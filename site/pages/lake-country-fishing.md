@@ -38,8 +38,11 @@ generalized and **not for navigation** — see [Credits](credits.html).
 
 ## Species
 
-One page each: how to tell it from the fish it gets confused with, where it
-lives in each lake, when it spawns, and how to catch it.
+Two pages each. **Page one is the field card** — how to tell it from the fish it
+gets confused with, where it lives in each lake, when it spawns, and how to
+catch it. Print that one for the boat. **Page two is the biology**: growth rates
+and how old that fish actually is, how it hunts, what it eats, and the handful
+of things about it that change how you fish for it.
 
 - [Largemouth Bass](doc/lake-country-fishing/fish/largemouth-bass.pdf)
 - [Smallmouth Bass](doc/lake-country-fishing/fish/smallmouth-bass.pdf)
