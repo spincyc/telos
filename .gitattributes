@@ -1,0 +1,6 @@
+# LF everywhere; a contributor's autocrlf must not change a published artifact.
+* text=auto eol=lf
+*.pdf binary
+*.jpg binary
+*.jpeg binary
+*.png binary

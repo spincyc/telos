@@ -1,0 +1,359 @@
+% Telos shared preamble.
+%
+% Every Telos publication is designed to be printed on a home laser printer,
+% one sheet at a time, and carried into a boat or a garage. Two constraints
+% follow from that and govern everything below:
+%
+%   1. Pure monochrome. No value is ever a hue. Emphasis is carried by rule
+%      weight, fill, and type, never by color, so a grayscale or black-only
+%      printer loses nothing.
+%   2. Card density. A "one-pager" is a hard contract: the leaf must fit on a
+%      single side of US Letter. The layout is therefore tight by default and
+%      the environments below are sized to leave room for a plate.
+
+\documentclass[10pt,letterpaper]{article}
+
+\usepackage[margin=0.55in,includefoot,footskip=0.24in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{needspace}
+\usepackage{multicol}
+\usepackage{ragged2e}
+\usepackage{graphicx}
+\usepackage{wrapfig}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,shapes.geometric,decorations.pathmorphing,patterns,fadings}
+
+% Semantic names are kept so a document reads intelligibly, but every value is
+% black, white, or a neutral gray that survives a black-only print driver.
+\definecolor{telosink}{gray}{0}
+\definecolor{telospaper}{gray}{1}
+\definecolor{telosrule}{gray}{0.35}
+\definecolor{telosfill}{gray}{0.90}
+\definecolor{telosdeep}{gray}{0.72}
+\definecolor{telosmute}{gray}{0.45}
+
+\hypersetup{hidelinks,pdfborder={0 0 0}}
+
+% Keep an unchanged source byte-reproducible across rebuilds: no build-clock
+% creation date and no random trailer ID.
+\pdfinfoomitdate=1
+\pdftrailerid{}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.42em}
+\setlength{\tabcolsep}{4pt}
+\setlength{\columnsep}{1.1em}
+\renewcommand{\arraystretch}{1.18}
+\setlist[itemize]{leftmargin=1.15em,itemsep=0.12em,topsep=0.2em,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=0.18em,topsep=0.2em,parsep=0pt}
+\setlist[description]{leftmargin=0pt,itemsep=0.16em,topsep=0.2em,parsep=0pt,
+  font=\normalfont\bfseries}
+
+% ---------------------------------------------------------------------------
+% Document identity. Each leaf declares these before \begin{document} so the
+% running head, the colophon, and the PDF metadata all agree.
+% ---------------------------------------------------------------------------
+\newcommand{\TelosProject}{Telos}
+\newcommand{\TelosDocTitle}{}
+\newcommand{\TelosDocSubtitle}{}
+\newcommand{\TelosRevision}{}
+
+\newcommand{\telosmeta}[4]{%
+  \renewcommand{\TelosProject}{#1}%
+  \renewcommand{\TelosDocTitle}{#2}%
+  \renewcommand{\TelosDocSubtitle}{#3}%
+  \renewcommand{\TelosRevision}{#4}%
+  \hypersetup{pdftitle={#2},pdfsubject={#3},pdfauthor={Telos}}%
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyfoot[L]{\footnotesize\textsc{\TelosProject}}
+\fancyfoot[C]{\footnotesize\TelosDocTitle}
+\fancyfoot[R]{\footnotesize\thepage}
+
+% The first page of a one-pager carries the masthead instead of a running foot,
+% so its footer is the compact provenance line.
+\fancypagestyle{telosfirst}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \renewcommand{\footrulewidth}{0.4pt}%
+  \fancyfoot[L]{\footnotesize\textsc{\TelosProject}}%
+  \fancyfoot[C]{\footnotesize\TelosRevision}%
+  \fancyfoot[R]{\footnotesize\thepage}%
+}
+
+% ---------------------------------------------------------------------------
+% Masthead. A heavy rule, the title, a light subtitle, a thin rule. The
+% optional argument is a right-aligned tag (a species' scientific name, a
+% lesson number) that sits on the title's baseline.
+% ---------------------------------------------------------------------------
+\newcommand{\telosmasthead}[1][]{%
+  \thispagestyle{telosfirst}%
+  \begingroup
+  \setlength{\parskip}{0pt}%
+  \noindent\rule{\linewidth}{1.6pt}\par
+  \vspace{0.30em}
+  \noindent
+  \begin{minipage}[b]{0.66\linewidth}
+    \raggedright{\LARGE\bfseries\TelosDocTitle}
+  \end{minipage}%
+  \hfill
+  \begin{minipage}[b]{0.32\linewidth}
+    \raggedleft{\small\itshape #1}
+  \end{minipage}\par
+  \vspace{0.18em}
+  \noindent{\small\TelosDocSubtitle}\par
+  \vspace{0.28em}
+  \noindent\rule{\linewidth}{0.4pt}\par
+  \endgroup
+  \vspace{0.35em}
+}
+
+% ---------------------------------------------------------------------------
+% Headings. Compact, small-caps, rule-anchored — a card has no room for the
+% article class's default vertical air.
+% ---------------------------------------------------------------------------
+\titleformat{\section}{\normalfont\large\bfseries}{}{0pt}{}[\vspace{-0.55em}\rule{\linewidth}{0.4pt}]
+\titlespacing*{\section}{0pt}{0.85em}{0.35em}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{}{0pt}{}
+\titlespacing*{\subsection}{0pt}{0.6em}{0.2em}
+\titleformat{\subsubsection}{\normalfont\small\bfseries\scshape}{}{0pt}{}
+\titlespacing*{\subsubsection}{0pt}{0.45em}{0.12em}
+
+% A short run-in heading for card interiors that must not consume a full line.
+\newcommand{\telosrubric}[1]{\textbf{#1}\enspace}
+
+% ---------------------------------------------------------------------------
+% Quantities. siunitx is not in this TeX Live split, and the guides need only a
+% fixed thin space and upright units, so define that directly rather than take
+% a package dependency the documented install would not satisfy.
+%   \qty{9}{kV}  ->  9 kV        \unitof{kV}  ->  kV
+% ---------------------------------------------------------------------------
+\newcommand{\unitof}[1]{\ensuremath{\mathrm{#1}}}
+\newcommand{\qty}[2]{#1\,\unitof{#2}}
+\newcommand{\numrange}[2]{#1\,--\,#2}
+\newcommand{\qtyrange}[3]{#1\,--\,#2\,\unitof{#3}}
+% Inches and feet appear constantly in the fishing guide; keep one spelling.
+\newcommand{\inch}[1]{#1\,in}
+\newcommand{\feet}[1]{#1\,ft}
+
+% ---------------------------------------------------------------------------
+% Cards and boxes.
+% ---------------------------------------------------------------------------
+
+% Titled card with a hairline frame. The default card for facts a reader looks
+% up rather than reads through.
+\newtcolorbox{teloscard}[1]{
+  enhanced, breakable,
+  colback=telospaper, colframe=telosink, colbacktitle=telospaper,
+  coltitle=telosink,
+  boxrule=0.5pt, sharp corners,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
+  before skip=6pt, after skip=6pt,
+  title={#1}, fonttitle=\small\bfseries
+}
+
+% Untitled left-ruled block: hierarchy without a redundant label.
+\newtcolorbox{telosframe}{
+  enhanced, breakable,
+  colback=telospaper, frame hidden, boxrule=0pt, sharp corners,
+  borderline west={1.3pt}{0pt}{telosink},
+  left=8pt, right=2pt, top=3pt, bottom=3pt,
+  before skip=6pt, after skip=6pt
+}
+
+% Filled emphasis panel — the "read this first" block. The 10% fill stays
+% legible under a cheap laser toner curve and still reads as distinct.
+\newtcolorbox{telospanel}[1]{
+  enhanced, breakable,
+  colback=telosfill, colframe=telosink, colbacktitle=telosfill,
+  coltitle=telosink,
+  boxrule=0.5pt, sharp corners,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
+  before skip=6pt, after skip=6pt,
+  title={#1}, fonttitle=\small\bfseries
+}
+
+% Hazard block. Deliberately the heaviest object on any page: a 1.4pt frame
+% plus a solid title bar. Nothing else in Telos is allowed to look like this,
+% so a reader skimming a lesson cannot mistake it for ordinary emphasis.
+\newtcolorbox{teloshazard}[1]{
+  enhanced, breakable,
+  colback=telospaper, colframe=telosink,
+  colbacktitle=telosink, coltitle=telospaper,
+  boxrule=1.4pt, sharp corners,
+  left=6pt, right=6pt, top=5pt, bottom=5pt,
+  toptitle=3pt, bottomtitle=3pt,
+  before skip=8pt, after skip=8pt,
+  title={\MakeUppercase{#1}}, fonttitle=\small\bfseries
+}
+
+% ---------------------------------------------------------------------------
+% Rating dots. A five-step scale that prints identically in black-only: filled
+% versus open circles, never a shaded bar.
+% ---------------------------------------------------------------------------
+\newcommand{\telosdot}{\tikz[baseline=-0.42ex]\fill[telosink] (0,0) circle (0.28ex);}
+\newcommand{\telosopendot}{\tikz[baseline=-0.42ex]\draw[telosink,line width=0.28pt] (0,0) circle (0.28ex);}
+\makeatletter
+\newcounter{telos@rate}
+\newcommand{\telosrating}[1]{%
+  \begingroup
+  \setcounter{telos@rate}{0}%
+  \@whilenum\value{telos@rate}<#1\do{\telosdot\kern0.22em\stepcounter{telos@rate}}%
+  \@whilenum\value{telos@rate}<5\do{\telosopendot\kern0.22em\stepcounter{telos@rate}}%
+  \endgroup
+}
+\makeatother
+
+% ---------------------------------------------------------------------------
+% Tables.
+%
+% tabularx reads its body by scanning for a literal \end{tabularx}, so it can
+% never be wrapped in a \newenvironment. Documents therefore open tabularx and
+% longtable directly and take their house style from these column types and the
+% booktabs rules. The one exception is the fact strip below, which is built on
+% plain tabular precisely so it *can* be an environment.
+% ---------------------------------------------------------------------------
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{R}{>{\raggedleft\arraybackslash}X}
+\newcolumntype{C}{>{\centering\arraybackslash}X}
+\newcolumntype{B}{>{\bfseries\raggedright\arraybackslash}X}
+\newcolumntype{N}{>{\raggedright\arraybackslash}p{0.16\linewidth}}
+
+% Key/value fact strip. Two flush columns of short lookups; the label column is
+% a fixed fraction so a stack of cards aligns across the whole guide.
+\newenvironment{telosfacts}[1][0.24]
+  {\begingroup\small
+   \setlength{\parskip}{0pt}%
+   \renewcommand{\arraystretch}{1.25}%
+   \begin{tabular}{@{}>{\bfseries\raggedright\arraybackslash}p{\dimexpr#1\linewidth\relax}@{\hspace{0.7em}}>{\raggedright\arraybackslash}p{\dimexpr\linewidth-#1\linewidth-0.7em\relax}@{}}}
+  {\end{tabular}\par\endgroup}
+\newcommand{\telosfact}[2]{#1 & #2\\}
+
+% ---------------------------------------------------------------------------
+% Seasonal / diurnal activity bar.
+%
+% \telosseasonbar{4,3,2,1,1,2,3,3,4,5,4,3} draws a twelve-cell month strip
+% where each value 0-5 is a fill height. Height, not gray value, carries the
+% signal, so it is exact under any toner curve; the cell is outlined either way
+% so an empty month is still visibly a month.
+% ---------------------------------------------------------------------------
+\newcommand{\telosseasonlabels}{J,F,M,A,M,J,J,A,S,O,N,D}
+\newcommand{\telosseasonbar}[1]{%
+  \begingroup
+  \begin{tikzpicture}[x=1.25em,y=2.1ex,baseline=0pt]
+    \foreach \v [count=\i from 0] in {#1} {
+      \draw[telosrule,line width=0.3pt] (\i,0) rectangle (\i+0.86,5);
+      \ifnum\v>0
+        \fill[telosink] (\i,0) rectangle (\i+0.86,\v);
+      \fi
+    }
+    \foreach \m [count=\i from 0] in \telosseasonlabels {
+      \node[font=\tiny,anchor=north,inner sep=1.2pt] at (\i+0.43,-0.1) {\m};
+    }
+  \end{tikzpicture}%
+  \endgroup
+}
+
+% Four-cell day-part strip: dawn, midday, dusk, night.
+\newcommand{\telosdaylabels}{Dawn,Mid,Dusk,Night}
+\newcommand{\telosdaybar}[1]{%
+  \begingroup
+  \begin{tikzpicture}[x=2.9em,y=2.1ex,baseline=0pt]
+    \foreach \v [count=\i from 0] in {#1} {
+      \draw[telosrule,line width=0.3pt] (\i,0) rectangle (\i+0.92,5);
+      \ifnum\v>0
+        \fill[telosink] (\i,0) rectangle (\i+0.92,\v);
+      \fi
+    }
+    \foreach \m [count=\i from 0] in \telosdaylabels {
+      \node[font=\tiny,anchor=north,inner sep=1.2pt] at (\i+0.46,-0.1) {\m};
+    }
+  \end{tikzpicture}%
+  \endgroup
+}
+
+% A bar needs vertical room for its labels when it sits in a fact strip.
+\newcommand{\telosbarrow}[1]{\rule{0pt}{4.2ex}#1\rule[-1.6ex]{0pt}{1.6ex}}
+
+% ---------------------------------------------------------------------------
+% Plates. A species or apparatus illustration with a caption rule beneath it.
+% \telosplate{width fraction}{file}{caption}
+% ---------------------------------------------------------------------------
+\newcommand{\telosplate}[3]{%
+  \begingroup
+  \centering
+  \includegraphics[width=#1\linewidth]{#2}\par
+  \vspace{0.15em}
+  \begin{minipage}{#1\linewidth}
+    \rule{\linewidth}{0.4pt}\par
+    \vspace{0.1em}
+    {\footnotesize #3\par}
+  \end{minipage}\par
+  \endgroup
+  \vspace{0.3em}
+}
+
+% TikZ drawing conventions shared by every rig, knot, and circuit diagram.
+\tikzset{
+  telos line/.style={draw=telosink,line width=0.7pt},
+  telos hair/.style={draw=telosink,line width=0.35pt},
+  telos heavy/.style={draw=telosink,line width=1.2pt},
+  telos node/.style={draw=telosink,fill=telospaper,align=center,inner sep=4pt,font=\small},
+  telos emphasis/.style={draw=telosink,line width=1.2pt,fill=telospaper,align=center,
+    inner sep=4pt,font=\small\bfseries},
+  telos label/.style={font=\scriptsize,inner sep=1.5pt},
+  telos arrow/.style={-{Stealth[length=1.8mm]},draw=telosink,line width=0.6pt},
+  telos dim/.style={|<->|,draw=telosink,line width=0.35pt},
+  telos water/.style={draw=telosrule,line width=0.4pt,decorate,
+    decoration={snake,amplitude=0.4mm,segment length=3mm}},
+}
+
+% ---------------------------------------------------------------------------
+% Colophon. Rendered once, at the end of the last page, in the recovered footer
+% area so it never creates a page of its own.
+% ---------------------------------------------------------------------------
+\newif\ifTelosColophonRendered
+\newcommand{\TelosColophonExtra}{}
+\newcommand{\TelosColophon}{%
+  \ifTelosColophonRendered\else
+  \global\TelosColophonRenderedtrue
+  \par
+  \enlargethispage{0.5in}%
+  \vspace{0.3em}%
+  \begingroup
+  \setlength{\parskip}{0pt}%
+  \begin{minipage}{\linewidth}
+  \rule{\linewidth}{0.35pt}\par
+  \vspace{0.3em}%
+  \fontsize{7}{8.2}\selectfont
+  \textbf{Telos.} \TelosProject{} — \TelosDocTitle. Revised \TelosRevision.
+  \TelosColophonExtra{}
+  Project-created text and diagrams are licensed \href{https://creativecommons.org/licenses/by/4.0/}{CC BY 4.0}.
+  Incorporated public-domain artwork remains public domain and is credited on
+  the plate it appears with. See \texttt{LICENSE} and \texttt{CREDITS.md} in the
+  source. Nothing here is professional advice; verify current regulations and
+  follow the stated safety procedure.
+  \end{minipage}
+  \endgroup
+  \fi
+}
+\AtEndDocument{\TelosColophon}

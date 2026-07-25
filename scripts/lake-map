@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""Generate a lake's TikZ depth map from its digitized survey.
+
+Hand-placing depth contours does not work: they must nest, they must close,
+and where a lake narrows they must split or vanish. So instead of drawing
+contours we reconstruct the surface they came from.
+
+The input for each lake is a shoreline traced from the published Wisconsin
+survey sheet plus the soundings and contour-crossing points read off it. This
+tool rasterizes the shoreline, interpolates a depth field through the anchors
+with the shoreline pinned at zero, and traces each requested iso-depth with
+marching squares. The result is a set of closed, properly nested polylines that
+follow the survey's own numbers.
+
+The output is generalized. It shows where the structure is, not where your hull
+is, and it is not for navigation.
+
+    scripts/lake-map            regenerate every map
+    scripts/lake-map pine-lake  regenerate one
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = ROOT / "src/lake-country-fishing/shared/maps"
+OUTPUT_ROOT = ROOT / "src/lake-country-fishing/shared"
+
+# 0.04 cm cells: finer than the printed line width, coarse enough that the
+# pure-Python relaxation stays under a few seconds when run coarse-to-fine.
+CELL = 0.04
+# Anchors are painted as small discs rather than single cells. A point source in
+# a harmonic field is a logarithmic singularity, which would print as a spike.
+ANCHOR_RADIUS_CM = 0.07
+# Successive over-relaxation factor and the coarse-to-fine schedule. The fine
+# level gets the most sweeps: too few and contours kink around the anchor discs.
+OMEGA = 1.85
+SCHEDULE = ((8, 600), (4, 500), (2, 400), (1, 400))
+
+
+# --------------------------------------------------------------------------
+# Geometry
+# --------------------------------------------------------------------------
+
+
+def to_centimetres(shore_px, pixel_frame, frame):
+    """Map digitized pixel coordinates into the page frame, flipping y."""
+    x0, y0, x1, y1 = (pixel_frame[k] for k in ("x0", "y0", "x1", "y1"))
+    scale_x = frame["width_cm"] / (x1 - x0)
+    scale_y = frame["height_cm"] / (y1 - y0)
+    return [((px - x0) * scale_x, (y1 - py) * scale_y) for px, py in shore_px]
+
+
+def point_in_polygon(x, y, polygon):
+    inside = False
+    count = len(polygon)
+    j = count - 1
+    for i in range(count):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if (yi > y) != (yj > y):
+            crossing = xi + (y - yi) * (xj - xi) / (yj - yi)
+            if x < crossing:
+                inside = not inside
+        j = i
+    return inside
+
+
+def densify(polygon, step):
+    """Insert points so no shoreline segment is longer than `step`."""
+    dense = []
+    count = len(polygon)
+    for index in range(count):
+        ax, ay = polygon[index]
+        bx, by = polygon[(index + 1) % count]
+        dense.append((ax, ay))
+        length = math.hypot(bx - ax, by - ay)
+        for piece in range(1, int(length / step)):
+            fraction = piece * step / length
+            dense.append((ax + (bx - ax) * fraction, ay + (by - ay) * fraction))
+    return dense
+
+
+# --------------------------------------------------------------------------
+# Depth field
+# --------------------------------------------------------------------------
+
+
+def solve_level(polygon, anchors, frame, cell, iterations, seed=None):
+    """Harmonic (Laplace) interpolation of depth on one grid resolution.
+
+    Inverse-distance weighting is wrong for this: it puts a local extremum at
+    every sounding, so a lake bottom comes out as a field of bullseyes. The
+    depth surface we want is the smoothest one that honours the soundings and
+    meets zero at the shoreline, which is exactly the solution of Laplace's
+    equation with those values as Dirichlet conditions. Solving it by
+    over-relaxed Gauss-Seidel, coarse grid first, converges in a few seconds
+    and cannot invent an extremum where the survey did not record one.
+    """
+    columns = int(frame["width_cm"] / cell) + 3
+    rows = int(frame["height_cm"] / cell) + 3
+
+    inside = [[False] * columns for _ in range(rows)]
+    fixed = [[False] * columns for _ in range(rows)]
+    field = [[0.0] * columns for _ in range(rows)]
+
+    for row in range(rows):
+        y = row * cell
+        for column in range(columns):
+            if point_in_polygon(column * cell, y, polygon):
+                inside[row][column] = True
+
+    # Land is held at zero, which makes the shoreline the zero isobath.
+    for row in range(rows):
+        for column in range(columns):
+            if not inside[row][column]:
+                fixed[row][column] = True
+
+    if seed is not None:
+        seed_field, seed_columns, seed_rows = seed
+        for row in range(rows):
+            for column in range(columns):
+                if inside[row][column]:
+                    sr = min(seed_rows - 1, row * (seed_rows - 1) // max(rows - 1, 1))
+                    sc = min(seed_columns - 1, column * (seed_columns - 1) // max(columns - 1, 1))
+                    field[row][column] = max(seed_field[sr][sc], 0.0)
+
+    radius = max(1, int(ANCHOR_RADIUS_CM / cell))
+    for anchor in anchors:
+        depth = float(anchor["depth"])
+        centre_column = int(round(anchor["x"] / cell))
+        centre_row = int(round(anchor["y"] / cell))
+        for row in range(centre_row - radius, centre_row + radius + 1):
+            for column in range(centre_column - radius, centre_column + radius + 1):
+                if not (0 <= row < rows and 0 <= column < columns):
+                    continue
+                if (row - centre_row) ** 2 + (column - centre_column) ** 2 > radius ** 2:
+                    continue
+                if not inside[row][column]:
+                    continue
+                fixed[row][column] = True
+                field[row][column] = depth
+
+    for _ in range(iterations):
+        change = 0.0
+        for row in range(1, rows - 1):
+            row_above, row_below = field[row - 1], field[row + 1]
+            current = field[row]
+            for column in range(1, columns - 1):
+                if fixed[row][column]:
+                    continue
+                average = 0.25 * (row_above[column] + row_below[column]
+                                  + current[column - 1] + current[column + 1])
+                delta = OMEGA * (average - current[column])
+                current[column] += delta
+                if abs(delta) > change:
+                    change = abs(delta)
+        if change < 0.02:
+            break
+
+    return field, columns, rows, inside
+
+
+def build_field(polygon, anchors, frame):
+    """Solve the depth surface coarse-to-fine, then mask the exterior."""
+    seed = None
+    for divisor, iterations in SCHEDULE:
+        field, columns, rows, inside = solve_level(
+            polygon, anchors, frame, CELL * divisor, iterations, seed
+        )
+        seed = (field, columns, rows)
+
+    # Outside the lake the field is held below every contour level so that
+    # marching squares closes each iso-line against the shoreline instead of
+    # running off the edge of the grid.
+    for row in range(rows):
+        for column in range(columns):
+            if not inside[row][column]:
+                field[row][column] = -1.0
+    return field, columns, rows
+
+
+# --------------------------------------------------------------------------
+# Marching squares
+# --------------------------------------------------------------------------
+
+
+def interpolate(pa, va, pb, vb, level):
+    if abs(vb - va) < 1e-12:
+        return pa
+    fraction = (level - va) / (vb - va)
+    return (pa[0] + (pb[0] - pa[0]) * fraction, pa[1] + (pb[1] - pa[1]) * fraction)
+
+
+def trace_level(field, columns, rows, level):
+    """Return closed polylines along the given iso-depth."""
+    segments = []
+    for row in range(rows - 1):
+        for column in range(columns - 1):
+            corners = [
+                ((column, row), field[row][column]),
+                ((column + 1, row), field[row][column + 1]),
+                ((column + 1, row + 1), field[row + 1][column + 1]),
+                ((column, row + 1), field[row + 1][column]),
+            ]
+            crossings = []
+            for index in range(4):
+                (pa, va), (pb, vb) = corners[index], corners[(index + 1) % 4]
+                if (va >= level) != (vb >= level):
+                    point_a = (pa[0] * CELL, pa[1] * CELL)
+                    point_b = (pb[0] * CELL, pb[1] * CELL)
+                    crossings.append(interpolate(point_a, va, point_b, vb, level))
+            if len(crossings) == 2:
+                segments.append((crossings[0], crossings[1]))
+            elif len(crossings) == 4:
+                # Saddle: join the pairs that keep the contour simple.
+                segments.append((crossings[0], crossings[1]))
+                segments.append((crossings[2], crossings[3]))
+    return stitch(segments)
+
+
+def stitch(segments, tolerance=CELL * 0.55):
+    """Join unordered segments into polylines."""
+    def key(point):
+        return (round(point[0] / tolerance), round(point[1] / tolerance))
+
+    adjacency: dict = {}
+    for a, b in segments:
+        adjacency.setdefault(key(a), []).append((a, b))
+        adjacency.setdefault(key(b), []).append((b, a))
+
+    used = set()
+    polylines = []
+    for a, b in segments:
+        identity = (key(a), key(b))
+        if identity in used or (identity[1], identity[0]) in used:
+            continue
+        chain = [a, b]
+        used.add(identity)
+        # Walk forward until the chain closes or dead-ends.
+        while True:
+            options = adjacency.get(key(chain[-1]), [])
+            step = None
+            for start, end in options:
+                candidate = (key(start), key(end))
+                if candidate in used or (candidate[1], candidate[0]) in used:
+                    continue
+                step = end
+                used.add(candidate)
+                break
+            if step is None:
+                break
+            chain.append(step)
+            if key(step) == key(chain[0]):
+                break
+        if len(chain) >= 8:
+            polylines.append(chain)
+    return polylines
+
+
+def simplify(points, tolerance):
+    """Ramer-Douglas-Peucker, so the emitted TeX stays readable."""
+    if len(points) < 3:
+        return points
+    first, last = points[0], points[-1]
+    worst_index, worst_distance = 0, 0.0
+    for index in range(1, len(points) - 1):
+        distance = perpendicular_distance(points[index], first, last)
+        if distance > worst_distance:
+            worst_index, worst_distance = index, distance
+    if worst_distance <= tolerance:
+        return [first, last]
+    return (simplify(points[: worst_index + 1], tolerance)[:-1]
+            + simplify(points[worst_index:], tolerance))
+
+
+def perpendicular_distance(point, start, end):
+    if start == end:
+        return math.hypot(point[0] - start[0], point[1] - start[1])
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    return abs(dy * point[0] - dx * point[1] + end[0] * start[1] - end[1] * start[0]) / length
+
+
+# --------------------------------------------------------------------------
+# Emit
+# --------------------------------------------------------------------------
+
+
+def format_path(points, style, close=True):
+    body = " ".join(f"({x:.2f},{y:.2f})" for x, y in points)
+    suffix = " -- cycle" if close else ""
+    wrapped = []
+    line = f"\\draw[{style}] "
+    for token in body.split(" "):
+        if len(line) + len(token) > 76:
+            wrapped.append(line)
+            line = "  "
+        line += token + " -- "
+    line = line.rstrip(" -")
+    wrapped.append(line + suffix + ";")
+    return "\n".join(wrapped)
+
+
+def generate(slug):
+    data = json.loads((DATA_ROOT / f"{slug}.json").read_text(encoding="utf-8"))
+    frame = data["frame"]
+    polygon = to_centimetres(data["shore_px"], data["pixel_frame"], frame)
+
+    # A sounding or a numbered spot outside the shoreline is a digitizing
+    # mistake, and the solver would drop it without a word. Say so instead.
+    stray = []
+    for anchor in data["anchors"]:
+        if not point_in_polygon(anchor["x"], anchor["y"], polygon):
+            stray.append(f"anchor ({anchor['x']}, {anchor['y']}) depth {anchor['depth']}")
+    for spot in data["spots"]:
+        if not point_in_polygon(spot["x"], spot["y"], polygon):
+            stray.append(f"spot {spot['n']} ({spot['x']}, {spot['y']})")
+    if stray:
+        raise SystemExit(
+            f"lake-map: {slug}: these lie outside the shoreline:\n  "
+            + "\n  ".join(stray)
+        )
+
+    field, columns, rows = build_field(polygon, data["anchors"], frame)
+
+    lines = [
+        f"% {data['name']} depth map --- GENERATED by scripts/lake-map.",
+        f"% Edit maps/{slug}.json and re-run; do not edit this file.",
+        "%",
+        f"% Source survey: {data['survey']}",
+        "% Contours are reconstructed from the survey's soundings and are",
+        "% generalized. Not for navigation.",
+        "",
+        "\\begin{tikzpicture}[x=1cm,y=1cm]",
+        "",
+    ]
+
+    for level in sorted(data["levels"], reverse=True):
+        style = data["level_styles"].get(str(level), "contour20")
+        traced = trace_level(field, columns, rows, float(level))
+        if not traced:
+            continue
+        lines.append(f"% ---- {level} ft ----")
+        for chain in traced:
+            reduced = simplify(chain, CELL * 0.45)
+            if len(reduced) < 6:
+                continue
+            lines.append(format_path(reduced, style))
+        lines.append("")
+
+    lines.append("% ---- shoreline ----")
+    lines.append(format_path([(round(x, 2), round(y, 2)) for x, y in polygon], "shore"))
+    lines.append("")
+
+    if data.get("soundings"):
+        lines.append("% ---- deepest soundings ----")
+        for sounding in data["soundings"]:
+            lines.append(f"\\fill[telosink] ({sounding['x']},{sounding['y']}) circle (0.045);")
+            lines.append(
+                f"\\node[depthlabel,anchor={sounding.get('anchor', 'west')}] at "
+                f"({sounding['x'] + sounding.get('dx', 0.07)},{sounding['y'] + sounding.get('dy', 0)}) "
+                f"{{{sounding['label']}}};"
+            )
+        lines.append("")
+
+    if data.get("labels"):
+        lines.append("% ---- contour labels ----")
+        for label in data["labels"]:
+            lines.append(
+                f"\\node[depthlabel,fill=telospaper,inner sep=0.5pt] at "
+                f"({label['x']},{label['y']}) {{{label['text']}}};"
+            )
+        lines.append("")
+
+    lines.append("% ---- spots keyed to the seasonal table ----")
+    for spot in data["spots"]:
+        lines.append(f"\\spot{{{spot['x']}}}{{{spot['y']}}}{{{spot['n']}}}")
+    if data.get("landing"):
+        landing = data["landing"]
+        lines.append(f"\\landing{{{landing['x']}}}{{{landing['y']}}}")
+    lines.append("")
+
+    furniture = data["furniture"]
+    lines.append(f"\\northarrow{{{furniture['north'][0]}}}{{{furniture['north'][1]}}}")
+    lines.append(
+        f"\\scalebarof{{{furniture['scale'][0]}}}{{{furniture['scale'][1]}}}"
+        f"{{{furniture['scale'][2]}}}{{\\fontsize{{5.5}}{{6}}\\selectfont {furniture['scale'][3]}}}"
+    )
+    lines.append("")
+    lines.append("\\end{tikzpicture}")
+
+    destination = OUTPUT_ROOT / f"{slug}-map.tex"
+    destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"lake-map: {destination.relative_to(ROOT)} "
+          f"({len(polygon)} shore points, {len(data['anchors'])} anchors)")
+
+
+def main() -> int:
+    requested = sys.argv[1:] or [path.stem for path in sorted(DATA_ROOT.glob("*.json"))]
+    for slug in requested:
+        generate(slug)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.setrecursionlimit(10000)
+    sys.exit(main())

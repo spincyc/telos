@@ -1,0 +1,215 @@
+/* Telos site styles.
+ *
+ * The site is an index to printable PDFs, not a reading destination, so the
+ * page stays close to a plain document: one column, generous measure, and a
+ * palette that mirrors the monochrome print preamble. Light and dark are both
+ * first-class because the repository owner reads this on a phone in a boat and
+ * on a desktop in a workshop. */
+
+:root {
+  color-scheme: light dark;
+  --ink: #16181c;
+  --muted: #5b6169;
+  --paper: #fbfbf9;
+  --panel: #ffffff;
+  --rule: #d9d7d0;
+  --accent: #16181c;
+  --measure: 46rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e6e1;
+    --muted: #9aa0a8;
+    --paper: #16181b;
+    --panel: #1e2126;
+    --rule: #333840;
+    --accent: #e8e6e1;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.6 ui-serif, Georgia, "Times New Roman", serif;
+}
+
+.wrap {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  background: var(--panel);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--ink);
+  z-index: 10;
+}
+
+/* Masthead --------------------------------------------------------------- */
+
+.masthead {
+  border-bottom: 2px solid var(--ink);
+  padding: 2rem 0 0;
+}
+
+.wordmark {
+  display: inline-block;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.tagline {
+  margin: 0.35rem 0 1.1rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.masthead nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.masthead nav a {
+  display: block;
+  padding: 0.55rem 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.masthead nav a:hover { color: var(--ink); }
+.masthead nav a.current {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* Content ---------------------------------------------------------------- */
+
+main { padding: 2.5rem 1.25rem 3rem; }
+
+h1, h2, h3, h4 {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.25;
+  margin: 2rem 0 0.6rem;
+}
+
+main > h1:first-child { margin-top: 0; }
+
+h1 { font-size: 1.9rem; letter-spacing: -0.01em; }
+h2 {
+  font-size: 1.25rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--rule);
+}
+h3 { font-size: 1.02rem; }
+
+p, ul, ol { margin: 0.85rem 0; }
+
+a { color: var(--accent); text-underline-offset: 0.15em; }
+a:hover { text-decoration-thickness: 2px; }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
+
+blockquote {
+  margin: 1.2rem 0;
+  padding: 0.1rem 0 0.1rem 1rem;
+  border-left: 3px solid var(--ink);
+  color: var(--muted);
+}
+
+code, pre {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.88em;
+}
+
+code {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+
+pre {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+pre code { background: none; border: 0; padding: 0; }
+
+/* Tables scroll inside their own container so the page body never does. */
+.table-scroll, table { display: block; overflow-x: auto; max-width: 100%; }
+
+table {
+  border-collapse: collapse;
+  margin: 1.2rem 0;
+  font-size: 0.94rem;
+  white-space: nowrap;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.45rem 0.9rem 0.45rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+th {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1.5px solid var(--ink);
+}
+
+/* A link to a PDF is the whole point of the site, so mark it unmistakably. */
+a[href$=".pdf"]::after {
+  content: " PDF";
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  vertical-align: 0.35em;
+  color: var(--muted);
+}
+
+/* Colophon --------------------------------------------------------------- */
+
+.colophon {
+  border-top: 1px solid var(--rule);
+  padding: 1.75rem 0 2.5rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.colophon p { margin: 0.5rem 0; }
+
+@media (max-width: 34rem) {
+  body { font-size: 15px; }
+  .masthead nav { gap: 0.9rem; }
+}

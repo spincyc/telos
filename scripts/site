@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""Render, check, and verify the Telos GitHub Pages artifact.
+
+The artifact is deliberately small: a handful of Markdown pages wrapped in one
+layout, plus the reviewed PDF tree from doc/. Everything the site can publish is
+named explicitly in site/site.json, so adding a page or a publication is a
+tracked edit rather than a directory scan that silently picks up a draft.
+
+    site check    Validate the manifest against the working tree.
+    site build    Render build/site (add --serve to preview it).
+    site verify   Re-check an already rendered build/site.
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import http.server
+import json
+import re
+import shutil
+import socketserver
+import sys
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST_PATH = ROOT / "site/site.json"
+LAYOUT_PATH = ROOT / "release/site/layout.html"
+ASSET_ROOT = ROOT / "release/site/assets"
+DOC_ROOT = ROOT / "doc"
+OUTPUT_ROOT = ROOT / "build/site"
+
+MARKDOWN_LINK_RE = re.compile(r"(?<!\!)\[(?P<text>[^\]]*)\]\((?P<href>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
+HTML_REFERENCE_RE = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""")
+EXTERNAL_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#|mailto:)")
+
+
+class SiteError(RuntimeError):
+    """A manifest, link, or artifact problem the operator must fix."""
+
+
+# --------------------------------------------------------------------------
+# Manifest
+# --------------------------------------------------------------------------
+
+
+def load_manifest() -> dict:
+    if not MANIFEST_PATH.exists():
+        raise SiteError(f"missing manifest: {MANIFEST_PATH.relative_to(ROOT)}")
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise SiteError(f"manifest is not valid JSON: {error}") from error
+
+    for field in ("title", "tagline", "pages"):
+        if field not in manifest:
+            raise SiteError(f"manifest is missing required field: {field}")
+    if not isinstance(manifest["pages"], list) or not manifest["pages"]:
+        raise SiteError("manifest 'pages' must be a non-empty list")
+
+    seen_outputs: set[str] = set()
+    for index, page in enumerate(manifest["pages"]):
+        for field in ("source", "output", "title"):
+            if field not in page:
+                raise SiteError(f"page {index} is missing required field: {field}")
+        output = page["output"]
+        if output in seen_outputs:
+            raise SiteError(f"duplicate page output: {output}")
+        if output.startswith("/") or ".." in PurePosixPath(output).parts:
+            raise SiteError(f"page output must be a relative path inside the site: {output}")
+        seen_outputs.add(output)
+    return manifest
+
+
+def page_sources(manifest: dict) -> list[tuple[dict, Path]]:
+    resolved: list[tuple[dict, Path]] = []
+    for page in manifest["pages"]:
+        source = ROOT / page["source"]
+        if not source.is_file():
+            raise SiteError(f"page source does not exist: {page['source']}")
+        resolved.append((page, source))
+    return resolved
+
+
+# --------------------------------------------------------------------------
+# Link checking
+# --------------------------------------------------------------------------
+
+
+def local_targets(href: str) -> str | None:
+    """Return the path portion of a site-local link, or None if it is external."""
+    if EXTERNAL_RE.match(href):
+        return None
+    path = urlsplit(href).path
+    return unquote(path) if path else None
+
+
+def check_links(manifest: dict) -> tuple[list[str], set[str]]:
+    """Validate every link out of every page. Returns (problems, referenced PDFs)."""
+    problems: list[str] = []
+    referenced_pdfs: set[str] = set()
+    outputs = {page["output"] for page in manifest["pages"]}
+
+    for page, source in page_sources(manifest):
+        output_dir = PurePosixPath(page["output"]).parent
+        text = source.read_text(encoding="utf-8")
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            href = match.group("href")
+            target = local_targets(href)
+            if target is None or target == "":
+                continue
+
+            # Resolve the link the way a browser would: relative to the page's
+            # own location in the rendered site, not to its Markdown source.
+            resolved = PurePosixPath(target)
+            if not target.startswith("/"):
+                resolved = PurePosixPath(*(output_dir / target).parts)
+            normalized = normalize(resolved)
+            if normalized is None:
+                problems.append(f"{page['source']}: link escapes the site root: {href}")
+                continue
+
+            # The renderer rewrites .md hrefs to .html, so a cross-page link is
+            # written as the target page's output name with a .md suffix.
+            # Check it the same way the renderer will resolve it.
+            if normalized.endswith(".md"):
+                normalized = normalized[: -len(".md")] + ".html"
+
+            if normalized.endswith(".pdf"):
+                if not (ROOT / normalized).is_file():
+                    problems.append(f"{page['source']}: link to a PDF that is not in doc/: {href}")
+                else:
+                    referenced_pdfs.add(normalized)
+            elif normalized.endswith(".html"):
+                if normalized not in outputs:
+                    problems.append(f"{page['source']}: link to an unpublished page: {href}")
+            elif not (ROOT / normalized).exists():
+                problems.append(f"{page['source']}: link to a missing file: {href}")
+
+    return problems, referenced_pdfs
+
+
+def normalize(path: PurePosixPath) -> str | None:
+    """Collapse '.' and '..' segments, refusing anything that leaves the root."""
+    parts: list[str] = []
+    for part in path.parts:
+        if part in ("", ".", "/"):
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def published_pdfs() -> set[str]:
+    if not DOC_ROOT.is_dir():
+        return set()
+    return {
+        pdf.relative_to(ROOT).as_posix()
+        for pdf in DOC_ROOT.rglob("*.pdf")
+        if pdf.is_file()
+    }
+
+
+def command_check(_: argparse.Namespace) -> int:
+    manifest = load_manifest()
+    problems, referenced = check_links(manifest)
+
+    available = published_pdfs()
+    for orphan in sorted(available - referenced):
+        problems.append(f"{orphan}: promoted into doc/ but linked from no page")
+
+    if not LAYOUT_PATH.is_file():
+        problems.append(f"missing layout: {LAYOUT_PATH.relative_to(ROOT)}")
+    if not ASSET_ROOT.is_dir():
+        problems.append(f"missing asset root: {ASSET_ROOT.relative_to(ROOT)}")
+
+    if problems:
+        for problem in problems:
+            print(f"site: {problem}", file=sys.stderr)
+        return 1
+    print(
+        f"site: {len(manifest['pages'])} pages, {len(available)} publications, "
+        "all links resolve"
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------
+# Build
+# --------------------------------------------------------------------------
+
+
+def render_markdown(text: str) -> str:
+    try:
+        import markdown
+    except ModuleNotFoundError as error:  # pragma: no cover - environment guard
+        raise SiteError(
+            "python-markdown is required; install it with "
+            "'pip install -r requirements-site.txt' or 'pacman -S python-markdown'"
+        ) from error
+    renderer = markdown.Markdown(
+        extensions=["extra", "sane_lists", "toc", "attr_list"],
+        output_format="html5",
+    )
+    return renderer.convert(text)
+
+
+def rewrite_page_links(body: str) -> str:
+    """Point .md links at their rendered .html output."""
+    def replace(match: re.Match[str]) -> str:
+        reference = match.group(1)
+        if EXTERNAL_RE.match(reference) or not reference.endswith(".md"):
+            return match.group(0)
+        return match.group(0).replace(reference, reference[: -len(".md")] + ".html")
+
+    return HTML_REFERENCE_RE.sub(replace, body)
+
+
+def relative_prefix(output: str) -> str:
+    depth = len(PurePosixPath(output).parts) - 1
+    return "../" * depth
+
+
+def build_navigation(manifest: dict, current: str) -> str:
+    items: list[str] = []
+    for page in manifest["pages"]:
+        label = page.get("nav")
+        if not label:
+            continue
+        target = relative_prefix(current) + page["output"]
+        classes = ' class="current"' if page["output"] == current else ""
+        items.append(f'<a href="{html.escape(target)}"{classes}>{html.escape(label)}</a>')
+    return "\n".join(items)
+
+
+def command_build(arguments: argparse.Namespace) -> int:
+    manifest = load_manifest()
+    problems, _ = check_links(manifest)
+    if problems:
+        for problem in problems:
+            print(f"site: {problem}", file=sys.stderr)
+        return 1
+
+    layout = LAYOUT_PATH.read_text(encoding="utf-8")
+
+    if OUTPUT_ROOT.exists():
+        shutil.rmtree(OUTPUT_ROOT)
+    OUTPUT_ROOT.mkdir(parents=True)
+
+    for page, source in page_sources(manifest):
+        body = rewrite_page_links(render_markdown(source.read_text(encoding="utf-8")))
+        prefix = relative_prefix(page["output"])
+        rendered = (
+            layout.replace("{{site_title}}", html.escape(manifest["title"]))
+            .replace("{{tagline}}", html.escape(manifest["tagline"]))
+            .replace("{{title}}", html.escape(page["title"]))
+            .replace("{{navigation}}", build_navigation(manifest, page["output"]))
+            .replace("{{root}}", prefix)
+            .replace("{{content}}", body)
+        )
+        destination = OUTPUT_ROOT / page["output"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(rendered, encoding="utf-8")
+
+    shutil.copytree(ASSET_ROOT, OUTPUT_ROOT / "assets")
+    if DOC_ROOT.is_dir():
+        shutil.copytree(DOC_ROOT, OUTPUT_ROOT / "doc")
+
+    # GitHub Pages runs Jekyll unless told not to; the artifact is already HTML.
+    (OUTPUT_ROOT / ".nojekyll").write_text("", encoding="utf-8")
+
+    count = sum(1 for _ in OUTPUT_ROOT.rglob("*") if _.is_file())
+    print(f"site: wrote {count} files to {OUTPUT_ROOT.relative_to(ROOT)}")
+
+    if arguments.serve:
+        serve(OUTPUT_ROOT, arguments.port)
+    return 0
+
+
+def serve(root: Path, port: int) -> None:
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(root), **kwargs)
+
+        def log_message(self, *args):  # quiet by default
+            pass
+
+    with socketserver.TCPServer(("127.0.0.1", port), Handler) as server:
+        print(f"site: serving http://127.0.0.1:{port}/ (Ctrl-C to stop)")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print()
+
+
+# --------------------------------------------------------------------------
+# Verify
+# --------------------------------------------------------------------------
+
+
+def command_verify(_: argparse.Namespace) -> int:
+    if not OUTPUT_ROOT.is_dir():
+        raise SiteError("build/site does not exist; run 'make site' first")
+
+    problems: list[str] = []
+    for page in sorted(OUTPUT_ROOT.rglob("*.html")):
+        relative = page.relative_to(OUTPUT_ROOT)
+        for reference in HTML_REFERENCE_RE.findall(page.read_text(encoding="utf-8")):
+            target = local_targets(reference)
+            if target is None or target == "":
+                continue
+            if target.startswith("/"):
+                resolved = PurePosixPath(target)
+            else:
+                resolved = PurePosixPath(relative.parent.as_posix()) / target
+            normalized = normalize(resolved)
+            if normalized is None or not (OUTPUT_ROOT / normalized).exists():
+                problems.append(f"{relative}: dangling reference: {reference}")
+
+    if not (OUTPUT_ROOT / ".nojekyll").is_file():
+        problems.append("artifact is missing .nojekyll; GitHub Pages would run Jekyll on it")
+    if not (OUTPUT_ROOT / "index.html").is_file():
+        problems.append("artifact is missing index.html")
+
+    if problems:
+        for problem in problems:
+            print(f"site: {problem}", file=sys.stderr)
+        return 1
+    pages = sum(1 for _ in OUTPUT_ROOT.rglob("*.html"))
+    pdfs = sum(1 for _ in OUTPUT_ROOT.rglob("*.pdf"))
+    print(f"site: verified {pages} pages and {pdfs} publications")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="site", description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("check", help="validate the manifest and links").set_defaults(
+        handler=command_check
+    )
+    build = subparsers.add_parser("build", help="render build/site")
+    build.add_argument("--serve", action="store_true", help="serve the artifact after rendering")
+    build.add_argument("--port", type=int, default=8000, help="preview port (default 8000)")
+    build.set_defaults(handler=command_build)
+    subparsers.add_parser("verify", help="re-check a rendered artifact").set_defaults(
+        handler=command_verify
+    )
+
+    arguments = parser.parse_args()
+    try:
+        return arguments.handler(arguments)
+    except SiteError as error:
+        print(f"site: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
