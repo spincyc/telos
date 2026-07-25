@@ -75,6 +75,27 @@ to fish it.
 | Quick-Strike Rig | Big dead bait for pike, hooked in the jaw | [PDF](doc/lake-country-fishing/rigs/quick-strike-rig.pdf) |
 | Tip-Up | Live bait under the ice | [PDF](doc/lake-country-fishing/rigs/tip-up.pdf) |
 
+## Cooking
+
+A sheet for each species: how good it is to eat, how to fillet *that* fish with
+the cuts drawn on the same plate the species sheet uses, which bones to watch
+for, and three ways to cook it. Every sheet carries Wisconsin's current
+safe-eating guidance for that species.
+
+| Species | | Sheet |
+|---|---|---|
+| Walleye | The best-eating fish here, and the cheeks nobody takes | [PDF](doc/lake-country-fishing/cooking/walleye.pdf) |
+| Yellow Perch | Pound for pound the finest eating in fresh water | [PDF](doc/lake-country-fishing/cooking/yellow-perch.pdf) |
+| Bluegill | The fish most people learn to clean on | [PDF](doc/lake-country-fishing/cooking/bluegill.pdf) |
+| Pumpkinseed | Treat it exactly as a bluegill | [PDF](doc/lake-country-fishing/cooking/pumpkinseed.pdf) |
+| Black Crappie | The mildest fillet in the lake | [PDF](doc/lake-country-fishing/cooking/black-crappie.pdf) |
+| Rock Bass | Under-rated; eat it the day you catch it | [PDF](doc/lake-country-fishing/cooking/rock-bass.pdf) |
+| Northern Pike | **The five-fillet method** — how to beat the Y-bones | [PDF](doc/lake-country-fishing/cooking/northern-pike.pdf) |
+| Largemouth Bass | Better than its reputation, from cold water | [PDF](doc/lake-country-fishing/cooking/largemouth-bass.pdf) |
+| Smallmouth Bass | Cleaner-tasting, because of where it lives | [PDF](doc/lake-country-fishing/cooking/smallmouth-bass.pdf) |
+| Cisco | Oily and fine-fleshed — the one fish here worth smoking | [PDF](doc/lake-country-fishing/cooking/cisco.pdf) |
+| Muskellunge | Why this one goes back | [PDF](doc/lake-country-fishing/cooking/muskellunge.pdf) |
+
 ## Reference
 
 | Sheet | What it covers | |

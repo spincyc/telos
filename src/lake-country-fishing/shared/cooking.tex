@@ -1,0 +1,91 @@
+% Shared machinery for the cooking sheets.
+%
+% The filleting diagrams are drawn *on top of* the same public-domain Denton
+% plate the species sheet uses. That is deliberate: a reader who has just
+% identified a fish from one sheet sees the identical drawing on the other, with
+% the cuts marked on it, so there is never any doubt which fish or which end.
+%
+% Cut lines are drawn twice -- a white halo first, then the black dashed line on
+% top -- because a plain black line disappears into the dark dorsal shading of a
+% grayscale plate.
+
+\tikzset{
+  cuthalo/.style={draw=telospaper,line width=2.6pt,line cap=round},
+  cut/.style={draw=telosink,line width=1.1pt,dash pattern=on 3.2pt off 2.2pt,
+              line cap=round},
+  cutsolid/.style={draw=telosink,line width=1.1pt,line cap=round},
+  cutguide/.style={draw=telosmute,line width=0.5pt,dash pattern=on 1.2pt off 1.2pt},
+  cutlabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
+}
+
+% The plate, set up so overlay coordinates run 0..1 across and up the image.
+%   \begin{filletplate}{width}{plate-slug} ...overlay... \end{filletplate}
+\newenvironment{filletplate}[2]
+  {\begin{tikzpicture}[x=#1,y=#1]
+     \node[anchor=south west,inner sep=0] (telosfishplate) at (0,0)
+       {\includegraphics[width=#1]{\telosplateroot/#2.png}};
+   \begin{scope}[x={(telosfishplate.south east)},y={(telosfishplate.north west)}]}
+  {\end{scope}\end{tikzpicture}}
+
+% A cut line: halo then dashes. Takes a coordinate path fragment.
+\newcommand{\cutpath}[1]{%
+  \draw[cuthalo] #1;
+  \draw[cut] #1;}
+
+% A solid line, for a cut that is a single decisive stroke rather than a
+% traced-around outline.
+\newcommand{\cutsolidpath}[1]{%
+  \draw[cuthalo] #1;
+  \draw[cutsolid] #1;}
+
+% Numbered step marker, matching the numbered spots on the lake maps so the
+% guide has one visual language for "this is step/place N".
+\newcommand{\cutstep}[3]{%
+  \node[circle,fill=telosink,text=telospaper,inner sep=0pt,minimum size=3.4mm,
+        font=\fontsize{6.4}{6.4}\selectfont\bfseries] at (#1,#2) {#3};}
+
+% A small caption pinned inside the plate area.
+\newcommand{\cutnote}[4]{%
+  \node[cutlabel,anchor=#3,fill=telospaper,fill opacity=0.82,text opacity=1,
+        inner sep=1.4pt] at (#1,#2) {#4};}
+
+% ---------------------------------------------------------------------------
+% The eating-quality strip. Same shape on every cooking sheet so the sheets can
+% be compared by eye: is this fish worth carrying home?
+% ---------------------------------------------------------------------------
+\newenvironment{eatingfacts}
+  {\begingroup\small
+   \setlength{\parskip}{0pt}%
+   \renewcommand{\arraystretch}{1.22}%
+   \begin{tabular}{@{}>{\bfseries\raggedright\arraybackslash}p{0.19\linewidth}@{\hspace{0.6em}}>{\raggedright\arraybackslash}p{\dimexpr0.81\linewidth-0.6em\relax}@{}}}
+  {\end{tabular}\par\endgroup}
+
+% ---------------------------------------------------------------------------
+% The Wisconsin advisory. Written once, verbatim from the DNR/DHS "Choose
+% Wisely" 2024--2026 statewide guidance, so no sheet can paraphrase it loosely.
+% The argument is the row that applies to this species.
+% ---------------------------------------------------------------------------
+\newcommand{\advisorystrip}[3]{%
+  \par\vspace{0.35em}
+  \noindent
+  \begin{minipage}{\linewidth}
+    \rule{\linewidth}{0.9pt}\par
+    \vspace{0.3em}
+    {\footnotesize\textbf{Wisconsin safe-eating guidance.} For #1:
+     \textbf{#2} for women under 50 and children under 15;
+     \textbf{#3} for women over 50 and men.
+     This is the statewide advice for inland waters, from the DNR and DHS
+     \emph{Choose Wisely} guide. Over 150 Wisconsin waters carry stricter
+     site-specific advice --- check the current booklet or the DNR's
+     Eat Your Catch query tool for these lakes before you make a habit of it.\par}
+    \vspace{0.25em}
+    \rule{\linewidth}{0.3pt}
+  \end{minipage}\par}
+
+% The three statewide categories, so a sheet names one rather than retyping it.
+\newcommand{\advisorypanfish}{\advisorystrip{bluegill, crappie, yellow perch,
+  sunfish, rock bass and bullhead}{one serving per week}{unrestricted}}
+\newcommand{\advisorygamefish}[1]{\advisorystrip{#1}{one serving per month}%
+  {one serving per week}}
+\newcommand{\advisorymusky}{\advisorystrip{muskellunge}{do not eat}%
+  {one serving per month}}
