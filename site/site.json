@@ -1,0 +1,36 @@
+{
+  "title": "Telos",
+  "tagline": "Home projects, worked out properly and printed on paper.",
+  "pages": [
+    {
+      "source": "README.md",
+      "output": "index.html",
+      "title": "Telos",
+      "nav": "Home"
+    },
+    {
+      "source": "site/pages/lake-country-fishing.md",
+      "output": "lake-country-fishing.html",
+      "title": "Lake Country Fishing",
+      "nav": "Fishing"
+    },
+    {
+      "source": "site/pages/electricity.md",
+      "output": "electricity.html",
+      "title": "Electricity & Magnetism",
+      "nav": "Electricity"
+    },
+    {
+      "source": "CREDITS.md",
+      "output": "credits.html",
+      "title": "Credits & Sources",
+      "nav": "Credits"
+    },
+    {
+      "source": "LICENSE",
+      "output": "license.html",
+      "title": "Licensing",
+      "nav": "License"
+    }
+  ]
+}
