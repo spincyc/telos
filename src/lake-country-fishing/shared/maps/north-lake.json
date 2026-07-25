@@ -117,8 +117,16 @@
     {"x": 2.15, "y": 4.05, "depth": 22},
     {"x": 0.4, "y": 4.4, "depth": 15}
   ],
-  "levels": [10, 20, 40, 60, 70],
-  "level_styles": {"10": "contour10", "20": "contour20", "40": "contour40", "60": "contour40", "70": "contour80"},
+  "levels": [
+    5,
+    10,
+    20,
+    30,
+    40,
+    60,
+    70
+  ],
+  "level_styles": {"5": "contour5", "10": "contour10", "20": "contour20", "30": "contour30", "40": "contour40", "60": "contour40", "70": "contour80"},
   "soundings": [
     {"x": 4.99, "y": 5.85, "label": "78 ft"},
     {"x": 1.19, "y": 2.75, "label": "78 ft"},
@@ -141,6 +149,12 @@
   ],
   "furniture": {
     "north": [0.3, 8.85],
-    "scale": [0.1, 8.1, 1.86, "1/4 mile"]
-  }
+    "scale": [
+      0.1,
+      8.1,
+      1.86,
+      "1/4 mile"
+    ]
+  },
+  "stipple_shallow": true
 }

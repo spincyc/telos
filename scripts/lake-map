@@ -291,6 +291,19 @@ def perpendicular_distance(point, start, end):
 # --------------------------------------------------------------------------
 
 
+def points_to_path(points):
+    """Emit one closed coordinate run, wrapped to a readable line length."""
+    wrapped, line = [], "  "
+    for x, y in points:
+        token = f"({x:.2f},{y:.2f}) -- "
+        if len(line) + len(token) > 76:
+            wrapped.append(line)
+            line = "  "
+        line += token
+    wrapped.append(line.rstrip(" -") + " -- cycle")
+    return "\n".join(wrapped)
+
+
 def format_path(points, style, close=True):
     body = " ".join(f"({x:.2f},{y:.2f})" for x, y in points)
     suffix = " -- cycle" if close else ""
@@ -339,6 +352,25 @@ def generate(slug):
         "\\begin{tikzpicture}[x=1cm,y=1cm]",
         "",
     ]
+
+    shallow_level = min(data["levels"])
+    shallow_paths = []
+    if data.get("stipple_shallow", True):
+        for chain in trace_level(field, columns, rows, float(shallow_level)):
+            reduced = simplify(chain, CELL * 0.45)
+            if len(reduced) >= 6:
+                shallow_paths.append(reduced)
+    if shallow_paths:
+        lines.append(f"% ---- shallow shelf: shore to {shallow_level} ft ----")
+        lines.append("% Filled even-odd between the shoreline and the shallowest")
+        lines.append("% contour, because this ring is the weed zone and it is the")
+        lines.append("% first water anyone fishes.")
+        body = ["\\fill[telosshallow,even odd rule]"]
+        body.append(points_to_path([(round(x, 2), round(y, 2)) for x, y in polygon]))
+        for chain in shallow_paths:
+            body.append(points_to_path(chain))
+        lines.append("\n".join(body) + ";")
+        lines.append("")
 
     for level in sorted(data["levels"], reverse=True):
         style = data["level_styles"].get(str(level), "contour20")

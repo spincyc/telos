@@ -95,9 +95,14 @@
   contour5/.style={draw=telosink,line width=0.5pt},
   contour10/.style={draw=telosink,line width=0.42pt},
   contour20/.style={draw=telosmute,line width=0.38pt},
+  contour30/.style={draw=telosmute,line width=0.32pt,dash pattern=on 3pt off 1.4pt},
   contour40/.style={draw=telosmute,line width=0.34pt},
   contour80/.style={draw=telosmute,line width=0.3pt,dash pattern=on 2pt off 1.2pt},
   weedbed/.style={draw=telosmute,line width=0.35pt,dash pattern=on 1.2pt off 1pt},
+  % The shallow shelf is stippled rather than shaded: a dot screen survives a
+  % black-only print driver, where a light grey fill turns into either nothing
+  % or a solid block depending on the printer.
+  telosshallow/.style={pattern=dots,pattern color=telosdeep},
   maplabel/.style={font=\fontsize{5.6}{6.4}\selectfont,inner sep=0.8pt},
   depthlabel/.style={font=\fontsize{5}{5.6}\selectfont\itshape,text=telosmute,inner sep=0.6pt},
 }
@@ -132,6 +137,12 @@
 % Map key entry: a short line of the same weight as the contour it explains.
 \newcommand{\mapkeyline}[2]{%
   \raisebox{0.18ex}{\tikz[baseline=0pt]{\draw[#1] (0,0) -- (0.5,0);}}~{\fontsize{6}{7}\selectfont #2}}
+
+% Map key entry for the stippled shallow shelf.
+\newcommand{\mapkeystipple}[1]{%
+  \raisebox{-0.35ex}{\tikz[baseline=0pt]{
+    \fill[telosshallow] (0,0) rectangle (0.5,0.28);
+    \draw[telos hair] (0,0) rectangle (0.5,0.28);}}~{\fontsize{6}{7}\selectfont #1}}
 
 % ---------------------------------------------------------------------------
 % Rig diagrams. A rig is drawn against a vertical water column: surface rule at
