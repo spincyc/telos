@@ -1,0 +1,86 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{10. The Spark Gap}{Air as a switch --- and the lesson where the danger starts}{2026-07-25}
+\begin{document}
+\telosmasthead[Read the Safety sheet before this lesson, not during it]
+\lessonhead{10}{about 60 minutes}{\textbf{adult-operated from here on}}
+
+\highvoltagenote
+
+\begin{materials}
+\item A piezo igniter from a gas lighter (safe, and the only source the boys handle)
+\item Two smooth machine-screw electrodes with adjustable spacing
+\item A dry wooden or PVC stand
+\item Feeler gauges or a ruler
+\item Safety glasses for everyone
+\item \emph{Only for the adult:} the neon-sign transformer, in its enclosure
+\end{materials}
+
+\begin{predict}
+Air is an excellent insulator. What has to be true for a spark to cross a gap at
+all --- and if you double the gap, does it take twice the voltage, more than
+twice, or less?
+\end{predict}
+
+\lessonsection{Do it --- the safe version first}
+\begin{enumerate}
+\item Mount two rounded electrodes facing each other on a dry insulating stand,
+  set to about 1\,mm.
+\item Connect a piezo igniter across them. Click it. A spark jumps, with a snap.
+  A piezo makes thousands of volts at almost no current, so this is safe to
+  handle and it demonstrates the whole principle.
+\item Widen the gap in steps and keep clicking. At some spacing the piezo can no
+  longer bridge it. Record that distance --- you have just measured the
+  breakdown voltage of air in units of piezo clicks.
+\item \textbf{Sharp versus round.} Swap one rounded electrode for a needle. It
+  now fires at a wider gap, and you may see a faint corona glow before any spark
+  at all. Field lines crowd at a point, exactly as in Lesson 2.
+\item \textbf{Listen and smell.} The snap is air heated so fast it explodes ---
+  that is sound made by a spark. The sharp smell afterwards is ozone. Ventilate.
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{Breakdown}{Air is an insulator until the electric field rips
+  electrons off its molecules. Those electrons accelerate, hit more molecules,
+  free more electrons --- an avalanche. In under a microsecond a column of air
+  becomes a conductor.}
+\telosfact{The number}{Dry air breaks down at roughly \qty{30}{kV} per
+  centimetre at sea level, so about \qty{3}{kV} per millimetre. That is a rule
+  of thumb, not a constant: humidity, temperature, altitude, electrode shape and
+  surface roughness all move it.}
+\telosfact{Not quite linear}{Doubling the gap needs a bit more than double the
+  voltage, and below about a tenth of a millimetre the relationship reverses
+  entirely --- Paschen's law. For our purposes: wider gap, higher firing
+  voltage, and the gap spacing is therefore how you \emph{set} the voltage the
+  capacitor charges to before it fires.}
+\telosfact{Why it is a good switch}{It closes in well under a microsecond and
+  carries enormous current with almost no resistance. No mechanical or
+  semiconductor switch you can build at home comes close. That speed is what
+  makes the primary tank ring hard.}
+\telosfact{Quenching}{Once the gap has fired it stays conducting until the
+  current falls low enough for the hot channel to cool. Getting it to stop at
+  the right moment --- after the energy has crossed to the secondary but before
+  it sloshes back, Lesson 9 --- is the hardest part of tuning a coil. It is why
+  serious builders use multiple gaps in series or blow air through them.}
+\end{telosfacts}
+
+\begin{teloshazard}{Everything changes at this lesson}
+The piezo demonstration is safe. The neon-sign transformer is not, and it is the
+adult's alone: \qtyrange{9}{15}{kV} at \qtyrange{30}{60}{mA}, against roughly
+\qty{10}{mA} across the chest to stop a heart. The boys may watch a supervised
+firing from a stated distance and may do every part of the mechanical build with
+the machine unplugged and the capacitor shorted. They do not touch the plug, the
+switch, or anything inside the enclosure. Ozone, ultraviolet, impulsive noise and
+broadband radio interference all start here too. Everything on the \textbf{Safety}
+sheet applies from this moment.
+\end{teloshazard}
+
+\begin{telospanel}{The link to the coil}
+The gap sets the firing voltage, and $E = \tfrac{1}{2}CV^2$ from Lesson 7 turns
+that voltage into the energy of each shot. Widen the gap and each shot carries
+more energy but fires less often; narrow it and you get frequent weak shots. That
+one adjustment, plus the primary tap from Lesson 8, is most of what tuning a
+Tesla coil consists of.
+\end{telospanel}
+\end{document}

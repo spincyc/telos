@@ -1,0 +1,79 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{9. Coupling}{Two tuned circuits handing energy back and forth}{2026-07-25}
+\begin{document}
+\telosmasthead[The lesson that explains why a Tesla coil is not a transformer]
+\lessonhead{9}{about 75 minutes}{everyone builds; battery power only}
+
+\begin{materials}
+\item Two identical pendulums --- same length, same weight
+\item A horizontal string or dowel to hang them from
+\item Two identical LC tanks from Lesson 8
+\item Signal generator and oscilloscope, or the multimeter method
+\item A ruler, to set and measure coil spacing
+\end{materials}
+
+\begin{predict}
+Two identical pendulums hang from the same slack string. You start one swinging
+and hold the other still, then let go. What happens to each over the next
+minute? Draw both, one under the other, against time.
+\end{predict}
+
+\lessonsection{Do it --- the pendulums first}
+\begin{enumerate}
+\item Hang two identical pendulums from a common horizontal string with some
+  slack in it. Start one; leave the other at rest.
+\item Watch for a full minute. The first slows and stops; the second, which
+  nobody touched, is now swinging at full amplitude. Then it reverses, and the
+  energy comes back. It keeps trading, indefinitely, until friction wins.
+\item \textbf{Change the coupling.} Tighten the string. The trade happens faster.
+  Slacken it right off and the second pendulum barely moves at all.
+\item \textbf{Break the match.} Shorten one pendulum so the two no longer share
+  a frequency. Now almost nothing transfers, at any coupling. \emph{Matching
+  matters more than coupling.}
+\end{enumerate}
+
+\lessonsection{Then the circuits}
+\begin{enumerate}
+\item Set up two identical LC tanks, tuned to the same $f_0$, with their coils a
+  few centimetres apart and coaxial.
+\item Drive the first at $f_0$ and measure the voltage across the second.
+\item Slide them closer. The transfer rises and the single sharp peak splits
+  into \emph{two} peaks either side of $f_0$ --- an over-coupled pair no longer
+  has one resonance, it has two.
+\item Detune one tank with a different capacitor. Transfer collapses, exactly as
+  with the shortened pendulum.
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{Coupling coefficient}{Written $k$, from 0 (no shared field) to 1 (all
+  of it shared). An iron-cored mains transformer runs at $k \approx 0.95$. A
+  Tesla coil runs deliberately \emph{loose}, around $k = 0.1$ to $0.2$.}
+\telosfact{Why loose is better here}{Energy takes many cycles to cross a loosely
+  coupled pair, and during those cycles the secondary's voltage builds and
+  builds. Couple them tightly and the transfer is fast but the secondary never
+  gets the chance to ring up. Tight coupling also puts so much voltage across
+  the secondary's own turns that it arcs internally and destroys itself.}
+\telosfact{Both must be tuned the same}{This is what the pendulum experiment
+  proves. Coupling with mismatched frequencies transfers almost nothing.}
+\telosfact{Energy goes both ways}{The pendulums traded back and forth, and so do
+  the coils. In a real coil we want the transfer stopped at the moment the
+  secondary is fullest --- which is exactly what the spark gap does in
+  Lesson 10, by quenching.}
+\telosfact{This is why it is not a transformer}{A transformer trades voltage for
+  current by turns ratio alone. A Tesla coil does that \emph{and} accumulates
+  energy over many cycles of a shared resonance. That second mechanism is where
+  most of the voltage comes from.}
+\end{telosfacts}
+
+\begin{telospanel}{The whole machine, in one sentence you can now parse}
+The transformer charges the capacitor; the gap dumps it into the primary tank,
+which rings at $f_0$; the secondary is tuned to the same $f_0$ and loosely
+coupled, so over many cycles it takes that energy and rings up to a voltage far
+higher than the transformer alone could make; and the gap quenches at the right
+moment so the energy does not slosh back. Lessons 6, 7, 8 and 9 are those four
+clauses.
+\end{telospanel}
+\lowvoltagenote
+\end{document}

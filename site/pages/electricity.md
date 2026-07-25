@@ -24,11 +24,11 @@ measurement, and only then arrives at the equation.
 | 4 | Electromagnets | A current makes a magnetic field. Wind one and lift things. | [PDF](doc/electricity/lessons/04-electromagnet.pdf) |
 | 5 | Induction | A *changing* magnetic field makes a voltage. | [PDF](doc/electricity/lessons/05-induction.pdf) |
 | 6 | Transformers | Two coils sharing a field trade voltage for current. | [PDF](doc/electricity/lessons/06-transformers.pdf) |
-| 7 | Capacitors | Storing energy in an electric field. | *in progress* |
-| 8 | Resonance | An LC circuit has one frequency it likes. | *in progress* |
-| 9 | Coupling | Two tuned circuits pass energy back and forth. | *in progress* |
-| 10 | The Spark Gap | Air breaks down and becomes a switch. | *in progress* |
-| 11 | Build the coil | Assemble, tune and fire it. | *in progress* |
+| 7 | Capacitors | Storing energy in an electric field, and the RC time constant. | [PDF](doc/electricity/lessons/07-capacitors.pdf) |
+| 8 | Resonance | An LC circuit has one frequency it likes. Measure it. | [PDF](doc/electricity/lessons/08-resonance.pdf) |
+| 9 | Coupling | Two tuned circuits pass energy back and forth. | [PDF](doc/electricity/lessons/09-coupling.pdf) |
+| 10 | The Spark Gap | Air breaks down and becomes a switch. **Danger starts here.** | [PDF](doc/electricity/lessons/10-spark-gap.pdf) |
+| 11 | **Build the coil** | Assemble, tune and fire it. | [PDF](doc/electricity/build-the-coil.pdf) |
 
 ## Safety
 
