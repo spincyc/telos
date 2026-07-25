@@ -21,6 +21,12 @@
       "nav": "Electricity"
     },
     {
+      "source": "site/pages/potato-launcher.md",
+      "output": "potato-launcher.html",
+      "title": "Potato Launcher",
+      "nav": "Launcher"
+    },
+    {
       "source": "CREDITS.md",
       "output": "credits.html",
       "title": "Credits & Sources",

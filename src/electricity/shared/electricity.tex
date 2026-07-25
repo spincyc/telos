@@ -4,46 +4,8 @@
 % the same (header, materials list, the four standing rubrics), and a small set
 % of circuit symbols drawn in TikZ so the schematics print as line art.
 
-% ---------------------------------------------------------------------------
-% Lesson furniture
-% ---------------------------------------------------------------------------
-
-% \lessonhead{number}{time}{who does what}
-\newcommand{\lessonhead}[3]{%
-  \par\noindent
-  \begin{minipage}{\linewidth}
-    \rule{\linewidth}{0.4pt}\par
-    \vspace{0.3em}
-    {\small\textbf{Lesson #1}\quad$\cdot$\quad #2\quad$\cdot$\quad #3\par}
-    \vspace{0.25em}
-    \rule{\linewidth}{0.4pt}
-  \end{minipage}\par
-  \vspace{0.5em}}
-
-% The materials list. Two columns of short lines; a lesson that needs a long
-% shopping list is a lesson that has not been thought through.
-\newenvironment{materials}
-  {\begin{telospanel}{What you need}\begin{multicols}{2}
-   \begin{itemize}[leftmargin=1em,itemsep=0.05em,topsep=0pt]}
-  {\end{itemize}\end{multicols}\end{telospanel}}
-
-% The four rubrics every lesson carries, in the same order every time:
-% what you are about to see, what to do, what it means, and what to ask.
-\newcommand{\lessonsection}[1]{\section*{#1}\vspace{-0.35em}\rule{\linewidth}{0.4pt}\vspace{0.2em}}
-
-% A prediction box. The point of the curriculum is that they commit to an
-% answer before the demonstration, not after.
-\newtcolorbox{predict}{
-  enhanced, breakable,
-  colback=telospaper, colframe=telosink,
-  boxrule=0.5pt, sharp corners,
-  left=6pt, right=6pt, top=4pt, bottom=4pt,
-  before skip=6pt, after skip=6pt,
-  borderline west={2.2pt}{0pt}{telosink},
-  title={\small\bfseries Predict first}, fonttitle=\small\bfseries,
-  colbacktitle=telospaper, coltitle=telosink,
-  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
-}
+% Lesson furniture (lessonhead, materials, lessonsection, predict) now lives
+% in common/preamble.tex, shared with the other courses.
 
 % ---------------------------------------------------------------------------
 % Circuit symbols. Every symbol is drawn from a left-hand anchor and is one

@@ -1,0 +1,62 @@
+\input{common/preamble.tex}
+\input{potato-launcher/shared/launcher.tex}
+\telosmeta{Potato Launcher}{4. Projectile Motion}{Turning a bang into a number}{2026-07-25}
+\begin{document}
+\telosmasthead[And working out a safety distance you can defend]
+\lessonhead{4}{about 90 minutes}{bench work, then range work with the adult}
+
+\begin{materials}
+\item A long tape measure or a measuring wheel
+\item A protractor or a phone inclinometer app
+\item A stopwatch, and a phone that shoots slow motion
+\item Marker flags or cones
+\item A notebook --- this lesson is mostly recording
+\end{materials}
+
+\begin{predict}
+At what launch angle does a projectile go furthest? Most people say 45 degrees.
+Write down whether you think that is exactly right for a potato, and if not,
+whether the best angle is higher or lower --- and why.
+\end{predict}
+
+\lessonsection{Do it --- on the bench first}
+\begin{enumerate}
+\item \textbf{Drop and time.} Drop a ball from a measured height and time the fall. Repeat five times and average. Compute $g$ from $h = \tfrac{1}{2}gt^2$. You should land near \qty{9.8}{m/s^2}.
+\item \textbf{Horizontal launch.} Roll a ball off a table at various speeds. It always takes the \emph{same} time to hit the floor. Horizontal and vertical motion are independent, and that single fact is the whole of projectile motion.
+\item \textbf{Angle trial.} With a rubber-band launcher or a hose, fire at 20, 30, 40, 45, 50, 60 and 70 degrees and measure each range. Plot range against angle.
+\end{enumerate}
+
+\lessonsection{Then on the range}
+\begin{enumerate}
+\item \textbf{Fire flat, from a measured height.} Muzzle horizontal, height $h$ measured. Time the fall from $h$, then measure how far downrange it lands. Muzzle velocity is simply distance divided by that fall time --- no clever equipment required.
+\item \textbf{Or film it.} Slow motion at 240 frames per second, with two marker flags a known distance apart in shot. Count frames between them. This is the more accurate method and boys will prefer it.
+\item \textbf{Angle series.} Three shots each at 30, 40, 45 and 50 degrees, same fuel dose, and record every range. Plot it.
+\item \textbf{Compare with Lesson 3.} You predicted a muzzle velocity from the gas law. How close was it? If it is much lower, where did the energy go?
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{Two independent motions}{Horizontal at constant speed, vertical accelerating downward. They do not affect one another, and every projectile problem is those two treated separately and then combined.}
+\telosfact{Range in a vacuum}{$R = v^2\sin(2\theta)/g$, which peaks at exactly 45 degrees. Notice the $v^2$: doubling muzzle velocity \emph{quadruples} range. Small increases in fuel efficiency matter a great deal downrange.}
+\telosfact{Range in air}{Not 45 degrees. Drag takes energy out for the whole flight, so a flatter, shorter flight loses less --- the real optimum for a blunt, light projectile is usually somewhere between 35 and 42 degrees. Your measurements should show this, and it is a genuinely satisfying disagreement with the textbook.}
+\telosfact{A potato is a bad projectile}{Light for its size, blunt, irregular and rough. Drag dominates, so it decelerates hard and falls well short of the vacuum prediction. Compare your measured range with $v^2/g$ and see how much air took.}
+\telosfact{The energy}{$\tfrac{1}{2}mv^2$. A \qty{200}{g} potato at \qty{100}{m/s} carries about \qty{1000}{J} --- comparable to a handgun round, with far more mass and less speed. This is the number that justifies every rule on the \textbf{Safety} sheet.}
+\telosfact{Your safety distance}{Fire at 45 degrees and measure the longest range you can produce. Then \textbf{double it} and treat that as the minimum clear ground. A projectile does not care what you intended.}
+\end{telosfacts}
+
+\lessonsection{Break it}
+\begin{telosfacts}[0.20]
+\telosfact{Change the projectile}{A potato, a wet rag wad, a tennis ball, a carrot. Same launcher, same fuel, and very different ranges. Which variables changed --- mass, drag, seal --- and which mattered most?}
+\telosfact{Fuel versus range}{Overlay your Lesson 2 fuel-dose series on the range plot. The peak should be in the same place.}
+\telosfact{Predict, then check}{Before the last shot of the day, predict the range from your own numbers and mark the spot with a flag. Then fire.}
+\telosfact{Wind}{Fire the same shot with and against a steady wind. A light, blunt projectile is affected far more than they expect.}
+\end{telosfacts}
+
+\begin{telospanel}{The point of the numbers}
+The reason to measure all this is not the physics grade. It is that once you
+have measured a muzzle velocity, computed the energy and seen where a 45-degree
+shot actually lands, the safety distance stops being a rule somebody imposed and
+becomes a number you worked out yourself. Nobody argues with their own
+arithmetic.
+\end{telospanel}
+\end{document}

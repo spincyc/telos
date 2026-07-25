@@ -1,0 +1,56 @@
+\input{common/preamble.tex}
+\input{potato-launcher/shared/launcher.tex}
+\telosmeta{Potato Launcher}{3. Gas Laws}{Heat a trapped gas and the pressure rises in proportion}{2026-07-25}
+\begin{document}
+\telosmasthead[The equation that says how hard it pushes]
+\lessonhead{3}{about 75 minutes}{everyone --- kitchen care only}
+
+\begin{materials}
+\item A balloon, a bottle, a bowl of hot water and one of iced water
+\item A syringe with the nozzle blocked, and weights
+\item A pressure gauge and a bicycle pump
+\item A thermometer
+\item A marshmallow and a syringe, for entertainment
+\end{materials}
+
+\begin{predict}
+A sealed rigid container of air at room temperature is heated from
+\qty{20}{^\circ C} to \qty{1000}{^\circ C}, which is roughly what a burning
+fuel-air mixture reaches. The volume cannot change. By what factor does the
+pressure rise? Guess before you calculate --- then calculate.
+\end{predict}
+
+\lessonsection{Do it}
+\begin{enumerate}
+\item \textbf{Balloon on a bottle.} Stretch a balloon over an empty bottle's neck. Stand the bottle in hot water --- the balloon inflates. Then iced water --- it is drawn in. Nothing entered or left.
+\item \textbf{Squeeze a syringe.} Block the nozzle, push the plunger, and feel the resistance rise. Halve the volume and the force roughly doubles. That is Boyle's law under your thumb.
+\item \textbf{Marshmallow.} A marshmallow in a blocked syringe. Pull the plunger and it swells; push and it shrinks. The gas trapped in its foam is obeying the same rule.
+\item \textbf{Measure it properly.} Pump a fixed volume to a known pressure, note the gauge, and warm the vessel. Record pressure against temperature in kelvin and plot it. It is a straight line, and extrapolating it backwards points at absolute zero.
+\item \textbf{Do the launcher arithmetic.} Your chamber is fixed volume. Take the flame temperature of a hydrocarbon in air as roughly \qty{2000}{K} and room temperature as \qty{293}{K}, and work out the pressure ratio.
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{The gas law}{$PV = nRT$. Pressure times volume equals amount times temperature, with a constant. Fix the volume and the amount, and pressure is simply proportional to \emph{absolute} temperature.}
+\telosfact{Kelvin, not Celsius}{The proportionality only works from absolute zero. Going from \qty{20}{^\circ C} to \qty{40}{^\circ C} is not a doubling --- it is 293\,K to 313\,K, about 7\%. This is the mistake everyone makes once.}
+\telosfact{The launcher number}{From 293\,K to roughly 2000\,K is a factor of about seven in absolute temperature. In practice a combustion launcher chamber sees a peak of roughly \qtyrange{3}{6} atmospheres absolute, because the burn is not instantaneous, the potato starts moving, and heat is lost to the walls almost immediately.}
+\telosfact{And $n$ changes too}{Burning also changes the number of gas molecules. That is a second, smaller contribution on top of the temperature effect.}
+\telosfact{Why that is survivable}{Schedule 40 pressure PVC is rated for a sustained working pressure well above that, and the launcher's peak lasts a few thousandths of a second. The margin is real --- but it is a margin, not a licence. It is also why over-fuelling, cold pipe, and un-cured joints all matter. \sheetref{Safety}}
+\telosfact{Force, not pressure, moves the potato}{Pressure times area. Three extra atmospheres on a \qty{1.5}{in} bore is roughly \qty{80}{lb} pushing on the potato's base, for the whole length of the barrel.}
+\end{telosfacts}
+
+\lessonsection{Break it}
+\begin{telosfacts}[0.20]
+\telosfact{Longer barrel}{The same force acting over a longer distance does more work, so the potato leaves faster --- up to the point where the gas has expanded so much that pressure has fallen and friction wins. Build a second barrel and find out where that is.}
+\telosfact{Bigger bore}{More area, so more force --- but also more gas volume needed to fill it, so the pressure falls faster as the potato moves. Argue both sides before you assume bigger is better.}
+\telosfact{Cold day}{Starting at \qty{0}{^\circ C} instead of \qty{20}{^\circ C} is only a 7\% difference in the gas law --- but it makes PVC substantially more brittle, which matters far more. \sheetref{Safety}}
+\telosfact{Work it out first}{Energy delivered is roughly average force times barrel length. Compare that with $\tfrac{1}{2}mv^2$ for a \qty{200}{g} potato and predict the muzzle velocity you will measure in Lesson 4.}
+\end{telosfacts}
+
+\begin{telospanel}{The link to the launcher}
+This lesson is what makes the project engineering rather than a stunt. Before
+you fire it you can put a number on the pressure, a number on the force, and a
+number on the expected muzzle velocity --- and then in Lesson 4 you measure the
+velocity and see how close you were.
+\end{telospanel}
+\end{document}

@@ -16,6 +16,7 @@ repository, so what this site publishes is exactly what was reviewed locally.
 | Project | What it is | Sheets |
 |---|---|---|
 | **[Lake Country Fishing](lake-country-fishing.md)** | A field guide to Pine Lake and North Lake, Waukesha County, Wisconsin. Reconstructed depth maps with numbered spots keyed to a season-by-season table, a two-page sheet for every species (field card, then biology), a one-page sheet for every rig, a cooking and filleting sheet per species, and reference sheets for lures, bait, knots and the fishing year. | 44 |
+| **[Potato Launcher](potato-launcher.md)** | A combustion-driven PVC launcher fired on open ground, with four lessons that make it a physics project rather than a stunt: air pressure, the fuel-air ratio, the gas law, and projectile motion. | 7 |
 | **[Electricity & Magnetism](electricity.md)** | A hands-on course for teenagers that builds, lesson by lesson, to a working spark-gap Tesla coil. Charge, fields, Ohm's law, electromagnets, induction, transformers, capacitors, resonance, coupling, and the spark gap itself. | 18 |
 
 ## Start here
@@ -28,6 +29,7 @@ repository, so what this site publishes is exactly what was reviewed locally.
 | To tie a rig | [Rig sheets](lake-country-fishing.md#rigs) |
 | To teach some physics | [Course map](doc/electricity/overview.pdf) |
 | To build a Tesla coil safely | [Safety](doc/electricity/safety.pdf) — read this first |
+| To launch a potato safely | [Safety](doc/potato-launcher/safety.pdf) — read this first |
 
 ## How it is built
 
