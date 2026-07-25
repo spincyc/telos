@@ -1,0 +1,67 @@
+\input{common/preamble.tex}
+\input{lake-country-fishing/shared/fishing.tex}
+\telosmeta{Lake Country Fishing}{Quick-Strike Rig}{Fish a big dead bait for pike and hook the fish, not its stomach}{2026-07-25}
+\begin{document}
+\telosmasthead[The responsible way to fish large bait for pike]
+
+\noindent
+\begin{minipage}[t]{0.42\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\rigframe{5.4}{5.2}{bottom}
+\draw[telos line] (1.5,6.05) -- (1.5,4.72);
+\rigstop{1.5}{5.80}
+\rigbead{1.5}{5.55}
+\rigfloat{1.5}{5.12}
+\draw[telos line] (1.5,4.72) -- (1.5,2.35);
+\rigswivel{1.5}{2.22}
+\draw[telos line,dash pattern=on 1.4pt off 1pt] (1.5,2.10) -- (2.05,1.55);
+\draw[telos line] (2.05,1.55) .. controls (2.75,1.85) and (3.45,1.25) .. (4.05,1.55);
+\draw[telos line] (2.05,1.55) .. controls (2.75,1.25) and (3.45,1.85) .. (4.05,1.55);
+\draw[telos line] (4.05,1.55) -- (4.45,1.85) -- (4.45,1.25) -- cycle;
+\fill[telosink] (2.35,1.62) circle (0.04);
+\draw[telos line] (2.75,1.30) arc (100:-170:0.1);
+\draw[telos line] (3.55,1.28) arc (100:-170:0.1);
+\node[maplabel,anchor=south east,font=\fontsize{6}{7}\selectfont] at (0.55,4.85) {to rod};
+\riglabel{1.62}{5.12}{2.35}{5.05}{west}{slip float}
+\riglabel{1.60}{2.22}{2.35}{2.85}{west}{swivel}
+\riglabel{1.85}{1.85}{2.45}{2.35}{west}{wire trace}
+\riglabel{2.75}{1.12}{2.55}{0.55}{east}{two small trebles}
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.55\linewidth}
+\vspace{0pt}
+\begin{telosfacts}[0.26]
+\telosfact{What it does}{Two small treble hooks set into the flank of a large dead bait, on a wire trace. Because the hooks are on the \emph{outside} of the bait, you strike immediately instead of waiting for the pike to swallow.}
+\telosfact{Why it matters}{The old method --- a single hook inside a bait, and a long wait --- gut-hooks pike and kills fish you meant to release. A quick-strike rig hooks them in the jaw. This is the humane way to do it, and it is also more effective.}
+\telosfact{Components}{Wire trace with two size 6--8 trebles, barrel swivel, slip float and stop, large dead bait.}
+\telosfact{Bait}{A dead sucker, smelt or large shiner, 6--10\,in. Dead bait works: pike scavenge readily, especially in cold water.}
+\telosfact{Wire}{Not optional. Pike teeth cut monofilament instantly.}
+\telosfact{Line}{20\,lb braid or 15\,lb mono; a rod with backbone.}
+\end{telosfacts}
+\end{minipage}
+
+\section{Build and bait it}
+\begin{enumerate}
+\item Rig the \textbf{slip float} on the main line --- stop knot, bead, float --- exactly as on the \sheetref{slip bobber} sheet. Set the depth so the bait hangs just above the weed tops.
+\item Tie the main line to a \textbf{barrel swivel}, and the swivel to the \textbf{wire trace}.
+\item Set the \textbf{rear treble} into the bait's flank near the tail, one point only, barely under the skin.
+\item Set the \textbf{front treble} near the head, again one point only. The bait should hang naturally, not bent.
+\end{enumerate}
+
+\section{Fish it}
+\begin{telosfacts}[0.20]
+\telosfact{Strike early}{When the float goes down, count to \textbf{five}, reel until tight, and sweep hard. Do not give it a minute. Do not give it thirty seconds. The whole design assumes an early strike.}
+\telosfact{Tackle at hand}{Long-nose pliers, side cutters and jaw spreaders in the boat before you cast, not after you hook one.}
+\telosfact{Cut, do not dig}{If a hook is awkward, cut the treble with side cutters and back the pieces out. A cheap hook is worth less than the fish.}
+\telosfact{Where}{Pine spots \textbf{1} and \textbf{9} in April and again in October; the deep weed edge at \textbf{5} in summer. North spots \textbf{2}, \textbf{5} and \textbf{6}.}
+\telosfact{Ice}{The same rig on a tip-up is the standard big-pike presentation, \sheetref{tip-up}.}
+\end{telosfacts}
+
+\begin{teloshazard}{Handle pike properly}
+Backward-facing teeth, and a fish strong enough to thrash while you work. Jaw spreaders and long pliers every time; fingers never inside the mouth or under the gill plate. Pike over \qty{70}{^\circ F} water are fragile --- unhook in the net, in the water, and release quickly. See the \textbf{Northern Pike} sheet.
+\end{teloshazard}
+\end{document}

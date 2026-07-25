@@ -1,0 +1,257 @@
+% Shared macros for the Lake Country fishing guide.
+%
+% Loaded after common/preamble.tex by every leaf in this project. Everything
+% here exists to keep three families of page consistent: species cards, rig
+% cards, and lake maps.
+
+% ---------------------------------------------------------------------------
+% Species card header. The plate sits full width under the masthead, because a
+% fish is identified by its whole profile and a thumbnail defeats the purpose.
+%   \speciesplate{file}{caption}
+%
+% The Makefile builds each leaf from its own directory with src/ on TEXINPUTS,
+% so shared art is named from the project root rather than relatively.
+% ---------------------------------------------------------------------------
+\newcommand{\telosplateroot}{lake-country-fishing/shared/plates}
+\newcommand{\speciesplate}[2]{%
+  \begingroup
+  \centering
+  \includegraphics[width=0.86\linewidth]{\telosplateroot/#1.png}\par
+  \vspace{-0.1em}
+  \begin{minipage}{0.86\linewidth}
+    \rule{\linewidth}{0.35pt}\par
+    \vspace{0.08em}
+    {\fontsize{7}{8}\selectfont #2\par}
+  \end{minipage}\par
+  \endgroup
+  \vspace{0.15em}
+}
+
+% ---------------------------------------------------------------------------
+% Species page header: plate on the left, identification facts on the right.
+%
+% A species sheet is a one-pager, and that is a hard contract -- it has to be
+% usable as a single sheet in a tackle box. Stacking a full-width plate above
+% the fact strip costs about four centimetres of height that the page does not
+% have, so the two sit side by side instead. The body of the environment is a
+% run of \telosfact rows.
+%
+%   \begin{speciestop}{plate-slug}{plate credit}
+%     \telosfact{...}{...}
+%   \end{speciestop}
+% ---------------------------------------------------------------------------
+\newenvironment{speciestop}[2]
+  {\par\noindent
+   \begin{minipage}[t]{0.395\linewidth}
+     \vspace{0pt}%
+     \includegraphics[width=\linewidth]{\telosplateroot/#1.png}\par
+     \vspace{0.15em}
+     \rule{\linewidth}{0.35pt}\par
+     \vspace{0.1em}
+     {\fontsize{6.2}{7.2}\selectfont #2\par}
+   \end{minipage}%
+   \hfill
+   \begin{minipage}[t]{0.575\linewidth}
+     \vspace{0pt}\small
+     \setlength{\parskip}{0pt}%
+     \renewcommand{\arraystretch}{1.22}%
+     \begin{tabular}{@{}>{\bfseries\raggedright\arraybackslash}p{0.21\linewidth}@{\hspace{0.55em}}>{\raggedright\arraybackslash}p{\dimexpr0.79\linewidth-0.55em\relax}@{}}}
+  {\end{tabular}%
+   \end{minipage}\par
+   \vspace{0.45em}}
+
+% Standard credit line for the Denton plates. Every species page uses it, so
+% the wording of the public-domain claim cannot drift between pages.
+\newcommand{\dentoncredit}[1]{%
+  #1 --- chromolithograph by S.\,F.\ Denton, New York Commissioners of
+  Fisheries, Game and Forests, 1896--1902. Public domain; converted to
+  grayscale for printing.}
+\newcommand{\fmibcredit}[1]{%
+  #1 --- plate from the Freshwater and Marine Image Bank, University of
+  Washington. Public domain; converted to grayscale for printing.}
+
+% ---------------------------------------------------------------------------
+% Where-and-when block. Every species page answers the same four questions in
+% the same order and the same place on the page, so the guide can be used by
+% flipping rather than reading.
+% ---------------------------------------------------------------------------
+\newenvironment{whenwhere}
+  {\begingroup\small
+   \setlength{\parskip}{0pt}%
+   \renewcommand{\arraystretch}{1.3}%
+   \begin{tabular}{@{}>{\bfseries\raggedright\arraybackslash}p{0.13\linewidth}@{\hspace{0.6em}}>{\raggedright\arraybackslash}p{\dimexpr0.87\linewidth-0.6em\relax}@{}}}
+  {\end{tabular}\par\endgroup}
+
+% ---------------------------------------------------------------------------
+% Map primitives.
+%
+% Both lake maps are drawn in a normalized frame where one unit is one
+% centimetre on the page. Depth is encoded by line weight alone: the shoreline
+% is heaviest, and each successive contour is lighter, so the map reads on a
+% black-only printer exactly as it does on screen.
+% ---------------------------------------------------------------------------
+\tikzset{
+  shore/.style={draw=telosink,line width=1.1pt},
+  contour5/.style={draw=telosink,line width=0.5pt},
+  contour10/.style={draw=telosink,line width=0.42pt},
+  contour20/.style={draw=telosmute,line width=0.38pt},
+  contour40/.style={draw=telosmute,line width=0.34pt},
+  contour80/.style={draw=telosmute,line width=0.3pt,dash pattern=on 2pt off 1.2pt},
+  weedbed/.style={draw=telosmute,line width=0.35pt,dash pattern=on 1.2pt off 1pt},
+  maplabel/.style={font=\fontsize{5.6}{6.4}\selectfont,inner sep=0.8pt},
+  depthlabel/.style={font=\fontsize{5}{5.6}\selectfont\itshape,text=telosmute,inner sep=0.6pt},
+}
+
+% A numbered fishing spot. The disc is solid black with reversed type so it
+% stays findable against contour lines at any print density.
+\newcommand{\spot}[3]{%
+  \node[circle,fill=telosink,text=telospaper,inner sep=0pt,minimum size=3.1mm,
+        font=\fontsize{6}{6}\selectfont\bfseries] at (#1,#2) {#3};}
+
+% A boat landing marker.
+\newcommand{\landing}[2]{%
+  \node[rectangle,draw=telosink,fill=telospaper,line width=0.5pt,inner sep=0pt,
+        minimum size=2.6mm,font=\fontsize{5.5}{5.5}\selectfont\bfseries] at (#1,#2) {L};}
+
+% North arrow, placed by its tail.
+\newcommand{\northarrow}[2]{%
+  \begin{scope}[shift={(#1,#2)}]
+    \draw[telos line,-{Stealth[length=1.6mm]}] (0,0) -- (0,0.55);
+    \node[font=\fontsize{6}{6}\selectfont\bfseries,anchor=south] at (0,0.55) {N};
+  \end{scope}}
+
+% Scale bar, given a length in cm and its label.
+\newcommand{\scalebarof}[4]{%
+  \begin{scope}[shift={(#1,#2)}]
+    \draw[telos hair] (0,0) -- (#3,0);
+    \draw[telos hair] (0,-0.06) -- (0,0.06);
+    \draw[telos hair] (#3,-0.06) -- (#3,0.06);
+    \node[font=\fontsize{5.5}{5.5}\selectfont,anchor=north] at (#3/2,-0.04) {#4};
+  \end{scope}}
+
+% Map key entry: a short line of the same weight as the contour it explains.
+\newcommand{\mapkeyline}[2]{%
+  \raisebox{0.18ex}{\tikz[baseline=0pt]{\draw[#1] (0,0) -- (0.5,0);}}~{\fontsize{6}{7}\selectfont #2}}
+
+% ---------------------------------------------------------------------------
+% Rig diagrams. A rig is drawn against a vertical water column: surface rule at
+% the top, bottom hatching at the base, everything between drawn to scale in
+% the same units so two rigs can be compared by eye.
+% ---------------------------------------------------------------------------
+\newcommand{\watersurface}[3]{%
+  \draw[telos hair] (#1,#3) -- (#2,#3);
+  \draw[telos water] (#1,#3-0.08) -- (#2,#3-0.08);}
+
+\newcommand{\lakebottom}[3]{%
+  \draw[telos line] (#1,#3) -- (#2,#3);
+  \foreach \x in {#1,...,#2} {
+    \draw[telos hair] (\x,#3) -- (\x-0.18,#3-0.18);}}
+
+% Terminal-tackle glyphs, all drawn from a single anchor so a rig can be
+% assembled by placing anchors down a line.
+\newcommand{\rigswivel}[2]{%
+  \draw[telos line] (#1,#2) circle (0.07);
+  \draw[telos line] (#1,#2+0.07) -- (#1,#2+0.16);
+  \draw[telos line] (#1,#2-0.07) -- (#1,#2-0.16);}
+
+\newcommand{\rigsplitshot}[2]{\fill[telosink] (#1,#2) circle (0.075);}
+
+\newcommand{\rigbead}[2]{%
+  \draw[telos line] (#1,#2) circle (0.08);
+  \draw[telos hair] (#1-0.08,#2) -- (#1+0.08,#2);}
+
+% An egg or walking sinker: a filled lozenge the line runs through.
+\newcommand{\rigsinker}[2]{%
+  \fill[telosink] (#1,#2) ellipse (0.1 and 0.17);
+  \draw[telospaper,line width=0.4pt] (#1,#2-0.2) -- (#1,#2+0.2);}
+
+% A bank or bell sinker hanging from a dropper.
+\newcommand{\rigbell}[2]{%
+  \fill[telosink] (#1-0.09,#2) -- (#1+0.09,#2) -- (#1+0.05,#2-0.26) -- (#1-0.05,#2-0.26) -- cycle;}
+
+% A hook, drawn hanging from its eye at the anchor.
+\newcommand{\righook}[2]{%
+  \draw[telos line] (#1,#2) -- (#1,#2-0.3);
+  \draw[telos line] (#1,#2-0.3) arc (180:-90:0.11);
+  \draw[telos line] (#1+0.22,#2-0.19) -- (#1+0.17,#2-0.09);}
+
+% A jig head: a ball at the bend with the eye at 90 degrees.
+\newcommand{\rigjig}[2]{%
+  \fill[telosink] (#1,#2-0.28) circle (0.11);
+  \draw[telos line] (#1,#2) -- (#1,#2-0.2);
+  \draw[telos line] (#1+0.09,#2-0.3) arc (0:-120:0.16);}
+
+% A float. Filled lower half so it reads as sitting in the water.
+\newcommand{\rigfloat}[2]{%
+  \draw[telos line] (#1,#2) ellipse (0.13 and 0.26);
+  \begin{scope}
+    \clip (#1-0.15,#2-0.28) rectangle (#1+0.15,#2);
+    \fill[telosink] (#1,#2) ellipse (0.13 and 0.26);
+  \end{scope}
+  \draw[telos line] (#1,#2+0.26) -- (#1,#2+0.4);}
+
+% A bobber stop knot on the line.
+\newcommand{\rigstop}[2]{%
+  \draw[telos line] (#1-0.07,#2-0.05) -- (#1+0.07,#2+0.05);
+  \draw[telos line] (#1-0.07,#2+0.05) -- (#1+0.07,#2-0.05);}
+
+% A soft-plastic worm hanging from a hook, drawn as a tapered body.
+\newcommand{\rigworm}[3]{%
+  \draw[telos line] (#1,#2) .. controls (#1+0.28,#2-0.25) and (#1-0.24,#2-0.5) ..
+    (#1+0.06,#2-#3);}
+
+% A minnow or shiner, side on, hanging from an anchor point.
+\newcommand{\rigminnow}[2]{%
+  \draw[telos line] (#1,#2) .. controls (#1+0.42,#2+0.16) and (#1+0.42,#2-0.16) .. (#1,#2)
+    -- cycle;
+  \draw[telos line] (#1+0.42,#2) -- (#1+0.62,#2+0.13) -- (#1+0.62,#2-0.13) -- cycle;
+  \fill[telosink] (#1+0.09,#2+0.03) circle (0.025);}
+
+% Callout: a hairline leader from a component to a label set clear of the rig.
+%   \riglabel{from x}{from y}{to x}{to y}{anchor}{text}
+\newcommand{\riglabel}[6]{%
+  \draw[telos hair] (#1,#2) -- (#3,#4);
+  \node[maplabel,anchor=#5,font=\fontsize{6.4}{7.4}\selectfont] at (#3,#4) {#6};}
+
+% Depth annotation down the left edge of a rig diagram.
+\newcommand{\rigdepth}[4]{%
+  \draw[telos dim] (#1,#2) -- (#1,#3);
+  \node[maplabel,anchor=east,font=\fontsize{6.4}{7.4}\selectfont,rotate=90]
+    at (#1-0.12,{(#2+#3)/2}) {#4};}
+
+% The standard water column a rig is drawn in: surface rule at the top,
+% hatched bottom at zero. Every rig sheet uses the same scale so two rigs can be
+% compared by holding the sheets side by side.
+\newcommand{\rigframe}[3]{%
+  \watersurface{0}{#1}{#2}
+  \lakebottom{0}{#1}{0}
+  \node[maplabel,anchor=west,font=\fontsize{6}{7}\selectfont] at (0.05,#2+0.22) {surface};
+  \node[maplabel,anchor=west,font=\fontsize{6}{7}\selectfont] at (0.05,-0.32) {#3};}
+
+% ---------------------------------------------------------------------------
+% Cross-reference helper. The guide is a set of loose printed sheets, so a
+% reference names the sheet rather than a page number.
+% ---------------------------------------------------------------------------
+\newcommand{\sheetref}[1]{\textit{see the \textbf{#1} sheet}}
+
+% ---------------------------------------------------------------------------
+% Regulation strip.
+%
+% Deliberately not a \teloshazard. That box means "this can hurt you" and it is
+% reserved for the electricity curriculum; spending it on a bag limit would
+% train the reader to ignore it. A rule limit is a legal fact, so it gets a
+% compact ruled strip at the foot of the sheet instead -- which also buys back
+% the two centimetres that keep a species sheet on one page.
+% ---------------------------------------------------------------------------
+\newcommand{\regsstrip}[1]{%
+  \par\vspace{0.35em}
+  \noindent
+  \begin{minipage}{\linewidth}
+    \rule{\linewidth}{0.9pt}\par
+    \vspace{0.3em}
+    {\footnotesize\textbf{Regulations on these waters, 2026--27.} #1
+     \emph{These change; only the Wisconsin DNR's current publication for this
+     exact water body is authoritative.}\par}
+    \vspace{0.25em}
+    \rule{\linewidth}{0.3pt}
+  \end{minipage}\par}
