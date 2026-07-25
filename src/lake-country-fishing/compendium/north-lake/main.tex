@@ -1,0 +1,104 @@
+\input{common/preamble.tex}
+\input{lake-country-fishing/shared/fishing.tex}
+\newcommand{\CompendiumBuildRoot}{../../../../build/lake-country-fishing}
+\input{lake-country-fishing/shared/compendium.tex}
+
+\telosmeta{Lake Country Fishing}{North Lake --- Complete Guide}{Waukesha County, Wisconsin --- 440 acres, 78 ft, river-fed and stained}{2026-07-25}
+
+\begin{document}
+
+% ---- title page ----
+\thispagestyle{empty}
+\null\vspace{0.14\textheight}
+\noindent\rule{\linewidth}{2.4pt}\par
+\vspace{0.7em}
+\noindent{\fontsize{40}{44}\selectfont\bfseries North Lake}\par
+\vspace{0.4em}
+\noindent{\Large Waukesha County, Wisconsin --- 440 acres, 78 ft, river-fed and stained}\par
+\vspace{0.5em}
+\noindent\rule{\linewidth}{0.5pt}\par
+\vspace{1.4em}
+\noindent\begin{minipage}{0.86\linewidth}
+Every sheet in the Lake Country guide, bound in one document: the lake and its
+depth map, a page for each species, a page for each rig, and the reference
+sheets. Each page is also published on its own, and the two are the same
+document --- this is those sheets bound, not a rewriting of them.\\[0.8em]
+\textbf{Revised 2026-07-25.} Regulations quoted anywhere in this document are
+the 2026--27 rules and they change every year. Only the Wisconsin DNR's current
+publication for this exact water body is authoritative.
+\end{minipage}\par
+\vfill
+\noindent{\small\textsc{Telos} \quad$\cdot$\quad spincyc.github.io/telos}\par
+\clearpage
+
+% ---- contents ----
+\thispagestyle{telosfirst}
+\section*{What is in here}
+\vspace{-0.4em}\rule{\linewidth}{0.4pt}\vspace{0.4em}
+
+\begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}L@{}}
+\toprule
+\textbf{Part} & \textbf{Sheets}\\
+\midrule
+I. The lake & North Lake --- overview, depth map with numbered spots, and the
+  season-by-season table of what holds where\\
+II. Species & Largemouth bass, smallmouth bass, walleye, northern pike,
+  muskellunge, bluegill, pumpkinseed, black crappie, yellow perch, rock bass,
+  cisco\\
+III. Rigs & Slip bobber, lindy, Carolina, Texas, wacky, drop shot,
+  jig-and-minnow, three-way, split shot, quick-strike, tip-up\\
+IV. Reference & Lures and baits, the seasonal calendar, knots\\
+\bottomrule
+\end{tabularx}
+
+\vspace{1.2em}
+\begin{telospanel}{How to use it}
+The numbered spots on the depth map are the guide's spine. Every species sheet
+and most rig sheets refer back to them, so Pine 4'' or North 5'' always
+means the same piece of water. Read the lake sheet first; after that the guide
+is meant to be flipped through rather than read.
+\end{telospanel}
+
+\bindpart{I \quad The Lake}{The water itself: what it is made of, how deep it
+  goes, where the structure is, and which of the nine (or seven) marked spots is
+  worth your time in which month.}
+\bindsheet{lakes/north-lake}
+
+\bindpart{II \quad Species}{One page each. How to tell it apart from the fish
+  it gets confused with, where it lives in this lake, when it spawns, and how to
+  catch it. The plates are public-domain chromolithographs by S.\,F.\ Denton,
+  published in the New York fisheries reports around 1896--1902.}
+\bindsheet{fish/largemouth-bass}
+\bindsheet{fish/smallmouth-bass}
+\bindsheet{fish/walleye}
+\bindsheet{fish/northern-pike}
+\bindsheet{fish/muskellunge}
+\bindsheet{fish/bluegill}
+\bindsheet{fish/pumpkinseed}
+\bindsheet{fish/black-crappie}
+\bindsheet{fish/yellow-perch}
+\bindsheet{fish/rock-bass}
+\bindsheet{fish/cisco}
+
+\bindpart{III \quad Rigs}{One page each: a drawing of the assembled rig, what
+  every component is for, how to build it, and how to fish it. Roughly in order
+  of how often you will tie them.}
+\bindsheet{rigs/slip-bobber}
+\bindsheet{rigs/split-shot}
+\bindsheet{rigs/jig-and-minnow}
+\bindsheet{rigs/lindy-rig}
+\bindsheet{rigs/carolina-rig}
+\bindsheet{rigs/texas-rig}
+\bindsheet{rigs/wacky-rig}
+\bindsheet{rigs/drop-shot}
+\bindsheet{rigs/three-way-rig}
+\bindsheet{rigs/quick-strike-rig}
+\bindsheet{rigs/tip-up}
+
+\bindpart{IV \quad Reference}{What to carry, when to go, and the four knots
+  that cover everything in this guide.}
+\bindsheet{reference/lures-and-baits}
+\bindsheet{reference/seasonal-calendar}
+\bindsheet{reference/knots}
+
+\end{document}

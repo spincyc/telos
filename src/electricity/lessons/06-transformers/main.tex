@@ -1,0 +1,88 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{6. Transformers}{Trading voltage for current}{2026-07-25}
+\begin{document}
+\telosmasthead[Two coils sharing one field]
+\lessonhead{6}{about 75 minutes}{everyone builds; low-voltage AC only}
+
+\begin{materials}
+\item A laminated iron core --- a salvaged transformer core, or a bundle of iron wire
+\item Magnet wire, two colours if possible
+\item A low-voltage AC supply: a 6--12\,V AC wall adapter (\emph{AC output, not DC})
+\item Multimeter with an AC volts range
+\item A small torch bulb and holder
+\item Tape, sandpaper
+\end{materials}
+
+\begin{predict}
+You wind 100 turns on one side of a core and 200 on the other, and put 6\,V AC
+into the 100-turn side. What comes out of the 200-turn side? And when you draw
+current from it, where does that energy come from?
+\end{predict}
+
+\lessonsection{Do it}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\cktransformer{2.2}{0}{$N_p$}{$N_s$}
+\draw[wire] (2.06,0.68) -- (0.6,0.68) -- (0.6,-0.1);
+\draw[wire] (2.06,0.0) -- (0.6,0.0) -- (0.6,-0.1);
+\node[telos node,anchor=east] at (0.45,0.34) {6\,V\\AC};
+\draw[wire] (2.72,0.68) -- (4.3,0.68);
+\draw[wire] (2.72,0.0) -- (4.3,0.0);
+\draw[wire] (4.3,0.68) -- (4.3,0.5);
+\draw[wire] (4.3,0.0) -- (4.3,0.18);
+\node[telos node] at (4.3,0.34) {V};
+\node[ckt,anchor=north,align=center] at (2.4,-0.55) {laminated iron core};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item \textbf{Wind the primary.} 100 turns on one limb of the core, counted
+  carefully. Sand the ends.
+\item \textbf{Wind the secondary.} 200 turns on the other limb. Sand the ends.
+\item \textbf{Step up.} Connect the AC adapter to the primary. Measure the AC
+  voltage at the primary and at the secondary. Take the ratio.
+\item \textbf{Step down.} Swap them --- drive the 200-turn winding and measure
+  the 100-turn one. The ratio inverts.
+\item \textbf{Load it.} Put the torch bulb across the secondary. Measure the
+  secondary voltage again --- it sags. Now measure the \emph{primary} current
+  with and without the bulb connected.
+\item \textbf{Try DC.} Swap the AC adapter for a battery of the same voltage.
+  The output is zero, apart from a flick at the instant you connect or
+  disconnect. Say out loud why, using Lesson 5.
+\item \textbf{Remove the core.} Pull the two coils apart, or take out the iron.
+  The output collapses.
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{The turns ratio}{$V_s / V_p = N_s / N_p$. Your measured ratio should
+  be close to 2, and a little low because of losses.}
+\telosfact{Nothing is free}{$V_p I_p \approx V_s I_s$. Double the voltage and you
+  halve the available current. A transformer trades one for the other; it does
+  not create energy. The primary current rose when you loaded the secondary,
+  which is that equation happening in front of you.}
+\telosfact{AC only}{A transformer needs a \emph{changing} field. On DC it does
+  nothing except at the moment of switching --- which is Lesson 5 again, and it
+  is also, exactly, what a spark gap will exploit.}
+\telosfact{The core's job}{The iron carries the field from one coil to the other
+  so nearly all of it is shared. Without it, most of the primary's field misses
+  the secondary. The fraction that is shared is called the \textbf{coupling},
+  and it becomes the central design question in Lesson 9.}
+\telosfact{Laminations}{The core is made of thin sheets, insulated from each
+  other, precisely to break up the eddy currents you saw braking the magnet in
+  Lesson 5. Here those currents are pure loss.}
+\end{telosfacts}
+
+\begin{telospanel}{The link to the coil}
+The neon-sign transformer is exactly this device, with a huge turns ratio: about
+120\,V in and 9{,}000--15{,}000\,V out, at correspondingly less current. It is
+also, by the same equation, why that supply is dangerous --- the current it can
+deliver is small by industrial standards and still many times what stops a
+heart. The Tesla coil itself is \emph{also} a transformer, but a strange one: no
+iron, loose coupling, and tuned to a single frequency. Lessons 8 and 9 explain
+why those three differences turn it into something a plain transformer can never
+be.
+\end{telospanel}
+\lowvoltagenote
+\end{document}

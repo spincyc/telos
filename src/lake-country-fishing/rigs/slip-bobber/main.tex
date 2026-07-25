@@ -5,30 +5,32 @@
 \telosmasthead[The first rig to learn and the last one to give up]
 
 \noindent
-\begin{minipage}[t]{0.42\linewidth}
+\begin{minipage}[t]{0.46\linewidth}
 \vspace{0pt}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-\rigframe{5.4}{5.2}{bottom}
-\draw[telos line] (1.7,6.1) -- (1.7,4.62);
-\rigstop{1.7}{5.85}
-\rigbead{1.7}{5.60}
-\rigfloat{1.7}{5.02}
-\draw[telos line] (1.7,4.62) -- (1.7,1.55);
-\rigsplitshot{1.7}{1.95}
-\righook{1.7}{1.55}
-\rigworm{1.79}{1.28}{0.34}
-\rigdepth{0.62}{1.3}{5.2}{set depth}
-\riglabel{1.82}{5.85}{2.95}{6.05}{west}{bobber stop knot}
-\riglabel{1.80}{5.60}{2.95}{5.55}{west}{bead}
-\riglabel{1.86}{5.02}{2.95}{5.02}{west}{slip float}
-\riglabel{1.79}{1.95}{2.95}{2.20}{west}{split shot}
-\riglabel{1.95}{1.42}{2.95}{1.30}{west}{hook \& bait}
+\rigsurface{0}{5.6}{7.4}
+\rigbottom{0}{5}{0}
+% main line down from the rod, through the stop, bead and float
+\draw[fishline] (2.3,8.3) -- (2.3,6.05);
+\stopknot{2.3}{7.95}{1.15}
+\bead{2.3}{7.55}{1.15}
+\slipfloat{2.3}{6.75}{1.15}
+\draw[fishline] (2.3,6.05) -- (2.3,2.05);
+\wtSplitShot{2.3}{2.45}{1.15}
+\hookJ{2.3}{2.05}{1.3}
+\baitCrawler{2.66}{0.60}{1.0}
+\rigspanlabel{1.05}{1.15}{1.05}{7.35}{center}{set depth}
+\callout{2.42}{7.95}{3.6}{8.35}{west}{bobber stop --- slide to set depth}
+\callout{2.45}{7.55}{3.6}{7.65}{west}{bead}
+\callout{2.60}{6.75}{3.6}{6.85}{west}{slip float, line runs through}
+\callout{2.45}{2.45}{3.6}{3.05}{west}{one split shot}
+\callout{2.75}{1.60}{3.6}{1.95}{west}{hook and bait}
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.55\linewidth}
+\begin{minipage}[t]{0.51\linewidth}
 \vspace{0pt}
 \begin{telosfacts}[0.26]
 \telosfact{What it does}{The float slides freely on the line until it hits the stop knot. You can fish 20 ft down and still reel the float to the rod tip to cast.}
@@ -52,10 +54,9 @@
 \section{Fish it}
 \begin{telosfacts}[0.20]
 \telosfact{Set the depth}{Bait should ride just above whatever the fish are holding on --- the weed tops, the bottom, the school. Fish look up far more readily than down. Start a foot above and work down.}
-\telosfact{Cast}{The float sits at the split shot for the cast, then the weight pulls line through the float until the stop knot arrives. Give it a few seconds to settle before you judge anything.}
 \telosfact{Read it}{A bluegill takes the float sideways and down in small taps. A crappie lifts it and lays it flat --- that is a fish swimming up with the bait, and it is a bite. Walleye pull it under slowly and steadily.}
 \telosfact{Set the hook}{Reel the slack, then sweep. Do not snap a rod at a crappie, \sheetref{Black Crappie}.}
-\telosfact{Adjust}{If the float lies flat and stays flat you are too deep and the bait is on the bottom. Slide the stop down.}
+\telosfact{Adjust}{A float that lies flat and stays flat is too deep --- the bait is on the bottom. Slide the stop down.}
 \end{telosfacts}
 
 \begin{telospanel}{When to use it}

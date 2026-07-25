@@ -14,6 +14,22 @@ measurement, and only then arrives at the equation.
 
 - [Course Map](doc/electricity/overview.pdf) — the through-line, who does what, and the machine you are building
 
+## Lessons
+
+| # | Lesson | The idea | Sheet |
+|---|---|---|---|
+| 1 | Charge | Charge exists, comes in two signs, and is conserved. Build an electroscope. | [PDF](doc/electricity/lessons/01-charge.pdf) |
+| 2 | Fields | A field is how a force reaches across empty space. Map one. | [PDF](doc/electricity/lessons/02-fields.pdf) |
+| 3 | Ohm's Law | Voltage, current and resistance, measured on a real circuit. | [PDF](doc/electricity/lessons/03-ohms-law.pdf) |
+| 4 | Electromagnets | A current makes a magnetic field. Wind one and lift things. | [PDF](doc/electricity/lessons/04-electromagnet.pdf) |
+| 5 | Induction | A *changing* magnetic field makes a voltage. | [PDF](doc/electricity/lessons/05-induction.pdf) |
+| 6 | Transformers | Two coils sharing a field trade voltage for current. | [PDF](doc/electricity/lessons/06-transformers.pdf) |
+| 7 | Capacitors | Storing energy in an electric field. | *in progress* |
+| 8 | Resonance | An LC circuit has one frequency it likes. | *in progress* |
+| 9 | Coupling | Two tuned circuits pass energy back and forth. | *in progress* |
+| 10 | The Spark Gap | Air breaks down and becomes a switch. | *in progress* |
+| 11 | Build the coil | Assemble, tune and fire it. | *in progress* |
+
 ## Safety
 
 Lessons 1 through 9 run from batteries and small plug-in supplies and cannot

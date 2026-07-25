@@ -211,12 +211,17 @@ def render_markdown(text: str) -> str:
 
 
 def rewrite_page_links(body: str) -> str:
-    """Point .md links at their rendered .html output."""
+    """Point .md links at their rendered .html output, fragments included."""
     def replace(match: re.Match[str]) -> str:
         reference = match.group(1)
-        if EXTERNAL_RE.match(reference) or not reference.endswith(".md"):
+        if EXTERNAL_RE.match(reference):
             return match.group(0)
-        return match.group(0).replace(reference, reference[: -len(".md")] + ".html")
+        # A cross-page link may carry a fragment: page.md#section.
+        path, separator, fragment = reference.partition("#")
+        if not path.endswith(".md"):
+            return match.group(0)
+        rewritten = path[: -len(".md")] + ".html" + separator + fragment
+        return match.group(0).replace(reference, rewritten)
 
     return HTML_REFERENCE_RE.sub(replace, body)
 
@@ -255,8 +260,14 @@ def command_build(arguments: argparse.Namespace) -> int:
     for page, source in page_sources(manifest):
         body = rewrite_page_links(render_markdown(source.read_text(encoding="utf-8")))
         prefix = relative_prefix(page["output"])
+        # The landing page's title is the site's title; "Telos — Telos" in a
+        # browser tab helps nobody.
+        head_title = page["title"]
+        if head_title != manifest["title"]:
+            head_title = f"{head_title} — {manifest['title']}"
         rendered = (
-            layout.replace("{{site_title}}", html.escape(manifest["title"]))
+            layout.replace("{{head_title}}", html.escape(head_title))
+            .replace("{{site_title}}", html.escape(manifest["title"]))
             .replace("{{tagline}}", html.escape(manifest["tagline"]))
             .replace("{{title}}", html.escape(page["title"]))
             .replace("{{navigation}}", build_navigation(manifest, page["output"]))

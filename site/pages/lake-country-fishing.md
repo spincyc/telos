@@ -12,16 +12,29 @@ those facts.
 Every sheet is designed to be printed in black and white and carried in a boat.
 Species and rig sheets are one page each.
 
+## Everything in one document
+
+If you are printing once and binding it, take these. Each is the complete guide
+for that lake — the lake sheet, every species, every rig, every reference sheet —
+bound from the very same PDFs published individually below.
+
+| Document | Pages | |
+|---|---|---|
+| **Pine Lake, complete guide** | 39 | [Download](doc/lake-country-fishing/compendium/pine-lake.pdf) |
+| **North Lake, complete guide** | 38 | [Download](doc/lake-country-fishing/compendium/north-lake.pdf) |
+
 ## The lakes
 
 Each lake sheet carries a reconstructed depth map with numbered spots, keyed to
 a season-by-season table of what holds where and how to fish it.
 
-- [Pine Lake](doc/lake-country-fishing/lakes/pine-lake.pdf) — 711 acres, 85 ft, very clear, nine spots
-- [North Lake](doc/lake-country-fishing/lakes/north-lake.pdf) — 440 acres, 78 ft, stained and riverine, seven spots
+| Lake | Character | Spots | Sheet |
+|---|---|---|---|
+| **Pine Lake** | 711 acres, 85 ft, gravel, very clear | 9 | [PDF](doc/lake-country-fishing/lakes/pine-lake.pdf) |
+| **North Lake** | 440 acres, 78 ft, river-fed and stained, two basins | 7 | [PDF](doc/lake-country-fishing/lakes/north-lake.pdf) |
 
 The maps are redrawn from Wisconsin DNR historical survey sheets. They are
-generalized and **not for navigation** — see [Credits](credits.md).
+generalized and **not for navigation** — see [Credits](credits.html).
 
 ## Species
 
@@ -48,23 +61,27 @@ New York fisheries reports around 1896–1902.
 One page each: a diagram, what every component is for, how to build it, and how
 to fish it.
 
-- [Slip Bobber](doc/lake-country-fishing/rigs/slip-bobber.pdf) — hold a bait at an exact depth, in any depth of water
-- [Lindy Rig](doc/lake-country-fishing/rigs/lindy-rig.pdf) — drag live bait and let the fish take line
-- [Carolina Rig](doc/lake-country-fishing/rigs/carolina-rig.pdf) — cover bottom, keep the bait above it
-- [Texas Rig](doc/lake-country-fishing/rigs/texas-rig.pdf) — soft plastic inside heavy cover
-- [Wacky Rig](doc/lake-country-fishing/rigs/wacky-rig.pdf) — one hook, one worm, no weight
-- [Drop Shot](doc/lake-country-fishing/rigs/drop-shot.pdf) — weight below the hook
-- [Jig and Minnow](doc/lake-country-fishing/rigs/jig-and-minnow.pdf) — the simplest way to reach a walleye
-- [Three-Way Rig](doc/lake-country-fishing/rigs/three-way-rig.pdf) — hold a depth on a steep face
-- [Split Shot](doc/lake-country-fishing/rigs/split-shot.pdf) — the least rig you can get away with
-- [Quick-Strike Rig](doc/lake-country-fishing/rigs/quick-strike-rig.pdf) — big dead bait for pike, hooked in the jaw
-- [Tip-Up](doc/lake-country-fishing/rigs/tip-up.pdf) — live bait under the ice
+| Rig | What it is for | Sheet |
+|---|---|---|
+| Slip Bobber | Hold a bait at an exact depth, in any depth of water | [PDF](doc/lake-country-fishing/rigs/slip-bobber.pdf) |
+| Split Shot | The least rig you can get away with | [PDF](doc/lake-country-fishing/rigs/split-shot.pdf) |
+| Jig and Minnow | The simplest way to reach a walleye | [PDF](doc/lake-country-fishing/rigs/jig-and-minnow.pdf) |
+| Lindy Rig | Drag live bait and let the fish take line | [PDF](doc/lake-country-fishing/rigs/lindy-rig.pdf) |
+| Carolina Rig | Cover bottom, keep the bait above it | [PDF](doc/lake-country-fishing/rigs/carolina-rig.pdf) |
+| Texas Rig | Soft plastic inside heavy cover | [PDF](doc/lake-country-fishing/rigs/texas-rig.pdf) |
+| Wacky Rig | One hook, one worm, no weight | [PDF](doc/lake-country-fishing/rigs/wacky-rig.pdf) |
+| Drop Shot | Weight below the hook | [PDF](doc/lake-country-fishing/rigs/drop-shot.pdf) |
+| Three-Way Rig | Hold a depth on a steep face | [PDF](doc/lake-country-fishing/rigs/three-way-rig.pdf) |
+| Quick-Strike Rig | Big dead bait for pike, hooked in the jaw | [PDF](doc/lake-country-fishing/rigs/quick-strike-rig.pdf) |
+| Tip-Up | Live bait under the ice | [PDF](doc/lake-country-fishing/rigs/tip-up.pdf) |
 
 ## Reference
 
-- [Lures & Baits](doc/lake-country-fishing/reference/lures-and-baits.pdf) — what to carry and what each thing is for
-- [Seasonal Calendar](doc/lake-country-fishing/reference/seasonal-calendar.pdf) — species by month, and the year by water temperature
-- [Knots](doc/lake-country-fishing/reference/knots.pdf) — four knots cover everything here
+| Sheet | What it covers | |
+|---|---|---|
+| Lures & Baits | What to carry and what each thing is for | [PDF](doc/lake-country-fishing/reference/lures-and-baits.pdf) |
+| Seasonal Calendar | Species by month, and the year by water temperature | [PDF](doc/lake-country-fishing/reference/seasonal-calendar.pdf) |
+| Knots | Four knots cover everything here | [PDF](doc/lake-country-fishing/reference/knots.pdf) |
 
 ## Regulations
 

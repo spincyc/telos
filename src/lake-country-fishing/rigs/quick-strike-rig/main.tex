@@ -5,34 +5,37 @@
 \telosmasthead[The responsible way to fish large bait for pike]
 
 \noindent
-\begin{minipage}[t]{0.42\linewidth}
+\begin{minipage}[t]{0.46\linewidth}
 \vspace{0pt}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-\rigframe{5.4}{5.2}{bottom}
-\draw[telos line] (1.5,6.05) -- (1.5,4.72);
-\rigstop{1.5}{5.80}
-\rigbead{1.5}{5.55}
-\rigfloat{1.5}{5.12}
-\draw[telos line] (1.5,4.72) -- (1.5,2.35);
-\rigswivel{1.5}{2.22}
-\draw[telos line,dash pattern=on 1.4pt off 1pt] (1.5,2.10) -- (2.05,1.55);
-\draw[telos line] (2.05,1.55) .. controls (2.75,1.85) and (3.45,1.25) .. (4.05,1.55);
-\draw[telos line] (2.05,1.55) .. controls (2.75,1.25) and (3.45,1.85) .. (4.05,1.55);
-\draw[telos line] (4.05,1.55) -- (4.45,1.85) -- (4.45,1.25) -- cycle;
-\fill[telosink] (2.35,1.62) circle (0.04);
-\draw[telos line] (2.75,1.30) arc (100:-170:0.1);
-\draw[telos line] (3.55,1.28) arc (100:-170:0.1);
-\node[maplabel,anchor=south east,font=\fontsize{6}{7}\selectfont] at (0.55,4.85) {to rod};
-\riglabel{1.62}{5.12}{2.35}{5.05}{west}{slip float}
-\riglabel{1.60}{2.22}{2.35}{2.85}{west}{swivel}
-\riglabel{1.85}{1.85}{2.45}{2.35}{west}{wire trace}
-\riglabel{2.75}{1.12}{2.55}{0.55}{east}{two small trebles}
+\rigsurface{0}{9.4}{6.2}
+\rigbottom{0}{9}{0}
+\draw[fishline] (1.5,7.6) -- (1.5,5.55);
+\stopknot{1.5}{7.25}{1.1}
+\bead{1.5}{6.9}{1.05}
+\slipfloat{1.5}{6.15}{1.1}
+\draw[fishline] (1.5,5.55) -- (1.5,3.05);
+\swivel{1.5}{2.85}{1.15}
+\draw[fishwire] (1.5,2.55) -- (2.35,2.0);
+% the dead bait, hung horizontally on two trebles
+\begin{scope}[shift={(2.35,2.0)}]
+  \baitMinnow{0}{0}{2.6}
+\end{scope}
+\begin{scope}[shift={(3.05,2.55)}] \hookTreble{0}{0}{0.85} \end{scope}
+\begin{scope}[shift={(4.35,2.55)}] \hookTreble{0}{0}{0.85} \end{scope}
+\draw[fishwire] (2.35,2.0) -- (3.05,2.55) -- (4.35,2.55);
+\callout{1.62}{6.15}{2.6}{6.55}{west}{slip float sets the depth}
+\callout{1.62}{2.85}{2.6}{3.85}{west}{swivel}
+\callout{2.9}{2.35}{3.3}{4.55}{west}{two small trebles set in the flank, \emph{one point only}}
+\callout{5.0}{1.75}{5.6}{1.2}{west}{6--10 in dead bait}
+\node[rigtag,anchor=north,align=center] at (4.2,0.45)
+  {hooks outside the bait, so you strike at once and hook the jaw};
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.55\linewidth}
+\begin{minipage}[t]{0.51\linewidth}
 \vspace{0pt}
 \begin{telosfacts}[0.26]
 \telosfact{What it does}{Two small treble hooks set into the flank of a large dead bait, on a wire trace. Because the hooks are on the \emph{outside} of the bait, you strike immediately instead of waiting for the pike to swallow.}

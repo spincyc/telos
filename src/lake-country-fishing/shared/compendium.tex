@@ -1,0 +1,32 @@
+% The per-lake compendium.
+%
+% Both compendiums bind the same sheets in the same order, differing only in
+% which lake sheet leads. They are assembled with \includepdf from the already
+% built individual PDFs rather than by re-typesetting the sources, which
+% guarantees that a bound page and the loose sheet a reader printed last week
+% are byte-for-byte the same document. If they could drift, they would.
+%
+% The including document defines \CompendiumLake (the lake's document id) and
+% \CompendiumTitle, then inputs this file.
+
+\usepackage{pdfpages}
+
+% Section divider: a full-width rule, a large title, and a one-line gloss. It
+% exists so a printed and stapled compendium can be thumbed through.
+\newcommand{\bindpart}[2]{%
+  \clearpage
+  \thispagestyle{telosfirst}%
+  \null\vspace{0.22\textheight}
+  \noindent\rule{\linewidth}{2pt}\par
+  \vspace{0.5em}
+  \noindent{\fontsize{26}{30}\selectfont\bfseries #1}\par
+  \vspace{0.35em}
+  \noindent\rule{\linewidth}{0.4pt}\par
+  \vspace{0.5em}
+  \noindent\begin{minipage}{0.82\linewidth}#2\end{minipage}\par
+  \clearpage}
+
+% Bind one built sheet. The path is relative to the build tree, which the
+% Makefile passes in as \CompendiumBuildRoot.
+\newcommand{\bindsheet}[1]{%
+  \includepdf[pages=-]{\CompendiumBuildRoot/#1.pdf}}

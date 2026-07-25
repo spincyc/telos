@@ -5,28 +5,30 @@
 \telosmasthead[The walleye rig --- also called a slip-sinker or live-bait rig]
 
 \noindent
-\begin{minipage}[t]{0.42\linewidth}
+\begin{minipage}[t]{0.46\linewidth}
 \vspace{0pt}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-\rigframe{5.4}{5.2}{bottom}
-\draw[telos line] (0.9,5.3) -- (2.0,0.62);
-\rigsinker{1.62}{2.20}
-\rigstop{1.72}{1.75}
-\draw[telos line] (1.78,1.5) .. controls (2.6,1.2) and (3.4,1.0) .. (4.3,0.75);
-\righook{4.30}{0.90}
-\rigminnow{4.34}{0.62}
-\node[maplabel,anchor=south east,font=\fontsize{6}{7}\selectfont] at (0.95,4.75) {to rod};
-\riglabel{1.72}{2.35}{2.75}{3.60}{west}{walking sinker}
-\riglabel{1.80}{1.75}{2.75}{2.95}{west}{bead \& swivel}
-\riglabel{3.2}{1.02}{3.55}{2.10}{west}{leader, 3--6 ft}
-\draw[telos arrow] (5.3,4.3) -- (4.3,4.3);
-\node[maplabel,anchor=west,font=\fontsize{6}{7}\selectfont] at (5.35,4.3) {drift};
+\rigsurface{0}{9.4}{6.2}
+\rigbottom{0}{9}{0}
+\draw[fishline] (0.7,5.9) -- (2.35,1.25);
+\wtWalking{2.30}{1.55}{1.35}
+\bead{2.42}{0.95}{1.1}
+\swivel{2.5}{0.62}{1.15}
+\draw[fishleader] (2.62,0.42) .. controls (3.9,0.22) and (5.4,0.5) .. (6.55,0.72);
+\hookJ{6.55}{0.86}{1.2}
+\baitLeech{6.92}{0.30}{1.15}
+\draw[telos arrow] (8.6,4.4) -- (7.2,4.4);
+\node[rigtag,anchor=west] at (8.7,4.4) {drift};
+\callout{2.35}{1.30}{3.15}{3.05}{west}{walking sinker --- line slides through it}
+\callout{2.52}{0.95}{4.35}{2.35}{west}{bead}
+\callout{2.62}{0.62}{5.05}{1.80}{west}{swivel: the sinker cannot pass it}
+\rigspanlabel{2.7}{-0.5}{6.5}{-0.5}{center}{leader, 3--6 ft}
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.55\linewidth}
+\begin{minipage}[t]{0.51\linewidth}
 \vspace{0pt}
 \begin{telosfacts}[0.26]
 \telosfact{What it does}{The sinker drags the bottom; the line slides \emph{through} it. When a fish picks up the bait it feels no weight at all, so it keeps moving instead of dropping the bait.}

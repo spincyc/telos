@@ -190,3 +190,10 @@ clean:
 	rm -rf $(BUILD_ROOT)
 
 distclean: clean
+
+# The per-lake compendiums bind already-built sheets with \includepdf, so they
+# depend on every other PDF in the project rather than on TeX sources.
+COMPENDIUM_PDFS := $(filter $(BUILD_ROOT)/lake-country-fishing/compendium/%,$(BUILD_PDFS))
+COMPENDIUM_INPUTS := $(filter-out $(COMPENDIUM_PDFS),\
+	$(filter $(BUILD_ROOT)/lake-country-fishing/%,$(BUILD_PDFS)))
+$(COMPENDIUM_PDFS): $(COMPENDIUM_INPUTS)

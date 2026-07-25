@@ -1,0 +1,285 @@
+% Terminal-tackle drawing library.
+%
+% The species plates in this guide are public-domain chromolithographs and they
+% set the standard the rest of the guide has to meet. No equivalent exists for
+% terminal tackle: a drop-shot rig and a wacky rig postdate the era of the plates
+% by a century, so there is nothing to borrow. These components are therefore
+% drawn to match the plates rather than to be schematic -- correct proportions,
+% a heavier outline than a circuit diagram would use, and enough interior detail
+% that a reader can recognise the real object in their hand.
+%
+% Every component is drawn from a single anchor with an explicit scale, so a rig
+% is assembled by placing anchors down a line. One unit is one centimetre at
+% scale 1, which is roughly life size for a size 1/0 hook.
+
+% ---------------------------------------------------------------------------
+% Line and leader
+% ---------------------------------------------------------------------------
+\tikzset{
+  fishline/.style={draw=telosink,line width=0.55pt},
+  fishleader/.style={draw=telosink,line width=0.45pt},
+  fishheavy/.style={draw=telosink,line width=0.9pt},
+  fishdetail/.style={draw=telosink,line width=0.3pt},
+  fishwire/.style={draw=telosink,line width=0.55pt,dash pattern=on 1.6pt off 1.1pt},
+  riglabel/.style={font=\fontsize{6.6}{7.6}\selectfont},
+  rigtag/.style={font=\fontsize{6.6}{7.6}\selectfont\itshape},
+}
+
+% ---------------------------------------------------------------------------
+% Hooks
+% ---------------------------------------------------------------------------
+
+% A single J hook hanging from its eye. \hookJ{x}{y}{scale}
+\newcommand{\hookJ}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,-0.10) circle (0.10);
+    \draw[fishheavy] (0,-0.20) -- (0,-0.92);
+    \draw[fishheavy] (0,-0.92) .. controls (0,-1.20) and (0.22,-1.34) ..
+      (0.40,-1.24) .. controls (0.54,-1.16) and (0.56,-1.00) .. (0.50,-0.86);
+    \draw[fishheavy] (0.50,-0.86) -- (0.44,-0.50);
+    \draw[fishdetail] (0.455,-0.62) -- (0.35,-0.70);
+  \end{scope}}
+
+% A wide-gap offset worm hook -- the Texas-rig hook, with its characteristic
+% double bend just below the eye. \hookOffset{x}{y}{scale}
+\newcommand{\hookOffset}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,-0.10) circle (0.10);
+    \draw[fishheavy] (0,-0.20) -- (0,-0.34)
+      -- (0.16,-0.44) -- (0.02,-0.56) -- (0.02,-1.00);
+    \draw[fishheavy] (0.02,-1.00) .. controls (0.02,-1.34) and (0.32,-1.50) ..
+      (0.54,-1.36) .. controls (0.70,-1.26) and (0.70,-1.06) .. (0.62,-0.90);
+    \draw[fishheavy] (0.62,-0.90) -- (0.54,-0.46);
+    \draw[fishdetail] (0.565,-0.60) -- (0.45,-0.68);
+  \end{scope}}
+
+% A treble hook. \hookTreble{x}{y}{scale}
+\newcommand{\hookTreble}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,-0.10) circle (0.10);
+    \draw[fishheavy] (0,-0.20) -- (0,-0.80);
+    \foreach \s in {-1,1} {
+      \draw[fishheavy] (0,-0.80) .. controls (0,-1.06) and (\s*0.22,-1.18) ..
+        (\s*0.38,-1.06) .. controls (\s*0.50,-0.96) and (\s*0.50,-0.82) ..
+        (\s*0.44,-0.70);
+      \draw[fishheavy] (\s*0.44,-0.70) -- (\s*0.39,-0.38);
+      \draw[fishdetail] (\s*0.405,-0.48) -- (\s*0.30,-0.545);}
+    \draw[fishheavy] (0,-0.80) .. controls (0.02,-1.14) and (0.12,-1.24) .. (0.16,-1.12)
+      .. controls (0.20,-1.00) and (0.14,-0.92) .. (0.06,-0.86);
+  \end{scope}}
+
+% A jig head: lead ball moulded at the bend, eye at ninety degrees to the shank.
+\newcommand{\jighead}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0) circle (0.09);
+    \draw[fishheavy] (0,-0.09) -- (0,-0.30);
+    \fill[telosink] (0,-0.52) circle (0.24);
+    \draw[telospaper,line width=0.5pt] (-0.08,-0.44) arc (150:210:0.16);
+    \draw[fishheavy] (0.16,-0.64) -- (0.42,-0.94);
+    \draw[fishheavy] (0.42,-0.94) .. controls (0.60,-1.12) and (0.60,-0.86) ..
+      (0.46,-0.70);
+    \draw[fishheavy] (0.46,-0.70) -- (0.40,-0.42);
+    \draw[fishdetail] (0.415,-0.52) -- (0.31,-0.58);
+  \end{scope}}
+
+% ---------------------------------------------------------------------------
+% Weights
+% ---------------------------------------------------------------------------
+
+% Bullet (cone) weight, nose up, line running through. \wtBullet{x}{y}{scale}
+\newcommand{\wtBullet}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telosink] (0,0) .. controls (0.20,-0.14) and (0.26,-0.40) .. (0.26,-0.62)
+      -- (-0.26,-0.62) .. controls (-0.26,-0.40) and (-0.20,-0.14) .. (0,0) -- cycle;
+    \draw[telospaper,line width=0.55pt] (0,0.06) -- (0,-0.68);
+    \draw[fishdetail] (-0.26,-0.62) -- (0.26,-0.62);
+  \end{scope}}
+
+% Egg sinker. \wtEgg{x}{y}{scale}
+\newcommand{\wtEgg}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telosink] (0,0) ellipse (0.22 and 0.34);
+    \draw[telospaper,line width=0.5pt] (0,0.34) -- (0,0.22);
+    \draw[telospaper,line width=0.5pt] (0,-0.34) -- (0,-0.22);
+    \draw[fishheavy] (0,0.34) -- (0,0.52);
+    \draw[fishheavy] (0,-0.34) -- (0,-0.52);
+  \end{scope}}
+
+% Walking sinker: the banana-shaped bottom-dragging weight of a lindy rig.
+\newcommand{\wtWalking}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telosink] (-0.06,0.04) .. controls (0.24,-0.06) and (0.40,-0.44) ..
+      (0.34,-0.78) .. controls (0.18,-0.72) and (0.02,-0.40) .. (-0.20,-0.10)
+      .. controls (-0.16,-0.02) and (-0.12,0.02) .. (-0.06,0.04) -- cycle;
+    \draw[fishheavy] (-0.10,0.06) -- (-0.14,0.30);
+    \draw[fishheavy] (-0.14,0.30) circle (0.075);
+  \end{scope}}
+
+% Bell (bank) sinker hanging from an eye. \wtBell{x}{y}{scale}
+\newcommand{\wtBell}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishdetail] (0,0) circle (0.06);
+    \fill[telosink] (-0.06,-0.06) .. controls (-0.22,-0.20) and (-0.26,-0.48) ..
+      (-0.24,-0.66) -- (0.24,-0.66) .. controls (0.26,-0.48) and (0.22,-0.20) ..
+      (0.06,-0.06) -- cycle;
+    \draw[fishdetail] (-0.24,-0.66) -- (0.24,-0.66);
+  \end{scope}}
+
+% Cylinder weight for a drop shot, with its pinch-clip top.
+\newcommand{\wtCylinder}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0) -- (0,-0.12);
+    \draw[fishheavy] (-0.07,-0.12) -- (0.07,-0.12);
+    \fill[telosink] (-0.10,-0.16) rectangle (0.10,-0.72);
+    \fill[telosink] (0,-0.72) ellipse (0.10 and 0.06);
+  \end{scope}}
+
+% Split shot: a sphere with the pinch slot showing.
+\newcommand{\wtSplitShot}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telosink] (0,0) circle (0.15);
+    \draw[telospaper,line width=0.5pt] (-0.17,0) -- (0.17,0);
+  \end{scope}}
+
+% ---------------------------------------------------------------------------
+% Hardware
+% ---------------------------------------------------------------------------
+
+% Barrel swivel, vertical. \swivel{x}{y}{scale}
+\newcommand{\swivel}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0.26) circle (0.09);
+    \draw[fishheavy] (0,-0.26) circle (0.09);
+    \fill[telosink] (-0.09,-0.17) rectangle (0.09,0.17);
+    \draw[telospaper,line width=0.4pt] (-0.09,0) -- (0.09,0);
+  \end{scope}}
+
+% Three-way swivel: three eyes on a central ring.
+\newcommand{\swivelThree}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telosink] (0,0) circle (0.10);
+    \foreach \a in {90,-30,210} {
+      \draw[fishheavy] (\a:0.10) -- (\a:0.22);
+      \draw[fishheavy] (\a:0.30) circle (0.085);}
+  \end{scope}}
+
+% Bead. \bead{x}{y}{scale}
+\newcommand{\bead}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0) circle (0.15);
+    \draw[fishdetail] (0,0) ellipse (0.05 and 0.15);
+  \end{scope}}
+
+% Bobber stop knot on the line.
+\newcommand{\stopknot}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \foreach \i in {-1,0,1} {
+      \draw[fishheavy] (\i*0.075,-0.13) .. controls (\i*0.075+0.06,0) .. (\i*0.075,0.13);}
+    \draw[fishheavy] (-0.19,0.16) -- (-0.05,0.10);
+    \draw[fishheavy] (0.19,0.16) -- (0.05,0.10);
+  \end{scope}}
+
+% Slip float, sitting in the water: lower half filled.
+\newcommand{\slipfloat}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0) ellipse (0.26 and 0.50);
+    \begin{scope}
+      \clip (-0.30,-0.56) rectangle (0.30,0);
+      \fill[telosink] (0,0) ellipse (0.26 and 0.50);
+    \end{scope}
+    \draw[fishheavy] (0,0.50) -- (0,0.88);
+    \draw[fishheavy] (0,-0.50) -- (0,-0.76);
+    \draw[fishdetail] (-0.05,0.86) -- (0.05,0.86);
+  \end{scope}}
+
+% ---------------------------------------------------------------------------
+% Baits
+% ---------------------------------------------------------------------------
+
+% Soft-plastic stick worm, drawn hanging and slightly curved.
+\newcommand{\baitWorm}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \def\wormbody{
+      (0.02,0.06) .. controls (0.26,-0.10) and (0.20,-0.60) .. (0.06,-1.02)
+      .. controls (-0.02,-1.28) and (-0.14,-1.34) .. (-0.20,-1.20)
+      .. controls (-0.26,-1.06) and (-0.14,-0.98) .. (-0.14,-0.86)
+      .. controls (-0.14,-0.50) and (-0.24,-0.14) .. (-0.14,0.02)
+      .. controls (-0.10,0.10) and (-0.04,0.10) .. (0.02,0.06)}
+    \fill[telospaper] \wormbody -- cycle;
+    \draw[fishheavy] \wormbody -- cycle;
+    \foreach \y/\a/\b in {-0.18/-0.19/0.16, -0.42/-0.20/0.19, -0.66/-0.17/0.18,
+                          -0.88/-0.13/0.13} {
+      \draw[fishdetail] (\a,\y) -- (\b,\y);}
+  \end{scope}}
+
+% Live minnow, side on, nose at the anchor and tail to the right.
+\newcommand{\baitMinnow}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \fill[telospaper]
+      (0,0) .. controls (0.30,0.26) and (0.78,0.24) .. (1.02,0.08)
+      .. controls (0.78,-0.24) and (0.30,-0.26) .. (0,0) -- cycle;
+    \draw[fishheavy]
+      (0,0) .. controls (0.30,0.26) and (0.78,0.24) .. (1.02,0.08)
+      .. controls (0.78,-0.24) and (0.30,-0.26) .. (0,0) -- cycle;
+    \draw[fishheavy] (1.02,0.08) -- (1.30,0.26) -- (1.26,-0.06) -- (1.02,0.08) -- cycle;
+    \draw[fishdetail] (0.22,0.10) .. controls (0.30,0.02) and (0.30,-0.02) .. (0.22,-0.10);
+    \fill[telosink] (0.13,0.05) circle (0.035);
+    \draw[fishdetail] (0.44,0.20) -- (0.62,0.14);
+    \draw[fishdetail] (0.40,-0.13) .. controls (0.50,-0.20) and (0.58,-0.20) .. (0.64,-0.14);
+  \end{scope}}
+
+% Nightcrawler threaded on a hook, with a free tail.
+\newcommand{\baitCrawler}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[fishheavy] (0,0) .. controls (0.16,-0.34) and (-0.14,-0.56) ..
+      (0.02,-0.90) .. controls (0.14,-1.14) and (-0.10,-1.24) .. (-0.16,-1.44);
+    \foreach \i in {1,...,7} {
+      \draw[fishdetail] ($(-0.06,{-0.14*\i})$) -- ($(0.06,{-0.14*\i-0.02})$);}
+  \end{scope}}
+
+% Leech, drawn with its characteristic ribbon swim.
+\newcommand{\baitLeech}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \def\leechbody{
+      (0,0.02) .. controls (0.30,0.26) and (0.64,-0.22) .. (0.98,0.06)
+      .. controls (0.94,0.18) and (0.86,0.20) .. (0.80,0.14)
+      .. controls (0.56,-0.06) and (0.36,0.30) .. (0.10,0.16)
+      .. controls (0.02,0.12) and (-0.02,0.08) .. (0,0.02)}
+    \fill[telospaper] \leechbody -- cycle;
+    \draw[fishheavy] \leechbody -- cycle;
+  \end{scope}}
+
+% ---------------------------------------------------------------------------
+% Frame furniture for a rig plate
+% ---------------------------------------------------------------------------
+
+% Water surface: a ruled line with a wave band beneath it.
+\newcommand{\rigsurface}[3]{%
+  \draw[fishdetail] (#1,#3) -- (#2,#3);
+  \draw[telosrule,line width=0.4pt,decorate,
+        decoration={snake,amplitude=0.5mm,segment length=3.4mm}] (#1,#3-0.13) -- (#2,#3-0.13);
+  \node[riglabel,anchor=west,text=telosmute] at (#1+0.04,#3+0.20) {surface};}
+
+% Lake bottom: a ruled line with hatching below it.
+\newcommand{\rigbottom}[3]{%
+  \draw[fishheavy] (#1,#3) -- (#2,#3);
+  \foreach \x in {#1,...,#2} {
+    \draw[fishdetail] (\x+0.5,#3) -- (\x+0.26,#3-0.24);}
+  \node[riglabel,anchor=west,text=telosmute] at (#1+0.04,#3-0.34) {bottom};}
+
+% A labelled callout with a hairline leader and a dot at the component end.
+%   \callout{from x}{from y}{to x}{to y}{anchor}{text}
+\newcommand{\callout}[6]{%
+  \draw[fishdetail,telosmute] (#1,#2) -- (#3,#4);
+  \fill[telosmute] (#1,#2) circle (0.035);
+  \node[riglabel,anchor=#5,inner sep=1.6pt] at (#3,#4) {#6};}
+
+% A dimension arrow with a label, for leader lengths and set depths.
+\newcommand{\rigspan}[5]{%
+  \draw[|<->|,fishdetail,telosmute] (#1,#2) -- (#3,#4);
+  \node[rigtag,anchor=#5,inner sep=2pt,fill=telospaper]
+    at ({(#1+#3)/2},{(#2+#4)/2}) {}; }
+\newcommand{\rigspanlabel}[6]{%
+  \draw[|<->|,fishdetail,telosmute] (#1,#2) -- (#3,#4);
+  \node[rigtag,inner sep=2pt,fill=telospaper,anchor=#5]
+    at ({(#1+#3)/2},{(#2+#4)/2}) {#6};}

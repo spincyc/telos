@@ -5,27 +5,28 @@
 \telosmasthead[Also called a wolf river rig]
 
 \noindent
-\begin{minipage}[t]{0.42\linewidth}
+\begin{minipage}[t]{0.46\linewidth}
 \vspace{0pt}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-\rigframe{5.4}{5.2}{bottom}
-\draw[telos line] (1.1,5.0) -- (2.30,2.60);
-\rigswivel{2.34}{2.48}
-\draw[telos line] (2.30,2.36) -- (2.15,0.62);
-\rigbell{2.15}{0.62}
-\draw[telos line] (2.42,2.40) .. controls (3.1,2.15) and (3.7,2.35) .. (4.35,2.05);
-\righook{4.35}{2.05}
-\rigminnow{4.44}{1.78}
-\node[maplabel,anchor=south east,font=\fontsize{6}{7}\selectfont] at (1.05,4.65) {to rod};
-\riglabel{2.44}{2.60}{3.00}{3.55}{west}{three-way swivel}
-\riglabel{2.22}{1.55}{1.55}{1.20}{east}{dropper (lighter line)}
-\riglabel{3.4}{2.24}{3.65}{3.05}{west}{leader, 2--4 ft}
+\rigsurface{0}{9.4}{6.2}
+\rigbottom{0}{9}{0}
+\draw[fishline] (0.7,5.9) -- (2.6,2.35);
+\swivelThree{2.7}{2.15}{1.5}
+\draw[fishline] (2.55,1.75) -- (2.25,0.72);
+\wtBell{2.25}{0.72}{1.35}
+\draw[fishleader] (3.12,2.02) .. controls (4.4,1.7) and (5.6,1.5) .. (6.75,1.55);
+\hookJ{6.75}{1.62}{1.25}
+\baitMinnow{7.12}{0.85}{1.15}
+\callout{2.86}{2.42}{3.55}{4.15}{west}{three-way swivel}
+\callout{2.32}{1.35}{1.15}{2.55}{east}{dropper --- \emph{lighter} line, so a snag costs only the sinker}
+\rigspanlabel{3.1}{-0.55}{6.7}{-0.55}{center}{leader, 2--4 ft}
+\rigspanlabel{1.25}{0.05}{1.25}{2.05}{center}{stand-off}
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.55\linewidth}
+\begin{minipage}[t]{0.51\linewidth}
 \vspace{0pt}
 \begin{telosfacts}[0.26]
 \telosfact{What it does}{Three lines meet at one swivel: the main line up to the rod, a short dropper down to the weight, and a leader out to the bait. The weight tracks the bottom while the bait rides at a fixed height above it.}
