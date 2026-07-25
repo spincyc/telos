@@ -1,0 +1,78 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{Demo: Homopolar Motor}{An electric motor with three parts and no switch}{2026-07-25}
+\begin{document}
+\telosmasthead[Five minutes, and it will run until the battery dies]
+\lessonhead{Demo A}{5 minutes}{after Lesson 4 --- battery only, completely safe}
+
+\begin{materials}
+\item One AA battery
+\item One neodymium disc magnet, 10--12\,mm
+\item About 20\,cm of bare copper wire, 18--20 AWG
+\item Pliers
+\end{materials}
+
+\noindent
+\begin{minipage}[t]{0.44\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % battery standing on the magnet
+  \draw[partheavy,fill=telosfill] (0.6,0.5) rectangle (1.5,3.1);
+  \draw[partdetail] (1.0,3.1) rectangle (1.12,3.28);
+  \node[partsmall,rotate=90] at (1.05,1.8) {AA};
+  \draw[partheavy,fill=telospaper] (0.35,0.16) rectangle (1.75,0.5);
+  \draw[partdetail] (0.35,0.33) -- (1.75,0.33);
+  \node[partsmall,anchor=west] at (1.85,0.33) {magnet};
+  % the wire loop: sits on the top terminal, arms brush the magnet edge
+  \draw[wirered] (1.05,3.4) .. controls (1.9,3.3) and (2.15,1.6) .. (1.78,0.42);
+  \draw[wirered] (1.05,3.4) .. controls (0.2,3.3) and (-0.05,1.6) .. (0.32,0.42);
+  \draw[partheavy] (0.95,3.36) arc (180:0:0.10 and 0.07);
+  \draw[telos arrow] (2.5,2.2) arc (-60:60:0.7);
+  \node[partsmall,anchor=west,align=left] at (3.3,2.2) {it spins};
+  \node[partsmall,anchor=north,align=center] at (1.05,-0.05)
+    {the wire must \emph{just} touch\\the magnet's edge --- no more};
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.53\linewidth}
+\vspace{0pt}
+\begin{predict}
+There is no switch, no commutator and no coil --- three parts and one loop of
+wire. Before you build it: what is actually pushing on the wire, and which
+direction will it turn? Then, once it spins: what happens if you flip the magnet
+over?
+\end{predict}
+\begin{telosfacts}[0.22]
+\telosfact{Why it turns}{Current flows down the wire. The wire sits in the magnet's field. A current in a magnetic field feels a sideways force --- and because the field is vertical and the current has a horizontal part, the force pushes it around in a circle.}
+\telosfact{The rule}{Point the fingers of your right hand along the current and curl them into the field: your thumb gives the force. Reverse either the current or the magnet and it reverses.}
+\telosfact{Why so simple}{Every other motor needs a commutator to keep flipping the current. This one never needs to, because the geometry means the force is always in the same rotational direction.}
+\end{telosfacts}
+\end{minipage}
+
+\lessonsection{Build it}
+\begin{enumerate}
+\item Stick the \textbf{magnet to the flat negative end} of the battery. Stand the assembly on the magnet.
+\item Bend the wire into a shape that \textbf{rests in a dimple on the positive terminal} and hangs down both sides, with the two ends just brushing the outer edge of the magnet. Symmetry matters more than neatness.
+\item Let go. It should spin immediately, often at several hundred revolutions per minute.
+\item If it does not: the ends are pressing too hard (friction), not touching at all (no circuit), or the wire is not balanced. Adjust one thing at a time.
+\end{enumerate}
+
+\lessonsection{Break it}
+\begin{telosfacts}[0.22]
+\telosfact{Flip the magnet}{Reverses the field, so it reverses the spin. Predict before you do it.}
+\telosfact{Flip the battery}{Reverses the current --- same result. Now: what if you flip \emph{both}?}
+\telosfact{Two magnets}{Stronger field, more force, faster spin. Also a hotter wire.}
+\telosfact{Shape it}{A heart, a spiral, a cage. Once it works, the shape is a design problem and the boys will spend an hour on it.}
+\telosfact{Feel the wire}{It gets warm. This is a dead short across a battery with almost no resistance --- most of the energy becomes heat, not rotation. Do not leave it running for long, and do not use a lithium cell.}
+\end{telosfacts}
+
+\begin{telospanel}{Why this one first}
+This is the cheapest ``oh, wow'' in the whole course and it is the entire
+principle of every electric motor ever built: current in a magnetic field feels
+a force. A washing machine, a drill and a Tesla coil's primary all rest on the
+sentence this demonstrates in five minutes with three parts.
+\end{telospanel}
+\lowvoltagenote
+\end{document}

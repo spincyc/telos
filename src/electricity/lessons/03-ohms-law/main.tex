@@ -21,21 +21,40 @@ swap it for a 220\,$\Omega$ resistor. Does the LED get brighter, dimmer, or stay
 the same --- and roughly by how much? Write a number, not a word.
 \end{predict}
 
-\lessonsection{Do it}
-\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\ckbattery{0}{0}{9\,V}
-\draw[wire] (1,0) -- (2,0);
-\ckswitch{2}{0}{S}
-\draw[wire] (3,0) -- (4,0);
-\ckresistor{4}{0}{$R$}
-\draw[wire] (5,0) -- (6,0);
-\ckled{6}{0}{LED}
-\draw[wire] (7,0) -- (8,0) -- (8,-1.2) -- (0,-1.2) -- (0,0);
-\node[ckt,anchor=north] at (4,-1.25) {current is the same everywhere in one loop};
-\end{tikzpicture}
-\end{center}
+\lessonsection{Wire it up}
 
+Build the picture on the left. The drawing on the right is the same circuit
+written in the shorthand engineers use --- every symbol on it is one of the
+objects in the picture. From this lesson on, both are given.
+
+\twoways{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ptBreadboard{0}{0}{1.0}{16}
+  \ptNineVolt{-1.9}{0.4}{0.75}
+  \ptSwitch{1.3}{1.85}{1.0}
+  \ptResistor{2.6}{1.6}{1.0}
+  \ptLED{4.0}{1.5}{1.0}
+  \draw[wirered] (-1.05,1.68) .. controls (-0.6,2.3) and (0.0,2.5) .. (0.42,1.60);
+  \draw[wireblk] (-1.24,1.68) .. controls (-1.5,0.4) and (-0.6,-0.3) .. (0.42,0.18);
+  \draw[wirered] (1.12,1.43) -- (1.12,1.16);
+  \draw[wirered] (1.48,1.43) -- (1.98,1.16);
+  \draw[wirered] (3.22,1.60) -- (3.22,1.16);
+  \draw[wirered] (4.5,0.88) .. controls (4.9,0.4) .. (4.5,0.18);
+  \node[partsmall,anchor=north,align=center] at (2.4,-0.42)
+    {one loop: battery $\to$ switch $\to$ resistor $\to$ LED $\to$ back};
+\end{tikzpicture}}{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{0}{0}{9\,V}
+  \draw[wire] (1,0) -- (1.5,0);
+  \ckswitch{1.5}{0}{S}
+  \draw[wire] (2.5,0) -- (2.5,-1.0);
+  \ckresistor{1.5}{-1.0}{$R$}
+  \draw[wire] (1.5,-1.0) -- (1.0,-1.0);
+  \ckled{0}{-1.0}{}
+  \draw[wire] (0,-1.0) -- (0,0);
+\end{tikzpicture}}
+
+\lessonsection{Do it}
 \begin{enumerate}
 \item \textbf{Build the loop.} Battery, switch, resistor, LED, back to the
   battery. The LED only works one way round --- if nothing lights, turn it

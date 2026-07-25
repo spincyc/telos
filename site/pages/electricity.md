@@ -30,6 +30,19 @@ measurement, and only then arrives at the equation.
 | 10 | The Spark Gap | Air breaks down and becomes a switch. **Danger starts here.** | [PDF](doc/electricity/lessons/10-spark-gap.pdf) |
 | 11 | **Build the coil** | Assemble, tune and fire it. | [PDF](doc/electricity/build-the-coil.pdf) |
 
+## Demonstrations
+
+Standalone builds, each a single sitting, each tied to the lesson whose idea it
+makes visible. These are the ones that get remembered.
+
+| | Demo | What it does | Do it | Sheet |
+|---|---|---|---|---|
+| A | **Homopolar Motor** | An electric motor with three parts and no switch — five minutes | after 4 | [PDF](doc/electricity/demos/homopolar-motor.pdf) |
+| B | **Kelvin Water Dropper** | Sparks made from falling water and nothing else | after 1 | [PDF](doc/electricity/demos/kelvin-dropper.pdf) |
+| C | **Eddy Currents** | Magnets falling in slow motion through metal that is not magnetic | after 5 | [PDF](doc/electricity/demos/eddy-currents.pdf) |
+| D | **Build a Speaker** | A coil, a magnet and a paper cup turned into music | after 4 | [PDF](doc/electricity/demos/speaker.pdf) |
+| E | **What the Coil Can Do** | Jacob's ladder, and lighting a tube from your hand | after 10 | [PDF](doc/electricity/demos/coil-showpieces.pdf) |
+
 ## Safety
 
 Lessons 1 through 9 run from batteries and small plug-in supplies and cannot

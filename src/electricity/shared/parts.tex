@@ -1,0 +1,223 @@
+% Pictorial component library.
+%
+% A schematic is a language, and a beginner does not speak it yet. Every early
+% lesson therefore shows a *picture* of the actual parts on the actual bench --
+% a 9 V battery that looks like a 9 V battery, a breadboard with holes in it --
+% and only introduces the schematic symbol alongside it, once the reader already
+% knows what the thing does. From Lesson 3 the two are shown side by side so the
+% symbol is learnt as shorthand for something familiar rather than as an
+% arbitrary glyph.
+%
+% Every part is drawn from a single anchor with an explicit scale. One unit is
+% one centimetre at scale 1, roughly life size.
+
+\tikzset{
+  partline/.style={draw=telosink,line width=0.7pt},
+  partheavy/.style={draw=telosink,line width=1.0pt},
+  partdetail/.style={draw=telosink,line width=0.32pt},
+  partfill/.style={fill=telosfill},
+  wirered/.style={draw=telosink,line width=1.1pt,line cap=round},
+  wireblk/.style={draw=telosink,line width=1.1pt,line cap=round,
+                  dash pattern=on 3pt off 1.6pt},
+  partlabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
+  partsmall/.style={font=\fontsize{5.6}{6.4}\selectfont},
+}
+
+% --------------------------------------------------------------------------
+% Power
+% --------------------------------------------------------------------------
+
+% A 9 V battery, terminals up. \pt9V{x}{y}{scale}
+\newcommand{\ptNineVolt}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,partfill] (0,0) rectangle (1.0,1.7);
+    \draw[partdetail] (0.10,0.10) rectangle (0.90,1.45);
+    \draw[partheavy,fill=telospaper] (0.24,1.7) circle (0.13);
+    \draw[partheavy,fill=telospaper] (0.68,1.7) circle (0.10);
+    \draw[partheavy] (0.68,1.60) -- (0.68,1.80);
+    \node[partsmall,anchor=center] at (0.5,0.78) {9\,V};
+    \node[partsmall,anchor=east] at (0.18,1.95) {$-$};
+    \node[partsmall,anchor=west] at (0.80,1.95) {$+$};
+  \end{scope}}
+
+% A two-cell AA holder with leads. \ptCellHolder{x}{y}{scale}
+\newcommand{\ptCellHolder}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,partfill] (0,0) rectangle (2.4,0.9);
+    \foreach \i in {0,1} {
+      \draw[partdetail,fill=telospaper] (0.18+\i*1.1,0.16) rectangle (1.12+\i*1.1,0.74);
+      \draw[partdetail] (1.06+\i*1.1,0.34) rectangle (1.12+\i*1.1,0.56);
+      \node[partsmall] at (0.6+\i*1.1,0.45) {AA};}
+    \draw[wirered] (2.4,0.68) -- (2.9,0.68);
+    \draw[wireblk] (2.4,0.22) -- (2.9,0.22);
+    \node[partsmall,anchor=west] at (2.95,0.68) {$+$};
+    \node[partsmall,anchor=west] at (2.95,0.22) {$-$};
+  \end{scope}}
+
+% --------------------------------------------------------------------------
+% Board and wiring
+% --------------------------------------------------------------------------
+
+% A solderless breadboard, drawn with its hole grid and power rails.
+%   \ptBreadboard{x}{y}{scale}{columns}
+\newcommand{\ptBreadboard}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \pgfmathsetmacro{\bbw}{#4*0.22+0.4}
+    \draw[partheavy,fill=telospaper] (0,0) rectangle (\bbw,2.5);
+    % power rails
+    \foreach \y in {0.18,2.32} {
+      \draw[partdetail] (0.12,\y-0.09) -- (\bbw-0.12,\y-0.09);
+      \foreach \i in {1,...,#4} {\fill[telosink] (0.2+\i*0.22-0.22,\y) circle (0.028);}}
+    % main field, split by the centre channel
+    \foreach \y in {0.72,0.94,1.16,1.38,1.60} {
+      \foreach \i in {1,...,#4} {\fill[telosink] (0.2+\i*0.22-0.22,\y) circle (0.028);}}
+    \draw[partdetail] (0.06,1.14) -- (\bbw-0.06,1.14);
+    \draw[partdetail] (0.06,1.20) -- (\bbw-0.06,1.20);
+    \node[partsmall,anchor=north] at (\bbw/2,-0.06) {breadboard};
+  \end{scope}}
+
+% An alligator clip lead. \ptClipLead{x1}{y1}{x2}{y2}{style}
+\newcommand{\ptClipLead}[5]{%
+  \draw[#5] (#1,#2) .. controls ($(#1,#2)+(0.5,-0.6)$) and ($(#3,#4)+(-0.5,-0.6)$) .. (#3,#4);
+  \foreach \p in {(#1,#2),(#3,#4)} {
+    \fill[telosink] \p circle (0.055);}}
+
+% A single alligator clip, jaws open, hanging from a lead.
+\newcommand{\ptClip}[4]{%
+  \begin{scope}[shift={(#1,#2)},rotate=#4,scale=#3]
+    \draw[partheavy] (0,0) -- (0.34,0.10) -- (0.62,0.02);
+    \draw[partheavy] (0,0) -- (0.34,-0.10) -- (0.62,-0.02);
+    \draw[partdetail] (0.10,0.05) -- (0.10,-0.05);
+    \draw[partheavy] (-0.02,0.08) rectangle (-0.30,-0.08);
+  \end{scope}}
+
+% --------------------------------------------------------------------------
+% Components
+% --------------------------------------------------------------------------
+
+% An LED: domed body, flat on the cathode side, long leg is the anode.
+\newcommand{\ptLED}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,fill=telospaper]
+      (-0.20,0) -- (-0.20,0.24) arc (180:0:0.20) -- (0.20,0) -- cycle;
+    \draw[partdetail] (-0.20,0) -- (0.20,0);
+    \draw[partheavy] (-0.20,0) -- (-0.20,-0.10) -- (-0.24,-0.10);
+    \draw[partheavy] (-0.11,0) -- (-0.11,-0.62);
+    \draw[partheavy] (0.11,0) -- (0.11,-0.40);
+    \node[partsmall,anchor=west] at (-0.09,-0.72) {long leg $=+$};
+  \end{scope}}
+
+% A resistor with four colour bands, drawn as tone blocks so it prints in B/W.
+\newcommand{\ptResistor}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy] (-0.62,0) -- (-0.34,0);
+    \draw[partheavy] (0.34,0) -- (0.62,0);
+    \draw[partheavy,fill=telospaper] (-0.34,-0.13) rectangle (0.34,0.13);
+    \fill[telosink] (-0.24,-0.13) rectangle (-0.17,0.13);
+    \fill[telosdeep] (-0.11,-0.13) rectangle (-0.04,0.13);
+    \fill[telosink] (0.02,-0.13) rectangle (0.09,0.13);
+    \fill[telosmute] (0.20,-0.13) rectangle (0.26,0.13);
+  \end{scope}}
+
+% A toggle switch on a small plate.
+\newcommand{\ptSwitch}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,partfill] (-0.30,-0.22) rectangle (0.30,0.22);
+    \draw[partheavy] (0,0) -- (0.22,0.42);
+    \draw[partheavy,fill=telosink] (0.22,0.42) circle (0.09);
+    \draw[partheavy] (-0.18,-0.22) -- (-0.18,-0.42);
+    \draw[partheavy] (0.18,-0.22) -- (0.18,-0.42);
+  \end{scope}}
+
+% A handheld multimeter with display, dial and two probe jacks.
+\newcommand{\ptMultimeter}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,partfill,rounded corners=0.10] (0,0) rectangle (1.9,3.0);
+    \draw[partheavy,fill=telospaper] (0.22,2.14) rectangle (1.68,2.76);
+    \node[partsmall] at (0.95,2.45) {8.8.8};
+    \draw[partheavy,fill=telospaper] (0.95,1.30) circle (0.52);
+    \draw[partheavy] (0.95,1.30) -- (0.95,1.74);
+    \fill[telosink] (0.95,1.30) circle (0.07);
+    \foreach \a in {30,70,110,150,190,230,270,310,350} {
+      \draw[partdetail] (\a:0.58) -- (\a:0.66);}
+    \draw[partheavy,fill=telospaper] (0.52,0.34) circle (0.13);
+    \draw[partheavy,fill=telospaper] (1.38,0.34) circle (0.13);
+    \node[partsmall,anchor=north] at (0.52,0.16) {COM};
+    \node[partsmall,anchor=north] at (1.38,0.16) {V$\Omega$};
+  \end{scope}}
+
+% --------------------------------------------------------------------------
+% Magnetics
+% --------------------------------------------------------------------------
+
+% An iron nail with wire wound round it. \ptWoundNail{x}{y}{scale}{turns}
+\newcommand{\ptWoundNail}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,partfill] (0,-0.09) rectangle (2.6,0.09);
+    \draw[partheavy,partfill] (-0.16,-0.22) rectangle (0,0.22);
+    \draw[partheavy] (2.6,-0.09) -- (2.95,0) -- (2.6,0.09);
+    \foreach \i in {1,...,#4} {
+      \draw[partline] (0.34+\i*0.16-0.16,-0.20) arc (-90:90:0.10 and 0.20);}
+    \draw[wirered] (0.30,-0.20) .. controls (0.0,-0.6) .. (-0.35,-0.62);
+    \pgfmathsetmacro{\lastx}{0.34+#4*0.16-0.16}
+    \draw[wireblk] (\lastx,0.20) .. controls (\lastx+0.3,0.6) .. (\lastx+0.7,0.62);
+  \end{scope}}
+
+% A bar magnet with poles marked.
+\newcommand{\ptBarMagnet}[4]{%
+  \begin{scope}[shift={(#1,#2)},rotate=#4,scale=#3]
+    \draw[partheavy,fill=telospaper] (0,0) rectangle (1.0,0.38);
+    \draw[partheavy,fill=telosfill] (1.0,0) rectangle (2.0,0.38);
+    \node[partsmall] at (0.5,0.19) {N};
+    \node[partsmall] at (1.5,0.19) {S};
+  \end{scope}}
+
+% A stack of neodymium disc magnets.
+\newcommand{\ptDiscMagnet}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,fill=telosfill] (0,0) rectangle (0.52,0.14);
+    \draw[partheavy,fill=telospaper] (0,0.14) rectangle (0.52,0.28);
+    \draw[partdetail] (0,0.07) ellipse (0.03 and 0.06);
+  \end{scope}}
+
+% A compass, needle pointing at the given bearing.
+\newcommand{\ptCompass}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy,fill=telospaper] (0,0) circle (0.42);
+    \draw[partdetail] (0,0) circle (0.34);
+    \fill[telosink] (#4:0.30) -- ({#4+90}:0.07) -- ({#4+180}:0.30) -- ({#4-90}:0.07) -- cycle;
+    \fill[telospaper] ({#4+180}:0.30) -- ({#4+90}:0.07) -- (0,0) -- ({#4-90}:0.07) -- cycle;
+    \draw[partdetail] ({#4+180}:0.30) -- ({#4+90}:0.07) -- (0,0) -- ({#4-90}:0.07) -- cycle;
+    \fill[telosink] (0,0) circle (0.035);
+  \end{scope}}
+
+% A coil wound on a cardboard tube, seen from the side.
+\newcommand{\ptCoilTube}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[partheavy] (0,0) -- (0,1.1);
+    \draw[partheavy] (#4,0) -- (#4,1.1);
+    \draw[partheavy] (0,1.1) arc (180:0:{#4/2} and 0.16);
+    \draw[partdetail] (0,1.1) arc (-180:0:{#4/2} and 0.16);
+    \draw[partheavy] (0,0) arc (180:360:{#4/2} and 0.16);
+    \foreach \y in {0.28,0.40,0.52,0.64,0.76} {
+      \draw[partline] (0,\y) arc (180:360:{#4/2} and 0.10);}
+    \draw[wirered] (0,0.28) .. controls (-0.4,0.1) .. (-0.6,0.05);
+    \draw[wireblk] (#4,0.76) .. controls (#4+0.4,0.95) .. (#4+0.6,1.0);
+  \end{scope}}
+
+% --------------------------------------------------------------------------
+% Layout helper: the same circuit drawn twice, picture then symbol.
+% --------------------------------------------------------------------------
+\newcommand{\twoways}[2]{%
+  \par\noindent
+  \begin{minipage}[t]{0.56\linewidth}
+    \vspace{0pt}\centering
+    {\partsmalltext\textsc{what it looks like}}\par\vspace{0.2em}
+    #1
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.40\linewidth}
+    \vspace{0pt}\centering
+    {\partsmalltext\textsc{what it is called}}\par\vspace{0.2em}
+    #2
+  \end{minipage}\par\vspace{0.4em}}
+\newcommand{\partsmalltext}{\fontsize{6.6}{7.6}\selectfont}

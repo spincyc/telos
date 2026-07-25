@@ -49,6 +49,23 @@ battery? Then: an electromagnet with 50 turns lifts 8 paper clips. How many will
   prediction in an interesting way.
 \end{enumerate}
 
+\lessonsection{How to wind it}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ptWoundNail{0}{2.4}{1.15}{11}
+  \ptCellHolder{0.4}{0.2}{0.9}
+  \draw[wirered] (-0.4,1.68) .. controls (-1.0,1.1) and (-0.4,0.7) .. (0.4,0.83);
+  \draw[wireblk] (2.5,3.1) .. controls (3.6,3.2) and (3.9,1.2) .. (3.06,0.4);
+  \node[partsmall,anchor=west,align=left] at (3.3,2.6)
+    {every turn the\\same direction};
+  \node[partsmall,anchor=north,align=center] at (1.9,-0.35)
+    {sand the enamel off both ends --- it is insulation, and the circuit
+     will not work through it};
+  \draw[telos arrow] (1.3,3.05) arc (200:-20:0.42 and 0.30);
+\end{tikzpicture}
+\end{center}
+
 \lessonsection{What it means}
 \begin{telosfacts}[0.20]
 \telosfact{Current makes field}{Not "moving magnets make fields" --- moving

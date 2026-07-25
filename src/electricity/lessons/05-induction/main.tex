@@ -21,6 +21,22 @@ magnet dropped down a cardboard tube of the same size? Commit before you drop
 anything.
 \end{predict}
 
+\lessonsection{How to set it up}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ptCoilTube{0}{0.6}{1.25}{1.5}
+  \ptDiscMagnet{0.62}{3.2}{1.5}
+  \draw[telos arrow] (0.95,3.05) -- (0.95,2.3);
+  \node[partsmall,anchor=west] at (1.15,2.7) {drop it through};
+  \ptMultimeter{4.6}{0.0}{0.85}
+  \draw[wirered] (-0.75,0.68) .. controls (-1.2,-0.6) and (3.2,-0.9) .. (5.04,0.29);
+  \draw[wireblk] (2.4,1.85) .. controls (3.6,2.2) and (5.0,1.8) .. (5.77,0.29);
+  \node[partsmall,anchor=north,align=center] at (1.6,-1.15)
+    {200--400 turns on a kitchen-roll tube, both ends sanded, meter on millivolts DC};
+\end{tikzpicture}
+\end{center}
+
 \lessonsection{Do it}
 \begin{enumerate}
 \item \textbf{Wind a sense coil.} Wind 200--400 turns of magnet wire around the

@@ -1,0 +1,70 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{Demo: What the Coil Can Do}{Jacob's ladder, and lighting a tube from your hand}{2026-07-25}
+\begin{document}
+\telosmasthead[The payoff demonstrations --- adult-operated]
+\lessonhead{Demo E}{after the coil is built}{\textbf{adult owns the mains side}}
+
+\highvoltagenote
+
+\section{Jacob's ladder}
+\noindent
+\begin{minipage}[t]{0.34\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[partheavy] (0.55,0.3) .. controls (0.75,2.2) .. (0.15,4.6);
+  \draw[partheavy] (1.65,0.3) .. controls (1.45,2.2) .. (2.05,4.6);
+  \draw[partheavy,fill=telosfill] (0.2,0) rectangle (2.0,0.3);
+  \node[partsmall,anchor=north] at (1.1,-0.05) {NST, in its enclosure};
+  \foreach \y/\w in {0.75/0.16, 1.7/0.30, 2.7/0.46, 3.7/0.66} {
+    \draw[telos hair] (1.1-\w,\y) .. controls (1.1-\w/3,\y+0.16) and (1.1+\w/3,\y-0.10) .. (1.1+\w,\y);}
+  \draw[telos arrow] (2.5,0.9) -- (2.5,4.2);
+  \node[partsmall,anchor=west,align=left] at (2.65,2.5) {the arc\\climbs};
+  \node[partsmall,anchor=south] at (1.1,4.8) {then breaks, and restarts at the bottom};
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.63\linewidth}
+\vspace{0pt}
+\begin{predict}
+Two wires make a narrow V, closest together at the bottom. An arc strikes across
+the gap and then travels \emph{upward}, into a wider and wider gap that ought to
+be harder to jump. Why does it climb rather than staying where it started?
+\end{predict}
+\begin{telosfacts}[0.22]
+\telosfact{Why it strikes low}{The gap is narrowest at the bottom, so that is where the field is strongest and the air breaks down first. \sheetref{10. The Spark Gap}}
+\telosfact{Why it climbs}{The arc is a column of hot ionised gas, and hot gas rises. It also carries current, so it is pushed by its own magnetic field. Both effects drive it up the electrodes.}
+\telosfact{Why it survives}{Ionised air conducts far better than cold air, so once an arc exists it can be stretched much wider than the gap it could originally jump.}
+\telosfact{Why it breaks}{Eventually the arc is stretched too far, cools, and stops conducting. The voltage then reappears across the narrow bottom gap and the cycle restarts.}
+\telosfact{Build note}{Two stiff bare wires, 1--2\,mm apart at the base, opening to 5--8\,cm at the top, mounted on a fireproof insulating base inside the enclosure.}
+\end{telosfacts}
+\end{minipage}
+
+\section{Lighting a fluorescent tube from your hand}
+\begin{telosfacts}[0.22]
+\telosfact{What happens}{Stand several feet from a running coil holding an ordinary fluorescent tube, and it lights --- with no wires and nothing connected to it.}
+\telosfact{Why}{The coil floods the room with a strong, rapidly changing electric field. That field drives the free electrons in the tube's low-pressure mercury vapour back and forth, they collide with mercury atoms, the atoms emit ultraviolet, and the phosphor coating converts that to visible light. Exactly the same process as in the ceiling fixture, with the field arriving through the air instead of through a ballast.}
+\telosfact{It is a field meter}{Walk toward the coil and it brightens; step behind a grounded metal sheet and it dims. You are mapping the field you drew with iron filings in Lesson 2, at room scale.}
+\telosfact{Distance rule}{Do this at a stated distance, agreed before the coil is switched on, and never with any part of you inside the streamer range.}
+\telosfact{Not a party trick}{Everyone in the room needs to be beyond the longest streamer you have seen from this coil, plus a wide margin. The tube does not have to be close to work.}
+\end{telosfacts}
+
+\begin{teloshazard}{These two are the reward, not the point}
+Both demonstrations use the mains-derived high-voltage supply, and the full
+\textbf{Safety} sheet applies without exception: named adult on the plug,
+grounding stick in reach, capacitor shorted before any hand goes near anything,
+second person present, everyone with an implant out of the room, all electronics
+elsewhere, eye and ear protection, extinguisher in reach. Run in short bursts.
+Stop at the first sign of anything unexpected --- a smell of hot varnish, an arc
+where there should not be one, a transformer getting warm.
+\end{teloshazard}
+
+\begin{telospanel}{Close the loop}
+Ask, before you switch anything on, which lesson each of these comes from. The
+ladder is Lesson 10 --- air breaking down and becoming a conductor. The tube is
+Lesson 2 --- a field reaching across empty space to do work. If they can name
+those without help, the course did its job, and the sparks are just the receipt.
+\end{telospanel}
+\end{document}
