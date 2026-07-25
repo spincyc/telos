@@ -79,9 +79,12 @@ to fish it.
 
 | Sheet | What it covers | |
 |---|---|---|
+| Reading Water | Why fish are where they are, so you can find them on any lake | [PDF](doc/lake-country-fishing/reference/reading-water.pdf) |
 | Lures & Baits | What to carry and what each thing is for | [PDF](doc/lake-country-fishing/reference/lures-and-baits.pdf) |
 | Seasonal Calendar | Species by month, and the year by water temperature | [PDF](doc/lake-country-fishing/reference/seasonal-calendar.pdf) |
 | Knots | Four knots cover everything here | [PDF](doc/lake-country-fishing/reference/knots.pdf) |
+| Handling & Release | A released fish that dies anyway was not released | [PDF](doc/lake-country-fishing/reference/handling-and-release.pdf) |
+| A First Trip | How to take somebody fishing who has never been | [PDF](doc/lake-country-fishing/reference/first-trip.pdf) |
 
 ## Regulations
 

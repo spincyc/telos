@@ -15,7 +15,7 @@ repository, so what this site publishes is exactly what was reviewed locally.
 
 | Project | What it is | Sheets |
 |---|---|---|
-| **[Lake Country Fishing](lake-country-fishing.md)** | A field guide to Pine Lake and North Lake, Waukesha County, Wisconsin. Reconstructed depth maps with numbered spots keyed to a season-by-season table, a one-page sheet for every species and every rig, and reference sheets for lures, bait, knots and the fishing year. | 30 |
+| **[Lake Country Fishing](lake-country-fishing.md)** | A field guide to Pine Lake and North Lake, Waukesha County, Wisconsin. Reconstructed depth maps with numbered spots keyed to a season-by-season table, a one-page sheet for every species and every rig, and reference sheets for lures, bait, knots and the fishing year. | 33 |
 | **[Electricity & Magnetism](electricity.md)** | A hands-on course for teenagers that builds, lesson by lesson, to a working spark-gap Tesla coil. Charge, fields, Ohm's law, electromagnets, induction, transformers, capacitors, resonance, coupling, and the spark gap itself. | 8 so far |
 
 ## Start here
