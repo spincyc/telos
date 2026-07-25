@@ -1,0 +1,142 @@
+\input{common/preamble.tex}
+\input{electricity/shared/electricity.tex}
+
+\telosmeta{Electricity \& Magnetism}{Safety}
+  {Read this completely before Lesson 10. Post it on the wall.}{2026-07-25}
+
+\begin{document}
+\telosmasthead[The rules that do not bend]
+
+\begin{teloshazard}{What you are dealing with}
+A neon-sign transformer turns household power into \qtyrange{9}{15}{kV} at
+\qtyrange{30}{60}{mA}. Roughly \qty{10}{mA} across the chest can stop a heart,
+and \qty{100}{mA} very reliably does. This supply delivers several times that,
+it is a \emph{current-limited but not current-safe} source, and it will not let
+go of you --- above about \qty{15}{mA} your hand muscles clamp shut on the
+conductor. The tank capacitor stores a lethal charge \textbf{after the power is
+off} and will hold it for a long time. Nothing in Lessons 1--9 can hurt you.
+Everything from Lesson 10 can kill an adult.
+\end{teloshazard}
+
+\section{The five rules}
+
+\begin{telosfacts}[0.06]
+\telosfact{1}{\textbf{The adult owns the plug.} One adult, named in advance, is
+  the only person who plugs in, switches on, or decides that the machine may be
+  energized. That does not rotate, and it does not get delegated because someone
+  is busy. Everyone else treats the machine as live until that person says
+  otherwise.}
+\telosfact{2}{\textbf{Unplug, then short, then touch.} Never in another order,
+  and never skipping a step. Pull the plug from the wall --- not the switch,
+  the plug. Then take the grounding stick and short the capacitor terminals
+  together, and \emph{leave it shorted} while your hands are inside. A capacitor
+  that was discharged five minutes ago can recover a dangerous voltage on its
+  own through dielectric absorption. Short it again every time.}
+\telosfact{3}{\textbf{One hand.} When anything is or might be energized, your
+  other hand goes in your pocket or behind your back. Current that enters one
+  hand and leaves the other crosses your heart. Current that enters and leaves
+  the same hand mostly does not. This is a habit built in Lesson 3, when it
+  costs nothing, precisely so it is automatic in Lesson 11.}
+\telosfact{4}{\textbf{Never alone.} The machine is never energized, or capable
+  of being energized, with one person in the room. The second person's job is
+  to be able to pull the plug and call for help. They should know where the plug
+  is without looking.}
+\telosfact{5}{\textbf{Stand back and stay back.} Once it is running, nobody is
+  within arm's reach of any part of it. Adjustments happen with the plug out and
+  the capacitor shorted. There is no adjustment worth making while it runs.}
+\end{telosfacts}
+
+\section{Build these in, not on}
+
+\begin{telosfacts}[0.20]
+\telosfact{Grounding stick}{A length of dry hardwood or PVC with a metal hook at
+  the end, a heavy wire from the hook to your RF ground. Build it \emph{first},
+  before any high-voltage part is assembled. It is the single most important
+  object in the room.}
+\telosfact{Bleeder resistors}{Every capacitor in the bank gets a high-value
+  resistor permanently across it, so the bank drains on its own in seconds
+  rather than holding a charge for hours. Bleeders are a backup for the
+  grounding stick, never a replacement for it.}
+\telosfact{Safety gap}{A fixed spark gap wired across the transformer output,
+  set slightly wider than the main gap. The coil's tank circuit can reflect
+  voltage spikes back into the transformer and destroy it; the safety gap fires
+  first and shunts them. It protects the equipment, and equipment that fails
+  unexpectedly is a hazard to people.}
+\telosfact{Interlocked enclosure}{The transformer, capacitor and gap live inside
+  a box. The box has a switch that cuts mains power when it is opened. Test the
+  interlock deliberately before you trust it.}
+\telosfact{A real switch}{A proper switched and fused enclosure with an
+  indicator lamp, at a distance from the coil. Not a power strip on the floor.}
+\telosfact{RF ground}{The secondary's base wire goes to \emph{its own ground
+  rod} driven outside, not to the mains earth in a wall outlet. Streamers
+  returning through house wiring will destroy electronics elsewhere in the
+  building and can energize things that should not be energized.}
+\end{telosfacts}
+
+\section{The other hazards, which are easy to forget}
+
+\begin{telosfacts}[0.20]
+\telosfact{Pacemakers and implants}{A running Tesla coil produces intense
+  electromagnetic fields. Anyone with a pacemaker, implanted defibrillator,
+  insulin pump, cochlear implant or hearing aid must not be in or near the
+  room. This is not a precaution to weigh against convenience --- ask everyone
+  before you fire it, every time.}
+\telosfact{Electronics}{Phones, watches, laptops, hearing aids and car keys go
+  in another room. Not in a pocket. The coil does not distinguish between an
+  antenna and a phone.}
+\telosfact{Radio interference}{A spark-gap coil is a broadband radio
+  transmitter, and an inefficient one. It will interfere with radio, television
+  and wireless service well beyond your own house, and unintentional radiators
+  are regulated. Run it in short bursts, keep total runtime low, and stop if a
+  neighbour reports interference.}
+\telosfact{Ozone and nitrogen oxides}{Sparks in air make both, and both are
+  lung irritants. Ventilate the space, and do not run it in a closed basement
+  room. If you can smell it strongly, stop and air the room out.}
+\telosfact{Ultraviolet}{An arc emits UV. Do not stare into the gap. Safety
+  glasses, and the gap enclosed or shielded.}
+\telosfact{Noise}{A spark gap is genuinely loud and the sound is impulsive.
+  Hearing protection for everyone in the room.}
+\telosfact{Fire}{You are making sparks near wood, dust and insulation. A fire
+  extinguisher within reach, a clear bench, and nothing flammable near the gap.}
+\telosfact{Burns}{Streamers are hot enough to burn skin instantly and to ignite
+  paper. The RF burn from a streamer is deep and does not hurt at first, because
+  it destroys nerve endings on the way in.}
+\end{telosfacts}
+
+\section{Before every run --- read it aloud}
+
+\begin{telosframe}
+\begin{enumerate}[leftmargin=1.4em,itemsep=0.1em]
+\item Is the grounding stick in the room and within reach?
+\item Is the capacitor bank shorted right now, and are my hands out?
+\item Is the enclosure closed and the interlock tested?
+\item Is the RF ground connected to the ground rod, and the connection tight?
+\item Has everyone with an implant left, and are all electronics out of the room?
+\item Is there a second person, and do they know where the plug is?
+\item Safety glasses and hearing protection on everyone?
+\item Is the extinguisher within reach and the bench clear?
+\item Is everyone at least an arm's length beyond the longest streamer I expect?
+\item Am I the named adult, and am I the one about to close this switch?
+\end{enumerate}
+\end{telosframe}
+
+\begin{teloshazard}{If someone is shocked}
+Do not touch them. \textbf{Kill the power first} --- pull the plug --- because
+if they are still in contact with the conductor you will be the second casualty.
+Then call emergency services. Any electrical shock across the chest warrants
+medical assessment even if the person feels fine afterwards: electrical injury
+causes heart rhythm disturbances that can appear hours later, and internal
+burns that are invisible from outside. ``He said he was fine'' is not a
+clinical assessment.
+\end{teloshazard}
+
+\begin{telospanel}{Why the rules are written this way}
+Every rule above exists because it is a habit, not a judgement. In the moment
+that something goes wrong you will not reason your way to the right action ---
+you will do whatever you have always done. That is the entire reason Lessons
+1--9 use batteries that cannot hurt anyone and still insist on one hand,
+discharge before touching, and a second person in the room. The rules are the
+point of the low-voltage lessons; the physics is a bonus.
+\end{telospanel}
+
+\end{document}
