@@ -16,7 +16,7 @@ repository, so what this site publishes is exactly what was reviewed locally.
 | Project | What it is | Sheets |
 |---|---|---|
 | **[Lake Country Fishing](lake-country-fishing.md)** | A field guide to Pine Lake and North Lake, Waukesha County, Wisconsin. Reconstructed depth maps with numbered spots keyed to a season-by-season table, a two-page sheet for every species (field card, then biology), a one-page sheet for every rig, a cooking and filleting sheet per species, and reference sheets for lures, bait, knots and the fishing year. | 44 |
-| **[Potato Launcher](potato-launcher.md)** | A combustion-driven PVC launcher fired on open ground. Four lessons make it a physics project rather than a stunt; six craft sheets and a build log make it something built well enough to trust. | 14 |
+| **[Potato Launcher](potato-launcher.md)** | A combustion-driven PVC launcher fired on open ground. Four lessons make it a physics project rather than a stunt; six craft sheets and a build log make it something built well enough to trust. | 15 |
 | **[Homelab](homelab.md)** | A reproducible network-provisioning system: PXE boot, validated interactive install, a Controller that owns DHCP/DNS/PXE, and continuous Ansible convergence. Generic profile; instance data stays private. | 3 |
 | **[Electricity & Magnetism](electricity.md)** | A hands-on course for teenagers that builds, lesson by lesson, to a working spark-gap Tesla coil. Charge, fields, Ohm's law, electromagnets, induction, transformers, capacitors, resonance, coupling, and the spark gap itself. | 18 |
 

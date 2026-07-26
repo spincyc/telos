@@ -55,6 +55,17 @@ you write down when the last joint was welded, add 48 hours, and write that time
 on the chamber. Nobody fires before then — not for a quick test, not because it
 feels solid.
 
+## Demonstration
+
+| Demo | What it does | Sheet |
+|---|---|---|
+| **Ruben's Tube** | A standing sound wave made visible as a metre of fire that holds perfectly still. Measures the speed of sound in propane by counting flame heights. | [PDF](doc/potato-launcher/demos/rubens-tube.pdf) |
+
+Same physics as the launcher — pressure in a closed volume of gas, and gas that
+burns only where fuel and air are in the right proportion — pointed at something
+spectacular instead of something ballistic. Outdoors only, and the adult owns
+the cylinder.
+
 ## One specification that is not negotiable
 
 Schedule 40 **pressure**-rated PVC, marked with an NSF-PW rating and a pressure
