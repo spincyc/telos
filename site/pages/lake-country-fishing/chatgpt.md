@@ -1,53 +1,98 @@
 # Lake Country Fishing — ChatGPT edition
 
-Three compact, black-and-white field documents for deciding where to go,
-learning from the day, and returning safely. This is an independently
-structured **ChatGPT edition**: it uses provider-neutral shared research but
-selects and organizes the evidence in its own way.
+An independently researched, black-and-white field library for Pine Lake and
+North Lake in Waukesha County. The edition mirrors the full kind of library
+available from Claude—lake guides, fish, rigs, references, cooking, and bound
+lake compendia—while using its own source selection, prose, maps, diagrams, and
+organization.
 
-## What are you doing?
+## Complete lake guides
 
-| Task | Take this | |
+Each compendium binds the exact loose PDFs below and includes only material
+relevant to that lake. Pine includes cisco as **historical-only** evidence;
+North does not. A broad DNR “panfish” record makes an individual panfish a
+candidate, not verified presence.
+
+| Lake | Evidence-led contents | Complete guide |
 |---|---|---|
-| **Choosing between Pine and North** | Durable lake facts, a sixty-second decision, and a first-hour search | [Choose the Lake](../../../doc/lake-country-fishing/chatgpt/choose-the-lake.pdf) |
-| **Trying to turn conditions into a pattern** | An observe–predict–test–record loop with a printable trip log | [Run an Adaptive Fishing Day](../../../doc/lake-country-fishing/chatgpt/adaptive-day.pdf) |
-| **Packing, checking rules, or leaving the ramp** | Legal, weather, PFD, fish-consumption, and invasive-species gates | [Leave Ready, Return Clean](../../../doc/lake-country-fishing/chatgpt/leave-ready.pdf) |
+| **Pine Lake** | 4 current named species + 5 candidate panfish + historical-only cisco | [Download](../../../doc/lake-country-fishing/chatgpt/compendium/pine-lake.pdf) |
+| **North Lake** | 4 current named species + 5 candidate panfish; no cisco or musky | [Download](../../../doc/lake-country-fishing/chatgpt/compendium/north-lake.pdf) |
 
-Start with **Leave Ready, Return Clean**. Use **Choose the Lake** at home, then
-carry **Run an Adaptive Fishing Day** in the boat.
+## The lakes
 
-## What this edition knows—and does not
+The monochrome maps are independently reconstructed from original Wisconsin
+DNR bathymetric material, with contemporary public imagery used only to check
+shoreline and access context. They are fishing aids, not navigation charts.
 
-The stable lake facts come from the Wisconsin DNR records for Pine Lake (WBIC
-779200) and North Lake (WBIC 850800). Safety, invasive-species, consumption,
-and fishing-rule claims come from Wisconsin DNR and NOAA/National Weather
-Service guidance checked July 26, 2026. Tactical suggestions are labeled as
-testable hypotheses; they are not represented as current fisheries-survey
-findings.
+| Lake | DNR identity | Sheet |
+|---|---|---|
+| Pine Lake | WBIC 779200 · 711 acres · 85 ft | [PDF](../../../doc/lake-country-fishing/chatgpt/lakes/pine-lake.pdf) |
+| North Lake | WBIC 850800 · 440 acres · 78.4 ft | [PDF](../../../doc/lake-country-fishing/chatgpt/lakes/north-lake.pdf) |
 
-The shared research layer stores source metadata and atomic claims separately
-from the ChatGPT selection manifest. Another AI provider can reuse, challenge,
-extend, and select different claims without copying this edition’s structure
-or prose.
+## Fish
 
-## Safety and regulations
+Each two-page sheet covers identification, habitat, lake-specific evidence
+limits, presentations, handling, and dated 2026–27 harvest rules.
 
-Static PDFs are not authoritative law. Immediately before every trip, check
-the [Wisconsin DNR fishing regulations](https://dnr.wisconsin.gov/topic/fishing/regulations)
-for the exact water and species, plus posted local boating ordinances. If you
-plan to keep fish, check the current [fish-consumption
+- [Largemouth Bass](../../../doc/lake-country-fishing/chatgpt/fish/largemouth-bass.pdf)
+- [Smallmouth Bass](../../../doc/lake-country-fishing/chatgpt/fish/smallmouth-bass.pdf)
+- [Walleye](../../../doc/lake-country-fishing/chatgpt/fish/walleye.pdf)
+- [Northern Pike](../../../doc/lake-country-fishing/chatgpt/fish/northern-pike.pdf)
+- [Muskellunge](../../../doc/lake-country-fishing/chatgpt/fish/muskellunge.pdf) — identification and lawful-harvest reference; no current presence inferred
+- [Bluegill](../../../doc/lake-country-fishing/chatgpt/fish/bluegill.pdf)
+- [Pumpkinseed](../../../doc/lake-country-fishing/chatgpt/fish/pumpkinseed.pdf)
+- [Black Crappie](../../../doc/lake-country-fishing/chatgpt/fish/black-crappie.pdf)
+- [Yellow Perch](../../../doc/lake-country-fishing/chatgpt/fish/yellow-perch.pdf)
+- [Rock Bass](../../../doc/lake-country-fishing/chatgpt/fish/rock-bass.pdf)
+- [Cisco](../../../doc/lake-country-fishing/chatgpt/fish/cisco.pdf) — Pine evidence is historical-only
+
+## Cooking and cleaning
+
+Every four-page guide covers humane dispatch, cold-chain handling, cleaning,
+species-specific filleting and bone layout, deboning, preparation, at least
+two cooking methods, legal versus preferred eating size, and dated consumption
+advice. All instructional art is original monochrome linework.
+
+| Species | Guide | Species | Guide |
+|---|---|---|---|
+| Largemouth Bass | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/largemouth-bass.pdf) | Smallmouth Bass | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/smallmouth-bass.pdf) |
+| Walleye | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/walleye.pdf) | Northern Pike | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/northern-pike.pdf) |
+| Muskellunge | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/muskellunge.pdf) | Cisco | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/cisco.pdf) |
+| Bluegill | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/bluegill.pdf) | Pumpkinseed | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/pumpkinseed.pdf) |
+| Black Crappie | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/black-crappie.pdf) | Yellow Perch | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/yellow-perch.pdf) |
+| Rock Bass | [PDF](../../../doc/lake-country-fishing/chatgpt/cooking/rock-bass.pdf) | | |
+
+The pike and muskellunge guides draw the forked Y-bone field and the separate
+upper, lower, and tail cuts rather than treating every fish as the same fillet.
+
+## Rigs
+
+| Rig | Sheet | Rig | Sheet |
+|---|---|---|---|
+| Slip Bobber | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/slip-bobber.pdf) | Split Shot | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/split-shot.pdf) |
+| Jig and Minnow | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/jig-and-minnow.pdf) | Lindy Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/lindy-rig.pdf) |
+| Carolina Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/carolina-rig.pdf) | Texas Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/texas-rig.pdf) |
+| Wacky Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/wacky-rig.pdf) | Drop Shot | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/drop-shot.pdf) |
+| Three-Way Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/three-way-rig.pdf) | Quick-Strike Rig | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/quick-strike-rig.pdf) |
+| Tip-Up | [PDF](../../../doc/lake-country-fishing/chatgpt/rigs/tip-up.pdf) | | |
+
+## Shared references
+
+- [Reading Water](../../../doc/lake-country-fishing/chatgpt/reference/reading-water.pdf)
+- [Lures and Bait](../../../doc/lake-country-fishing/chatgpt/reference/lures-and-baits.pdf)
+- [Seasonal Calendar](../../../doc/lake-country-fishing/chatgpt/reference/seasonal-calendar.pdf)
+- [Knots](../../../doc/lake-country-fishing/chatgpt/reference/knots.pdf)
+- [Handling and Release](../../../doc/lake-country-fishing/chatgpt/reference/handling-and-release.pdf)
+- [First Trip](../../../doc/lake-country-fishing/chatgpt/reference/first-trip.pdf)
+
+## Rules, consumption, and evidence
+
+The printed rules are dated for the 2026–27 season. Static PDFs are not law:
+before every trip, check the [Wisconsin DNR fishing
+regulations](https://dnr.wisconsin.gov/topic/fishing/regulations) for the exact
+water, species, and date. Before eating a fish, query current [consumption
 advice](https://dnr.wisconsin.gov/topic/Fishing/consumption) by water, species,
 and length.
 
-Wear a fitted life jacket. Do not launch when thunderstorms are possible; if
-thunder or threatening weather develops, head for port or safe shelter early.
-At the ramp, inspect and remove aquatic hitchhikers, drain equipment, and never
-move live fish away from the waterbody.
-
-## Provenance
-
-Edition: ChatGPT · researched and written 2026-07-26. The source register,
-atomic claim ledger, and selection rationale live under
-`research/lake-country-fishing/`. Lake dimensions and classifications are
-traceable to the Wisconsin DNR waterbody IDs printed above. No prose from the
-existing Claude edition was reused.
+Provider-neutral sources, atomic claims, historical/current boundaries, and
+the ChatGPT selection rationale live under `research/lake-country-fishing/`.

@@ -4,39 +4,42 @@ Edition date: 2026-07-26.
 
 ## Editorial shape
 
-This edition is task-led rather than encyclopedic:
+This is a full field-library edition: independent lake sheets and maps,
+lake-filtered compendia, two-page fish sheets, four-page cooking guides,
+individual rig sheets, and shared reference sheets. It parallels the complete
+kind of coverage in the Claude edition without copying Claude prose, finished
+maps, diagrams, or source-selection judgments.
 
-1. **Choose the lake** turns stable physical facts into a falsifiable first
-   plan.
-2. **Run the trip** uses a short decision loop instead of species-by-species
-   recipes.
-3. **Come home clean** puts law, safety, release, and invasive-species actions
-   into one departure card.
-
-The set deliberately avoids copied prose, inherited spot numbers, and
-one-sheet-per-species symmetry. It does not assert a productive fishing spot
-without current survey evidence.
+The loose sheet remains the unit of publication. A compendium binds those
+exact provider-owned PDFs rather than rewriting them. Pine and North need not
+have symmetric compendia: current water-specific evidence decides what is
+bound. The lake books separate four individually named species from five named
+panfish candidate sheets; the broad group record does not establish individual
+presence. Pine alone carries a separately divided historical-only cisco module.
 
 ## Selected claims
 
 | Claim | Used in | Why salient |
 |---|---|---|
-| LCF-LAKE-001, 003, 005 | `choose-the-lake` | The lakes demand different search plans. |
-| LCF-LAKE-002, 004 | `leave-ready` | Local ordinance status belongs at departure, not in static prose. |
-| LCF-RULE-001, 002 | `leave-ready` | Prevents a static guide from masquerading as law. |
-| LCF-RULE-003 | `leave-ready` | Converts AIS law into an end-of-trip action. |
-| LCF-FOOD-001 | `leave-ready` | Keeps harvest decisions tied to current advice. |
-| LCF-SAFE-001–004 | `leave-ready`, `adaptive-day` | Highest-consequence decisions come before tactics. |
-| LCF-CARE-001 | `adaptive-day` | Release planning is part of tackle choice. |
+| LCF-LAKE-001–005 | lake sheets, compendia | Stable physical character and evidence limits shape the search. |
+| LCF-FISH-001–003 | fish sheets, compendia | Distinguishes individually named fish from candidate members of a broad panfish record. |
+| LCF-FISH-RULE-001–002 | fish and cooking sheets | Prints dated rules while yielding to the live water-specific page. |
+| LCF-FOOD-001–006 | cooking guides | Governs dispatch, processing, temperature, contaminants, and original diagrams. |
+| LCF-SAFE-001–004 | lake and reference sheets | Highest-consequence decisions precede tactics. |
+| LCF-CARE-001 | fish and handling sheets | Release planning begins before the cast. |
+| Tackle and reference ledgers | rigs and references | Retains complete practical coverage while keeping tactical claims testable. |
 
 ## Excluded or bounded
 
-- Exact bag and length limits: excluded because they are volatile and
-  water-specific.
+- Exact bag and length limits are printed as dated 2026–27 values and always
+  paired with a live-rule departure check.
 - Exact public-access availability and local launch rules: bounded to live DNR
   and posted information.
-- Bathymetric contours and navigation: excluded from this compact edition.
-- Species-presence and population claims: excluded pending a current,
-  water-specific fisheries survey suitable for publication.
+- Bathymetry is independently reconstructed as a monochrome fishing aid, never
+  a navigation chart.
+- The current DNR pages support four individually named fish on each lake plus
+  a broad panfish group. Individual panfish sheets say candidate, not verified
+  presence. Pine cisco is historical-only. A regulation is not used as
+  muskellunge presence evidence.
 - Seasonal depths and lure claims: presented only as testable starting
   hypotheses, never lake facts.
