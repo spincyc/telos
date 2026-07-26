@@ -1,0 +1,24 @@
+# Present the installer on the serial console at boot.
+#
+# The acceptance matrix (ADR 0056) attaches to ttyS0 and drives the genuine
+# interactive prompts through it (ADR 0058). A person at a physical console
+# gets the same program on tty1.
+[Unit]
+Description=Homelab provisioning environment
+After=systemd-networkd-wait-online.service
+Wants=systemd-networkd-wait-online.service
+ConditionPathExists=/usr/local/bin/homelab-install
+
+[Service]
+Type=idle
+ExecStart=/usr/local/bin/homelab-install
+StandardInput=tty-force
+StandardOutput=inherit
+StandardError=inherit
+TTYPath=/dev/ttyS0
+TTYReset=yes
+TTYVHangup=yes
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

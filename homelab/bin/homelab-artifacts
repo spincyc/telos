@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Publish and verify the boot artifact tree.
+
+    homelab-artifacts publish <source> <root>   copy in and re-checksum
+    homelab-artifacts verify  <root>            check every artifact
+    homelab-artifacts nginx   <address>         print the service config
+    homelab-artifacts ipxe    <base-url>        print the boot script
+
+ADR 0048 requires a manifest listing every artifact with its SHA-256, which the
+installer verifies before use. This is the tool that maintains it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+import artifacts  # noqa: E402
+
+
+def publish(source: Path, root: Path) -> int:
+    root.mkdir(parents=True, exist_ok=True)
+    for path in sorted(Path(source).rglob("*")):
+        if path.is_file():
+            destination = root / path.relative_to(source)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+    manifest = artifacts.build_manifest(root)
+    (root / artifacts.MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    print(f"published {len(manifest['artifacts'])} artifacts to {root}")
+    for name, digest in sorted(manifest["artifacts"].items()):
+        print(f"  {digest[:16]}  {name}")
+    return 0
+
+
+def verify(root: Path) -> int:
+    manifest_path = root / artifacts.MANIFEST_NAME
+    if not manifest_path.is_file():
+        print(f"no manifest at {manifest_path}", file=sys.stderr)
+        return 2
+    manifest = json.loads(manifest_path.read_text())
+    problems = artifacts.verify_against(manifest, root)
+    if problems:
+        print("ARTIFACT VERIFICATION FAILED", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+    print(f"verified {len(manifest['artifacts'])} artifacts against {manifest_path}")
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    publish_parser = sub.add_parser("publish")
+    publish_parser.add_argument("source", type=Path)
+    publish_parser.add_argument("root", type=Path)
+
+    verify_parser = sub.add_parser("verify")
+    verify_parser.add_argument("root", type=Path)
+
+    nginx_parser = sub.add_parser("nginx")
+    nginx_parser.add_argument("address")
+
+    ipxe_parser = sub.add_parser("ipxe")
+    ipxe_parser.add_argument("base_url")
+
+    arguments = parser.parse_args(argv)
+    if arguments.command == "publish":
+        return publish(arguments.source, arguments.root)
+    if arguments.command == "verify":
+        return verify(arguments.root)
+    if arguments.command == "nginx":
+        print(artifacts.render_nginx(listen_address=arguments.address), end="")
+        return 0
+    if arguments.command == "ipxe":
+        print(artifacts.render_ipxe(base_url=arguments.base_url), end="")
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

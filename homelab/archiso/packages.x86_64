@@ -1,0 +1,46 @@
+# Homelab provisioning environment package set (ADR 0049).
+#
+# Every entry is something bin/homelab-install shells out to, or something
+# needed to reach the console over the network. If a package cannot be traced
+# to a line in the installer, it does not belong here: this image is a public
+# artifact and every package in it is attack surface on a machine that is
+# about to be handed a disk to erase.
+
+base
+linux
+linux-firmware
+mkinitcpio
+mkinitcpio-archiso
+mkinitcpio-nfs-utils
+
+# Disk layout --- disks.py
+gptfdisk
+parted
+dosfstools
+btrfs-progs
+cryptsetup
+util-linux
+
+# Installing the target system
+arch-install-scripts
+systemd-ukify
+sbctl
+
+# The installer itself
+python
+
+# Network boot and reaching the artifact service
+iproute2
+iputils
+curl
+wget
+openssh
+
+# Diagnosis when something does not work at 2 a.m.
+nano
+less
+lsof
+pciutils
+usbutils
+dmidecode
+tmux
