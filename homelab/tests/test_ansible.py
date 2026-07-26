@@ -194,6 +194,70 @@ class TestPlaybooks(unittest.TestCase):
         self.assertIn("@sha256:", conditions)
 
 
+
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class TestInstanceTemplate(unittest.TestCase):
+    """The tracked template must stay in step with what the roles read.
+
+    The real overlay is gitignored, so nothing else would catch a variable
+    being renamed in a role while the template kept offering the old name. The
+    failure mode is quiet: convergence falls back to the role default -- an
+    empty break-glass key list -- and stops with a message about a key the
+    operator believes they supplied.
+    """
+
+    TEMPLATE = ROOT / "instance-example"
+
+    def load(self, relative):
+        return yaml.safe_load((self.TEMPLATE / relative).read_text())
+
+    def role_defaults(self, role):
+        return yaml.safe_load(
+            (ANSIBLE / "roles" / role / "defaults" / "main.yml").read_text())
+
+    def test_the_template_exists_and_parses(self):
+        for path in sorted(self.TEMPLATE.rglob("*.yml")):
+            with self.subTest(path=path.relative_to(self.TEMPLATE)):
+                self.assertIsInstance(yaml.safe_load(path.read_text()), dict)
+
+    def test_it_supplies_every_variable_the_common_role_leaves_empty(self):
+        supplied = self.load("group_vars/all.yml")
+        for name, value in self.role_defaults("common").items():
+            if value in ([], "", None):
+                with self.subTest(variable=name):
+                    self.assertIn(name, supplied)
+
+    def test_the_controller_group_names_the_optional_role_switches(self):
+        supplied = self.load("group_vars/controllers.yml")
+        for switch in ("homelab_services_enabled", "homelab_identity_enabled"):
+            self.assertIn(switch, supplied)
+            self.assertFalse(supplied[switch], f"{switch} must default to off")
+
+    def test_the_inventory_has_the_groups_the_playbooks_target(self):
+        inventory = self.load("inventory/hosts.yml")
+        groups = inventory["all"]["children"]
+        self.assertIn("controllers", groups)
+        self.assertIn("workstations", groups)
+
+    def test_the_template_carries_no_key_material(self):
+        # A template with a real-looking key in it is a key somebody will use.
+        for path in sorted(self.TEMPLATE.rglob("*")):
+            if not path.is_file():
+                continue
+            text = path.read_text()
+            with self.subTest(path=path.relative_to(self.TEMPLATE)):
+                self.assertNotIn("BEGIN OPENSSH PRIVATE KEY", text)
+                self.assertNotIn("BEGIN RSA PRIVATE KEY", text)
+                # A public key body is base64; the placeholder is not.
+                self.assertNotRegex(text, r"ssh-ed25519 AAAA")
+                self.assertNotRegex(text, r"ssh-rsa AAAA")
+
+    def test_the_ansible_configuration_points_at_the_overlay_it_seeds(self):
+        configuration = (ANSIBLE / "ansible.cfg").read_text()
+        self.assertIn("../instance/inventory/hosts.yml", configuration)
+        self.assertTrue((self.TEMPLATE / "inventory/hosts.yml").exists())
+
+
 class TestNoInstanceData(unittest.TestCase):
     """ADR 0046: nothing here may name a real machine."""
 

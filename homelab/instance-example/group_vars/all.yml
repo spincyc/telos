@@ -1,0 +1,10 @@
+# Applies to every managed machine.
+---
+# The local administrator that exists whether or not the directory is up.
+# Deliberately not your directory account and not `root` (ADR 0055, ADR 0063).
+homelab_breakglass_user: <break-glass-user>
+
+# The public half of the dedicated break-glass key pair, verbatim, one entry per
+# line of the .pub file. The private half is never stored in this repository.
+homelab_breakglass_authorized_keys:
+  - "ssh-ed25519 <public-key-body> homelab break-glass"

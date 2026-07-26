@@ -47,6 +47,16 @@ OVMF_VARS_CANDIDATES = (
 LAB_SOCKET_PORT = 12960
 
 
+def serial_for(name: str) -> str:
+    """A stable, obviously-synthetic serial for a lab machine's disk.
+
+    Obviously synthetic on purpose: if one of these ever shows up in a summary
+    on real hardware, it should be unmistakable that the wrong thing is being
+    installed. Stable so a test can predict what the harness must type.
+    """
+    return f"LAB-{name.upper()}-0001"
+
+
 def _first_existing(candidates) -> str | None:
     for candidate in candidates:
         if Path(candidate).is_file():
@@ -79,6 +89,11 @@ class Machine:
     memory_mb: int = 2048
     cpus: int = 2
     mac: str = "52:54:00:00:00:01"
+    # A virtio disk reports no serial unless one is set, and the installer will
+    # not offer a disk it cannot confirm at the authorization prompt (ADR 0058)
+    # -- so without this the matrix could never install anything. Setting it is
+    # also the faithful thing to do: real hardware reports a serial.
+    disk_serial: str = ""
     # The first machine listens; the others connect to it, which forms one
     # layer-2 segment among the guests and nothing else.
     listens: bool = False
@@ -115,6 +130,8 @@ class Lab:
 
     def add(self, machine: Machine) -> Machine:
         machine.disk_path = self.root / f"{machine.name}.qcow2"
+        if not machine.disk_serial:
+            machine.disk_serial = serial_for(machine.name)
         subprocess.run(
             [QEMU_IMG, "create", "-f", "qcow2", str(machine.disk_path), f"{machine.disk_gib}G"],
             check=True, capture_output=True)
@@ -149,7 +166,11 @@ class Lab:
         if machine.vars_path and machine.vars_path.exists():
             argv += ["-drive", f"if=pflash,format=raw,unit=1,file={machine.vars_path}"]
 
-        argv += ["-drive", f"file={machine.disk_path},if=virtio,format=qcow2"]
+        # Split into a backend and an explicit device so the serial can be set.
+        # `if=virtio` shorthand gives no way to do that, and a disk with no
+        # serial is one the installer refuses to offer.
+        argv += ["-drive", f"file={machine.disk_path},if=none,id=disk0,format=qcow2",
+                 "-device", f"virtio-blk-pci,drive=disk0,serial={machine.disk_serial}"]
 
         transport = (f"socket,id=lab,listen=:{LAB_SOCKET_PORT}" if machine.listens
                      else f"socket,id=lab,connect=127.0.0.1:{LAB_SOCKET_PORT}")

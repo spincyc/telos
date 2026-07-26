@@ -1,0 +1,30 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/nvme0n1",
+        "type": "disk",
+        "model": "Samsung SSD 990 PRO 2TB",
+        "serial": "S7DPNU0X301234",
+        "size": 2000381018112,
+        "rm": false,
+        "rota": false,
+        "tran": "nvme"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "enp5s0",
+      "mac": "3c:ec:ef:20:00:01",
+      "carrier": true,
+      "speed": 1000,
+      "wireless": false
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": false,
+    "tpm2": true
+  }
+}

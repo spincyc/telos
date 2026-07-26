@@ -2,6 +2,10 @@
 # The break-glass administrator. ADR 0055 makes this mandatory rather than
 # optional: while the directory is down, this account and cached credentials
 # are the only way in. It is never a directory account.
+#
+# The key is a dedicated pair used for nothing else (ADR 0063). Nothing here
+# ever handles the private half. Both values are supplied by the gitignored
+# instance overlay; an inherited default key would be a credential in Git.
 homelab_breakglass_user: labadmin
 homelab_breakglass_authorized_keys: []
 

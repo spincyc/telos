@@ -1,0 +1,50 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/sda",
+        "type": "disk",
+        "model": "Ultra Fit",
+        "serial": "4C531001550",
+        "size": 68719476736,
+        "rm": true,
+        "rota": false,
+        "tran": "usb"
+      },
+      {
+        "path": "/dev/sdb",
+        "type": "disk",
+        "model": "KINGSTON SA400",
+        "serial": "50026B7",
+        "size": 59055800320,
+        "rm": false,
+        "rota": false,
+        "tran": "sata"
+      },
+      {
+        "path": "/dev/sdc",
+        "type": "disk",
+        "model": "WDC WD5000AZLX",
+        "serial": "",
+        "size": 499289948160,
+        "rm": false,
+        "rota": true,
+        "tran": "sata"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "enp2s0",
+      "mac": "3c:ec:ef:20:00:05",
+      "carrier": true,
+      "speed": 1000,
+      "wireless": false
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": false,
+    "tpm2": true
+  }
+}

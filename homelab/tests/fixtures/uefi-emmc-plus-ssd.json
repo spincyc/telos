@@ -1,0 +1,40 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/mmcblk0",
+        "type": "disk",
+        "model": "BJTD4R",
+        "serial": "0x12345678",
+        "size": 62277025792,
+        "rm": false,
+        "rota": false,
+        "tran": "mmc"
+      },
+      {
+        "path": "/dev/sda",
+        "type": "disk",
+        "model": "CT1000MX500SSD1",
+        "serial": "2043E5B12345",
+        "size": 999653638144,
+        "rm": false,
+        "rota": false,
+        "tran": "sata"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "enp1s0",
+      "mac": "00:e0:4c:20:00:04",
+      "carrier": true,
+      "speed": 1000,
+      "wireless": false
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": false,
+    "tpm2": false
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/nvme0n1",
+        "type": "disk",
+        "model": "KIOXIA KXG60ZNV512G",
+        "serial": "Z0AB12345678",
+        "size": 511101108224,
+        "rm": false,
+        "rota": false,
+        "tran": "nvme"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "wlp2s0",
+      "mac": "a0:88:69:20:00:06",
+      "carrier": true,
+      "speed": 866,
+      "wireless": true
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": false,
+    "tpm2": true
+  }
+}

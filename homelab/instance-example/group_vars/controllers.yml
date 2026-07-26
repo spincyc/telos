@@ -1,0 +1,29 @@
+# Controller-only variables.
+---
+# ADR 0054: off by default. Set true on the host that should run the always-on
+# applications -- today that may be the Controller itself; moving them later
+# changes which host claims the role and nothing else.
+homelab_services_enabled: false
+
+homelab_services: []
+# - name: homebridge
+#   description: HomeKit bridge
+#   image: ghcr.io/homebridge/homebridge@sha256:<digest>
+#   # Host networking is required: mDNS does not traverse a container network,
+#   # and HomeKit pairing does not work without it.
+#   host_network: true
+#   state_path: /homebridge
+# - name: openhab
+#   image: docker.io/openhab/openhab@sha256:<digest>
+#   host_network: true
+#   devices:
+#     # Stable by-id path. A /dev/ttyUSB number is reassigned on reboot and
+#     # would hand this application somebody else's radio.
+#     - /dev/serial/by-id/<usb-radio-id>
+
+# ADR 0055: enable only once the domain controller exists and answers. Joining
+# a machine to a directory that is not ready is how a working machine stops
+# being able to log in.
+homelab_identity_enabled: false
+homelab_identity_domain: <domain>.home.arpa
+homelab_identity_realm: <DOMAIN>.HOME.ARPA

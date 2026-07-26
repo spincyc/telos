@@ -1,0 +1,57 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/nvme0n1",
+        "type": "disk",
+        "model": "WD Black SN850X 1TB",
+        "serial": "23110X800123",
+        "size": 999653638144,
+        "rm": false,
+        "rota": false,
+        "tran": "nvme"
+      },
+      {
+        "path": "/dev/sda",
+        "type": "disk",
+        "model": "Samsung SSD 870 EVO 1TB",
+        "serial": "S6PENL0T900456",
+        "size": 999653638144,
+        "rm": false,
+        "rota": false,
+        "tran": "sata"
+      },
+      {
+        "path": "/dev/sdb",
+        "type": "disk",
+        "model": "ST4000VN008",
+        "serial": "ZDH1ABCD",
+        "size": 4000762036224,
+        "rm": false,
+        "rota": true,
+        "tran": "sata"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "enp3s0",
+      "mac": "3c:ec:ef:20:00:02",
+      "carrier": true,
+      "speed": 1000,
+      "wireless": false
+    },
+    {
+      "name": "enp4s0",
+      "mac": "3c:ec:ef:20:00:03",
+      "carrier": false,
+      "speed": null,
+      "wireless": false
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": false,
+    "tpm2": true
+  }
+}

@@ -156,3 +156,99 @@ class TestDriverSafety(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEveryHardwareShape(unittest.TestCase):
+    """Drive the real installer end to end against each hardware shape.
+
+    The shape tests judge preflight directly. These check the whole program:
+    that the questions asked, the summary shown and the serial demanded all
+    still line up when the machine underneath is a different shape. A machine
+    the installer judges correctly but cannot actually be driven through is
+    still a machine that does not install.
+    """
+
+    def shape(self, name):
+        return str(ROOT / f"tests/fixtures/{name}.json")
+
+    def test_a_single_nvme_controller_installs(self):
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="1", managed_interface="1"),
+            confirmation="S7DPNU0X301234",
+            machine=self.shape("uefi-single-nvme"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("/dev/nvme0n1p2", transcript.text)
+
+    def test_choosing_the_second_of_several_disks_targets_that_disk(self):
+        # The offered list is ordered, so answering "2" must reach /dev/sda --
+        # and the serial demanded must be that disk's, not the first one's.
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="2"),
+            confirmation="S6PENL0T900456",
+            machine=self.shape("uefi-mixed-nvme-sata"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("/dev/sda1", transcript.text)
+        self.assertNotIn("/dev/nvme0n1p", transcript.text)
+
+    def test_the_first_disk_s_serial_does_not_authorize_the_second(self):
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="2"),
+            confirmation="23110X800123",           # the NVMe's serial
+            machine=self.shape("uefi-mixed-nvme-sata"))
+        self.assertNotEqual(transcript.exit_status, 0)
+        self.assertIn("Nothing has been written", transcript.text)
+
+    def test_an_unplugged_managed_interface_is_selectable(self):
+        # ADR 0010: installed on one network, carried to another while powered
+        # off. enp4s0 has no carrier and is the second offered interface.
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="1", managed_interface="2"),
+            confirmation="23110X800123",
+            machine=self.shape("uefi-mixed-nvme-sata"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("enp4s0", transcript.text)
+
+    def test_an_emmc_machine_installs_to_its_ssd(self):
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="1"),
+            confirmation="2043E5B12345",
+            machine=self.shape("uefi-emmc-plus-ssd"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("/dev/sda2", transcript.text)
+        # The eMMC was excluded, and the operator can see why.
+        self.assertIn("/dev/mmcblk0", transcript.text)
+
+    def test_the_lab_guest_installs(self):
+        # The shape the acceptance matrix actually boots. If this fails, the
+        # matrix cannot install anything at all.
+        transcript = install(
+            answers=dict(CONTROLLER_ANSWERS, target_disk="1"),
+            confirmation="LAB-CONTROLLER-0001",
+            machine=self.shape("uefi-virtio-lab-guest"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("/dev/vda1", transcript.text)
+
+    def test_a_machine_with_no_eligible_disk_refuses_before_asking_anything(self):
+        transcript = install(
+            answers={"profile": "controller"},
+            confirmation=None,
+            machine=self.shape("uefi-no-eligible-disk"))
+        self.assertEqual(transcript.exit_status, 2, transcript.tail())
+        self.assertIn("CANNOT INSTALL ON THIS MACHINE", transcript.text)
+        self.assertIn("Nothing has been written", transcript.text)
+
+    def test_a_wireless_only_machine_refuses_the_controller_profile(self):
+        transcript = install(
+            answers={"profile": "controller"},
+            confirmation=None,
+            machine=self.shape("uefi-wireless-only"))
+        self.assertEqual(transcript.exit_status, 2, transcript.tail())
+
+    def test_the_same_wireless_only_machine_installs_as_a_workstation(self):
+        transcript = install(
+            answers={"profile": "workstation", "hostname": "laptop",
+                     "target_disk": "1"},
+            confirmation="Z0AB12345678",
+            machine=self.shape("uefi-wireless-only"))
+        self.assertEqual(transcript.exit_status, 0, transcript.tail())
+        self.assertIn("/dev/nvme0n1p1", transcript.text)

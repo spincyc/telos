@@ -84,7 +84,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
-	homelab-test homelab-lab homelab-converge-check adr-digest \
+	homelab-test homelab-lab homelab-converge-check homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
 .DELETE_ON_ERROR:
 
@@ -142,6 +142,16 @@ homelab-lab:
 		missing = lab.missing_requirements(); \
 		print('lab ready') if not missing else \
 		[print('missing:', item) for item in missing]"
+
+# Seed the private instance overlay from the tracked template. Never overwrites:
+# the overlay is not in Git, so clobbering it loses the only copy.
+homelab-instance:
+	@if [ -d homelab/instance ]; then \
+		echo "homelab/instance already exists, leaving it alone"; \
+	else \
+		cp -r homelab/instance-example homelab/instance; \
+		echo "seeded homelab/instance from the template; fill in the placeholders"; \
+	fi
 
 # Syntax-check the convergence playbooks. Structural invariants are covered by
 # the unit tests; this catches what only Ansible itself can see. Skips quietly
