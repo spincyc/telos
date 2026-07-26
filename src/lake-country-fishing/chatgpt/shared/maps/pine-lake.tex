@@ -1,0 +1,74 @@
+\begin{tikzpicture}[x=.68cm,y=.68cm]
+% Independent generalization of the 1955 DNR survey, checked against 2024 NAIP.
+\path[cgshore]
+ (4.4,13.7)..controls(4.0,13.0)and(4.1,12.3)..(3.8,11.7)
+ ..controls(3.5,11.0)and(4.0,10.4)..(3.2,9.7)
+ ..controls(2.3,9.1)and(1.2,9.3)..(1.0,8.5)
+ ..controls(.8,7.8)and(1.6,7.4)..(1.2,6.7)
+ ..controls(.8,6.0)and(.9,5.1)..(1.6,4.7)
+ ..controls(2.0,4.4)and(1.4,3.7)..(1.7,3.0)
+ ..controls(2.1,2.2)and(2.7,1.6)..(3.0,.7)
+ ..controls(3.4,.1)and(4.1,.5)..(4.3,1.1)
+ ..controls(4.6,1.7)and(5.1,1.5)..(5.6,2.0)
+ ..controls(6.2,2.5)and(6.0,3.2)..(6.6,3.7)
+ ..controls(7.0,4.1)and(6.5,4.7)..(6.9,5.3)
+ ..controls(7.5,6.2)and(7.1,7.1)..(7.5,8.0)
+ ..controls(7.8,8.8)and(7.3,9.5)..(7.6,10.2)
+ ..controls(7.9,10.9)and(7.2,11.3)..(6.8,11.1)
+ ..controls(6.1,10.8)and(5.7,11.6)..(5.1,11.7)
+ ..controls(4.7,11.9)and(5.0,12.8)..(4.4,13.7)--cycle;
+\draw[cgten]
+ (4.35,13.1)..controls(4.2,12.1)and(4.0,11.3)..(3.7,10.4)
+ ..controls(3.2,9.7)and(1.6,9.3)..(1.5,8.5)
+ ..controls(1.4,7.7)and(2.0,7.1)..(1.6,6.2)
+ ..controls(1.2,5.1)and(2.0,4.5)..(2.0,3.6)
+ ..controls(2.1,2.7)and(3.0,2.0)..(3.2,1.1)
+ ..controls(3.8,.8)and(4.1,1.6)..(4.7,1.9)
+ ..controls(5.6,2.3)and(5.4,3.3)..(6.2,3.9)
+ ..controls(6.8,4.5)and(6.2,5.4)..(6.8,6.4)
+ ..controls(7.2,7.4)and(6.8,8.7)..(7.1,9.7)
+ ..controls(7.3,10.5)and(6.7,10.7)..(6.1,10.6)
+ ..controls(5.2,10.4)and(5.0,11.4)..(4.6,11.2)
+ ..controls(4.1,10.9)and(4.7,10.0)..(4.0,9.7)
+ ..controls(3.6,9.3)and(4.1,8.7)..(4.0,8.0)
+ ..controls(3.9,7.3)and(4.1,6.3)..(4.2,5.5)
+ ..controls(4.4,4.6)and(4.6,3.5)..(4.1,2.7);
+\draw[cgtwenty]
+ (4.2,11.0)..controls(3.2,10.2)and(2.2,9.1)..(2.0,8.2)
+ ..controls(1.8,7.0)and(2.4,6.4)..(2.3,5.3)
+ ..controls(2.1,4.3)and(2.7,3.2)..(3.2,2.2)
+ ..controls(3.8,1.6)and(4.7,2.5)..(5.0,3.3)
+ ..controls(5.3,4.1)and(5.1,4.9)..(5.6,5.8)
+ ..controls(6.3,7.0)and(6.0,8.3)..(6.4,9.2)
+ ..controls(6.6,9.8)and(5.9,10.1)..(5.3,9.9)
+ ..controls(4.8,9.7)and(5.1,8.8)..(4.6,8.3)
+ ..controls(4.1,7.8)and(4.7,6.6)..(4.6,5.7)
+ ..controls(4.5,4.9)and(4.2,4.1)..(4.0,3.2);
+\draw[cgforty]
+ (3.9,10.1)..controls(2.8,9.0)and(2.4,8.1)..(2.7,7.1)
+ ..controls(3.0,6.0)and(2.6,5.0)..(3.0,4.0)
+ ..controls(3.4,3.0)and(4.4,3.1)..(4.7,4.0)
+ ..controls(5.0,5.0)and(5.2,5.9)..(5.5,6.9)
+ ..controls(5.8,8.0)and(5.3,9.1)..(4.8,9.4)
+ ..controls(4.4,9.6)and(4.2,9.9)..(3.9,10.1)--cycle;
+\draw[cgsixty]
+ (3.7,9.2)..controls(3.0,8.2)and(3.2,7.0)..(3.4,5.9)
+ ..controls(3.5,4.9)and(3.8,4.0)..(4.2,4.0)
+ ..controls(4.8,4.2)and(4.8,5.6)..(5.1,6.6)
+ ..controls(5.3,7.7)and(4.9,8.8)..(4.4,9.2)--cycle;
+\node[cgdepth] at (4.25,7.1) {85};
+\node[cgdepth] at (2.45,6.0) {20};
+\node[cgdepth] at (5.7,9.0) {20};
+\node[cgdepth] at (4.8,3.2) {40};
+\fill[white,draw=black,line width=.7pt]
+ (5.0,8.6)..controls(5.2,8.9)and(5.4,8.5)..(5.35,8.1)
+ ..controls(5.25,7.8)and(4.95,8.1)..(5.0,8.6)--cycle;
+\node[cgnote] at (5.25,8.85) {island};
+\cgspot{4.2}{12.2}{1}\cgspot{6.3}{10.55}{2}\cgspot{5.45}{9.25}{3}
+\cgspot{4.85}{8.15}{4}\cgspot{1.75}{8.1}{5}\cgspot{1.65}{5.5}{6}
+\cgspot{6.35}{4.65}{7}\cgspot{3.6}{3.0}{8}\cgspot{3.85}{1.2}{9}
+\node[draw=black,fill=white,minimum size=3mm,inner sep=0pt,font=\scriptsize\bfseries]
+ at (3.55,.35) {A};
+\node[cgnote,anchor=north west] at (3.75,.45) {verify launch/signs};
+\cgnorth{7.7}{12.6}\cgscale{.5}{.25}{1.55}{0.5 mile}
+\end{tikzpicture}

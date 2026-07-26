@@ -277,9 +277,15 @@ clean:
 
 distclean: clean
 
-# The per-lake compendiums bind already-built sheets with \includepdf, so they
-# depend on every other PDF in the project rather than on TeX sources.
-COMPENDIUM_PDFS := $(filter $(BUILD_ROOT)/lake-country-fishing/compendium/%,$(BUILD_PDFS))
-COMPENDIUM_INPUTS := $(filter-out $(COMPENDIUM_PDFS),\
-	$(filter $(BUILD_ROOT)/lake-country-fishing/%,$(BUILD_PDFS)))
-$(COMPENDIUM_PDFS): $(COMPENDIUM_INPUTS)
+# Each provider's per-lake compendiums bind that provider's already-built
+# sheets with \includepdf. Keep the dependency inside the edition: a ChatGPT
+# compendium must not wait on, or accidentally bind, Claude artifacts.
+COMPENDIUM_EDITIONS := $(sort $(foreach document,$(DOCUMENTS),\
+	$(if $(findstring /compendium/,$(document)),\
+	$(word 1,$(subst /, ,$(document)))/$(word 2,$(subst /, ,$(document))))))
+define REGISTER_COMPENDIUM_EDITION
+$(filter $(BUILD_ROOT)/$(1)/compendium/%,$(BUILD_PDFS)): \
+	$(filter-out $(BUILD_ROOT)/$(1)/compendium/%,\
+	$(filter $(BUILD_ROOT)/$(1)/%,$(BUILD_PDFS)))
+endef
+$(foreach edition,$(COMPENDIUM_EDITIONS),$(eval $(call REGISTER_COMPENDIUM_EDITION,$(edition))))

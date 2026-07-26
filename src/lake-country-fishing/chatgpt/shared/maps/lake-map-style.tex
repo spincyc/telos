@@ -1,0 +1,22 @@
+% ChatGPT edition map primitives. Original monochrome drawings; no Claude map
+% geometry or generated output is imported.
+\tikzset{
+  cgshore/.style={draw=black,line width=1pt,fill=white},
+  cgten/.style={draw=black,line width=.5pt},
+  cgtwenty/.style={draw=black,line width=.42pt},
+  cgforty/.style={draw=black,line width=.35pt,dash pattern=on 4pt off 1.5pt},
+  cgsixty/.style={draw=black,line width=.32pt,dash pattern=on 2pt off 1.2pt},
+  cgspot/.style={circle,fill=black,text=white,minimum size=3.3mm,inner sep=0pt,
+    font=\fontsize{6}{6}\selectfont\bfseries},
+  cgdepth/.style={fill=white,inner sep=.6pt,font=\fontsize{5.5}{6}\selectfont},
+  cgnote/.style={fill=white,inner sep=1pt,font=\fontsize{6}{7}\selectfont}
+}
+\newcommand{\cgspot}[3]{\node[cgspot] at (#1,#2) {#3};}
+\newcommand{\cgnorth}[2]{%
+  \draw[-{Stealth[length=1.8mm]},line width=.5pt] (#1,#2) -- ++(0,.65);
+  \node[font=\scriptsize\bfseries,anchor=south] at (#1,#2+.65) {N};}
+\newcommand{\cgscale}[4]{%
+  \draw[line width=.5pt] (#1,#2) -- ++(#3,0);
+  \draw[line width=.5pt] (#1,#2-.07) -- ++(0,.14);
+  \draw[line width=.5pt] (#1+#3,#2-.07) -- ++(0,.14);
+  \node[font=\fontsize{5.5}{6}\selectfont,anchor=north] at (#1+#3/2,#2-.08) {#4};}
