@@ -1,0 +1,9 @@
+---
+# The Controller's bundled DHCP, DNS, PXE and artifact services (ADR 0012).
+# Every value that identifies this machine comes from its installation
+# manifest, never from inventory, so convergence cannot contradict what was
+# actually installed.
+homelab_lease_time: 12h
+homelab_tftp_root: /srv/tftp
+homelab_http_root: /srv/http/boot
+homelab_config_dir: /etc/homelab

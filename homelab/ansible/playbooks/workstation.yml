@@ -1,0 +1,28 @@
+---
+# Converge a Workstation. It pivots on its Controller's fully qualified name
+# (ADR 0002) and never runs network services of its own.
+- name: Workstation
+  hosts: workstations
+  become: true
+
+  pre_tasks:
+    - name: Read the installation manifest
+      ansible.builtin.slurp:
+        src: /etc/homelab/manifest.json
+      register: homelab_manifest_raw
+
+    - name: Parse the manifest
+      ansible.builtin.set_fact:
+        homelab_manifest: "{{ homelab_manifest_raw.content | b64decode | from_json }}"
+
+    - name: Refuse to converge a machine installed as a different profile
+      ansible.builtin.assert:
+        that: homelab_manifest.profile == 'workstation'
+        fail_msg: >-
+          {{ inventory_hostname }} reports profile
+          '{{ homelab_manifest.profile }}' in its manifest.
+
+  roles:
+    - common
+    - role: identity_client
+      when: homelab_identity_enabled | default(false)

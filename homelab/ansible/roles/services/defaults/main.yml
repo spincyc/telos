@@ -1,0 +1,19 @@
+---
+# ADR 0054. Disabled by default and enabled per instance, because the role may
+# live on the Controller host today and move to its own machine later without
+# any other change.
+homelab_services_state_root: /srv/services
+homelab_services_quadlet_dir: /etc/containers/systemd
+
+# Each entry describes one always-on application. `image` must be pinned by
+# digest, not by tag: a tag is a moving target and an unattended restart would
+# silently change the running version.
+#
+#   - name: homebridge
+#     image: ghcr.io/homebridge/homebridge@sha256:...
+#     host_network: true          # required for mDNS/HomeKit pairing
+#     devices:
+#       - /dev/serial/by-id/usb-Zigbee-radio
+#
+# Defined in the gitignored instance overlay (ADR 0046), never here.
+homelab_services: []

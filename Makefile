@@ -84,7 +84,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
-	homelab-test homelab-lab adr-digest \
+	homelab-test homelab-lab homelab-converge-check adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
 .DELETE_ON_ERROR:
 
@@ -142,6 +142,18 @@ homelab-lab:
 		missing = lab.missing_requirements(); \
 		print('lab ready') if not missing else \
 		[print('missing:', item) for item in missing]"
+
+# Syntax-check the convergence playbooks. Structural invariants are covered by
+# the unit tests; this catches what only Ansible itself can see. Skips quietly
+# where Ansible is not installed.
+homelab-converge-check:
+	@if command -v ansible-playbook >/dev/null 2>&1; then \
+		cd homelab/ansible && for play in playbooks/*.yml; do \
+			ansible-playbook --syntax-check -i localhost, "$$play" || exit 1; \
+		done; \
+	else \
+		echo "ansible-playbook not installed, playbooks not syntax-checked"; \
+	fi
 
 # Regenerate the printable decision record from the Markdown ADRs.
 adr-digest:

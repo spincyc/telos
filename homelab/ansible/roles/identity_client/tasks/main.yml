@@ -1,0 +1,83 @@
+---
+- name: Require the realm to be named
+  ansible.builtin.assert:
+    that:
+      - homelab_identity_domain | length > 0
+      - homelab_identity_realm | length > 0
+    fail_msg: >-
+      identity_client was enabled without a domain or realm. Enable it only
+      once the directory exists and answers.
+
+- name: Refuse to join a machine with no local way back in
+  # The directory is a bootstrap dependency (ADR 0055). While it is down, only
+  # cached and break-glass logins work. Joining first and adding the break-glass
+  # account afterwards leaves a window where a directory outage is an
+  # unrecoverable machine.
+  ansible.builtin.assert:
+    that: homelab_breakglass_authorized_keys | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} has no break-glass administrator key. Run the
+      common role first; local break-glass accounts are mandatory, not
+      optional (ADR 0055).
+
+- name: Install the directory client
+  ansible.builtin.package:
+    name:
+      - sssd
+      - sssd-tools
+      - adcli
+      - samba          # net ads join
+      - krb5
+      - oddjob-mkhomedir
+    state: present
+
+- name: Configure Kerberos
+  ansible.builtin.template:
+    src: krb5.conf.j2
+    dest: /etc/krb5.conf
+    mode: "0644"
+
+- name: Configure SSSD
+  ansible.builtin.template:
+    src: sssd.conf.j2
+    dest: /etc/sssd/sssd.conf
+    owner: root
+    group: root
+    # SSSD refuses to start if this is group- or world-readable, and it is
+    # right to: the file names the directory and its access parameters.
+    mode: "0600"
+  notify: restart sssd
+
+- name: Check whether this machine is already joined
+  ansible.builtin.command: /usr/sbin/adcli testjoin --domain={{ homelab_identity_domain }}
+  register: homelab_identity_joined
+  changed_when: false
+  failed_when: false
+
+- name: Report that the join must be performed by a person
+  # Deliberately not automated. Joining requires directory-administrator
+  # credentials, and putting those in inventory, in a vault this playbook can
+  # open unattended, or in the process table is precisely what the handoff
+  # forbids. A person runs the join once, at a console, and Ansible converges
+  # everything around it.
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is not joined to {{ homelab_identity_domain }}.
+      Join it by hand, once:
+        net ads join -U <directory-administrator>
+      then re-run this playbook. The credential is not stored anywhere.
+  when: homelab_identity_joined.rc != 0
+
+- name: Create home directories on first login
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/system-login
+    line: "session   optional  pam_mkhomedir.so umask=0077"
+    insertafter: EOF
+  # Home directories stay local (ADR 0055): a network home directory makes
+  # every login depend on the directory being up *and* the share being mounted.
+
+- name: Enable SSSD
+  ansible.builtin.systemd:
+    name: sssd.service
+    enabled: true
+    state: started

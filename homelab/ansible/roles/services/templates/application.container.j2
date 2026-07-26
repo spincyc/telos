@@ -1,0 +1,39 @@
+# {{ item.name }} -- managed by Ansible (roles/services). Edits are overwritten.
+#
+# A Podman quadlet: systemd generates the service unit from this file, so
+# lifecycle, ordering, restart policy and journal integration are ordinary
+# systemd rather than a second supervision system (ADR 0054).
+[Unit]
+Description={{ item.description | default(item.name) }}
+{% if item.after is defined %}
+After={{ item.after | join(' ') }}
+{% endif %}
+
+[Container]
+Image={{ item.image }}
+{% if item.host_network | default(false) %}
+# Host networking: mDNS and UPnP do not traverse a container network, and
+# HomeKit pairing does not work without them. Container network isolation is
+# deliberately given up for these applications.
+Network=host
+{% else %}
+{% for port in item.ports | default([]) %}
+PublishPort={{ port }}
+{% endfor %}
+{% endif %}
+Volume={{ homelab_services_state_root }}/{{ item.name }}:{{ item.state_path | default('/data') }}:Z
+{% for device in item.devices | default([]) %}
+# Bound by stable by-id path: a /dev/ttyUSB number is reassigned on reboot and
+# would hand this application somebody else's radio.
+AddDevice={{ device }}
+{% endfor %}
+{% for name, value in (item.environment | default({})).items() %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

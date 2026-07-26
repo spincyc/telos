@@ -1,0 +1,59 @@
+---
+- name: Require every image to be pinned by digest
+  ansible.builtin.assert:
+    that: item.image is search('@sha256:')
+    fail_msg: >-
+      {{ item.name }} names image '{{ item.image }}'. A tag moves, so an
+      ordinary restart would change the running version with nothing recording
+      that it happened. Pin the digest.
+  loop: "{{ homelab_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install Podman
+  ansible.builtin.package:
+    name: podman
+    state: present
+
+- name: Create the state subvolume root
+  ansible.builtin.file:
+    path: "{{ homelab_services_state_root }}"
+    state: directory
+    mode: "0755"
+
+- name: Create a Btrfs subvolume for each application's state
+  # ADR 0027 and ADR 0054: application state is excluded from the operating
+  # system checkpoint, because its restore point is not the same as the
+  # operating system's. Its own subvolume is what makes that possible.
+  ansible.builtin.command:
+    cmd: "btrfs subvolume create {{ homelab_services_state_root }}/{{ item.name }}"
+    creates: "{{ homelab_services_state_root }}/{{ item.name }}"
+  loop: "{{ homelab_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create the quadlet directory
+  ansible.builtin.file:
+    path: "{{ homelab_services_quadlet_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install a quadlet for each application
+  ansible.builtin.template:
+    src: application.container.j2
+    dest: "{{ homelab_services_quadlet_dir }}/{{ item.name }}.container"
+    mode: "0644"
+  loop: "{{ homelab_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: reload systemd for quadlets
+
+- name: Start each application
+  ansible.builtin.systemd:
+    name: "{{ item.name }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ homelab_services }}"
+  loop_control:
+    label: "{{ item.name }}"

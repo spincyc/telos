@@ -1,0 +1,23 @@
+# Managed by Ansible (roles/identity_client). Edits are overwritten.
+[sssd]
+domains = {{ homelab_identity_domain }}
+config_file_version = 2
+services = nss, pam
+
+[domain/{{ homelab_identity_domain }}]
+id_provider = ad
+access_provider = ad
+ad_domain = {{ homelab_identity_domain }}
+krb5_realm = {{ homelab_identity_realm | upper }}
+realmd_tags = manages-system joined-with-adcli
+cache_credentials = True
+# ADR 0055: an explicit lifetime, longer than a normal trip. The default is
+# short enough that a laptop away for two weeks stops being able to log in.
+krb5_store_password_if_offline = True
+offline_credentials_expiration = {{ homelab_identity_offline_credentials_days }}
+# UID and GID come from the directory (ADR 0055), not from a local mapping.
+ldap_id_mapping = False
+fallback_homedir = /home/%u
+default_shell = /bin/bash
+use_fully_qualified_names = False
+enumerate = {{ 'True' if homelab_identity_enumerate else 'False' }}

@@ -1,0 +1,11 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart controller network services
+  # Re-run activation rather than restarting the services directly: the checks
+  # must pass again after any configuration change (ADR 0009).
+  ansible.builtin.systemd:
+    name: homelab-first-boot.service
+    state: restarted

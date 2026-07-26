@@ -1,0 +1,18 @@
+---
+# ADR 0055: Samba AD DC is the directory. This role makes a machine a *client*
+# of it. The domain controller itself is built separately and is not converged
+# from here -- it is a distinct trust boundary running in its own VM.
+#
+# Disabled by default. Joining a machine to a directory that is not ready yet
+# is how a working machine stops being able to log in.
+homelab_identity_domain: ""
+homelab_identity_realm: ""
+
+# Longer than a normal trip. ADR 0055 requires this to be set explicitly rather
+# than inherited from a default nobody chose: a laptop that runs out of cached
+# credentials in an airport cannot log in at all.
+homelab_identity_offline_credentials_days: 30
+
+# The directory owns UID and GID. Enumeration is off because it makes every
+# `ls -l` a directory query.
+homelab_identity_enumerate: false

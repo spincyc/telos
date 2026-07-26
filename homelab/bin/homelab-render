@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Render Controller service configuration from an installation manifest.
+
+Called by Ansible on the control node so the configuration is produced by the
+same generators the installer and bootstrap host use -- one implementation of
+each decision, unit-tested, rather than an Ansible template that quietly drifts.
+
+Emits JSON so a single invocation supplies every file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+import artifacts  # noqa: E402
+import dnsmasq    # noqa: E402
+import netplan    # noqa: E402
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest-json", required=True)
+    parser.add_argument("--lease-time", default=dnsmasq.DEFAULT_LEASE_TIME)
+    arguments = parser.parse_args(argv)
+
+    document = json.loads(arguments.manifest_json)
+    network = document.get("network")
+    if not network:
+        print(json.dumps({}), end="")
+        return 0
+
+    plan = netplan.build_plan(network["entered"])
+    address = plan.controller_ipv4_address
+    base_url = f"http://{address}/boot"
+
+    print(json.dumps({
+        "dnsmasq": dnsmasq.render(
+            plan,
+            interface=document["managed_interface"]["stable_name"],
+            controller_hostname=document["hostname"],
+            lease_time=arguments.lease_time,
+            http_base_url=base_url),
+        "nginx": artifacts.render_nginx(listen_address=address),
+        "ipxe": artifacts.render_ipxe(base_url=base_url),
+    }), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

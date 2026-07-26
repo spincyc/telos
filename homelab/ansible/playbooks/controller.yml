@@ -1,0 +1,43 @@
+---
+# Converge a Controller.
+#
+# Preconditions: the machine was installed by bin/homelab-install, carries
+# /etc/homelab/manifest.json, and is reachable over SSH with the administrator
+# key. Nothing here partitions, encrypts or writes boot artifacts -- that is
+# install time and is not repeatable (ADR 0053).
+- name: Controller
+  hosts: controllers
+  become: true
+
+  pre_tasks:
+    - name: Read the installation manifest
+      ansible.builtin.slurp:
+        src: /etc/homelab/manifest.json
+      register: homelab_manifest_raw
+
+    - name: Parse the manifest
+      ansible.builtin.set_fact:
+        homelab_manifest: "{{ homelab_manifest_raw.content | b64decode | from_json }}"
+
+    - name: Refuse to converge a machine installed as a different profile
+      ansible.builtin.assert:
+        that: homelab_manifest.profile == 'controller'
+        fail_msg: >-
+          {{ inventory_hostname }} reports profile
+          '{{ homelab_manifest.profile }}' in its manifest. Converging a
+          Workstation with the Controller playbook would start DHCP on it.
+
+    - name: Note when this host is a disposable development-proof installation
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is a development-proof installation
+          (ADR 0043). It is disposable and must not hold production data.
+      when: homelab_manifest.development_proof | bool
+
+  roles:
+    - common
+    - controller_network
+    - role: services
+      when: homelab_services_enabled | default(false)
+    - role: identity_client
+      when: homelab_identity_enabled | default(false)

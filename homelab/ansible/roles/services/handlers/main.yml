@@ -1,0 +1,4 @@
+---
+- name: reload systemd for quadlets
+  ansible.builtin.systemd:
+    daemon_reload: true

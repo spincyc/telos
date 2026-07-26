@@ -1,0 +1,8 @@
+---
+# The break-glass administrator. ADR 0055 makes this mandatory rather than
+# optional: while the directory is down, this account and cached credentials
+# are the only way in. It is never a directory account.
+homelab_breakglass_user: labadmin
+homelab_breakglass_authorized_keys: []
+
+homelab_timezone: UTC
