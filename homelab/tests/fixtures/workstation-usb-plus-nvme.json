@@ -1,0 +1,47 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/sda",
+        "type": "disk",
+        "model": "USB Flash Disk",
+        "serial": "1123091030912962",
+        "size": 124623257600,
+        "rm": true,
+        "rota": true,
+        "tran": "usb"
+      },
+      {
+        "path": "/dev/nvme0n1",
+        "type": "disk",
+        "model": "Samsung SSD 9100 PRO 4TB",
+        "serial": "S7YANJ0Y405056D",
+        "size": 4000787030016,
+        "rm": false,
+        "rota": false,
+        "tran": "nvme"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "eno1",
+      "mac": "60:cf:84:77:c6:6f",
+      "carrier": true,
+      "speed": 10000,
+      "wireless": false
+    },
+    {
+      "name": "eno2",
+      "mac": "60:cf:84:77:c6:6e",
+      "carrier": false,
+      "speed": null,
+      "wireless": false
+    }
+  ],
+  "firmware": {
+    "uefi": true,
+    "secure_boot": "disabled",
+    "tpm2": true
+  }
+}

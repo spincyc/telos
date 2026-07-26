@@ -1,0 +1,74 @@
+{
+  "lsblk": {
+    "blockdevices": [
+      {
+        "path": "/dev/sda",
+        "type": "disk",
+        "model": "Cruzer Blade",
+        "serial": "4C530001",
+        "size": 34359738368,
+        "rm": true,
+        "rota": true,
+        "tran": "usb"
+      },
+      {
+        "path": "/dev/sdb",
+        "type": "disk",
+        "model": "TS32GSSD",
+        "serial": "TS-A99",
+        "size": 34359738368,
+        "rm": false,
+        "rota": false,
+        "tran": "sata"
+      },
+      {
+        "path": "/dev/sdc",
+        "type": "disk",
+        "model": "HGST HUS726T4",
+        "serial": "",
+        "size": 4000000000000,
+        "rm": false,
+        "rota": true,
+        "tran": "sata"
+      },
+      {
+        "path": "/dev/sdd",
+        "type": "disk",
+        "model": "WDC WD40EFRX",
+        "serial": "WD-WCC7K5",
+        "size": 4000000000000,
+        "rm": false,
+        "rota": true,
+        "tran": "sata"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "name": "enp3s0",
+      "mac": "3c:ec:ef:11:22:33",
+      "carrier": true,
+      "speed": 1000,
+      "wireless": false
+    },
+    {
+      "name": "enp4s0",
+      "mac": "3c:ec:ef:11:22:34",
+      "carrier": false,
+      "speed": null,
+      "wireless": false
+    },
+    {
+      "name": "wlp5s0",
+      "mac": "a0:88:69:aa:bb:cc",
+      "carrier": true,
+      "speed": 866,
+      "wireless": true
+    }
+  ],
+  "firmware": {
+    "uefi": false,
+    "secure_boot": null,
+    "tpm2": false
+  }
+}
