@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Render, check, and verify the Telos GitHub Pages artifact.
 
-The artifact is deliberately small: a handful of Markdown pages wrapped in one
-layout, plus the reviewed PDF tree from doc/. Everything the site can publish is
-named explicitly in site/site.json, so adding a page or a publication is a
-tracked edit rather than a directory scan that silently picks up a draft.
+Every page selects its own layout. This lets provider editions present a
+project in genuinely different ways while retaining one small, audited build
+pipeline and one explicit publication manifest.
 
     site check    Validate the manifest against the working tree.
     site build    Render build/site (add --serve to preview it).
@@ -26,7 +25,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site/site.json"
-LAYOUT_PATH = ROOT / "release/site/layout.html"
+LAYOUT_ROOT = ROOT / "release/site/layouts"
 ASSET_ROOT = ROOT / "release/site/assets"
 DOC_ROOT = ROOT / "doc"
 OUTPUT_ROOT = ROOT / "build/site"
@@ -53,15 +52,17 @@ def load_manifest() -> dict:
     except json.JSONDecodeError as error:
         raise SiteError(f"manifest is not valid JSON: {error}") from error
 
-    for field in ("title", "tagline", "pages"):
+    for field in ("title", "tagline", "navigation", "pages"):
         if field not in manifest:
             raise SiteError(f"manifest is missing required field: {field}")
     if not isinstance(manifest["pages"], list) or not manifest["pages"]:
         raise SiteError("manifest 'pages' must be a non-empty list")
+    if not isinstance(manifest["navigation"], list) or not manifest["navigation"]:
+        raise SiteError("manifest 'navigation' must be a non-empty list")
 
     seen_outputs: set[str] = set()
     for index, page in enumerate(manifest["pages"]):
-        for field in ("source", "output", "title"):
+        for field in ("source", "output", "title", "layout"):
             if field not in page:
                 raise SiteError(f"page {index} is missing required field: {field}")
         output = page["output"]
@@ -69,7 +70,29 @@ def load_manifest() -> dict:
             raise SiteError(f"duplicate page output: {output}")
         if output.startswith("/") or ".." in PurePosixPath(output).parts:
             raise SiteError(f"page output must be a relative path inside the site: {output}")
+        layout = page["layout"]
+        if (
+            not isinstance(layout, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", layout)
+        ):
+            raise SiteError(f"page {index} has an invalid layout id: {layout!r}")
+        if not (LAYOUT_ROOT / f"{layout}.html").is_file():
+            raise SiteError(f"page {index} selects a missing layout: {layout}")
+        body_class = page.get("body_class", "")
+        if not isinstance(body_class, str) or not re.fullmatch(
+            r"[a-z0-9 -]*", body_class
+        ):
+            raise SiteError(f"page {index} has invalid body_class tokens")
         seen_outputs.add(output)
+
+    for index, item in enumerate(manifest["navigation"]):
+        if not isinstance(item, dict) or not {"label", "output"} <= item.keys():
+            raise SiteError(f"navigation item {index} requires label and output")
+        if item["output"] not in seen_outputs:
+            raise SiteError(
+                f"navigation item {index} points to unpublished output: "
+                f"{item['output']}"
+            )
     return manifest
 
 
@@ -211,8 +234,8 @@ def command_check(_: argparse.Namespace) -> int:
     for orphan in sorted(available - referenced):
         problems.append(f"{orphan}: promoted into doc/ but linked from no page")
 
-    if not LAYOUT_PATH.is_file():
-        problems.append(f"missing layout: {LAYOUT_PATH.relative_to(ROOT)}")
+    if not LAYOUT_ROOT.is_dir():
+        problems.append(f"missing layout root: {LAYOUT_ROOT.relative_to(ROOT)}")
     if not ASSET_ROOT.is_dir():
         problems.append(f"missing asset root: {ASSET_ROOT.relative_to(ROOT)}")
 
@@ -270,12 +293,11 @@ def relative_prefix(output: str) -> str:
 
 def build_navigation(manifest: dict, current: str) -> str:
     items: list[str] = []
-    for page in manifest["pages"]:
-        label = page.get("nav")
-        if not label:
-            continue
-        target = relative_prefix(current) + page["output"]
-        classes = ' class="current"' if page["output"] == current else ""
+    for item in manifest["navigation"]:
+        label = item["label"]
+        target = relative_prefix(current) + item["output"]
+        current_root = item["output"] == "projects.html" and current.startswith("projects/")
+        classes = ' class="current"' if item["output"] == current or current_root else ""
         items.append(f'<a href="{html.escape(target)}"{classes}>{html.escape(label)}</a>')
     return "\n".join(items)
 
@@ -288,13 +310,12 @@ def command_build(arguments: argparse.Namespace) -> int:
             print(f"site: {problem}", file=sys.stderr)
         return 1
 
-    layout = LAYOUT_PATH.read_text(encoding="utf-8")
-
     if OUTPUT_ROOT.exists():
         shutil.rmtree(OUTPUT_ROOT)
     OUTPUT_ROOT.mkdir(parents=True)
 
     for page, source in page_sources(manifest):
+        layout = (LAYOUT_ROOT / f"{page['layout']}.html").read_text(encoding="utf-8")
         body = rewrite_page_links(render_markdown(source.read_text(encoding="utf-8")))
         prefix = relative_prefix(page["output"])
         # The landing page's title is the site's title; "Telos — Telos" in a
@@ -306,7 +327,12 @@ def command_build(arguments: argparse.Namespace) -> int:
             layout.replace("{{head_title}}", html.escape(head_title))
             .replace("{{site_title}}", html.escape(manifest["title"]))
             .replace("{{tagline}}", html.escape(manifest["tagline"]))
+            .replace(
+                "{{description}}",
+                html.escape(page.get("description", manifest["tagline"])),
+            )
             .replace("{{title}}", html.escape(page["title"]))
+            .replace("{{body_class}}", html.escape(page.get("body_class", "")))
             .replace("{{navigation}}", build_navigation(manifest, page["output"]))
             .replace("{{root}}", prefix)
             .replace("{{content}}", body)

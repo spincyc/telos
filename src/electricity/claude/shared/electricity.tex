@@ -1,0 +1,117 @@
+% Shared macros for the electricity and magnetism curriculum.
+%
+% Two families of thing live here: the furniture that makes every lesson look
+% the same (header, materials list, the four standing rubrics), and a small set
+% of circuit symbols drawn in TikZ so the schematics print as line art.
+
+% Lesson furniture (lessonhead, materials, lessonsection, predict) now lives
+% in common/preamble.tex, shared with the other courses.
+
+% ---------------------------------------------------------------------------
+% Circuit symbols. Every symbol is drawn from a left-hand anchor and is one
+% unit long, so a schematic can be assembled by stepping along a line.
+% ---------------------------------------------------------------------------
+\tikzset{
+  wire/.style={draw=telosink,line width=0.5pt},
+  wirethick/.style={draw=telosink,line width=0.9pt},
+  ckt/.style={font=\fontsize{7}{8}\selectfont},
+  cktsmall/.style={font=\fontsize{6}{7}\selectfont},
+}
+
+\newcommand{\ckresistor}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.15,#2);
+  \draw[wire] (#1+0.15,#2-0.11) rectangle (#1+0.85,#2+0.11);
+  \draw[wire] (#1+0.85,#2) -- (#1+1.0,#2);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.14) {#3};}
+
+\newcommand{\ckcap}[3]{% x y label -- non-polarised
+  \draw[wire] (#1,#2) -- (#1+0.44,#2);
+  \draw[wirethick] (#1+0.44,#2-0.22) -- (#1+0.44,#2+0.22);
+  \draw[wirethick] (#1+0.56,#2-0.22) -- (#1+0.56,#2+0.22);
+  \draw[wire] (#1+0.56,#2) -- (#1+1.0,#2);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.26) {#3};}
+
+\newcommand{\ckinductor}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.14,#2);
+  \foreach \i in {0,1,2,3} {
+    \draw[wire] (#1+0.14+\i*0.18,#2) arc (180:0:0.09);}
+  \draw[wire] (#1+0.86,#2) -- (#1+1.0,#2);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.14) {#3};}
+
+\newcommand{\ckbattery}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.40,#2);
+  \draw[wirethick] (#1+0.40,#2-0.10) -- (#1+0.40,#2+0.10);
+  \draw[wire] (#1+0.52,#2-0.22) -- (#1+0.52,#2+0.22);
+  \draw[wire] (#1+0.52,#2) -- (#1+1.0,#2);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.26) {#3};}
+
+\newcommand{\ckswitch}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.25,#2);
+  \fill[telosink] (#1+0.25,#2) circle (0.045);
+  \draw[wire] (#1+0.25,#2) -- (#1+0.72,#2+0.28);
+  \fill[telosink] (#1+0.75,#2) circle (0.045);
+  \draw[wire] (#1+0.75,#2) -- (#1+1.0,#2);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.34) {#3};}
+
+\newcommand{\ckled}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.34,#2);
+  \fill[telosink] (#1+0.34,#2-0.20) -- (#1+0.34,#2+0.20) -- (#1+0.66,#2) -- cycle;
+  \draw[wirethick] (#1+0.66,#2-0.20) -- (#1+0.66,#2+0.20);
+  \draw[wire] (#1+0.66,#2) -- (#1+1.0,#2);
+  \draw[telos arrow] (#1+0.52,#2+0.26) -- (#1+0.70,#2+0.44);
+  \draw[telos arrow] (#1+0.62,#2+0.22) -- (#1+0.80,#2+0.40);
+  \node[ckt,anchor=west] at (#1+0.84,#2+0.40) {#3};}
+
+% A spark gap: two electrodes facing across a gap.
+\newcommand{\ckgap}[3]{% x y label
+  \draw[wire] (#1,#2) -- (#1+0.40,#2);
+  \fill[telosink] (#1+0.40,#2) circle (0.09);
+  \fill[telosink] (#1+0.60,#2) circle (0.09);
+  \draw[wire] (#1+0.60,#2) -- (#1+1.0,#2);
+  \draw[telos hair] (#1+0.44,#2+0.06) -- (#1+0.50,#2-0.04) -- (#1+0.56,#2+0.06);
+  \node[ckt,anchor=south] at (#1+0.5,#2+0.20) {#3};}
+
+% Earth ground.
+\newcommand{\ckground}[2]{%
+  \draw[wire] (#1,#2) -- (#1,#2-0.22);
+  \draw[wirethick] (#1-0.24,#2-0.22) -- (#1+0.24,#2-0.22);
+  \draw[wire] (#1-0.15,#2-0.32) -- (#1+0.15,#2-0.32);
+  \draw[wire] (#1-0.07,#2-0.42) -- (#1+0.07,#2-0.42);}
+
+% A transformer: two coils facing a laminated core.
+\newcommand{\cktransformer}[4]{% x y primary-label secondary-label
+  \begin{scope}[shift={(#1,#2)}]
+    \foreach \i in {0,1,2,3} {
+      \draw[wire] (0,\i*0.20) arc (-90:90:0.10);}
+    \foreach \i in {0,1,2,3,4,5} {
+      \draw[wire] (0.34,-0.10+\i*0.15) arc (270:90:0.075);}
+    \draw[wirethick] (0.15,-0.14) -- (0.15,0.82);
+    \draw[wirethick] (0.21,-0.14) -- (0.21,0.82);
+    \node[cktsmall,anchor=east] at (-0.14,0.34) {#3};
+    \node[cktsmall,anchor=west] at (0.48,0.34) {#4};
+  \end{scope}}
+
+% ---------------------------------------------------------------------------
+% Standing safety text. Written once so no lesson can restate it more loosely.
+% ---------------------------------------------------------------------------
+\newcommand{\lowvoltagenote}{%
+  \begin{telosframe}
+  \textbf{This lesson is low voltage.} Everything here runs from batteries or a
+  small plug-in supply and cannot hurt you. That changes at Lesson~10. Build the
+  habits now --- one hand, discharge before touching, check before you power up
+  --- while the stakes are nothing, so that they are automatic when the stakes
+  are real.
+  \end{telosframe}}
+
+\newcommand{\highvoltagenote}{%
+  \begin{teloshazard}{Adult-operated: mains-derived high voltage}
+  From here on the apparatus contains voltages and currents that kill people
+  every year. The adult owns the mains plug, the transformer and every decision
+  about energizing. Nobody touches anything inside the enclosure until the
+  supply is unplugged \emph{and} the capacitor has been shorted with the
+  grounding stick. Read the \textbf{Safety} sheet completely before this lesson,
+  not during it.
+  \end{teloshazard}}
+
+% Pictorial component library: pictures before symbols.
+\input{electricity/claude/shared/parts.tex}

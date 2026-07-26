@@ -1,0 +1,79 @@
+\input{common/preamble.tex}
+\input{potato-launcher/claude/shared/launcher.tex}
+\telosmeta{Potato Launcher}{Craft 6: Inspect Your Own Work}{Confidence comes from evidence, not from hoping}{2026-07-25}
+\begin{document}
+\telosmasthead[Shop skill --- the one that makes the other five worth having]
+
+\begin{standard}
+Before anything is used, every measurement has been checked by someone,
+every joint has been looked at against a written list, every defect found has
+been \textbf{fixed or the part remade} --- never noted and accepted --- and the
+whole lot is recorded on paper with a date and a name against it.
+\end{standard}
+
+\section{Why this is a skill and not an attitude}
+Being careful is not a personality trait you either have or lack. It is a
+procedure: know what good looks like, look for specific named defects rather
+than a general impression, do it before the next step hides the evidence, and
+write down what you found. People who build reliable things are not more
+virtuous than people who do not --- they have a list.
+
+\begin{telosfacts}[0.22]
+\telosfact{Look for named defects}{``Does it look OK?'' finds almost nothing, because your eye reports what you expect. ``Is there a continuous bead all the way round this socket?'' finds the actual problem. Every craft sheet ends with a check phrased that way for exactly this reason.}
+\telosfact{Inspect before you hide it}{A burr is invisible once the pipe is in the socket; a weld bead is unreadable once the assembly is painted. Sequence the inspection before the step that conceals the thing.}
+\telosfact{Fix or remake}{A defect you have written down and decided to live with is worse than one you never found, because now you are relying on a judgement you were not qualified to make. Pipe is cheap.}
+\telosfact{Someone else's eyes}{Swap parts with your brother and check each other's. You cannot see your own mistakes well --- your brain replays what you intended, not what you did.}
+\telosfact{Write it down}{A build log turns ``I think it cured long enough'' into a date. \sheetref{Build Log}}
+\telosfact{Sign it}{Putting your initials against a check is a small thing that changes how carefully the check gets done. That is not a trick; it is just true.}
+\end{telosfacts}
+
+\section{The inspection, in order}
+Run this before the first firing and again at the start of every session.
+
+\begin{tabularx}{\linewidth}{@{}p{0.05\linewidth}p{0.24\linewidth}L@{}}
+\toprule
+& \textbf{Check} & \textbf{Pass means}\\
+\midrule
+1 & Cut faces & Square to the pipe, checked with a try square in four positions, no light. \sheetref{Craft 2: Cut Square}\\
+2 & Edges & No burr inside or out; an even 1--2\,mm chamfer all the way round every pipe end. \sheetref{Craft 3: Deburr \& Chamfer}\\
+3 & Every weld & A continuous squeeze-out bead with no gaps; witness marks aligned; pipe bottomed. \sheetref{Craft 4: Solvent Weld}\\
+4 & Cure & Forty-eight hours since the date written on the part. Not ``about two days''.\\
+5 & Penetrations & Round holes, no crazing, no cracks, epoxy fillet continuous all the way round. \sheetref{Craft 5: Drill \& Seal}\\
+6 & Chamber wall & No crazing, whitening, star cracks or deformation anywhere. Any of these retires the chamber permanently.\\
+7 & Cleanout & Threads clean, plug turns freely and seats fully by hand plus a nudge.\\
+8 & Igniter & Spark visible and audible across the gap, chamber open, before any fuel.\\
+9 & Barrel bore & Clean, smooth, nothing loose inside. Look down it \emph{from the breech}, never from the muzzle.\\
+10 & Pipe marking & Every pressure-bearing part still legibly reads Schedule 40 pressure PVC with an NSF-PW rating.\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Any single failure stops the session}
+There is no partial pass and no ``we will watch it''. A chamber is a pressure
+vessel a few feet from your face; the whole value of an inspection list is that
+it decides in advance, calmly, what you will do when you find something --- so
+that you are not making that call while three people stand around waiting to
+shoot.
+\end{gate}
+
+\section{Judging your own work honestly}
+\begin{telosfacts}[0.22]
+\telosfact{Measure, do not eyeball}{``That looks square'' is not a check. The try square is a check.}
+\telosfact{Compare to a reference}{Keep the sectioned practice weld from Craft 4 on the bench. Comparing against a known-good example is far more reliable than comparing against your memory of one.}
+\telosfact{Separate effort from quality}{A joint you worked hard on is not thereby a good joint. The two are unrelated, and confusing them is the most common reason a defect gets argued away.}
+\telosfact{Expect to remake things}{Everyone who builds well remakes parts. It is evidence the inspection is working, not evidence that you are bad at this. A build with no remade parts usually means nobody looked properly.}
+\telosfact{Do it when you are fresh}{Inspection at the end of a long session finds less. If you are tired, write the log and inspect tomorrow.}
+\end{telosfacts}
+
+\checkyourself{Hand your finished assembly and this sheet to somebody else and
+ask them to run all ten checks without your help. Anything they find that you
+did not is worth more than anything you found yourself --- it tells you which of
+your own checks you are performing loosely.}
+
+\begin{telospanel}{What you are really learning}
+Not how to make a potato launcher. How to know whether a thing you made is
+sound, and to be able to say why, and to be willing to cut a part up and do it
+again when it is not. That transfers to every workshop, every bike repair, every
+piece of code and every piece of furniture either of you ever makes. The
+launcher is a pretext.
+\end{telospanel}
+\end{document}

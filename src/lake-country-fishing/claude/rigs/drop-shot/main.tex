@@ -1,0 +1,63 @@
+\input{common/preamble.tex}
+\input{lake-country-fishing/claude/shared/fishing.tex}
+\telosmeta{Lake Country Fishing}{Drop Shot}{Weight on the bottom, bait suspended above it, both under your control}{2026-07-25}
+\begin{document}
+\telosmasthead[The deep-water finesse rig --- weight below the hook]
+
+\noindent
+\begin{minipage}[t]{0.46\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\rigsurface{0}{5.6}{7.4}
+\rigbottom{0}{5}{0}
+\draw[fishline] (1.3,7.1) -- (2.55,4.05);
+% the hook is tied into the line, standing out at right angles, point up
+\draw[fishline] (2.55,4.05) -- (2.55,0.95);
+\begin{scope}[shift={(2.55,4.05)},rotate=-90]
+  \hookJ{0}{0}{1.15}
+\end{scope}
+\baitMinnow{3.05}{4.05}{1.1}
+\wtCylinder{2.55}{0.95}{1.5}
+\rigspanlabel{1.35}{1.0}{1.35}{4.0}{center}{tag, 12--24 in}
+\callout{3.05}{4.35}{3.95}{5.65}{west}{hook tied \emph{into} the line, point up}
+\callout{2.66}{0.75}{3.7}{1.55}{west}{weight anchors on the bottom}
+\node[rigtag,anchor=north,align=center] at (2.7,-0.55)
+  {shake the rod: the weight never moves, only the bait};
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.51\linewidth}
+\vspace{0pt}
+\begin{telosfacts}[0.26]
+\telosfact{What it does}{Everything else puts the weight above the bait. This puts it below. The weight anchors on the bottom and the bait hovers a fixed distance above it, where you can shake it in place indefinitely without moving it.}
+\telosfact{Why it matters}{Fish that will not chase will still eat something that hangs in front of them. This is the rig for a tough day in deep clear water.}
+\telosfact{Components}{Cylinder or teardrop weight, size 1 or 1/0 drop-shot hook, small minnow-shaped plastic.}
+\telosfact{Tag length}{12\,in for bottom-hugging perch and smallmouth; 24--36\,in for fish suspended off a drop.}
+\telosfact{Line}{6--8\,lb fluorocarbon on spinning tackle.}
+\telosfact{Catches}{Smallmouth, walleye, perch, crappie, largemouth. On Pine Lake's east wall it is the most reliable summer rig there is.}
+\end{telosfacts}
+\end{minipage}
+
+\section{Build it}
+\begin{enumerate}
+\item Tie a \textbf{Palomar knot} with the hook, but leave a very long tag end --- 2 to 3 ft.
+\item Pass that tag end \textbf{back down through the hook eye}, from the top. This is the step everyone forgets, and it is what makes the hook stand out from the line at right angles with the point up.
+\item Attach the \textbf{weight} to the bottom of the tag with a simple overhand loop, or crimp it into the weight's line clip so it pulls free on a snag instead of costing you the rig.
+\item Nose-hook the plastic through the very tip so it hangs horizontally and free.
+\end{enumerate}
+
+\section{Fish it}
+\begin{telosfacts}[0.20]
+\telosfact{Drop straight down}{This is primarily a vertical rig. Get over the fish and lower it.}
+\telosfact{Feel the weight land}{Once it is down, take up slack until the line is just tight to the weight, and then stop reeling.}
+\telosfact{Shake, do not lift}{Shake the rod tip. The weight never moves; only the bait quivers. That is the entire presentation, and you can do it in one spot for a minute at a time.}
+\telosfact{The bite}{Often just added weight, or the line moving sideways. Reel down and sweep --- no snap, small hook.}
+\telosfact{Where}{Pine spots \textbf{3} (the east wall) and \textbf{4} (down the sides of the bar), 25--40 ft. North spots \textbf{3} and \textbf{4}.}
+\end{telosfacts}
+
+\begin{telospanel}{When to use it}
+August on Pine Lake, when the fish are deep, the sun is high and nothing is chasing. It is also the best rig in the guide for fishing a spot you can see on electronics: put it on their nose and leave it there.
+\end{telospanel}
+\end{document}

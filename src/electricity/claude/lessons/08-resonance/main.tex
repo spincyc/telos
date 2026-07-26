@@ -1,0 +1,93 @@
+\input{common/preamble.tex}
+\input{electricity/claude/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{8. Resonance}{Every circuit with an L and a C has one note it likes}{2026-07-25}
+\begin{document}
+\telosmasthead[Swings, wine glasses and the LC tank]
+\lessonhead{8}{about 90 minutes}{everyone builds; battery power only}
+
+\begin{materials}
+\item String and a weight, for a pendulum
+\item An inductor: the 100-turn coil from Lesson 4, or a 1\,mH choke
+\item Capacitors: 0.01\,$\mu$F, 0.1\,$\mu$F, 1\,$\mu$F (film, not electrolytic)
+\item A signal generator, or a phone app with a tone generator and an amplifier
+\item An oscilloscope if you have one; otherwise a multimeter on AC volts
+\item A wine glass and water
+\end{materials}
+
+\begin{predict}
+You push a child on a swing. Why does pushing at exactly the right moment work
+so much better than pushing hard at random moments? Write the answer in your own
+words. Then: an LC circuit rings at one frequency. If you \emph{quadruple} the
+capacitance, does the frequency double, halve, quarter, or something else?
+\end{predict}
+
+\lessonsection{Do it}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[wire] (0,0) -- (0,1.1);
+\ckinductor{0}{1.1}{$L$}
+\draw[wire] (1,1.1) -- (2.2,1.1) -- (2.2,0);
+\ckcap{2.2}{0}{}
+\node[ckt,anchor=west] at (2.55,0) {$C$};
+\draw[wire] (2.2,-0.6) -- (2.2,-1.2) -- (0,-1.2) -- (0,0);
+\node[ckt,anchor=north,align=center] at (1.1,-1.4)
+  {an LC tank: energy sloshes between the coil's\\magnetic field and the capacitor's electric field};
+\draw[telos arrow] (3.4,0.6) arc (-60:60:0.9);
+\draw[telos arrow] (4.9,-0.5) arc (120:240:0.9);
+\node[ckt,anchor=west] at (5.3,0.05) {$f_0 = \dfrac{1}{2\pi\sqrt{LC}}$};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item \textbf{The pendulum.} Hang a weight on a string. Push it at random ---
+  it goes nowhere. Push it once each time it swings back to you --- it climbs
+  quickly. Now shorten the string by half and find the new rhythm. Every
+  oscillator has one frequency at which small, well-timed pushes accumulate.
+\item \textbf{The wine glass.} Wet a finger and run it round the rim until it
+  sings. Add water and do it again --- the note drops. You changed the effective
+  mass of the oscillator, and the frequency followed.
+\item \textbf{Build the tank.} Connect your coil and a 0.1\,$\mu$F capacitor in
+  parallel. Drive it from the signal generator through a 1\,k$\Omega$ resistor
+  and measure the AC voltage across the tank.
+\item \textbf{Sweep it.} Step the frequency up in stages, recording the voltage
+  each time. Plot voltage against frequency. There is one frequency where the
+  reading peaks sharply --- that is $f_0$.
+\item \textbf{Change one thing.} Swap to 0.01\,$\mu$F and find the peak again.
+  Then 1\,$\mu$F. Compare with your prediction: a hundred-fold change in $C$
+  should move $f_0$ by a factor of ten, because the formula has a square root
+  in it.
+\item \textbf{Check the formula.} Compute $1/(2\pi\sqrt{LC})$ for each and
+  compare with what you measured.
+\end{enumerate}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{Energy sloshes}{Charge the capacitor and let it go: it drives current
+  through the coil, which builds a magnetic field. When the capacitor is empty
+  the field collapses, and by Lesson 5 that collapse drives current onward,
+  recharging the capacitor the other way round. Back and forth --- the exact
+  electrical analogue of the pendulum.}
+\telosfact{The resonant frequency}{$f_0 = 1/(2\pi\sqrt{LC})$. It depends only on
+  the coil and the capacitor, not on how hard you hit it.}
+\telosfact{Why the peak is sharp}{At $f_0$ small pushes arrive in step and add
+  up, so the voltage in the tank climbs far above the driving voltage. Off
+  resonance they arrive out of step and cancel.}
+\telosfact{Q}{How sharp that peak is, is called the Q of the circuit. Low
+  resistance means high Q, means a taller and narrower peak, means more energy
+  accumulated before losses eat it. A Tesla coil secondary wants the highest Q
+  you can build.}
+\telosfact{Damping}{Add a resistor in series and sweep again. The peak flattens.
+  Resistance is what stops the swing.}
+\end{telosfacts}
+
+\begin{telospanel}{The link to the coil}
+Both halves of a Tesla coil are LC tanks. The primary is a few turns of heavy
+conductor plus the tank capacitor. The secondary is a thousand turns of fine
+wire, and its capacitance is not a component at all --- it is the topload and
+the coil's own self-capacitance against the surrounding air. \textbf{Tuning a
+Tesla coil means adjusting one tank until its $f_0$ matches the other's}, and
+you do it by moving the primary's tap, which changes $L$. Every hour you will
+later spend tuning the coil is this lesson.
+\end{telospanel}
+\lowvoltagenote
+\end{document}

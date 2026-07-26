@@ -1,0 +1,89 @@
+\input{common/preamble.tex}
+\input{potato-launcher/claude/shared/launcher.tex}
+\telosmeta{Potato Launcher}{Craft 1: Measure \& Mark}{Everything downstream inherits the error you make here}{2026-07-25}
+\begin{document}
+\telosmasthead[Shop skill --- transferable to anything you ever build]
+
+\begin{standard}
+A mark is \textbf{one line}, thin enough that you can tell which side of it to
+cut on, drawn square around the whole circumference of round stock, and made
+from a measurement you took twice. If you cannot say which side of your own
+mark the material comes off, the mark is not good enough.
+\end{standard}
+
+\noindent
+\begin{minipage}[t]{0.46\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % tape hook, showing the deliberate float
+  \draw[craftheavy] (0,0) rectangle (4.6,0.62);
+  \foreach \x in {0.5,1.0,...,4.5} {\draw[craftdetail] (\x,0.62) -- (\x,0.44);}
+  \foreach \x in {1.0,2.0,3.0,4.0} {\draw[craftline] (\x,0.62) -- (\x,0.30);}
+  \foreach \x/\n in {1.0/1,2.0/2,3.0/3,4.0/4} {\node[cfsmall,anchor=north] at (\x,0.28) {\n};}
+  \draw[craftheavy] (0,-0.10) -- (0,0.72);
+  \draw[craftheavy] (-0.22,0.72) -- (0.02,0.72);
+  \draw[craftheavy] (-0.22,0.72) -- (-0.22,-0.10);
+  \craftcall{-0.20}{0.30}{-0.9}{-0.75}{west}{the hook \emph{is} loose --- on purpose}
+  \node[cflabel,anchor=west,align=left] at (0.2,-1.05)
+    {it slides by exactly its own thickness,\\so it reads true hooked \emph{or} butted};
+  % burnt inch
+  \draw[craftheavy] (0,-2.4) rectangle (4.6,-1.78);
+  \foreach \x in {1.0,2.0,3.0,4.0} {\draw[craftline] (\x,-1.78) -- (\x,-2.10);}
+  \foreach \x/\n in {1.0/1,2.0/2,3.0/3,4.0/4} {\node[cfsmall,anchor=north] at (\x,-2.12) {\n};}
+  \draw[craftline,craftfill] (1.0,-2.75) rectangle (4.0,-2.50);
+  \craftdim{1.0}{-2.95}{4.0}{-2.95}{measure 1 to 4, cut 3}
+  \node[cflabel,anchor=west,align=left] at (0.1,-3.35)
+    {\textbf{The burnt inch.} Start at a whole number, not the hook.\\Subtract it. A worn hook then cannot lie to you.};
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.51\linewidth}
+\vspace{0pt}
+\begin{telosfacts}[0.24]
+\telosfact{Measure twice}{Not a proverb --- a procedure. Take the measurement, put the tape down, do something else for ten seconds, take it again. If the two disagree, take a third. Two agreeing measurements is evidence; one is a hope.}
+\telosfact{Mark thin}{A pencil line is about half a millimetre wide, which on four joints is two millimetres of accumulated slop. Use a fine mechanical pencil, or scribe with a knife where a scratch is acceptable.}
+\telosfact{Mark which side}{Put a small \textbf{X} on the waste side of every line, immediately. Cut so the blade eats the X and the line survives. This single habit removes most short-piece mistakes.}
+\telosfact{Go all the way round}{On pipe, a mark on one side tells you nothing about the far side. Roll the pipe against a square, or wrap paper round it, and carry the line the whole way.}
+\telosfact{One reference}{Measure every cut from the \emph{same} end of the stock, not from the last cut. Measuring cut-to-cut adds every previous error to the next one.}
+\telosfact{Write it down}{Cut list first, on paper, before any tool comes out. \sheetref{Build Log}}
+\end{telosfacts}
+\end{minipage}
+
+\section{The wrap trick, and why it works}
+Wrap a sheet of paper around the pipe so the edge meets itself exactly. Because
+the paper edge is straight and the pipe is round, the line where the paper
+overlaps is automatically perpendicular to the pipe axis. Draw along it.
+
+\expectcraft{The line closes on itself when you have gone all the way round. If
+the two ends of the line miss each other, the paper was not aligned and the mark
+is not square --- start again rather than splitting the difference.}
+
+\section{Where error comes from, in order of size}
+\begin{tabularx}{\linewidth}{@{}p{0.24\linewidth}p{0.14\linewidth}L@{}}
+\toprule
+\textbf{Source} & \textbf{Typical} & \textbf{What to do}\\
+\midrule
+Measuring cut-to-cut & several mm & Always measure from one reference end.\\
+Thick pencil line & 0.5 mm each & Fine pencil or knife; cut to one consistent side.\\
+Tape not flat or not straight & 1--2 mm & Pull it taut against the work, sight down it.\\
+Reading the wrong graduation & 1.5 mm or more & Say the number out loud as you read it.\\
+Worn or bent hook & up to 1 mm & Use the burnt inch and it cannot matter.\\
+Parallax --- eye off to one side & under 1 mm & Look straight down at the mark.\\
+\bottomrule
+\end{tabularx}
+
+\checkyourself{Lay your marked pipe on the bench and roll it slowly. The line
+should stay at the same height all the way round --- if it wanders up and down,
+it is not square and the cut made from it will not be either. Then measure the
+marked length again, from the reference end, with the tape you did not use the
+first time if you have two.}
+
+\begin{telospanel}{Why this sheet is first}
+Every later skill is downstream of this one. A cut cannot be squarer than its
+mark; a joint cannot be tighter than its cut; a chamber cannot be stronger than
+its joint. Accuracy is not a talent you have or lack --- it is a set of small
+habits, and they are all on this page.
+\end{telospanel}
+\end{document}

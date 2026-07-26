@@ -1,0 +1,90 @@
+\input{common/preamble.tex}
+\input{potato-launcher/claude/shared/launcher.tex}
+\telosmeta{Potato Launcher}{Demo: Ruben's Tube}{Make a sound wave visible as a wall of flame}{2026-07-26}
+\begin{document}
+\telosmasthead[The best-looking thing you can build with a drill and a pipe]
+\lessonhead{Demo}{an afternoon to build}{\textbf{adult owns the gas, always}}
+
+\begin{teloshazard}{Propane in a perforated pipe --- outdoors only}
+This is a pipe full of flammable gas with an open flame along its length. Build
+and run it \textbf{outdoors}, never indoors, never in a garage, never under
+anything. An adult owns the cylinder, the regulator and the valve, and lights it
+--- the same rule as the launcher's fuel. Purge and light promptly: a tube left
+filling unlit accumulates gas and then lights all at once. Keep the extinguisher
+on the bench, not in the house.
+\end{teloshazard}
+
+\noindent
+\begin{minipage}[t]{0.47\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % the tube in section, with flames along the top
+  \draw[pvc,pvcfill] (0,0) rectangle (7.2,0.85);
+  \foreach \x in {0.4,0.8,...,7.0} {\draw[pvcdetail] (\x,0.85) -- (\x,0.72);}
+  % standing wave: flame height follows pressure
+  \foreach \x/\h in {0.4/0.30, 0.8/0.55, 1.2/0.72, 1.6/0.55, 2.0/0.30,
+                     2.4/0.14, 2.8/0.30, 3.2/0.62, 3.6/0.80, 4.0/0.62,
+                     4.4/0.30, 4.8/0.14, 5.2/0.30, 5.6/0.58, 6.0/0.75,
+                     6.4/0.58, 6.8/0.30} {
+    \draw[pvc] (\x,0.85) .. controls (\x-0.07,0.85+\h*0.6) and (\x+0.07,0.85+\h*0.7)
+      .. (\x,0.85+\h);}
+  % speaker at one end, sealed cap at the other
+  \draw[pvc,pvcfill] (-0.7,-0.2) rectangle (0,1.05);
+  \draw[pvc] (-0.55,0.15) -- (-0.15,0.42) -- (-0.15,0.43) -- (-0.55,0.70) -- cycle;
+  \node[lnsmall,anchor=east] at (-0.8,0.42) {speaker};
+  \draw[pvc,pvcfill] (7.2,-0.2) rectangle (7.6,1.05);
+  \node[lnsmall,anchor=west] at (7.7,0.42) {sealed};
+  % gas inlet
+  \draw[pvc] (3.6,0) -- (3.6,-0.7);
+  \node[lnsmall,anchor=north] at (3.6,-0.75) {propane in};
+  \node[lnsmall,anchor=north,align=center] at (3.6,-1.25)
+    {tall flames at pressure antinodes,\\short at nodes --- the wave, standing still};
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.50\linewidth}
+\vspace{0pt}
+\begin{predict}
+Sound is a travelling wave. Play a steady tone into a closed tube full of gas
+with a row of small flames along the top. Do the flames ripple along like waves
+on water, all flicker together, or something else? Draw what you expect before
+you light it.
+\end{predict}
+\begin{telosfacts}[0.22]
+\telosfact{What happens}{The flames settle into a fixed pattern of tall and short that does not move. Change the frequency and the pattern changes to a different fixed arrangement.}
+\telosfact{Why}{The tone reflects off the sealed end and interferes with itself. At the right frequencies the two waves cancel at fixed points and reinforce at others, producing a \textbf{standing wave} --- a wave whose peaks stay put.}
+\telosfact{Flame height reads pressure}{Higher pressure inside pushes more gas out of the holes there, so a tall flame marks an antinode and a short one a node. You are looking at a graph of pressure along the tube, drawn in fire.}
+\telosfact{Measure the speed of sound}{Twice the distance between adjacent nodes is one wavelength. Multiply by the frequency and you have the speed of sound \emph{in propane} --- around \qty{250}{m/s}, noticeably slower than in air, because the gas is heavier.}
+\telosfact{The link to the launcher}{Same physics, different use: pressure in a closed volume of gas, and gas that burns only where fuel and air are in the right proportion. \sheetref{2. Combustion}}
+\end{telosfacts}
+\end{minipage}
+
+\section{Build it}
+\begin{enumerate}
+\item \textbf{Pipe.} A 1\,m to 2\,m length of steel or copper pipe, \qtyrange{50}{75}{mm} across. \textbf{Not PVC:} this one has open flame along its whole length, and the pipe gets hot. The launcher's pressure-rated PVC rule does not transfer here --- different job, different material.
+\item \textbf{Drill the holes.} A row of \qty{1.5}{mm} holes along the top, evenly spaced every \qtyrange{15}{25}{mm}, all the way down, in a straight line. Mark the line first and carry it the whole length. \sheetref{Craft 1: Measure \& Mark}
+\item \textbf{Deburr every hole.} A burr changes the flame at that hole and puts a false reading in your pattern. \sheetref{Craft 3: Deburr \& Chamfer}
+\item \textbf{Seal one end} with a solid cap. The reflection off this end is what makes the standing wave; a leaky end gives a poor pattern.
+\item \textbf{Fit the speaker} at the other end over a flexible membrane --- a rubber sheet or a balloon stretched and clamped. It must seal the tube while still moving freely.
+\item \textbf{Gas inlet} in the underside near the middle, with a valve. Adult keeps the valve.
+\item \textbf{Leak-check with soapy water} before any flame goes near it, at full working pressure. Bubbles anywhere means stop.
+\end{enumerate}
+
+\section{Run it}
+\begin{telosfacts}[0.20]
+\telosfact{Purge first}{Let gas flow long enough to displace the air inside, then light along the row promptly. Do not let it fill unlit.}
+\telosfact{Find the resonances}{Sweep a tone generator slowly from about \qty{50}{Hz} upward. Most frequencies do nothing interesting; at particular ones the pattern snaps into place. Those are the tube's resonances --- exactly the behaviour from \sheetref{8. Resonance} in the electricity course, in a different medium.}
+\telosfact{Count the nodes}{Each resonance has one more node than the last. Record frequency against node count; the relationship is a straight line and you can predict the next one before you find it.}
+\telosfact{Do the arithmetic}{Node spacing times two is the wavelength. Wavelength times frequency is the speed of sound in the gas. Compare with \qty{343}{m/s} in air and explain the difference.}
+\telosfact{Then play music}{Once the measurements are done. A bass line makes the whole tube dance, and it is worth every minute of the build.}
+\end{telosfacts}
+
+\begin{telospanel}{Why this is worth building}
+Standing waves are on every physics syllabus and almost nobody has seen one. A
+diagram of nodes and antinodes is an abstraction; a metre of fire holding
+perfectly still while a speaker plays is not. Your boys will be able to point at
+a node and say what it is, and they will still be able to in ten years.
+\end{telospanel}
+\end{document}

@@ -1,0 +1,164 @@
+\input{common/preamble.tex}
+\input{electricity/claude/shared/electricity.tex}
+
+\telosmeta{Electricity \& Magnetism}{11. Build the Coil}
+  {A small spark-gap Tesla coil, and how to tune it}{2026-07-25}
+
+\begin{document}
+\telosmasthead[The machine everything else was for]
+\lessonhead{11}{several weekends}{\textbf{adult owns the mains side, permanently}}
+
+\highvoltagenote
+
+\section{The circuit}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[telos node,minimum width=1.5cm] (m) at (0,0) {mains\\120\,V};
+\draw[wire] (0.85,0) -- (1.6,0);
+\cktransformer{1.6}{-0.34}{}{}
+\node[cktsmall,anchor=north,align=center] at (1.9,-0.9) {NST\\9--15\,kV};
+\draw[wire] (2.35,0.34) -- (3.6,0.34);
+\draw[wire] (2.35,-0.34) -- (3.6,-0.34) -- (3.6,-1.4) -- (7.4,-1.4);
+% safety gap across the transformer
+\draw[wire] (4.3,0.34) -- (4.3,1.25);
+\ckgap{4.3}{1.55}{safety gap}
+\draw[wire] (5.3,1.55) -- (6.0,1.55) -- (6.0,-1.4);
+% tank capacitor and main gap
+\draw[wire] (3.6,0.34) -- (4.9,0.34);
+\ckcap{4.9}{0.34}{$C$}
+\draw[wire] (5.9,0.34) -- (6.6,0.34);
+\ckgap{6.6}{0.34}{main gap}
+\draw[wire] (7.6,0.34) -- (8.4,0.34);
+% primary
+\draw[wire] (8.4,0.34) -- (8.4,-0.1);
+\ckinductor{8.4}{-0.5}{}
+\node[cktsmall,anchor=north] at (8.9,-0.75) {primary, tapped};
+\draw[wire] (9.4,-0.5) -- (9.4,-1.4);
+\draw[wire] (7.4,-1.4) -- (9.4,-1.4);
+% secondary and topload
+\draw[wire] (10.5,1.9) ellipse (0.75 and 0.22);
+\node[cktsmall,anchor=west] at (11.4,1.9) {topload (torus)};
+\draw[wire] (10.5,1.68) -- (10.5,1.3);
+\ckinductor{10.5}{0.9}{}
+\node[cktsmall,anchor=west,align=left] at (11.4,0.9) {secondary\\$\approx$1000 turns};
+\draw[wire] (10.5,0.9) -- (10.5,-1.0);
+\ckground{10.5}{-1.0}
+\node[cktsmall,anchor=north,align=center] at (10.5,-1.6) {RF ground rod\\\emph{not} mains earth};
+\draw[telos hair,telosmute] (9.55,0.2) -- (10.35,0.2);
+\node[cktsmall,anchor=south,text=telosmute] at (9.95,0.25) {$k\approx0.15$};
+\end{tikzpicture}
+\end{center}
+
+\section{Parts}
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}p{0.24\linewidth}L@{}}
+\toprule
+\textbf{Part} & \textbf{Typical for a small coil} & \textbf{Notes}\\
+\midrule
+Transformer & \qty{9}{kV}, \qty{30}{mA} neon-sign transformer &
+  An older non-GFCI unit. A modern electronic sign transformer will not survive
+  this duty. \textbf{This is the lethal component.}\\
+Tank capacitor & \qtyrange{5}{10}{nF} at \qty{20}{kV}+, as a series-parallel
+  string of pulse-rated film capacitors (an ``MMC'') &
+  Never electrolytic, never ordinary film. Each capacitor gets its own
+  \qty{10}{M\Omega} bleeder resistor across it.\\
+Main gap & Two \qtyrange{1}{1.5}{in} copper pipe electrodes, adjustable, or a
+  multi-gap string & Round and smooth, mounted so the spacing can be set
+  repeatably. Fan-cooled if you run it more than briefly.\\
+Safety gap & Fixed, set slightly wider than the main gap & Protects the
+  transformer from reflected spikes. Not optional.\\
+Primary & 10--15 turns of \qty{1/4}{in} copper tube or heavy wire, flat spiral,
+  \emph{tapped} & The tap is the tuning control. Leave it accessible.\\
+Secondary & \qtyrange{900}{1200}{} turns of 24--26 AWG enamelled wire on
+  \qtyrange{3}{4}{in} PVC or acrylic, aspect ratio about 4:1 or 5:1 &
+  Close-wound, no gaps, no overlaps. Sealed with polyurethane afterwards.\\
+Topload & Aluminium dryer duct formed into a torus, or a spun ball &
+  Smooth. Every sharp point is a place the coil will arc from prematurely.\\
+Ground & Its own rod, driven outside & \textbf{Never} the mains earth.\\
+\bottomrule
+\end{tabularx}
+
+\section{Build order --- and who does what}
+\begin{telosfacts}[0.20]
+\telosfact{1. Grounding stick}{Build this \emph{first}, before any high-voltage
+  part exists. Hardwood or PVC handle, metal hook, heavy braid to the ground rod.
+  Nothing else gets built until it is finished and hanging on the wall.}
+\telosfact{2. Secondary}{The long job and the best one to share. Wind slowly and
+  evenly, keeping tension constant; a drill on its slowest speed with the form
+  chucked helps. Count in hundreds and mark the form. Two coats of polyurethane
+  when done. \emph{Boys do this.}}
+\telosfact{3. Primary}{Flat spiral on an insulating cross, turns evenly spaced,
+  with a clip lead for the tap. \emph{Boys do this.}}
+\telosfact{4. Topload}{Form the duct into a ring, tape and smooth it, mount it
+  on a plate above the secondary. \emph{Boys do this.}}
+\telosfact{5. Capacitor bank}{Series-parallel string on a board, every capacitor
+  with its bleeder resistor. \emph{Boys can assemble it; adult checks every
+  joint.}}
+\telosfact{6. Gaps, enclosure, wiring}{Main gap, safety gap, interlocked
+  enclosure, switched and fused mains inlet, indicator lamp.
+  \emph{Adult only.}}
+\telosfact{7. Ground rod}{Driven outside, heavy strap back to the secondary base
+  by the shortest route you can manage.}
+\end{telosfacts}
+
+\section{Tuning it}
+\begin{enumerate}
+\item \textbf{Calculate first.} Work out the secondary's resonant frequency from
+  its dimensions, and set the primary tap to the turn that gives the primary
+  tank the same $f_0$. Lesson 8 is the whole of this step.
+\item \textbf{Start with the gap narrow} and the tap near your calculated turn.
+\item \textbf{Fire it in short bursts.} Seconds, not minutes. Unplug, short the
+  capacitor with the grounding stick, move the tap one turn, reconnect, fire
+  again. \textbf{Every single adjustment goes through that sequence.}
+\item \textbf{Watch the streamers.} Longer and brighter means closer to tune.
+  Work outward from the calculated turn in both directions and keep a written
+  log of tap position against streamer length --- you will not remember.
+\item \textbf{Then the gap.} Once the tap is right, widen the gap a little at a
+  time. Wider means a higher firing voltage and more energy per shot, up to the
+  point where the transformer can no longer charge the capacitor fast enough and
+  the output falls off again.
+\item \textbf{Stop when it stops improving.} A small coil producing a clean
+  6--12\,in streamer is a complete success and there is nothing to prove by
+  pushing it further.
+\end{enumerate}
+
+\section{If it does not work}
+\begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}L@{}}
+\toprule
+\textbf{Symptom} & \textbf{Look at}\\
+\midrule
+No spark at the gap at all & Transformer not energized; interlock open; gap far
+  too wide; capacitor open circuit.\\
+Gap fires but no output & Tuning is a long way off, or the ground connection is
+  poor or missing. Check the ground first --- it is the most common fault.\\
+Weak, thin streamers & Off tune. Move the tap. Also check for a cracked
+  capacitor or a sooty gap.\\
+Safety gap firing constantly & The main gap is set too wide, so voltage is
+  reaching the safety gap first. Narrow the main gap.\\
+Arcs from the secondary to the primary & Coupling too tight, or the topload is
+  too small. Raise the secondary relative to the primary; add a ``strike ring''.\\
+Internal arcing in the secondary & Coupling much too tight, or turns damaged.
+  This ruins a secondary. Stop and inspect.\\
+Transformer getting hot & Running too long. Short bursts only.\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{Before every run, read the checklist aloud}
+Grounding stick in reach. Capacitor shorted, hands out. Enclosure closed,
+interlock tested. RF ground connected and tight. Everyone with an implant out of
+the room and all electronics elsewhere. Second person present who knows where the
+plug is. Safety glasses and hearing protection on. Extinguisher in reach, bench
+clear. Everyone beyond arm's length of the longest streamer. The named adult is
+the one closing the switch. The full list, and why each item is on it, is on the
+\textbf{Safety} sheet --- and it belongs on the wall, not in a drawer.
+\end{teloshazard}
+
+\begin{telospanel}{What you built}
+A transformer charges a capacitor. A gap of air, switching in under a
+microsecond, dumps that capacitor into a tuned coil. That coil rings, and over
+many cycles hands its energy to a second coil tuned to the same note, loosely
+enough that the voltage has time to build. The result leaves the topload as a
+streamer, because the electric field at its surface has grown strong enough to
+tear air apart. Every clause of that is a lesson you did with a battery and a
+meter first --- which is the only reason any of it makes sense now.
+\end{telospanel}
+\end{document}

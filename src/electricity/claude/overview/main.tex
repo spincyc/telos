@@ -1,0 +1,74 @@
+\input{common/preamble.tex}
+\input{electricity/claude/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{Course Map}{Ten hands-on lessons that build to a Tesla coil}{2026-07-25}
+\begin{document}
+\telosmasthead[For teenagers and one adult]
+
+This is a course with a machine at the end of it. Every lesson exists because
+the Tesla coil in Lesson~11 will not work unless you understand the thing the
+lesson teaches --- and each one is built, measured and broken rather than read
+about. The order is not negotiable: a coil is a pair of coupled resonant
+circuits fed by a spark gap, and each of those words is a lesson.
+
+\section{The through-line}
+\begin{tabularx}{\linewidth}{@{}p{0.045\linewidth}p{0.22\linewidth}L p{0.20\linewidth}@{}}
+\toprule
+\textbf{\#} & \textbf{Lesson} & \textbf{The idea} & \textbf{Why the coil needs it}\\
+\midrule
+1 & Charge & Charge exists, comes in two signs, and is conserved. Build an electroscope. & The whole machine moves charge on and off a top electrode.\\
+2 & Fields & A field is how a force reaches across empty space. Map one. & The spark, the corona and the capacitor are all field effects.\\
+3 & Ohm's law & Voltage, current and resistance, measured on a real circuit. & You cannot size a resistor or read a meter without it.\\
+4 & Electromagnets & A current makes a magnetic field. Wind one and lift things. & Every coil in the machine is this.\\
+5 & Induction & A \emph{changing} magnetic field makes a voltage. & This is the entire secret of the coil.\\
+6 & Transformers & Two coils sharing a field trade voltage for current. & The neon-sign transformer, and the coil itself.\\
+7 & Capacitors & Storing energy in an electric field, and the RC time constant. & The tank capacitor stores the shot the coil fires.\\
+8 & Resonance & An LC circuit has one frequency it likes. Measure it. & Both halves of the coil are tuned to the same note.\\
+9 & Coupling & Two tuned circuits pass energy back and forth. & Why a Tesla coil is not just a transformer.\\
+10 & The spark gap & Air breaks down at a voltage and becomes a switch. & It is the fastest switch in the machine, and the loudest.\\
+11 & \textbf{Build the coil} & Assemble, tune and fire it. & ---\\
+\bottomrule
+\end{tabularx}
+
+\section{How each lesson runs}
+\begin{telosfacts}[0.20]
+\telosfact{Predict first}{Every lesson opens with a question and a box to commit an answer in. A prediction that turns out wrong teaches more than a demonstration that was never in doubt --- but only if it was written down first.}
+\telosfact{Build it}{They do the building. An adult who assembles the apparatus and then demonstrates it has taught nothing except that physics is something other people do.}
+\telosfact{Measure it}{Every lesson produces a number. A meter reading is the difference between a science lesson and a magic trick.}
+\telosfact{Break it}{Change one thing and predict the change. Double the turns. Halve the capacitor. Reverse the magnet.}
+\telosfact{Then the maths}{The equation comes after the measurement, as the compact way to say what they already saw. Never before.}
+\end{telosfacts}
+
+\section{Who does what}
+\begin{telosfacts}[0.20]
+\telosfact{Lessons 1--9}{Battery and low-voltage only. Nothing in these lessons can hurt anybody. The boys build, wire, measure and record; the adult asks questions.}
+\telosfact{Lesson 10 onward}{Mains-derived high voltage enters the course. \textbf{The adult owns the plug and every energizing decision, permanently.} The boys still do the mechanical build --- winding the secondary, cutting pipe, assembling the capacitor bank, laying out the base --- because that is most of the work and all of it is safe with the thing unplugged.}
+\telosfact{Non-negotiable}{Nobody is ever alone with the machine energized or energizable. The \textbf{Safety} sheet is read start to finish before Lesson~10, and it is posted on the wall where the coil is built.}
+\end{telosfacts}
+
+\section{The machine you are building}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[telos node,minimum width=2.1cm] (mains) at (0,0) {mains\\120\,V};
+\node[telos node,minimum width=2.1cm] (nst)   at (2.9,0) {neon-sign\\transformer};
+\node[telos node,minimum width=2.1cm] (cap)   at (5.8,0) {tank\\capacitor};
+\node[telos node,minimum width=2.1cm] (gap)   at (8.7,0) {spark\\gap};
+\node[telos node,minimum width=2.1cm] (pri)   at (11.6,0) {primary\\coil};
+\node[telos emphasis,minimum width=2.1cm] (sec) at (14.5,0) {secondary\\+ topload};
+\foreach \a/\b in {mains/nst,nst/cap,cap/gap,gap/pri,pri/sec}
+  {\draw[telos arrow] (\a) -- (\b);}
+\node[cktsmall,anchor=north,align=center] at (2.9,-0.55) {L3, L6\\steps up to 9--15\,kV};
+\node[cktsmall,anchor=north,align=center] at (5.8,-0.55) {L7\\stores the shot};
+\node[cktsmall,anchor=north,align=center] at (8.7,-0.55) {L10\\switches it};
+\node[cktsmall,anchor=north,align=center] at (11.6,-0.55) {L4, L8\\tuned tank};
+\node[cktsmall,anchor=north,align=center] at (14.5,-0.55) {L5, L9\\coupled resonator};
+\end{tikzpicture}
+\end{center}
+
+\begin{telospanel}{The one sentence version}
+A transformer charges a capacitor; a spark gap dumps that capacitor into a
+tuned coil; that coil rings at its resonant frequency and hands its energy, over
+several cycles, to a second coil tuned to the same frequency --- which is why
+the output voltage is far higher than the transformer alone could ever produce.
+Everything in Lessons 1--10 is one word of that sentence.
+\end{telospanel}
+\end{document}

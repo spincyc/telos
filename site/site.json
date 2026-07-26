@@ -1,48 +1,131 @@
 {
   "title": "Telos",
-  "tagline": "Home projects, worked out properly and printed on paper.",
+  "tagline": "Useful work, independently made, built to leave the screen.",
+  "navigation": [
+    {"label": "Home", "output": "index.html"},
+    {"label": "Projects", "output": "projects.html"},
+    {"label": "About", "output": "about.html"}
+  ],
   "pages": [
     {
       "source": "README.md",
       "output": "index.html",
       "title": "Telos",
-      "nav": "Home"
+      "layout": "directory",
+      "description": "A growing library of printable home projects with independent AI-provider editions."
     },
     {
-      "source": "site/pages/lake-country-fishing.md",
-      "output": "lake-country-fishing.html",
+      "source": "site/pages/projects.md",
+      "output": "projects.html",
+      "title": "Projects",
+      "layout": "directory",
+      "description": "Browse Telos projects by subject and AI-provider edition."
+    },
+    {
+      "source": "site/pages/about.md",
+      "output": "about.html",
+      "title": "About",
+      "layout": "default",
+      "description": "How Telos shares research while preserving independent AI-provider editions."
+    },
+    {
+      "source": "site/pages/lake-country-fishing/index.md",
+      "output": "projects/lake-country-fishing/index.html",
       "title": "Lake Country Fishing",
-      "nav": "Fishing"
+      "layout": "default",
+      "body_class": "project-hub",
+      "description": "Choose a Claude or ChatGPT field-guide edition for Pine Lake and North Lake."
     },
     {
-      "source": "site/pages/electricity.md",
-      "output": "electricity.html",
+      "source": "site/pages/lake-country-fishing/claude.md",
+      "output": "projects/lake-country-fishing/claude/index.html",
+      "title": "Lake Country Fishing — Claude edition",
+      "layout": "fishing",
+      "body_class": "claude",
+      "description": "The Claude field-library edition for Pine Lake and North Lake."
+    },
+    {
+      "source": "site/pages/lake-country-fishing/chatgpt.md",
+      "output": "projects/lake-country-fishing/chatgpt/index.html",
+      "title": "Lake Country Fishing — ChatGPT edition",
+      "layout": "fishing",
+      "body_class": "chatgpt",
+      "description": "A task-led ChatGPT field system for choosing water, adapting a fishing day, and leaving clean."
+    },
+    {
+      "source": "site/pages/electricity/index.md",
+      "output": "projects/electricity/index.html",
       "title": "Electricity & Magnetism",
-      "nav": "Electricity"
+      "layout": "default",
+      "body_class": "project-hub",
+      "description": "Choose an independent Claude or ChatGPT electricity curriculum."
     },
     {
-      "source": "site/pages/potato-launcher.md",
-      "output": "potato-launcher.html",
+      "source": "site/pages/electricity/claude.md",
+      "output": "projects/electricity/claude/index.html",
+      "title": "Electricity & Magnetism — Claude edition",
+      "layout": "electricity",
+      "body_class": "claude",
+      "description": "The Claude cumulative course from charge to a spark-gap Tesla coil."
+    },
+    {
+      "source": "site/pages/electricity/chatgpt.md",
+      "output": "projects/electricity/chatgpt/index.html",
+      "title": "Electricity & Magnetism — ChatGPT edition",
+      "layout": "electricity",
+      "body_class": "chatgpt",
+      "description": "A ChatGPT pathway through observation, measurement, models, and a hard high-voltage boundary."
+    },
+    {
+      "source": "site/pages/potato-launcher/index.md",
+      "output": "projects/potato-launcher/index.html",
       "title": "Potato Launcher",
-      "nav": "Launcher"
+      "layout": "default",
+      "body_class": "project-hub",
+      "description": "Choose an independent safety-first Claude or ChatGPT launcher edition."
     },
     {
-      "source": "site/pages/homelab.md",
-      "output": "homelab.html",
+      "source": "site/pages/potato-launcher/claude.md",
+      "output": "projects/potato-launcher/claude/index.html",
+      "title": "Potato Launcher — Claude edition",
+      "layout": "launcher",
+      "body_class": "claude",
+      "description": "The Claude physics, craft, build, and demonstration edition."
+    },
+    {
+      "source": "site/pages/potato-launcher/chatgpt.md",
+      "output": "projects/potato-launcher/chatgpt/index.html",
+      "title": "Potato Launcher — ChatGPT edition",
+      "layout": "launcher",
+      "body_class": "chatgpt",
+      "description": "A ChatGPT build dossier organized around go/no-go gates and controlled operation."
+    },
+    {
+      "source": "site/pages/homelab/index.md",
+      "output": "projects/homelab/index.html",
       "title": "Homelab",
-      "nav": "Homelab"
+      "layout": "default",
+      "body_class": "project-hub",
+      "description": "A provider-neutral reproducible network-provisioning system."
+    },
+    {
+      "source": "PROVIDER-EDITIONS.md",
+      "output": "provider-editions.html",
+      "title": "Provider editions",
+      "layout": "default",
+      "description": "The source, research, publication, and landing-page contract for independent AI-provider editions."
     },
     {
       "source": "CREDITS.md",
       "output": "credits.html",
       "title": "Credits & Sources",
-      "nav": "Credits"
+      "layout": "default"
     },
     {
       "source": "LICENSE",
       "output": "license.html",
       "title": "Licensing",
-      "nav": "License"
+      "layout": "default"
     }
   ]
 }

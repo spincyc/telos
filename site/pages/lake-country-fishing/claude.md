@@ -1,0 +1,120 @@
+# Lake Country Fishing
+
+**Claude edition · encyclopedic field library**
+
+A field guide to **Pine Lake** and **North Lake**, Waukesha County, Wisconsin.
+
+The two lakes sit two miles apart and fish nothing alike. Pine Lake is 711
+acres, 85 ft deep, gravel-bottomed and startlingly clear — weeds grow past
+15 ft, fish see your line, and the best bites come at the edges of the day.
+North Lake is 440 acres, river-fed and stained, split into two basins joined by
+one narrow neck. Almost every difference in how you fish them follows from
+those facts.
+
+Every sheet is designed to be printed in black and white and carried in a boat.
+Species and rig sheets are one page each.
+
+## Everything in one document
+
+If you are printing once and binding it, take these. Each is the complete guide
+for that lake — the lake sheet, every species, every rig, every reference sheet —
+bound from the very same PDFs published individually below.
+
+| Document | Pages | |
+|---|---|---|
+| **Pine Lake, complete guide** | 39 | [Download](../../../doc/lake-country-fishing/claude/compendium/pine-lake.pdf) |
+| **North Lake, complete guide** | 38 | [Download](../../../doc/lake-country-fishing/claude/compendium/north-lake.pdf) |
+
+## The lakes
+
+Each lake sheet carries a reconstructed depth map with numbered spots, keyed to
+a season-by-season table of what holds where and how to fish it.
+
+| Lake | Character | Spots | Sheet |
+|---|---|---|---|
+| **Pine Lake** | 711 acres, 85 ft, gravel, very clear | 9 | [PDF](../../../doc/lake-country-fishing/claude/lakes/pine-lake.pdf) |
+| **North Lake** | 440 acres, 78 ft, river-fed and stained, two basins | 7 | [PDF](../../../doc/lake-country-fishing/claude/lakes/north-lake.pdf) |
+
+The maps are redrawn from Wisconsin DNR historical survey sheets. They are
+generalized and **not for navigation** — see [Credits](../../../credits.html).
+
+## Species
+
+Two pages each. **Page one is the field card** — how to tell it from the fish it
+gets confused with, where it lives in each lake, when it spawns, and how to
+catch it. Print that one for the boat. **Page two is the biology**: growth rates
+and how old that fish actually is, how it hunts, what it eats, and the handful
+of things about it that change how you fish for it.
+
+- [Largemouth Bass](../../../doc/lake-country-fishing/claude/fish/largemouth-bass.pdf)
+- [Smallmouth Bass](../../../doc/lake-country-fishing/claude/fish/smallmouth-bass.pdf)
+- [Walleye](../../../doc/lake-country-fishing/claude/fish/walleye.pdf)
+- [Northern Pike](../../../doc/lake-country-fishing/claude/fish/northern-pike.pdf)
+- [Muskellunge](../../../doc/lake-country-fishing/claude/fish/muskellunge.pdf) — how to tell one from a pike, and why it matters at a 40 in minimum
+- [Bluegill](../../../doc/lake-country-fishing/claude/fish/bluegill.pdf)
+- [Pumpkinseed](../../../doc/lake-country-fishing/claude/fish/pumpkinseed.pdf)
+- [Black Crappie](../../../doc/lake-country-fishing/claude/fish/black-crappie.pdf)
+- [Yellow Perch](../../../doc/lake-country-fishing/claude/fish/yellow-perch.pdf)
+- [Rock Bass](../../../doc/lake-country-fishing/claude/fish/rock-bass.pdf)
+- [Cisco](../../../doc/lake-country-fishing/claude/fish/cisco.pdf) — the deep-water forage fish that explains Pine Lake
+
+The plates are public-domain chromolithographs by S. F. Denton, published in the
+New York fisheries reports around 1896–1902.
+
+## Rigs
+
+One page each: a diagram, what every component is for, how to build it, and how
+to fish it.
+
+| Rig | What it is for | Sheet |
+|---|---|---|
+| Slip Bobber | Hold a bait at an exact depth, in any depth of water | [PDF](../../../doc/lake-country-fishing/claude/rigs/slip-bobber.pdf) |
+| Split Shot | The least rig you can get away with | [PDF](../../../doc/lake-country-fishing/claude/rigs/split-shot.pdf) |
+| Jig and Minnow | The simplest way to reach a walleye | [PDF](../../../doc/lake-country-fishing/claude/rigs/jig-and-minnow.pdf) |
+| Lindy Rig | Drag live bait and let the fish take line | [PDF](../../../doc/lake-country-fishing/claude/rigs/lindy-rig.pdf) |
+| Carolina Rig | Cover bottom, keep the bait above it | [PDF](../../../doc/lake-country-fishing/claude/rigs/carolina-rig.pdf) |
+| Texas Rig | Soft plastic inside heavy cover | [PDF](../../../doc/lake-country-fishing/claude/rigs/texas-rig.pdf) |
+| Wacky Rig | One hook, one worm, no weight | [PDF](../../../doc/lake-country-fishing/claude/rigs/wacky-rig.pdf) |
+| Drop Shot | Weight below the hook | [PDF](../../../doc/lake-country-fishing/claude/rigs/drop-shot.pdf) |
+| Three-Way Rig | Hold a depth on a steep face | [PDF](../../../doc/lake-country-fishing/claude/rigs/three-way-rig.pdf) |
+| Quick-Strike Rig | Big dead bait for pike, hooked in the jaw | [PDF](../../../doc/lake-country-fishing/claude/rigs/quick-strike-rig.pdf) |
+| Tip-Up | Live bait under the ice | [PDF](../../../doc/lake-country-fishing/claude/rigs/tip-up.pdf) |
+
+## Cooking
+
+A sheet for each species: how good it is to eat, how to fillet *that* fish with
+the cuts drawn on the same plate the species sheet uses, which bones to watch
+for, and three ways to cook it. Every sheet carries Wisconsin's current
+safe-eating guidance for that species.
+
+| Species | | Sheet |
+|---|---|---|
+| Walleye | The best-eating fish here, and the cheeks nobody takes | [PDF](../../../doc/lake-country-fishing/claude/cooking/walleye.pdf) |
+| Yellow Perch | Pound for pound the finest eating in fresh water | [PDF](../../../doc/lake-country-fishing/claude/cooking/yellow-perch.pdf) |
+| Bluegill | The fish most people learn to clean on | [PDF](../../../doc/lake-country-fishing/claude/cooking/bluegill.pdf) |
+| Pumpkinseed | Treat it exactly as a bluegill | [PDF](../../../doc/lake-country-fishing/claude/cooking/pumpkinseed.pdf) |
+| Black Crappie | The mildest fillet in the lake | [PDF](../../../doc/lake-country-fishing/claude/cooking/black-crappie.pdf) |
+| Rock Bass | Under-rated; eat it the day you catch it | [PDF](../../../doc/lake-country-fishing/claude/cooking/rock-bass.pdf) |
+| Northern Pike | **The five-fillet method** — how to beat the Y-bones | [PDF](../../../doc/lake-country-fishing/claude/cooking/northern-pike.pdf) |
+| Largemouth Bass | Better than its reputation, from cold water | [PDF](../../../doc/lake-country-fishing/claude/cooking/largemouth-bass.pdf) |
+| Smallmouth Bass | Cleaner-tasting, because of where it lives | [PDF](../../../doc/lake-country-fishing/claude/cooking/smallmouth-bass.pdf) |
+| Cisco | Oily and fine-fleshed — the one fish here worth smoking | [PDF](../../../doc/lake-country-fishing/claude/cooking/cisco.pdf) |
+| Muskellunge | Why this one goes back | [PDF](../../../doc/lake-country-fishing/claude/cooking/muskellunge.pdf) |
+
+## Reference
+
+| Sheet | What it covers | |
+|---|---|---|
+| Reading Water | Why fish are where they are, so you can find them on any lake | [PDF](../../../doc/lake-country-fishing/claude/reference/reading-water.pdf) |
+| Lures & Baits | What to carry and what each thing is for | [PDF](../../../doc/lake-country-fishing/claude/reference/lures-and-baits.pdf) |
+| Seasonal Calendar | Species by month, and the year by water temperature | [PDF](../../../doc/lake-country-fishing/claude/reference/seasonal-calendar.pdf) |
+| Knots | Four knots cover everything here | [PDF](../../../doc/lake-country-fishing/claude/reference/knots.pdf) |
+| Handling & Release | A released fish that dies anyway was not released | [PDF](../../../doc/lake-country-fishing/claude/reference/handling-and-release.pdf) |
+| A First Trip | How to take somebody fishing who has never been | [PDF](../../../doc/lake-country-fishing/claude/reference/first-trip.pdf) |
+
+## Regulations
+
+Every sheet that quotes a limit quotes the 2026–27 rules for these specific
+waters. **These change every year.** Only the Wisconsin DNR's current
+publication for a specific water body is authoritative — check it before you
+fish.

@@ -27,8 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_ROOT = ROOT / "src/lake-country-fishing/shared/maps"
-OUTPUT_ROOT = ROOT / "src/lake-country-fishing/shared"
+DATA_ROOT = ROOT / "src/lake-country-fishing/claude/shared/maps"
+OUTPUT_ROOT = ROOT / "src/lake-country-fishing/claude/shared"
 
 # 0.04 cm cells: finer than the printed line width, coarse enough that the
 # pure-Python relaxation stays under a few seconds when run coarse-to-fine.

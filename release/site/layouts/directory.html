@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{head_title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+<script src="{{root}}assets/site.js" defer></script>
+</head>
+<body class="directory {{body_class}}">
+<a class="skip" href="#content">Skip to content</a>
+<header class="masthead">
+  <div class="shell masthead-inner">
+    <a class="wordmark" href="{{root}}index.html">{{site_title}}</a>
+    <nav aria-label="Primary">
+{{navigation}}
+    </nav>
+  </div>
+</header>
+<main id="content" class="shell">
+{{content}}
+</main>
+<footer class="colophon">
+  <div class="shell">
+    <p>Home projects, worked out properly, independently assembled, and printed on paper.</p>
+  </div>
+</footer>
+</body>
+</html>

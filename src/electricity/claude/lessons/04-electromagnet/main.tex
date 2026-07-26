@@ -1,0 +1,108 @@
+\input{common/preamble.tex}
+\input{electricity/claude/shared/electricity.tex}
+\telosmeta{Electricity \& Magnetism}{4. Electromagnets}{A current makes a magnetic field}{2026-07-25}
+\begin{document}
+\telosmasthead[Ørsted's accident, repeated]
+\lessonhead{4}{about 75 minutes}{everyone builds; battery power only}
+
+\begin{materials}
+\item Enamelled magnet wire, 26--30 AWG, about 10\,m
+\item Large iron nail or bolt (100\,mm)
+\item AA cells and holder; a 9\,V battery
+\item Compass
+\item Paper clips
+\item Multimeter
+\item Sandpaper, tape
+\end{materials}
+
+\begin{predict}
+A compass sits under a straight wire that runs north--south. You connect the
+battery. Which way does the needle turn --- and what happens if you reverse the
+battery? Then: an electromagnet with 50 turns lifts 8 paper clips. How many will
+100 turns lift? Commit to a number.
+\end{predict}
+
+\lessonsection{Do it}
+\begin{enumerate}
+\item \textbf{Ørsted's experiment.} Lay a straight wire over a compass, running
+  the same way the needle points. Touch it briefly across a AA cell. The needle
+  swings across. Reverse the connections --- it swings the other way. In 1820
+  this was the first evidence that electricity and magnetism are one subject.
+  \emph{Only touch it briefly:} a bare wire across a cell is a short circuit and
+  gets hot.
+\item \textbf{Find the direction.} Move the compass above, below and beside the
+  wire. The field circles \emph{around} the wire. Point your right thumb along
+  the current and your fingers curl the way the field goes.
+\item \textbf{Wind a coil.} Wind 50 turns of magnet wire neatly along the nail,
+  all the same direction, counting aloud. Leave 15\,cm tails, sand the enamel
+  off the ends --- enamel is insulation and the circuit will not work through
+  it.
+\item \textbf{Lift things.} Connect to the AA holder and pick up paper clips.
+  Count them. Disconnect: they fall.
+\item \textbf{Double it.} Wind 50 more turns on top, same direction, so you now
+  have 100. Count clips again. Compare with your prediction.
+\item \textbf{Take the iron out.} Slide the nail out and try lifting with the
+  air-cored coil alone. Then put it back.
+\item \textbf{Measure the current.} Put the meter in series and record it for
+  the 50-turn and 100-turn coils. The 100-turn coil has twice the wire, so twice
+  the resistance, so \emph{half} the current --- which complicates your
+  prediction in an interesting way.
+\end{enumerate}
+
+\lessonsection{How to wind it}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ptWoundNail{0}{2.4}{1.15}{11}
+  \ptCellHolder{0.4}{0.2}{0.9}
+  \draw[wirered] (-0.4,1.68) .. controls (-1.0,1.1) and (-0.4,0.7) .. (0.4,0.83);
+  \draw[wireblk] (2.5,3.1) .. controls (3.6,3.2) and (3.9,1.2) .. (3.06,0.4);
+  \node[partsmall,anchor=west,align=left] at (3.3,2.6)
+    {every turn the\\same direction};
+  \node[partsmall,anchor=north,align=center] at (1.9,-0.35)
+    {sand the enamel off both ends --- it is insulation, and the circuit
+     will not work through it};
+  \draw[telos arrow] (1.3,3.05) arc (200:-20:0.42 and 0.30);
+\end{tikzpicture}
+\end{center}
+
+\lessonsection{What it means}
+\begin{telosfacts}[0.20]
+\telosfact{Current makes field}{Not "moving magnets make fields" --- moving
+  \emph{charge} makes a magnetic field. A bar magnet works because of circulating
+  currents inside its atoms.}
+\telosfact{Turns concentrate it}{Each turn adds its field to the others. The
+  strength depends on the \textbf{ampere-turns}: current multiplied by number of
+  turns. That is why your measurement mattered --- doubling turns while halving
+  current is roughly a wash, and the honest answer to the prediction is "about
+  the same, unless I also change the voltage".}
+\telosfact{Iron multiplies}{An iron core can multiply the field by hundreds. The
+  iron's own atomic magnets line up with yours and add to it. This is why
+  transformers have iron cores --- and why a Tesla coil, which works at radio
+  frequency where iron cannot keep up, has an \emph{air} core.}
+\telosfact{Switching it off}{A permanent magnet is always on. This one is a
+  magnet you can control, which is the entire basis of motors, relays,
+  loudspeakers and transformers.}
+\end{telosfacts}
+
+\lessonsection{Break it}
+\begin{telosfacts}[0.20]
+\telosfact{Wind it backwards}{Wind the second 50 turns the \emph{opposite} way.
+  Now what happens? Predict before you connect.}
+\telosfact{More voltage}{Try 9\,V instead of 3\,V on the same coil. Measure the
+  current. Feel the coil after twenty seconds --- and think about where that
+  energy is going.}
+\telosfact{Aluminium core}{Try a core of aluminium or copper instead of iron.
+  Nothing happens. Only a few metals are ferromagnetic, which is a fact about
+  atoms and not about metals in general.}
+\end{telosfacts}
+
+\begin{telospanel}{The link to the coil}
+The primary coil of the Tesla coil is exactly this: a few turns of heavy
+conductor making a magnetic field. The secondary is the same idea with about a
+thousand turns of thin wire. Neither has an iron core, because at the coil's
+operating frequency --- hundreds of thousands of cycles per second --- iron
+cannot flip fast enough and would simply heat up.
+\end{telospanel}
+\lowvoltagenote
+\end{document}

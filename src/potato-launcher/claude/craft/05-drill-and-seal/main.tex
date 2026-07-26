@@ -1,0 +1,103 @@
+\input{common/preamble.tex}
+\input{potato-launcher/claude/shared/launcher.tex}
+\telosmeta{Potato Launcher}{Craft 5: Drill \& Seal}{Every hole you make is a hole in a pressure vessel}{2026-07-25}
+\begin{document}
+\telosmasthead[Shop skill --- transferable to anything you ever build]
+
+\begin{standard}
+A round hole of the intended size, with no cracks radiating from it, no
+crazing around it, and a seal that is continuous all the way round on the
+\textbf{outside} face. Nothing you fit through a chamber wall may rely on the
+threads alone to hold pressure.
+\end{standard}
+
+\noindent
+\begin{minipage}[t]{0.45\linewidth}
+\vspace{0pt}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[cflabel,anchor=south,align=center] at (1.6,1.5) {PVC grabs a twist drill};
+  \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
+  \draw[craftheavy] (1.6,1.1) -- (1.6,2.0);
+  \draw[craftheavy] (1.45,1.1) -- (1.6,0.78) -- (1.75,1.1) -- cycle;
+  \draw[craftline] (1.30,0.5) -- (1.42,0.36);
+  \draw[craftline] (1.90,0.5) -- (1.78,0.36);
+  \craftcall{1.42}{0.40}{3.5}{0.15}{west}{the drill snatches\\through and chips\\the far side}
+  \begin{scope}[shift={(0,-2.4)}]
+    \node[cflabel,anchor=south,align=center] at (1.6,1.5) {a step drill cannot};
+    \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
+    \foreach \i/\w in {0/0.42,1/0.32,2/0.22} {
+      \draw[craftheavy] (1.6-\w,1.1+\i*0.30) rectangle (1.6+\w,1.4+\i*0.30);}
+    \draw[craftheavy] (1.6,2.0) -- (1.6,2.4);
+    \draw[craftline] (1.28,0.5) -- (1.28,1.1);
+    \draw[craftline] (1.92,0.5) -- (1.92,1.1);
+    \craftyes{3.6}{0.8}
+  \end{scope}
+  % sealed penetration
+  \begin{scope}[shift={(0,-5.0)}]
+    \node[cflabel,anchor=south,align=center] at (1.6,1.35) {sealed on the outside face};
+    \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
+    \draw[craftheavy] (1.5,0.2) rectangle (1.7,1.5);
+    \draw[craftheavy] (1.34,1.1) rectangle (1.86,1.22);
+    \fill[craftweld] (1.10,1.10) .. controls (1.30,1.34) and (1.90,1.34) ..
+      (2.10,1.10) -- cycle;
+    \craftcall{1.6}{1.28}{3.5}{1.05}{west}{epoxy fillet}
+    \craftcall{1.6}{0.35}{3.5}{0.25}{west}{nut inside}
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.52\linewidth}
+\vspace{0pt}
+\begin{telosfacts}[0.22]
+\telosfact{PVC grabs}{A standard twist drill's cutting geometry pulls itself into plastic. As the point breaks through, the flutes snatch, and the drill either climbs through violently or cracks the far wall. This surprises everyone once.}
+\telosfact{Use a step drill}{It cannot self-feed, it leaves a clean round hole, and it works from a small pilot upward. This is the right tool and it is inexpensive.}
+\telosfact{Or grind the drill}{If you only have twist drills, back the cutting edge off to near zero rake, or drill a pilot and then open up in stages. Slow speed, light steady pressure, and back off as you approach breakthrough.}
+\telosfact{Back it up}{Clamp a scrap block behind the wall where you can. It supports the material at the moment of breakthrough, which is the moment things go wrong.}
+\telosfact{Never near a joint}{Keep penetrations well away from a welded socket. The wall there is a different thickness and the weld zone has different properties.}
+\telosfact{Round holes only}{No slots, no filed-out ovals, no drilling two overlapping holes. Every corner is a stress concentration and a crack starter.}
+\end{telosfacts}
+\end{minipage}
+
+\section{Method for the igniter electrodes}
+\begin{enumerate}
+\item Mark both positions, roughly a third of the way along the chamber from the breech, well clear of any welded joint. \sheetref{Craft 1: Measure \& Mark}
+\item Pilot-drill small and slow. Check the pilot is where you meant it before opening up.
+\item Open to size with a step drill, backing off pressure at breakthrough.
+\item Deburr both sides of the hole. A burr under a washer stops it seating flat. \sheetref{Craft 3: Deburr \& Chamfer}
+\item Fit the screw with a washer inside and out, and a nut inside. Do not overtighten --- PVC creeps, and a nut torqued hard today is loose next month.
+\item Set the internal electrode gap at 3 to 5\,mm and \textbf{test the spark before sealing anything}, with the chamber open.
+\item Seal the outside face with an epoxy fillet all the way round the screw. The epoxy is the pressure seal; the nut only holds position.
+\item Let the epoxy cure fully before the chamber sees any pressure.
+\end{enumerate}
+
+\begin{gate}{Test before you seal}
+Once the epoxy is on, changing the gap means destroying the seal. Test the spark
+with a battery-free piezo click while you can still reach both electrodes, and
+confirm you see and hear it jump. Sealing an untested igniter is how a build
+ends up needing a new chamber.
+\end{gate}
+
+\section{Why a crack near a hole is different}
+A crack in plain pipe wall has to start somewhere. A hole gives it a start: the
+stress in the material flows around the hole and concentrates at its edge,
+roughly tripling there even for a perfectly round hole. A sharp corner, a
+scratch from a slipped drill, or a star crack from a snatching bit multiplies
+that far further. This is why the rules are round holes, no sharp corners, no
+scratches, and inspect every penetration before every session.
+
+\checkyourself{Hold the drilled area up to a strong light and look at the plastic
+around the hole from several angles. You are looking for \textbf{crazing} --- a
+faint web of tiny white lines --- and for any crack, however short. Crazing means
+the material was stressed while you drilled it. Either is a reason to remake the
+part, not to seal over it.}
+
+\begin{telospanel}{The habit worth taking away}
+Match the tool to the material rather than forcing the tool you have. A twist
+drill is a superb tool for steel and a poor one for thin plastic, and no amount
+of care fully compensates. Recognising that a job wants a different tool --- and
+that the right one often costs very little --- is most of what separates work
+that looks made from work that looks got away with.
+\end{telospanel}
+\end{document}
