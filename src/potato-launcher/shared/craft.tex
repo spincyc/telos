@@ -1,0 +1,163 @@
+% Drawing library for the craft sheets.
+%
+% The craft sheets teach transferable shop skill, not launcher assembly, so the
+% drawings are of tools and joints rather than of this project's parts. A boy
+% who learns to cut square and solvent-weld properly here should recognise the
+% same drawings when he builds something else entirely.
+%
+% Everything is drawn in section where a section shows the thing that matters.
+% A solvent weld is invisible from outside, and that is exactly why it gets
+% built wrong.
+
+\tikzset{
+  craftline/.style={draw=telosink,line width=0.9pt},
+  craftheavy/.style={draw=telosink,line width=1.3pt},
+  craftdetail/.style={draw=telosink,line width=0.35pt},
+  crafthint/.style={draw=telosmute,line width=0.4pt,dash pattern=on 2pt off 1.6pt},
+  craftfill/.style={fill=telosfill},
+  craftweld/.style={pattern=north east lines,pattern color=telosdeep},
+  craftbad/.style={draw=telosink,line width=0.9pt},
+  cflabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
+  cfsmall/.style={font=\fontsize{5.8}{6.8}\selectfont},
+  cftag/.style={font=\fontsize{6.4}{7.4}\selectfont\itshape},
+}
+
+% ---------------------------------------------------------------------------
+% Pipe and fittings, in longitudinal section
+% ---------------------------------------------------------------------------
+
+% A length of pipe in section. \pipesection{x}{y}{length}{outer radius}{wall}
+\newcommand{\pipesection}[5]{%
+  \begin{scope}[shift={(#1,#2)}]
+    \draw[craftline,craftfill] (0,#4-#5) rectangle (#3,#4);
+    \draw[craftline,craftfill] (0,-#4) rectangle (#3,-#4+#5);
+    \draw[crafthint] (0,0) -- (#3,0);
+  \end{scope}}
+
+% A socket fitting in section, with the pipe inserted to the shoulder and the
+% interference zone marked. This is the drawing that explains solvent welding.
+%   \socketjoint{x}{y}{scale}{insert depth fraction 0..1}
+\newcommand{\socketjoint}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    % fitting body
+    \draw[craftline,craftfill] (1.4,0.30) rectangle (3.4,0.62);
+    \draw[craftline,craftfill] (1.4,-0.30) rectangle (3.4,-0.62);
+    \draw[craftline] (3.4,0.62) -- (3.4,-0.62);
+    % socket shoulder
+    \draw[craftline] (2.9,0.30) -- (2.9,-0.30);
+    % pipe, inserted #4 of the way to the shoulder
+    \pgfmathsetmacro{\tip}{1.4 + (2.9-1.4)*#4}
+    \draw[craftline,craftfill] (-0.1,0.30) rectangle (\tip,0.44);
+    \draw[craftline,craftfill] (-0.1,-0.30) rectangle (\tip,-0.44);
+    % the weld zone: where softened surfaces fuse
+    \fill[craftweld] (1.4,0.30) rectangle (\tip,0.44);
+    \fill[craftweld] (1.4,-0.30) rectangle (\tip,-0.44);
+    \draw[crafthint] (-0.1,0) -- (3.4,0);
+  \end{scope}}
+
+% A mitre box holding pipe, seen from above.
+\newcommand{\mitrebox}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[craftheavy] (0,0) rectangle (3.2,1.5);
+    \draw[craftline] (0,0.28) -- (3.2,0.28);
+    \draw[craftline] (0,1.22) -- (3.2,1.22);
+    % the 90-degree slot
+    \draw[craftheavy] (1.5,-0.12) -- (1.5,1.62);
+    \draw[craftheavy] (1.62,-0.12) -- (1.62,1.62);
+    % pipe lying in the channel
+    \draw[craftline,craftfill] (0.2,0.42) rectangle (2.9,1.08);
+    \draw[craftdetail] (0.2,0.42) -- (0.2,1.08);
+  \end{scope}}
+
+% A try square checking a cut end.
+\newcommand{\squarecheck}[4]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    % pipe end, cut at angle #4 degrees off square
+    \draw[craftline,craftfill] (0,0.28) rectangle (1.6,0.46);
+    \draw[craftline,craftfill] (0,-0.28) rectangle (1.6,-0.46);
+    \pgfmathsetmacro{\skewa}{1.6 + 0.46*tan(#4)}
+    \pgfmathsetmacro{\skewb}{1.6 - 0.46*tan(#4)}
+    \draw[craftline] (\skewa,0.46) -- (\skewb,-0.46);
+    % square: stock against the pipe side, blade across the end
+    \draw[craftheavy] (1.1,0.46) -- (1.1,0.86) -- (2.5,0.86);
+    \draw[craftheavy] (1.1,0.46) -- (2.35,0.46);
+    \draw[craftdetail] (1.24,0.46) -- (1.24,0.72);
+  \end{scope}}
+
+% A chamfered pipe end in section, with the angle called out.
+\newcommand{\chamferend}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[craftline,craftfill] (0,0.30) -- (1.5,0.30) -- (1.5,0.44)
+      -- (0.22,0.44) -- (0,0.30) -- cycle;
+    \draw[craftline,craftfill] (0,-0.30) -- (1.5,-0.30) -- (1.5,-0.44)
+      -- (0.22,-0.44) -- (0,-0.30) -- cycle;
+    \draw[crafthint] (0,0) -- (1.5,0);
+    \draw[crafthint] (0.22,0.44) -- (0.42,0.44);
+    \draw[crafthint] (0,0.30) -- (0.42,0.30);
+  \end{scope}}
+
+% A burr on an inside edge -- the defect the chamfer sheet is about.
+\newcommand{\burrend}[3]{%
+  \begin{scope}[shift={(#1,#2)},scale=#3]
+    \draw[craftline,craftfill] (0,0.30) rectangle (1.5,0.44);
+    \draw[craftline,craftfill] (0,-0.30) rectangle (1.5,-0.44);
+    \draw[craftline] (0,0.30) .. controls (0.06,0.20) and (0.14,0.18) .. (0.10,0.30);
+    \draw[craftline] (0,-0.30) .. controls (0.06,-0.20) and (0.14,-0.18) .. (0.10,-0.30);
+    \draw[crafthint] (0,0) -- (1.5,0);
+  \end{scope}}
+
+% A tick-and-cross verdict marker, for right-way/wrong-way pairs.
+\newcommand{\craftyes}[2]{%
+  \draw[craftheavy] (#1-0.14,#2) -- (#1-0.04,#2-0.12) -- (#1+0.16,#2+0.14);}
+\newcommand{\craftno}[2]{%
+  \draw[craftheavy] (#1-0.13,#2-0.13) -- (#1+0.13,#2+0.13);
+  \draw[craftheavy] (#1-0.13,#2+0.13) -- (#1+0.13,#2-0.13);}
+
+% Dimension line with a label.
+\newcommand{\craftdim}[5]{%
+  \draw[|<->|,craftdetail] (#1,#2) -- (#3,#4);
+  \node[cftag,fill=telospaper,inner sep=1.6pt] at ({(#1+#3)/2},{(#2+#4)/2}) {#5};}
+
+% Callout with a hairline leader.
+\newcommand{\craftcall}[6]{%
+  \draw[craftdetail,telosmute] (#1,#2) -- (#3,#4);
+  \fill[telosmute] (#1,#2) circle (0.035);
+  \node[cflabel,anchor=#5,align=left,inner sep=1.6pt] at (#3,#4) {#6};}
+
+% ---------------------------------------------------------------------------
+% Craft-sheet furniture
+% ---------------------------------------------------------------------------
+
+% The standard every craft sheet opens with: what "good" looks like, stated as
+% something checkable rather than as an aspiration.
+\newtcolorbox{standard}{
+  enhanced, breakable,
+  colback=telospaper, colframe=telosink,
+  boxrule=1.0pt, sharp corners,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
+  before skip=7pt, after skip=7pt,
+  colbacktitle=telospaper, coltitle=telosink,
+  title={THE STANDARD}, fonttitle=\small\bfseries
+}
+
+% What you should observe if the step worked.
+\newcommand{\expectcraft}[1]{%
+  \par\vspace{0.15em}
+  \noindent\begin{minipage}{\linewidth}
+  \hspace*{0.6em}\begin{minipage}{\dimexpr\linewidth-0.6em\relax}
+  {\footnotesize\textbf{You should see:} #1\par}
+  \end{minipage}\end{minipage}\par\vspace{0.3em}}
+
+% How to check your own work. Every craft sheet has one, because a skill you
+% cannot verify is a skill you cannot trust.
+\newcommand{\checkyourself}[1]{%
+  \par\vspace{0.3em}
+  \noindent
+  \begin{minipage}{\linewidth}
+    \rule{\linewidth}{0.9pt}\par
+    \vspace{0.3em}
+    {\footnotesize\textbf{Check it yourself.} #1\par}
+    \vspace{0.25em}
+    \rule{\linewidth}{0.3pt}
+  \end{minipage}\par}

@@ -50,23 +50,10 @@
   {\footnotesize\textbf{Expect:} #1\par}
   \end{minipage}\end{minipage}\par\vspace{0.3em}}
 
-% A stop-and-check gate. Used before anything destructive and before anything
-% that would be expensive to discover later.
-\newtcolorbox{gate}[1]{
-  enhanced, breakable,
-  colback=telospaper, colframe=telosink,
-  boxrule=1.0pt, sharp corners,
-  left=6pt, right=6pt, top=4pt, bottom=4pt,
-  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
-  before skip=7pt, after skip=7pt,
-  colbacktitle=telospaper, coltitle=telosink,
-  title={\MakeUppercase{#1}}, fonttitle=\small\bfseries
-}
+% \begin{gate} now lives in common/preamble.tex, shared with the other
+% projects that document procedures.
 
-% Which decision governs the paragraph you are reading. The manuals are
-% generated from the same repository as the ADRs, and a reader who disagrees
-% with an instruction should be able to find the decision behind it.
-\newcommand{\governedby}[1]{{\footnotesize\textsc{governed by #1}}}
+% \governedby now lives in common/preamble.tex.
 
 % An instance value that comes from the private overlay. In the published
 % documents these render as visible placeholders, which is deliberate: a

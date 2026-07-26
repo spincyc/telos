@@ -64,7 +64,7 @@
 \newcommand{\lncall}[6]{%
   \draw[pvcdetail,telosmute] (#1,#2) -- (#3,#4);
   \fill[telosmute] (#1,#2) circle (0.035);
-  \node[lnlabel,anchor=#5,inner sep=1.6pt] at (#3,#4) {#6};}
+  \node[lnlabel,anchor=#5,align=left,inner sep=1.6pt] at (#3,#4) {#6};}
 
 % ---------------------------------------------------------------------------
 % Standing safety text, written once.
@@ -89,3 +89,6 @@
   than splitting. This is the one specification in the whole project that is
   not negotiable.
   \end{telosframe}}
+
+% Craft sheets: transferable shop skill, drawn in section.
+\input{potato-launcher/shared/craft.tex}

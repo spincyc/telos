@@ -33,6 +33,28 @@ ordinances vary; confirm yours before you start.
 | 4 | Projectile Motion | Range, angle, and measuring a muzzle velocity you cannot see. | [PDF](doc/potato-launcher/lessons/04-projectile-motion.pdf) |
 | 5 | **Build and Fire** | Cut, glue, cure 48 hours, test, shoot, tune. | [PDF](doc/potato-launcher/build.pdf) |
 
+## Craft
+
+The lessons explain why it works. These teach how to build it *well* — and they
+are the part that transfers to everything else your boys ever make. Each sheet
+opens with **the standard** (what good looks like, stated as something
+checkable), gives a method, and ends with how to verify your own work.
+
+| # | Sheet | The standard it sets |
+|---|---|---|
+| 1 | [Measure & Mark](doc/potato-launcher/craft/01-measure-and-mark.pdf) | One thin line, square all the way round, from a measurement taken twice |
+| 2 | [Cut Square](doc/potato-launcher/craft/02-cut-square.pdf) | Perpendicular within a degree — no light under a try square, four positions |
+| 3 | [Deburr & Chamfer](doc/potato-launcher/craft/03-deburr-and-chamfer.pdf) | No burr anywhere; an even 1–2 mm chamfer on every end |
+| 4 | [Solvent Weld](doc/potato-launcher/craft/04-solvent-weld.pdf) | **It is not glue.** A continuous bead all round, bottomed, dated, 48 hours |
+| 5 | [Drill & Seal](doc/potato-launcher/craft/05-drill-and-seal.pdf) | Round holes, no crazing, spark tested *before* sealing |
+| 6 | [Inspect Your Own Work](doc/potato-launcher/craft/06-inspect-your-work.pdf) | Ten named checks, run before the step that hides the evidence |
+| — | [**Build Log**](doc/potato-launcher/build-log.pdf) | Print it, fill it in with a pen, keep it with the launcher |
+
+The build log is the piece that makes the rest real. It has a cure gate on it:
+you write down when the last joint was welded, add 48 hours, and write that time
+on the chamber. Nobody fires before then — not for a quick test, not because it
+feels solid.
+
 ## One specification that is not negotiable
 
 Schedule 40 **pressure**-rated PVC, marked with an NSF-PW rating and a pressure

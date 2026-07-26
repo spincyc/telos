@@ -143,6 +143,11 @@
 % so a reference names the sheet rather than a page number.
 \newcommand{\sheetref}[1]{\textit{see the \textbf{#1} sheet}}
 
+% Which decision, ADR or sheet governs the paragraph you are reading. A reader
+% who disagrees with an instruction should be able to find the reasoning behind
+% it rather than having to take it on trust.
+\newcommand{\governedby}[1]{{\footnotesize\textsc{governed by #1}}}
+
 % ---------------------------------------------------------------------------
 % Quantities. siunitx is not in this TeX Live split, and the guides need only a
 % fixed thin space and upright units, so define that directly rather than take
@@ -207,6 +212,20 @@
   left=6pt, right=6pt, top=5pt, bottom=5pt,
   toptitle=3pt, bottomtitle=3pt,
   before skip=8pt, after skip=8pt,
+  title={\MakeUppercase{#1}}, fonttitle=\small\bfseries
+}
+
+% A stop-and-check gate. Used before anything destructive, and before anything
+% that would be expensive to discover later. Shared by every project that has
+% a procedure someone could get hurt following carelessly.
+\newtcolorbox{gate}[1]{
+  enhanced, breakable,
+  colback=telospaper, colframe=telosink,
+  boxrule=1.0pt, sharp corners,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
+  before skip=7pt, after skip=7pt,
+  colbacktitle=telospaper, coltitle=telosink,
   title={\MakeUppercase{#1}}, fonttitle=\small\bfseries
 }
 
