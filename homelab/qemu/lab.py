@@ -58,9 +58,9 @@ def missing_requirements() -> list[str]:
     """What must be installed before the matrix can run."""
     missing = []
     if not shutil.which(QEMU):
-        missing.append(f"{QEMU} (pacman -S qemu-full)")
+        missing.append(f"{QEMU} (pacman -S qemu-base)")
     if not shutil.which(QEMU_IMG):
-        missing.append(f"{QEMU_IMG} (pacman -S qemu-full)")
+        missing.append(f"{QEMU_IMG} (pacman -S qemu-base)")
     if not _first_existing(OVMF_CODE_CANDIDATES):
         missing.append("OVMF firmware (pacman -S edk2-ovmf)")
     return missing

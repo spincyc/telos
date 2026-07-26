@@ -27,7 +27,7 @@ ARCH_TEX_PACKAGES := texlive-bin texlive-basic texlive-latex \
 ARCH_WORKFLOW_PACKAGES := git openai-codex
 # Homelab provisioning: image build, disk layout and the QEMU acceptance matrix.
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
-	dnsmasq nginx ipxe qemu-full edk2-ovmf ansible
+	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible
 ARCH_DEPENDENCY_PACKAGES := $(ARCH_CORE_PACKAGES) $(ARCH_PYTHON_PACKAGES) \
 	$(ARCH_TEX_PACKAGES) $(ARCH_WORKFLOW_PACKAGES) \
 	$(ARCH_HOMELAB_PACKAGES)
