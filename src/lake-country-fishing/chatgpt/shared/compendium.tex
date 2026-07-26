@@ -37,6 +37,7 @@ date. Printed text never overrides the current rule.
 \vfill
 {\small\textsc{Telos}\quad$\cdot$\quad ChatGPT edition\quad$\cdot$\quad
 spincyc.github.io/telos}\par
+\TelosColophon
 \clearpage
 
 \section*{What is bound}
@@ -79,7 +80,7 @@ confirms the species; do not read inclusion as a presence or abundance claim.}
 \bindspecies{black-crappie}
 \bindspecies{yellow-perch}
 \bindspecies{rock-bass}
-\ifstrequal{\PineEdition}{yes}{
+\ifdefstring{\PineEdition}{yes}{
   \bindpart{Historical module \quad Cisco}{Historical Pine evidence makes this
   useful for identification and interpretation, but the current broad DNR
   record does not confirm cisco. Do not target or harvest cisco without
