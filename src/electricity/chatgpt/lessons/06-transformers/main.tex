@@ -1,0 +1,11 @@
+\def\doctitle{Lesson 6: Transformers}\def\docsubtitle{Turns ratio under changing flux}\def\docstrap{use a tiny switched pulse, never mains}
+\def\materialslist{\item Two insulated coils on one iron core \item 2 AA cells \item Pushbutton \item Multimeter}
+\def\prediction{Will the second coil show a steady voltage while DC in the first coil is steady?}
+\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](-2,-1)rectangle(2,1);
+\foreach \y in {-0.7,-.35,...,.7}{\draw[very thick](-2.3,\y)arc(90:-90:.18 and .18);}
+\foreach \y in {-0.7,-.35,...,.7}{\draw[very thick](2.3,\y)arc(90:270:.18 and .18);}
+\node[left]at(-2.6,0){primary};\node[right]at(2.6,0){secondary};\draw[->](0,-1.25)--(0,-.75)node[midway,right]{shared flux};\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item With power disconnected, put both coils on the core. Connect the secondary only to a voltmeter.\item Briefly press and release the primary pushbutton. Record both voltage pulses and their signs.\item Compare secondaries with different turn counts, keeping primary, core, and switching method unchanged.\item Repeat without the iron core.\end{enumerate}}
+\def\explanation{A transformer requires changing flux. With DC, change occurs mainly at make and break, hence pulses rather than steady secondary voltage. In the ideal sinusoidal model \(V_s/V_p=N_s/N_p\); this crude pulse experiment tests direction and relative magnitude, not precise regulation. Real winding resistance, leakage flux, and core loss matter.}
+\def\extension{Graph secondary peak against turn count. Do not connect any winding to an outlet or wall adapter.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

@@ -13,7 +13,9 @@ extend, challenge, and selectively use without copying publication prose.
 | `<provider>-selection.md` | The claims an edition selected, rejected, or bounded; why they were salient; and the publication documents that use them. |
 
 Projects may add topic indexes, archived witnesses, datasets, or working notes.
-They do not have to share a source-file layout with another project.
+They may split a large library into `*-sources.md` and `*-claims.md` topical
+ledgers; the validator treats those files as part of the same project-wide ID
+space. Projects do not have to share a source-file layout with one another.
 
 ## Identity rules
 

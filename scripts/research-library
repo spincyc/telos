@@ -57,6 +57,8 @@ def validate() -> list[str]:
         relative = display(project)
         sources = project / "sources.md"
         claims = project / "claims.md"
+        source_files = [sources, *sorted(project.glob("*-sources.md"))]
+        claim_files = [claims, *sorted(project.glob("*-claims.md"))]
         selections = sorted(project.glob("*-selection.md"))
         for required in (sources, claims):
             if not required.is_file():
@@ -66,11 +68,20 @@ def validate() -> list[str]:
         if not sources.is_file() or not claims.is_file():
             continue
 
-        source_text = sources.read_text(encoding="utf-8")
-        if not HTTPS_URL.search(source_text):
-            problems.append(f"{relative}/sources.md: no direct HTTPS source")
+        for source_file in source_files:
+            source_text = source_file.read_text(encoding="utf-8")
+            if not HTTPS_URL.search(source_text):
+                problems.append(f"{display(source_file)}: no direct HTTPS source")
 
-        known = claim_ids(claims.read_text(encoding="utf-8"))
+        known: set[str] = set()
+        for claim_file in claim_files:
+            found = claim_ids(claim_file.read_text(encoding="utf-8"))
+            duplicate_local = known & found
+            for claim in sorted(duplicate_local):
+                problems.append(
+                    f"{display(claim_file)}: duplicate project claim ID {claim}"
+                )
+            known.update(found)
         if not known:
             problems.append(f"{relative}/claims.md: no stable claim IDs")
         for claim in sorted(known):

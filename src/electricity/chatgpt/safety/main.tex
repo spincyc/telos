@@ -1,0 +1,20 @@
+\def\doctitle{Safety}
+\def\docsubtitle{Roles, boundaries, and the stop-before-touch workflow}
+\def\docstrap{post this at the bench}
+\def\materialslist{\item This guide \item Safety glasses \item Parts tray \item Current-limited battery holder with switch}
+\def\prediction{An adult is present. Does that make work on an opened mains appliance acceptable? Write the reason, not just yes or no.}
+\def\diagram{\begin{center}\begin{tikzpicture}
+\node[draw,minimum width=3cm,minimum height=1cm](l){LEARNER: battery task};
+\node[draw,minimum width=3cm,minimum height=1cm,right=8mm of l](a){ADULT: inspect / stop};
+\node[draw,minimum width=3cm,minimum height=1cm,right=8mm of a](q){QUALIFIED: other work};
+\draw[very thick] ($(a.south west)+(-3.4,-.35)$)--($(a.south east)+(3.4,-.35)$);
+\node[below] at ($(a.south)+(0,-.35)$){hard boundary: roles do not merge};
+\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Work dry, uncluttered, and away from jewelry, loose metal, drinks, and damaged cells.
+\item Assemble with power disconnected. Adult checks source, polarity, meter jacks, bare conductors, and likely short paths.
+\item Energize only for the stated interval. One hand owns the switch. Disconnect before moving a lead.
+\item Stop immediately for heat, swelling, leakage, odor, smoke, pain, damaged insulation, or behavior not predicted.
+\item Count small magnets before and after; store them inaccessible to children. Never use a lithium cell in a direct-short demonstration.\end{enumerate}}
+\def\explanation{Voltage alone is not a safety verdict. Current path and duration affect shock; available current and stored energy affect heating, arcs, and fire. OSHA's qualified-person distinction is a useful boundary even though this is not a workplace course. The course therefore excludes mains and exposed high voltage rather than teaching a learner to manage them.}
+\def\extension{Run a no-power rehearsal. The learner points to the disconnect, names every stop condition, and demonstrates where each meter lead goes. If the rehearsal is uncertain, do not energize.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

@@ -1,0 +1,8 @@
+\def\doctitle{Lesson 7: Capacitors}\def\docsubtitle{Charge, voltage, time, and stored energy}\def\docstrap{small components, resistor-limited}
+\def\materialslist{\item 2 AA cells \item 1 k\(\Omega\) resistor \item 1000 \(\mu\)F capacitor rated 10 V or higher \item Multimeter \item Switch}
+\def\prediction{Will capacitor voltage jump instantly to the source value through a resistor?}
+\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](0,0)--(1,0);\draw[very thick](1,-.5)--(1,.5);\draw[very thick](1.3,-.5)--(1.3,.5);\draw[very thick](1.3,0)--(2.3,0);\node[above]at(1.15,.55){\(C\)};\draw[->](2.8,-.7)--(2.8,.7)node[above]{\(V_C\)};\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Adult confirms capacitance, voltage rating, and polarity. Begin discharged through the resistor.\item Connect battery--resistor--capacitor. Measure voltage across the capacitor every five seconds.\item Disconnect the battery and discharge only through the resistor while recording voltage.\item Repeat with a second resistance; never short the leads with metal.\end{enumerate}}
+\def\explanation{Capacitance is \(C=Q/V\). The resistor limits current, so voltage changes over time; larger \(R\) or \(C\) produces a longer time scale. Ideal stored energy is \(E=\tfrac12CV^2\), showing why voltage matters quadratically. This course uses only small low-voltage components, yet treats even them as charged until measured and resistor-discharged.}
+\def\extension{Plot voltage against time for two resistors on the same axes. Identify what changed and what did not.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

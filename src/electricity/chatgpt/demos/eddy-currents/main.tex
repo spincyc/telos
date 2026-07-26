@@ -1,0 +1,8 @@
+\def\doctitle{Demo: Eddy Currents}\def\docsubtitle{Magnetic braking and energy accounting}\def\docstrap{falling magnets, no electricity supply}
+\def\materialslist{\item Copper or aluminum tube \item Same-size nonconducting tube \item Neodymium magnet \item Same-size nonmagnetic slug \item Timer}
+\def\prediction{Will a magnet fall through a nonmagnetic metal tube at ordinary free-fall speed?}
+\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](-.6,2.5)--(-.6,-1);\draw[very thick](.6,2.5)--(.6,-1);\draw[very thick,fill=gray!20](-.4,1.8)rectangle(.4,1.3);\node at(0,1.55){N/S};\draw[->](0,1.2)--(0,.5);\foreach\y in {1,.4,-.2}{\draw[->](.8,\y)arc(0:300:.25 and .12);}\node[right]at(1.1,.4){induced loops};\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Adult counts the magnet. Drop the nonmagnetic slug through both tubes and time.\item Drop the magnet through the nonconducting tube, then the metal tube. Catch over a padded tray.\item Repeat three times from the same height.\item Compare an intact tube with a lengthwise-slotted conductor if commercially prepared and burr-free.\end{enumerate}}
+\def\explanation{Changing flux drives circulating currents in the conductor. Their magnetic effect opposes the change, slowing the magnet. Gravitational potential energy becomes mainly thermal energy in the tube rather than disappearing. A slit interrupts current loops and weakens braking. The metal need not be ferromagnetic.}
+\def\extension{Graph transit time against tube material or wall thickness; do not substitute loose stacks of ingestible magnets.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

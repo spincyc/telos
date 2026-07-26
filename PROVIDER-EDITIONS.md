@@ -5,6 +5,9 @@ An edition may have its own document count, hierarchy, pedagogy, visual
 language, and landing-page layout. The only shared contracts are evidence
 traceability, safe publication, working links, and printable output.
 
+All Telos documents are black and white. Provider identity, warnings, maps,
+diagrams, and navigation must remain understandable without color.
+
 ## Repository shape
 
 ```text

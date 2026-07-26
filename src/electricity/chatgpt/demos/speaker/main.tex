@@ -1,0 +1,8 @@
+\def\doctitle{Demo: Speaker}\def\docsubtitle{From changing current to motion and sound}\def\docstrap{a paper-cup transducer at low voltage}
+\def\materialslist{\item Paper cup \item 30--32 AWG insulated wire coil \item Ceramic or secured neodymium magnet \item Audio source through approved battery amplifier \item 100 \(\Omega\) series resistor}
+\def\prediction{Will steady DC make a continuous tone? Why should alternating current differ?}
+\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](0,0)--(-1,2)--(1,2)--cycle;\draw[very thick](-.5,.75)ellipse(.5 and .18);\draw[very thick,fill=gray!20](-.25,.1)rectangle(.25,.65);\node[right]at(.4,.4){fixed magnet};\draw[<->](1.35,.9)--(1.35,1.7)node[midway,right]{cup motion};\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Wind and secure a light coil to the cup base. Adult secures the magnet so it cannot jump or be ingested.\item Connect only through the resistor and a battery-powered, current-limited amplifier at minimum level.\item Play a low-volume tone and observe cup motion by touching a paper flag, not the moving coil.\item Change frequency, then mass with a small removable paper clip; compare sound.\end{enumerate}}
+\def\explanation{The amplifier supplies changing current. In the permanent magnet's field, coil force reverses with current and moves the cone, which drives pressure variations in air. Steady current gives only a displacement and heating, not a sustained tone. Electrical, mechanical, and acoustic power are linked; losses become heat.}
+\def\extension{Use a phone spectrum display only as an observer. Compare commanded frequency with the strongest measured peak.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

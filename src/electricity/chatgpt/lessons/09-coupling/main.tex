@@ -1,0 +1,8 @@
+\def\doctitle{Lesson 9: Coupling}\def\docsubtitle{Geometry controls shared changing flux}\def\docstrap{send a pulse without a wire between coils}
+\def\materialslist{\item Two insulated coils \item 2 AA cells and pushbutton \item Multimeter \item Iron core \item Ruler}
+\def\prediction{Which matters more to the received pulse: coil separation or wire length between the meter and receiver?}
+\def\diagram{\begin{center}\begin{tikzpicture}\foreach\x in {0,.35,...,1.4}{\draw[very thick](\x,0)ellipse(.15 and .7);}\foreach\x in {3,3.35,...,4.4}{\draw[very thick](\x,0)ellipse(.15 and .7);}\draw[<->](1.7,0)--(2.7,0)node[midway,above]{gap};\draw[dashed,->](1.4,.4)..controls(2.2,1.2)..(3,.4);\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Drive the first coil only with brief make/break pulses. Measure the second coil's response at fixed alignment.\item Increase separation in measured steps.\item Repeat at 90-degree orientation.\item Insert the common iron core and repeat the distance series.\end{enumerate}}
+\def\explanation{Mutual induction depends on how much changing flux from the transmitter links the receiver. Separation, orientation, turns, core, and drive-change rate all matter. A weak pulse at poor alignment is a measurement, not failed magic. Energy still comes from the battery; coupling controls how much reaches the second circuit.}
+\def\extension{Create a two-dimensional coupling map by moving the receiver over graph paper while keeping pulse method fixed.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

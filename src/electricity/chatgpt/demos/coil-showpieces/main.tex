@@ -1,0 +1,8 @@
+\def\doctitle{Demo: Coupled-Coil Showpieces}\def\docsubtitle{Visible low-voltage effects without exposed high voltage}\def\docstrap{two safe finales for the course instrument}
+\def\materialslist{\item Completed coupled-coil instrument \item LED with 1 k\(\Omega\) resistor \item Small compass \item Graph paper}
+\def\prediction{At what receiver orientation should the induced indication be weakest?}
+\def\diagram{\begin{center}\begin{tikzpicture}\node[draw](p){pulse coil};\node[draw,right=2cm of p](r){receiver + LED};\draw[dashed,->](p)--(r)node[midway,above]{linked flux};\draw[->](r.south)arc(90:-180:.5)node[left]{rotate};\node[draw,below=1.2cm of p](c){compass map};\draw[->](p)--(c);\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item \textbf{Orientation null:} pulse identically while rotating the receiver in 15-degree steps. Record LED response or meter peak and find the minimum.\item \textbf{Field portrait:} remove the receiver; use the compass to map primary field direction at grid points during brief, consistent current pulses.\item Overlay both maps. Ask whether the weak coupling orientation matches little linked flux.\item Power off and disconnect before every repositioning.\end{enumerate}}
+\def\explanation{These effects are the legitimate finale of the learner course: field direction, changing flux, geometry, and energy transfer all become visible without sparks. An LED is directional and nonlinear, so meter data are better for comparison; the LED supplies immediacy, not precision.}
+\def\extension{Predict and test what a shared core changes. Keep pulse duration, source, and coil geometry fixed and report trial-to-trial spread.}
+\input{electricity/chatgpt/shared/lesson-template.tex}

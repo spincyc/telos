@@ -1,0 +1,17 @@
+\def\doctitle{Overview}
+\def\docsubtitle{A measured path from charge to coupled fields}
+\def\docstrap{ten investigations, five demonstrations, one firm boundary}
+\def\materialslist{\item This overview \item A bound lab notebook \item The safety guide}
+\def\prediction{Which is more convincing: a named effect, a visible effect, or a measurement that changes predictably? Explain.}
+\def\diagram{\begin{center}\begin{tikzpicture}[node distance=9mm]
+\node[draw] (a){charge};\node[draw,right=of a](b){field};\node[draw,right=of b](c){circuit};
+\node[draw,below=of c](d){magnetism};\node[draw,left=of d](e){induction};\node[draw,left=of e](f){coupling};
+\draw[->](a)--(b);\draw[->](b)--(c);\draw[->](c)--(d);\draw[->](d)--(e);\draw[->](e)--(f);
+\end{tikzpicture}\end{center}}
+\def\procedure{\begin{enumerate}\item Read Safety with the learner and assign roles.
+\item Take Lessons 1--7 in order; they establish charge, field, measurement, induction, ratio, and stored energy.
+\item Lessons 8--10 connect resonance, coupling, and historical discharge apparatus without crossing into learner high voltage.
+\item Use demonstrations after their named prerequisite. Build the low-voltage coupled-coil instrument only after Lessons 1--9.\end{enumerate}}
+\def\explanation{The course treats a model as useful only when it predicts an observation. Each lesson follows the same loop: predict, assemble deenergized, adult inspection, energize briefly, measure, disconnect, explain. The final machine is not the purpose; it is a test of whether the learner can follow energy and fields across several representations.}
+\def\extension{Make a concept map after every lesson. Draw a solid arrow for a measured connection and a dotted arrow for a question. Revisit and revise rather than erase.}
+\input{electricity/chatgpt/shared/lesson-template.tex}
