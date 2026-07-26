@@ -1,0 +1,14 @@
+
+  Homelab provisioning environment
+
+  The installer is running on the serial console. To install from this
+  terminal instead, run:
+
+      homelab-install
+
+  It asks every question here, shows a complete summary, and writes nothing
+  to any disk until you type the target disk's serial number to authorize it.
+  Press Ctrl-C before then to abandon the installation.
+
+  --dry-run  ask everything and print the disk commands instead of running them
+

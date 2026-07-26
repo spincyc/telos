@@ -47,9 +47,10 @@ The installer exists and is driven end to end by an acceptance harness that
 answers its genuine prompts through a pseudo-terminal — there is no unattended
 code path for the harness to use, so there is nothing to abuse on real hardware.
 
-    make check            site checks plus 274 tests
+    make check            site checks plus 297 tests
     make homelab-test     the suite, verbosely
     make homelab-matrix   the acceptance matrix
+    make homelab-image    stage the provisioning image for building
     make homelab-instance seed the private overlay from the tracked template
 
 Built and tested: network-plan validation, dnsmasq and nginx generation, the
@@ -66,7 +67,16 @@ written on. Matrix stage 1 passes: a lab guest boots UEFI on its serial console,
 finds no boot disk, and attempts PXE over IPv4 on a segment with no route off
 it. The remaining stages wait on a built Archiso image.
 
-Not yet run: a real installation, which needs a spare machine.
+The provisioning image is staged by a tool that assembles the tracked profile,
+the installer, and the administrator public key from the private overlay, then
+audits the result and prints the one privileged command that builds it. The
+audit refuses a private key, an empty key file, and any declared path the tree
+does not contain — and sshd is enabled only when there is a key for it to
+accept, because a listening sshd with no authorized key is attack surface
+nothing can log in through.
+
+Not yet run: the build itself, which needs root; and a real installation, which
+needs a spare machine.
 
 ## Status
 

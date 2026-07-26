@@ -153,18 +153,31 @@ def stage_firmware() -> Outcome:
 # --------------------------------------------------------------------------
 
 
-ARTIFACT_ROOT = Path(__file__).resolve().parents[1] / "archiso" / "out"
+# Where `bin/homelab-image` leaves a build. Overridable so a build kept
+# somewhere else can be tested without moving it.
+ARTIFACT_ROOT = Path(os.environ.get("HOMELAB_ARTIFACT_ROOT", "/tmp/homelab-image/out"))
+
+# The netboot build mode produces these, not an ISO. Looking for the kernel by
+# name rather than for "some file" means a half-finished build reads as absent
+# instead of as ready.
+REQUIRED_ARTIFACTS = ("vmlinuz-linux", "initramfs-linux.img")
 
 
-def artifacts_present() -> bool:
-    return ARTIFACT_ROOT.is_dir() and any(ARTIFACT_ROOT.glob("*.iso"))
+def missing_artifacts(root: Path = ARTIFACT_ROOT) -> list[str]:
+    if not root.is_dir():
+        return list(REQUIRED_ARTIFACTS)
+    present = {path.name for path in root.rglob("*") if path.is_file()}
+    return [name for name in REQUIRED_ARTIFACTS if name not in present]
 
 
 def _pending(stage: str, detail: str) -> Outcome:
-    if not artifacts_present():
+    missing = missing_artifacts()
+    if missing:
         return Outcome(stage, "pending", detail,
-                       waiting_for=f"a built Archiso image under {ARTIFACT_ROOT} "
-                                   f"(mkarchiso needs root, so it is not run from here)")
+                       waiting_for=f"a built image ({', '.join(missing)} not under "
+                                   f"{ARTIFACT_ROOT}). Stage it with "
+                                   f"bin/homelab-image, then build it: mkarchiso "
+                                   f"needs root, so nothing here escalates for you")
     return Outcome(stage, "pending", detail,
                    waiting_for="this stage is not implemented yet")
 

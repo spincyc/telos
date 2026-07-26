@@ -6,6 +6,8 @@
 # artifact and every package in it is attack surface on a machine that is
 # about to be handed a disk to erase.
 
+# The live environment itself --- kernel, firmware, and the archiso hooks that
+# mount a root filesystem fetched over HTTP.
 base
 linux
 linux-firmware

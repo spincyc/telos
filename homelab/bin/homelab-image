@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Stage a complete, buildable Archiso profile, then say how to build it.
+
+The tracked profile under `archiso/` holds only what a person wrote. Three
+things it cannot hold are needed before `mkarchiso` will succeed:
+
+  * the installer itself -- `bin/homelab-install` and `lib/*.py` -- which lives
+    where the tests can reach it, not duplicated inside the image tree;
+  * `authorized_keys`, which is a person's key from the private overlay and
+    must never be committed;
+  * an `os-release` and version stamp recording which commit the image is.
+
+Staging them into a work directory keeps generated content out of Git and makes
+the privileged step a single reviewable command over a tree that can be
+inspected first.
+
+    homelab/bin/homelab-image                 stage, then print the build command
+    homelab/bin/homelab-image --build         stage and build (needs root)
+    homelab/bin/homelab-image --check         stage and verify, build nothing
+
+Nothing here runs as root. `mkarchiso` needs it; deciding to grant it is the
+operator's, so this program prints the command rather than escalating.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROFILE = ROOT / "archiso"
+OVERLAY = ROOT / "instance"
+DEFAULT_WORK = Path("/tmp/homelab-image")
+
+# Modules the installer imports. Listed rather than globbed so a stray file in
+# lib/ cannot silently become part of a published image.
+INSTALLER_MODULES = (
+    "artifacts.py", "disks.py", "dnsmasq.py", "firstboot.py", "hardware.py",
+    "manifest.py", "netplan.py", "preflight.py", "prompts.py", "steps.py",
+)
+
+# What must never appear in the image. It is published with its checksum and is
+# readable by anyone who can fetch it.
+FORBIDDEN_CONTENT = (
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "a private key"),
+    (re.compile(r"^\$[0-9a-z]+\$", re.MULTILINE), "a crypt(3) password hash"),
+)
+
+
+class StagingError(RuntimeError):
+    pass
+
+
+def stage(work: Path, *, overlay: Path = OVERLAY) -> list[str]:
+    """Build the profile tree. Returns a list of notes for the operator."""
+    notes: list[str] = []
+    build = work / "profile"
+    if build.exists():
+        shutil.rmtree(build)
+    shutil.copytree(PROFILE, build, symlinks=True)
+
+    airootfs = build / "airootfs"
+
+    # The installer, as one program plus its modules, at the path the systemd
+    # unit and file_permissions already name.
+    local_bin = airootfs / "usr/local/bin"
+    local_lib = airootfs / "usr/local/lib/homelab"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    local_lib.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "bin/homelab-install", local_bin / "homelab-install")
+    for module in INSTALLER_MODULES:
+        source = ROOT / "lib" / module
+        if not source.is_file():
+            raise StagingError(f"lib/{module} is missing; the image would ship "
+                               f"an installer that cannot start")
+        shutil.copy2(source, local_lib / module)
+    notes.append(f"installer staged: 1 program, {len(INSTALLER_MODULES)} modules")
+
+    # bin/homelab-install finds lib/ relative to itself. Inside the image the
+    # two are not siblings, so the path is supplied explicitly rather than by
+    # editing the program -- the file in the image stays byte-identical to the
+    # one the tests drive.
+    (airootfs / "etc/environment").parent.mkdir(parents=True, exist_ok=True)
+    _append_line(airootfs / "etc/environment",
+                 "PYTHONPATH=/usr/local/lib/homelab")
+
+    # The administrator's public key, if the overlay has one.
+    keys_source = overlay / "authorized_keys"
+    keys_target = airootfs / "root/.ssh/authorized_keys"
+    if keys_source.is_file():
+        text = keys_source.read_text()
+        _refuse_secrets(text, str(keys_source))
+        if not text.strip():
+            raise StagingError(f"{keys_source} is empty")
+        keys_target.parent.mkdir(parents=True, exist_ok=True)
+        keys_target.write_text(text if text.endswith("\n") else text + "\n")
+        # sshd is enabled only when there is a key for it to accept. An image
+        # with a listening sshd and no authorized key is pure attack surface:
+        # nothing can log in through it, and the root account has no password.
+        wants = airootfs / "etc/systemd/system/multi-user.target.wants"
+        wants.mkdir(parents=True, exist_ok=True)
+        (wants / "sshd.service").symlink_to("/usr/lib/systemd/system/sshd.service")
+        notes.append(f"authorized_keys staged from {keys_source} "
+                     f"({len(text.strip().splitlines())} key(s)); sshd enabled")
+    else:
+        # file_permissions names this path, and mkarchiso fails on an entry it
+        # cannot find. Drop the entry rather than shipping an empty file that
+        # looks like SSH access was configured.
+        _drop_permission_entry(build / "profiledef.sh",
+                               "/root/.ssh/authorized_keys")
+        notes.append(f"no {keys_source}: the image will have no SSH access, "
+                     f"console only")
+
+    _write_version(airootfs, notes)
+    return notes
+
+
+def _append_line(path: Path, line: str) -> None:
+    existing = path.read_text() if path.is_file() else ""
+    if line in existing:
+        return
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    path.write_text(existing + line + "\n")
+
+
+def _drop_permission_entry(profiledef: Path, target: str) -> None:
+    kept = [line for line in profiledef.read_text().splitlines()
+            if f'["{target}"]' not in line]
+    profiledef.write_text("\n".join(kept) + "\n")
+
+
+def _write_version(airootfs: Path, notes: list[str]) -> None:
+    """Record which commit the image was built from.
+
+    An image that cannot say what it is cannot be correlated with a failure
+    report, and every failure report from this thing arrives by hand.
+    """
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(ROOT), "status", "--porcelain"],
+            capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit, dirty = "unknown", ""
+
+    stamp = commit + ("+dirty" if dirty else "")
+    path = airootfs / "etc/homelab-image-version"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{stamp}\n")
+    notes.append(f"image version: {stamp}")
+    if dirty:
+        notes.append("  the working tree has uncommitted changes, so this "
+                     "image cannot be reproduced from a commit")
+
+
+def _refuse_secrets(text: str, where: str) -> None:
+    for pattern, description in FORBIDDEN_CONTENT:
+        if pattern.search(text):
+            raise StagingError(
+                f"{where} contains {description}. The image is a public "
+                f"artifact published with its checksum; nothing secret may be "
+                f"baked into it (ADR 0049).")
+
+
+def audit(build: Path) -> list[str]:
+    """Look at the staged tree the way somebody who downloaded it would."""
+    problems: list[str] = []
+
+    for path in sorted(build.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for pattern, description in FORBIDDEN_CONTENT:
+            if pattern.search(text):
+                problems.append(f"{path.relative_to(build)} contains {description}")
+
+    profiledef = (build / "profiledef.sh").read_text()
+    for match in re.finditer(r'\["([^"]+)"\]', profiledef):
+        named = build / "airootfs" / match.group(1).lstrip("/")
+        if not named.exists():
+            problems.append(f"profiledef.sh sets permissions on {match.group(1)}, "
+                            f"which the staged tree does not contain")
+
+    installer = build / "airootfs/usr/local/bin/homelab-install"
+    if not installer.is_file():
+        problems.append("the installer is not in the image")
+    elif "--fixture" not in installer.read_text():
+        problems.append("the staged installer is not the one the tests drive")
+
+    return problems
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--work", type=Path, default=DEFAULT_WORK,
+                        help=f"staging directory (default {DEFAULT_WORK})")
+    parser.add_argument("--build", action="store_true",
+                        help="run mkarchiso after staging; requires root")
+    parser.add_argument("--check", action="store_true",
+                        help="stage and audit only, build nothing")
+    arguments = parser.parse_args(argv)
+
+    work = arguments.work
+    work.mkdir(parents=True, exist_ok=True)
+    build = work / "profile"
+    output = work / "out"
+
+    try:
+        notes = stage(work)
+    except StagingError as error:
+        print(f"cannot stage the image: {error}")
+        return 2
+
+    for note in notes:
+        print(f"  {note}")
+
+    problems = audit(build)
+    if problems:
+        print("")
+        print("  the staged image is not fit to publish:")
+        for problem in problems:
+            print(f"    {problem}")
+        return 1
+    print("  audit: no secrets, every declared path present")
+    print("")
+
+    command = ["mkarchiso", "-v", "-w", str(work / "work"), "-o", str(output),
+               str(build)]
+
+    if arguments.check:
+        print(f"  staged at {build}")
+        return 0
+
+    if not arguments.build:
+        print("  staged. To build it:")
+        print("")
+        print(f"    sudo {' '.join(command)}")
+        print("")
+        print("  mkarchiso needs root to mount and to own files in the image.")
+        print("  Nothing here escalates on your behalf.")
+        return 0
+
+    if os.geteuid() != 0:
+        print("  --build needs root. Run the command above with sudo.")
+        return 2
+    if not shutil.which("mkarchiso"):
+        print("  mkarchiso is not installed (pacman -S archiso)")
+        return 2
+    return subprocess.run(command).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

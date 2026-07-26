@@ -84,7 +84,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
-	homelab-test homelab-lab homelab-matrix homelab-converge-check \
+	homelab-test homelab-lab homelab-matrix homelab-image \
+	homelab-converge-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
 .DELETE_ON_ERROR:
@@ -143,6 +144,11 @@ homelab-lab:
 		missing = lab.missing_requirements(); \
 		print('lab ready') if not missing else \
 		[print('missing:', item) for item in missing]"
+
+# Stage the provisioning image and print the privileged build command. Nothing
+# here runs as root: mkarchiso needs it, and granting it is the operator's call.
+homelab-image:
+	@cd homelab && $(PYTHON) bin/homelab-image
 
 # The acceptance matrix. Stage 1 runs today; the rest report what they are
 # waiting for rather than passing silently.
