@@ -22,8 +22,10 @@ homelab. The decisions are the contract; the code is an implementation of them.
 
 ## What this repository is
 
-Four projects, each built to print well in black and white, published as PDFs to
-GitHub Pages at <https://spincyc.github.io/telos/>.
+Four subjects, each built to print well in black and white, published as PDFs
+to GitHub Pages at <https://spincyc.github.io/telos/>. Fishing, electricity,
+and potato launcher now have explicit Claude and ChatGPT editions; homelab
+remains provider-neutral.
 
 | Project | State |
 |---|---|
@@ -37,12 +39,34 @@ GitHub Pages at <https://spincyc.github.io/telos/>.
     make            build every PDF into build/
     make install    promote reviewed builds into the tracked doc/ tree
     make site       regenerate site/ from site/pages/*.md and doc/
-    make check      site checks, package-closure guard, 297 tests
+    make check      site/research checks, package-closure guard, 299 tests
     make list       every document id
 
 A document is any directory under `src/` containing `main.tex`. `src/common/`
 holds shared includes and never becomes a document. TEXINPUTS is built from the
 leaf directory, so `\input{common/preamble.tex}` works from anywhere.
+
+### Provider editions and shared research
+
+Read `PROVIDER-EDITIONS.md` before adding a provider or reorganizing a
+publication. Provider identity is explicit in source and artifact paths:
+
+    src/<project>/<provider>/<document>/main.tex
+    doc/<project>/<provider>/<document>.pdf
+
+Provider editions do not need symmetric document trees or landing-page
+layouts. Evidence is shared through `research/<project>/sources.md` and atomic
+`claims.md`; each edition records its own selections and exclusions in
+`<provider>-selection.md`. `scripts/research-library` enforces the exchange
+contract.
+
+The site header is intentionally limited to Home, Projects, and About. New
+projects belong in the directory rather than global navigation. Every page
+selects a validated template under `release/site/layouts/`; project-specific
+layouts are expected.
+
+`tools/worktree-marshal/` is still Codex-only. Multi-provider publication does
+not authorize or imply a generic agent launcher.
 
 ## Homelab: where things stand
 

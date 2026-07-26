@@ -16,7 +16,7 @@ the United States; Telos claims no rights in them.
 Each was retrieved from Wikimedia Commons, converted to grayscale, cropped to
 remove the engraved caption strip, and level-adjusted for laser printing. No
 other alteration was made. The processing recipe is in
-`src/lake-country-fishing/shared/plates/` history.
+`src/lake-country-fishing/claude/shared/plates/` history.
 
 | Sheet | Plate | Wikimedia Commons file |
 |---|---|---|
@@ -73,6 +73,22 @@ regulation year. Launch hours and fees come from the Village of Chenequa.
 **Regulations change every year.** Only the DNR's current publication for a
 specific water body is authoritative, and every sheet that quotes a limit says
 so.
+
+## AI-provider editions
+
+The original fishing, electricity, and potato-launcher publications are
+identified as the **Claude editions**. Their source and PDF paths now carry that
+provider identity explicitly.
+
+The **ChatGPT editions** are independent publications researched and written
+for this repository in July 2026. They share no publication prose with the
+Claude editions. Their authoritative witnesses, atomic reusable claims, and
+editorial selections are recorded under `research/<project>/`; the source
+registers there provide direct links, retrieval dates, scope, and caveats.
+
+AI assistance does not transfer authority from an issuing agency to Telos.
+Current law, regulation, safety requirements, and local conditions must still
+be checked with the cited primary authority.
 
 ## Tooling
 
