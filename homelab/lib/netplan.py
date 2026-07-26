@@ -126,6 +126,26 @@ def _parse_network(value: str, field_name: str) -> ipaddress.IPv4Network:
         ) from None
 
 
+def check_usable_address(address_text: str, cidr_text: str, field_name: str) -> None:
+    """Raise unless the address is a usable unicast host address in the subnet.
+
+    Exposed separately from build_plan so the installer can apply this rule at
+    the prompt that broke it, while a plan is still half-collected. build_plan
+    calls the same function, so there is one implementation of the rule.
+    """
+    network = _parse_network(cidr_text, "managed_ipv4_cidr")
+    address = _parse_address(address_text, field_name)
+    if address not in network:
+        raise NetworkPlanError(
+            f"{field_name}: {address} is not inside {network.with_prefixlen}")
+    if address == network.network_address:
+        raise NetworkPlanError(
+            f"{field_name}: {address} is the network address, not a usable host address")
+    if address == network.broadcast_address:
+        raise NetworkPlanError(
+            f"{field_name}: {address} is the broadcast address, not a usable host address")
+
+
 def build_plan(inputs: dict) -> NetworkPlan:
     """Validate the four ADR 0045 inputs and return the full derived plan.
 
@@ -165,14 +185,7 @@ def build_plan(inputs: dict) -> NetworkPlan:
         ("dhcp_pool_start", pool_start),
         ("dhcp_pool_end", pool_end),
     ):
-        if address not in network:
-            raise NetworkPlanError(
-                f"{name}: {address} is not inside {network.with_prefixlen}"
-            )
-        if address == network.network_address:
-            raise NetworkPlanError(f"{name}: {address} is the network address, not a usable host address")
-        if address == network.broadcast_address:
-            raise NetworkPlanError(f"{name}: {address} is the broadcast address, not a usable host address")
+        check_usable_address(str(address), network.with_prefixlen, name)
         if not (first_usable <= address <= last_usable):
             raise NetworkPlanError(f"{name}: {address} is not a usable unicast address in {network.with_prefixlen}")
 

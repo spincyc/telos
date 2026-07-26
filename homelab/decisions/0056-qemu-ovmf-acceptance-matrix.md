@@ -17,8 +17,10 @@ command.
 The matrix builds a virtual isolated network with no router and boots:
 
 - a virtual **bootstrap** host serving ProxyDHCP, TFTP and HTTP;
-- a virtual **Controller** target, installed unattended from the real installer
-  using a recorded answer set; and
+- a virtual **Controller** target, installed from the real installer with no
+  human present; ADR 0058 defines the mechanism, which drives the genuine
+  interactive prompts through a pseudo-terminal rather than adding an
+  unattended code path; and
 - a virtual **Workstation** target that pivots on the Controller's FQDN.
 
 It then asserts, automatically:
