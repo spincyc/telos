@@ -16,7 +16,8 @@ leaks into a published source.
 |---|---|---|
 | **Controller Design** | What the Controller owns, what it deliberately does not, storage and network boundaries, the install-once/converge-continuously split | [PDF](doc/homelab/design/controller.pdf) |
 | **Controller Rebuild** | Bare metal to serving DHCP, written on the assumption that the Controller is dead and nothing it hosted is available | [PDF](doc/homelab/manual/controller-rebuild.pdf) |
-| **Decision Record** | All 57 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](doc/homelab/decisions.pdf) |
+| **Provisioning Design** | Network boot, the authorization boundary, what cannot be offered, and how the whole thing is tested | [PDF](doc/homelab/design/provisioning.pdf) |
+| **Decision Record** | All 62 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](doc/homelab/decisions.pdf) |
 
 ## Shape of it
 
@@ -36,6 +37,24 @@ converge run, not a reinstall.
 network, installs a virtual Controller from the real installer, and asserts that
 leases land in the pool, `home.arpa` resolves, no default route is advertised,
 checksums verify and a second converge run reports no changes.
+
+## What runs today
+
+The installer exists and is driven end to end by an acceptance harness that
+answers its genuine prompts through a pseudo-terminal — there is no unattended
+code path for the harness to use, so there is nothing to abuse on real hardware.
+
+    make check          site checks plus 186 homelab tests
+    make homelab-test   the suite, verbosely
+    make homelab-lab    reports whether QEMU and OVMF are present
+
+Built and tested: network-plan validation, dnsmasq and nginx generation, the
+prompt registry, hardware collection behind a substitutable seam, preflight
+judgement, the step runner with its authorization token, the manifest, the
+iPXE script and artifact checksums, and the Archiso profile.
+
+Not yet run: the QEMU matrix, which needs `qemu-full` and `edk2-ovmf`; and a
+real installation, which needs a spare machine.
 
 ## Status
 

@@ -1,0 +1,100 @@
+\input{common/preamble.tex}
+\input{homelab/shared/homelab.tex}
+
+\telosmeta{Homelab}{Provisioning Design}
+  {Network boot, the authorization boundary, and how it is tested}{2026-07-26}
+
+\begin{document}
+\telosmasthead[High-level design]
+
+A machine is installed by network booting it into an interactive environment,
+answering questions at its console, and typing the target disk's serial number
+to authorize the erase. There is no pre-staged record of what a machine should
+become, no answer file, and no unattended mode. Physical access to the console
+plus that typed confirmation \emph{is} the authorization model.
+
+\section{The boot chain}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[role,minimum width=2.4cm] (fw)   at (0,0)    {target\\firmware};
+  \node[role,minimum width=2.4cm] (dhcp) at (3.4,0)  {dnsmasq\\DHCP + PXE};
+  \node[role,minimum width=2.4cm] (tftp) at (6.8,0)  {TFTP\\iPXE only};
+  \node[role,minimum width=2.4cm] (http) at (10.2,0) {nginx\\everything else};
+  \node[telos emphasis,minimum width=2.4cm] (env) at (13.6,0) {installer\\environment};
+  \foreach \a/\b in {fw/dhcp,dhcp/tftp,tftp/http,http/env} {\draw[flow] (\a) -- (\b);}
+  \node[hlabel,anchor=north,align=center] at (3.4,-0.75) {ADR 0044\\one authority};
+  \node[hlabel,anchor=north,align=center] at (6.8,-0.75) {small,\\unauthenticated};
+  \node[hlabel,anchor=north,align=center] at (10.2,-0.75) {ADR 0048\\checksummed};
+  \node[hlabel,anchor=north,align=center] at (13.6,-0.75) {ADR 0049\\Archiso};
+\end{tikzpicture}
+\end{center}
+
+\begin{telosfacts}[0.20]
+\telosfact{Why the split}{TFTP is unauthenticated and slow, so it carries only the first-stage loader. Kernels, initramfs images and the root filesystem travel over HTTP, where they can be checksummed against a published manifest. \governedby{ADR 0044, ADR 0048}}
+\telosfact{One DHCP authority}{Never two on one segment, at any stage, including transitions. Where external infrastructure already owns DHCP, the bootstrap host runs in ProxyDHCP mode and supplies boot options only. \governedby{ADR 0008, ADR 0052}}
+\telosfact{No menu}{The iPXE script boots exactly one thing. A menu with a single entry is a timeout waiting to select the wrong option.}
+\telosfact{Checksums, not signatures}{During Milestone A artifact integrity comes from a published SHA-256 manifest that the installer verifies before use. Authenticated boot is Milestone B. \governedby{ADR 0043}}
+\end{telosfacts}
+
+\section{The installer}
+\begin{tabularx}{\linewidth}{@{}p{0.05\linewidth}p{0.26\linewidth}L@{}}
+\toprule
+& \textbf{Stage} & \textbf{What happens}\\
+\midrule
+1 & Collect & Disks, interfaces and firmware read from the running machine behind a substitutable seam, so the judgement logic is testable without hardware.\\
+2 & Refuse & Legacy BIOS stops the run outright. So does a machine with no eligible disk, or a Controller with no wired interface. \governedby{ADR 0019, ADR 0050}\\
+3 & Ask & Only the questions that apply. Validators see the answers already given, so a rule is reported at the prompt that broke it.\\
+4 & Validate & The network plan is checked again as a whole before the summary. \governedby{ADR 0045}\\
+5 & Summarise & Profile, hostname, firmware, interface, the entered and derived network plan, the exact disk, and the layout to be written. \governedby{ADR 0004}\\
+6 & Authorize & The operator types the target disk's \textbf{serial number}. Not \texttt{yes}. \governedby{ADR 0058}\\
+7 & Execute & Steps run in order and stop at the first failure. Nothing is rolled back. \governedby{ADR 0059}\\
+8 & Record & A non-secret manifest is written to the new root and echoed to the console. \governedby{ADR 0060}\\
+9 & Power off & Never reboot. Relocation while powered off is the DHCP-conflict boundary. \governedby{ADR 0010}\\
+\bottomrule
+\end{tabularx}
+
+\section{What cannot be offered}
+Some things are excluded from the choices rather than merely warned about,
+because a warning is something an operator can read past at one in the morning.
+
+\begin{telosfacts}[0.24]
+\telosfact{Removable disks}{The installer boots from removable media. Offering the stick it is running from is the most destructive available mistake, so it never appears in the list --- with the reason printed, so the operator can see it was considered and rejected.}
+\telosfact{Disks with no serial}{ADR 0058 confirms the erase by typing the serial. A disk that reports none cannot be confirmed, so it must not be offered. That rule fell out of the confirmation design rather than being invented separately.}
+\telosfact{Disks under 64 GiB}{Not a computed minimum. A floor below which the operator has almost certainly selected the wrong device. \governedby{ADR 0051}}
+\telosfact{Wireless interfaces}{Bare-metal network installation is wired, and a Controller serving DHCP over wireless is not a supported design.}
+\telosfact{An unplugged wired interface}{\emph{Is} offered. The Controller is routinely provisioned on one network and relocated while powered off, so the managed interface is often disconnected during installation. Carrier is noted here and required at first boot. \governedby{ADR 0010, ADR 0009}}
+\end{telosfacts}
+
+\section{How it is tested}
+The acceptance harness attaches to a pseudo-terminal and answers the genuine
+prompts the way a person would, including typing the serial. There is no
+unattended code path for it to use, so there is nothing to abuse on real
+hardware, and the program under test is byte-identical to the one that runs on
+metal.
+
+\begin{telosfacts}[0.20]
+\telosfact{One source of truth}{The installer renders a prompt registry; the harness reads the same registry to know what to answer. A reworded prompt cannot desynchronize them. \governedby{ADR 0058}}
+\telosfact{The harness refuses to guess}{A prompt that appears and is not in the script is an error. An authorization prompt with no scripted confirmation is an error. Guessing is how a harness ends up confirming an erase nobody scripted.}
+\telosfact{Same driver, two targets}{Locally it drives the installer as a subprocess. In the lab it drives a QEMU guest whose serial console is the process's stdio. The installer cannot tell the difference. \governedby{ADR 0056}}
+\telosfact{The topology enforces the boundary}{The virtual lab has no user networking and no default NIC --- only a socket segment between guests. ADR 0011's no-routing rule is a property of the lab, not a setting in it.}
+\telosfact{Fresh firmware every run}{Each guest gets its own OVMF variable store, so boot entries from one run cannot make a later run pass.}
+\end{telosfacts}
+
+\begin{telospanel}{A bug this found}
+The rule that matters most is that the Controller's address must never sit
+inside the DHCP pool --- dnsmasq must not be able to lease the address its own
+DNS answers on. Asked in ADR 0045's order, that violation surfaced two prompts
+late, while the operator was being asked for the pool's last address and told
+that a different field was wrong. The questions are therefore asked subnet,
+pool, Controller address: last, so the error lands on the prompt that caused it.
+Driving the real interface found that; no unit test would have.
+\end{telospanel}
+
+\begin{gate}{Milestone A is disposable by construction}
+Every installation during the functional proof is labelled
+\texttt{development-proof} in its manifest, requires the LUKS2 passphrase at
+every boot, and carries no production data. That label is a recorded state, not
+a remembered one, so later tooling can refuse to treat such a machine as
+production. \governedby{ADR 0043, ADR 0060}
+\end{gate}
+\end{document}
