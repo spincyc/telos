@@ -72,6 +72,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
+	homelab-test homelab-lab adr-digest \
 	dependencies-arch install-dependencies-arch
 .DELETE_ON_ERROR:
 
@@ -117,6 +118,21 @@ check: check-tools
 	@$(PYTHON) $(SITE_TOOL) check
 	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -q
 
+# Homelab: the tests are pure Python and need nothing installed; the lab needs
+# QEMU and OVMF and says so when they are absent.
+homelab-test:
+	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -v
+
+homelab-lab:
+	@cd homelab && $(PYTHON) -c "import sys; sys.path.insert(0,'qemu'); import lab; \
+		missing = lab.missing_requirements(); \
+		print('lab ready') if not missing else \
+		[print('missing:', item) for item in missing]"
+
+# Regenerate the printable decision record from the Markdown ADRs.
+adr-digest:
+	@$(PYTHON) scripts/adr-digest
+
 dependencies-arch:
 	@printf '%s\n' $(ARCH_DEPENDENCY_PACKAGES)
 
@@ -144,6 +160,9 @@ help:
 		'make site-preview          Render and serve it on localhost' \
 		'make verify-site           Re-check the rendered artifact' \
 		'make check      Validate the site manifest and run the homelab tests' \
+		'make homelab-test         Run the homelab suite verbosely' \
+		'make homelab-lab          Report whether the QEMU lab can run' \
+		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \
 		'' \
 		'Isolated agent runs (Worktree Marshal):' \
