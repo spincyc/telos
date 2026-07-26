@@ -1,0 +1,37 @@
+% Original one-sheet rig system for the ChatGPT edition.
+\newcommand{\rigassembly}[4]{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+ \draw[line width=.7pt] (.4,1.35)--(7.7,1.35);
+ \foreach \x/\lab in {.6/{#1},3/{#2},5.3/{#3},7.5/{#4}}{
+  \fill[white,draw=black,line width=.7pt] (\x,1.35) circle (.14);
+  \draw[line width=.4pt] (\x,1.18)--(\x,.65);
+  \node[font=\fontsize{7}{8}\selectfont,align=center,text width=2.1cm,
+    anchor=north] at (\x,.62) {\lab};}
+ \draw[-{Stealth[length=2mm]},line width=.5pt] (.4,1.75)--(7.7,1.75);
+ \node[font=\scriptsize,anchor=south] at (4.05,1.77) {line / direction of pull};
+\end{tikzpicture}}
+
+\newcommand{\RigSheet}[9]{%
+\input{common/preamble.tex}
+\telosmeta{Lake Country Fishing}{#1}{Rig sheet --- original assembly diagram}{2026-07-26}
+\begin{document}\telosmasthead[ChatGPT edition]
+\textbf{Job.} #2\par
+\begin{center}\rigassembly#3\end{center}
+\section{Components and build}
+#4\par
+\section{Fish it}
+#5\par
+\begin{telosfacts}[.20]
+\telosfact{Pine Lake}{#6}
+\telosfact{North Lake}{#7}
+\telosfact{Adjustment}{#8}
+\end{telosfacts}
+\begin{teloshazard}{Control the hooks, fish and law}
+#9 Use tackle strong enough to retrieve the target promptly. Prepare pliers and
+a knotless rubber net before the cast. If a hook is deep, cutting the line can
+be less damaging than prolonged extraction. Verify exact-water 2026--27 rules,
+hook count, bait law and seasons before every trip.
+\end{teloshazard}
+\small\textbf{Source basis:} Wisconsin DNR Hook, Line \& Thinker; Hook Your
+Catch; Catch-and-Release Guidelines; Boat Transportation and Bait Laws.
+\end{document}}
