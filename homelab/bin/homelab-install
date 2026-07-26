@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""The interactive installer.
+
+This is the only entry point. There is no unattended mode, no answers file and
+no flag that skips a prompt (ADR 0058) -- the acceptance matrix drives this
+program through a pseudo-terminal exactly as a person would.
+
+The shape of a run:
+
+    1. Collect hardware facts and judge them          (preflight)
+    2. Refuse outright if the machine cannot host it  (ADR 0019, ADR 0051)
+    3. Ask the questions that apply                   (prompts registry)
+    4. Validate the network plan as a whole           (ADR 0045)
+    5. Show the complete summary                      (ADR 0004)
+    6. Require the target disk's serial to be typed   (ADR 0058)
+    7. Run the steps, stopping at the first failure   (ADR 0059)
+    8. Write and print the manifest                   (ADR 0060)
+    9. Power off, never reboot                        (ADR 0010)
+
+Everything before step 6 is non-destructive and can be abandoned at any point
+by pressing Ctrl-C.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+import disks              # noqa: E402
+import dnsmasq            # noqa: E402
+import hardware           # noqa: E402
+import manifest as manifest_module  # noqa: E402
+import netplan            # noqa: E402
+import preflight          # noqa: E402
+import prompts            # noqa: E402
+import steps              # noqa: E402
+
+VERSION = "0.1.0"
+RULE = "=" * 72
+
+
+class Console:
+    """All input and output in one place, so the pty harness has one surface."""
+
+    def __init__(self, out=sys.stdout, read=input) -> None:
+        self.out = out
+        self._read = read
+
+    def say(self, text: str = "") -> None:
+        print(text, file=self.out, flush=True)
+
+    def block(self, lines: list[str]) -> None:
+        for line in lines:
+            self.say(line)
+
+    def ask(self, prompt: prompts.Prompt, answers: dict) -> str:
+        """Ask until the answer validates. `?` prints the help text."""
+        while True:
+            raw = self._read(prompt.render())
+            if raw.strip() == "?":
+                self.say(f"    {prompt.help_text}")
+                continue
+            try:
+                return prompt.validate(raw, answers)
+            except prompts.AnswerError as error:
+                self.say(f"    not accepted: {error}")
+                self.say("    enter ? for help")
+
+    def ask_raw(self, text: str) -> str:
+        return self._read(f"{text}: ")
+
+
+def enumerate_choices(console: Console, candidates: list[preflight.Candidate],
+                      heading: str) -> dict[str, object]:
+    """Print an enumerated list and return the number -> item mapping."""
+    console.say(f"  {heading}:")
+    offered: dict[str, object] = {}
+    for index, candidate in enumerate(
+            [c for c in candidates if c.eligible], start=1):
+        offered[str(index)] = candidate.item
+        console.say(f"    {index})  {candidate.item.describe()}")
+    console.say("")
+    console.block(preflight.excluded_lines(candidates, heading))
+    console.say("")
+    return offered
+
+
+def choose(console: Console, prompt: prompts.Prompt, offered: dict, answers: dict):
+    """Ask for a number from an enumerated list until one is valid."""
+    while True:
+        picked = console.ask(prompt, answers)
+        if picked in offered:
+            return picked, offered[picked]
+        console.say(f"    not accepted: enter a number between 1 and {len(offered)}")
+
+
+def run(console: Console, collector: hardware.Collector, *,
+        development_proof: bool, dry_run: bool) -> int:
+    console.say(RULE)
+    console.say(f"Homelab installer {VERSION}")
+    console.say(RULE)
+    console.say("")
+    console.say("Nothing is written to any disk until you authorize it explicitly.")
+    console.say("Press Ctrl-C at any point before then to abandon the installation.")
+    console.say("")
+
+    answers: dict[str, str] = {}
+
+    # --- profile first: it decides which later questions apply -------------
+    answers["profile"] = console.ask(prompts.BY_IDENTIFIER["profile"], answers)
+    result = preflight.assess(collector, answers["profile"])
+
+    console.say("")
+    console.say(f"  Firmware: {result.firmware.describe()}")
+    console.say("")
+
+    if result.refusals:
+        console.say(RULE)
+        console.say("CANNOT INSTALL ON THIS MACHINE")
+        console.say(RULE)
+        console.say("")
+        for refusal in result.refusals:
+            console.say(f"  {refusal}")
+        console.say("")
+        console.say("  Nothing has been written to any disk.")
+        return 2
+
+    answers["hostname"] = console.ask(prompts.BY_IDENTIFIER["hostname"], answers)
+
+    disk_choices = enumerate_choices(console, result.disks, "Disks")
+    _, target = choose(console, prompts.BY_IDENTIFIER["target_disk"], disk_choices, answers)
+    answers["target_disk"] = target.path
+
+    interface = None
+    network_plan = None
+
+    if answers["profile"] == "controller":
+        nic_choices = enumerate_choices(console, result.interfaces, "Network interfaces")
+        _, interface = choose(
+            console, prompts.BY_IDENTIFIER["managed_interface"], nic_choices, answers)
+        answers["managed_interface"] = interface.name
+
+        answers["network_services"] = console.ask(
+            prompts.BY_IDENTIFIER["network_services"], answers)
+
+        if prompts.wants_network_services(answers):
+            # Registry order, not netplan's field order: see the note in
+            # prompts.py about why the Controller address is asked last.
+            for prompt in prompts.applicable(answers):
+                if prompt.identifier in netplan.INPUT_FIELDS:
+                    answers[prompt.identifier] = console.ask(prompt, answers)
+            # ADR 0045: every rule again, as a set, before the summary. The
+            # per-prompt checks caught what they could see at the time.
+            try:
+                network_plan = netplan.build_plan(
+                    {field: answers[field] for field in netplan.INPUT_FIELDS})
+            except netplan.NetworkPlanError as error:
+                console.say("")
+                console.say(f"  The network plan is not valid: {error}")
+                console.say("  Nothing has been written to any disk.")
+                return 2
+            for note in netplan.advisories(network_plan):
+                console.say(f"  note: {note}")
+
+    # --- the summary is the authorization boundary -------------------------
+    console.say("")
+    console.block(preflight.summary_lines(
+        preflight=result, profile=answers["profile"], hostname=answers["hostname"],
+        target=target, interface=interface,
+        network_rows=network_plan.summary_rows() if network_plan else None,
+        development_proof=development_proof))
+
+    console.say("  Disk layout that will be written:")
+    console.block(disks.describe_layout(target.path))
+    console.say("")
+
+    typed = console.ask_raw(prompts.CONFIRMATION_TEXT)
+    authorization = steps.authorize(
+        typed, disk_path=target.path, disk_serial=target.serial)
+    if authorization is None:
+        console.say("")
+        console.say(f"  {prompts.ABORT_MESSAGE}")
+        return 1
+
+    console.say("")
+    console.say("  Authorized.")
+    console.say("")
+
+    sequence = build_sequence(answers, target, interface, network_plan, dry_run=dry_run)
+    outcome = steps.Runner(sequence, authorization=authorization,
+                           emit=console.say).run(target_disk=target.path)
+
+    if not outcome.succeeded:
+        console.say("")
+        console.block(steps.failure_report(outcome, target_disk=target.path))
+        return 1
+
+    document = manifest_module.build(
+        installer_version=VERSION,
+        installed_at=datetime.datetime.now(datetime.timezone.utc)
+            .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        profile=answers["profile"], hostname=answers["hostname"],
+        development_proof=development_proof, firmware=result.firmware,
+        target_disk=target, managed_interface=interface, network_plan=network_plan,
+        partitions=[
+            {"number": 1, "role": "esp", "size_gib": disks.ESP_SIZE_GIB},
+            {"number": 2, "role": "luks2", "size_gib": None},
+        ])
+    console.say("")
+    console.block(manifest_module.console_block(document))
+    console.say("")
+    console.block(steps.success_report(
+        outcome, target_disk=target.path, hostname=answers["hostname"]))
+    return 0
+
+
+def build_sequence(answers, target, interface, network_plan, *, dry_run: bool):
+    """The ordered steps. In a dry run each one prints instead of executing."""
+    layout = disks.Layout(target.path)
+    keyfile = "/run/homelab-install.key"
+
+    plan: list[tuple[str, str, list[list[str]]]] = [
+        ("wipe", f"clear existing signatures on {target.path}", disks.plan_wipe(target.path)),
+        ("partition", "write the GPT layout", disks.plan_partition(target.path)),
+        ("format-esp", "create the FAT32 EFI System Partition",
+         disks.plan_format_esp(layout.esp_partition)),
+        ("luks-format", "create the LUKS2 container",
+         disks.plan_luks_format(layout.luks_partition, keyfile)),
+        ("luks-open", "open the LUKS2 container",
+         disks.plan_luks_open(layout.luks_partition, "homelab-root", keyfile)),
+        ("btrfs", "create the Btrfs filesystem",
+         disks.plan_btrfs("/dev/mapper/homelab-root")),
+        ("subvolumes", "create the Btrfs subvolumes", disks.plan_subvolumes("/mnt")),
+    ]
+
+    sequence = []
+    for name, description, commands in plan:
+        sequence.append(steps.Step(
+            name, description,
+            _body(name, commands, dry_run=dry_run),
+            destructive=True))
+    return sequence
+
+
+def _body(name: str, commands: list[list[str]], *, dry_run: bool):
+    def execute() -> None:
+        for argv in commands:
+            if dry_run:
+                print(f"      would run: {' '.join(argv)}", flush=True)
+                continue
+            steps.command(name, argv)()
+    return execute
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Install a homelab profile on this machine.")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="ask every question and show the summary, but print the disk "
+             "commands instead of running them. Still requires authorization, "
+             "so the confirmation gate is exercised.")
+    parser.add_argument(
+        "--fixture", type=Path,
+        help="read hardware facts from a captured fixture instead of this "
+             "machine. For developing the installer on a workstation.")
+    parser.add_argument(
+        "--production", action="store_true",
+        help="assert this is not a development-proof installation. Milestone A "
+             "installations are development-proof by default (ADR 0043).")
+    arguments = parser.parse_args(argv)
+
+    collector = (hardware.FixtureCollector.from_file(arguments.fixture)
+                 if arguments.fixture else hardware.SystemCollector())
+
+    console = Console()
+    try:
+        return run(console, collector,
+                   development_proof=not arguments.production,
+                   dry_run=arguments.dry_run)
+    except KeyboardInterrupt:
+        console.say("")
+        console.say(f"  {prompts.ABORT_MESSAGE}")
+        return 130
+    except steps.NotAuthorized as error:
+        console.say("")
+        console.say(f"  {error}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

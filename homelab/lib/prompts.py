@@ -145,6 +145,13 @@ def wants_network_services(answers: dict) -> bool:
 
 # --------------------------------------------------------------------------
 # The registry, in the order the installer asks
+#
+# The network questions are ordered subnet, pool, Controller address --- not the
+# order ADR 0045 lists them in. The rule that matters most is that the Controller
+# must not sit inside the pool, and that can only be checked once the pool is
+# known. Asking the Controller address last means a violation is reported at the
+# prompt the operator can actually act on, rather than two prompts later against
+# a field that is not the one at fault.
 # --------------------------------------------------------------------------
 
 PROMPTS: tuple[Prompt, ...] = (
@@ -197,14 +204,6 @@ PROMPTS: tuple[Prompt, ...] = (
         applies_when=wants_network_services,
     ),
     Prompt(
-        "controller_ipv4_address",
-        "Controller static address",
-        "This machine's own address, and the DNS server every client will be "
-        "told to use. It must sit outside the DHCP pool.",
-        _network_field("controller_ipv4_address"),
-        applies_when=wants_network_services,
-    ),
-    Prompt(
         "dhcp_pool_start",
         "DHCP pool, first address",
         "The lowest address dnsmasq may lease.",
@@ -216,6 +215,14 @@ PROMPTS: tuple[Prompt, ...] = (
         "DHCP pool, last address",
         "The highest address dnsmasq may lease, inclusive.",
         _network_field("dhcp_pool_end"),
+        applies_when=wants_network_services,
+    ),
+    Prompt(
+        "controller_ipv4_address",
+        "Controller static address",
+        "This machine's own address, and the DNS server every client will be "
+        "told to use. It must sit outside the DHCP pool.",
+        _network_field("controller_ipv4_address"),
         applies_when=wants_network_services,
     ),
 )
