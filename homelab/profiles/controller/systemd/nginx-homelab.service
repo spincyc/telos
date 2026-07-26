@@ -1,0 +1,26 @@
+# The artifact service (ADR 0048). Read-only, one document root, one address.
+#
+# Like dnsmasq, not enabled at boot: it starts as part of the bundle that
+# homelab-first-boot.service authorizes (ADR 0012).
+[Unit]
+Description=Homelab artifact service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/nginx-homelab.pid
+ExecStartPre=/usr/bin/nginx -t -c /etc/homelab/nginx.conf
+ExecStart=/usr/bin/nginx -c /etc/homelab/nginx.conf
+ExecReload=/usr/bin/nginx -s reload -c /etc/homelab/nginx.conf
+ExecStop=/usr/bin/nginx -s quit -c /etc/homelab/nginx.conf
+Restart=on-failure
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/log/nginx /run
+ReadOnlyPaths=/srv/http/boot
+
+[Install]

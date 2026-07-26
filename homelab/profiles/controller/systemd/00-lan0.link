@@ -1,0 +1,14 @@
+# Pin the managed interface to a stable name by its permanent MAC (ADR 0050).
+#
+# The MAC is the identity; lan0 is a label. Kernel names follow firmware
+# enumeration and can change when hardware or a kernel does, and dnsmasq
+# binding to the wrong link would put a second DHCP authority on a network this
+# Controller does not own.
+#
+# GENERATED at install time: MACAddress is substituted from the operator's
+# selection and recorded in the manifest.
+[Match]
+MACAddress=@MANAGED_MAC@
+
+[Link]
+Name=lan0

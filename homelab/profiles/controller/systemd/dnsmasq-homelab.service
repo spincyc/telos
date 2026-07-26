@@ -1,0 +1,29 @@
+# The bundled DHCP, DNS, PXE and first-stage TFTP service (ADR 0044).
+#
+# Deliberately NOT enabled at boot. homelab-first-boot.service starts it only
+# after verifying that this machine is the sole DHCP authority on the segment
+# it is plugged into (ADR 0009). Enabling this unit directly would bypass that
+# check and is what the fail-closed design exists to prevent.
+[Unit]
+Description=Homelab Controller DHCP, DNS and PXE
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/dnsmasq --test --conf-file=/etc/homelab/dnsmasq.conf
+ExecStart=/usr/bin/dnsmasq --keep-in-foreground --conf-file=/etc/homelab/dnsmasq.conf
+Restart=on-failure
+RestartSec=5s
+
+# The daemon needs to bind privileged ports and read its TFTP root, nothing else.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/lib/misc
+ReadOnlyPaths=/srv/tftp
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID
+
+[Install]
+# No WantedBy: activation is homelab-first-boot.service's decision.

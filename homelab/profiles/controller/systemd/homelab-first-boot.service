@@ -1,0 +1,22 @@
+# Activate Controller network services on the first boot after installation.
+#
+# ADR 0009 requires this to be automatic and to fail closed. ADR 0010 has the
+# operator carry the machine, powered off, from the network it was provisioned
+# on to the network it will serve -- so the checks this runs are about whether
+# it has been plugged into the right place.
+[Unit]
+Description=Homelab Controller network-service activation
+Documentation=man:dnsmasq(8)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/homelab/manifest.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/homelab/bin/homelab-first-boot
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

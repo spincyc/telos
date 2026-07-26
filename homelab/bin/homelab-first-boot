@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Activate Controller network services, or refuse and say why.
+
+ADR 0009: activation is automatic on the first boot after installation and must
+fail closed. ADR 0012 bundles DHCP and DNS, so they start together or not at
+all -- a partial start is a failure.
+
+Reads its expectations from the installation manifest (ADR 0060) rather than
+from its own configuration file, so there is one record of what this machine is
+and the activation path cannot drift from it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+import firstboot  # noqa: E402
+import manifest as manifest_module  # noqa: E402
+
+BUNDLE = ("dnsmasq-homelab.service", "nginx-homelab.service")
+
+
+def load_expectations(path: Path) -> tuple[str, str] | None:
+    """The MAC and service address this machine was installed against."""
+    if not path.is_file():
+        return None
+    document = json.loads(path.read_text())
+    interface = document.get("managed_interface")
+    network = document.get("network")
+    if not interface or not network:
+        return None
+    return (interface.get("permanent_mac", ""),
+            network.get("entered", {}).get("controller_ipv4_address", ""))
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", type=Path,
+                        default=Path(manifest_module.MANIFEST_PATH))
+    parser.add_argument("--check-only", action="store_true",
+                        help="run the checks and report, but start nothing")
+    arguments = parser.parse_args(argv)
+
+    expectations = load_expectations(arguments.manifest)
+    if expectations is None:
+        print(f"  No managed network recorded in {arguments.manifest}.")
+        print("  This Controller was not installed to own DHCP and DNS, so there")
+        print("  is nothing to activate. Exiting successfully.")
+        return 0
+
+    expected_mac, expected_address = expectations
+    activation = firstboot.evaluate(
+        firstboot.SystemProbes(),
+        expected_mac=expected_mac, expected_address=expected_address)
+
+    print("\n".join(firstboot.report(activation)), flush=True)
+
+    if not activation.may_start:
+        # ADR 0009: leave DHCP stopped and exit non-zero so the unit records a
+        # failure rather than appearing to have succeeded quietly.
+        return 1
+
+    if arguments.check_only:
+        return 0
+
+    # ADR 0012: one unit of work. If either fails to start, stop both, because
+    # a Controller advertising itself as a DNS server it is not running is
+    # worse than one that is plainly absent.
+    started = []
+    for unit in BUNDLE:
+        result = subprocess.run(["systemctl", "start", unit],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"\n  {unit} failed to start: {(result.stderr or '').strip()}")
+            for already in started:
+                subprocess.run(["systemctl", "stop", already],
+                               capture_output=True, text=True)
+            print("  Stopped the rest of the bundle. DHCP and DNS start together")
+            print("  or not at all (ADR 0012).")
+            return 1
+        started.append(unit)
+
+    print(f"\n  Started: {', '.join(BUNDLE)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
