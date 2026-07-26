@@ -1,0 +1,130 @@
+\input{common/preamble.tex}
+\input{homelab/shared/homelab.tex}
+
+\telosmeta{Homelab}{Convergence Design}
+  {What day two looks like, and why installation is deliberately small}{2026-07-26}
+
+\begin{document}
+\telosmasthead[High-level design]
+
+Installation does only what cannot be done later: partition, encrypt, write boot
+artifacts, pin one interface, create one account. Everything else is a
+repository, a commit and a converge run. A machine is not a thing that was set
+up once; it is a thing that is continuously made to match what is written down.
+
+\section{Where the line falls}
+\begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}L@{}}
+\toprule
+\textbf{Install time} & \textbf{Why it cannot wait}\\
+\midrule
+Partitioning and LUKS2 & Destructive, needs the authorization gate, and cannot be re-run on a machine in use. \governedby{ADR 0051, ADR 0058}\\
+Boot artifacts and the UKI & The machine must boot before anything can converge it.\\
+The managed interface pin & A MAC-pinned \texttt{.link} file has to exist before first boot decides whether to serve DHCP. \governedby{ADR 0050}\\
+The manifest & Records what the machine \emph{is}. Everything afterwards reads it rather than being told. \governedby{ADR 0060}\\
+\midrule
+\textbf{Converge time} & \textbf{Why it belongs there}\\
+\midrule
+Packages, accounts, sshd & Changes constantly. A reinstall to add a package is a design failure.\\
+dnsmasq, nginx, iPXE config & Generated from the manifest by the same code the installer uses, so a decision has one implementation.\\
+Optional services & Off by default, enabled per instance, movable to another host. \governedby{ADR 0054}\\
+Directory membership & Enabled only once the directory exists and answers. \governedby{ADR 0055}\\
+\bottomrule
+\end{tabularx}
+
+\section{The manifest is the authority}
+Convergence never tells a machine what it is. It asks.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[role,minimum width=3.0cm] (repo) at (0,0) {repository\\playbooks + roles};
+  \node[role,minimum width=3.0cm] (inv)  at (0,-1.7) {instance overlay\\gitignored};
+  \node[telos emphasis,minimum width=3.0cm] (ans) at (4.2,-0.85) {ansible-playbook};
+  \node[role,minimum width=3.0cm] (host) at (8.6,-0.85) {machine};
+  \node[role,minimum width=3.0cm] (man)  at (13.0,-0.85) {manifest.json\\what it \emph{is}};
+  \draw[flow] (repo) -- (ans);
+  \draw[flow] (inv)  -- (ans);
+  \draw[flow] (ans)  -- (host);
+  \draw[flow] (host) -- (man);
+  \draw[flow] (man.north) -- ++(0,0.8) -| (ans.north);
+  \node[hlabel,anchor=south,align=center] at (8.6,0.55) {profile read back before anything is changed};
+\end{tikzpicture}
+\end{center}
+
+\begin{telosfacts}[0.22]
+\telosfact{The profile guard}{Each playbook reads \texttt{/etc/homelab/manifest.json} and refuses to proceed if the profile is not the one it converges. Converging a Workstation with the Controller playbook would start DHCP on it --- the one thing forbidden at every stage. \governedby{ADR 0008}}
+\telosfact{Not inventory}{Inventory says how to \emph{reach} a machine. What the machine is comes from the machine. An inventory typo can therefore fail to connect, but cannot convert a Workstation into a DHCP server.}
+\telosfact{Disposable is recorded}{A development-proof installation says so in its manifest, and convergence says so out loud. That is a recorded state, not a remembered one. \governedby{ADR 0043, ADR 0060}}
+\end{telosfacts}
+
+\section{One implementation of each decision}
+The Controller's \texttt{dnsmasq}, \texttt{nginx} and iPXE configuration is not
+an Ansible template. It is produced by the same generators the installer and the
+bootstrap host call, invoked through a small bridge and installed verbatim.
+
+\begin{telospanel}{Why this is worth the indirection}
+A template is a second implementation. The generators refuse configurations that
+violate a recorded decision --- a Controller address inside its own DHCP pool, a
+default route advertised, \texttt{bind-dynamic} where \texttt{bind-interfaces} is
+required --- and those refusals are unit-tested. A template that drifted would
+still be valid \texttt{dnsmasq} syntax, would pass \texttt{dnsmasq -{}-test}, and
+would quietly stop enforcing the decision it was written to enforce. The tests
+assert byte equality between what convergence installs and what the generator
+produces, so the drift cannot happen silently.
+\end{telospanel}
+
+\section{Getting back in when the directory is down}
+The directory is a bootstrap dependency. While it is unavailable, only cached
+logins and one local account work.
+
+\begin{gate}{Convergence refuses to strand a machine}
+Both the base role and the directory-join role assert that a break-glass
+administrator key is configured, and stop if it is not. It is a dedicated key
+pair used for nothing else: the daily-driver key is loaded in an agent all day
+and forwarded to other hosts, so reusing it would protect the recovery account
+with the credential most likely to be part of a bad day. Nothing in the
+repository ever handles the private half. \governedby{ADR 0055, ADR 0063}
+\end{gate}
+
+The domain join itself is deliberately not automated. It requires
+directory-administrator credentials, and automating it would mean storing those
+somewhere a playbook can read unattended. The role detects that a machine is not
+joined, stops, and prints the one command a person runs at a console.
+
+\section{Public repository, private overlay}
+\begin{telosfacts}[0.24]
+\telosfact{In Git}{Playbooks, roles, generators, tests, decisions, and a template overlay in which every value is a visible placeholder.}
+\telosfact{Not in Git}{Hostnames, addresses, interface MACs, disk serials, DHCP reservations and the break-glass public key. These live in a gitignored overlay that needs its own backup, because nothing else is backing it up. \governedby{ADR 0046}}
+\telosfact{Not anywhere}{The LUKS2 passphrase, private keys, directory-administrator credentials and Kerberos keytabs. The overlay is gitignored, not encrypted, and sits in a working tree that gets copied around.}
+\telosfact{Enforced, not intended}{The site build scans published sources for address literals and internal hostnames and fails closed. The template is tested to contain no key material. A tracked template that drifts from the variables the roles read is a test failure.}
+\end{telosfacts}
+
+\section{What is proven and what is not}
+\begin{tabularx}{\linewidth}{@{}p{0.24\linewidth}p{0.12\linewidth}L@{}}
+\toprule
+\textbf{Stage} & \textbf{State} & \textbf{What it establishes}\\
+\midrule
+firmware & passing & A lab guest boots UEFI on its serial console, finds no boot disk, and attempts PXE over IPv4 on a segment with no route off it.\\
+boot-chain & pending & The Controller answers DHCP, serves iPXE over TFTP, and the guest chainloads the installer over HTTP.\\
+install & pending & The genuine installer is driven to completion over the guest's serial console, serial typed and all.\\
+activation & pending & First boot refuses on a segment that already has DHCP, and starts cleanly on one that does not.\\
+converge & pending & Ansible converges the installed Controller, and a second run reports no changes.\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Pending is reported, never skipped}
+A stage that cannot run yet prints what it is waiting for and the matrix does
+not call itself green. A harness that silently skips what it cannot do converts
+an unknown into a false assurance, which is worse than having no harness at all.
+\end{gate}
+
+\begin{telospanel}{A defect this design found before hardware did}
+The lab's virtual disk reported no serial. The installer will not offer a disk
+whose serial cannot be typed at the authorization prompt, so the acceptance
+matrix could never have installed anything --- it would have failed with ``no
+eligible disk'' on its first real run, and the obvious diagnosis would have been
+that the installer was broken. The fix is one line of QEMU argv, but the reason
+it was found is that the fixtures describe hardware \emph{shapes} rather than one
+captured machine: NVMe, SATA and eMMC partition naming, absent serials,
+removable media, wireless-only. A snapshot of one box would have missed it.
+\end{telospanel}
+\end{document}
