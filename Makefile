@@ -25,8 +25,12 @@ ARCH_TEX_PACKAGES := texlive-bin texlive-basic texlive-latex \
 	texlive-latexrecommended texlive-latexextra texlive-pictures \
 	texlive-fontsrecommended
 ARCH_WORKFLOW_PACKAGES := git openai-codex
+# Homelab provisioning: image build, disk layout and the QEMU acceptance matrix.
+ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
+	dnsmasq nginx ipxe qemu-full edk2-ovmf ansible
 ARCH_DEPENDENCY_PACKAGES := $(ARCH_CORE_PACKAGES) $(ARCH_PYTHON_PACKAGES) \
-	$(ARCH_TEX_PACKAGES) $(ARCH_WORKFLOW_PACKAGES)
+	$(ARCH_TEX_PACKAGES) $(ARCH_WORKFLOW_PACKAGES) \
+	$(ARCH_HOMELAB_PACKAGES)
 
 SOURCE_ROOT := src
 BUILD_ROOT := build
@@ -111,6 +115,7 @@ verify-site:
 
 check: check-tools
 	@$(PYTHON) $(SITE_TOOL) check
+	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -q
 
 dependencies-arch:
 	@printf '%s\n' $(ARCH_DEPENDENCY_PACKAGES)
@@ -138,7 +143,7 @@ help:
 		'make site       Render the GitHub Pages artifact into build/site' \
 		'make site-preview          Render and serve it on localhost' \
 		'make verify-site           Re-check the rendered artifact' \
-		'make check      Validate the site manifest against the tree' \
+		'make check      Validate the site manifest and run the homelab tests' \
 		'make clean      Remove build/' \
 		'' \
 		'Isolated agent runs (Worktree Marshal):' \
