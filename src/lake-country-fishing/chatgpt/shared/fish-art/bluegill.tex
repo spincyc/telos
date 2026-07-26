@@ -1,0 +1,57 @@
+\newcommand{\FishOutline}{%
+  % Deep, compressed sunfish body; short head and only a shallow tail fork.
+  \draw[line width=1.15pt,rounded corners=.4pt]
+    (0.12,0) .. controls (.22,.76) and (1.05,1.28) .. (2.45,1.42)
+    .. controls (3.75,1.50) and (5.10,1.12) .. (5.86,.48)
+    .. controls (6.15,.31) and (6.30,.25) .. (6.54,.23)
+    -- (6.95,.82) .. controls (7.05,.48) and (7.06,.20) .. (6.78,0)
+    .. controls (7.06,-.20) and (7.05,-.48) .. (6.95,-.82)
+    -- (6.54,-.23) .. controls (6.30,-.25) and (6.15,-.31) .. (5.86,-.48)
+    .. controls (5.10,-1.12) and (3.75,-1.50) .. (2.45,-1.42)
+    .. controls (1.05,-1.28) and (.22,-.76) .. (0.12,0) -- cycle;
+  % One continuous dorsal: stiff anterior rays grade into a rounded soft fin.
+  \draw[line width=.85pt] (2.08,1.40)--(2.21,1.70)
+    .. controls (2.78,1.78) and (3.34,1.71) .. (3.68,1.58)
+    .. controls (4.24,1.70) and (4.78,1.42) .. (5.06,.91);
+  \foreach \x/\xt/\yt in {2.30/2.21/1.70,2.53/2.46/1.74,
+    2.77/2.72/1.76,3.01/3.00/1.74,3.25/3.28/1.68,3.50/3.55/1.62}
+    {\draw[line width=.38pt] (\x,1.41)--(\xt,\yt);}
+  \draw[line width=.34pt] (3.76,1.35)--(3.80,1.59)
+    (4.02,1.30)--(4.12,1.61) (4.28,1.23)--(4.45,1.55)
+    (4.53,1.12)--(4.76,1.38);
+  \draw[line width=.8pt] (3.04,-1.39) .. controls (3.42,-1.77) and
+    (4.24,-1.72) .. (4.87,-1.12);
+  \draw[line width=.8pt] (1.86,-1.26) .. controls (1.42,-1.72) and
+    (1.02,-1.58) .. (.96,-.86);
+  \draw[line width=.8pt] (1.50,.18) .. controls (2.14,.02) and
+    (2.62,-.44) .. (2.76,-1.16) .. controls (2.08,-.98) and
+    (1.62,-.54) .. (1.50,.18);
+}
+\newcommand{\FishDetails}{%
+  \draw[line width=.7pt] (.12,0) .. controls (.35,.05) and (.48,.08) .. (.68,.03);
+  \draw[line width=.65pt] (.70,-.02) .. controls (.80,-.39) and
+    (1.08,-.66) .. (1.42,-.77);
+  \draw (1.02,.43) circle (.13); \fill (1.04,.44) circle (.047);
+  \draw[line width=.7pt] (1.50,.69) .. controls (1.71,.36) and
+    (1.74,-.27) .. (1.42,-.77);
+  \fill[black] (1.51,.67) .. controls (1.85,.71) and (1.96,.48) .. (1.74,.24)
+    .. controls (1.61,.12) and (1.55,.18) .. (1.50,.30) -- cycle;
+  % Bluegill's subdued vertical barring.
+  \foreach \x/\top/\bot in {2.18/1.28/-1.25,2.76/1.39/-1.38,
+    3.37/1.39/-1.40,3.98/1.29/-1.30,4.57/1.10/-1.12}
+    {\draw[line width=.34pt,densely dotted] (\x,\top) .. controls
+      (\x-.16,.45) and (\x+.15,-.42) .. (\x,\bot);}
+  \draw[line width=.45pt] (2.02,.14) .. controls (3.35,.39) and
+    (4.72,.31) .. (5.67,.06);
+}
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (1.67,.54)--(1.28,1.72);
+  \node[font=\scriptsize,anchor=south,align=center] at (1.28,1.74)
+    {solid black\\ear flap};
+  \draw[line width=.45pt] (2.42,-.86)--(2.05,-1.70);
+  \node[font=\scriptsize,anchor=north,align=center] at (2.05,-1.72)
+    {long pointed\\pectoral fin};
+  \draw[line width=.45pt] (3.20,1.52)--(4.04,1.76);
+  \node[font=\scriptsize,anchor=south,align=center] at (4.12,1.77)
+    {deep body; long\\spiny dorsal};
+}

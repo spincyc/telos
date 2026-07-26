@@ -1,0 +1,62 @@
+\newcommand{\FishOutline}{%
+  % Long, lean percid with pointed snout and a deeply forked caudal fin.
+  \draw[line width=1.15pt,line join=round]
+    (0.04,0.02) -- (0.31,0.34)
+    .. controls (0.73,0.80) and (1.51,0.93) .. (2.34,0.92)
+    .. controls (3.47,0.91) and (4.58,0.67) .. (5.60,0.38)
+    -- (5.90,0.31)--(6.93,1.02)
+    .. controls (6.73,0.56) and (6.60,0.20) .. (6.27,0)
+    .. controls (6.60,-0.20) and (6.73,-0.56) .. (6.93,-1.02)
+    --(5.90,-0.31)--(5.60,-0.38)
+    .. controls (4.55,-0.64) and (3.39,-0.84) .. (2.25,-0.87)
+    .. controls (1.40,-0.89) and (0.75,-0.67) .. (0.32,-0.36)
+    --(0.04,-0.02)--cycle;
+  \draw[line width=.98pt,line cap=round]
+    (0.04,-0.02) .. controls (0.39,-0.13) and (0.75,-0.16) .. (1.04,-0.05)
+    .. controls (0.77,-0.33) and (0.38,-0.38) .. (0.17,-0.24);
+}
+
+\newcommand{\FishDetails}{%
+  \draw[line width=.75pt] (0.94,0.40) circle (0.12);
+  \fill (0.94,0.40) circle (0.040);
+  \draw[line width=.55pt] (1.38,0.70)
+    .. controls (1.60,0.23) and (1.59,-0.31) .. (1.34,-0.67);
+  % Fully separate spiny and soft dorsal fins.
+  \draw[line width=.86pt,line join=round]
+    (1.63,0.91) .. controls (1.83,1.43) and (2.25,1.54) .. (2.57,1.39)
+    .. controls (2.76,1.30) and (2.89,1.08) .. (2.98,0.90);
+  \foreach \x/\yt in {1.77/1.28,1.94/1.43,2.12/1.49,2.30/1.48,2.48/1.41,2.66/1.32,2.82/1.15}
+    {\draw[line width=.43pt] (\x,.91)--(\x,\yt);}
+  \draw[line width=.82pt]
+    (3.45,0.86) .. controls (3.77,1.18) and (4.28,1.15) .. (4.65,0.64);
+  \foreach \x/\yt in {3.61/1.02,3.79/1.12,3.98/1.14,4.17/1.10,4.36/.96}
+    {\draw[line width=.40pt] (\x,.78)--(\x,\yt);}
+  \draw[line width=.70pt]
+    (3.54,-0.76) .. controls (3.87,-1.09) and (4.33,-1.02) .. (4.59,-0.61);
+  \draw[line width=.68pt] (1.43,-0.30)
+    .. controls (1.88,-0.62) and (2.15,-0.49) .. (2.31,-0.12);
+  \draw[line width=.68pt] (2.00,-0.84)
+    .. controls (2.28,-1.12) and (2.67,-1.09) .. (2.91,-0.85);
+  % Mottled saddle pattern and diagnostic lower caudal tip.
+  \foreach \x/\y in {2.00/.35,2.45/.10,2.92/.43,3.39/.17,3.88/.38,4.37/.12,4.84/.29}
+    {\draw[line width=.55pt] (\x-.20,\y+.12)..controls(\x,\y-.12)..(\x+.20,\y+.05);}
+  % An uninked patch bounded inside the lower caudal lobe preserves the
+  % diagnostic white-tip cue in a monochrome drawing.
+  \draw[line width=.55pt]
+    (6.52,-0.58) .. controls (6.66,-0.64) and (6.78,-0.76) .. (6.84,-0.88)
+    .. controls (6.67,-0.79) and (6.56,-0.70) .. cycle;
+  \draw[line width=.50pt] (0.43,0.17)--(0.54,0.22);
+  \draw[line width=.50pt] (0.49,-0.20)--(0.60,-0.15);
+}
+
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (0.94,0.53)--(0.94,1.48)--(0.64,1.70);
+  \node[font=\scriptsize,anchor=east,align=right] at (0.60,1.70)
+    {large glassy\\eye};
+  \draw[line width=.45pt] (3.22,0.94)--(3.22,1.50)--(3.48,1.70);
+  \node[font=\scriptsize,anchor=west,align=left] at (3.52,1.70)
+    {two separate\\dorsal fins};
+  \draw[line width=.45pt] (6.66,-0.70)--(6.18,-1.50)--(5.94,-1.70);
+  \node[font=\scriptsize,anchor=east,align=right] at (5.90,-1.70)
+    {white lower\\tail tip};
+}

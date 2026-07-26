@@ -1,0 +1,61 @@
+\newcommand{\FishOutline}{%
+  % Heavy, elongate body with a narrow caudal peduncle and forked tail.
+  \draw[line width=1.1pt,line join=round]
+    (0.08,0.14)
+    .. controls (0.50,0.53) and (1.45,0.79) .. (2.72,0.85)
+    .. controls (4.02,0.91) and (5.18,0.69) .. (5.87,0.37)
+    -- (6.36,0.30)
+    .. controls (6.60,0.64) and (6.84,0.91) .. (7.00,1.08)
+    .. controls (6.92,0.57) and (6.90,0.25) .. (6.72,0.00)
+    .. controls (6.90,-0.25) and (6.92,-0.57) .. (7.00,-1.08)
+    .. controls (6.84,-0.91) and (6.60,-0.64) .. (6.36,-0.30)
+    -- (5.85,-0.37)
+    .. controls (4.75,-0.72) and (3.37,-0.84) .. (2.20,-0.77)
+    .. controls (1.32,-0.72) and (0.59,-0.44) .. (0.14,-0.20)
+    .. controls (-0.03,-0.11) and (-0.03,0.05) .. (0.08,0.15)
+    -- cycle;
+  % Broad, flattened predatory head.
+  \draw[line width=1.0pt,line cap=round]
+    (0.08,0.14) .. controls (0.32,0.02) and (0.98,-0.01) .. (1.52,-0.06)
+    .. controls (1.02,-0.22) and (0.46,-0.24) .. (0.14,-0.20);
+  \draw[line width=.95pt] (0.14,-0.20) .. controls (0.62,-0.34) and (1.25,-0.28) .. (1.52,-0.06);
+  % Paired fins and opposed rear dorsal/anal fins.
+  \draw[line width=.95pt,line join=round]
+    (4.72,0.63) .. controls (5.10,1.18) and (5.57,1.20) .. (5.83,0.38);
+  \draw[line width=.95pt,line join=round]
+    (4.84,-0.62) .. controls (5.22,-1.16) and (5.66,-1.10) .. (5.87,-0.36);
+  \draw[line width=.9pt,line join=round]
+    (3.28,-0.80) .. controls (3.58,-1.17) and (4.03,-1.10) .. (4.22,-0.73);
+  \draw[line width=.9pt,line join=round]
+    (1.48,-0.50) .. controls (1.63,-0.88) and (2.03,-0.94) .. (2.28,-0.74);
+}
+\newcommand{\FishDetails}{%
+  % Head landmarks: large eye, nostril, operculum, and sensory pores.
+  \draw[line width=.55pt] (0.78,0.31) circle (0.085);
+  \draw[line width=.45pt] (0.28,0.28) circle (0.025);
+  \draw[line width=.55pt] (1.52,0.61) .. controls (1.30,0.25) and (1.31,-0.35) .. (1.57,-0.58);
+  \foreach \x/\y in {.60/-.20,.72/-.25,.85/-.28,.99/-.29,.66/-.36,.81/-.40}
+    \draw[line width=.45pt] (\x,\y) circle (.022);
+  \draw[line width=.45pt,dash pattern=on 2.6pt off 1.5pt]
+    (1.29,0.02) .. controls (2.65,0.13) and (4.35,0.02) .. (5.91,-0.10);
+  % Irregular dark bars: open linework keeps the plate strictly monochrome.
+  \foreach \x/\yt/\yb/\bend in {
+    1.48/.76/-.72/.22,1.83/.91/-.88/-.18,2.19/1.00/-.92/.18,
+    2.58/1.04/-.98/-.12,2.98/1.05/-.99/.16,3.39/1.03/-.96/-.20,
+    3.82/.98/-.91/.12,4.23/.91/-.84/-.17,4.62/.82/-.75/.10,
+    4.98/.70/-.65/-.12,5.31/.59/-.55/.08}
+    \draw[line width=.55pt]
+      (\x,\yt) .. controls ({\x-.11},{(\yt+\yb)/2+.13}) and
+      ({\x+.13},{(\yt+\yb)/2-.13}) .. ({\x+\bend},\yb);
+  \draw[line width=.4pt] (6.34,.36) -- (6.73,0) -- (6.34,-.36);
+  \foreach \x in {4.98,5.17,5.36,5.54}
+    \draw[line width=.4pt] (\x,.84) -- ({\x+.20},1.20);
+}
+\newcommand{\FishCallouts}{%
+  \node[anchor=east,font=\scriptsize] at (2.12,1.69) {broad, flattened head};
+  \draw[line width=.45pt] (2.16,1.61) -- (1.63,1.33) -- (0.61,.59);
+  \node[anchor=west,font=\scriptsize] at (4.34,1.69) {rear dorsal fin};
+  \draw[line width=.45pt] (4.30,1.60) -- (4.58,1.36) -- (5.14,1.20);
+  \node[anchor=west,font=\scriptsize] at (4.14,-1.66) {dark bars on light body};
+  \draw[line width=.45pt] (4.10,-1.57) -- (3.72,-1.27) -- (3.39,-.58);
+}

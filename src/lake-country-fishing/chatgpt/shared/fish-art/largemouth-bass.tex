@@ -1,0 +1,60 @@
+\newcommand{\FishOutline}{%
+  % Blunt head, deep shoulder, nearly truncate tail: largemouth bass.
+  \draw[line width=1.15pt,line join=round]
+    (0.05,0.12) -- (0.28,0.34)
+    .. controls (0.42,0.76) and (0.82,1.02) .. (1.46,1.12)
+    .. controls (2.25,1.31) and (3.45,1.18) .. (4.18,0.92)
+    .. controls (4.62,0.76) and (5.08,0.61) .. (5.62,0.48)
+    -- (5.93,0.43) -- (6.88,1.05)
+    .. controls (6.69,0.53) and (6.66,0.20) .. (6.98,0)
+    .. controls (6.66,-0.20) and (6.69,-0.53) .. (6.88,-1.05)
+    -- (5.93,-0.43) -- (5.62,-0.48)
+    .. controls (4.92,-0.65) and (4.34,-0.83) .. (3.72,-1.01)
+    .. controls (2.74,-1.29) and (1.54,-1.20) .. (0.82,-0.80)
+    .. controls (0.48,-0.62) and (0.25,-0.34) .. (0.05,-0.12)
+    -- (0.05,0.12);
+  % The hinged maxilla extends behind the eye.
+  \draw[line width=1.05pt,line cap=round]
+    (0.04,-0.10) .. controls (0.43,-0.18) and (1.12,-0.22) .. (1.58,-0.02)
+    .. controls (1.20,-0.45) and (0.55,-0.50) .. (0.20,-0.29);
+}
+
+\newcommand{\FishDetails}{%
+  \draw[line width=.68pt] (1.08,0.42) circle (0.10);
+  \fill (1.08,0.42) circle (0.035);
+  \draw[line width=.55pt] (1.50,0.82)
+    .. controls (1.72,0.30) and (1.72,-0.29) .. (1.47,-0.73);
+  % Joined dorsal: low notch between the spiny and soft portions.
+  \draw[line width=.82pt,line join=round]
+    (1.92,1.18) .. controls (2.13,1.50) and (2.53,1.53) .. (2.82,1.38)
+    .. controls (2.97,1.30) and (3.05,1.18) .. (3.15,1.10)
+    .. controls (3.46,1.36) and (3.89,1.27) .. (4.18,0.92);
+  \foreach \x/\yt in {2.06/1.39,2.22/1.48,2.39/1.50,2.56/1.47,2.72/1.41}
+    {\draw[line width=.42pt] (\x,1.16)--(\x,\yt);}
+  \foreach \x/\yt in {3.31/1.20,3.49/1.27,3.68/1.27,3.87/1.19}
+    {\draw[line width=.40pt] (\x,1.03)--(\x,\yt);}
+  \draw[line width=.70pt] (2.08,-1.13)
+    .. controls (2.43,-1.42) and (2.96,-1.40) .. (3.34,-1.08);
+  \draw[line width=.70pt] (3.94,-0.95)
+    .. controls (4.30,-1.31) and (4.74,-1.24) .. (4.96,-0.64);
+  \draw[line width=.70pt] (1.58,-0.25)
+    .. controls (2.10,-0.62) and (2.36,-0.55) .. (2.56,-0.16)
+    .. controls (2.11,-0.27) and (1.84,-0.23) .. (1.58,-0.25);
+  % Irregular dark lateral band, not generic scales.
+  \draw[line width=1.00pt]
+    (1.48,0.03)--(1.82,-0.08)--(2.16,0.04)--(2.50,-0.10)
+    --(2.86,0.02)--(3.22,-0.13)--(3.58,-0.01)--(3.95,-0.15)
+    --(4.31,-0.04)--(4.70,-0.17)--(5.10,-0.10)--(5.58,-0.22);
+}
+
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (0.74,-0.31)--(0.74,-1.52)--(0.40,-1.72);
+  \node[font=\scriptsize,anchor=east,align=right] at (0.36,-1.72)
+    {jaw reaches\\behind eye};
+  \draw[line width=.45pt] (2.92,1.34)--(2.92,1.58)--(3.20,1.72);
+  \node[font=\scriptsize,anchor=west,align=left] at (3.24,1.72)
+    {joined dorsal,\\deep notch};
+  \draw[line width=.45pt] (4.20,-0.12)--(4.20,-1.54)--(4.46,-1.72);
+  \node[font=\scriptsize,anchor=west,align=left] at (4.50,-1.72)
+    {dark broken\\side band};
+}

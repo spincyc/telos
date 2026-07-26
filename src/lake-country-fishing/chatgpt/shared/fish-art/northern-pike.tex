@@ -1,0 +1,67 @@
+\newcommand{\FishOutline}{%
+  % Long, nearly cylindrical body and moderately forked, rounded caudal lobes.
+  \draw[line width=1.05pt,line join=round]
+    (0.10,0.14)
+    .. controls (0.48,0.49) and (1.45,0.68) .. (2.62,0.74)
+    .. controls (3.95,0.79) and (5.10,0.62) .. (5.86,0.34)
+    -- (6.34,0.28)
+    .. controls (6.55,0.57) and (6.75,0.79) .. (6.90,0.86)
+    .. controls (7.01,0.85) and (6.93,0.58) .. (6.82,0.40)
+    .. controls (6.76,0.23) and (6.82,0.12) .. (6.73,0.00)
+    .. controls (6.82,-0.12) and (6.76,-0.23) .. (6.82,-0.40)
+    .. controls (6.93,-0.58) and (7.01,-0.85) .. (6.90,-0.86)
+    .. controls (6.75,-0.79) and (6.55,-0.57) .. (6.34,-0.28)
+    -- (5.86,-0.34)
+    .. controls (4.71,-0.67) and (3.28,-0.75) .. (2.15,-0.67)
+    .. controls (1.32,-0.62) and (0.67,-0.43) .. (0.17,-0.20)
+    .. controls (-0.02,-0.10) and (-0.02,0.08) .. (0.10,0.18)
+    -- cycle;
+  % Duck-bill snout and long lower jaw.
+  \draw[line width=1.0pt,line cap=round]
+    (0.10,0.14) .. controls (0.35,0.02) and (0.95,-0.01) .. (1.45,-0.06)
+    .. controls (0.98,-0.22) and (0.48,-0.24) .. (0.17,-0.20);
+  \draw[line width=.95pt] (0.17,-0.20) .. controls (0.66,-0.34) and (1.20,-0.27) .. (1.45,-0.06);
+  % Rear-set dorsal, anal, pelvic, and pectoral fins.
+  \draw[line width=.95pt,line join=round]
+    (4.72,0.58) .. controls (5.06,1.10) and (5.50,1.14) .. (5.80,0.35);
+  \draw[line width=.95pt,line join=round]
+    (4.82,-0.57) .. controls (5.18,-1.08) and (5.59,-1.04) .. (5.87,-0.34);
+  \draw[line width=.9pt,line join=round]
+    (3.40,-0.72) .. controls (3.67,-1.08) and (4.02,-1.03) .. (4.19,-0.66);
+  \draw[line width=.9pt,line join=round]
+    (1.78,-0.61) .. controls (1.94,-0.97) and (2.34,-0.98) .. (2.58,-0.68);
+  \draw[line width=.9pt,line join=round]
+    (1.38,-0.39) .. controls (1.55,-0.80) and (1.92,-0.84) .. (2.13,-0.62);
+}
+\newcommand{\FishDetails}{%
+  % Eye, nostril, gill cover, lateral line, and fin rays.
+  \draw[line width=.55pt] (0.76,0.29) circle (0.075);
+  \draw[line width=.45pt] (0.30,0.23) circle (0.025);
+  \draw[line width=.55pt] (1.46,0.55) .. controls (1.24,0.25) and (1.25,-0.30) .. (1.50,-0.54);
+  \draw[line width=.45pt] (1.50,-0.54) .. controls (1.64,-0.32) and (1.65,0.30) .. (1.46,0.55);
+  \draw[line width=.45pt,dash pattern=on 2.4pt off 1.5pt]
+    (1.55,0.01) .. controls (2.75,0.10) and (4.35,0.03) .. (5.91,-0.06);
+  % Closely spaced black hatching establishes the pike's dark ground.
+  \foreach \x in {1.65,2.00,2.35,2.70,3.05,3.40,3.75,4.10,4.45,4.80,5.15}
+    \draw[line width=.4pt] (\x,-.50) -- ({\x+.42},.50);
+  \foreach \x in {1.85,2.20,2.55,2.90,3.25,3.60,3.95,4.30,4.65,5.00,5.35}
+    \draw[line width=.4pt] (\x,.50) -- ({\x+.30},-.42);
+  \foreach \x/\y in {1.78/.38,2.12/.55,2.47/.31,2.83/.52,3.20/.34,3.58/.54,
+    3.96/.31,4.34/.50,4.72/.29,5.10/.42,
+    1.82/-.28,2.22/-.47,2.61/-.25,3.02/-.48,3.42/-.27,3.82/-.46,
+    4.23/-.25,4.63/-.45,5.04/-.24}
+    \draw[fill=white,line width=.45pt] (\x,\y) ellipse (.105 and .060);
+  \foreach \x in {4.92,5.10,5.28,5.46}
+    \draw[line width=.4pt] (\x,.60) -- ({\x+.24},1.00);
+  \foreach \x in {5.04,5.22,5.40}
+    \draw[line width=.4pt] (\x,-.59) -- ({\x+.22},-.96);
+  \draw[line width=.45pt] (6.34,.27) -- (6.73,0) -- (6.34,-.27);
+}
+\newcommand{\FishCallouts}{%
+  \node[anchor=east,font=\scriptsize] at (2.16,1.66) {long duck-bill snout};
+  \draw[line width=.45pt] (2.20,1.59) -- (1.50,1.17) -- (0.45,0.20);
+  \node[anchor=west,font=\scriptsize] at (4.26,1.66) {dorsal fin set far back};
+  \draw[line width=.45pt] (4.22,1.57) -- (4.60,1.24) -- (5.12,1.00);
+  \node[anchor=west,font=\scriptsize] at (4.20,-1.62) {light oval spots};
+  \draw[line width=.45pt] (4.16,-1.54) -- (3.86,-1.18) -- (3.62,-.55);
+}

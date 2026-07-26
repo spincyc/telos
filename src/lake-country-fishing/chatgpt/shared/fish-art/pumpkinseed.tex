@@ -1,0 +1,61 @@
+\newcommand{\FishOutline}{%
+  % Very deep sunfish with a steep forehead and a rounded, barely notched tail.
+  \draw[line width=1.15pt]
+    (0.10,0) .. controls (.16,.87) and (1.10,1.40) .. (2.50,1.49)
+    .. controls (3.80,1.54) and (5.02,1.18) .. (5.78,.52)
+    .. controls (6.12,.29) and (6.30,.23) .. (6.55,.22)
+    .. controls (6.76,.56) and (6.91,.70) .. (7.02,.74)
+    .. controls (7.08,.39) and (7.08,.16) .. (6.80,0)
+    .. controls (7.08,-.16) and (7.08,-.39) .. (7.02,-.74)
+    .. controls (6.91,-.70) and (6.76,-.56) .. (6.55,-.22)
+    .. controls (6.30,-.23) and (6.12,-.29) .. (5.78,-.52)
+    .. controls (5.02,-1.18) and (3.80,-1.54) .. (2.50,-1.49)
+    .. controls (1.10,-1.40) and (.16,-.87) .. (0.10,0)--cycle;
+  % Attached dorsal membrane with hard rays forward and soft rays behind.
+  \draw[line width=.85pt] (2.00,1.45)--(2.13,1.72)
+    .. controls (2.73,1.82) and (3.30,1.76) .. (3.62,1.61)
+    .. controls (4.23,1.71) and (4.84,1.41) .. (5.13,.91);
+  \foreach \x/\xt/\yt in {2.22/2.13/1.72,2.46/2.39/1.76,
+    2.70/2.65/1.79,2.94/2.93/1.79,3.18/3.21/1.75,3.42/3.49/1.67}
+    {\draw[line width=.38pt] (\x,1.47)--(\xt,\yt);}
+  \draw[line width=.34pt] (3.72,1.42)--(3.78,1.63)
+    (4.00,1.37)--(4.10,1.66) (4.28,1.28)--(4.43,1.59)
+    (4.56,1.16)--(4.77,1.44);
+  \draw[line width=.8pt] (3.14,-1.45) .. controls (3.62,-1.79) and
+    (4.40,-1.67) .. (4.96,-1.07);
+  \draw[line width=.8pt] (1.72,-1.32) .. controls (1.30,-1.77) and
+    (.91,-1.55) .. (.94,-.81);
+  \draw[line width=.8pt] (1.56,.16) .. controls (2.07,-.06) and
+    (2.40,-.55) .. (2.47,-1.25) .. controls (1.89,-.99) and
+    (1.58,-.50) .. (1.56,.16);
+}
+\newcommand{\FishDetails}{%
+  \draw[line width=.7pt] (.10,0) .. controls (.35,.05) and (.50,.07) .. (.68,.01);
+  \draw[line width=.65pt] (.68,-.01) .. controls (.78,-.39) and
+    (1.06,-.69) .. (1.43,-.79);
+  \draw (1.00,.47) circle (.12); \fill (1.02,.48) circle (.045);
+  \draw[line width=.7pt] (1.48,.74) .. controls (1.74,.33) and
+    (1.72,-.35) .. (1.43,-.79);
+  % Broad ear flap, with the pumpkinseed's diagnostic pale-edged rear spot.
+  \fill[black] (1.46,.70) .. controls (1.92,.76) and (2.09,.51) .. (1.83,.22)
+    .. controls (1.63,.06) and (1.51,.19) .. (1.48,.35)--cycle;
+  \draw[white,line width=.85pt] (1.90,.34) circle (.085);
+  \draw[black,line width=.38pt] (1.90,.34) circle (.13);
+  % Wavy cheek lines, rendered as clear monochrome tracery.
+  \draw[line width=.4pt] (.57,.30)..controls(.79,.17)and(.91,.28)..(1.16,.16);
+  \draw[line width=.4pt] (.55,.16)..controls(.78,.03)and(.96,.13)..(1.24,-.01);
+  \draw[line width=.4pt] (.59,.02)..controls(.80,-.11)and(1.02,-.03)..(1.29,-.18);
+  \foreach \x/\y in {2.20/.68,2.58/-.48,3.06/.85,3.53/-.79,4.02/.52,4.54/-.38}
+    {\draw[line width=.35pt] (\x,\y) circle (.10);}
+}
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (1.90,.34)--(1.24,1.72);
+  \node[font=\scriptsize,anchor=south,align=center] at (1.20,1.74)
+    {pale-edged spot\\on ear flap};
+  \draw[line width=.45pt] (.88,.12)--(.58,-1.69);
+  \node[font=\scriptsize,anchor=north,align=center] at (.58,-1.71)
+    {wavy lines\\across cheek};
+  \draw[line width=.45pt] (2.78,1.55)--(3.82,1.77);
+  \node[font=\scriptsize,anchor=south,align=center] at (3.92,1.78)
+    {very deep body;\\small mouth};
+}

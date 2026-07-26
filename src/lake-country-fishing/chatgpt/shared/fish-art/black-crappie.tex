@@ -1,0 +1,62 @@
+\newcommand{\FishOutline}{%
+  % Paper-thin slab body, large oblique mouth, and shallowly emarginate tail.
+  \draw[line width=1.15pt]
+    (0.08,-.12) .. controls (.13,.68) and (.83,1.23) .. (2.05,1.43)
+    .. controls (3.48,1.64) and (4.91,1.25) .. (5.77,.56)
+    .. controls (6.05,.34) and (6.24,.25) .. (6.48,.24)
+    --(6.99,.75) .. controls (7.10,.45) and (7.04,.18) .. (6.82,0)
+    .. controls (7.04,-.18) and (7.10,-.45) .. (6.99,-.75)
+    --(6.48,-.24) .. controls (6.24,-.25) and (6.05,-.34) .. (5.77,-.56)
+    .. controls (4.91,-1.25) and (3.48,-1.64) .. (2.05,-1.43)
+    .. controls (.83,-1.23) and (.13,-.75) .. (0.08,-.12)--cycle;
+  % Crappie diagnostic: seven tall dorsal spines enclosed by one membrane.
+  \draw[line width=.9pt] (1.82,1.45)--(1.93,1.75)
+    .. controls (2.48,1.85) and (3.16,1.80) .. (3.53,1.62)
+    .. controls (4.16,1.67) and (4.78,1.25) .. (5.15,.82);
+  \foreach \x/\xt/\yt in {1.97/1.93/1.75,2.20/2.16/1.79,
+    2.43/2.41/1.82,2.66/2.66/1.83,2.89/2.92/1.81,
+    3.12/3.18/1.76,3.35/3.44/1.66}
+    {\draw[line width=.44pt] (\x,1.46)--(\xt,\yt);}
+  \draw[line width=.34pt] (3.67,1.40)--(3.72,1.62)
+    (3.94,1.34)--(4.06,1.62) (4.21,1.24)--(4.40,1.54)
+    (4.50,1.12)--(4.75,1.32);
+  % Broad anal fin nearly mirrors the long dorsal, a crappie hallmark.
+  \draw[line width=.9pt] (2.55,-1.50)
+    .. controls (3.04,-1.82) and (3.78,-1.77) .. (4.14,-1.57)
+    .. controls (4.55,-1.57) and (4.91,-1.13) .. (5.16,-.83);
+  \draw[line width=.34pt] (2.82,-1.47)--(2.90,-1.68)
+    (3.10,-1.51)--(3.18,-1.76) (3.38,-1.48)--(3.48,-1.77)
+    (3.68,-1.43)--(3.80,-1.73) (4.03,-1.34)--(4.13,-1.57)
+    (4.36,-1.21)--(4.50,-1.51) (4.67,-1.04)--(4.80,-1.30);
+  \draw[line width=.75pt] (1.63,.10) .. controls (2.10,-.18) and
+    (2.28,-.63) .. (2.25,-1.24) .. controls (1.81,-1.04) and
+    (1.54,-.56) .. (1.63,.10);
+}
+\newcommand{\FishDetails}{%
+  % Crappie's broad, upturned gape.
+  \draw[line width=.8pt] (.08,-.12) .. controls (.38,.13) and
+    (.67,.30) .. (1.01,.24);
+  \draw[line width=.55pt] (.14,-.14) .. controls (.47,-.04) and
+    (.77,-.01) .. (1.01,.24);
+  \draw (1.00,.58) circle (.16); \fill (1.03,.60) circle (.057);
+  \draw[line width=.65pt] (1.47,.83) .. controls (1.78,.33) and
+    (1.73,-.39) .. (1.39,-.82);
+  % Irregular black-crappie mottling: no orderly vertical bars.
+  \foreach \x/\y/\r in {
+    1.66/.54/.08,1.92/-.46/.10,2.18/.87/.11,2.34/.17/.07,2.61/-.77/.10,
+    2.88/.55/.09,3.12/-.16/.12,3.34/.98/.08,3.57/-.90/.09,3.79/.36/.11,
+    4.04/-.37/.07,4.29/.79/.10,4.53/-.69/.11,4.77/.13/.08,5.08/.52/.07,
+    5.24/-.29/.09}{\fill (\x,\y) circle (\r);}
+  \draw[line width=.36pt] (1.72,-.02)..controls(2.72,.30)and(4.43,.21)..(5.63,-.05);
+}
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (.61,.12)--(.42,1.71);
+  \node[font=\scriptsize,anchor=south,align=center] at (.42,1.73)
+    {large, oblique\\upturned mouth};
+  \draw[line width=.45pt] (3.13,-.19)--(3.00,-1.72);
+  \node[font=\scriptsize,anchor=north,align=center] at (3.00,-1.74)
+    {irregular black\\mottling};
+  \draw[line width=.45pt] (2.55,1.56)--(4.17,1.78);
+  \node[font=\scriptsize,anchor=south,align=center] at (4.30,1.79)
+    {7--8 dorsal spines;\\deep slab body};
+}

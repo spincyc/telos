@@ -1,0 +1,58 @@
+\newcommand{\FishOutline}{%
+  % Compact, laterally compressed percid with a modestly forked tail.
+  \draw[line width=1.15pt,line join=round]
+    (0.08,0.04) .. controls (0.24,0.58) and (0.87,1.05) .. (1.65,1.16)
+    .. controls (2.60,1.34) and (3.72,1.13) .. (4.55,0.75)
+    .. controls (5.02,0.55) and (5.35,0.43) .. (5.73,0.34)
+    --(5.98,0.31)--(6.90,0.82)
+    .. controls (6.73,0.39) and (6.71,0.15) .. (6.98,0)
+    .. controls (6.71,-0.15) and (6.73,-0.39) .. (6.90,-0.82)
+    --(5.98,-0.31)--(5.73,-0.34)
+    .. controls (5.18,-0.47) and (4.67,-0.68) .. (4.08,-0.91)
+    .. controls (3.19,-1.27) and (2.07,-1.34) .. (1.27,-1.05)
+    .. controls (0.61,-0.81) and (0.22,-0.42) .. (0.08,-0.04)--cycle;
+  \draw[line width=.82pt,line cap=round]
+    (0.08,-0.04) .. controls (0.33,-0.11) and (0.55,-0.11) .. (0.72,-0.03);
+}
+
+\newcommand{\FishDetails}{%
+  \draw[line width=.68pt] (0.93,0.42) circle (0.09);
+  \fill (0.93,0.42) circle (0.03);
+  \draw[line width=.55pt] (1.36,0.82)
+    .. controls (1.59,0.29) and (1.58,-0.36) .. (1.29,-0.86);
+  % Separate, strongly spined first dorsal and rounded soft dorsal.
+  \draw[line width=.86pt,line join=round]
+    (1.55,1.18) .. controls (1.77,1.51) and (2.17,1.58) .. (2.49,1.46)
+    .. controls (2.68,1.39) and (2.79,1.24) .. (2.87,1.14);
+  \foreach \x/\yt in {1.69/1.40,1.86/1.51,2.03/1.55,2.20/1.54,2.37/1.49,2.54/1.42,2.70/1.31}
+    {\draw[line width=.43pt] (\x,1.18)--(\x,\yt);}
+  \draw[line width=.82pt]
+    (3.25,1.05) .. controls (3.56,1.36) and (4.02,1.23) .. (4.40,0.81);
+  \foreach \x/\yt in {3.41/1.21,3.59/1.30,3.78/1.29,3.97/1.21,4.17/1.06}
+    {\draw[line width=.40pt] (\x,.98)--(\x,\yt);}
+  \draw[line width=.68pt]
+    (3.49,-1.11) .. controls (3.83,-1.38) and (4.22,-1.24) .. (4.42,-0.79);
+  \foreach \x in {3.70,3.88,4.06,4.24}
+    {\draw[line width=.45pt] (\x,-1.20)--(\x+.10,-.91);}
+  \draw[line width=.68pt] (1.35,-0.34)
+    .. controls (1.77,-0.67) and (2.04,-0.56) .. (2.20,-0.16);
+  \draw[line width=.68pt] (2.19,-1.25)
+    .. controls (2.49,-1.48) and (2.88,-1.42) .. (3.12,-1.18);
+  \foreach \x in {2.35,2.53,2.71,2.89}
+    {\draw[line width=.45pt] (\x,-1.36)--(\x+.08,-1.21);}
+  % Six characteristic tapering vertical bars.
+  \foreach \x/\yt/\yb in {1.67/.83/-.79,2.17/.99/-.91,2.70/1.02/-.96,3.24/.94/-.92,3.79/.82/-.82,4.34/.63/-.66}
+    {\draw[line width=.92pt] (\x,\yt) .. controls (\x-.13,.34) and (\x+.12,-.27) .. (\x,\yb);}
+}
+
+\newcommand{\FishCallouts}{%
+  \draw[line width=.45pt] (2.60,-1.33)--(1.90,-1.51)--(1.64,-1.70);
+  \node[font=\scriptsize,anchor=east,align=right] at (1.60,-1.70)
+    {orange lower fins\\shown hatched};
+  \draw[line width=.45pt] (2.94,1.13)--(2.94,1.51)--(3.20,1.70);
+  \node[font=\scriptsize,anchor=west,align=left] at (3.24,1.70)
+    {two separate\\dorsal fins};
+  \draw[line width=.45pt] (3.78,-0.77)--(3.78,-1.51)--(4.05,-1.70);
+  \node[font=\scriptsize,anchor=west,align=left] at (4.09,-1.70)
+    {six to nine\\dark bars};
+}
