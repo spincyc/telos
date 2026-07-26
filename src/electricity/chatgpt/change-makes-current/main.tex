@@ -1,0 +1,75 @@
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism — ChatGPT}{Change Makes Current}
+  {Induction as a sign, size, and energy-conversion investigation}{2026-07-26}
+\begin{document}
+\telosmasthead[\editiontag\enspace|\enspace Investigation 4]
+
+\begin{teloshazard}{Only the hand-moved source described here}
+Use a hand-moved permanent magnet and a passive coil connected to a meter.
+Do not substitute a powered electromagnet, motor, transformer, outlet-powered
+apparatus, ignition component, large magnet assembly, or high-voltage device.
+Keep strong magnets away from implants and magnetic storage. \stopline
+\end{teloshazard}
+
+\section{Make the detector}
+Wind 200--300 turns of fine enamelled wire around a cardboard tube; tape the
+coil, scrape the two ends, and connect it to a digital multimeter on its most
+sensitive DC voltage range. The coil has no battery.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[rounded corners] (-5,-.55) rectangle (-3.2,.55);
+\node at (-4.1,0){N\hspace{.9cm}S};
+\draw[telos arrow] (-3,0)--(-1.9,0) node[midway,above]{motion};
+\foreach \x in {-1.2,-.9,...,1.2} \draw (\x,-.75) ellipse (.22 and .75);
+\draw (-1.2,.75)--(-1.2,1.25)--(3,1.25);
+\draw (1.2,-.75)--(1.2,-1.25)--(3,-1.25);
+\node[draw,circle,minimum size=1.2cm] at (3,0){V};
+\draw (3,1.25)--(3,.6); \draw (3,-1.25)--(3,-.6);
+\end{tikzpicture}
+\end{center}
+
+\section{Run the sign test}
+Zero is a result. Hold the magnet stationary inside the coil; record the meter.
+Then make four controlled moves, using the same travel distance:
+
+\begin{tabularx}{\linewidth}{@{}L C C C@{}}
+\toprule
+Move & Peak sign & Peak magnitude & Repeats agree?\\ \midrule
+North pole in, slow &&&\\
+North pole out, slow &&&\\
+South pole in, slow &&&\\
+North pole in, fast &&&\\
+\bottomrule
+\end{tabularx}
+
+\begin{labrecord}\end{labrecord}
+
+\section{Build the compact model}
+A \emph{change} in magnetic flux through the coil induces an emf. Reversing
+motion or magnet orientation reverses the sign. Faster change generally makes
+a larger magnitude. The induced effect opposes the change that produces it:
+this is the qualitative Faraday--Lenz model.
+
+\begin{telospanel}{Where the energy comes from}
+The meter response is not free energy. Your hand does mechanical work against
+the induced interaction; some energy transfers electrically and ultimately
+becomes thermal energy. A generator scales this conversion with controlled
+motion, magnetic fields and circuits.
+\end{telospanel}
+
+\section{A fairer extension}
+Compare 100 and 300 turns using the same magnet, tube, travel distance and a
+metronome to time the stroke. Make five trials per coil and compare medians.
+Then name the largest uncontrolled variable. Do not compare hand speed by
+memory.
+
+\begin{teloscard}{What this does—and does not—show}
+It supports a relationship among changing flux, polarity and induced emf. It
+does not establish the waveform of grid AC, transformer safety, or permission
+to connect a coil to household power.
+\end{teloscard}
+
+\sourcesline{DOE S06. Safety boundary: OSHA S01--S03}
+\end{document}

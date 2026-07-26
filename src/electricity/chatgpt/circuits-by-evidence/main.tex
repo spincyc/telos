@@ -1,0 +1,79 @@
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism — ChatGPT}{Circuits by Evidence}
+  {Three compact labs: path, resistance, and energy rate}{2026-07-26}
+\begin{document}
+\telosmasthead[\editiontag\enspace|\enspace Investigation 2]
+
+\begin{teloshazard}{This book has one source class}
+Use only \lowvoltage. For the procedures below, use the stated AA-cell holder.
+Never substitute a wall adapter or bench supply. Disconnect the holder before
+rewiring. If a cell, wire, or resistor becomes warm: disconnect, move hands
+away, tell the adult, and do not reuse it.
+\end{teloshazard}
+
+\section{Lab A — What does “complete path” mean?}
+\textbf{Build:} two AA cells, a 330 \(\Omega\) resistor and an LED in series.
+Try each change with power disconnected: reverse LED; remove one connection;
+bypass the resistor \textbf{only as a prediction—do not connect it}.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw (0,0)--(1,0) -- (1,.5);
+\draw (1,.5)--(1,1.4); \draw (.78,.82)--(1.22,.82);
+\draw (.88,1.02)--(1.12,1.02); \node[left] at (.72,.92){2 AA};
+\draw (1,1.4)--(3.3,1.4);
+\draw (3.3,1.4)--(3.3,1.05);
+\draw[decorate,decoration={zigzag,segment length=3pt,amplitude=2pt}]
+  (3.3,1.05)--(3.3,.35);
+\draw (3.3,.35)--(3.3,0);
+\node[right] at (3.45,.7){330 \(\Omega\)};
+\draw (3.3,0)--(2.25,0); \draw (2.25,-.22)--(2.25,.22);
+\draw (2.05,-.22)--(2.05,.22); \draw (2.05,0)--(0,0);
+\node[below] at (2.15,-.3){LED};
+\end{tikzpicture}
+\end{center}
+
+A source supplies potential difference; current needs a closed conducting path.
+The resistor limits current. The diagram shows connection, not tabletop shape.
+
+\section{Lab B — Make an \(I\)-\(V\) evidence table}
+Use \textbf{one} 220 \(\Omega\), 0.25 W resistor. Measure resistance with the
+battery disconnected. Then use 1, 2, 3 and 4 AA cells and measure voltage
+\emph{across} the resistor. Measure current only after the adult verifies that
+the red lead is in the correct current jack and the meter is inserted in series.
+Connect for at most five seconds per reading.
+
+\begin{tabularx}{\linewidth}{@{}C C C C C@{}}
+\toprule
+Cells & \(V\) across (\(\rm V\)) & \(I\) (\(\rm A\)) & \(V/I\) (\(\Omega\)) &
+\(P=VI\) (\(\rm W\))\\ \midrule
+1&&&&\\ 2&&&&\\ 3&&&&\\ 4&&&&\\ \bottomrule
+\end{tabularx}
+
+\begin{gate}{Power rating}
+Before the four-cell trial, calculate \(P=V^2/R\) using the measured resistance
+and expected battery voltage. Proceed only if the result is below 0.25 W.
+\end{gate}
+
+\section{Lab C — Series and parallel are connection claims}
+Using two 1 k\(\Omega\) resistors, predict and then measure equivalent resistance
+with \textbf{all batteries removed}. Series should exceed either resistor;
+parallel should be less than either. Explain the result as available paths, then
+check with \(R_s=R_1+R_2\) and \(1/R_p=1/R_1+1/R_2\).
+
+\begin{labrecord}\end{labrecord}
+
+\section{Read the graph, not just the formula}
+Plot \(I\) vertically and \(V\) horizontally. If the points lie near a straight
+line through zero, \(V=IR\) is a useful model over this range. A slope changing
+with temperature would mean “constant \(R\)” failed—not that Ohm's law is a
+magic rule every component must obey.
+
+\begin{telospanel}{Units tell a story}
+\(1\,{\rm A}=1\,{\rm C/s}\), \(1\,{\rm V}=1\,{\rm W/A}\), and
+\(1\,\Omega=1\,{\rm V/A}\). Power \(P=VI\) is an energy-transfer rate.
+\end{telospanel}
+
+\sourcesline{NIST S04; DOE S06; DOE S07. Safety boundary: OSHA S01--S03}
+\end{document}

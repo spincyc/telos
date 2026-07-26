@@ -1,0 +1,65 @@
+\input{common/preamble.tex}
+\input{potato-launcher/chatgpt/shared/edition.tex}
+\telosmeta{Potato Launcher · ChatGPT}{Range Command Card}{Stop gates, roles, and the shot cycle}{2026-07-26}
+\begin{document}
+\telosmasthead[\editiontag]
+\adultonly
+
+\section{No gate, no shot}
+\begin{telosframe}
+\fixedgates
+\end{telosframe}
+
+\section{Four roles, one authority}
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}L@{}}
+\toprule
+\textbf{Adult lead} & Owns the launcher, fuel and igniter; calls every state
+change; may stop the session without debate.\\
+\textbf{Range watcher} & Watches the entire downrange area and backstop; says
+``clear'' only after a fresh scan; calls ``CEASE FIRE'' on any change.\\
+\textbf{Recorder} & Logs condition, shot number and observation from behind the
+line. No approach until released by the adult lead.\\
+\textbf{Everyone} & Eyes and double hearing protection on; stays behind the
+line; repeats a cease-fire call so it cannot be missed.\\
+\bottomrule
+\end{tabularx}
+
+\section{States, spoken aloud}
+\begin{center}
+\begin{tikzpicture}[node distance=0.45cm and 0.34cm,
+  s/.style={draw,rounded corners,minimum height=0.63cm,align=center,
+  font=\small\bfseries,inner xsep=5pt},
+  a/.style={-{Latex[length=2mm]},thick}]
+\node[s] (cold) {COLD\\open \& vented};
+\node[s,right=of cold] (load) {LOAD\\muzzle downrange};
+\node[s,right=of load] (fuel) {FUEL\\adult only};
+\node[s,right=of fuel] (hot) {HOT\\hands off};
+\node[s,right=of hot] (fire) {FIRE\\on command};
+\draw[a] (cold)--(load); \draw[a] (load)--(fuel); \draw[a] (fuel)--(hot);
+\draw[a] (hot)--(fire);
+\draw[a] (fire) to[bend right=28] node[below,font=\scriptsize]{vent, inspect,
+account} (cold);
+\end{tikzpicture}
+\end{center}
+
+\begin{teloshazard}{Misfire branch}
+Do not retry, add fuel, open, move, peer into, or approach. Adult lead calls
+``MISFIRE---HOLD.'' Keep the muzzle downrange and every person behind the line
+for a full \textbf{60 seconds}. Then the adult vents from the breech end while
+remaining out of the muzzle line. A second anomaly ends the session.
+\end{teloshazard}
+
+\section{Stop means stop}
+Stop immediately for a person, vehicle, animal, aircraft concern, shifting
+wind/fire condition, lost projectile, unexpected sound, weak/odd discharge,
+damaged or dropped launcher, loose fitting, fuel spill, PPE failure, or any
+uncertainty. Unload and vent before discussion. Cracked, crazed, whitened,
+deformed, badly UV-weathered, or heat-damaged PVC is retired, not repaired.
+
+\begin{telospanel}{Why the range is larger than the equation}
+The classroom trajectory assumes no air drag and a known launch state. A real
+potato is irregular, draggy, variable, and capable of fragmenting. A calculation
+is for learning; a walked empty range and positive earth backstop are for
+safety. Never use a predicted landing point as a boundary.
+\end{telospanel}
+\end{document}

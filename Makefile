@@ -130,6 +130,7 @@ verify-site:
 
 check: check-tools
 	@$(PYTHON) $(SITE_TOOL) check
+	@$(PYTHON) scripts/research-library
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
 	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -q
@@ -240,9 +241,12 @@ $(BUILD_ROOT)/$(1).pdf: $(shell find $(SOURCE_ROOT)/$(1) -type f \( \
 endef
 $(foreach document,$(DOCUMENTS),$(eval $(call REGISTER_DOCUMENT_SOURCES,$(document))))
 
-# Every leaf in a project also depends on that project's shared includes and art.
+# Every leaf in a project also depends on that project's provider-owned shared
+# includes and art. Provider trees are deliberately free to organize
+# themselves differently; recursively finding shared/ directories avoids
+# imposing one cross-provider document shape.
 define REGISTER_PROJECT_SHARED
-$(filter $(BUILD_ROOT)/$(1)/%,$(BUILD_PDFS)): $(shell find $(SOURCE_ROOT)/$(1)/shared -type f \( \
+$(filter $(BUILD_ROOT)/$(1)/%,$(BUILD_PDFS)): $(shell find $(SOURCE_ROOT)/$(1) -type f -path '*/shared/*' \( \
 	-name '*.tex' -o -name '*.sty' -o -name '*.png' -o -name '*.jpg' -o \
 	-name '*.jpeg' -o -name '*.pdf' -o -name '*.eps' \) 2>/dev/null | sort)
 endef

@@ -1,0 +1,14 @@
+\newcommand{\editiontag}{ChatGPT edition}
+\newcommand{\lowvoltage}{isolated battery power, \textbf{12 V DC maximum}}
+\newcommand{\stopline}{\textbf{STOP: no outlets, mains leads, wall adapters,
+large battery packs, large capacitors, ignition coils, or exposed high voltage.}}
+\newenvironment{labrecord}{%
+  \begin{teloscard}{Evidence record}\small
+  \begin{tabularx}{\linewidth}{@{}p{0.19\linewidth}L@{}}
+  Prediction & \rule{0.96\linewidth}{0.35pt}\\[1.2em]
+  Changed variable & \rule{0.96\linewidth}{0.35pt}\\[1.2em]
+  Measured result & \rule{0.96\linewidth}{0.35pt}\\[1.2em]
+  Claim + because & \rule{0.96\linewidth}{0.35pt}
+  \end{tabularx}}{\end{teloscard}}
+\newcommand{\sourcesline}[1]{\par\smallskip{\footnotesize\textbf{Evidence:} #1.
+See the provider-neutral electricity source register.}}
