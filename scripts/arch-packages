@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Resolve the Arch dependency closure and refuse ambiguous virtual packages.
+
+`make install-dependencies-arch` is meant to run start to finish without
+somebody watching it. A dependency on a *virtual* package with more than one
+provider breaks that: pacman stops mid-transaction and asks which provider to
+use, and the transaction sits there until a person answers.
+
+The classic case is QEMU. `qemu-full` and `qemu-desktop` depend on
+`qemu-audio-jack`, which depends on the virtual package `jack`, which is
+provided by both `jack2` and `pipewire-jack`. Choosing `pipewire-jack` then
+depends on the virtual `pipewire-session-manager`, so answering one question
+earns another. None of it is wanted: the acceptance lab runs QEMU headless with
+`-nographic` and no audio device at all, so `qemu-base` is the correct package
+and the whole branch disappears.
+
+This script makes that a property of the package list rather than something
+that has to be remembered. It reads pacman's sync databases directly -- no
+network, no lock, nothing to install -- walks the closure of the declared
+packages, and reports any virtual dependency that more than one package could
+satisfy, naming the path that reached it.
+
+    scripts/arch-packages --list      print the declared packages, one per line
+    scripts/arch-packages --check     exit non-zero if the closure is ambiguous
+
+On a host that is not Arch, or one with no sync databases, --check reports that
+it could not verify and exits zero. A missing database is not evidence of a
+problem, and `make check` must stay runnable on any machine.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import re
+import sys
+import tarfile
+from pathlib import Path
+
+SYNC_DIRECTORY = "/var/lib/pacman/sync"
+MAKEFILE = Path(__file__).resolve().parents[1] / "Makefile"
+
+# `name>=1.2` / `name=1.2` / `name<1.2` all name the package `name`.
+VERSION_CONSTRAINT = re.compile(r"[<>=].*$")
+EXACT_VERSION = re.compile(r"^(?P<name>[^<>=]+)=(?P<version>[^<>=]+)$")
+
+
+def dependency_name(specification: str) -> str:
+    return VERSION_CONSTRAINT.sub("", specification.strip())
+
+
+def exact_version(specification: str) -> str | None:
+    """The version in `libnettle.so=9-64`, or None for an unconstrained name.
+
+    Shared-object dependencies carry their soname version this way, and it is
+    what distinguishes `nettle` from `nettle3`. Ignoring it would report an
+    ambiguity pacman does not actually have.
+    """
+    match = EXACT_VERSION.match(specification.strip())
+    return match.group("version") if match else None
+
+
+# --------------------------------------------------------------------------
+# The declared list
+# --------------------------------------------------------------------------
+
+
+def declared_packages(makefile: Path = MAKEFILE) -> list[str]:
+    """Read ARCH_DEPENDENCY_PACKAGES out of the Makefile.
+
+    The Makefile stays the single place the list is written down. Duplicating it
+    here would let the two drift, and a checker that verifies a stale list is
+    worse than no checker.
+    """
+    variables: dict[str, str] = {}
+    text = makefile.read_text()
+    text = re.sub(r"\\\n\s*", " ", text)          # join continuation lines
+    for line in text.splitlines():
+        match = re.match(r"^(ARCH_[A-Z_]+)\s*:?=\s*(.*)$", line)
+        if match:
+            variables[match.group(1)] = match.group(2)
+
+    def expand(value: str) -> list[str]:
+        words: list[str] = []
+        for word in value.split():
+            reference = re.match(r"^\$[({]([A-Za-z_]+)[)}]$", word)
+            if reference:
+                words += expand(variables.get(reference.group(1), ""))
+            else:
+                words.append(word)
+        return words
+
+    if "ARCH_DEPENDENCY_PACKAGES" not in variables:
+        raise SystemExit(f"{makefile}: ARCH_DEPENDENCY_PACKAGES is not defined")
+    return expand(variables["ARCH_DEPENDENCY_PACKAGES"])
+
+
+# --------------------------------------------------------------------------
+# The sync databases
+# --------------------------------------------------------------------------
+
+
+def load_databases(directory: str = SYNC_DIRECTORY) -> tuple[dict, dict]:
+    """Return (packages by name, provider names by virtual name).
+
+    Parses the `desc` entries pacman itself writes, so nothing has to shell out
+    to pacman and no repository lock is taken.
+    """
+    packages: dict[str, dict] = {}
+    providers: dict[str, dict[str, set[str | None]]] = {}
+
+    for path in sorted(glob.glob(f"{directory}/*.db")):
+        with tarfile.open(path) as archive:
+            for member in archive.getmembers():
+                if not member.name.endswith("/desc"):
+                    continue
+                handle = archive.extractfile(member)
+                if handle is None:
+                    continue
+                fields = _parse_desc(handle.read().decode("utf8", "replace"))
+                name = fields.get("NAME", [""])[0]
+                if not name:
+                    continue
+                packages[name] = fields
+                for provided in fields.get("PROVIDES", []):
+                    entry = providers.setdefault(dependency_name(provided), {})
+                    entry.setdefault(name, set()).add(exact_version(provided))
+
+    return packages, providers
+
+
+def candidates(specification: str, providers: dict) -> list[str]:
+    """Which packages could satisfy this dependency, honouring the version.
+
+    `libnettle.so=9-64` is satisfied by nettle but not by nettle3, which
+    provides version 8. Only when two providers survive the version constraint
+    does pacman have a real question to ask.
+    """
+    offered = providers.get(dependency_name(specification), {})
+    wanted = exact_version(specification)
+    if wanted is None:
+        return sorted(offered)
+    return sorted(name for name, versions in offered.items()
+                  if wanted in versions or None in versions)
+
+
+def _parse_desc(text: str) -> dict[str, list[str]]:
+    fields: dict[str, list[str]] = {}
+    section = None
+    for line in text.splitlines():
+        if line.startswith("%") and line.endswith("%"):
+            section = line.strip("%")
+            fields[section] = []
+        elif line.strip() and section:
+            fields[section].append(line.strip())
+    return fields
+
+
+# --------------------------------------------------------------------------
+# The closure
+# --------------------------------------------------------------------------
+
+
+def ambiguities(roots: list[str], packages: dict, providers: dict) -> list[dict]:
+    """Every virtual dependency pacman would have to ask a question about.
+
+    Two rules keep this honest, and both matter:
+
+    A real package wins over a virtual name of the same spelling, which is
+    pacman's own rule -- `bash` is a package, so nothing is asked about it even
+    though other packages provide it.
+
+    A virtual dependency whose provider is *already* in the transaction is not
+    a question either. `dnsmasq` depends on both `nettle` and `libnettle.so`;
+    nettle is pulled in by name, so the soname is satisfied without a choice.
+    That means the concrete selection has to be resolved first and the virtual
+    dependencies judged against it, not in one pass.
+    """
+    unknown = [name for name in roots if name not in packages]
+
+    # Pass one: everything reachable by concrete name, plus how we got there.
+    reached: dict[str, list[str]] = {name: [name] for name in roots}
+    virtual: dict[str, tuple[str, str]] = {}          # dep spec -> (via, name)
+    pending = list(roots)
+    selected: set[str] = set()
+
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        fields = packages.get(name)
+        if fields is None:
+            continue
+        selected.add(name)
+        for specification in fields.get("DEPENDS", []):
+            dependency = dependency_name(specification)
+            if dependency not in reached:
+                reached[dependency] = reached[name] + [dependency]
+            if dependency in packages:
+                pending.append(dependency)
+            else:
+                virtual.setdefault(specification, (name, dependency))
+
+    # Pass two: a virtual dependency is a question only when more than one
+    # provider survives the version constraint and none is already selected.
+    found: dict[str, dict] = {}
+    for specification, (_, dependency) in sorted(virtual.items()):
+        possible = candidates(specification, providers)
+        if len(possible) < 2 or selected.intersection(possible):
+            continue
+        found[dependency] = {
+            "virtual": dependency,
+            "providers": possible,
+            "path": reached[dependency],
+        }
+
+    for name in unknown:
+        found[f"!{name}"] = {"missing": name}
+    return [entry for _, entry in sorted(found.items())]
+
+
+# --------------------------------------------------------------------------
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--list", action="store_true",
+                      help="print the declared packages, one per line")
+    mode.add_argument("--check", action="store_true",
+                      help="verify the closure needs no provider disambiguation")
+    parser.add_argument("--sync-directory", default=SYNC_DIRECTORY)
+    arguments = parser.parse_args(argv)
+
+    roots = declared_packages()
+
+    if arguments.list:
+        for name in roots:
+            print(name)
+        return 0
+
+    if not glob.glob(f"{arguments.sync_directory}/*.db"):
+        print("arch packages: no pacman sync databases here, not verified")
+        return 0
+
+    packages, providers = load_databases(arguments.sync_directory)
+    problems = ambiguities(roots, packages, providers)
+
+    if not problems:
+        print(f"arch packages: {len(roots)} declared, closure needs no "
+              f"provider disambiguation")
+        return 0
+
+    print("arch packages: the dependency closure would stop and ask a question")
+    print("")
+    for problem in problems:
+        if "missing" in problem:
+            print(f"  {problem['missing']}: not in any configured repository")
+            continue
+        print(f"  {problem['virtual']}: provided by "
+              f"{', '.join(problem['providers'])}")
+        print(f"    reached via {' -> '.join(problem['path'])}")
+    print("")
+    print("  Either drop the package that pulls it in, or name the provider you")
+    print("  want in ARCH_PROVIDER_PACKAGES so pacman has nothing to ask about.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -26,11 +26,23 @@ ARCH_TEX_PACKAGES := texlive-bin texlive-basic texlive-latex \
 	texlive-fontsrecommended
 ARCH_WORKFLOW_PACKAGES := git openai-codex
 # Homelab provisioning: image build, disk layout and the QEMU acceptance matrix.
+#
+# qemu-base, deliberately, and never qemu-desktop or qemu-full. Those pull in
+# qemu-audio-jack, which depends on the virtual package `jack` -- provided by
+# both jack2 and pipewire-jack -- so pacman stops mid-transaction and asks which
+# one to use, and pipewire-jack then depends on the virtual
+# pipewire-session-manager, so answering earns another question. The lab runs
+# headless (-nographic, -nodefaults, no audio device at all), so none of that
+# branch is wanted. `make check` verifies the closure stays free of it.
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible
+# Explicit choices for virtual dependencies that more than one package could
+# satisfy. Naming a provider here settles it before pacman has to ask. Empty
+# because the list above needs nothing: keep it that way rather than growing it.
+ARCH_PROVIDER_PACKAGES :=
 ARCH_DEPENDENCY_PACKAGES := $(ARCH_CORE_PACKAGES) $(ARCH_PYTHON_PACKAGES) \
 	$(ARCH_TEX_PACKAGES) $(ARCH_WORKFLOW_PACKAGES) \
-	$(ARCH_HOMELAB_PACKAGES)
+	$(ARCH_HOMELAB_PACKAGES) $(ARCH_PROVIDER_PACKAGES)
 
 SOURCE_ROOT := src
 BUILD_ROOT := build
@@ -73,7 +85,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
 	homelab-test homelab-lab adr-digest \
-	dependencies-arch install-dependencies-arch
+	dependencies-arch install-dependencies-arch check-dependencies-arch
 .DELETE_ON_ERROR:
 
 ifeq ($(strip $(_TELOS_MAKE_PARALLEL_FLAGS)),)
@@ -116,6 +128,8 @@ verify-site:
 
 check: check-tools
 	@$(PYTHON) $(SITE_TOOL) check
+	@$(PYTHON) scripts/arch-packages --check
+	@$(PYTHON) -m unittest discover -s tests -t . -q
 	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -q
 
 # Homelab: the tests are pure Python and need nothing installed; the lab needs
@@ -136,14 +150,24 @@ adr-digest:
 dependencies-arch:
 	@printf '%s\n' $(ARCH_DEPENDENCY_PACKAGES)
 
+# Verify the declared closure needs no provider disambiguation. Skips quietly
+# on a host with no pacman databases.
+check-dependencies-arch:
+	@$(PYTHON) scripts/arch-packages --check
+
 # Arch does not support partial upgrades: synchronize and upgrade in the same
 # transaction that installs the canonical packages.
-install-dependencies-arch:
+#
+# The declared closure is checked first so a run cannot stall on a provider
+# question. --noconfirm then keeps the transaction moving; note that pacman's
+# default answer to "remove conflicting package?" is no, so a genuine conflict
+# still aborts rather than silently uninstalling something.
+install-dependencies-arch: check-dependencies-arch
 	@set -eu; \
 	if [ "$$(id -u)" = 0 ]; then \
-		pacman -Syu --needed -- $(ARCH_DEPENDENCY_PACKAGES); \
+		pacman -Syu --needed --noconfirm -- $(ARCH_DEPENDENCY_PACKAGES); \
 	else \
-		sudo pacman -Syu --needed -- $(ARCH_DEPENDENCY_PACKAGES); \
+		sudo pacman -Syu --needed --noconfirm -- $(ARCH_DEPENDENCY_PACKAGES); \
 	fi
 
 help:
