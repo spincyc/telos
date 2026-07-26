@@ -1,0 +1,92 @@
+% Shared macros for the homelab project.
+%
+% This project's documents are read in two very different situations: at a desk
+% while designing, and standing in front of a broken machine at eleven at night
+% with no network. The second case is the one that sets the style. Commands are
+% set apart so they can be found by eye, every dangerous step has a visible
+% verification after it, and nothing depends on being able to reach a web page.
+
+% ---------------------------------------------------------------------------
+% Decision-record entries, used by the generated digest.
+% ---------------------------------------------------------------------------
+\newcommand{\adrentry}[4]{%
+  \par\vspace{0.7em}
+  \needspace{4\baselineskip}%
+  \noindent
+  \begin{minipage}{\linewidth}
+    \rule{\linewidth}{0.6pt}\par
+    \vspace{0.25em}
+    {\small\textbf{ADR #1}\quad #2\par}
+    \vspace{0.1em}
+    {\fontsize{7}{8.2}\selectfont\textsc{#3}\quad$\cdot$\quad #4\par}
+    \vspace{0.2em}
+    \rule{\linewidth}{0.3pt}
+  \end{minipage}\par
+  \vspace{0.3em}}
+
+% ---------------------------------------------------------------------------
+% Procedures.
+%
+% A rebuild manual is a sequence of commands and the observable evidence that
+% each one worked. These environments keep that pairing structural rather than
+% a matter of the author remembering.
+% ---------------------------------------------------------------------------
+
+% A block of shell to type. Deliberately not a listing package: plain verbatim
+% in a ruled box prints identically everywhere and has no font dependency.
+\newenvironment{shellblock}
+  {\par\vspace{0.25em}\noindent
+   \begin{minipage}{\linewidth}
+   \rule{\linewidth}{0.3pt}\par\vspace{0.15em}
+   \begingroup\footnotesize\ttfamily\obeylines\obeyspaces\parindent=0pt\parskip=0pt}
+  {\endgroup\par\vspace{0.15em}\rule{\linewidth}{0.3pt}\end{minipage}\par\vspace{0.25em}}
+
+% What you should see if the previous step worked. A step without one of these
+% is a step you cannot verify, and in a rebuild manual that is a defect.
+\newcommand{\expectthis}[1]{%
+  \par\vspace{0.1em}
+  \noindent\begin{minipage}{\linewidth}
+  \hspace*{0.6em}\begin{minipage}{\dimexpr\linewidth-0.6em\relax}
+  {\footnotesize\textbf{Expect:} #1\par}
+  \end{minipage}\end{minipage}\par\vspace{0.3em}}
+
+% A stop-and-check gate. Used before anything destructive and before anything
+% that would be expensive to discover later.
+\newtcolorbox{gate}[1]{
+  enhanced, breakable,
+  colback=telospaper, colframe=telosink,
+  boxrule=1.0pt, sharp corners,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  toptitle=3pt, bottomtitle=3pt, titlerule=0.4pt,
+  before skip=7pt, after skip=7pt,
+  colbacktitle=telospaper, coltitle=telosink,
+  title={\MakeUppercase{#1}}, fonttitle=\small\bfseries
+}
+
+% Which decision governs the paragraph you are reading. The manuals are
+% generated from the same repository as the ADRs, and a reader who disagrees
+% with an instruction should be able to find the decision behind it.
+\newcommand{\governedby}[1]{{\footnotesize\textsc{governed by #1}}}
+
+% An instance value that comes from the private overlay. In the published
+% documents these render as visible placeholders, which is deliberate: a
+% published manual must be complete and obviously generic, never look like it
+% is describing somebody's actual network.
+\newcommand{\instancevalue}[2]{\texttt{\textlangle #1\textrangle}%
+  \footnote{Instance value. Supplied from \texttt{homelab/instance/} at build
+  time; #2.}}
+\newcommand{\placeholder}[1]{\texttt{\textlangle #1\textrangle}}
+
+% ---------------------------------------------------------------------------
+% Role and boundary diagrams.
+% ---------------------------------------------------------------------------
+\tikzset{
+  role/.style={draw=telosink,line width=0.9pt,fill=telospaper,align=center,
+    inner sep=5pt,font=\small,minimum width=2.6cm},
+  roleoff/.style={draw=telosmute,line width=0.5pt,dash pattern=on 2.5pt off 1.8pt,
+    fill=telospaper,align=center,inner sep=5pt,font=\small,minimum width=2.6cm},
+  boundary/.style={draw=telosmute,line width=0.5pt,dash pattern=on 3pt off 2pt,
+    rounded corners=3pt},
+  flow/.style={-{Stealth[length=2mm]},draw=telosink,line width=0.7pt},
+  hlabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
+}

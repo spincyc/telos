@@ -27,6 +27,12 @@
       "nav": "Launcher"
     },
     {
+      "source": "site/pages/homelab.md",
+      "output": "homelab.html",
+      "title": "Homelab",
+      "nav": "Homelab"
+    },
+    {
       "source": "CREDITS.md",
       "output": "credits.html",
       "title": "Credits & Sources",

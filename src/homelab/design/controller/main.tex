@@ -1,0 +1,125 @@
+\input{common/preamble.tex}
+\input{homelab/shared/homelab.tex}
+
+\telosmeta{Homelab}{Controller Design}
+  {What the Controller is, what it owns, and what it deliberately does not}{2026-07-25}
+
+\begin{document}
+\telosmasthead[High-level design]
+
+The Controller is the homelab's infrastructure host. It answers DHCP and DNS for
+its managed network, serves the boot chain that installs every other machine,
+and is the one system that must be reconstructible without any other system
+being available. Everything else in the lab may depend on the Controller. The
+Controller may depend on nothing except a copy of this document, an installer
+image and a recorded set of inputs.
+
+\section{Scope}
+\begin{telosfacts}[0.22]
+\telosfact{It owns}{Boot, storage and encryption; the managed network interface; bundled DHCPv4 and \texttt{home.arpa} DNS; PXE selection and first-stage TFTP; the HTTP artifact service; local recovery; and its own checkpoint and rollback.}
+\telosfact{It may host}{The optional Services role --- Homebridge, openHAB and similar --- and the identity domain controller in a VM. Both are separable and neither is required for the Controller to do its job. \governedby{ADR 0054, ADR 0055}}
+\telosfact{It does not do}{Routing, NAT or perimeter firewalling. It has one network interface and advertises no default route. On the isolated acceptance network there is deliberately no path to the Internet. \governedby{ADR 0011}}
+\telosfact{It is not}{A hypervisor-first platform. Foundational services run directly on the Arch host; containers and VMs are used where they earn their place, not by default. \governedby{ADR 0014}}
+\telosfact{One failure domain}{Containers and VMs on the Controller share its hardware, its kernel maintenance window and its power supply. Placing a service on the Controller does not make it independently available.}
+\end{telosfacts}
+
+\section{Roles and boundaries}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[boundary] (-0.55,-2.5) rectangle (5.6,3.0);
+  \node[hlabel,anchor=north west] at (-0.5,2.95) {Controller host (Arch, ADR 0015)};
+  \node[role] (net) at (1.2,2.1) {dnsmasq\\DHCP · DNS · PXE};
+  \node[role] (http) at (4.2,2.1) {nginx\\artifacts};
+  \node[role] (boot) at (1.2,0.7) {systemd-boot\\3 signed UKIs};
+  \node[role] (store) at (4.2,0.7) {LUKS2 + Btrfs\\checkpoints};
+  \node[roleoff] (svc) at (1.2,-0.9) {Services role\\(optional, off)};
+  \node[roleoff] (dir) at (4.2,-0.9) {Samba AD DC\\(VM)};
+  \node[hlabel,anchor=north,align=center] at (2.7,-1.55)
+    {dashed = optional, disabled by default,\\relocatable to another host without redesign};
+  \node[role,minimum width=2.2cm] (ws) at (8.4,1.4) {Workstation};
+  \node[role,minimum width=2.2cm] (cli) at (8.4,-0.3) {Client};
+  \draw[flow] (net) -- node[hlabel,above,pos=0.55] {boot chain} (ws.west);
+  \draw[flow] (net) -- node[hlabel,below,pos=0.6] {lease · DNS} (cli.west);
+  \node[hlabel,anchor=west,align=left,text=telosmute] at (6.6,-2.1)
+    {no default route\\advertised (ADR 0011)};
+\end{tikzpicture}
+\end{center}
+
+\section{Storage}
+\begin{tabularx}{\linewidth}{@{}p{0.10\linewidth}p{0.16\linewidth}L@{}}
+\toprule
+\textbf{Part} & \textbf{Size} & \textbf{Why}\\
+\midrule
+ESP & 2 GiB, FAT32 & systemd-boot plus three UKIs, one of which carries a complete rescue userspace. Sized with deliberate headroom so an update can stage a full new artifact set before switching. The ESP is the one partition that cannot be grown afterwards without moving everything behind it. \governedby{ADR 0051}\\
+Root & remainder, LUKS2 & Btrfs inside the encrypted container. The operating system is one checkpointable subvolume; logs, caches, home directories, the snapshot store and mutable service data are separate subvolumes excluded from it. \governedby{ADR 0026, ADR 0027}\\
+Swap & file in root & A file inside the encrypted Btrfs, so encrypted swap costs no second LUKS container. Hibernation is disabled --- a machine whose job is answering DHCP does not suspend.\\
+\bottomrule
+\end{tabularx}
+
+There is no Windows partition. ADR 0047 removed it: firmware maintenance uses
+\texttt{fwupd} where the vendor publishes to LVFS and vendor-supplied bootable
+media otherwise, which costs nothing until the day it is needed and removes a
+licence, a BitLocker recovery-key custody chain and a second Secure Boot trust
+path from the design.
+
+\section{The network boundary}
+\begin{telosfacts}[0.22]
+\telosfact{One interface}{Selected explicitly at install time and pinned by permanent MAC address to the stable name \texttt{lan0}. There is no default and no automatic choice, because binding DHCP to the wrong link puts a second DHCP authority on a network the Controller does not own. \governedby{ADR 0050}}
+\telosfact{One authority}{dnsmasq is the only address-assigning DHCP server on its layer-2 network. Where external infrastructure owns DHCP, the Controller's instance stays stopped. Two authorities on one segment is forbidden at every stage, including transitions. \governedby{ADR 0008, ADR 0044}}
+\telosfact{Bundled}{DHCP and DNS start and stop as one unit. A partial success is a failure. \governedby{ADR 0012}}
+\telosfact{IPv4 only}{Managed addressing is IPv4. The host's IPv6 stack stays enabled and unmanaged; nothing globally disables it. \governedby{ADR 0013}}
+\telosfact{Four inputs}{The operator supplies subnet, Controller address, and pool start and end. Netmask, network and broadcast addresses, the DNS server, the suffix and the absence of a router are all derived. Contradictory values cannot reach dnsmasq because they cannot be entered. \governedby{ADR 0045}}
+\telosfact{Fail closed}{First boot verifies the interface, its MAC, carrier, the address and the absence of a competing DHCP authority before starting anything. If any check fails, DHCP stays stopped and the machine reports why. \governedby{ADR 0009}}
+\end{telosfacts}
+
+\section{Lifecycle: install once, converge continuously}
+The single most important structural decision is that installation and
+configuration are different things with different cadences.
+
+\begin{tabularx}{\linewidth}{@{}p{0.17\linewidth}L@{}}
+\toprule
+\textbf{Stage} & \textbf{What happens}\\
+\midrule
+Install & Only what cannot be done later: partition, encrypt, make filesystems, install the base system and both kernels, write boot artifacts, configure \texttt{lan0} and the static address, install \texttt{sshd} with the administrator public key, record the manifest. Then power off. \governedby{ADR 0010, ADR 0053}\\
+Relocate & The operator physically moves the powered-off Controller to the isolated switch. Being powered off during the move is the primary DHCP-conflict safety boundary --- not a configuration flag. \governedby{ADR 0010}\\
+First boot & One-shot activation validates the network plan, then starts dnsmasq and nginx together, or leaves them stopped and says why.\\
+Converge & Everything else is Ansible over SSH from this repository: package sets, service configuration, the Services role, identity client, users, sudo, health checks. Idempotent, reviewable as a diff, and the same mechanism for the Controller and every Workstation. \governedby{ADR 0053}\\
+Update & Guarded: read the news, checkpoint, full-system upgrade, reboot if foundational, validate DHCP, DNS and PXE automatically, roll back if validation fails. \governedby{ADR 0016, ADR 0028}\\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Why this split matters}
+The previous design specified provisioning in detail and day-two configuration
+not at all, which meant that adding a service or changing a DHCP reservation
+implied reinstalling the machine. Nothing iterates at that cost, so in practice
+the running system drifts from the record and the record stops being true. The
+install stage is deliberately small so that it can be fully tested; everything
+that changes often lives where changes are cheap and reversible.
+\end{telospanel}
+
+\section{Optional roles}
+\begin{telosfacts}[0.22]
+\telosfact{Services}{Homebridge, openHAB and similar, as Podman quadlets with host networking --- required, because HomeKit and UPnP discovery depend on mDNS and do not survive bridged container networking. USB radios bound by stable \texttt{by-id} path. Application state on its own subvolume with its own backup, because its restore point is not the operating system's. Disabled by default. \governedby{ADR 0054}}
+\telosfact{The trade-off}{Running Services on the Controller means a Controller maintenance window is also a home-automation outage. That is accepted and recorded, not hidden. When it stops being acceptable, the role moves to its own host and nothing else changes.}
+\telosfact{Identity}{Samba AD DC in a VM --- a genuine separate trust boundary with its own restart and upgrade cadence, which is precisely when ADR 0014 permits a VM. Arch clients use SSSD's AD provider; Windows Pro clients domain-join; an AD-capable NAS can share the same identities. \governedby{ADR 0055}}
+\telosfact{Break-glass}{Every managed machine keeps a separately named local administrator that is never a directory account. While the directory is down, only cached and break-glass logins work --- so this is mandatory, not a nicety.}
+\end{telosfacts}
+
+\section{Milestones}
+\begin{telosfacts}[0.22]
+\telosfact{A: functional proof}{Network boot, interactive authorization, install, isolated-network activation, DHCP and DNS validation, checkpoint and rollback, Workstation pivot. Encryption is real throughout. Secure Boot may be disabled under an explicit, recorded \texttt{development-proof} mode with manual LUKS2 unlock at every boot, no production data, and no custom signing material anywhere. \governedby{ADR 0043}}
+\telosfact{B: hardening}{Revisit ADRs 0029--0042 as a group with operational experience, then enforce Secure Boot, implement signing and custody, enable TPM unlock only after its recovery path is tested, and prove an unattended cold restart restores service. Reprovision from the proven installer; the proof installation is disposable by construction. \governedby{ADR 0043}}
+\telosfact{Known defects to fix in B}{The key separation in ADRs 0033--0035 is notional once ADR 0039 gives both media one passphrase; the backup's independence is defeated by sharing that passphrase; and ADR 0030's additive trust model may be infeasible on firmware that only permits \texttt{db} changes from Setup Mode. All three are recorded rather than rediscovered. \governedby{ADR 0057}}
+\telosfact{No system passes}{Final acceptance until Milestone B is complete.}
+\end{telosfacts}
+
+\begin{gate}{The bootstrap rule}
+The Controller rebuild procedure must never require a functioning Controller to
+obtain the instructions, DNS records, installer image, artifact manifest or
+decryption material needed to rebuild it. Every recovery path in this design is
+tested with the Controller assumed dead. That is the whole reason this document
+is printable.
+\end{gate}
+\end{document}
+
+% leak test

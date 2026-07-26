@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Render the homelab decision record into a printable Telos document.
+
+The ADRs are Markdown because that is what they are edited and reviewed as. The
+printed digest is generated from them so the two cannot drift: there is no
+second copy of a decision to forget to update.
+
+The digest is a *record*, not a manual. It carries each decision's title,
+status, date and the Decision section verbatim. Context and Consequences stay in
+the Markdown, where a reader who needs them has a search box.
+
+    scripts/adr-digest
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "homelab/decisions"
+OUTPUT = ROOT / "src/homelab/decisions/main.tex"
+
+# LaTeX-special characters, in an order that cannot double-escape the backslash.
+ESCAPES = [
+    ("\\", r"\textbackslash{}"),
+    ("&", r"\&"), ("%", r"\%"), ("$", r"\$"), ("#", r"\#"),
+    ("_", r"\_"), ("{", r"\{"), ("}", r"\}"),
+    ("~", r"\textasciitilde{}"), ("^", r"\textasciicircum{}"),
+]
+
+
+def tex_escape(text: str) -> str:
+    for char, replacement in ESCAPES:
+        text = text.replace(char, replacement)
+    return text
+
+
+def inline(text: str) -> str:
+    """Escape, then restore the small amount of Markdown the ADRs actually use."""
+    text = tex_escape(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", text)
+    text = re.sub(r"`([^`]+)`", r"\\texttt{\1}", text)
+    text = text.replace("--", "---")
+    return text
+
+
+def parse(path: Path) -> dict | None:
+    text = path.read_text(encoding="utf-8")
+    heading = re.search(r"^# ADR (\d+): (.+)$", text, re.M)
+    if not heading:
+        return None
+    status = re.search(r"^- Status:\s*(.+)$", text, re.M)
+    date = re.search(r"^- Date:\s*(.+)$", text, re.M)
+    section = re.search(r"^## Decision\s*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return {
+        "number": int(heading.group(1)),
+        "title": heading.group(2).strip(),
+        "status": status.group(1).strip() if status else "Unknown",
+        "date": date.group(1).strip() if date else "",
+        "decision": (section.group(1).strip() if section else ""),
+    }
+
+
+def render_body(markdown: str) -> str:
+    """Render the Decision section: paragraphs, bullets, numbers, tables."""
+    out: list[str] = []
+    mode: str | None = None
+
+    def close():
+        nonlocal mode
+        if mode == "itemize":
+            out.append(r"\end{itemize}")
+        elif mode == "enumerate":
+            out.append(r"\end{enumerate}")
+        elif mode == "table":
+            out.append(r"\bottomrule")
+            out.append(r"\end{tabularx}")
+        mode = None
+
+    lines = markdown.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip()
+        stripped = line.strip()
+
+        if not stripped:
+            # A blank line inside a list may just be spacing between items, so
+            # look ahead: the list ends only if what follows is not another
+            # item. Without this a trailing paragraph is swallowed into the
+            # final bullet.
+            if mode in ("itemize", "enumerate"):
+                following = next(
+                    (candidate.strip() for candidate in lines[index + 1:] if candidate.strip()),
+                    "")
+                if not re.match(r"^([-*]\s+|\d+\.\s+)", following):
+                    close()
+            else:
+                close()
+            index += 1
+            continue
+
+        # A Markdown table: header row, separator row, then body rows.
+        if stripped.startswith("|") and index + 1 < len(lines) and set(
+                lines[index + 1].strip().replace("|", "").replace(":", "").strip()) <= {"-", " "}:
+            close()
+            header = [c.strip() for c in stripped.strip("|").split("|")]
+            columns = "@{}" + "l" * (len(header) - 1) + "L@{}"
+            out.append(r"\begin{tabularx}{\linewidth}{%s}" % columns)
+            out.append(r"\toprule")
+            out.append(" & ".join(r"\textbf{%s}" % inline(c) for c in header) + r"\\")
+            out.append(r"\midrule")
+            mode = "table"
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                cells = [c.strip() for c in lines[index].strip().strip("|").split("|")]
+                out.append(" & ".join(inline(c) for c in cells) + r"\\")
+                index += 1
+            close()
+            continue
+
+        bullet = re.match(r"^[-*]\s+(.*)$", stripped)
+        numbered = re.match(r"^\d+\.\s+(.*)$", stripped)
+
+        if bullet:
+            if mode != "itemize":
+                close()
+                out.append(r"\begin{itemize}")
+                mode = "itemize"
+            out.append(r"\item " + inline(bullet.group(1)))
+        elif numbered:
+            if mode != "enumerate":
+                close()
+                out.append(r"\begin{enumerate}")
+                mode = "enumerate"
+            out.append(r"\item " + inline(numbered.group(1)))
+        elif mode in ("itemize", "enumerate"):
+            # A wrapped continuation of the previous item.
+            out.append(inline(stripped))
+        else:
+            close()
+            out.append(inline(stripped))
+        index += 1
+
+    close()
+    return "\n".join(out)
+
+
+def main() -> int:
+    if not SOURCE.is_dir():
+        print(f"adr-digest: no decision record at {SOURCE}", file=sys.stderr)
+        return 2
+
+    adrs = []
+    for path in sorted(SOURCE.glob("[0-9][0-9][0-9][0-9]-*.md")):
+        record = parse(path)
+        if record and record["number"] > 0:
+            adrs.append(record)
+    if not adrs:
+        print("adr-digest: found no ADRs", file=sys.stderr)
+        return 2
+
+    counts: dict[str, int] = {}
+    for record in adrs:
+        key = record["status"].split(" by ")[0].strip()
+        counts[key] = counts.get(key, 0) + 1
+
+    parts = [
+        r"\input{common/preamble.tex}",
+        r"\input{homelab/shared/homelab.tex}",
+        r"% GENERATED by scripts/adr-digest from homelab/decisions/*.md.",
+        r"% Edit the Markdown and re-run; do not edit this file.",
+        r"\telosmeta{Homelab}{Decision Record}"
+        r"{Every accepted, superseded and deferred decision, in order}{2026-07-25}",
+        r"\begin{document}",
+        r"\telosmasthead[%d decisions]" % len(adrs),
+        "",
+        r"This is the complete architecture decision record for the homelab "
+        r"provisioning system, generated from the Markdown sources so the printed "
+        r"copy cannot drift from the repository. Each entry carries its status and "
+        r"its Decision section verbatim. Context and consequences remain in "
+        r"\texttt{homelab/decisions/}.",
+        "",
+        r"\begin{telosfacts}[0.30]",
+    ]
+    for status, count in sorted(counts.items(), key=lambda item: -item[1]):
+        parts.append(r"\telosfact{%s}{%d}" % (inline(status), count))
+    parts += [r"\end{telosfacts}", ""]
+
+    for record in adrs:
+        parts.append(r"\adrentry{%04d}{%s}{%s}{%s}" % (
+            record["number"], inline(record["title"]),
+            inline(record["status"]), inline(record["date"])))
+        parts.append(render_body(record["decision"]))
+        parts.append("")
+
+    parts.append(r"\end{document}")
+
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    print(f"adr-digest: {OUTPUT.relative_to(ROOT)} ({len(adrs)} decisions)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
