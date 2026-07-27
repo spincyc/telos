@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+seed_root=${1:-/run/media/telos/TELOS_SEED}
+package_dir=$seed_root/packages
+source_archive=$seed_root/source/telos.tar.gz
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "run as root: $0 [mounted-seed-root]" >&2
+    exit 2
+fi
+if [ ! -d "$package_dir" ] || [ ! -f "$source_archive" ]; then
+    echo "not a Telos seed mount: $seed_root" >&2
+    exit 2
+fi
+
+# The seed is a closed package transaction. Pacman resolves dependencies from
+# the files on the disc and does not need a network mirror.
+set -- "$package_dir"/*.pkg.tar.zst
+if [ ! -e "$1" ]; then
+    echo "seed contains no Arch packages" >&2
+    exit 2
+fi
+for archive do
+    if [ ! -f "$archive.sig" ]; then
+        echo "package signature is missing: $archive.sig" >&2
+        exit 2
+    fi
+done
+pacman --config "$seed_root/pacman.conf" -U --needed --noconfirm -- "$@"
+
+install -d -m 0755 /opt/telos-source
+tar -xzf "$source_archive" -C /opt/telos-source
+install -m 0644 "$seed_root/receipt.json" /opt/telos-source/seed-receipt.json
+echo "installed Controller dependencies and public Telos source in /opt/telos-source"

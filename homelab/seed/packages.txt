@@ -1,0 +1,23 @@
+# Runtime and build inputs carried by the public, offline Controller seed.
+# Keep this generic: instance inventory and secrets belong in telos-private.
+base
+linux-lts
+linux-firmware
+networkmanager
+openssh
+sudo
+git
+python
+ansible
+samba
+krb5
+bind
+ntp
+dnsmasq
+nginx
+rsync
+ipxe
+archiso
+qemu-base
+edk2-ovmf
+libisoburn

@@ -38,7 +38,7 @@ ARCH_WORKFLOW_PACKAGES := git openai-codex
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
 	python-cryptography python-dnspython python-pexpect openresolv bind \
-	openssh rsync \
+	openssh rsync gnupg \
 	wimlib libisoburn
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty
@@ -52,6 +52,9 @@ SOURCE_ROOT := src
 BUILD_ROOT := build
 DOC_ROOT := doc
 SITE_TOOL := scripts/site
+ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
+WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
+WIMBOOT ?= homelab/var/media/wimboot
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -90,6 +93,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	doc install-doc site site-preview verify-site \
 	homelab-test homelab-lab homelab-matrix homelab-image \
 	homelab-converge-check homelab-bootstrap-deps \
+	homelab-media homelab-media-arch homelab-media-windows \
+	homelab-media-wimboot homelab-bootstrap-seed \
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
 	homelab-bootstrap-vm-destroy homelab-bootstrap-controller \
@@ -173,6 +178,33 @@ homelab-matrix:
 # alias so the workstation manual can name the phase it prepares.
 homelab-bootstrap-deps: install-dependencies-arch
 
+# Resolve current upstream media into an ignored cache. Arch is checked against
+# its official digest and pinned release key. wimboot is version/hash pinned.
+# Microsoft requires an interactive consumer-media link, so the aggregate
+# target stops at that explicit gate until the operator supplies its ISO and
+# the digest printed by Microsoft's verification table.
+homelab-media: homelab-media-arch homelab-media-wimboot homelab-media-windows
+
+homelab-media-arch:
+	@homelab/media/fetch-arch
+
+homelab-media-windows:
+	@if [ -z '$(WINDOWS_ISO)' ] || [ -z '$(WINDOWS_SHA256)' ]; then \
+		homelab/bin/homelab-fetch-windows --output '$(WINDOWS_ISO_CACHE)'; \
+	else \
+		homelab/bin/homelab-fetch-windows \
+			--source '$(WINDOWS_ISO)' --expected-sha256 '$(WINDOWS_SHA256)' \
+			--output '$(WINDOWS_ISO_CACHE)'; \
+	fi
+
+homelab-media-wimboot:
+	@homelab/bin/homelab-fetch-wimboot --output '$(WIMBOOT)'
+
+homelab-bootstrap-seed:
+	@$(PYTHON) homelab/seed/build.py \
+		$(if $(SEED_OUTPUT),--output '$(SEED_OUTPUT)') \
+		$(if $(SEED_PACKAGES),--packages '$(SEED_PACKAGES)')
+
 # The bootstrap VM is isolated by construction. Planning is the default;
 # create/run require APPLY=1, and destroy additionally requires the exact
 # confirmation consumed by bootstrap_dc.py.
@@ -190,12 +222,16 @@ homelab-bootstrap-vm-create:
 		$(PYTHON) homelab/vm/bootstrap_dc.py create --apply; \
 	fi
 
-homelab-bootstrap-vm-run:
+homelab-bootstrap-vm-run: $(if $(strip $(ISO)),,homelab-media-arch)
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to run bootstrap-dc'; \
-		$(PYTHON) homelab/vm/bootstrap_dc.py run $(if $(ISO),--iso '$(ISO)'); \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run \
+			--iso '$(if $(ISO),$(ISO),$(ARCH_ISO))' \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
 	else \
-		$(PYTHON) homelab/vm/bootstrap_dc.py run $(if $(ISO),--iso '$(ISO)') --apply; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run \
+			--iso '$(if $(ISO),$(ISO),$(ARCH_ISO))' \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') --apply; \
 	fi
 
 homelab-bootstrap-vm-destroy:
@@ -383,6 +419,8 @@ help:
 		'make check      Validate the site manifest and run the homelab tests' \
 		'make homelab-test         Run the homelab suite verbosely' \
 		'make homelab-lab          Report whether the QEMU lab can run' \
+		'make homelab-media        Fresh-fetch official disposable media' \
+		'make homelab-bootstrap-seed  Build the isolated Controller seed ISO' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

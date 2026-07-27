@@ -23,6 +23,7 @@ NAME = "bootstrap-dc"
 VCPUS = 4
 MEMORY_MIB = 8192
 DISK_SIZE = "80G"
+DISK_SERIAL = "TELOS-BOOTSTRAP-DC-001"
 DEFAULT_STATE = Path("build/homelab/vm/bootstrap-dc")
 OVMF_PAIRS = (
     (
@@ -78,7 +79,11 @@ def _private_state(files: dict[str, Path]) -> bool:
                for key in ("disk", "vars", "manifest"))
 
 
-def qemu_command(state: Path, iso: Path | None) -> list[str]:
+def qemu_command(
+    state: Path,
+    iso: Path | None,
+    seed_iso: Path | None = None,
+) -> list[str]:
     files = paths(state)
     pair = ovmf_pair()
     code = pair[0] if pair else Path("/usr/share/edk2/x64/OVMF_CODE.4m.fd")
@@ -89,16 +94,36 @@ def qemu_command(state: Path, iso: Path | None) -> list[str]:
         "-cpu", "host",
         "-smp", str(VCPUS),
         "-m", str(MEMORY_MIB),
-        "-nographic",
+        "-display", "none",
         "-serial", "mon:stdio",
+        "-boot", "strict=on,menu=off",
         "-drive", f"if=pflash,format=raw,readonly=on,file={code}",
         "-drive", f"if=pflash,format=raw,file={files['vars']}",
-        "-drive", f"if=virtio,format=qcow2,file={files['disk']}",
+        "-drive", (
+            f"if=none,id=osdisk,format=qcow2,cache=none,"
+            f"file={files['disk']}"
+        ),
+        "-device", (
+            f"virtio-blk-pci,drive=osdisk,serial={DISK_SERIAL},"
+            f"bootindex={2 if iso else 1}"
+        ),
     ]
     command += socket_network_args(
         role="listen", mac="52:54:00:11:11:11")
     if iso:
-        command += ["-drive", f"media=cdrom,readonly=on,file={iso.resolve()}"]
+        command += [
+            "-drive",
+            f"if=none,id=installmedia,media=cdrom,readonly=on,"
+            f"file={iso.resolve()}",
+            "-device", "ide-cd,drive=installmedia,bootindex=1",
+        ]
+    if seed_iso:
+        command += [
+            "-drive",
+            f"if=none,id=seedmedia,media=cdrom,readonly=on,"
+            f"file={seed_iso.resolve()}",
+            "-device", "ide-cd,drive=seedmedia,bootindex=3",
+        ]
     return command
 
 
@@ -140,7 +165,11 @@ def create(state: Path, apply: bool) -> int:
             "name": NAME,
             "vcpus": VCPUS,
             "memory_mib": MEMORY_MIB,
-            "disk": {"format": "qcow2", "size": DISK_SIZE},
+            "disk": {
+                "format": "qcow2",
+                "size": DISK_SIZE,
+                "serial": DISK_SERIAL,
+            },
             "firmware": {
                 "code": str(pair[0]),
                 "variables_source": str(pair[1]),
@@ -176,7 +205,12 @@ def status(state: Path) -> int:
     return 0 if ready else 1
 
 
-def run(state: Path, iso: Path | None, apply: bool) -> int:
+def run(
+    state: Path,
+    iso: Path | None,
+    apply: bool,
+    seed_iso: Path | None = None,
+) -> int:
     files = paths(state)
     if not _safe_state_path(state):
         print(f"error: state path includes a symlink: {state}", file=sys.stderr)
@@ -193,10 +227,12 @@ def run(state: Path, iso: Path | None, apply: bool) -> int:
         missing.append("qemu-system-x86_64")
     if iso and not iso.is_file():
         missing.append(str(iso))
+    if seed_iso and not seed_iso.is_file():
+        missing.append(str(seed_iso))
     if missing:
         print("error: missing: " + ", ".join(missing), file=sys.stderr)
         return 2
-    command = qemu_command(state, iso)
+    command = qemu_command(state, iso, seed_iso)
     print(" ".join(str(part) for part in command))
     if not apply:
         print("dry run; repeat with --apply")
@@ -242,6 +278,11 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("status")
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--iso", type=Path)
+    run_parser.add_argument(
+        "--seed-iso",
+        type=Path,
+        help="attach a second read-only data CD after the installer and disk",
+    )
     run_parser.add_argument("--apply", action="store_true")
     destroy_parser = commands.add_parser("destroy")
     destroy_parser.add_argument("--confirm")
@@ -254,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "create":
         return create(args.state_dir, args.apply)
     if command == "run":
-        return run(args.state_dir, args.iso, args.apply)
+        return run(args.state_dir, args.iso, args.apply, args.seed_iso)
     if command == "destroy":
         return destroy(args.state_dir, args.confirm)
     return status(args.state_dir)

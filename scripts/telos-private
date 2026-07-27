@@ -28,7 +28,10 @@ SECRET_MARKER_FIXTURES = frozenset(
         "homelab/tests/test_ansible.py",
         "homelab/tests/test_image.py",
         "homelab/tests/test_manifest.py",
+        "homelab/tests/test_seed_build.py",
+        "homelab/tests/test_seed_security.py",
         "homelab/ansible/roles/domain_controller/files/provision-domain.py",
+        "homelab/seed/build.py",
         "scripts/telos-private",
         "tests/test_telos_private.py",
     }

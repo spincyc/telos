@@ -22,6 +22,22 @@ partial state are refused.
 Boot installation media with
 `make homelab-bootstrap-vm-run ISO=/path/to/arch.iso APPLY=1`. Omitting
 `APPLY=1` prints the complete QEMU command without starting the guest.
+When `ISO` is present, firmware always tries that read-only medium before the
+virtual disk. Without `ISO`, only the installed disk is bootable. The disk has
+the stable serial `TELOS-BOOTSTRAP-DC-001`, so installer authorization does not
+depend on a changing `/dev` name.
+
+An optional offline seed may be attached as a second read-only CD:
+`make homelab-bootstrap-vm-run SEED_ISO=homelab/var/seed/telos-controller-seed.iso
+APPLY=1`. The explicit boot order remains installer ISO, virtual disk, then
+seed. The seed therefore supplies packages and source without silently
+replacing the official Arch installer as the boot authority.
+
+The terminal is both the guest serial console and QEMU monitor. Use `Ctrl-a c`
+to switch between them and `Ctrl-a h` for help. The Telos controller installer
+opens on that serial console. A stock Arch ISO may keep its firmware and boot
+menu on a graphical console; it is suitable as source media, but the Telos
+controller image is the unattended, terminal-friendly installation path.
 
 The VM is temporary infrastructure, but its directory data becomes durable
 once it provisions the real domain. Destruction therefore requires

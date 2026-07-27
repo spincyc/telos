@@ -22,6 +22,11 @@ class BootstrapVmTests(unittest.TestCase):
         joined = " ".join(command)
         self.assertIn("-smp 4", joined)
         self.assertIn("-m 8192", joined)
+        self.assertIn("-display none", joined)
+        self.assertIn("-serial mon:stdio", joined)
+        self.assertIn("-boot strict=on,menu=off", joined)
+        self.assertIn(
+            "serial=TELOS-BOOTSTRAP-DC-001,bootindex=1", joined)
         self.assertIn("socket,id=bootstrap,listen=127.0.0.1:12961", joined)
         self.assertNotIn("bridge", joined)
         self.assertNotIn("tap", joined)
@@ -34,7 +39,32 @@ class BootstrapVmTests(unittest.TestCase):
             command = bootstrap_dc.qemu_command(
                 Path("/state"), Path("/media/arch.iso"))
         self.assertIn(
-            "media=cdrom,readonly=on,file=/media/arch.iso", command)
+            "if=none,id=installmedia,media=cdrom,readonly=on,"
+            "file=/media/arch.iso", command)
+        joined = " ".join(command)
+        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
+                      joined)
+        self.assertIn("ide-cd,drive=installmedia,bootindex=1", joined)
+
+    def test_seed_iso_is_read_only_and_cannot_preempt_installer(self):
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))):
+            command = bootstrap_dc.qemu_command(
+                Path("/state"),
+                Path("/media/arch.iso"),
+                Path("/media/telos-seed.iso"),
+            )
+        joined = " ".join(command)
+        self.assertIn(
+            "id=seedmedia,media=cdrom,readonly=on,"
+            "file=/media/telos-seed.iso",
+            joined,
+        )
+        self.assertIn("ide-cd,drive=installmedia,bootindex=1", joined)
+        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
+                      joined)
+        self.assertIn("ide-cd,drive=seedmedia,bootindex=3", joined)
 
     def test_create_defaults_to_dry_run(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -93,6 +123,9 @@ class BootstrapVmTests(unittest.TestCase):
                 self.assertEqual((state / name).stat().st_mode & 0o777, 0o600)
             manifest = json.loads((state / "manifest.json").read_text())
             self.assertEqual(manifest["schema"], 1)
+            self.assertEqual(
+                manifest["disk"]["serial"],
+                bootstrap_dc.DISK_SERIAL)
             self.assertEqual(
                 manifest["network"]["physical_attachment"],
                 "blocked-pending-network-gate")
