@@ -34,6 +34,27 @@ questions, worked reasoning, boundary cases, and a prompt asking what result
 would weaken or falsify the explanation. It must not invent a hands-on
 procedure where the project safety contract forbids one.
 
+## Explicitness and cognitive accessibility
+
+- Assume an intelligent reader who may not infer hidden state, omitted
+  transitions, pronoun references, tool orientation, or the author's intended
+  stopping point. Intellectual depth is welcome; ambiguity is not.
+- For consequential procedures, name the precondition, actor, object, action,
+  location or orientation, expected observation, pass criterion, and safe
+  failure branch. Prefer one physical action per numbered step.
+- When a step changes system state, show or state the before state, the single
+  change, and the after state. Do not compress “assemble, test, and adjust”
+  into one instruction.
+- Replace “as needed,” “properly,” “carefully,” “normal,” and “secure” with an
+  observable or measurable condition. If no universal number exists, explain
+  the comparison or decision rule.
+- Repeat a critical boundary at the point where it controls action. Do not
+  require the reader to remember a warning from several pages earlier.
+- Pair instruction with verification: what to look, listen, feel, or measure
+  for; what counts as passing; what common failure looks like; and the next
+  safe action. Diagrams and graphite plates must show these distinct states
+  when prose alone could be misread.
+
 ## Illustration density and purpose
 
 - Use ample original monochrome illustrations. One decorative overview image
@@ -77,6 +98,13 @@ procedure where the project safety contract forbids one.
   broad reflection prompt.
 - State the expected pattern separately from fabricated sample data. Never
   imply that a reader obtained a measurement they did not take.
+- Keep brief predictions, immediate observations, and one-line checks beside
+  the step they support. Move substantial blank tables, logs, plotting grids,
+  sketch frames, evidence packets, and sign-off forms into a clearly labeled
+  worksheet or field-workbook section at the end of the publication.
+- Order end worksheets in the same sequence in which the reader will use
+  them. Teaching, safety boundaries, worked examples, interpretation, and
+  troubleshooting must precede the detachable/write-on packet.
 
 ## Page flow and useful space
 
@@ -123,3 +151,14 @@ Before publication:
 - confirm that safety and evidence boundaries survived the expansion;
 - run repository validation; and
 - promote the reviewed PDF together with its source.
+
+## Document versions
+
+- Every publication carries a version in the form `YYYYMMDD.NNN`.
+- The date is the publication date without separators. `NNN` is a
+  zero-padded, per-document sequence starting at `001`; increment it whenever
+  that document is republished again on the same date.
+- Print the version in the first-page footer and include it in PDF metadata.
+  A source date such as `2026-07-27` or an unversioned PDF is invalid.
+- A composite binder receives its own version. Its included leaves retain
+  their own printed versions so a detached page remains identifiable.
