@@ -177,6 +177,8 @@ def build(output: Path, package_file: Path) -> None:
         database = work / "pacman-db"
         (database / "local").mkdir(parents=True)
         shutil.copy2(Path(__file__).with_name("install-controller-deps"), stage)
+        shutil.copy2(Path(__file__).with_name("install-controller"), stage)
+        shutil.copy2(Path(__file__).with_name("verify-seed"), stage)
         shutil.copy2(package_file, stage / "packages.txt")
         shutil.copy2(PACMAN_CONFIG, stage / "pacman.conf")
 

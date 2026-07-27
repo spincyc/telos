@@ -1,0 +1,161 @@
+#!/bin/sh
+set -eu
+
+expected_serial=TELOS-BOOTSTRAP-DC-001
+seed_root=${1:-/run/media/telos/TELOS_SEED}
+target=/mnt
+mounted=0
+
+fail() {
+    echo "install-controller: $*" >&2
+    exit 2
+}
+
+cleanup() {
+    if [ "$mounted" -eq 1 ]; then
+        umount -R "$target" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+[ "$(id -u)" -eq 0 ] || fail "run as root: $0 [mounted-seed-root]"
+[ -d /sys/firmware/efi ] || fail "UEFI boot is required"
+[ -d "$seed_root/packages" ] || fail "package directory is missing"
+[ -f "$seed_root/source/telos.tar.gz" ] || fail "source archive is missing"
+[ -f "$seed_root/receipt.json" ] || fail "seed receipt is missing"
+[ -f "$seed_root/pacman.conf" ] || fail "pacman configuration is missing"
+command -v pacstrap >/dev/null || fail "pacstrap is unavailable"
+command -v genfstab >/dev/null || fail "genfstab is unavailable"
+command -v python >/dev/null || fail "python is unavailable"
+python "$seed_root/verify-seed" "$seed_root" ||
+    fail "seed receipt verification failed"
+
+disk=
+matches=0
+while read -r candidate serial kind; do
+    if [ "$kind" = disk ] && [ "$serial" = "$expected_serial" ]; then
+        disk=$candidate
+        matches=$((matches + 1))
+    fi
+done <<EOF
+$(lsblk -dnpo NAME,SERIAL,TYPE)
+EOF
+[ "$matches" -eq 1 ] ||
+    fail "expected exactly one disk with serial $expected_serial; found $matches"
+[ -b "$disk" ] || fail "matched path is not a block device: $disk"
+[ "$(blockdev --getro "$disk")" -eq 0 ] || fail "target disk is read-only"
+
+if lsblk -nrpo MOUNTPOINT "$disk" | grep -q '[^[:space:]]'; then
+    fail "target disk or one of its partitions is mounted"
+fi
+
+echo
+echo "This permanently erases $disk."
+echo "Required disk serial: $expected_serial"
+printf 'Type ERASE %s to continue: ' "$expected_serial"
+IFS= read -r confirmation
+[ "$confirmation" = "ERASE $expected_serial" ] || fail "confirmation did not match"
+
+for archive in "$seed_root"/packages/*.pkg.tar.zst; do
+    [ -f "$archive" ] || fail "seed contains no package archives"
+    [ -f "$archive.sig" ] || fail "detached signature is missing: $archive.sig"
+done
+
+[ "$(lsblk -dnro SERIAL,TYPE "$disk")" = "$expected_serial disk" ] ||
+    fail "target identity changed before erasure"
+wipefs --all --force "$disk"
+sfdisk --wipe always "$disk" <<'EOF'
+label: gpt
+size=1GiB, type=U, name="EFI System"
+type=L, name="Arch Linux"
+EOF
+partprobe "$disk"
+udevadm settle
+
+case "$disk" in
+    *[0-9]) efi_partition=${disk}p1; root_partition=${disk}p2 ;;
+    *) efi_partition=${disk}1; root_partition=${disk}2 ;;
+esac
+[ -b "$efi_partition" ] || fail "EFI partition did not appear"
+[ -b "$root_partition" ] || fail "root partition did not appear"
+
+mkfs.fat -F 32 -n TELOS_EFI "$efi_partition"
+mkfs.ext4 -F -L telos-root "$root_partition"
+mount "$root_partition" "$target"
+mounted=1
+mkdir -p "$target/boot"
+mount "$efi_partition" "$target/boot"
+
+# The seed carries the fresh package closure and detached Arch signatures.
+# -U prevents mirror use; the seed policy requires every local signature.
+set -- "$seed_root"/packages/*.pkg.tar.zst
+pacstrap -C "$seed_root/pacman.conf" "$target" -U -- "$@"
+
+genfstab -U "$target" >"$target/etc/fstab"
+printf '%s\n' bootstrap-dc >"$target/etc/hostname"
+cat >"$target/etc/hosts" <<'EOF'
+127.0.0.1 localhost
+::1 localhost
+127.0.1.1 bootstrap-dc
+EOF
+
+arch-chroot "$target" useradd --create-home --groups wheel --shell /bin/bash local-rescue
+install -Dm0440 /dev/stdin "$target/etc/sudoers.d/10-local-rescue" <<'EOF'
+%wheel ALL=(ALL:ALL) ALL
+EOF
+arch-chroot "$target" passwd --lock root
+
+echo
+echo "Set the temporary console password for local-rescue."
+echo "It is read directly by passwd and is not stored in an argument or answer file."
+arch-chroot "$target" passwd local-rescue
+
+install -Dm0644 /dev/stdin "$target/etc/ssh/sshd_config.d/10-controller.conf" <<'EOF'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+
+arch-chroot "$target" bootctl install
+root_uuid=$(blkid -s UUID -o value "$root_partition")
+[ -n "$root_uuid" ] || fail "could not read root filesystem UUID"
+install -Dm0644 /dev/stdin "$target/boot/loader/loader.conf" <<'EOF'
+default arch-linux-lts.conf
+timeout 5
+console-mode keep
+editor no
+EOF
+install -Dm0644 /dev/stdin "$target/boot/loader/entries/arch-linux-lts.conf" <<EOF
+title Arch Linux LTS
+linux /vmlinuz-linux-lts
+initrd /initramfs-linux-lts.img
+options root=UUID=$root_uuid rw console=tty0 console=ttyS0,115200n8
+EOF
+install -Dm0644 /dev/stdin "$target/boot/loader/entries/arch-linux-lts-fallback.conf" <<EOF
+title Arch Linux LTS (fallback initramfs)
+linux /vmlinuz-linux-lts
+initrd /initramfs-linux-lts-fallback.img
+options root=UUID=$root_uuid rw console=tty0 console=ttyS0,115200n8
+EOF
+
+mkdir -p "$target/etc/systemd/system/serial-getty@ttyS0.service.d"
+cat >"$target/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf" <<'EOF'
+[Service]
+TTYReset=yes
+TTYVHangup=yes
+EOF
+arch-chroot "$target" systemctl enable serial-getty@ttyS0.service
+arch-chroot "$target" systemctl enable NetworkManager.service
+arch-chroot "$target" systemctl enable sshd.service
+
+install -d -m 0755 "$target/opt/telos-source"
+install -m 0644 "$seed_root/source/telos.tar.gz" \
+    "$target/opt/telos-source/telos.tar.gz"
+install -m 0644 "$seed_root/receipt.json" \
+    "$target/opt/telos-source/seed-receipt.json"
+
+sync
+umount -R "$target"
+mounted=0
+trap - EXIT HUP INT TERM
+echo "Controller installation complete. Remove both ISOs and reboot."

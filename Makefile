@@ -97,7 +97,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-media-wimboot homelab-bootstrap-seed \
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
-	homelab-bootstrap-vm-destroy homelab-bootstrap-controller \
+	homelab-bootstrap-vm-boot homelab-bootstrap-vm-destroy \
+	homelab-bootstrap-controller \
 	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
 	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
 	homelab-pxe-publish homelab-pxe-rollback \
@@ -232,6 +233,14 @@ homelab-bootstrap-vm-run: $(if $(strip $(ISO)),,homelab-media-arch)
 		$(PYTHON) homelab/vm/bootstrap_dc.py run \
 			--iso '$(if $(ISO),$(ISO),$(ARCH_ISO))' \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') --apply; \
+	fi
+
+homelab-bootstrap-vm-boot:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to boot the installed disk'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run; \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run --apply; \
 	fi
 
 homelab-bootstrap-vm-destroy:
@@ -421,6 +430,7 @@ help:
 		'make homelab-lab          Report whether the QEMU lab can run' \
 		'make homelab-media        Fresh-fetch official disposable media' \
 		'make homelab-bootstrap-seed  Build the isolated Controller seed ISO' \
+		'make homelab-bootstrap-vm-boot  Boot the installed Controller disk' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Verify every payload in a Controller seed receipt."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def safe_relative(value: str) -> Path:
+    logical = PurePosixPath(value)
+    if logical.is_absolute() or ".." in logical.parts or not logical.parts:
+        raise ValueError(f"unsafe relative path: {value}")
+    return Path(*logical.parts)
+
+
+def verify(seed: Path) -> None:
+    receipt = json.loads((seed / "receipt.json").read_text(encoding="utf-8"))
+    expected = {}
+    for item in receipt["payload_files"]:
+        relative = safe_relative(item["path"])
+        if relative in expected:
+            raise ValueError(f"duplicate receipt path: {relative}")
+        expected[relative] = (item["bytes"], item["sha256"])
+    actual = {
+        path.relative_to(seed)
+        for path in seed.rglob("*")
+        if path.is_file() and path.name != "receipt.json"
+    }
+    if actual != set(expected):
+        raise ValueError("seed payload does not exactly match its receipt")
+    for relative, (size, digest) in expected.items():
+        path = seed / relative
+        if path.stat().st_size != size or sha256(path) != digest:
+            raise ValueError(f"receipt mismatch: {relative}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("seed", type=Path)
+    args = parser.parse_args()
+    verify(args.seed)
+    print("seed receipt verified")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

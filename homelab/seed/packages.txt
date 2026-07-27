@@ -3,6 +3,7 @@
 base
 linux-lts
 linux-firmware
+dosfstools
 networkmanager
 openssh
 sudo

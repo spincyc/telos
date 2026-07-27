@@ -33,6 +33,44 @@ APPLY=1`. The explicit boot order remains installer ISO, virtual disk, then
 seed. The seed therefore supplies packages and source without silently
 replacing the official Arch installer as the boot authority.
 
+## Interactive offline installation
+
+At the Arch live-system root prompt, locate and mount the seed by its filesystem
+label, then run its installer:
+
+```sh
+mkdir -p /run/telos-seed
+mount -L TELOS_SEED /run/telos-seed
+sudo /run/telos-seed/install-controller /run/telos-seed
+```
+
+The installer accepts exactly one writable disk whose reported serial is
+`TELOS-BOOTSTRAP-DC-001`. Before erasing it, the console requires the complete
+phrase:
+
+```text
+ERASE TELOS-BOOTSTRAP-DC-001
+```
+
+This is not a general-purpose hardware installer: a missing, duplicate or
+differently serialized disk is refused. The resulting phase-one GPT layout is
+a 1 GiB FAT32 EFI System Partition followed by an ext4 root partition using the
+rest of the disk. It installs signed packages only from the read-only seed,
+creates the fixed host name `bootstrap-dc`, installs systemd-boot, and enables
+the serial console.
+
+Near the end, `passwd` prompts twice for a temporary console password for
+`local-rescue`. Type it directly at the guest console. Do not place it in a
+command, Make variable, answer file, transcript or repository. Root is locked,
+SSH root login is disabled, and SSH password and keyboard-interactive
+authentication are disabled; the temporary password is for local console
+testing and `sudo` only.
+
+No private inventory, address plan, household identity, credential or secret is
+read from or written to the public seed. The install does not contact a mirror
+or enable physical networking. Keep the VM on its loopback-only boundary, and
+remove both read-only discs before booting the installed disk.
+
 The terminal is both the guest serial console and QEMU monitor. Use `Ctrl-a c`
 to switch between them and `Ctrl-a h` for help. The Telos controller installer
 opens on that serial console. A stock Arch ISO may keep its firmware and boot
