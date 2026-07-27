@@ -19,6 +19,18 @@ to see once you know to look.
 \begin{tikzpicture}[x=1cm,y=1cm]
   \node[cflabel,anchor=south] at (1.6,1.8) {a mitre box makes it hard to be wrong};
   \mitrebox{0}{0}{1.0}
+  % Fine-tooth backsaw seated in the guide slot.
+  \fill[craftfill] (1.48,0.12) -- (1.64,0.12) -- (1.90,1.83)
+    -- (1.72,1.87) -- cycle;
+  \draw[craftheavy] (1.48,0.12) -- (1.64,0.12) -- (1.90,1.83)
+    -- (1.72,1.87) -- cycle;
+  \foreach \y in {0.26,0.40,...,1.52}
+    {\draw[craftdetail] ({1.49+0.14*(\y-0.12)},\y) --
+      ({1.56+0.14*(\y-0.12)},\y-0.05);}
+  \draw[craftheavy,rounded corners=2pt] (1.71,1.84) -- (1.84,2.24)
+    -- (2.24,2.16) -- (2.12,1.72) -- cycle;
+  \draw[craftdetail,rounded corners=1pt] (1.86,1.91) -- (1.94,2.10)
+    -- (2.10,2.07) -- (2.04,1.86) -- cycle;
   \craftcall{1.56}{1.35}{2.9}{1.35}{west}{saw is guided,\\not aimed}
   \node[cflabel,anchor=north,align=center] at (1.6,-0.4)
     {support the pipe on \emph{both} sides of the cut};

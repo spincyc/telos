@@ -25,6 +25,22 @@ directions and you should feel the chamfer as a gentle ramp, not a sharp step.
     \chamferend{0}{0}{1.5}
     \craftyes{2.9}{0}
     \craftcall{0.20}{0.55}{2.6}{0.8}{west}{$\approx$15$^\circ$}
+    % Half-round file shown at the working angle.
+    \begin{scope}[shift={(0.10,0.58)},rotate=15]
+      \fill[craftfill] (0,0) -- (1.65,0) -- (1.82,0.10) --
+        (1.65,0.20) -- (0,0.20) -- cycle;
+      \draw[craftheavy] (0,0) -- (1.65,0) -- (1.82,0.10) --
+        (1.65,0.20) -- (0,0.20) -- cycle;
+      \foreach \x in {0.10,0.24,...,1.55}
+        {\draw[craftpencil] (\x,0.01) -- (\x+0.14,0.19);
+         \draw[craftpencil] (\x+0.14,0.01) -- (\x,0.19);}
+      \draw[craftline] (1.82,0.10) -- (2.18,0.10);
+      \draw[craftheavy,rounded corners=2pt] (2.18,-0.05) rectangle (2.85,0.25);
+    \end{scope}
+    \foreach \x/\y/\r in {0.16/0.42/18,0.30/0.48/-12,0.44/0.40/8}
+      {\draw[craftgrain,rotate around={\r:(\x,\y)}]
+        (\x,\y) .. controls (\x+0.08,\y+0.05) and
+        (\x+0.13,\y-0.04) .. (\x+0.20,\y);}
   \end{scope}
   % what the burr does inside a socket
   \begin{scope}[shift={(0,-4.3)}]

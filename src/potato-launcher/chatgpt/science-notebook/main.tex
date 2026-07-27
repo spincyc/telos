@@ -1,6 +1,11 @@
 \input{common/preamble.tex}
 \input{potato-launcher/chatgpt/shared/edition.tex}
 \telosmeta{Potato Launcher · ChatGPT}{Science Notebook}{Evidence before energy}{2026-07-26}
+\newcommand{\modelplate}[3]{%
+  \begin{center}
+  \includegraphics[width=.96\linewidth,height=#2,keepaspectratio]{#1}\\[-.15em]
+  {\footnotesize\itshape #3}
+  \end{center}}
 \begin{document}
 \telosmasthead[\editiontag]
 \adultonly
@@ -19,6 +24,9 @@ limit the mixture is too lean; above its upper limit it is too rich. That makes
 sprayer, temperature, chamber history and mixing all vary, so this edition
 provides no universal dose.
 
+\modelplate{potato-launcher/chatgpt/science-notebook/art/bounded-mixture.png}{1.55in}
+{Too lean · bounded region · too rich. The drawing is conceptual, not a dose scale.}
+
 \begin{teloscard}{Write before observing}
 \begin{tabularx}{\linewidth}{@{}p{0.24\linewidth}L@{}}
 Claim & A bounded mixture can ignite; mixtures outside the bounds may not.\\
@@ -36,6 +44,9 @@ not certify a homemade combustion assembly. Use only solid-wall,
 pressure-marked pipe \emph{and} pressure fittings; never DWV/cellular core and
 never compressed air or gas. Temperature, sunlight, impact, workmanship and
 chemical exposure can reduce margin.
+
+\modelplate{potato-launcher/chatgpt/science-notebook/art/material-inspection.png}{1.55in}
+{Sound surface · cellular core · stress crack · crazing. A mark cannot cancel a defect.}
 
 \begin{teloscard}{Material audit}
 \begin{tabularx}{\linewidth}{@{}L p{0.16\linewidth} p{0.16\linewidth}@{}}
@@ -58,6 +69,9 @@ It explains the parabolic ideal and separates horizontal from vertical motion.
 It does not include drag, potato shape, wind, launch-height difference, tumble,
 fragmentation, or shot-to-shot variation.
 
+\modelplate{potato-launcher/chatgpt/science-notebook/art/trajectory-uncertainty.png}{1.55in}
+{One ideal path versus a family of plausible outcomes under omitted effects.}
+
 \begin{teloscard}{Evidence table — observations, not performance tuning}
 \begin{tabularx}{\linewidth}{@{}p{0.10\linewidth}p{0.17\linewidth}L L@{}}
 \textbf{Trial} & \textbf{Cold/live} & \textbf{Predicted observation} &
@@ -71,6 +85,9 @@ Impulse sound can injure immediately, and ordinary meters may clip the peak.
 Therefore a phone reading cannot clear the hazard. Distance, limited attendance,
 earplugs plus earmuffs, impact-rated eye protection, and a disciplined firing
 line remain required regardless of the displayed number.
+
+\modelplate{potato-launcher/chatgpt/science-notebook/art/protective-controls.png}{4.15in}
+{Layered controls remain necessary when a phone waveform clips or misses the peak.}
 
 \begin{telospanel}{A good conclusion}
 State what the model explained, what the evidence showed, and what remains

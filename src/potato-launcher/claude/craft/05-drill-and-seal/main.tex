@@ -15,34 +15,51 @@ threads alone to hold pressure.
 \begin{minipage}[t]{0.45\linewidth}
 \vspace{0pt}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \node[cflabel,anchor=south,align=center] at (1.6,1.5) {PVC grabs a twist drill};
-  \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
-  \draw[craftheavy] (1.6,1.1) -- (1.6,2.0);
-  \draw[craftheavy] (1.45,1.1) -- (1.6,0.78) -- (1.75,1.1) -- cycle;
-  \draw[craftline] (1.30,0.5) -- (1.42,0.36);
-  \draw[craftline] (1.90,0.5) -- (1.78,0.36);
-  \craftcall{1.42}{0.40}{3.5}{0.15}{west}{the drill snatches\\through and chips\\the far side}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[cflabel,anchor=south west] at (0,1.72) {\textsc{breakthrough behaviour}};
+  \fill[telosfill] (0,.48) rectangle (3.25,1.08);
+  \draw[craftheavy] (0,.48) rectangle (3.25,1.08);
+  % Conventional twist drill, with visible lands and cutting lips.
+  \draw[craftheavy] (1.44,2.25)--(1.44,1.18)--(1.60,.80)--(1.76,1.18)--(1.76,2.25);
+  \draw[craftdetail] (1.44,2.05)..controls(1.82,1.88)and(1.38,1.66)..(1.76,1.48);
+  \draw[craftdetail] (1.76,1.83)..controls(1.38,1.66)and(1.82,1.44)..(1.48,1.28);
+  \draw[->,craftdetail] (2.15,2.02) arc[start angle=35,end angle=-220,radius=.28];
+  \draw[->,craftdetail] (1.60,1.28)--(1.60,.88);
+  \draw[craftline] (1.30,.48)--(1.43,.33);
+  \draw[craftline] (1.90,.48)--(1.77,.33);
+  \craftno{.35}{.78}
+  \craftcall{1.42}{.38}{3.48}{.20}{west}{self-feed chips the\\unsupported exit edge}
   \begin{scope}[shift={(0,-2.4)}]
-    \node[cflabel,anchor=south,align=center] at (1.6,1.5) {a step drill cannot};
-    \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
-    \foreach \i/\w in {0/0.42,1/0.32,2/0.22} {
-      \draw[craftheavy] (1.6-\w,1.1+\i*0.30) rectangle (1.6+\w,1.4+\i*0.30);}
-    \draw[craftheavy] (1.6,2.0) -- (1.6,2.4);
-    \draw[craftline] (1.28,0.5) -- (1.28,1.1);
-    \draw[craftline] (1.92,0.5) -- (1.92,1.1);
-    \craftyes{3.6}{0.8}
+    \node[cflabel,anchor=south west] at (0,1.72) {\textsc{controlled cut}};
+    \fill[telosfill] (0,.48) rectangle (3.25,1.08);
+    \draw[craftheavy] (0,.48) rectangle (3.25,1.08);
+    \draw[craftheavy] (1.16,1.08)--(1.16,1.27)--(1.29,1.27)--(1.29,1.48)
+      --(1.42,1.48)--(1.42,1.69)--(1.55,1.69)--(1.55,2.18);
+    \draw[craftheavy] (2.04,1.08)--(2.04,1.27)--(1.91,1.27)--(1.91,1.48)
+      --(1.78,1.48)--(1.78,1.69)--(1.65,1.69)--(1.65,2.18);
+    \draw[craftdetail] (1.16,1.16)--(2.04,1.16);
+    \draw[craftline] (1.16,.48)--(1.16,1.08);
+    \draw[craftline] (2.04,.48)--(2.04,1.08);
+    \draw[->,craftdetail] (1.60,2.04)--(1.60,1.78);
+    \craftyes{.35}{.78}
+    \craftcall{2.04}{.78}{3.48}{.36}{west}{round wall; clean\\supported exit edge}
   \end{scope}
   % sealed penetration
   \begin{scope}[shift={(0,-5.0)}]
-    \node[cflabel,anchor=south,align=center] at (1.6,1.35) {sealed on the outside face};
-    \draw[craftline,craftfill] (0,0.5) rectangle (3.2,1.1);
-    \draw[craftheavy] (1.5,0.2) rectangle (1.7,1.5);
-    \draw[craftheavy] (1.34,1.1) rectangle (1.86,1.22);
-    \fill[craftweld] (1.10,1.10) .. controls (1.30,1.34) and (1.90,1.34) ..
-      (2.10,1.10) -- cycle;
-    \craftcall{1.6}{1.28}{3.5}{1.05}{west}{epoxy fillet}
-    \craftcall{1.6}{0.35}{3.5}{0.25}{west}{nut inside}
+    \node[cflabel,anchor=south west] at (0,1.78) {\textsc{sealed electrode} --- section};
+    \fill[telosfill] (0,.48) rectangle (3.25,1.08);
+    \draw[craftheavy] (0,.48) rectangle (3.25,1.08);
+    \draw[craftheavy] (1.48,.05) rectangle (1.72,1.58);
+    \foreach \y in {.18,.32,...,1.48}{\draw[craftdetail] (1.48,\y)--(1.72,\y+.09);}
+    \draw[craftline,fill=telospaper] (1.25,1.08) rectangle (1.95,1.22);
+    \draw[craftline,fill=telospaper] (1.25,.34) rectangle (1.95,.48);
+    \draw[craftline] (1.31,.18)--(1.89,.18)--(1.98,.34)--(1.89,.50)--(1.31,.50)--(1.22,.34)--cycle;
+    \fill[craftweld] (.98,1.08)..controls(1.12,1.48)and(1.32,1.43)..(1.48,1.31)
+      --(1.72,1.31)..controls(1.88,1.43)and(2.08,1.48)..(2.22,1.08)--cycle;
+    \draw[craftline] (.98,1.08)..controls(1.12,1.48)and(1.32,1.43)..(1.48,1.31);
+    \draw[craftline] (1.72,1.31)..controls(1.88,1.43)and(2.08,1.48)..(2.22,1.08);
+    \craftcall{1.10}{1.30}{3.48}{1.44}{west}{continuous outside\\epoxy fillet}
+    \craftcall{1.24}{.34}{3.48}{.18}{west}{washer and nut inside}
   \end{scope}
 \end{tikzpicture}
 \end{center}

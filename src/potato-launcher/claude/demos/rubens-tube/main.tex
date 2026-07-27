@@ -21,7 +21,14 @@ on the bench, not in the house.
 \begin{tikzpicture}[x=1cm,y=1cm]
   % the tube in section, with flames along the top
   \draw[pvc,pvcfill] (0,0) rectangle (7.2,0.85);
-  \foreach \x in {0.4,0.8,...,7.0} {\draw[pvcdetail] (\x,0.85) -- (\x,0.72);}
+  \draw[pencil light] (0,.12)--(7.2,.12);
+  \draw[pencil light,dashed] (0,.42)
+    ..controls (1.2,.78) and (1.6,.08)..(2.4,.42)
+    ..controls (3.2,.82) and (4,.02)..(4.8,.42)
+    ..controls (5.6,.82) and (6.4,.08)..(7.2,.42);
+  \foreach \x in {0.4,0.8,...,7.0} {
+    \draw[pvcdetail] (\x,0.85) -- (\x,0.72);
+    \draw[pencil] (\x,0.85) ellipse (.045 and .018);}
   % standing wave: flame height follows pressure
   \foreach \x/\h in {0.4/0.30, 0.8/0.55, 1.2/0.72, 1.6/0.55, 2.0/0.30,
                      2.4/0.14, 2.8/0.30, 3.2/0.62, 3.6/0.80, 4.0/0.62,
@@ -29,6 +36,8 @@ on the bench, not in the house.
                      6.4/0.58, 6.8/0.30} {
     \draw[pvc] (\x,0.85) .. controls (\x-0.07,0.85+\h*0.6) and (\x+0.07,0.85+\h*0.7)
       .. (\x,0.85+\h);}
+  \foreach \x/\h in {0.4/0.30,1.2/0.72,2.0/0.30,2.8/0.30,3.6/0.80,4.4/0.30,5.2/0.30,6.0/0.75,6.8/0.30}
+    \draw[pencil light] (\x-.035,.9)..controls(\x-.1,.9+\h*.45)and(\x+.035,.9+\h*.7)..(\x,.85+\h);
   % speaker at one end, sealed cap at the other
   \draw[pvc,pvcfill] (-0.7,-0.2) rectangle (0,1.05);
   \draw[pvc] (-0.55,0.15) -- (-0.15,0.42) -- (-0.15,0.43) -- (-0.55,0.70) -- cycle;
@@ -40,6 +49,8 @@ on the bench, not in the house.
   \node[lnsmall,anchor=north] at (3.6,-0.75) {propane in};
   \node[lnsmall,anchor=north,align=center] at (3.6,-1.25)
     {tall flames at pressure antinodes,\\short at nodes --- the wave, standing still};
+  \draw[|<->|,pencil light] (0,-1.62)--(7.2,-1.62);
+  \node[lnsmall,fill=telospaper,inner sep=1pt] at (3.6,-1.62) {perforated resonant cavity};
 \end{tikzpicture}
 \end{center}
 \end{minipage}%

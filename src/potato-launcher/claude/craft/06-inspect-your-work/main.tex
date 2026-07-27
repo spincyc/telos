@@ -18,6 +18,33 @@ than a general impression, do it before the next step hides the evidence, and
 write down what you found. People who build reliable things are not more
 virtuous than people who do not --- they have a list.
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[cflabel,anchor=south west] at (0,1.55)
+    {\textsc{raking-light inspection} --- rotate the work; do not glance once};
+  \fill[telosfill] (1.02,-.45) rectangle (5.92,.45);
+  \draw[craftheavy] (1.02,-.45) rectangle (5.92,.45);
+  \draw[craftline] (2.02,-.58) rectangle (5.22,.58);
+  \draw[craftline] (2.02,-.58)..controls(1.72,-.52)and(1.72,.52)..(2.02,.58);
+  \draw[craftline] (5.22,-.58)..controls(5.52,-.52)and(5.52,.52)..(5.22,.58);
+  \draw[craftheavy] (3.18,-.66)--(3.18,.66);
+  \draw[craftdetail] (3.12,-.65)--(3.24,-.65);
+  % Inspection lamp and grazing rays.
+  \draw[craftheavy] (.18,1.12)--(.72,1.12)--(.92,.86)--(.72,.60)--(.18,.60)--cycle;
+  \draw[craftdetail] (.18,.72)--(-.05,.58);
+  \draw[craftdetail] (.18,1.00)--(-.05,1.14);
+  \foreach \y in {.66,.78,.90,1.02}{\draw[->,craftdetail,telosmute] (.92,\y)--(2.82,{.36*(\y-.84)});}
+  % Magnifier over the weld bead.
+  \draw[craftheavy] (4.52,.98) circle (.42);
+  \draw[craftheavy] (4.82,.68)--(5.35,.16);
+  \draw[craftdetail] (4.22,.96)..controls(4.38,1.18)and(4.64,1.18)..(4.80,.96);
+  \draw[->,craftdetail] (6.20,.72) arc[start angle=35,end angle=-245,radius=.34];
+  \craftcall{3.18}{.58}{3.44}{1.27}{south}{witness line}
+  \craftcall{2.02}{.52}{1.42}{-.90}{north}{trace the complete bead}
+  \craftcall{5.22}{-.46}{5.76}{-.98}{north}{turn through a full circle}
+\end{tikzpicture}
+\end{center}
+
 \begin{telosfacts}[0.22]
 \telosfact{Look for named defects}{``Does it look OK?'' finds almost nothing, because your eye reports what you expect. ``Is there a continuous bead all the way round this socket?'' finds the actual problem. Every craft sheet ends with a check phrased that way for exactly this reason.}
 \telosfact{Inspect before you hide it}{A burr is invisible once the pipe is in the socket; a weld bead is unreadable once the assembly is painted. Sequence the inspection before the step that conceals the thing.}

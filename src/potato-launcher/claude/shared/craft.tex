@@ -17,6 +17,8 @@
   craftfill/.style={fill=telosfill},
   craftweld/.style={pattern=north east lines,pattern color=telosdeep},
   craftbad/.style={draw=telosink,line width=0.9pt},
+  craftpencil/.style={draw=telosink,line width=0.28pt,opacity=0.72},
+  craftgrain/.style={draw=telosmute,line width=0.22pt,opacity=0.62},
   cflabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
   cfsmall/.style={font=\fontsize{5.8}{6.8}\selectfont},
   cftag/.style={font=\fontsize{6.4}{7.4}\selectfont\itshape},
@@ -58,15 +60,28 @@
 % A mitre box holding pipe, seen from above.
 \newcommand{\mitrebox}[3]{%
   \begin{scope}[shift={(#1,#2)},scale=#3]
-    \draw[craftheavy] (0,0) rectangle (3.2,1.5);
+    % Bench-top perspective, with enough construction detail to read as a tool.
+    \fill[craftfill] (0,0) -- (3.2,0) -- (3.48,0.20) -- (0.28,0.20) -- cycle;
+    \draw[craftheavy] (0,0) -- (3.2,0) -- (3.48,0.20) -- (3.48,1.42)
+      -- (3.2,1.50) -- (0,1.50) -- (0.28,1.42) -- (0.28,0.20) -- cycle;
     \draw[craftline] (0,0.28) -- (3.2,0.28);
     \draw[craftline] (0,1.22) -- (3.2,1.22);
+    \draw[craftdetail] (3.2,0) -- (3.2,1.50);
+    \foreach \y in {0.38,0.52,...,1.12} {
+      \draw[craftgrain] (0.08,\y) .. controls (0.8,\y+0.04) and
+        (2.35,\y-0.05) .. (3.12,\y+0.01);}
     % the 90-degree slot
     \draw[craftheavy] (1.5,-0.12) -- (1.5,1.62);
     \draw[craftheavy] (1.62,-0.12) -- (1.62,1.62);
     % pipe lying in the channel
-    \draw[craftline,craftfill] (0.2,0.42) rectangle (2.9,1.08);
+    \draw[craftline,fill=telospaper] (0.2,0.42) rectangle (2.9,1.08);
     \draw[craftdetail] (0.2,0.42) -- (0.2,1.08);
+    \draw[craftpencil] (0.2,0.50) -- (2.9,0.50);
+    \draw[craftpencil] (0.2,1.00) -- (2.9,1.00);
+    \draw[craftdetail] (0.2,0.42) arc[start angle=-90,end angle=90,
+      x radius=0.13,y radius=0.33];
+    \draw[craftpencil] (1.44,0.41) -- (1.44,1.09);
+    \draw[craftpencil] (1.68,0.41) -- (1.68,1.09);
   \end{scope}}
 
 % A try square checking a cut end.
@@ -82,6 +97,11 @@
     \draw[craftheavy] (1.1,0.46) -- (1.1,0.86) -- (2.5,0.86);
     \draw[craftheavy] (1.1,0.46) -- (2.35,0.46);
     \draw[craftdetail] (1.24,0.46) -- (1.24,0.72);
+    \foreach \x in {1.35,1.55,...,2.35} {
+      \draw[craftpencil] (\x,0.86) -- (\x,0.78);}
+    \fill[telospaper] (1.02,0.53) rectangle (1.30,0.76);
+    \draw[craftline] (1.02,0.53) rectangle (1.30,0.76);
+    \draw[craftdetail] (1.08,0.59) -- (1.24,0.59) -- (1.24,0.70);
   \end{scope}}
 
 % A chamfered pipe end in section, with the angle called out.
@@ -94,6 +114,9 @@
     \draw[crafthint] (0,0) -- (1.5,0);
     \draw[crafthint] (0.22,0.44) -- (0.42,0.44);
     \draw[crafthint] (0,0.30) -- (0.42,0.30);
+    \foreach \x in {0.25,0.38,...,1.42} {
+      \draw[craftgrain] (\x,0.32) -- (\x+0.10,0.42);
+      \draw[craftgrain] (\x,-0.32) -- (\x+0.10,-0.42);}
   \end{scope}}
 
 % A burr on an inside edge -- the defect the chamfer sheet is about.
@@ -104,6 +127,11 @@
     \draw[craftline] (0,0.30) .. controls (0.06,0.20) and (0.14,0.18) .. (0.10,0.30);
     \draw[craftline] (0,-0.30) .. controls (0.06,-0.20) and (0.14,-0.18) .. (0.10,-0.30);
     \draw[crafthint] (0,0) -- (1.5,0);
+    \foreach \x in {0.08,0.22,...,1.42} {
+      \draw[craftgrain] (\x,0.32) -- (\x+0.10,0.42);
+      \draw[craftgrain] (\x,-0.32) -- (\x+0.10,-0.42);}
+    \draw[craftpencil] (0.02,0.29) .. controls (0.12,0.17) and
+      (0.20,0.22) .. (0.15,0.31);
   \end{scope}}
 
 % A tick-and-cross verdict marker, for right-way/wrong-way pairs.

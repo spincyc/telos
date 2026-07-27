@@ -13,7 +13,109 @@
   lnlabel/.style={font=\fontsize{6.4}{7.4}\selectfont},
   lnsmall/.style={font=\fontsize{5.8}{6.8}\selectfont},
   lntag/.style={font=\fontsize{6.4}{7.4}\selectfont\itshape},
+  pencil/.style={draw=telosink,line width=0.55pt,line cap=round,line join=round},
+  pencil light/.style={draw=telosmute,line width=0.28pt,line cap=round},
+  pencil hatch/.style={pattern=north east lines,pattern color=telosmute},
 }
+
+% Compact field-sketch plates: observational drawings rather than icons.
+\newcommand{\airplate}{%
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil] (0,0) ellipse (1.05 and .22);
+  \draw[pencil] (-1.05,0)--(-1.05,1.45) arc (180:360:1.05 and .22)--(1.05,0);
+  \draw[pencil light] (-.91,.18) arc (200:340:.97 and .19);
+  \foreach \x in {-1.8,-1.5,-1.25,1.25,1.5,1.8}
+    \draw[-{Stealth[length=1.5mm]},pencil light] (\x,.72)--({.72*\x/abs(\x)},.72);
+  \foreach \y in {.15,.48,.82,1.16,1.48}
+    \draw[-{Stealth[length=1.5mm]},pencil light] (0,\y+.55)--(0,\y+.18);
+  \draw[pencil] (3.15,.05) ellipse (1.05 and .16);
+  \draw[pencil] (2.1,.05).. controls (2.25,.55) and (4.05,.55)..(4.2,.05);
+  \draw[pencil light] (2.28,.14).. controls (2.7,.34) and (3.6,.34)..(4.02,.14);
+  \draw[pencil] (5.35,0) rectangle (7.55,1.4);
+  \draw[pencil] (5.35,.7)--(6.15,.7);
+  \foreach \y in {.25,.48,.92,1.15}
+    \draw[-{Stealth[length=1.5mm]},pencil light] (5.05,\y)--(5.32,\y);
+  \node[lnsmall,align=center] at (0,-.48) {steam-filled can\\before cooling};
+  \node[lnsmall,align=center] at (3.15,-.48) {after condensation:\\outside air wins};
+  \node[lnsmall,align=center] at (6.45,-.48) {pressure acts on\\every surface};
+  \draw[pencil light] (-2.15,-.75)--(7.85,-.75);
+\end{tikzpicture}\end{center}}
+
+\newcommand{\combustionplate}{%
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \x/\lab in {0/lean,3.2/balanced,6.4/rich}{
+    \draw[pencil] (\x,0) ellipse (.92 and .17);
+    \draw[pencil] (\x-.92,0)--(\x-.92,1.35) arc (180:360:.92 and .17)--(\x+.92,0);
+    \draw[pencil light] (\x-.76,.22) arc (200:340:.8 and .13);
+    \node[lnlabel] at (\x,-.38) {\lab};
+  }
+  \foreach \p in {(-.55,.35),(-.18,.92),(.34,.55)}
+    \fill[telosink] \p circle (.045);
+  \foreach \p in {(2.55,.3),(2.8,.95),(3.2,.52),(3.48,1.1),(3.72,.35)}
+    \fill[telosink] \p circle (.045);
+  \foreach \p in {(5.7,.3),(5.9,.72),(6.1,1.08),(6.35,.42),(6.55,.85),(6.8,.25),(7.05,1.05)}
+    \fill[telosink] \p circle (.045);
+  \draw[pencil] (2.85,.2)..controls (2.72,.55) and (3.05,.72)..(3.08,1.18)
+    ..controls (3.28,.87) and (3.65,.62)..(3.35,.2);
+  \node[lnsmall,align=center] at (0,1.78) {too little fuel};
+  \node[lnsmall,align=center] at (3.2,1.78) {fuel and oxygen meet};
+  \node[lnsmall,align=center] at (6.4,1.78) {fuel crowds out oxygen};
+  \draw[pencil light] (-1.15,-.7)--(7.55,-.7);
+\end{tikzpicture}\end{center}}
+
+\newcommand{\gasplate}{%
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil] (-3.8,-.7) rectangle (-1.5,1.25);
+  \draw[pencil hatch] (-3.8,-.7) rectangle (-1.5,-.48);
+  \foreach \p in {(-3.45,-.1),(-2.95,.65),(-2.3,.12),(-1.85,.9)}
+    \fill[telosink] \p circle (.045);
+  \foreach \p in {(-3.45,-.1),(-2.95,.65),(-2.3,.12),(-1.85,.9)}
+    \draw[-{Stealth[length=1.4mm]},pencil light] \p -- +(.35,.25);
+  \draw[pencil] (-.3,-.7) rectangle (2,1.25);
+  \draw[pencil hatch] (-.3,-.7) rectangle (2,-.48);
+  \foreach \p in {(.05,-.1),(.55,.65),(1.2,.12),(1.65,.9)}
+    \fill[telosink] \p circle (.045);
+  \draw[-{Stealth[length=1.7mm]},pencil] (.05,-.1)--(.65,.42);
+  \draw[-{Stealth[length=1.7mm]},pencil] (.55,.65)--(-.15,1.08);
+  \draw[-{Stealth[length=1.7mm]},pencil] (1.2,.12)--(1.85,.72);
+  \draw[-{Stealth[length=1.7mm]},pencil] (1.65,.9)--(.95,.25);
+  \draw[pencil light] (-3.8,-1)--(2,-1);
+  \node[lnsmall,align=center] at (-2.65,-1.28) {cool gas:\\slower impacts};
+  \node[lnsmall,align=center] at (.85,-1.28) {hot gas:\\harder, more frequent impacts};
+  \draw[->,pencil] (3,-.65)--(6.7,-.65) node[below,lnsmall]{absolute temperature};
+  \draw[->,pencil] (3,-.65)--(3,1.25) node[left,lnsmall,rotate=90]{pressure};
+  \draw[pencil] (3.25,-.42)--(6.35,1.05);
+  \draw[pencil light,dashed] (4.5,-.65)--(4.5,.18)--(3,.18);
+\end{tikzpicture}\end{center}}
+
+\newcommand{\trajectoryplate}{%
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil light] (-.3,0)--(8.7,0);
+  \foreach \x in {0,1,...,8}\draw[pencil light] (\x,-.07)--(\x,.07);
+  \draw[pencil] (0,.25)--(.75,.58);
+  \draw[-{Stealth[length=1.8mm]},pencil] (.55,.48)--(1.65,.96);
+  \draw[pencil] (.75,.58)..controls (3.05,2.08) and (5.65,1.95)..(8.05,.05);
+  \draw[pencil light,dashed] (.75,.58)..controls (3.15,2.55) and (6.05,2.55)..(8.55,.05);
+  \foreach \x/\y in {1.7/1.12,3/1.55,4.3/1.65,5.6/1.43,6.8/.9}
+    \draw[-{Stealth[length=1.3mm]},pencil light] (\x,\y)--(\x,\y-.35);
+  \node[lnsmall,anchor=west] at (5.9,2.18) {vacuum prediction};
+  \node[lnsmall,anchor=west] at (5.9,1.72) {measured path with drag};
+  \node[lnsmall] at (4.2,-.35) {surveyed range --- mark every landing};
+\end{tikzpicture}\end{center}}
+
+\newcommand{\safetyplate}{%
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm]
+  \fill[pencil hatch] (-.5,-.1) rectangle (1.25,.08);
+  \launchersection{1.1}{.18}{.42}{4.2}{5.2}
+  \draw[pencil,dashed] (5.25,.5)..controls (7,1.75) and (9.3,1.65)..(11.2,.05);
+  \draw[pencil light] (0,-.35)--(11.8,-.35);
+  \draw[pencil] (.2,-.52)--(.2,.92);
+  \node[lnsmall,align=center,anchor=north] at (.2,-.58) {marked\\firing line};
+  \node[lnsmall,align=center] at (2.8,-.72) {all observers behind breech};
+  \draw[pencil hatch] (10.75,-.35)..controls (11.2,.15) and (11.45,.55)..(11.8,.92)--(12.15,-.35)--cycle;
+  \node[lnsmall,align=center,anchor=south] at (11.4,1.02) {earth backstop};
+  \node[lnsmall,align=center] at (7.8,-.72) {clear cone: no roads, buildings, people, or animals};
+\end{tikzpicture}\end{center}}
 
 % ---------------------------------------------------------------------------
 % The launcher in section. Chamber on the left with its cleanout and igniter,

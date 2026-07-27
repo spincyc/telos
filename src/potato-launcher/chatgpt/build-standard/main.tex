@@ -42,6 +42,75 @@ joint rather than adding cement, epoxy, tape, or a patch.
 area, distorted hole or uncertain seal rejects the part.
 \end{enumerate}
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  graphite/.style={draw=black!78,line width=.36pt},
+  ghost/.style={draw=black!32,line width=.22pt},
+  edge/.style={draw=black!92,line width=.62pt},
+  note/.style={font=\scriptsize,align=center,text=black!88}]
+% Plate frame and dividers.
+\draw[black!55,line width=.3pt] (0,0) rectangle (17.5,3.25);
+\draw[black!35,line width=.25pt] (5.82,0)--(5.82,3.25);
+\draw[black!35,line width=.25pt] (11.66,0)--(11.66,3.25);
+
+% I — square cut: pipe, wrap line, and try-square.
+\begin{scope}[shift={(.25,.15)}]
+  \path[fill=black!3] (.25,.72) rectangle (4.45,2.18);
+  \draw[edge] (.25,.72)--(4.45,.72) (.25,2.18)--(4.45,2.18);
+  \draw[edge] (.25,.72) arc[start angle=270,end angle=90,x radius=.23,y radius=.73];
+  \draw[graphite] (3.34,.72) arc[start angle=270,end angle=90,x radius=.23,y radius=.73];
+  \draw[ghost] (3.30,.72) arc[start angle=270,end angle=90,x radius=.23,y radius=.73];
+  \foreach \y in {.82,1.02,...,2.02}
+    \draw[black!18,line width=.18pt] (.38,\y)--(3.17,\y+.04);
+  \draw[edge] (3.57,.53)--(3.57,2.38)--(4.95,2.38);
+  \draw[graphite] (3.65,.65)--(3.65,2.30) (3.73,.65)--(3.73,2.22);
+  \draw[-{Stealth[length=1.5mm]},black!72,line width=.3pt] (4.93,1.42)--(3.75,1.42);
+  \node[note,anchor=east] at (4.91,1.12) {check\\all around};
+  \node[note,anchor=west,font=\scriptsize\bfseries] at (.15,2.72) {I\quad CUT SQUARE};
+  \node[note] at (2.52,.25) {fine wrap line; blade stays on waste side};
+\end{scope}
+
+% II — enlarged end section with clean bore and chamfer.
+\begin{scope}[shift={(6.07,.15)}]
+  \path[fill=black!3] (1.40,.48)--(4.65,.48)--(4.65,2.36)--(1.40,2.36)
+    --(.92,2.02)--(.92,.82)--cycle;
+  \draw[edge] (.92,.82)--(1.40,.48)--(4.65,.48)
+    (.92,2.02)--(1.40,2.36)--(4.65,2.36);
+  \draw[edge] (.92,.82)--(.92,2.02);
+  \draw[graphite] (1.40,.48)--(1.40,2.36);
+  \draw[ghost] (1.46,.53)--(1.46,2.31);
+  \foreach \x in {1.63,1.86,...,4.44}
+    \draw[black!16,line width=.18pt] (\x,.55)--(\x+.05,2.29);
+  \draw[-{Stealth[length=1.5mm]},black!72,line width=.3pt] (.80,1.42)--(.92,1.42);
+  \node[note,anchor=east] at (.78,1.42) {no burr};
+  \draw[-{Stealth[length=1.5mm]},black!72,line width=.3pt] (2.55,2.46)--(1.40,2.34);
+  \node[note,anchor=west] at (2.56,2.46) {even chamfer};
+  \node[note,anchor=west,font=\scriptsize\bfseries] at (.10,2.72) {II\quad DRESS THE EDGE};
+  \node[note] at (2.73,.24) {bright-light check: smooth, round, uncracked};
+\end{scope}
+
+% III — socket section, full insertion, witness line.
+\begin{scope}[shift={(11.91,.15)}]
+  \path[fill=black!3] (.14,.83) rectangle (2.73,2.04);
+  \path[fill=black!8] (2.73,.55) rectangle (4.88,2.32);
+  \draw[edge] (.14,.83)--(3.92,.83)--(3.92,2.04)--(.14,2.04);
+  \draw[edge] (2.73,.55)--(4.88,.55)--(4.88,2.32)--(2.73,2.32);
+  \draw[graphite] (3.92,.83)--(4.27,.72)--(4.27,2.15)--(3.92,2.04);
+  \foreach \x in {2.86,3.08,...,3.74}
+    \draw[black!17,line width=.18pt] (\x,.88)--(\x,1.99);
+  \draw[edge] (2.49,.72)--(2.49,2.15);
+  \draw[ghost] (2.44,.72)--(2.44,2.15);
+  \draw[graphite] (2.49,1.43)--(3.06,1.43);
+  \draw[-{Stealth[length=1.5mm]},black!72,line width=.3pt] (1.25,2.34)--(2.48,2.15);
+  \node[note,anchor=east] at (1.25,2.34) {witness line};
+  \draw[<->,black!72,line width=.3pt] (2.51,.35)--(3.91,.35);
+  \node[note,fill=white,inner sep=1pt] at (3.21,.35) {full depth};
+  \node[note,anchor=west,font=\scriptsize\bfseries] at (.10,2.72) {III\quad VERIFY INSERTION};
+  \node[note] at (2.65,.08) {continuous result; aligned; no gap or patch};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
 \section{Hold point C · Cure lock}
 \begin{telosframe}
 \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}L@{}}

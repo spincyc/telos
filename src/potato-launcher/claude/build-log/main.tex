@@ -11,6 +11,29 @@ This is the difference between a launcher you hope is fine and one you know is
 fine. Fill it in as you go, not afterwards from memory. Every blank on this page
 exists because somebody, somewhere, guessed instead of checking.
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[cflabel,anchor=south west] at (0,1.02)
+    {\textsc{record the evidence at the bench}};
+  \fill[telosfill] (0,-.32) rectangle (6.30,.32);
+  \draw[craftheavy] (0,-.32) rectangle (6.30,.32);
+  \draw[craftline] (1.05,-.43) rectangle (4.80,.43);
+  \draw[craftline] (1.05,-.43)..controls(.78,-.37)and(.78,.37)..(1.05,.43);
+  \draw[craftline] (4.80,-.43)..controls(5.08,-.37)and(5.08,.37)..(4.80,.43);
+  \draw[craftheavy] (2.15,-.50)--(2.15,.50);
+  \draw[craftheavy] (2.09,-.49)--(2.21,-.49);
+  \draw[craftdetail] (5.02,.72)--(6.56,.72)--(6.56,-.55)--(5.02,-.55)--cycle;
+  \foreach \y in {.45,.20,-.05,-.30}{\draw[craftdetail] (5.22,\y)--(6.34,\y);}
+  \draw[craftheavy] (5.08,.45)--(5.14,.37)--(5.28,.55);
+  \draw[craftheavy] (5.08,.20)--(5.14,.12)--(5.28,.30);
+  \draw[craftdetail] (4.88,-.62)--(5.92,.82);
+  \draw[craftdetail] (4.82,-.57)--(4.88,-.62)--(4.90,-.54);
+  \craftcall{2.15}{.48}{2.44}{.90}{south}{witness mark}
+  \craftcall{1.02}{-.36}{.64}{-.78}{north}{bead checked}
+  \craftcall{5.60}{.70}{6.72}{.62}{west}{date, result, initials}
+\end{tikzpicture}
+\end{center}
+
 \begin{telosfacts}[0.22]
 \telosfact{Builder}{\rule{0.72\linewidth}{0.4pt}}
 \telosfact{Adult in charge}{\rule{0.72\linewidth}{0.4pt}}

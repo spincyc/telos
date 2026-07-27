@@ -30,6 +30,9 @@ check beforehand.
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
 \launchersection{0}{0}{1.0}{4.2}{6.5}
+\foreach \x in {.35,.7,...,3.85}
+  \draw[pencil light] (\x,.16)--(\x+.28,1.34);
+\draw[pencil light,dashed] (0,.75)--(11.4,.75);
 \spud{10.8}{0.75}{1.0}
 \lncall{2.0}{0.75}{2.0}{-0.9}{north}{combustion chamber --- fuel and air}
 \lncall{-0.25}{0.75}{-0.6}{2.1}{south}{screw cleanout: load fuel, clear misfires}
