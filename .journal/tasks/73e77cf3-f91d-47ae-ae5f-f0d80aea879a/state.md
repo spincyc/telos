@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
 superseded_by: null
 created_at: "2026-07-27T21:51:51Z"
-updated_at: "2026-07-27T22:05:58Z"
+updated_at: "2026-07-27T22:13:32Z"
 ---
 
 # Goal
@@ -44,4 +44,10 @@ verification. Then implement the transactional multi-target release set.
 The aggregate seal is implemented and verified against both fixtures and the
 live ignored cache. It records a stable content/provenance inventory, separate
 tool versions, and rejects unstable or unsafe inputs. The task remains active
-for the transactional controller/Arch/Windows release set.
+for the first real controller/Arch/Windows release set.
+
+The transactional builder now stages all three leaves privately, binds them
+and the sealed Windows SMB source into one aggregate receipt, and selects only
+after complete verification. Negative, interruption, and rollback tests pass.
+The next slice must derive the missing controller and Arch source trees from
+sealed local inputs and build the first set.

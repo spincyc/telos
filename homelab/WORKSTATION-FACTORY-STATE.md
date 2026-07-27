@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260727.008`
+Document version: `20260727.009`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-27T17:05:58-05:00
+Last evidence/workstream review: 2026-07-27T17:13:32-05:00
 
-Repository baseline reviewed: `cd694e3`
+Repository baseline reviewed: `ff4f0b9`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -171,7 +171,7 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | Order | Gate | Required proof | State |
 |---:|---|---|---|
 | 1 | Media intake | Verify Windows digest and receipt; inspect the image catalog for Windows 11 Pro; verify Arch signature/digest and `wimboot` pin; prove no media is tracked. | pass: aggregate seal binds Arch, Windows provenance/Pro verification, `wimboot`, and the 976-file Windows install source |
-| 2 | Immutable PXE releases | Build and verify versioned Windows, Arch, and controller targets; manifests bind every byte to `YYYYMMDD.NNN`; rejected input and rollback tests pass. | partial: existing Windows stage reaches WinPE; install-image/custom-WinPE path is active work |
+| 2 | Immutable PXE releases | Build and verify versioned Windows, Arch, and controller targets; manifests bind every byte to `YYYYMMDD.NNN`; rejected input and rollback tests pass. | partial: transactional three-target release-set builder, aggregate receipt, sealed Windows SMB contract, selection, and rollback tests pass; first local release set is not yet built |
 | 3 | Controller convergence | From a fresh offline-installed disposable controller, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, and verify the authority boundary without external access. | pass: `20260727T201057Z-controller.json`; release selection, backup, and restore remain lifecycle gates |
 | 4 | PXE authority boundary | Simulated gateway remains sole DHCP authority; controller supplies only the approved boot and identity services; packet evidence proves no rogue offer, forwarding, or external connection. | simultaneous fabric and PXE gateway implemented; integrated proof pending |
 | 5 | Windows-first install | OVMF workstation PXE-boots WinPE, selects the disk by stable serial, installs Windows 11 Pro to the approved layout, and reboots without ISO attachment. Destructive authorization is scoped to the disposable disk. | pending |
@@ -196,6 +196,9 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   installation. An answer file, WinPE startup workflow, disk-serial gate,
   installation-image delivery, secret injection, and post-install acceptance
   remain to be implemented.
+- The transactional release-set path is implemented and tested, but the first
+  local set still needs explicit controller and extracted Arch source trees.
+  No `homelab/var/pxe` release has yet been accepted.
 - A local-only Samba AD test domain must use synthetic public-safe values. Real
   household identities and credentials belong only in the private overlay.
 - Offline automatic updates can validate policy, refusal behavior, and staged
@@ -261,8 +264,9 @@ it already passed and should be repeated only after a material change to the
 manual console path or immediately before separately authorized physical
 attachment.
 
-The next implementation action is to complete immutable Arch, Windows, and
-controller PXE releases, then keep the accepted configured
+The next implementation action is to derive and verify the controller and Arch
+source trees from sealed local inputs, build the first transactional immutable
+release set, then keep the accepted configured
 Controller alive on the isolated fabric and boot a disposable workstation
 through gateway-supplied options 66/67. First prove an actual x86-64 UEFI iPXE
 request and Arch installer handoff. Then exercise WinPE, Windows 11 Pro
