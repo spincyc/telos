@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Create and verify the private Telos overlay without creating a remote."""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+SECRET_MARKERS = (
+    "BEGIN OPENSSH PRIVATE KEY",
+    "BEGIN PRIVATE KEY",
+    "aws_secret_access_key",
+    "password:",
+    "private_key:",
+)
+
+
+def die(message: str) -> None:
+    raise SystemExit(message)
+
+
+def identifiers(path: Path) -> list[str]:
+    if not path.is_file():
+        die(f"identifier file does not exist: {path}")
+    values = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        value = line.strip()
+        if value and not value.startswith("#"):
+            if len(value) < 3:
+                die(f"identifier is too short for a reliable scan: {value!r}")
+            values.append(value)
+    return values
+
+
+def public_files(root: Path):
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+    )
+    for raw in result.stdout.split(b"\0"):
+        if raw:
+            yield root / raw.decode()
+
+
+def check_public(args) -> None:
+    needles = identifiers(args.identifiers)
+    findings = []
+    for path in public_files(args.public_root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        lower = text.casefold()
+        for needle in needles:
+            if re.search(rf"(?<![a-z0-9]){re.escape(needle.casefold())}(?![a-z0-9])", lower):
+                findings.append(f"{path.relative_to(args.public_root)}: protected identifier")
+        for marker in SECRET_MARKERS:
+            if marker.casefold() in lower:
+                findings.append(f"{path.relative_to(args.public_root)}: secret marker")
+    if findings:
+        die("public-boundary check failed:\n" + "\n".join(sorted(set(findings))))
+    print(f"public-boundary check passed ({len(needles)} protected identifiers)")
+
+
+FILES = {
+    ".gitignore": """# Plaintext secret workspace. Only SOPS-encrypted YAML is tracked.
+/secrets/plaintext/
+/tmp/
+*.key
+*.keytab
+*.pfx
+*.p12
+*.pem
+*.env
+""",
+    ".gitattributes": """*.sops.yaml diff
+""",
+    "README.md": """# Private Telos overlay
+
+This repository contains private inventory and values consumed by the public
+Telos procedures. It contains no plaintext credentials. Review
+`review/redacted-summary.txt` before the first commit.
+
+No bootstrap command creates or configures a remote. Before adding one, run:
+
+    ../telos/scripts/telos-private preflight --root .
+    ../telos/scripts/telos-private preflight --root . --check-github
+""",
+    "inventory/users.yml": """# Private values belong here; no passwords.
+users: []
+""",
+    "inventory/workstations.yml": """workstations: []
+""",
+    "policy/public-denylist.txt": """# One private username, hostname, address, or share name per line.
+# This file is private input to scripts/telos-private check-public.
+""",
+    "secrets/README.md": """# Encrypted secrets
+
+Commit only SOPS documents named `*.sops.yaml`, encrypted to age recipients.
+Decrypt into `plaintext/`, which Git ignores. Keep every age identity outside
+both Telos repositories. A public age recipient may be recorded in `.sops.yaml`;
+its corresponding private identity must never be recorded here.
+""",
+}
+
+
+def private_answers(args) -> tuple[str, ipaddress.IPv4Network]:
+    site = args.site_name
+    prefix = args.primary_prefix
+    if not site and not args.non_interactive:
+        site = input("Private site name: ").strip()
+    if not prefix and not args.non_interactive:
+        prefix = input("Primary RFC1918 IPv4 prefix (example 10.1.0.0/16): ").strip()
+    if not site or not SAFE_NAME.fullmatch(site):
+        die("site name must start with a letter and contain only lowercase letters, digits, or hyphens")
+    if not prefix:
+        die("primary prefix is required")
+    try:
+        network = ipaddress.ip_network(prefix, strict=True)
+    except ValueError:
+        die("primary prefix must be a canonical IPv4 CIDR")
+    if not isinstance(network, ipaddress.IPv4Network) or not network.is_private:
+        die("primary prefix must be private IPv4 space")
+    if network.prefixlen < 12 or network.prefixlen > 24:
+        die("primary prefix length must be between /12 and /24")
+    return site, network
+
+
+def bootstrap(args) -> None:
+    target = args.target.resolve()
+    if target.exists():
+        die(f"refusing to overwrite existing path: {target}")
+    if not SAFE_NAME.fullmatch(args.project_name):
+        die("project name must start with a letter and contain only lowercase letters, digits, or hyphens")
+    site, network = private_answers(args)
+    target.mkdir(parents=False)
+    for relative, content in FILES.items():
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    (target / "project.json").write_text(
+        json.dumps({"project": args.project_name, "schema": 1}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (target / "inventory/network.yml").write_text(
+        f"site:\n  name: {site}\n  primary_prefix: {network}\nnetworks: []\n",
+        encoding="utf-8",
+    )
+    (target / "review").mkdir(exist_ok=True)
+    (target / "review/redacted-summary.txt").write_text(
+        "Private Telos bootstrap review\n"
+        "site name: configured (value redacted)\n"
+        f"primary network: private IPv4 /{network.prefixlen} (value redacted)\n"
+        "users: 0\nnetworks: 0\nworkstations: 0\n"
+        "plaintext secrets: none\nremote: not created\n",
+        encoding="utf-8",
+    )
+    if args.git_init:
+        subprocess.run(["git", "-C", str(target), "init"], check=True)
+    print(f"created private skeleton: {target}")
+    print(
+        f"review: site configured; private IPv4 /{network.prefixlen}; "
+        "0 users; 0 networks; 0 workstations; no remote created"
+    )
+
+
+def git_output(root: Path, *command: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *command],
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def preflight(args) -> None:
+    root = args.root.resolve()
+    if not (root / ".git").exists():
+        die(f"not an initialized Git repository: {root}")
+    tracked = set(git_output(root, "ls-files").splitlines())
+    unsafe = sorted(
+        p for p in tracked
+        if p.startswith("secrets/plaintext/") or Path(p).suffix in {".key", ".keytab", ".pem", ".pfx", ".p12", ".env"}
+    )
+    if unsafe:
+        die("unsafe tracked secret material:\n" + "\n".join(unsafe))
+    origin = git_output(root, "remote", "get-url", "origin")
+    if not origin:
+        print("preflight passed; no origin remote configured")
+        return
+    if not args.check_github:
+        die("origin exists; rerun with --check-github to verify repository visibility")
+    result = subprocess.run(
+        ["gh", "repo", "view", origin, "--json", "visibility"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode:
+        die("could not verify GitHub repository visibility")
+    try:
+        visibility = json.loads(result.stdout)["visibility"]
+    except (KeyError, json.JSONDecodeError):
+        die("GitHub visibility response was invalid")
+    if visibility.upper() != "PRIVATE":
+        die(f"refusing non-private GitHub remote (visibility={visibility})")
+    print("preflight passed; GitHub reports origin visibility PRIVATE")
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    sub = result.add_subparsers(required=True)
+    create = sub.add_parser("bootstrap")
+    create.add_argument("--target", type=Path, default=ROOT.parent / "telos-private")
+    create.add_argument("--project-name", default="telos-private")
+    create.add_argument("--site-name")
+    create.add_argument("--primary-prefix")
+    create.add_argument("--non-interactive", action="store_true")
+    create.add_argument("--git-init", action="store_true")
+    create.set_defaults(function=bootstrap)
+    check = sub.add_parser("check-public")
+    check.add_argument("--public-root", type=Path, default=ROOT)
+    check.add_argument("--identifiers", type=Path, required=True)
+    check.set_defaults(function=check_public)
+    flight = sub.add_parser("preflight")
+    flight.add_argument("--root", type=Path, default=ROOT.parent / "telos-private")
+    flight.add_argument("--check-github", action="store_true")
+    flight.set_defaults(function=preflight)
+    return result
+
+
+if __name__ == "__main__":
+    args = parser().parse_args()
+    args.function(args)

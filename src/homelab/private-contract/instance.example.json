@@ -1,0 +1,54 @@
+{
+  "contract_version": 1,
+  "site": {
+    "label": "example-site",
+    "timezone": "Etc/UTC"
+  },
+  "identity": {
+    "dns_domain": "lab.home.arpa",
+    "kerberos_realm": "LAB.HOME.ARPA",
+    "netbios_name": "EXAMPLE"
+  },
+  "networks": [
+    {
+      "id": "managed-clients",
+      "purpose": "Synthetic managed-client example",
+      "vlan": 20,
+      "cidr": "10.77.1.0/28",
+      "gateway": "10.77.1.1",
+      "dhcp": {
+        "first": "10.77.1.5",
+        "last": "10.77.1.14"
+      },
+      "ssid": "EXAMPLE-MANAGED",
+      "wifi_secret_ref": "sops://homelab/wifi/example-managed"
+    }
+  ],
+  "people": [
+    {
+      "account": "example-admin",
+      "groups": ["workstation-admins"],
+      "enabled": true
+    },
+    {
+      "account": "example-user",
+      "groups": ["workstation-users"],
+      "enabled": true
+    }
+  ],
+  "machines": [
+    {
+      "hostname": "sample-laptop",
+      "role": "workstation",
+      "network": "managed-clients",
+      "ipv4": "10.77.1.4",
+      "mac_addresses": ["02:00:00:00:00:01"],
+      "disk_serials": ["SYNTHETIC-NOT-A-REAL-SERIAL"],
+      "profile": "dual-boot-example"
+    }
+  ],
+  "secret_refs": {
+    "domain-bootstrap": "sops://homelab/domain/bootstrap",
+    "local-rescue": "sops://homelab/workstations/local-rescue"
+  }
+}
