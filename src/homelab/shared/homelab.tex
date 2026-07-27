@@ -50,6 +50,32 @@
   {\footnotesize\textbf{Expect:} #1\par}
   \end{minipage}\end{minipage}\par\vspace{0.3em}}
 
+% A question that must have a concrete answer before the next critical action.
+% It is intentionally distinct from a gate: gates state policy; questions make
+% the operator compare that policy with the machine in front of them.
+\newcommand{\askbefore}[1]{%
+  \par\vspace{0.2em}
+  \noindent\begin{minipage}{\linewidth}
+  \rule{\linewidth}{0.3pt}\par\vspace{0.18em}
+  {\footnotesize\textbf{Answer before continuing:} #1\par}
+  \vspace{0.18em}\rule{\linewidth}{0.3pt}
+  \end{minipage}\par\vspace{0.3em}}
+
+% Explicitly record the non-happy path next to the evidence it interprets.
+\newcommand{\failurebranch}[1]{%
+  \par\vspace{0.05em}
+  \noindent\begin{minipage}{\linewidth}
+  \hspace*{0.6em}\begin{minipage}{\dimexpr\linewidth-0.6em\relax}
+  {\footnotesize\textbf{If not:} #1\par}
+  \end{minipage}\end{minipage}\par\vspace{0.3em}}
+
+% A compact command/evidence pair for read-only verification sequences.
+\newcommand{\proofpair}[2]{%
+  \par\needspace{3\baselineskip}\noindent
+  \begin{tabularx}{\linewidth}{@{}p{0.34\linewidth}L@{}}
+  \texttt{\footnotesize #1} & {\footnotesize #2}\\
+  \end{tabularx}\vspace{0.15em}}
+
 % \begin{gate} now lives in common/preamble.tex, shared with the other
 % projects that document procedures.
 

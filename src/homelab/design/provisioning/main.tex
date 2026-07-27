@@ -118,6 +118,98 @@ plus that typed confirmation \emph{is} the authorization model.
 \bottomrule
 \end{tabularx}
 
+\newpage
+\section{Interactive state machine}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=7mm and 7mm,
+  s/.style={draw,rounded corners=1pt,minimum width=2.25cm,
+    minimum height=.82cm,align=center,font=\scriptsize},
+  flow/.style={-{Stealth[length=1.6mm]},line width=.6pt},
+  fail/.style={flow,dashed},
+  lab/.style={font=\scriptsize,fill=white,inner sep=1pt}]
+\node[s] (collect) {collect facts\\read-only};
+\node[s,right=of collect] (eligible) {refuse ineligible\\targets};
+\node[s,right=of eligible] (ask) {ask applicable\\questions};
+\node[s,right=of ask] (valid) {validate whole\\plan};
+\node[s,right=of valid] (summary) {freeze summary\\and step plan};
+\node[s,below=10mm of summary] (serial) {match full\\typed serial};
+\node[s,left=of serial] (execute) {execute once\\stop on failure};
+\node[s,left=of execute] (record) {write manifest\\power off};
+\node[s,below=10mm of eligible] (refuse) {refuse or cancel\\without writes};
+\node[s,below=10mm of execute] (failed) {stop immediately\\preserve evidence};
+\draw[flow] (collect)--(eligible);
+\draw[flow] (eligible)--(ask);
+\draw[fail] (eligible)--node[lab,left]{no eligible disk}(refuse);
+\draw[flow] (ask)--(valid);
+\draw[fail] (valid) to[bend left=35] node[lab,above]{re-ask cause} (ask);
+\draw[flow] (valid)--(summary);
+\draw[flow] (summary)--(serial);
+\draw[fail] (serial.east) -- ++(.65,0) |- node[lab,right]{mismatch} (refuse.east);
+\draw[flow] (serial)--(execute);
+\draw[flow] (execute)--(record);
+\draw[fail] (execute)--node[lab,right]{error}(failed);
+\end{tikzpicture}
+\end{center}
+
+The authorization gate occurs after discovery and validation but before the
+first write. No answer gathered earlier is authorization. After execution
+starts, the program never loops back into questioning and never attempts an
+invented rollback.
+
+\section{Operator dialogue}
+\begin{tabularx}{\linewidth}{@{}p{.19\linewidth}p{.36\linewidth}L@{}}
+\toprule
+\textbf{Moment} & \textbf{Question shown or asked aloud} & \textbf{Evidence before continuing}\\
+\midrule
+Discovery & ``Do chassis identity, UEFI mode, disk serials and permanent MACs describe the machine in front of you?'' & Hardware fact report saved before any prompt; removable and ineligible devices listed separately with reasons.\\
+Profile & ``Controller or Workstation --- which boundary will this machine own?'' & Resulting required questions previewed; Controller requires one wired permanent MAC and a four-input network plan.\\
+Disk & ``Which eligible serial is the intended target, and where is its backup proof?'' & Model, serial, size, bus and existing signatures displayed together; operator identifies restore source if any data is expected.\\
+Network & ``Can this subnet, pool and Controller address coexist without a router or a second authority?'' & Derived network/broadcast/netmask shown; address outside pool; pool excludes network and broadcast; no gateway field exists.\\
+Summary & ``If this exact summary were printed after failure, would it identify every intended write?'' & Partition table, mount layout, host identity, interface binding and execution steps frozen to a digest.\\
+Authorization & ``Type the full target serial to erase only this disk.'' & Exact, case-sensitive match to the frozen disk identity; paste is accepted only as text, never as a generic confirmation.\\
+Completion & ``Does the on-disk manifest match the frozen summary and console copy?'' & Read-back from mounted target, digest comparison, clean unmount and explicit poweroff event.\\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Questions are controls}
+Each prompt should eliminate one class of ambiguity and expose the evidence
+needed to answer it. If an operator must remember an unstated fact, consult a
+second screen, or interpret a bare device name such as \texttt{/dev/sda}, the
+prompt has failed even when its validator accepts the input.
+\end{telospanel}
+
+\section{Execution ledger and evidence}
+\begin{tabularx}{\linewidth}{@{}p{.18\linewidth}p{.27\linewidth}L@{}}
+\toprule
+\textbf{Step} & \textbf{Precondition} & \textbf{Recorded proof}\\
+\midrule
+Erase and partition & Serial still resolves to the same whole-disk device; frozen size and identity unchanged & Before/after partition-table dumps; command, exit status, monotonic timestamps.\\
+Encrypt & Target partitions match the frozen plan; secrets absent from logs & LUKS2 metadata summary and UUID, key-source class, successful unlock test; never the passphrase.\\
+Filesystems & Mapped device and expected UUIDs are unique & Filesystem labels, UUIDs, Btrfs subvolume inventory and mount options.\\
+Base install & Artifact hashes equal the served manifest & Manifest digest, package database snapshot, repository snapshot date and failed-package output if any.\\
+Boot artifacts & ESP mounted from the selected disk; kernel/initramfs inputs complete & Boot-entry listing, UKI hashes, ESP free space and firmware-entry read-back.\\
+Network and SSH & Permanent MAC and administrator public-key fingerprint frozen & Generated unit/config digests; offline syntax checks; no private key or DHCP service activation.\\
+Manifest & All prior successful ledger entries available & Read-back from new root equals console copy; mode is \texttt{development-proof}; secrets explicitly excluded.\\
+Shutdown & Filesystems synced and unmounted & Unmount ledger, final poweroff request and absence of an automatic reboot path.\\
+\bottomrule
+\end{tabularx}
+
+\section{Failure branches}
+\begin{tabularx}{\linewidth}{@{}p{.21\linewidth}p{.28\linewidth}L@{}}
+\toprule
+\textbf{Failure point} & \textbf{Immediate action} & \textbf{Recovery rule}\\
+\midrule
+Before serial gate & Refuse or cancel; make no writes & Correct the answer or hardware and begin a new run. Preserve the rejected fact report when diagnosing discovery.\\
+Identity changes at gate & Cancel even if the typed serial matched the earlier display & Rescan from zero. A device path, capacity or serial change invalidates the frozen summary.\\
+Partition/encryption & Stop; do not format further partitions & Treat target contents as indeterminate. Export ledger, power off, inspect from separate rescue media, then restart a full install.\\
+Artifact mismatch & Stop before using the artifact & Quarantine artifact and manifest together. Repair publication; never ``update the checksum'' without reproducing the artifact.\\
+Package or boot failure & Stop; leave later configuration undone & Retain logs and mounted target for read-only inspection. Reinstallation, not ad hoc continuation, is the supported recovery.\\
+Manifest read-back mismatch & Do not declare completion or relocate & Preserve both copies, unmount, power off and investigate from rescue media. The install is failed even if it boots.\\
+Power loss & Assume the active step is incomplete & Boot rescue media, collect read-only storage facts and start again. There is no resume token and no inferred rollback.\\
+\bottomrule
+\end{tabularx}
+
 \section{What cannot be offered}
 Some things are excluded from the choices rather than merely warned about,
 because a warning is something an operator can read past at one in the morning.
@@ -144,6 +236,52 @@ metal.
 \telosfact{The topology enforces the boundary}{The virtual lab has no user networking and no default NIC --- only a socket segment between guests. ADR 0011's no-routing rule is a property of the lab, not a setting in it.}
 \telosfact{Fresh firmware every run}{Each guest gets its own OVMF variable store, so boot entries from one run cannot make a later run pass.}
 \end{telosfacts}
+
+\section{Acceptance matrix}
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.33\linewidth}L@{}}
+\toprule
+\textbf{Claim} & \textbf{Measurable acceptance} & \textbf{Retained proof}\\
+\midrule
+No unattended path & Every run encounters the serial prompt; EOF, timeout, empty input, unknown prompt and wrong serial all exit before the first write & PTY transcript plus write-driver call count of zero for each negative case.\\
+Correct exclusion & Removable, serial-less and sub-64-GiB disks are never selectable across the device-fixture matrix & Fact fixture, displayed rejection reason and eligible-list snapshot.\\
+Prompt relevance & Controller-only questions never appear for a Workstation; every unexpected prompt fails the harness & Prompt-registry coverage report and transcript for both profiles.\\
+Validation locality & Each invalid network answer is rejected at the prompt that made the plan invalid & Boundary-value matrix covering network/broadcast, pool order, overlap and Controller-in-pool cases.\\
+Stop on first error & For an injected failure at every execution step, no later driver method is called & Ordered call ledger for each fault injection, with the first error retained verbatim.\\
+Manifest fidelity & On-disk and console manifests are byte-identical and represent the frozen summary & Digest and semantic comparison after a successful QEMU install.\\
+Bootability & Fresh OVMF state boots both installed kernels and rescue artifact from the target disk & Serial transcript, booted kernel identity and storage UUID assertions.\\
+Network isolation & QEMU guests have no default NIC, user networking or host route & QEMU argv, socket-topology inventory and guest route table.\\
+Repeatability & Three clean lab runs from new disks and new OVMF variables produce equal semantic manifests & Run IDs, artifact hashes and explained differences limited to declared UUID/time fields.\\
+\bottomrule
+\end{tabularx}
+
+\section{End-to-end proof sequence}
+\begin{enumerate}
+\item Build artifacts once and freeze their manifest digest. Record the source
+revision and tool versions.
+\item Run negative PTY cases first: unknown prompt, wrong serial, EOF and every
+validator boundary. Assert zero write calls.
+\item Run the same dialogue in QEMU on a fresh virtual disk and OVMF variable
+store. Inject one failure at each write step and prove that the ledger ends
+there.
+\item Complete a successful Controller install. Before booting it, mount the
+target read-only and compare its manifest, layout and boot artifacts with the
+frozen summary.
+\item Boot the installed disk with no bootstrap host dependency. Record kernel,
+root UUID, subvolumes, mode and interface binding; verify DHCP remains stopped.
+\item Power off, connect the virtual Controller to the isolated socket segment,
+then perform the separate first-boot activation tests. Provisioning acceptance
+ends at poweroff; network-authority acceptance belongs to the Controller
+runbook.
+\end{enumerate}
+
+\begin{gate}{Final proof must survive review}
+The release bundle contains source revision, artifact and prompt-registry
+digests, hardware fixtures, transcripts, ordered driver ledgers, injected-fault
+results, QEMU topology, fresh-firmware boot evidence, manifests and all
+explained differences. A successful screenshot or a booting machine alone is
+not evidence that the erase boundary, isolation boundary or stop-on-error rule
+worked.
+\end{gate}
 
 \begin{telospanel}{A bug this found}
 The rule that matters most is that the Controller's address must never sit

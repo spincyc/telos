@@ -12,6 +12,35 @@ artifacts, pin one interface, create one account. Everything else is a
 repository, a commit and a converge run. A machine is not a thing that was set
 up once; it is a thing that is continuously made to match what is written down.
 
+\section{A run is a measured state transition}
+\begin{center}
+\begin{tikzpicture}[node distance=8mm and 10mm,font=\scriptsize]
+\node[role] (identify) {identify\\manifest read back};
+\node[role,right=of identify] (plan) {plan\\check + diff};
+\node[role,right=of plan] (apply) {apply\\bounded changes};
+\node[role,below=of apply] (measure) {measure\\service evidence};
+\node[role,left=of measure] (repeat) {repeat\\zero changes};
+\node[role,left=of repeat] (record) {accepted\\commit + recap};
+\draw[flow] (identify)--node[hlabel,above]{profile guard}(plan);
+\draw[flow] (plan)--node[hlabel,above]{human review}(apply);
+\draw[flow] (apply)--node[hlabel,right]{handlers settle}(measure);
+\draw[flow] (measure)--node[hlabel,above]{independent checks}(repeat);
+\draw[flow] (repeat)--node[hlabel,above]{idempotent}(record);
+\draw[flow,dashed] (plan) to[bend right=34]
+  node[hlabel,below]{wrong profile: stop}(identify);
+\draw[flow,dashed] (measure) to[bend left=28]
+  node[hlabel,below]{failed invariant: rollback/repair}(plan);
+\end{tikzpicture}
+\end{center}
+
+\begin{gate}{A green task recap is not acceptance}
+Ansible reports whether modules completed and whether they claim to have
+changed state. Acceptance also needs observations from the host and a client:
+bound sockets, active units, generated-file digests, lease behavior, route
+absence and a second zero-change plan. The playbook cannot be its own only
+witness.
+\end{gate}
+
 \section{Where the line falls}
 \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}L@{}}
 \toprule
@@ -146,6 +175,53 @@ assert byte equality between what convergence installs and what the generator
 produces, so the drift cannot happen silently.
 \end{telospanel}
 
+\section{Evidence travels with the change}
+A convergence record binds intent, implementation and observation. At minimum
+it names the repository commit, inventory target, manifest profile, first-run
+recap and second check-mode recap. For generated files it also records a digest
+from the generator side and one read back from the host.
+
+\begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}p{0.29\linewidth}L@{}}
+\toprule
+\textbf{Command or source} & \textbf{Independent observation} &
+\textbf{Acceptance}\\
+\midrule
+\texttt{cat /etc/homelab/manifest.json} & parsed profile and disposable flag &
+Exact intended profile before any role changes state.\\
+\texttt{ansible-playbook -{}-check -{}-diff} & reviewed task/file diff &
+No unexplained deletion, restart or secret-bearing value.\\
+generator output & host-side \texttt{sha256sum} & Byte-identical configuration,
+not merely valid syntax.\\
+\texttt{systemctl is-active} & \texttt{ss -lntup} and client query & Required
+units active and bound only where designed.\\
+second check run & recap with changed count & Zero changed and zero failed.\\
+\bottomrule
+\end{tabularx}
+
+\askbefore{Does the manifest read-back name the intended profile? Does the
+reviewed diff correspond to the reviewed commit? Which external observation
+will prove each restarted network service is safe and reachable?}
+
+\section{Failure branches are designed states}
+\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}p{0.30\linewidth}L@{}}
+\toprule
+\textbf{Observed failure} & \textbf{Immediate state} & \textbf{Next evidence}\\
+\midrule
+Profile mismatch & No changes; play ends failed & Capture manifest and
+inventory target; correct identity, not the guard.\\
+Generator refusal & Existing installed file remains & Save rejected inputs and
+generator diagnostic; correct the network plan.\\
+Config syntax failure & Service not restarted & Preserve candidate and syntax
+output; fix generation or role logic.\\
+Activation invariant fails & Both DHCP and HTTP services stopped & Read
+first-boot journal; identify interface, address or competing DHCP authority.\\
+Second run changes & Not accepted & Name the changing task and before/after
+value; repair idempotence before another mutation.\\
+Directory unavailable & Local break-glass path remains & Prove local key login
+at console/LAN before attempting join or auth changes.\\
+\bottomrule
+\end{tabularx}
+
 \section{Getting back in when the directory is down}
 The directory is a bootstrap dependency. While it is unavailable, only cached
 logins and one local account work.
@@ -184,6 +260,23 @@ activation & pending & First boot refuses on a segment that already has DHCP, an
 converge & pending & Ansible converges the installed Controller, and a second run reports no changes.\\
 \bottomrule
 \end{tabularx}
+
+\section{Acceptance measurements}
+\proofpair{sha256sum <generated-file>}{Matches the digest computed from the
+reviewed generator output for this commit and overlay.}
+\proofpair{systemctl is-active dnsmasq nginx}{Both active only after activation
+preflight; partial activation is failure.}
+\proofpair{ss -lntup}{Listeners match the intended managed address and ports;
+no wildcard exposure appears unexpectedly.}
+\proofpair{ip route show default}{On an isolated client, no output; the
+Controller did not advertise a nonexistent router.}
+\proofpair{ansible-playbook ... -{}-check}{Recap reports zero changed and zero
+failed after the applying run.}
+
+\noindent The retained record is small: date/time, operator, reviewed commit,
+target manifest digest, generated-file digests, both recaps, client lease and
+route observations, and any explicitly pending matrix stage. Secrets and
+private-overlay contents are referenced by identifier, never copied into it.
 
 \begin{gate}{Pending is reported, never skipped}
 A stage that cannot run yet prints what it is waiting for and the matrix does

@@ -33,6 +33,31 @@ subnet, Controller address, DHCP pool, and the managed interface's MAC address.
 encrypted disk is unrecoverable, and that is by design.
 \end{gate}
 
+\section{The rebuild state machine}
+Every arrow below has an observable boundary. Do not advance because elapsed
+time or familiar-looking output makes the next state seem likely.
+
+\begin{center}
+\begin{tikzpicture}[node distance=7mm and 8mm,font=\scriptsize]
+\node[role] (prepared) {prepared\\tests + digest};
+\node[role,right=of prepared] (booted) {installer booted\\no disk writes};
+\node[role,right=of booted] (authorized) {authorized\\serial matched};
+\node[role,below=of authorized] (off) {installed\\powered off};
+\node[role,left=of off] (active) {activated\\services atomic};
+\node[role,left=of active] (accepted) {accepted\\record signed};
+\draw[flow] (prepared)--node[hlabel,above]{verified image}(booted);
+\draw[flow] (booted)--node[hlabel,above]{questions answered}(authorized);
+\draw[flow] (authorized)--node[hlabel,right]{destructive write}(off);
+\draw[flow] (off)--node[hlabel,above]{move while dark}(active);
+\draw[flow] (active)--node[hlabel,above]{measure + converge}(accepted);
+\draw[flow,dashed] (booted) to[bend right=35]
+  node[hlabel,below]{mismatch: stop}(prepared);
+\draw[flow,dashed] (active) to[bend left=26]
+  node[hlabel,below]{conflict: services off}(off);
+\end{tikzpicture}
+\rebuildcaption{Only recorded evidence moves the rebuild forward.}
+\end{center}
+
 \section{Stage 0 --- Prepare the bootstrap host}
 \governedby{ADR 0052}
 
@@ -55,6 +80,18 @@ sha256sum -c artifacts/manifest.sha256
 \end{shellblock}
 \expectthis{Every line reports \texttt{OK}. A mismatch means the artifact is not
 the one that was tested --- do not proceed. \governedby{ADR 0043, ADR 0048}}
+\failurebranch{Quarantine the mismatched image. Rebuild or reacquire it, then
+record both the expected and observed SHA-256; never repair the manifest to
+match an unexplained artifact.}
+
+\askbefore{What exact image filename and SHA-256 will be entered in the
+acceptance record? Which interface is connected to the bootstrap segment, and
+which other interfaces are physically or administratively down?}
+
+\proofpair{ip -br link}{Only the intended bootstrap interface is up on the
+bench segment; record its permanent MAC.}
+\proofpair{sha256sum artifacts/<image>}{The 64 hexadecimal digits exactly match
+the separately obtained manifest value.}
 
 \begin{gate}{If the network already has a DHCP server}
 Run the bootstrap dnsmasq in \textbf{ProxyDHCP} mode so it offers only boot
@@ -62,6 +99,10 @@ options and never addresses. Two address-assigning DHCP authorities on one
 layer-2 network is forbidden at every stage, including this one.
 \governedby{ADR 0008}
 \end{gate}
+
+\askbefore{Is the segment isolated, or is an existing DHCP authority present?
+Name the observation that proves the answer. If it is uncertain, use ProxyDHCP
+or stop; uncertainty never authorizes address service.}
 
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
@@ -116,6 +157,14 @@ action. \governedby{ADR 0019}
 
 \expectthis{The Archiso environment reaches a shell and the installer starts.
 It has made no change to any disk at this point and will not until Stage 3.}
+\failurebranch{If PXE fails, keep the target in firmware or the read-only live
+environment. Check link, lease/ProxyDHCP traffic, TFTP handoff, HTTP status and
+image digest in that order. Do not change target disks while diagnosing boot.}
+
+\proofpair{test -d /sys/firmware/efi}{Exit status zero proves UEFI boot; any
+failure means reboot and disable legacy/CSM.}
+\proofpair{lsblk -o NAME,SIZE,MODEL,SERIAL,TYPE}{Inventory only: record the
+candidate disk tuple before the installer asks for authorization.}
 
 \section{Stage 2 --- Answer, and read the summary}
 \governedby{ADR 0004, ADR 0045, ADR 0050}
@@ -147,6 +196,16 @@ Read the disk serial aloud against the label on the drive. Physical access plus
 this confirmation \emph{is} the authorization model --- there is no second
 approval anywhere. Selecting a profile has authorized nothing.
 \end{gate}
+
+\askbefore{Does the physical drive label match the summary's model, serial and
+size character for character? Is the managed-interface permanent MAC the one
+in the instance record? Is the Controller address outside the printed pool?
+If any answer is not an unqualified yes, which input will be corrected?}
+
+\proofpair{lsblk -dn -o MODEL,SERIAL,SIZE <device>}{The live tuple matches both
+the physical label and the installer summary; save the output with the record.}
+\proofpair{ip -br link}{The selected permanent MAC belongs to the connected
+managed interface and no interface was accepted by positional name alone.}
 
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
@@ -196,6 +255,12 @@ reboot. \governedby{ADR 0010}
 \expectthis{A clean poweroff, not a reboot. If the machine reboots into the
 installed system while still on the provisioning network, power it off before
 it can start DHCP.}
+\failurebranch{If installation stops before poweroff, photograph or capture the
+last successful phase and error, leave the target off, and inspect the log from
+the live environment. Never infer that an incomplete disk is bootable.}
+
+\askbefore{Has the installer displayed its final sync completion and requested
+no further input? Is the chassis visibly off before any cable is moved?}
 
 \section{Stage 4 --- Relocate, then first boot}
 Move the powered-off Controller to the isolated switch and power it on. Being
@@ -255,6 +320,14 @@ configured; and that no other DHCP authority answers on the segment.
 for both. If activation failed, both are stopped and \texttt{journalctl -u
 homelab-first-boot} states which check failed. A partial start is a failure.
 \governedby{ADR 0009, ADR 0012}}
+\failurebranch{Keep both services stopped. Capture
+\texttt{journalctl -u homelab-first-boot -b} and the competing DHCP server's
+MAC, if reported. Remove the conflict or correct the interface/address record;
+do not start either daemon by hand.}
+
+\askbefore{Is the Controller now cabled only to the intended isolated segment?
+What observation shows that no other DHCP authority answered before activation?
+Are both services stopped if any preflight check failed?}
 
 \section{Stage 5 --- Prove it}
 From a separate client on the isolated switch:
@@ -264,6 +337,15 @@ ip addr show          \# a lease inside the configured pool
 ip route show         \# no default route
 dig +short \placeholder{hostname}.home.arpa @\placeholder{controller-address}
 \end{shellblock}
+
+\proofpair{ip -4 -o addr show scope global}{Exactly one managed address, inside
+the configured pool; record address, prefix and client MAC.}
+\proofpair{ip -4 route show default}{No output and exit status zero. Any default
+route is an acceptance failure.}
+\proofpair{dig +short <host>.home.arpa @<controller>}{Exactly the recorded
+Controller address, with no extra answer.}
+\proofpair{curl -fsS -o /tmp/ipxe <boot-URL> \&\& sha256sum /tmp/ipxe}{HTTP
+succeeds and the observed digest matches the artifact manifest.}
 
 \begin{telosfacts}[0.30]
 \telosfact{Lease}{Inside the pool, and never the Controller's own address.}
@@ -286,6 +368,42 @@ ansible-playbook -i \placeholder{inventory} controller.yml --check
 \end{shellblock}
 \expectthis{The third run reports zero changed tasks. A role that is not
 idempotent is a role that will surprise you during an outage.}
+\failurebranch{Do not repeat the mutating run until it happens to look clean.
+Save the first and check-mode outputs, identify the task that remains changed
+or failed, correct its declared state, then restart with check mode.}
+
+\askbefore{Does check mode propose only intended changes? Can each destructive
+or service-restarting task be tied to the reviewed commit? Is the break-glass
+public key present while its private half remains off the Controller?}
+
+\section{Acceptance record}
+Do not call the Controller rebuilt until this record is complete. Attach command
+output rather than transcribing favorable fragments.
+
+\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}p{0.27\linewidth}L@{}}
+\toprule
+\textbf{Evidence} & \textbf{Record} & \textbf{Pass condition}\\
+\midrule
+Build identity & commit; image filename; SHA-256 & Commit reviewed; digest
+matches manifest.\\
+Target identity & model; serial; size; interface MAC & Physical label, live
+inventory and authorization summary agree.\\
+Network plan & subnet; address; pool; client lease & Address outside pool;
+lease inside; no default route.\\
+Activation & first-boot journal; service states & Preflight passed and both
+services active, or neither active.\\
+Artifacts & boot URL; observed SHA-256 & Fetch succeeds; digest matches.\\
+Convergence & first-run recap; second check recap & Intended changes applied;
+final changed count is zero.\\
+Recovery & recovery-UKI boot date; key-custody check & Non-destructive boot
+proved; off-host material located without exposing it.\\
+\bottomrule
+\end{tabularx}
+
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}Xp{0.12\linewidth}X@{}}
+Operator: & \hrulefill & Date/time: & \hrulefill\\[1.4em]
+Witness/reviewer: & \hrulefill & Record ID: & \hrulefill
+\end{tabularx}
 
 \section{Recovering instead of rebuilding}
 \begin{telosfacts}[0.24]

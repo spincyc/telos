@@ -151,6 +151,114 @@ install stage is deliberately small so that it can be fully tested; everything
 that changes often lives where changes are cheap and reversible.
 \end{telospanel}
 
+\section{State model: prove each boundary before crossing it}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm and 10mm,
+  state/.style={draw,rounded corners=1pt,minimum width=2.35cm,
+    minimum height=1.05cm,align=center,font=\small},
+  stop/.style={state,double},
+  flow/.style={-{Stealth[length=1.8mm]},line width=.65pt},
+  fail/.style={flow,dashed},
+  why/.style={font=\fontsize{5.5}{6.2}\selectfont,align=center,
+    fill=white,inner sep=.5pt}]
+\node[state] (bare) {bare hardware\\Controller absent};
+\node[state,right=of bare] (built) {installed\\powered off};
+\node[state,right=of built] (placed) {isolated switch\\services stopped};
+\node[stop,right=of placed] (live) {network authority\\healthy};
+\node[state,below=of live] (checkpoint) {checkpoint\\candidate update};
+\node[state,left=of checkpoint] (validated) {updated\\proof passed};
+\node[stop,left=of validated] (rollback) {known-good\\restored};
+\draw[flow] (bare)--(built);
+\draw[flow] (built)--(placed);
+\draw[flow] (placed)--(live);
+\draw[flow] (live)--(checkpoint);
+\draw[flow] (checkpoint)--(validated);
+\draw[flow] (validated)--(live);
+\draw[fail] (checkpoint)--(rollback);
+\draw[flow] (rollback.west) -| (placed.south);
+\end{tikzpicture}
+\end{center}
+
+Every arrow has an evidence requirement. ``Command returned zero'' is never
+enough: the observation must establish the property named on the arrow.
+
+\begin{tabularx}{\linewidth}{@{}p{.18\linewidth}p{.24\linewidth}L@{}}
+\toprule
+\textbf{Transition} & \textbf{Operator question} & \textbf{Required evidence}\\
+\midrule
+Absent $\rightarrow$ installed & Is this the intended chassis, disk serial and permanent MAC? & Printed and on-disk manifests agree; the selected disk is no longer offered as ambiguous; shutdown, not reboot, is the final event.\\
+Installed $\rightarrow$ placed & Is the destination segment physically isolated from every other DHCP authority? & Switch-port inventory or cable trace; Controller remains powered off until attached; no upstream/router port is present.\\
+Placed $\rightarrow$ authority & Do carrier, MAC, address and DHCP-silence checks all describe this exact segment? & Preflight transcript; packet capture covering the listen window; bound sockets; one test lease and matching forward/reverse DNS.\\
+Authority $\rightarrow$ updated & Can clients still boot while stateful roles remain intact? & Checkpoint identifier; package transaction; cold-boot record; DHCP/DNS/PXE probes; service-state hashes and application-specific health.\\
+Failure $\rightarrow$ restored & Did rollback restore the previous system without rewinding mutable data? & Booted checkpoint identity; excluded-subvolume inventory; repeated network probes; incident note retaining the failed candidate.\\
+\bottomrule
+\end{tabularx}
+
+\section{Activation runbook}
+\begin{enumerate}
+\item With power still off, trace \texttt{lan0} to the isolated switch. Ask:
+\emph{What observation would reveal an accidental uplink?} Record the answer
+and the port identifiers before applying power.
+\item Boot locally and unlock LUKS. Record the manifest mode, root subvolume,
+kernel command line and permanent MAC. A mismatch stops activation.
+\item Keep dnsmasq and nginx stopped. Observe the segment long enough to see
+ordinary client discovery traffic; any DHCPOFFER from another source is a hard
+stop. Silence is evidence only when the capture interface and filter are also
+recorded.
+\item Run the first-boot preflight. Compare its derived network, broadcast,
+pool and Controller address with the printed plan. The operator explicitly
+answers: \emph{Is the Controller address outside the pool? Is no router option
+present?}
+\item Start the bundled network unit. From a sacrificial client, renew a lease,
+resolve the Controller name and reverse address, fetch the manifest and begin
+one PXE boot. Save server logs and the client's observed values.
+\item Reboot the Controller from cold power. Repeat the same probes without
+editing configuration. Only this second pass establishes persistence.
+\end{enumerate}
+
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.27\linewidth}L@{}}
+\toprule
+\textbf{Check} & \textbf{Command or observation} & \textbf{Pass evidence}\\
+\midrule
+Interface identity & \texttt{networkctl status lan0}; permanent address from \texttt{ip -d link} & Configured MAC equals observed permanent MAC; exactly one managed link.\\
+No competing DHCP & packet capture of UDP 67/68 before activation & No DHCPOFFER except the Controller after activation; capture duration and interface recorded.\\
+Bound services & socket and unit inventory & dnsmasq bound only to \texttt{lan0}; nginx serves only the intended artifact root; both units active together.\\
+Lease and names & client renew; forward and reverse queries & Address inside pool, no default gateway, DNS points to Controller, forward and reverse answers agree.\\
+Boot service & client PXE request and artifact fetch & TFTP transfers only iPXE; HTTP checksum equals manifest; requested artifact is the current named build.\\
+Recovery & boot rescue UKI with normal root unavailable & Rescue userspace reaches local console and can inspect/unlock the encrypted root without network service.\\
+\bottomrule
+\end{tabularx}
+
+\section{Failure branches}
+\begin{center}
+\begin{tikzpicture}[
+  q/.style={draw,diamond,aspect=2.3,align=center,font=\scriptsize,
+    inner sep=1.5pt},
+  a/.style={draw,rounded corners=1pt,align=center,font=\scriptsize,
+    text width=2.7cm,minimum height=.75cm},
+  f/.style={-{Stealth[length=1.5mm]},line width=.55pt},
+  lab/.style={font=\scriptsize,fill=white,inner sep=1pt}]
+\node[q] (offer) {foreign offer?};
+\node[a,right=17mm of offer] (isolate) {stop activation\\remove uplink or authority\\repeat capture};
+\node[q,below=11mm of offer] (identity) {MAC and carrier\\match plan?};
+\node[a,right=17mm of identity] (repair) {keep units stopped\\correct cabling or manifest\\do not rename blindly};
+\node[q,below=11mm of identity] (probe) {all client probes\\pass twice?};
+\node[a,right=17mm of probe] (bundle) {stop dnsmasq + nginx\\retain logs and capture\\repair, then restart at preflight};
+\node[a,below=11mm of probe] (accept) {record proof bundle\\mark authority healthy};
+\draw[f] (offer)--node[lab,above]{yes}(isolate);
+\draw[f] (offer)--node[lab,left]{no}(identity);
+\draw[f] (identity)--node[lab,above]{no}(repair);
+\draw[f] (identity)--node[lab,left]{yes}(probe);
+\draw[f] (probe)--node[lab,above]{no}(bundle);
+\draw[f] (probe)--node[lab,left]{yes}(accept);
+\end{tikzpicture}
+\end{center}
+
+Never ``test around'' a failed bundle member by leaving the other running. A
+partial DHCP/DNS/PXE service is a failed Controller, and its evidence bundle
+must retain the first failure rather than only the successful retry.
+
 \section{Optional roles}
 \begin{telosfacts}[0.22]
 \telosfact{Services}{Homebridge, openHAB and similar, as Podman quadlets with host networking --- required, because HomeKit and UPnP discovery depend on mDNS and do not survive bridged container networking. USB radios bound by stable \texttt{by-id} path. Application state on its own subvolume with its own backup, because its restore point is not the operating system's. Disabled by default. \governedby{ADR 0054}}
@@ -166,6 +274,28 @@ that changes often lives where changes are cheap and reversible.
 \telosfact{Known defects to fix in B}{The key separation in ADRs 0033--0035 is notional once ADR 0039 gives both media one passphrase; the backup's independence is defeated by sharing that passphrase; and ADR 0030's additive trust model may be infeasible on firmware that only permits \texttt{db} changes from Setup Mode. All three are recorded rather than rediscovered. \governedby{ADR 0057}}
 \telosfact{No system passes}{Final acceptance until Milestone B is complete.}
 \end{telosfacts}
+
+\section{Measurable acceptance}
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.31\linewidth}L@{}}
+\toprule
+\textbf{Property} & \textbf{Threshold} & \textbf{Final proof}\\
+\midrule
+Bootstrap independence & Zero Controller-hosted prerequisites used during a bare-metal rebuild & Start with Controller powered off and storage unavailable; rebuild from offline instructions, installer and recorded inputs.\\
+Network authority & Zero foreign offers; exactly one Controller offer per successful discovery & Timestamped capture spanning preflight and three client renewals, plus lease and DNS records.\\
+Cold recovery & Three consecutive cold boots return DHCP, DNS and PXE without intervention after LUKS unlock in Milestone A & Power-event log and identical automated probe reports. Milestone B additionally requires the approved unattended unlock path.\\
+Rollback & Failed system candidate reverted within 30 minutes; mutable service state neither rewound nor silently advanced by the rollback & Before/after checkpoint IDs, subvolume generations, probe report and application-state check.\\
+Rebuild fidelity & Rebuilt manifest matches recorded role, disk, MAC and network inputs; every declared package/service difference is explained & Manifest diff, configuration diff, acceptance transcript and signed-off exceptions.\\
+Safety boundary & No production data or production signing material on a \texttt{development-proof} system & Storage inventory and manifest-mode assertion included in the proof bundle.\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Final proof is a bundle, not a verdict}
+Acceptance consists of the input manifest, cable/port record, preflight and
+packet capture, checkpoint identifiers, cold-boot transcripts, client probe
+results, recovery exercise and explained diffs. It passes only when a second
+operator can trace every claimed boundary to an observation and reproduce the
+probe without privileged knowledge.
+\end{gate}
 
 \begin{gate}{The bootstrap rule}
 The Controller rebuild procedure must never require a functioning Controller to
