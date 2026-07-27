@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260727.005`
+Document version: `20260727.006`
 
 Status: active implementation
 
@@ -82,7 +82,7 @@ online-acquisition/offline-execution split are in
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Offline controller media and installation | Commit `386d97c` reproducibly builds controller seed SHA-256 `6af5008493b229c3a91901934d98b2121c9c7bfc3a041117d4fa8d0dcd8d7aee`; the installed `bootstrap-dc` booted from UEFI/systemd-boot on ext4 with locked root and working `local-rescue` sudo. | pass |
+| Offline controller media and installation | Commit `00a209f` reproducibly builds controller seed SHA-256 `a73a1d5140010fed401c4f9581f87af0989db2eb33106260c9caf8c05b8be212`; the installed `bootstrap-dc` booted from UEFI/systemd-boot on ext4 with locked root and working `local-rescue` sudo. | pass |
 | Installed controller safety gate | `homelab-network-attach-preflight` verified forwarding off, SSH root/password login disabled, authority services masked and inactive, and no provisioning/authority ports listening. | pass |
 | Manual isolated rehearsal | The operator ran the installed preflight successfully in the disposable controller and powered it off normally. | pass |
 | Unattended isolated rehearsal | `homelab/var/simulation/evidence/20260727T184229Z-1971156-b2907fed/result.json` records controller preflight, single DHCP authority, client continuity, and unchanged host state. | pass |
@@ -149,7 +149,7 @@ Other present local inputs:
 |---|---|
 | Arch Linux 2026.07.01 x86-64 ISO | `homelab/var/media/arch/archlinux-2026.07.01-x86_64.iso`; SHA-256 `e86295dc0bdf9b85a5a9256810c553239689d2ae8e80eeec81b4e2e910d8a6c0`; receipt is adjacent. |
 | iPXE `wimboot` | `homelab/var/media/wimboot`; SHA-256 `5f067ccdc4d084d5bf77b6c853bd0f8402dfc2b4cd1b103d358993ae97fae8e3`. |
-| Controller seed | Commit `386d97c`; `homelab/var/seed/telos-controller-seed.iso`; SHA-256 `6af5008493b229c3a91901934d98b2121c9c7bfc3a041117d4fa8d0dcd8d7aee`. |
+| Controller seed | Commit `00a209f`; `homelab/var/seed/telos-controller-seed.iso`; SHA-256 `a73a1d5140010fed401c4f9581f87af0989db2eb33106260c9caf8c05b8be212`; 267 package archives and 545 receipted payloads. |
 
 All paths under `homelab/var/` are disposable, ignored cache or evidence.
 Fresh-clone reconstruction rules are in
