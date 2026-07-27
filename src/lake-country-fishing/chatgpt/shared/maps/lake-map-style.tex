@@ -1,7 +1,16 @@
 % ChatGPT edition map primitives. Original monochrome drawings; no Claude map
 % geometry or generated output is imported.
 \tikzset{
-  cgshore/.style={draw=black,line width=1pt,fill=white},
+  % The lake geometry is locked to the independently checked shoreline.
+  % A sub-point random-step stroke supplies graphite tooth without moving the
+  % deterministic bathymetry, scale, or labels.
+  cgshore/.style={draw=black!86,line width=.82pt,fill=black!1.5,
+    decorate,decoration={random steps,segment length=2.2pt,amplitude=.14pt},
+    preaction={draw=black!24,line width=1.45pt},
+    path picture={
+      \node[inner sep=0pt,opacity=.38] at (path picture bounding box.center)
+        {\includegraphics[width=14cm,height=14cm]{lake-country-fishing/shared/art/water-graphite.png}};
+    }},
   cgten/.style={draw=black,line width=.5pt},
   cgtwenty/.style={draw=black,line width=.42pt,dash pattern=on 7pt off 1.5pt},
   cgforty/.style={draw=black,line width=.35pt,dash pattern=on 4pt off 1.5pt},

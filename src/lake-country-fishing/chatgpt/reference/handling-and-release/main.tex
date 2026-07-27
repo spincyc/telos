@@ -39,17 +39,21 @@ Has air exposure stopped being brief? Would cutting now cause less injury?
 \newpage
 \section{Support map}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round]
-\draw[very thick] (0,1)..controls(1.2,2.1)and(4.7,2.1)..(6.4,1)
- ..controls(4.8,-.05)and(1.25,-.05)..cycle;
-\draw (6.4,1)--(7.3,1.65)--(7.1,1)--(7.3,.35)--cycle;
-\draw[very thick] (1.1,.35) arc[start angle=190,end angle=350,x radius=.75,y radius=.4];
-\draw[very thick] (4.55,.25) arc[start angle=190,end angle=350,x radius=.85,y radius=.4];
-\node[font=\scriptsize,align=center] at(1.1,-.45){hand under\\head/shoulder};
-\node[font=\scriptsize,align=center] at(4.55,-.45){hand under\\belly or tail wrist};
-\draw[-{Latex}] (1.1,-.05)--(1.35,.45);
-\draw[-{Latex}] (4.55,-.05)--(4.45,.4);
-\node[font=\small,anchor=west] at(7.55,1){level, never hanging};
+\begin{tikzpicture}
+\node[inner sep=0] (plate) {\includegraphics[width=.94\linewidth]
+  {lake-country-fishing/chatgpt/reference/handling-and-release/art/two-point-support-graphite.png}};
+\node[font=\scriptsize,fill=white,align=center] at
+  ([xshift=-3.4cm,yshift=-2.35cm]plate.center) {support beneath\\head/shoulder};
+\node[font=\scriptsize,fill=white,align=center] at
+  ([xshift=2.3cm,yshift=-2.35cm]plate.center) {support beneath\\belly near tail wrist};
+\draw[-{Latex},line width=.55pt]
+  ([xshift=-3.4cm,yshift=-2.05cm]plate.center) --
+  ([xshift=-3.05cm,yshift=-.75cm]plate.center);
+\draw[-{Latex},line width=.55pt]
+  ([xshift=2.3cm,yshift=-2.05cm]plate.center) --
+  ([xshift=2.0cm,yshift=-.7cm]plate.center);
+\node[font=\small\bfseries,fill=white] at
+  ([yshift=2.45cm]plate.center) {level and fully supported --- never hanging};
 \end{tikzpicture}
 \end{center}
 \begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}X@{}}

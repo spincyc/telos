@@ -91,7 +91,9 @@
 % black-only printer exactly as it does on screen.
 % ---------------------------------------------------------------------------
 \tikzset{
-  shore/.style={draw=telosink,line width=1.1pt},
+  shore/.style={draw=telosink,line width=.9pt,decorate,
+    decoration={random steps,segment length=2.2pt,amplitude=.14pt},
+    preaction={draw=telosmute,line width=1.5pt}},
   contour5/.style={draw=telosink,line width=0.5pt},
   contour10/.style={draw=telosink,line width=0.42pt},
   contour20/.style={draw=telosmute,line width=0.38pt},
