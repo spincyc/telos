@@ -173,12 +173,12 @@ check: check-tools
 	@$(PYTHON) scripts/research-library
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
-	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -q
+	@$(PYTHON) -m unittest discover -s homelab/tests -t . -q
 
 # Homelab: the tests are pure Python and need nothing installed; the lab needs
 # QEMU and OVMF and says so when they are absent.
 homelab-test:
-	@cd homelab && $(PYTHON) -m unittest discover -s tests -t . -v
+	@$(PYTHON) -m unittest discover -s homelab/tests -t . -v
 
 homelab-lab:
 	@cd homelab && $(PYTHON) -c "import sys; sys.path.insert(0,'qemu'); import lab; \
@@ -581,10 +581,12 @@ homelab-pxe-all:
 		BASE_URL='$(WINDOWS_BASE_URL)'
 
 homelab-pxe-test:
-	@cd homelab && $(PYTHON) -m unittest \
-		tests.test_pxe_release tests.test_pxe_controller_target \
-		tests.test_arch_workstation_pxe tests.test_windows_pxe \
-		tests.test_pxe_deploy -v
+	@$(PYTHON) -m unittest \
+		homelab.tests.test_pxe_release \
+		homelab.tests.test_pxe_controller_target \
+		homelab.tests.test_arch_workstation_pxe \
+		homelab.tests.test_windows_pxe \
+		homelab.tests.test_pxe_deploy -v
 
 homelab-pxe-verify:
 	@if [ -z '$(RELEASE)' ]; then \
@@ -628,7 +630,7 @@ homelab-arch-update-check:
 		test "$$rc" -eq 0 -o "$$rc" -eq 75
 
 homelab-arch-update-test:
-	@cd homelab && $(PYTHON) -m unittest tests.test_arch_updates -v
+	@$(PYTHON) -m unittest homelab.tests.test_arch_updates -v
 
 homelab-private-bootstrap:
 	@$(PYTHON) scripts/telos-private bootstrap --git-init

@@ -1,6 +1,8 @@
 /build/
 __pycache__/
 *.py[cod]
+/.journal/.lock/
+/.journal/runtime/
 /tools/worktree-marshal/.venv/
 /tools/worktree-marshal/build/
 /tools/worktree-marshal/dist/
