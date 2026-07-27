@@ -133,6 +133,40 @@ Parallax --- eye off to one side & under 1 mm & Look straight down at the mark.\
 \bottomrule
 \end{tabularx}
 
+\section{Measurement and closure record}
+\noindent Use one row for each intended cut. Keep the tape seated at the same
+reference end for all three readings. Measure the closure gap where the two
+ends of the wrapped line meet; write \(0\) if they meet exactly.
+
+\renewcommand{\arraystretch}{1.55}
+\begin{tabularx}{\linewidth}{@{}p{0.10\linewidth}p{0.14\linewidth}
+p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
+\toprule
+\textbf{Cut} & \textbf{First} & \textbf{Second} & \textbf{Final} &
+\textbf{Closure gap} & \textbf{Pass / correct}\\
+ & \textbf{(mm)} & \textbf{(mm)} & \textbf{(mm)} & \textbf{(mm)} & \\
+\midrule
+1 & & & & & \\
+2 & & & & & \\
+3 & & & & & \\
+4 & & & & & \\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[craftheavy] (0,0.55) -- (11.4,0.55);
+  \draw[craftpencil] (5.68,0.03) -- (5.68,1.12);
+  \draw[craftpencil] (5.76,0.03) -- (5.76,1.12);
+  \draw[craftdetail,<->] (5.68,1.32) --
+    node[cfsmall,fill=telospaper] {closure gap} (5.76,1.32);
+  \node[cflabel,anchor=north] at (2.65,0.35)
+    {line stays at one height while the pipe rolls};
+  \craftyes{10.75}{1.12}
+\end{tikzpicture}
+\end{center}
+
 \checkyourself{Record the proof: first reading \rule{12mm}{0.2pt}\,mm; second
 reading \rule{12mm}{0.2pt}\,mm; final reading \rule{12mm}{0.2pt}\,mm. Roll the
 pipe slowly: does the line stay at one height? \rule{9mm}{0.2pt}. Does the line

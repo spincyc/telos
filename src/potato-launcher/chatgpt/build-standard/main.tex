@@ -199,6 +199,41 @@ certification & Sign the acceptance proof below\\
 \bottomrule
 \end{tabularx}
 
+\begin{center}
+\begin{tikzpicture}[node distance=.55cm and .75cm,
+  state/.style={draw=telosink,line width=.55pt,minimum width=3.25cm,
+    minimum height=.75cm,align=center,font=\small\bfseries},
+  proof/.style={draw=telosmute,line width=.35pt,align=center,font=\scriptsize,
+    inner sep=5pt},
+  flow/.style={-{Stealth[length=1.8mm]},draw=telosink,line width=.55pt}]
+\node[state] (hold) {QUARANTINE\\identity or condition uncertain};
+\node[proof,right=of hold] (inspect) {direct evidence only\\marking · bright light · record};
+\node[state,right=of inspect] (decision) {DISPOSITION\\one-way decision};
+\node[proof,below left=.55cm and -.15cm of decision] (release)
+  {release next hold point\\signed evidence retained};
+\node[proof,below right=.55cm and -.15cm of decision] (retire)
+  {retire and render unusable\\no confirming live test};
+\draw[flow] (hold)--(inspect);
+\draw[flow] (inspect)--(decision);
+\draw[flow] (decision)--(release);
+\draw[flow] (decision)--(retire);
+\node[font=\scriptsize\itshape,anchor=north] at ($(inspect.south)+(0,-1.48)$)
+  {A doubtful part never returns to service by argument, patch, or successful firing.};
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Quarantine and retirement ledger}
+\begin{tabularx}{\linewidth}{@{}p{0.13\linewidth}p{0.24\linewidth}L p{0.22\linewidth}@{}}
+\textbf{Part ID} & \textbf{Observed reason} & \textbf{Disposition / replacement evidence} &
+\textbf{Adult / date}\\ \midrule
+&&&\\[1.3em]
+&&&\\[1.3em]
+&&&\\
+\end{tabularx}
+Physically segregate doubtful parts while the decision is pending. A retired
+part is marked and rendered unusable under adult control before disposal.
+\end{teloscard}
+
 \begin{telosframe}
 \textbf{Final acceptance proof}\par
 I inspected every pressure-bearing surface in bright light, reconciled the

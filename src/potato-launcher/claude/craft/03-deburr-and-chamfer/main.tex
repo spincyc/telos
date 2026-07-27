@@ -134,6 +134,57 @@ fingertip check; point to the narrowest and widest measurements above. Both
 people initial here only after all three agree: maker \rule{1.2cm}{.3pt}\quad
 checker \rule{1.2cm}{.3pt}.}
 
+\section{Inspection record}
+\noindent
+\begin{tabularx}{\linewidth}{@{}p{0.17\linewidth}*{4}{>{\centering\arraybackslash}X}@{}}
+\toprule
+\textbf{Pipe end} & \textbf{Inside lip gone} & \textbf{Ramp 1--2\,mm} &
+\textbf{Even full turn} & \textbf{Clean / dry}\\
+\midrule
+End A & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
+End B & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
+End C & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
+End D & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\
+\bottomrule
+\end{tabularx}
+
+\medskip
+\noindent
+\begin{minipage}[t]{0.48\linewidth}
+\begin{telospanel}{Read the evidence}
+Circle the first failing observation, not the hoped-for result:
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[cflabel,draw,minimum width=1.7cm,minimum height=.65cm] (feel) at (0,0) {feel};
+  \node[cflabel,draw,minimum width=1.7cm,minimum height=.65cm] (light) at (2.4,0) {raking light};
+  \node[cflabel,draw,minimum width=1.7cm,minimum height=.65cm] (measure) at (4.8,0) {measure};
+  \draw[->,craftline] (feel)--(light);
+  \draw[->,craftline] (light)--(measure);
+\end{tikzpicture}
+\end{center}
+A smooth feel cannot prove width; a good measurement cannot prove the full
+turn. The three checks answer different questions.
+\end{telospanel}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+\begin{telospanel}{Disposition}
+For each corrected end, record what changed:
+\vspace{0.35em}
+
+\noindent Defect: \rule{4.6cm}{.3pt}
+
+\vspace{0.75em}
+\noindent Correction: \rule{4.25cm}{.3pt}
+
+\vspace{0.75em}
+\noindent Retest result: \rule{4.15cm}{.3pt}
+
+\vspace{0.75em}
+\noindent\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} accept\qquad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} remake
+\end{telospanel}
+\end{minipage}
+
 \begin{telospanel}{The habit worth taking away}
 The defects that matter most are usually the ones that become invisible the
 moment you finish the next step. Once a pipe is in a socket you will never see
