@@ -38,7 +38,7 @@ ARCH_WORKFLOW_PACKAGES := git openai-codex
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
 	python-cryptography python-dnspython python-pexpect openresolv bind \
-	openssh rsync gnupg fakeroot \
+	openssh rsync gnupg fakeroot mtools util-linux \
 	wimlib libisoburn
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty
@@ -105,7 +105,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-bootstrap-network-run homelab-bootstrap-network-check \
 	homelab-bootstrap-network-teardown \
 	homelab-sim-plan homelab-sim-run homelab-sim-check \
-	homelab-sim-repeat \
+	homelab-sim-repeat homelab-sim-deps \
+	homelab-sim-auto-plan homelab-sim-auto-run homelab-sim-auto-repeat \
 	homelab-bootstrap-controller \
 	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
 	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
@@ -374,6 +375,15 @@ homelab-sim-run:
 homelab-sim-check:
 	@PYTHONPATH=. $(PYTHON) -m unittest discover -s homelab/tests -t . -v
 
+homelab-sim-deps:
+	@missing=0; \
+	for tool in '$(PYTHON)' qemu-system-x86_64 qemu-img sfdisk mcopy; do \
+		if ! command -v "$$tool" >/dev/null 2>&1; then \
+			echo "missing simulation tool: $$tool" >&2; missing=1; \
+		fi; \
+	done; \
+	test "$$missing" -eq 0
+
 homelab-sim-repeat:
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 SIM_CYCLES=<positive integer>'; \
@@ -385,6 +395,32 @@ homelab-sim-repeat:
 		cycle=1; while [ "$$cycle" -le '$(SIM_CYCLES)' ]; do \
 			echo "isolated simulation cycle $$cycle/$(SIM_CYCLES)"; \
 			$(PYTHON) homelab/vm/simulated_topology.py --apply; \
+			cycle=$$((cycle + 1)); \
+		done; \
+	fi
+
+homelab-sim-auto-plan:
+	@$(PYTHON) homelab/vm/simulated_topology.py --automated
+
+homelab-sim-auto-run: homelab-sim-deps
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to run one unattended isolated cycle'; \
+		$(PYTHON) homelab/vm/simulated_topology.py --automated; \
+	else \
+		$(PYTHON) homelab/vm/simulated_topology.py --automated --apply; \
+	fi
+
+homelab-sim-auto-repeat: homelab-sim-deps
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 SIM_CYCLES=<positive integer>'; \
+		$(PYTHON) homelab/vm/simulated_topology.py --automated; \
+	else \
+		case '$(SIM_CYCLES)' in \
+			''|*[!0-9]*|0) echo 'SIM_CYCLES must be a positive integer' >&2; exit 2;; \
+		esac; \
+		cycle=1; while [ "$$cycle" -le '$(SIM_CYCLES)' ]; do \
+			echo "unattended isolated simulation cycle $$cycle/$(SIM_CYCLES)"; \
+			$(PYTHON) homelab/vm/simulated_topology.py --automated --apply; \
 			cycle=$$((cycle + 1)); \
 		done; \
 	fi
@@ -574,6 +610,8 @@ help:
 		'                         Plan the controlled physical attachment' \
 		'make homelab-sim-plan    Plan without changing local state' \
 		'make homelab-sim-run APPLY=1  Run one isolated cycle' \
+		'make homelab-sim-auto-run APPLY=1  Run one unattended cycle' \
+		'make homelab-sim-auto-repeat APPLY=1 SIM_CYCLES=2' \
 		'make homelab-sim-check   Run simulation acceptance tests' \
 		'make homelab-sim-repeat APPLY=1 SIM_CYCLES=2' \
 		'make homelab-private-onboard  Build a sibling private overlay' \

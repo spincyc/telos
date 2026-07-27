@@ -10,6 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+try:
+    from .secure_artifacts import atomic_write_text
+except ImportError:
+    from secure_artifacts import atomic_write_text
 
 ALLOWED_QEMU_PORTS = frozenset({12971, 12972})
 
@@ -35,6 +39,11 @@ COMMANDS: tuple[tuple[str, ...], ...] = (
     ("ss", "-H", "-lntup"),
 )
 
+NFT_UNAVAILABLE = (
+    "src/mnl.c:66: Unable to initialize Netlink socket: "
+    "Protocol not supported"
+)
+
 
 def _run(command: Sequence[str]) -> Observation:
     try:
@@ -57,11 +66,10 @@ def capture() -> dict[str, object]:
 
 
 def write(evidence: dict[str, object], destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
+    atomic_write_text(
+        destination,
         json.dumps(evidence, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8")
-    destination.chmod(0o600)
+    )
 
 
 def _observations(evidence: dict[str, object]) -> dict[tuple[str, ...], dict]:
@@ -97,7 +105,13 @@ def _invalid_evidence(evidence: dict[str, object], label: str) -> list[str]:
                 not isinstance(item.get("stderr"), str):
             violations.append(
                 f"{label} command has malformed output: " + " ".join(command))
-        if item.get("returncode") != 0:
+        unavailable_nft = (
+            command == ("nft", "-j", "--stateless", "list", "ruleset")
+            and item.get("returncode") == 3
+            and item.get("stdout") == ""
+            and item.get("stderr") == NFT_UNAVAILABLE
+        )
+        if item.get("returncode") != 0 and not unavailable_nft:
             violations.append(
                 f"{label} command failed ({item.get('returncode')}): "
                 + " ".join(command))
@@ -115,7 +129,11 @@ def _invalid_evidence(evidence: dict[str, object], label: str) -> list[str]:
 
 
 def _socket_lines(item: dict) -> set[str]:
-    return {line.strip() for line in item["stdout"].splitlines() if line.strip()}
+    return {
+        " ".join(line.split())
+        for line in item["stdout"].splitlines()
+        if line.strip()
+    }
 
 
 def _allowed_socket(line: str, allowed_ports: frozenset[int]) -> bool:
@@ -140,6 +158,21 @@ def _socket_port(line: str) -> int | None:
         return None
 
 
+def _comparable_stdout(command: tuple[str, ...], stdout: str) -> object:
+    """Remove only time-to-expiry fields while retaining the raw evidence."""
+    if command != ("ip", "-j", "address", "show"):
+        return stdout
+    try:
+        addresses = json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout
+    for interface in addresses:
+        for address in interface.get("addr_info", []):
+            address.pop("valid_life_time", None)
+            address.pop("preferred_life_time", None)
+    return addresses
+
+
 def compare(
     before: dict[str, object],
     after: dict[str, object],
@@ -162,10 +195,15 @@ def compare(
     for command in sorted(left):
         old = left[command]
         new = right[command]
-        if command == socket_command and allow_qemu_listeners:
+        if command == socket_command:
             if old["returncode"] != new["returncode"] or \
                     old["stderr"] != new["stderr"]:
                 violations.append("socket observation status changed")
+                continue
+            if not allow_qemu_listeners:
+                if _socket_lines(old) != _socket_lines(new):
+                    violations.append(
+                        "ss -H -lntup changed listening sockets")
                 continue
             added = _socket_lines(new) - _socket_lines(old)
             removed = _socket_lines(old) - _socket_lines(new)
@@ -197,7 +235,12 @@ def compare(
                     + ",".join(str(port) for port in sorted(observed_ports)))
             continue
         for field in ("returncode", "stdout", "stderr"):
-            if old[field] != new[field]:
+            old_value = old[field]
+            new_value = new[field]
+            if field == "stdout":
+                old_value = _comparable_stdout(command, old_value)
+                new_value = _comparable_stdout(command, new_value)
+            if old_value != new_value:
                 violations.append(
                     f"{' '.join(command)} changed field {field}")
     return violations

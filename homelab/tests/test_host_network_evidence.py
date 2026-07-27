@@ -1,6 +1,7 @@
 """Tests for simulation host-network evidence and invariants."""
 
 import copy
+import json
 import sys
 import tempfile
 import unittest
@@ -41,6 +42,87 @@ class HostNetworkEvidenceTests(unittest.TestCase):
             snapshot["observations"][0]["stderr"] = "ip: command not found"
         violations = evidence.compare(before, after)
         self.assertTrue(any("command failed" in item for item in violations))
+
+    def test_matching_unsupported_nft_is_recorded_but_not_overclaimed(self):
+        before = fixture()
+        after = fixture()
+        for snapshot in (before, after):
+            nft = next(
+                item for item in snapshot["observations"]
+                if tuple(item["command"])
+                == ("nft", "-j", "--stateless", "list", "ruleset"))
+            nft["returncode"] = 3
+            nft["stdout"] = ""
+            nft["stderr"] = evidence.NFT_UNAVAILABLE
+        self.assertEqual(evidence.compare(before, after), [])
+
+    def test_only_the_exact_unsupported_nft_failure_is_tolerated(self):
+        mutations = (
+            ("returncode", 1),
+            ("stdout", "{}"),
+            ("stderr", evidence.NFT_UNAVAILABLE + "\n"),
+            ("stderr", "Operation not permitted"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field, value=value):
+                before = fixture()
+                after = fixture()
+                for snapshot in (before, after):
+                    nft = next(
+                        item for item in snapshot["observations"]
+                        if tuple(item["command"])
+                        == ("nft", "-j", "--stateless", "list", "ruleset"))
+                    nft.update({
+                        "returncode": 3,
+                        "stdout": "",
+                        "stderr": evidence.NFT_UNAVAILABLE,
+                    })
+                    nft[field] = value
+                violations = evidence.compare(before, after)
+                self.assertTrue(
+                    any("command failed" in item for item in violations),
+                    violations,
+                )
+
+    def test_address_lease_countdown_does_not_claim_host_change(self):
+        before = fixture()
+        after = fixture()
+        command = ("ip", "-j", "address", "show")
+        for snapshot, lifetime in ((before, 100), (after, 97)):
+            address = next(
+                item for item in snapshot["observations"]
+                if tuple(item["command"]) == command)
+            address["stdout"] = json.dumps([{
+                "ifname": "eno1",
+                "addr_info": [{
+                    "family": "inet",
+                    "local": "10.0.7.123",
+                    "valid_life_time": lifetime,
+                    "preferred_life_time": lifetime,
+                }],
+            }])
+        self.assertEqual(evidence.compare(before, after), [])
+
+    def test_address_identity_change_is_detected_despite_lease_countdown(self):
+        before = fixture()
+        after = fixture()
+        command = ("ip", "-j", "address", "show")
+        for snapshot, address_value, lifetime in (
+                (before, "10.0.7.123", 100),
+                (after, "10.0.7.124", 97)):
+            address = next(
+                item for item in snapshot["observations"]
+                if tuple(item["command"]) == command)
+            address["stdout"] = json.dumps([{
+                "ifname": "eno1",
+                "addr_info": [{
+                    "family": "inet",
+                    "local": address_value,
+                    "valid_life_time": lifetime,
+                    "preferred_life_time": lifetime,
+                }],
+            }])
+        self.assertTrue(evidence.compare(before, after))
 
     def test_missing_required_command_does_not_pass(self):
         before = fixture()
@@ -106,6 +188,11 @@ class HostNetworkEvidenceTests(unittest.TestCase):
         self.assertTrue(evidence.compare(
             before, fixture(), allow_qemu_listeners=True))
 
+    def test_socket_column_alignment_is_not_a_state_change(self):
+        before = fixture("tcp LISTEN 0      128    0.0.0.0:22 0.0.0.0:*")
+        after = fixture("tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:*")
+        self.assertEqual(evidence.compare(before, after), [])
+
     def test_cycle_requires_complete_cleanup(self):
         before = fixture()
         during = fixture(
@@ -122,7 +209,19 @@ class HostNetworkEvidenceTests(unittest.TestCase):
             target = Path(temp) / "evidence.json"
             evidence.write(fixture(), target)
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(target.parent.stat().st_mode & 0o777, 0o700)
             self.assertIn('"schema": 1', target.read_text())
+
+    def test_evidence_writer_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            victim = root / "victim"
+            victim.write_text("keep")
+            target = root / "evidence.json"
+            target.symlink_to(victim)
+            with self.assertRaisesRegex(RuntimeError, "not a regular file"):
+                evidence.write(fixture(), target)
+            self.assertEqual(victim.read_text(), "keep")
 
 
 if __name__ == "__main__":

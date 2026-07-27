@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from .secure_artifacts import atomic_write_text
+except ImportError:
+    from secure_artifacts import atomic_write_text
 
 PASS_LINE = "RESULT PASS: safe to proceed to the separately authorized attachment step"
 HELPER = "/usr/local/sbin/homelab-network-attach-preflight"
@@ -46,6 +49,5 @@ class SerialVerificationGate:
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "transport": "qemu-serial-console",
         }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
-        os.chmod(path, 0o600)
+        atomic_write_text(
+            path, json.dumps(document, indent=2, sort_keys=True) + "\n")

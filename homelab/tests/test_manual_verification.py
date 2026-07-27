@@ -54,6 +54,19 @@ class ManualVerificationTests(unittest.TestCase):
                 gate.write_receipt(path)
             self.assertFalse(path.exists())
 
+    def test_receipt_rejects_symlink_without_touching_target(self):
+        gate = SerialVerificationGate()
+        gate.feed((PASS_LINE + "\n").encode())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            victim = root / "victim"
+            victim.write_text("keep")
+            path = root / "manual.json"
+            path.symlink_to(victim)
+            with self.assertRaisesRegex(RuntimeError, "not a regular file"):
+                gate.write_receipt(path)
+            self.assertEqual(victim.read_text(), "keep")
+
 
 if __name__ == "__main__":
     unittest.main()

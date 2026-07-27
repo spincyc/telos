@@ -12,8 +12,10 @@ from pathlib import Path
 
 try:
     from . import simulated_gateway as gateway
+    from .secure_artifacts import atomic_append_text
 except ImportError:
     import simulated_gateway as gateway
+    from secure_artifacts import atomic_append_text
 
 
 CLIENT_MAC = bytes.fromhex("525400311212")
@@ -242,7 +244,6 @@ def run(port: int, transcript: Path) -> None:
             raise RuntimeError("connectivity probe failed")
         event("CONNECTIVITY_PASS", address=str(gateway.LEASE_IP))
 
-    prior = transcript.read_text() if transcript.exists() else ""
-    transcript.write_text(
-        prior + "".join(json.dumps(item, sort_keys=True) + "\n"
-                        for item in events))
+    atomic_append_text(
+        transcript,
+        "".join(json.dumps(item, sort_keys=True) + "\n" for item in events))

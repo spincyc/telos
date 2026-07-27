@@ -7,11 +7,13 @@ import argparse
 import io
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -19,17 +21,28 @@ from pathlib import Path
 from typing import Callable
 
 try:
+    from .automated_controller import AutomatedSerial, DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, ovmf_pair, paths
     from .dhcp_provenance import assess, load
     from .host_network_evidence import capture, compare_cycle, write
     from .manual_verification import HELPER, SerialVerificationGate
+    from .qemu_boundary import audit_disposable_controller
+    from .secure_artifacts import atomic_write_text, private_directory
+    from .simulation_evidence import write_result, write_serial_events
+    from .signal_cleanup import (
+        RunInterrupted, SignalGuard, terminate_children)
     from .simulated_client import run as run_synthetic_client
     from .simulation_overlay import ControllerOverlay
 except ImportError:
+    from automated_controller import AutomatedSerial, DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, ovmf_pair, paths
     from dhcp_provenance import assess, load
     from host_network_evidence import capture, compare_cycle, write
     from manual_verification import HELPER, SerialVerificationGate
+    from qemu_boundary import audit_disposable_controller
+    from secure_artifacts import atomic_write_text, private_directory
+    from simulation_evidence import write_result, write_serial_events
+    from signal_cleanup import RunInterrupted, SignalGuard, terminate_children
     from simulated_client import run as run_synthetic_client
     from simulation_overlay import ControllerOverlay
 
@@ -43,6 +56,9 @@ MACS = {
     "client": "52:54:00:31:12:12",
 }
 NIC_COUNTS = {"gateway": 2, "controller": 1, "client": 1}
+GATEWAY_EXIT_TIMEOUT = 10
+CONTROLLER_RUNTIME_TIMEOUT = 3600
+CLIENT_RUNTIME_TIMEOUT = 15
 SOCKET_NETDEV = re.compile(
     r"socket,id=([A-Za-z0-9_.-]+),"
     r"(?:listen|connect)=127\.0\.0\.1:([1-9][0-9]{0,4})\Z")
@@ -136,13 +152,17 @@ def controller_command(
     controller_disk: Path,
     controller_vars: Path,
     port: int,
+    *,
+    disk_format: str = "qcow2",
 ) -> list[str]:
     """Build the only QEMU command used by the real simulation cycle."""
+    if disk_format not in {"qcow2", "raw"}:
+        raise ValueError("controller disk format must be qcow2 or raw")
     result = _base("controller", controller_vars, 4096)
     result += [
         "-drive",
         (
-            "if=virtio,format=qcow2,cache=none,"
+            f"if=virtio,format={disk_format},cache=none,"
             f"file={controller_disk.resolve()}"
         ),
     ]
@@ -169,6 +189,57 @@ def relay_controller_serial(
         destination.flush()
         gate.feed(chunk)
     return process.wait()
+
+
+def relay_controller_bounded(
+    process: subprocess.Popen[bytes],
+    gate: SerialVerificationGate,
+    timeout: float = CONTROLLER_RUNTIME_TIMEOUT,
+) -> int:
+    """Relay the console without leaving an unattended guest forever."""
+    expired = threading.Event()
+
+    def stop() -> None:
+        if process.poll() is None:
+            expired.set()
+            process.terminate()
+
+    timer = threading.Timer(timeout, stop)
+    timer.daemon = True
+    timer.start()
+    try:
+        result = relay_controller_serial(process, gate)
+    finally:
+        timer.cancel()
+    if expired.is_set():
+        raise subprocess.TimeoutExpired("controller", timeout)
+    return result
+
+
+def run_client_bounded(
+    port: int,
+    transcript: Path,
+    timeout: float = CLIENT_RUNTIME_TIMEOUT,
+) -> None:
+    """Bound a wedged synthetic client without process-wide signals."""
+    finished = threading.Event()
+    failure: list[BaseException] = []
+
+    def run_client() -> None:
+        try:
+            run_synthetic_client(port, transcript)
+        except BaseException as error:
+            failure.append(error)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(
+        target=run_client, name="telos-sim-client", daemon=True)
+    worker.start()
+    if not finished.wait(timeout):
+        raise subprocess.TimeoutExpired("synthetic client", timeout)
+    if failure:
+        raise failure[0]
 
 
 def audit_qemu_argv(role: str, argv: list[str]) -> None:
@@ -246,12 +317,25 @@ def assert_isolated(plans: dict[str, list[str]]) -> None:
 
 def audit_live_process(
     pid: int, role: str, proc_root: Path = Path("/proc"),
+    *,
+    disposable_disk: Path | None = None,
+    disposable_vars: Path | None = None,
+    forbidden_paths: tuple[Path, ...] = (),
 ) -> None:
     """Re-audit the kernel's view of a newly started QEMU process."""
     cmdline = proc_root / str(pid) / "cmdline"
-    try:
-        raw = cmdline.read_bytes()
-    except OSError as error:
+    raw = b""
+    error: OSError | None = None
+    for _attempt in range(20):
+        try:
+            raw = cmdline.read_bytes()
+            error = None
+        except OSError as caught:
+            error = caught
+        if raw:
+            break
+        time.sleep(0.01)
+    if error is not None:
         raise RuntimeError(
             f"{role}: cannot audit live QEMU process {pid}: {error}") from error
     argv_bytes = [part for part in raw.split(b"\0") if part]
@@ -263,6 +347,13 @@ def audit_live_process(
         raise RuntimeError(
             f"{role}: live process is not approved QEMU: {executable}")
     audit_qemu_argv(role, argv)
+    if disposable_disk is not None or disposable_vars is not None:
+        if disposable_disk is None or disposable_vars is None:
+            raise RuntimeError(
+                "strict live audit requires both disposable paths")
+        audit_disposable_controller(
+            argv, disk=disposable_disk, vars_file=disposable_vars,
+            forbidden_paths=forbidden_paths)
 
 
 def _validate(controller_state: Path) -> list[str]:
@@ -286,6 +377,7 @@ def run(
     evidence_root: Path | None = None,
     acceptance: Callable[[dict[str, list[str]], dict[str, object]], int]
     | None = None,
+    automated: bool = False,
 ) -> int:
     problems = _validate(controller_state)
     if problems:
@@ -305,7 +397,16 @@ def run(
         audit_qemu_argv("controller", command)
         print("Boundary: QEMU loopback sockets only; no host or UniFi changes")
         print("gateway: host userspace DHCP/DNS/NTP/probe simulator")
-        print(f"controller: {' '.join(command)}")
+        if automated:
+            print(
+                "controller: unattended rehearsal using a disposable sparse "
+                "raw disk and an ephemeral serial-only credential")
+            print(
+                "credential: generated in memory; never written to argv, "
+                "files, transcripts, or evidence")
+        else:
+            print(f"controller: {' '.join(command)}")
+            print("controller verification: foreground manual console")
         print("client: synthetic wire-level DHCP/DNS/NTP/probe client")
         print("sequence: gateway -> controller (foreground) -> client -> judge")
         print("dry run; repeat with --apply")
@@ -317,9 +418,10 @@ def run(
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         + f"-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-    evidence = evidence_root.resolve() / run_id
-    evidence.mkdir(parents=True, mode=0o700)
-    evidence.chmod(0o700)
+    evidence_root = evidence_root.expanduser().absolute()
+    private_directory(evidence_root, parents=True)
+    evidence = evidence_root / run_id
+    private_directory(evidence, parents=True)
     before = capture()
     write(before, evidence / "before.json")
     print(f"Evidence: {evidence}")
@@ -327,42 +429,73 @@ def run(
     with tempfile.TemporaryDirectory(prefix="telos-sim-") as temp:
         runtime = Path(temp)
         runtime.chmod(0o700)
-        transcript = runtime / "transcript.jsonl"
-        controller_audit = runtime / "controller-dhcp-server.jsonl"
+        transcript = evidence / "transcript.jsonl"
+        controller_audit = evidence / "controller-dhcp-server.jsonl"
+        gateway_log = evidence / "gateway.log"
+        for record in (transcript, controller_audit, gateway_log):
+            atomic_write_text(record, "")
         controller_files = paths(controller_state)
-        with ControllerOverlay(
+        state = (
+            DisposableBootDisk(
                 controller_files["disk"], controller_files["vars"],
-                run_root=runtime / "controller") as overlay:
+                run_root=runtime / "controller")
+            if automated else
+            ControllerOverlay(
+                controller_files["disk"], controller_files["vars"],
+                run_root=runtime / "controller")
+        )
+        # Enter the signal guard first so it remains active through state.close:
+        # canonical hashing, disposable deletion, and lock release all finish
+        # before the original signal handlers are restored.
+        with SignalGuard(), state as overlay:
             listener = socket.socket()
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)
             port = listener.getsockname()[1]
             plans = {"controller": controller_command(
-                controller_state, overlay.disk, overlay.vars, port)}
+                controller_state, overlay.disk, overlay.vars, port,
+                disk_format="raw" if automated else "qcow2")}
+            if automated:
+                audit_disposable_controller(
+                    plans["controller"],
+                    disk=overlay.disk,
+                    vars_file=overlay.vars,
+                    forbidden_paths=(
+                        controller_files["disk"], controller_files["vars"]),
+                )
             print("Boundary: one QEMU loopback socket; no host or UniFi changes")
-            print("The controller is foreground. Log in and run exactly:")
-            print(f"  sudo {HELPER}")
-            print("Only RESULT PASS opens the gate. Then run: sudo poweroff")
+            if automated:
+                print("Controller console verification is automated with a "
+                      "disposable in-memory credential")
+            else:
+                print("The controller is foreground. Log in and run exactly:")
+                print(f"  sudo {HELPER}")
+                print("Only RESULT PASS opens the gate. Then run: sudo poweroff")
             children: dict[str, subprocess.Popen[bytes]] = {}
             during: dict[str, object] | None = None
             primary_error: BaseException | None = None
             cleanup_error: BaseException | None = None
+            controller_exit_code: int | None = None
+            helper_passed = False
+            serial_events: tuple[str, ...] = ()
             outcome = 0
             try:
-                gateway_process = subprocess.Popen(
-                    [
-                        sys.executable,
-                        str(Path(__file__).with_name("simulated_gateway.py")),
-                        "--connections", "2",
-                        "--listener-fd", str(listener.fileno()),
-                        "--audit-first", str(controller_audit),
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
-                    pass_fds=(listener.fileno(),),
-                )
+                with gateway_log.open("wb") as gateway_output:
+                    gateway_process = subprocess.Popen(
+                        [
+                            sys.executable,
+                            str(Path(__file__).with_name(
+                                "simulated_gateway.py")),
+                            "--connections", "2",
+                            "--listener-fd", str(listener.fileno()),
+                            "--audit-first", str(controller_audit),
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=gateway_output,
+                        stderr=subprocess.STDOUT,
+                        pass_fds=(listener.fileno(),),
+                    )
                 listener.close()
                 children["gateway"] = gateway_process
                 time.sleep(0.25)
@@ -370,32 +503,73 @@ def run(
                     raise RuntimeError("userspace gateway failed to start")
                 gate = SerialVerificationGate()
                 controller_process = subprocess.Popen(
-                    plans["controller"], stdout=subprocess.PIPE,
+                    plans["controller"],
+                    stdin=subprocess.PIPE if automated else None,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, bufsize=0)
                 children["controller"] = controller_process
                 audit_live_process(
-                    controller_process.pid, "controller")
+                    controller_process.pid, "controller",
+                    disposable_disk=overlay.disk if automated else None,
+                    disposable_vars=overlay.vars if automated else None,
+                    forbidden_paths=(
+                        controller_files["disk"], controller_files["vars"])
+                    if automated else (),
+                )
                 time.sleep(0.25)
                 during = capture()
                 write(during, evidence / "during.json")
                 if acceptance is not None:
                     outcome = acceptance(plans, children)
+                elif automated:
+                    if controller_process.stdout is None:
+                        raise RuntimeError(
+                            "controller serial output was not captured")
+                    if controller_process.stdin is None:
+                        raise RuntimeError(
+                            "controller serial input was not captured")
+                    password = secrets.token_urlsafe(24).encode("ascii")
+                    try:
+                        serial_result = AutomatedSerial(
+                            controller_process.stdout,
+                            controller_process.stdin,
+                            password,
+                            timeout=120,
+                        ).run()
+                    finally:
+                        password = b""
+                    serial_events = serial_result.events
+                    controller_exit_code = controller_process.wait(timeout=20)
+                    helper_passed = (
+                        serial_result.helper_passed
+                        and serial_result.helper_returncode == 0
+                        and serial_result.powered_off
+                        and controller_exit_code == 0
+                    )
+                    if not helper_passed:
+                        raise RuntimeError(
+                            "automated controller verification failed")
                 else:
-                    if relay_controller_serial(
-                            controller_process, gate) != 0:
+                    controller_exit_code = relay_controller_bounded(
+                        controller_process, gate)
+                    if controller_exit_code != 0:
                         raise RuntimeError(
                             "controller QEMU exited unsuccessfully")
                     gate.write_receipt(
                         evidence / "manual-verification.json")
+                    helper_passed = True
+                if acceptance is None:
                     if (controller_audit.exists()
                             and controller_audit.stat().st_size):
                         raise RuntimeError(
                             "controller emitted a DHCP server message")
-                    transcript.write_text(
+                    atomic_write_text(
+                        transcript,
                         '{"sequence":1,"kind":"POWEROFF",'
                         '"actor":"controller"}\n')
-                    run_synthetic_client(port, transcript)
-                    if gateway_process.wait(timeout=5) != 0:
+                    run_client_bounded(port, transcript)
+                    if gateway_process.wait(
+                            timeout=GATEWAY_EXIT_TIMEOUT) != 0:
                         raise RuntimeError(
                             "userspace gateway exited unsuccessfully")
                     failures = assess(
@@ -410,38 +584,87 @@ def run(
             finally:
                 try:
                     listener.close()
-                    for child in reversed(tuple(children.values())):
-                        if child.poll() is None:
-                            child.terminate()
-                    for child in reversed(tuple(children.values())):
-                        try:
-                            child.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            child.kill()
-                            child.wait()
+                    cleanup_problems = terminate_children(
+                        children.values(),
+                        terminate_timeout=GATEWAY_EXIT_TIMEOUT,
+                        kill_timeout=2)
                     after = capture()
                     write(after, evidence / "after.json")
                     if during is not None:
-                        violations = compare_cycle(
+                        cleanup_problems.extend(compare_cycle(
                             before, during, after,
-                            allowed_ports=frozenset({port}))
-                        if violations:
-                            raise RuntimeError(
-                                "host evidence failed:\n- "
-                                + "\n- ".join(violations))
+                            allowed_ports=frozenset({port})))
+                    if cleanup_problems:
+                        raise RuntimeError(
+                            "host cleanup/evidence failed:\n- "
+                            + "\n- ".join(cleanup_problems))
                 except BaseException as error:
                     cleanup_error = error
+                finally:
+                    write_serial_events(
+                        evidence,
+                        qemu_exit_code=controller_exit_code,
+                        helper_passed=helper_passed,
+                        events=serial_events)
+            # A PASS is not publishable until canonical hashes are verified,
+            # disposable state is removed, and the simulation lock is released.
+            # Closing here makes the surrounding context exit idempotent.
+            try:
+                state.close()
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+                else:
+                    cleanup_error = RuntimeError(
+                        "cleanup/invariant verification failed and "
+                        f"state close also failed: {error}")
             if primary_error is not None:
                 if cleanup_error is not None:
-                    raise RuntimeError(
+                    combined = RuntimeError(
                         "simulation failed and cleanup/invariant verification "
-                        f"also failed: {cleanup_error}") from primary_error
+                        f"also failed: {cleanup_error}")
+                    write_result(
+                        evidence, status="fail", run_id=run_id,
+                        checks={
+                            "controller_preflight": helper_passed,
+                            "host_unchanged": False,
+                        },
+                        error=combined)
+                    raise combined from primary_error
+                write_result(
+                    evidence, status="fail", run_id=run_id,
+                    checks={
+                        "controller_preflight": helper_passed,
+                        "host_unchanged": cleanup_error is None,
+                    },
+                    error=primary_error)
                 raise primary_error
             if cleanup_error is not None:
+                write_result(
+                    evidence, status="fail", run_id=run_id,
+                    checks={
+                        "controller_preflight": helper_passed,
+                        "host_unchanged": False,
+                    },
+                    error=cleanup_error)
                 raise cleanup_error
+            write_result(
+                evidence, status="pass", run_id=run_id,
+                checks={
+                    "controller_preflight": helper_passed,
+                    "dhcp_authority": acceptance is None,
+                    "client_continuity": acceptance is None,
+                    "host_unchanged": True,
+                })
             print("PASS gateway is sole DHCP authority")
             print("PASS client DHCP, DNS, NTP and probe survived controller poweroff")
-            print("PASS host network state was unchanged")
+            print("PASS observable host network state was unchanged")
+            if any(
+                    item["command"]
+                    == ["nft", "-j", "--stateless", "list", "ruleset"]
+                    and item["returncode"] != 0
+                    for item in before["observations"]):
+                print("NOTE host firewall rules were unavailable to this user")
             return outcome
 
 
@@ -451,13 +674,27 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--controller-state", type=Path, default=DEFAULT_STATE)
     result.add_argument("--evidence-root", type=Path)
     result.add_argument("--apply", action="store_true")
+    mode = result.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--automated", action="store_true",
+        help="use an ephemeral serial-only credential in disposable state")
+    mode.add_argument(
+        "--manual", action="store_true",
+        help="require an operator at the controller console (default)")
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    return run(
-        args.controller_state, args.apply, evidence_root=args.evidence_root)
+    try:
+        return run(
+            args.controller_state, args.apply,
+            evidence_root=args.evidence_root,
+            automated=args.automated)
+    except RunInterrupted as error:
+        print(f"simulation {error}; cleanup and evidence completed",
+              file=sys.stderr)
+        return error.exit_code
 
 
 if __name__ == "__main__":

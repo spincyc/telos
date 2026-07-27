@@ -136,6 +136,7 @@ class ControllerOverlay:
         self.vars = self.root / "OVMF_VARS.fd"
         self._lock_stream = None
         self._disk_hash = ""
+        self._vars_hash = ""
         self._closed = False
 
     def prepare(self) -> "ControllerOverlay":
@@ -147,13 +148,15 @@ class ControllerOverlay:
         ):
             if not path.is_file() or path.is_symlink():
                 raise RuntimeError(f"{label} must be a regular, non-symlink file: {path}")
-        disk_stat = self.canonical_disk.stat()
-        if disk_stat.st_uid != os.geteuid():
-            raise RuntimeError("canonical controller disk must be owned by the current user")
-        if disk_stat.st_mode & 0o022:
-            raise RuntimeError(
-                "canonical controller disk must not be group/world writable"
-            )
+        for path, label in (
+            (self.canonical_disk, "canonical controller disk"),
+            (self.canonical_vars, "canonical OVMF variables"),
+        ):
+            state = path.stat()
+            if state.st_uid != os.geteuid():
+                raise RuntimeError(f"{label} must be owned by the current user")
+            if state.st_mode & 0o022:
+                raise RuntimeError(f"{label} must not be group/world writable")
 
         self.root.mkdir(parents=True, exist_ok=True)
         lock_path = self.canonical_disk.parent / ".simulation.lock"
@@ -169,6 +172,7 @@ class ControllerOverlay:
             self._assert_canonical_not_open()
             self._probe_qemu_image_lock()
             self._disk_hash = sha256(self.canonical_disk)
+            self._vars_hash = sha256(self.canonical_vars)
             subprocess.run(
                 [
                     "qemu-img", "create", "-f", "qcow2",
@@ -198,11 +202,12 @@ class ControllerOverlay:
         return f"if=pflash,format=raw,unit=1,file={self.vars}"
 
     def verify_canonical(self) -> None:
-        if not self._disk_hash:
+        if not self._disk_hash or not self._vars_hash:
             raise RuntimeError("controller simulation state is not prepared")
-        current = sha256(self.canonical_disk)
-        if current != self._disk_hash:
+        if sha256(self.canonical_disk) != self._disk_hash:
             raise RuntimeError("canonical controller disk changed during simulation")
+        if sha256(self.canonical_vars) != self._vars_hash:
+            raise RuntimeError("canonical OVMF variables changed during simulation")
 
     def close(self) -> None:
         if self._closed:
@@ -223,11 +228,13 @@ class ControllerOverlay:
             raise failure
 
     def _assert_canonical_not_open(self) -> None:
-        users = canonical_disk_users(self.canonical_disk, proc_root=self._proc_root)
-        if users:
-            raise CanonicalDiskInUse(
-                "canonical controller disk is open by: " + ", ".join(users)
-            )
+        for path, label in (
+            (self.canonical_disk, "canonical controller disk"),
+            (self.canonical_vars, "canonical OVMF variables"),
+        ):
+            users = canonical_disk_users(path, proc_root=self._proc_root)
+            if users:
+                raise CanonicalDiskInUse(f"{label} is open by: " + ", ".join(users))
 
     def _probe_qemu_image_lock(self) -> None:
         """Ask qemu-img to acquire its normal read lock without modifying data."""

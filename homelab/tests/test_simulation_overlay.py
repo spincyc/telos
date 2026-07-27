@@ -89,6 +89,15 @@ class TestControllerOverlay(unittest.TestCase):
             overlay.close()
         self.assertFalse(overlay.disk.exists())
 
+    def test_changed_canonical_ovmf_variables_fail_the_run(self):
+        overlay = self.prepared()
+        self.vars.write_bytes(b"tampered")
+        with self.assertRaisesRegex(
+            RuntimeError, "canonical OVMF variables changed during simulation"
+        ):
+            overlay.close()
+        self.assertFalse(overlay.vars.exists())
+
     def test_run_files_are_removed_on_clean_close(self):
         overlay = self.prepared()
         overlay.close()
@@ -201,6 +210,17 @@ class TestControllerOverlay(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "group/world writable"):
             overlay.prepare()
 
+    def test_group_writable_canonical_ovmf_variables_are_rejected(self):
+        self.vars.chmod(0o660)
+        proc = self.root / "proc"
+        proc.mkdir()
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        with self.assertRaisesRegex(
+            RuntimeError, "canonical OVMF variables must not be group/world writable"
+        ):
+            overlay.prepare()
+
     def test_close_preserves_state_and_lock_while_disk_is_open(self):
         proc = self.root / "proc"
         proc.mkdir()
@@ -243,6 +263,21 @@ class TestControllerOverlay(unittest.TestCase):
                 simulation_overlay.CanonicalDiskInUse, "could not lock/read"
             ):
                 overlay.prepare()
+
+    def test_open_canonical_ovmf_variables_are_rejected(self):
+        proc = self.root / "proc"
+        fd = proc / "8841" / "fd"
+        fd.mkdir(parents=True)
+        (proc / "8841" / "comm").write_text("qemu-system-x86\n")
+        (fd / "7").symlink_to(self.vars)
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        with self.assertRaisesRegex(
+            simulation_overlay.CanonicalDiskInUse,
+            r"canonical OVMF variables is open by: 8841 \(qemu-system-x86\)",
+        ):
+            overlay.prepare()
+        self.assertFalse(overlay.vars.exists())
 
 
 if __name__ == "__main__":
