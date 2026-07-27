@@ -18,6 +18,9 @@ homelab_ad_admin_password_file: ""
 homelab_ad_smb_conf: /etc/samba/smb.conf
 homelab_ad_private_dir: /var/lib/samba/private
 homelab_ad_enable_rfc2307: true
+homelab_ad_ntp_upstreams:
+  - 0.arch.pool.ntp.org
+  - 1.arch.pool.ntp.org
 
 # Documentation/input for the surrounding firewall role. This role does not
 # guess which firewall owns the host or network policy.

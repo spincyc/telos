@@ -3,6 +3,7 @@ driftfile /var/lib/ntp/ntp.drift
 restrict default kod limited nomodify nopeer noquery
 restrict 127.0.0.1
 restrict ::1
-pool 0.arch.pool.ntp.org iburst
-pool 1.arch.pool.ntp.org iburst
+{% for upstream in homelab_ad_ntp_upstreams %}
+server {{ upstream }} iburst
+{% endfor %}
 ntpsigndsocket {{ homelab_ad_private_dir }}/ntp_signd

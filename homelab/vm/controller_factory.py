@@ -9,10 +9,13 @@ private inventory or configures a host interface.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
+import stat
 import subprocess
 import argparse
 from dataclasses import dataclass
@@ -85,9 +88,15 @@ root=${{1:-/run/telos-factory}}
 [[ $(findmnt -no LABEL "$root") == {LABEL} ]] || {{
   echo "payload is not mounted from {LABEL}" >&2; exit 2;
 }}
+expected=$(cat "$root/authorization.sha256")
+actual=$(sha256sum /run/telos-factory-authorized | cut -d' ' -f1)
+[[ "$actual" == "$expected" ]] || {{
+  echo "disposable-guest authorization nonce mismatch" >&2; exit 2;
+}}
 iface=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\\n' |
   grep -Ev '^(lo|docker|virbr|br-|tap|veth)' | head -1)
 [[ -n "$iface" ]] || {{ echo "no isolated guest NIC" >&2; exit 2; }}
+systemctl stop NetworkManager.service
 ip link set "$iface" down
 ip link set "$iface" name sim0
 ip addr flush dev sim0
@@ -113,6 +122,12 @@ install -m 0600 "$root/secret/ad-admin" /run/secrets/factory-ad-admin
 trap 'shred -u /run/secrets/factory-ad-admin 2>/dev/null || rm -f /run/secrets/factory-ad-admin' EXIT
 install -d -m 0755 /opt/telos-factory
 cp -a "$root/ansible" /opt/telos-factory/
+install -d -m 0755 /etc/homelab
+printf '%s\\n' \
+  '{{"profile":"controller","hostname":"{spec.hostname}","development_proof":true}}' \
+  >/etc/homelab/manifest.json
+chmod 0644 /etc/homelab/manifest.json
+systemctl unmask samba.service ntpd.service nginx.service
 ANSIBLE_CONFIG=/opt/telos-factory/ansible/ansible.cfg \
   ansible-playbook -i "$root/inventory.ini" \
   -e @"$root/factory-vars.json" \
@@ -122,7 +137,6 @@ install -m 0644 "$root/telos-factory-tftp.service" /etc/systemd/system/telos-fac
 install -m 0644 "$root/factory-nginx.conf" /etc/homelab/factory-nginx.conf
 install -m 0644 "$root/boot.ipxe" /srv/http/homelab/boot.ipxe
 install -m 0644 /usr/share/ipxe/ipxe.efi /srv/tftp/ipxe.efi
-systemctl unmask nginx.service samba.service ntpd.service
 systemctl daemon-reload
 systemctl disable --now systemd-timesyncd.service
 systemctl restart samba.service ntpd.service
@@ -159,6 +173,7 @@ class FactoryBundle:
         repo: Path,
         output: Path,
         *,
+        authorization_nonce: str,
         password: str | None = None,
         spec: FactorySpec | None = None,
     ) -> None:
@@ -166,15 +181,27 @@ class FactoryBundle:
         self.output = Path(output).absolute()
         self.password = password or (
             "Synthetic-" + secrets.token_urlsafe(24) + "-47!")
+        self.authorization_nonce = authorization_nonce
         if "\n" in self.password or not self.password:
             raise ValueError("synthetic password must be one non-empty line")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.authorization_nonce):
+            raise ValueError("authorization nonce must be 64 lowercase hex digits")
         self.spec = spec or FactorySpec()
 
     def stage(self, destination: Path) -> Path:
         destination = Path(destination)
+        try:
+            mode = destination.lstat().st_mode
+        except FileNotFoundError:
+            mode = None
+        if mode is not None and (
+                stat.S_ISLNK(mode) or not stat.S_ISDIR(mode)):
+            raise ValueError(
+                "factory staging path must be a real directory")
         if destination.exists() and any(destination.iterdir()):
             raise ValueError("factory staging directory is not empty")
         destination.mkdir(parents=True, mode=0o700, exist_ok=True)
+        destination.chmod(0o700, follow_symlinks=False)
         for relative in ("homelab/ansible",):
             source = self.repo / relative
             if not source.is_dir():
@@ -193,11 +220,15 @@ class FactoryBundle:
             "homelab_ad_expected_hostname": self.spec.hostname,
             "homelab_ad_provision_enabled": True,
             "homelab_ad_admin_password_file": "/run/secrets/factory-ad-admin",
+            "homelab_ad_ntp_upstreams": [self.spec.gateway],
         }
         (destination / "factory-vars.json").write_text(
             json.dumps(variables, sort_keys=True) + "\n", encoding="utf-8")
         (destination / "inventory.ini").write_text(
             "[bootstrap_controllers]\nlocalhost ansible_connection=local\n",
+            encoding="utf-8")
+        (destination / "authorization.sha256").write_text(
+            hashlib.sha256(self.authorization_nonce.encode()).hexdigest() + "\n",
             encoding="utf-8")
         (destination / "telos-factory-tftp.service").write_text(
             tftp_unit(self.spec), encoding="utf-8")
@@ -249,9 +280,11 @@ class FactoryBundle:
         self.close()
 
     @staticmethod
-    def guest_command() -> str:
+    def guest_command(authorization_nonce: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", authorization_nonce):
+            raise ValueError("authorization nonce must be 64 lowercase hex digits")
         return (
-            "touch /run/telos-factory-authorized; "
+            f"printf %s {authorization_nonce} > /run/telos-factory-authorized; "
             "mkdir -p /run/telos-factory; "
             f"mount -L {LABEL} /run/telos-factory; "
             "/run/telos-factory/converge-controller /run/telos-factory"
@@ -268,13 +301,22 @@ def main() -> int:
         "--repo", type=Path,
         default=Path(__file__).resolve().parents[2])
     parser.add_argument(
+        "--authorization-nonce",
+        help="64 lowercase hex digits generated by the lifecycle orchestrator")
+    parser.add_argument(
         "--print-guest-command", action="store_true",
         help="print the fixed serial command instead of building")
     args = parser.parse_args()
     if args.print_guest_command:
-        print(FactoryBundle.guest_command())
+        if not args.authorization_nonce:
+            parser.error("--print-guest-command requires --authorization-nonce")
+        print(FactoryBundle.guest_command(args.authorization_nonce))
         return 0
-    output = FactoryBundle(args.repo, args.output).build()
+    if not args.authorization_nonce:
+        parser.error("building requires --authorization-nonce")
+    output = FactoryBundle(
+        args.repo, args.output,
+        authorization_nonce=args.authorization_nonce).build()
     print(output)
     return 0
 
