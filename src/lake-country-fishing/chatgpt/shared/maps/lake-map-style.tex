@@ -4,17 +4,22 @@
   % The lake geometry is locked to the independently checked shoreline.
   % A sub-point random-step stroke supplies graphite tooth without moving the
   % deterministic bathymetry, scale, or labels.
-  cgshore/.style={draw=black!86,line width=.82pt,fill=black!1.5,
+  cgshore/.style={draw=black,line width=.78pt,fill=black!4,
     decorate,decoration={random steps,segment length=2.2pt,amplitude=.14pt},
-    preaction={draw=black!24,line width=1.45pt},
+    preaction={draw=black!18,line width=2.15pt},
+    postaction={draw=black!58,line width=.24pt},
     path picture={
-      \node[inner sep=0pt,opacity=.38] at (path picture bounding box.center)
+      \node[inner sep=0pt,opacity=.68] at (path picture bounding box.center)
         {\includegraphics[width=14cm,height=14cm]{lake-country-fishing/shared/art/water-graphite.png}};
     }},
-  cgten/.style={draw=black,line width=.5pt},
-  cgtwenty/.style={draw=black,line width=.42pt,dash pattern=on 7pt off 1.5pt},
-  cgforty/.style={draw=black,line width=.35pt,dash pattern=on 4pt off 1.5pt},
-  cgsixty/.style={draw=black,line width=.32pt,dash pattern=on 2pt off 1.2pt},
+  cgten/.style={draw=black,line width=.54pt,
+    preaction={draw=black!16,line width=1.05pt}},
+  cgtwenty/.style={draw=black,line width=.46pt,dash pattern=on 7pt off 1.5pt,
+    preaction={draw=black!13,line width=.92pt}},
+  cgforty/.style={draw=black,line width=.39pt,dash pattern=on 4pt off 1.5pt,
+    preaction={draw=black!12,line width=.78pt}},
+  cgsixty/.style={draw=black,line width=.35pt,dash pattern=on 2pt off 1.2pt,
+    preaction={draw=black!11,line width=.68pt}},
   cgspot/.style={circle,fill=black,text=white,minimum size=3.3mm,inner sep=0pt,
     font=\fontsize{6}{6}\selectfont\bfseries},
   cgdepth/.style={fill=white,inner sep=.6pt,font=\fontsize{5.5}{6}\selectfont},

@@ -47,7 +47,7 @@
 \providecommand{\FilletPlate}{}
 \providecommand{\CookingPlate}{}
 \providecommand{\DispatchPlate}{}
-\telosmeta{Lake Country Fishing · ChatGPT}{Cooking \FishName}{From legal fish to boneless meal}{2026-07-26}
+\telosmeta{Lake Country Fishing · ChatGPT}{Cooking \FishName}{From legal fish to boneless meal}{20260726.001}
 \begin{document}
 \telosmasthead[\LatinName\ · kitchen guide]
 
@@ -181,44 +181,6 @@ from a sound edge.\\
 refrigeration; discard marinade that contacted raw fish unless boiled.
 \end{itemize}
 
-\begin{center}
-\begin{tabularx}{.94\linewidth}{@{}p{.25\linewidth}*{3}{>{\centering\arraybackslash}X}@{}}
-\toprule
-\textbf{Record before heat} & Thickest piece & Thinnest piece & Batch start\\
-\midrule
-Thickness / time & \rule{1.4cm}{.4pt} in & \rule{1.4cm}{.4pt} in &
-\rule{1.7cm}{.4pt}\\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\begin{teloscard}{Plan an even batch}
-Arrange the portions before heat and mark the thickest center in the sketch
-frame below. Which piece should be checked first? Which thin piece may need to
-leave the heat early? State the observation—not crust color or elapsed time—
-that will trigger each decision.
-
-\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\draw[thin] (0,0) rectangle (10.6,2.35);
-\foreach \x in {2.65,5.3,7.95}\draw[thin,dashed] (\x,0)--(\x,2.35);
-\node[font=\scriptsize,anchor=north west] at (.12,2.2)
-  {Sketch portions in pan / rack order; label thickness and probe entry};
-\end{tikzpicture}
-\end{center}
-
-\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.17\linewidth}p{.18\linewidth}L@{}}
-\toprule
-\textbf{Piece / position}&\textbf{Thickness}&\textbf{First check}&
-\textbf{Predicted action if below or above target}\\
-\midrule
-&&&\\[.55em]
-&&&\\[.55em]
-&&&\\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
-
 \Needspace{.48\textheight}
 \section{Two dependable methods}
 \CookingPlate
@@ -232,8 +194,8 @@ that will trigger each decision.
 \section{Measure, correct, prove}
 \begin{enumerate}
 \item Insert a clean instant-read probe sideways into the geometric center of
-the thickest portion, away from pan, rack, and bone. Record the lowest stable
-reading: \rule{1.4cm}{.4pt}\,°F at \rule{1.6cm}{.4pt}.
+the thickest portion, away from pan, rack, and bone. Read the lowest stable
+temperature rather than the first changing number.
 \item If it is below \qty{145}{^\circ F}, return only underdone pieces to heat
 in short increments. Clean the probe, then check a new center. If thin pieces
 are done first, remove them rather than drying the whole batch.
@@ -271,6 +233,45 @@ Before eating, use DNR's Fish Consumption Advisory Query for Pine Lake
 who are pregnant, may become pregnant, are breastfeeding, and children need
 the more protective category. When advice changes, follow the current query.
 \end{teloshazard}
+
+\newpage
+\section{Batch worksheet · complete after the meal}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[thin] (0,0) rectangle (10.6,2.35);
+\foreach \x in {2.65,5.3,7.95}\draw[thin,dashed] (\x,0)--(\x,2.35);
+\node[font=\scriptsize,anchor=north west] at (.12,2.2)
+  {Sketch pan / rack order; label thickness, probe entry, and early removals};
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.15\linewidth}p{.17\linewidth}p{.16\linewidth}L@{}}
+\toprule
+\textbf{Piece / position}&\textbf{Thickness}&\textbf{First check}&
+\textbf{Final °F}&\textbf{Correction / result}\\
+\midrule
+&&&&\\[.7em]
+&&&&\\[.7em]
+&&&&\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloscard}{Proof record}
+Batch start: \rule{22mm}{.4pt}\quad
+Thickest / thinnest: \rule{14mm}{.4pt} / \rule{14mm}{.4pt} in\quad
+Lowest stable center: \rule{16mm}{.4pt}\,°F
+
+\smallskip
+Which piece finished first, and what evidence triggered its removal?
+\par\noindent\rule{\linewidth}{.4pt}
+
+\smallskip
+Final bone check and split-center result:
+\par\noindent\rule{\linewidth}{.4pt}
+
+\smallskip
+Leftovers refrigerated at: \rule{24mm}{.4pt}
+\end{teloscard}
 
 {\footnotesize\textbf{Sources.} Wisconsin DNR Eating Your Catch and 2026--27
 water-specific regulations; Wisconsin DHS Eat Fish Safely; USDA/FoodSafety.gov

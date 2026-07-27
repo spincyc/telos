@@ -2,7 +2,7 @@
 \input{lake-country-fishing/claude/shared/fishing.tex}
 
 \telosmeta{Lake Country Fishing}{North Lake}
-  {Waukesha County, Wisconsin --- 440 acres, 78 ft maximum depth}{2026-07-25}
+  {Waukesha County, Wisconsin --- 440 acres, 78 ft maximum depth}{20260725.001}
 
 \begin{document}
 \telosmasthead[Town of Merton]
@@ -207,22 +207,6 @@ suggest where to look, but neither proves dissolved oxygen. Measure oxygen with
 calibrated gear or record it as unknown.
 \end{telospanel}
 
-\subsection{Two-basin water log}
-\renewcommand{\arraystretch}{1.35}
-\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.12\linewidth}p{.09\linewidth}
-p{.15\linewidth}p{.15\linewidth}X@{}}
-\toprule
-Date/time & Station & Depth ft & Temp: surface/5/10/20 ft &
-Secchi: down/up/mean ft & Rain, current, growth, bait, confidence\\
-\midrule
-\rule{0pt}{1.0cm}&&&&&\\ \midrule
-\rule{0pt}{1.0cm}&&&&&\\ \midrule
-\rule{0pt}{1.0cm}&&&&&\\ \midrule
-\rule{0pt}{1.0cm}&&&&&\\
-\bottomrule
-\end{tabularx}
-\renewcommand{\arraystretch}{1}
-
 \subsection{Interrogate the difference}
 \begin{enumerate}
 \item Which reading differed most between basins? \rule{1.25in}{.4pt}. Was that
@@ -256,37 +240,12 @@ flow/.style={-{Latex},line width=.55pt}]
 \end{tikzpicture}
 \end{center}
 
-\subsection{Access and weather gate}
-\begin{tabularx}{\linewidth}{@{}p{.30\linewidth}X p{.14\linewidth}@{}}
-\toprule
-\textbf{Verify today} & \textbf{Evidence, source, time} & \textbf{Go?}\\
-\midrule
-Current lawful public access and route && Yes / No\\
-Exact-water regulation; posted ordinance && Yes / No\\
-Forecast, radar, wind direction and gusts && Yes / No\\
-Lightning, fog, waves, current or high water && Yes / No\\
-Craft fit, PFDs, lights, communication, return && Yes / No\\
-\bottomrule
-\end{tabularx}
-
 \begin{teloshazard}{A map symbol does not grant access}
 Confirm the public route from a current authoritative source and read the
 signs on site. A path, road label or online pin is not permission. If access,
 weather, current or a safe return remains uncertain, do not launch.
 \end{teloshazard}
 
-\subsection{Claim and counter-evidence log}
-\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.18\linewidth}X X@{}}
-\toprule
-Time / spot & Claim tested & Evidence for and against & Next move and reason\\
-\midrule
-\rule{0pt}{1.2cm}&&&\\ \midrule
-\rule{0pt}{1.2cm}&&&\\ \midrule
-\rule{0pt}{1.2cm}&&&\\
-\bottomrule
-\end{tabularx}
-
-\newpage
 \begin{teloshazard}{Check the regulations before every trip}
 The 2026--27 rules for this water are the same as Pine Lake's: largemouth and
 smallmouth bass 14\,in minimum, 5 per day, 2 May--7 March, catch-and-release the
@@ -314,15 +273,53 @@ publish an unverified access or hazard mark.
 claims that the measurements did not support.
 \end{enumerate}
 
+\section{Field worksheets}
+
+\subsection{Access and weather gate}
+\begin{tabularx}{\linewidth}{@{}p{.30\linewidth}X p{.14\linewidth}@{}}
+\toprule
+\textbf{Verify today} & \textbf{Evidence, source, time} & \textbf{Go?}\\
+\midrule
+Current lawful public access and route && Yes / No\\
+Exact-water regulation; posted ordinance && Yes / No\\
+Forecast, radar, wind direction and gusts && Yes / No\\
+Lightning, fog, waves, current or high water && Yes / No\\
+Craft fit, PFDs, lights, communication, return && Yes / No\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Two-basin water log}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.12\linewidth}p{.09\linewidth}
+p{.15\linewidth}p{.15\linewidth}X@{}}
+\toprule
+Date/time & Station & Depth ft & Temp: surface/5/10/20 ft &
+Secchi: down/up/mean ft & Rain, current, growth, bait, confidence\\
+\midrule
+\rule{0pt}{.8cm}&&&&&\\ \midrule
+\rule{0pt}{.8cm}&&&&&\\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\subsection{Claim and counter-evidence log}
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.18\linewidth}X X@{}}
+\toprule
+Time / spot & Claim tested & Evidence for and against & Next move and reason\\
+\midrule
+\rule{0pt}{.8cm}&&&\\
+\bottomrule
+\end{tabularx}
+
 \subsection{Next paired comparison}
 \begin{tabularx}{\linewidth}{@{}p{.22\linewidth}X X@{}}
 \toprule
 \textbf{Control} & \textbf{River lobe} & \textbf{Main basin}\\
 \midrule
-Station / map spot & \rule{0pt}{1.0cm} &\\ \midrule
-Clock time / duration & \rule{0pt}{1.0cm} &\\ \midrule
-Depth / presentation & \rule{0pt}{1.0cm} &\\ \midrule
-Measurement tools & \rule{0pt}{1.0cm} &\\
+Station / map spot & \rule{0pt}{.7cm} &\\ \midrule
+Clock time / duration & \rule{0pt}{.7cm} &\\ \midrule
+Depth / presentation & \rule{0pt}{.7cm} &\\ \midrule
+Measurement tools & \rule{0pt}{.7cm} &\\
 \bottomrule
 \end{tabularx}
 
