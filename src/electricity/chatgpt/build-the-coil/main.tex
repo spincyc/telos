@@ -1,7 +1,22 @@
 \def\doctitle{Build the Coupled-Coil Instrument}\def\docsubtitle{A low-voltage pulse and resonance platform}\def\docstrap{the course synthesis, inside the learner boundary}
 \def\materialslist{\item 2--4 AA cells in fused, switched holder \item Two insulated coils on a removable ferrite or laminated-iron core \item Pushbutton \item LED with 1 k\(\Omega\) resistor \item Multimeter \item Cardboard base and cable ties}
 \def\prediction{Which change should most increase the receiver indication: aligning the coils, adding the core, or holding DC continuously?}
-\def\diagram{\begin{center}\begin{tikzpicture}\node[draw,minimum width=2.2cm,minimum height=1cm](s){battery + switch};\node[draw,right=8mm of s](p){primary coil};\node[draw,right=15mm of p](q){secondary coil};\node[draw,right=8mm of q](m){meter / LED};\draw[->](s)--(p);\draw[dashed,->](p)--(q)node[midway,above]{changing flux};\draw[->](q)--(m);\draw[very thick]($(p.south west)+(0,-.3)$)--($(q.south east)+(0,-.3)$)node[midway,below]{shared removable core};\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[font=\scriptsize,>=Stealth]
+  \node[inner sep=0] (plate) {\includegraphics[width=\linewidth]{electricity/chatgpt/build-the-coil/art/coupled-coil-apparatus.png}};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.13!(plate.north east)+(0,-1mm)$) {fused holder\\\(4\times\mathrm{AA}\), \(6\,\mathrm{V\,DC}\)};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.34!(plate.north east)+(0,-1mm)$) {master\\switch};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.42!(plate.north east)+(0,-1mm)$) {momentary\\pushbutton};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.50!(plate.north east)+(0,-1mm)$) {primary\\coil};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.61!(plate.north east)+(0,-1mm)$) {removable\\core};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.70!(plate.north east)+(0,-1mm)$) {secondary\\coil};
+  \node[align=center,fill=white,fill opacity=.9,text opacity=1] at ($(plate.north west)!0.89!(plate.north east)+(0,-1mm)$) {meter on\\volts range};
+  \draw[->] ($(plate.north west)!0.50!(plate.north east)+(0,-6mm)$) -- ($(plate.north west)!0.49!(plate.north east)+(0,-27mm)$);
+  \draw[->] ($(plate.north west)!0.61!(plate.north east)+(0,-6mm)$) -- ($(plate.north west)!0.60!(plate.north east)+(0,-25mm)$);
+  \draw[->] ($(plate.north west)!0.70!(plate.north east)+(0,-6mm)$) -- ($(plate.north west)!0.69!(plate.north east)+(0,-27mm)$);
+  \draw[<->] ($(plate.south west)!0.48!(plate.south east)+(0,18mm)$) -- node[below,fill=white,inner sep=1pt]{adjustable separation} ($(plate.south west)!0.68!(plate.south east)+(0,18mm)$);
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Mount components so no bare lead can bridge the battery. Provide strain relief and a clearly labeled master switch.\item Connect the primary through the pushbutton. Connect the secondary only to its meter or correctly resistor-limited LED.\item Adult performs continuity, resistance, polarity, meter-jack, and short-path inspection while deenergized.\item Pulse for less than one second; record receiver response. Compare coil gap, alignment, turns, and core one at a time.\item Disconnect the battery for every adjustment. Stop on warmth or unexpected behavior.\end{enumerate}}
 \def\explanation{This instrument combines current-produced field, changing flux, mutual induction, and geometry. It deliberately does not make sparks and is not a Tesla coil. Continuous DC gives little secondary response after the switching transient. A measured low-energy pulse provides more useful evidence than an uncontrolled high-voltage spectacle.}
 \def\extension{Create a calibration chart of receiver peak versus separation, with three trials and uncertainty bars. Photograph or redraw the final wiring and label every energy-transfer stage.}

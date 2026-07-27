@@ -1,7 +1,63 @@
 \def\doctitle{Lesson 4: Electromagnet}\def\docsubtitle{Current, turns, core, and fair tests}\def\docstrap{turn one variable at a time}
 \def\materialslist{\item 2 AA cells in switched holder \item Insulated magnet wire \item Iron bolt \item Paper clips \item Compass}
 \def\prediction{Which should change lifting strength more: doubling turns or reversing battery polarity?}
-\def\diagram{\coildiagram}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  pencil/.style={draw=black!68,line width=.34pt},
+  edge/.style={draw=black,line width=.78pt},
+  note/.style={font=\scriptsize,align=center}]
+% Steel bolt: faceted head, threaded shank, and graphite hatching.
+\fill[black!7] (-3.65,-.7) ellipse (1.05 and .12);
+\path[fill=black!13,draw=black,line width=.8pt]
+  (-3.66,-.41)--(-3.35,-.72)--(-2.77,-.72)--(-2.47,-.41)--
+  (-2.77,-.1)--(-3.35,-.1)--cycle;
+\foreach \y in {-.61,-.49,-.37,-.25}
+  \draw[pencil] (-3.46,\y)--(-2.68,\y);
+\path[fill=black!5,draw=black,line width=.8pt]
+  (-2.47,-.55) rectangle (2.72,-.27);
+\foreach \x in {1.82,2.02,...,2.62}
+  \draw[pencil] (\x,-.57)--(\x+.17,-.25);
+\node[note,below] at (-3.08,-.79) {iron bolt};
+% Dense helical winding; rear arcs are lighter to suggest depth.
+\foreach \x in {-2.15,-1.86,...,1.62}{
+  \draw[pencil] (\x,-.41) arc (180:360:.145 and .5);
+  \draw[edge] (\x+.29,-.41) arc (0:180:.145 and .5);}
+\draw[edge] (-2.15,-.41) .. controls (-2.5,.63) and (-3.8,.83) .. (-4.22,.23);
+\draw[edge] (1.91,-.41) .. controls (2.26,-1.28) and (3.37,-1.1) .. (3.72,-.62);
+\node[note,above] at (-.25,.6) {40 tidy turns of insulated wire};
+% Field lines around the energized coil.
+\draw[-{Stealth[length=1.8mm]},pencil]
+  (-1.9,.32)..controls(-.75,1.38)and(.9,1.38)..(2.35,.16);
+\draw[-{Stealth[length=1.8mm]},pencil]
+  (2.3,-.7)..controls(.8,-1.47)and(-.8,-1.47)..(-2.16,-.69);
+\node[note] at (.15,1.16) {field strengthens inside the core};
+% Battery holder at left, switch shown closed.
+\path[fill=black!9,draw=black,line width=.65pt,rounded corners=2pt]
+  (-5.02,-.5) rectangle (-4.12,.4);
+\draw[edge] (-4.86,-.32)--(-4.86,.22);
+\draw[edge] (-4.65,-.22)--(-4.65,.12);
+\draw[edge] (-4.44,-.31)--(-4.44,.21);
+\node[note,below] at (-4.57,-.56) {2 AA cells};
+\draw[edge] (-4.22,.23)--(-4.04,.44)--(-3.72,.44);
+\fill (-4.04,.44) circle (.035); \fill (-3.72,.44) circle (.035);
+\node[note,above] at (-3.88,.48) {switch};
+% Paper clips at the pole, with distinct overlapping wire contours.
+\foreach \y in {-.35,-.68,-1.01}{
+  \draw[edge,rounded corners=3pt] (2.72,\y) .. controls
+    (3.16,\y-.02) and (3.22,\y-.35) .. (2.9,\y-.39)
+    .. controls (2.65,\y-.42) and (2.64,\y-.17) .. (2.92,\y-.14);}
+\node[note,below] at (3,-1.42) {identical paper clips};
+% Compass witnesses polarity without crowding the apparatus.
+\draw[edge] (4.28,.52) circle (.57);
+\draw[pencil] (4.28,.02)--(4.28,1.02);
+\draw[pencil] (3.78,.52)--(4.78,.52);
+\path[fill=black] (4.28,.94)--(4.16,.48)--(4.28,.58)--(4.4,.48)--cycle;
+\path[fill=white,draw=black,line width=.45pt]
+  (4.28,.1)--(4.16,.56)--(4.28,.46)--(4.4,.56)--cycle;
+\node[note] at (4.28,1.2) {compass};
+\node[note] at (4.48,.79) {N};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Wind 20 tidy turns on the bolt and secure them. Strip only the lead ends.\item Energize for five seconds; count identical paper clips lifted. Disconnect and check temperature.\item Repeat three times, then make 40 turns with the same wire, core, source, and test.\item Use a compass to map polarity; reverse the source and repeat.\end{enumerate}}
 \def\explanation{Current produces a magnetic field around a conductor. Coil turns reinforce the axial field; an iron core responds strongly and concentrates flux. Reversing current reverses the poles but need not greatly change strength. More current can mean more field and also more \(I^2R\) heating, so brief timed trials matter.}
 \def\extension{Compare air and iron cores while holding turns and current fixed. Report both lifting result and uncertainty.}

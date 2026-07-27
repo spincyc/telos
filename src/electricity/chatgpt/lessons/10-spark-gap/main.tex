@@ -1,7 +1,13 @@
 \def\doctitle{Lesson 10: Spark Gaps}\def\docsubtitle{Gas breakdown as historical physics, not a learner build}\def\docstrap{read and model only; produce no sparks}
 \def\materialslist{\item This reading \item Printed Paschen-curve sketch \item Pencil \item No energized apparatus}
 \def\prediction{Why is ``air is an insulator'' incomplete rather than simply false?}
-\def\diagram{\begin{center}\begin{tikzpicture}\draw[->](0,0)--(5,0)node[right]{pressure \(\times\) gap};\draw[->](0,0)--(0,3)node[above]{breakdown voltage};\draw[very thick](.5,2.7)..controls(1.2,.5)and(2,.5)..(4.6,2.4);\node at(1.65,.35){minimum};\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}
+\includegraphics[width=.94\linewidth,height=2.35in,keepaspectratio]{%
+  electricity/chatgpt/lessons/10-spark-gap/assets/gas-breakdown-pencil.png}
+\par\footnotesize\emph{Conceptual cutaway, not construction guidance:
+collisions multiply charge carriers until a conductive channel forms. The
+inset minimum belongs to a pressure--gap curve, not to gap alone.}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Trace the historical sequence: charge separation, increasing field, ionization, conductive channel, rapid energy transfer, recovery.\item On the curve, mark why breakdown is not determined by gap alone.\item Identify hazards omitted by a pretty spark photograph: shock path, burns, fire, ultraviolet light, sound, ozone, and radio interference.\item Compare this mechanism with the low-voltage switch pulses in Lessons 6 and 9.\end{enumerate}}
 \def\explanation{A gas can become conductive when the field and collision conditions sustain ionization. Breakdown depends on gas, pressure, geometry, and separation. A spark gap is a nonlinear switch, historically useful in oscillators but noisy and hazardous. Nothing in this lesson authorizes construction: exposed high voltage remains qualified-person-only.}
 \def\extension{Write a museum-label explanation of a historical spark transmitter that includes both energy flow and why it is unsuitable for learner replication.}

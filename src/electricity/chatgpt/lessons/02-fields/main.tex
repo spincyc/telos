@@ -1,7 +1,59 @@
 \def\doctitle{Lesson 2: Fields}\def\docsubtitle{A map of force, not a visible substance}\def\docstrap{infer a field from repeated tests}
 \def\materialslist{\item Tape charge source \item Thread-suspended pith or foil ball \item Ruler \item Graph paper}
 \def\prediction{As separation doubles, should the interaction strengthen, weaken, or remain unchanged?}
-\def\diagram{\fielddiagram}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \tikzset{
+    graphite/.style={draw=black!72,line width=.42pt},
+    object/.style={draw=black!78,line width=.72pt},
+    ghost/.style={draw=black!32,line width=.34pt,dash pattern=on 1.2pt off 1.4pt},
+    measure/.style={draw=black!60,line width=.38pt},
+    note/.style={font=\footnotesize,align=center}
+  }
+
+  \node[font=\bfseries\small] at (-3.42,1.68) {A. Measure a deflection};
+  \draw[object] (-4.92,1.42)--(-2.02,1.42);
+  \draw[object] (-3.47,1.42)--(-3.47,1.18);
+  \draw[ghost] (-3.47,1.18)--(-3.47,-.58);
+  \draw[object] (-3.47,1.18)--(-2.97,-.51);
+  \fill[black!65] (-2.97,-.51) circle (.13);
+  \draw[ghost] (-3.47,-.58) circle (.13);
+  \draw[->,graphite] (-3.38,-.70) arc (-92:-63:.86);
+  \node[font=\scriptsize] at (-3.00,-.98) {deflection};
+
+  \draw[object,rounded corners=.08cm] (-1.50,-.82) rectangle (-.98,.16);
+  \foreach \y in {-.67,-.45,-.23,-.01}
+    \draw[object] (-.98,\y)--(-.67,\y);
+  \node[font=\scriptsize] at (-1.23,-.33) {$-$};
+  \draw[<->,measure] (-2.82,.30)--(-1.18,.30);
+  \node[font=\scriptsize,fill=white,inner sep=1pt] at (-2.00,.30) {distance $r$};
+  \draw[measure] (-4.80,-1.32)--(-.67,-1.32);
+  \foreach \x/\lab in {-4.55/0,-3.75/1,-2.95/2,-2.15/3,-1.35/4}
+    {\draw[measure] (\x,-1.38)--(\x,-1.25);
+     \node[font=\tiny] at (\x,-1.52) {\lab};}
+  \node[font=\scriptsize] at (-.89,-1.52) {cm};
+
+  \draw[black!28,line width=.35pt] (0,-1.65)--(0,1.76);
+
+  \node[font=\bfseries\small] at (3.20,1.68) {B. Build the map point by point};
+  \draw[step=.48cm,black!18,line width=.25pt] (.48,-1.38) grid (5.92,1.35);
+  \fill[black!78] (3.20,0) circle (.17);
+  \node[font=\scriptsize,white] at (3.20,0) {$+$};
+  \foreach \a in {0,45,...,315}{
+    \draw[->,graphite]
+      ({3.20+.52*cos(\a)},{.52*sin(\a)})
+      --({3.20+1.22*cos(\a)},{1.22*sin(\a)});
+    \fill[black!45]
+      ({3.20+1.45*cos(\a)},{1.45*sin(\a)}) circle (.025);
+  }
+  \draw[->,black!52,line width=.34pt]
+    (4.70,-.95)--(5.44,-1.23);
+  \node[font=\scriptsize,align=left,anchor=west] at (5.48,-1.23)
+    {arrow from\\one test point};
+  \node[note] at (3.20,-1.62)
+    {direction from motion \quad length from response};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Suspend the lightweight test object and mark its rest position.\item Place the prepared charge source at measured distances without touching.\item Record deflection direction and magnitude for at least five separations.\item Sketch arrows at each test point: direction from motion, length from relative response.\end{enumerate}}
 \def\explanation{A field is a model assigning an interaction to each location. An electric-field arrow points in the direction a positive test charge would accelerate. Field lines are a drawing convention: they do not begin to exist because ink connects the arrows, and crossings would assign two directions to one point.}
 \def\extension{Draw the map first from prediction, then overlay the observations in a different line style. Circle disagreements and propose a test.}

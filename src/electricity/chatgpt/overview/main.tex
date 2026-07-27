@@ -3,11 +3,75 @@
 \def\docstrap{ten investigations, five demonstrations, one firm boundary}
 \def\materialslist{\item This overview \item A bound lab notebook \item The safety guide}
 \def\prediction{Which is more convincing: a named effect, a visible effect, or a measurement that changes predictably? Explain.}
-\def\diagram{\begin{center}\begin{tikzpicture}[node distance=9mm]
-\node[draw] (a){charge};\node[draw,right=of a](b){field};\node[draw,right=of b](c){circuit};
-\node[draw,below=of c](d){magnetism};\node[draw,left=of d](e){induction};\node[draw,left=of e](f){coupling};
-\draw[->](a)--(b);\draw[->](b)--(c);\draw[->](c)--(d);\draw[->](d)--(e);\draw[->](e)--(f);
-\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=.86cm,y=.86cm,line cap=round,line join=round]
+  % Bench and quiet pencil hatching.
+  \draw[telos heavy] (-5.05,-1.15)--(5.05,-1.15);
+  \foreach \x in {-4.8,-4.45,...,4.8}
+    \draw[telos hair] (\x,-1.15)--++(.18,-.12);
+
+  % Bound notebook: predictions enter on the left.
+  \draw[telos line,rounded corners=.6pt] (-4.8,-.72) rectangle (-3.45,.62);
+  \draw[telos hair] (-4.57,-.72)--(-4.57,.62);
+  \foreach \y in {-.43,-.14,.15,.44}
+    \draw[telos hair] (-4.35,\y)--(-3.65,\y);
+  \foreach \y in {-.48,-.08,.32}
+    \draw[draw=telosink,line width=.45pt] (-4.68,\y) circle (.055);
+  \node[telos label,anchor=south] at (-4.13,.72) {predict};
+
+  % Current-limited battery holder and open switch.
+  \draw[telos line,rounded corners=1pt] (-3.05,-.55) rectangle (-1.72,.47);
+  \draw[telos hair] (-2.89,-.39) rectangle (-2.43,.31);
+  \draw[telos hair] (-2.36,-.39) rectangle (-1.90,.31);
+  \node[font=\tiny] at (-2.66,-.04) {$+$};
+  \node[font=\tiny] at (-2.13,-.04) {$-$};
+  \draw[telos line] (-1.72,.1)--(-1.30,.1);
+  \fill (-1.25,.1) circle (.045);
+  \fill (-.72,.1) circle (.045);
+  \draw[telos line] (-1.25,.1)--(-.80,.42);
+  \node[telos label,anchor=south] at (-2.38,.58) {controlled source};
+
+  % Coil on a visibly laminated core.
+  \draw[telos hair,fill=telosfill] (-.36,-.48) rectangle (1.35,.43);
+  \foreach \y in {-.34,-.17,0,.17,.34}
+    \draw[telos hair] (-.31,\y)--(1.30,\y);
+  \foreach \x in {-.45,-.18,...,1.44}
+    \draw[telos line] (\x,-.62) .. controls (\x-.16,-.26) and
+      (\x-.16,.28) .. (\x,.62);
+  \draw[telos line] (-.45,-.62)--(-.72,-.62)--(-.72,.1);
+  \draw[telos line] (1.44,.62)--(1.72,.62);
+  \node[telos label,fill=telospaper,anchor=south] at (.28,.82) {current makes a field};
+
+  % Field contours, deliberately varied like a technical-pencil plate.
+  \draw[telos arrow] (.45,.72) .. controls (1.05,1.46) and (2.18,1.35) .. (2.58,.60);
+  \draw[telos hair] (.13,.76) .. controls (.86,1.75) and (2.57,1.58) .. (2.91,.40);
+  \draw[telos hair] (.78,-.72) .. controls (1.30,-1.38) and (2.34,-1.24) .. (2.62,-.57);
+  \draw[telos arrow] (1.28,-.72) .. controls (1.72,-1.03) and (2.20,-.95) .. (2.43,-.61);
+
+  % Coupled pickup and analog meter.
+  \foreach \x in {2.18,2.38,...,2.98}
+    \draw[telos line] (\x,-.08) ellipse (.12 and .48);
+  \draw[telos line] (3.10,-.08)--(3.42,-.08)--(3.42,.28);
+  \draw[telos line] (2.06,-.08)--(1.86,-.08)--(1.86,-.74)--(3.42,-.74)--(3.42,-.52);
+  \draw[telos line,rounded corners=2pt,fill=telospaper] (3.17,-.52) rectangle (4.75,.70);
+  \draw[telos hair] (3.42,-.31) arc (205:-25:.55 and .45);
+  \foreach \a in {205,230,...,335}
+    \draw[telos hair] ({3.97+.55*cos(\a)},{-.31+.45*sin(\a)})--++({.07*cos(\a)},{.06*sin(\a)});
+  \draw[telos line] (3.97,-.31)--(4.28,.05);
+  \fill (3.97,-.31) circle (.055);
+  \node[font=\tiny] at (3.97,.47) {MEASURE};
+  \node[telos label,fill=telospaper,anchor=south] at (2.62,.62) {coupling};
+
+  % Reading order and observable evidence.
+  \draw[telos arrow] (-3.38,-.02)--(-3.10,-.02);
+  \draw[telos arrow] (-.64,-.88)--(.05,-.88)
+    node[midway,below,font=\tiny]{energize briefly};
+  \draw[telos arrow] (4.86,.08)--(5.00,.08);
+  \node[telos label,anchor=west,align=left] at (5.02,.08) {record\\evidence};
+\end{tikzpicture}
+\par\vspace{-0.2em}
+{\footnotesize\itshape One evidence loop: predict, energize briefly, observe a field effect, measure coupling, disconnect.}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Read Safety with the learner and assign roles.
 \item Take Lessons 1--7 in order; they establish charge, field, measurement, induction, ratio, and stored energy.
 \item Lessons 8--10 connect resonance, coupling, and historical discharge apparatus without crossing into learner high voltage.

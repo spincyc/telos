@@ -1,7 +1,54 @@
 \def\doctitle{Lesson 5: Induction}\def\docsubtitle{Only changing linked flux produces the pulse}\def\docstrap{motion direction becomes voltage direction}
 \def\materialslist{\item Coil of 200+ turns \item Bar magnet \item Sensitive multimeter \item Cardboard guide tube}
 \def\prediction{What will the meter show when a magnet rests motionless inside the coil? What changes when motion reverses?}
-\def\diagram{\inductiondiagram}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+% Cardboard guide and wound coil, drawn as a small observational plate.
+\fill[pattern=north east lines,pattern color=black!28]
+  (0,-.72) rectangle (3.25,.72);
+\draw[black!65] (0,-.72) rectangle (3.25,.72);
+\draw[black!45] (.12,-.64) rectangle (3.13,.64);
+\foreach \x in {.28,.43,...,2.98}{
+  \draw[line width=.48pt] (\x,-.79) .. controls (\x-.11,-.40) and
+    (\x-.11,.40) .. (\x,.79);
+  \draw[line width=.48pt] (\x,.79) .. controls (\x+.11,.40) and
+    (\x+.11,-.40) .. (\x,-.79);
+}
+\draw[line width=1pt] (0,-.84) -- (0,.84);
+\draw[line width=1pt] (3.25,-.84) -- (3.25,.84);
+\node[font=\scriptsize,align=center] at (1.62,-1.08)
+  {200+ turns on a cardboard guide};
+% Bar magnet in the guide.
+\shade[left color=black!24,right color=white] (-2.18,-.39) rectangle (-.28,.39);
+\draw[very thick] (-2.18,-.39) rectangle (-.28,.39);
+\draw (-1.23,-.39)--(-1.23,.39);
+\node[font=\small\bfseries] at (-1.70,0){S};
+\node[font=\small\bfseries] at (-.76,0){N};
+\draw[-{Stealth[length=3mm]},very thick] (-1.72,.78)--(-.48,.78);
+\node[font=\scriptsize,above] at (-1.10,.79){push in};
+\draw[-{Stealth[length=2.5mm]},thick] (-.48,-.76)--(-1.52,-.76);
+\node[font=\scriptsize,below] at (-1.00,-.77){pull out};
+% Winding leads and analog voltmeter.
+\draw[very thick] (0,-.80) .. controls (-.12,-1.42) and (3.88,-1.33)
+  .. (4.18,-1.82);
+\draw[very thick] (3.25,.80) .. controls (3.42,1.27) and (4.65,1.10)
+  .. (4.68,.72);
+\draw[very thick,fill=white] (4.10,-1.82) rectangle (6.12,.72);
+\draw[line width=.8pt] (4.38,-1.45) rectangle (5.84,.28);
+\draw (4.62,-1.16) arc (205:-25:.50);
+\foreach \a in {205,235,...,335}
+  \draw ($(5.11,-.68)+(\a:.50)$)--($(5.11,-.68)+(\a:.42)$);
+\draw[very thick,-{Stealth[length=2mm]}] (5.11,-.68)--(5.54,-.98);
+\node[font=\tiny\bfseries,align=center] at (5.11,.08){ZERO-CENTER\\mV};
+\fill (4.61,-1.64) circle (.06);
+\fill (5.61,-1.64) circle (.06);
+\node[font=\scriptsize] at (5.11,-2.07){sign reverses with motion};
+% Sparse flux strokes distinguish field linkage from the solid apparatus.
+\foreach \yy in {-.42,0,.42}
+  \draw[black!55,dashed,-{Stealth[length=1.8mm]}]
+    (-.20,\yy) .. controls (.55,\yy+.20) and (2.55,\yy+.20) .. (3.34,\yy);
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Connect the unpowered coil to the voltmeter. Hold the magnet still far away, then still inside.\item Move one pole in at slow and fast repeatable speeds; record sign and peak.\item Pull it out along the same path. Flip the magnet and repeat.\item Hold speed approximately fixed and compare one coil with two series coils.\end{enumerate}}
 \def\explanation{Induced emf follows change in magnetic flux linked through the circuit. No change means no sustained induced signal. Faster change and more linked turns generally increase the response. Reversing motion or pole reverses the sign because the induced effect opposes the change that produces it: Lenz's law and energy conservation tell the same story.}
 \def\extension{Drop the magnet through a nonconducting guide so speed and path are reproducible; sketch voltage versus time.}

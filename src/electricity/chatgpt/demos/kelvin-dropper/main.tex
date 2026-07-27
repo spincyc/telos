@@ -1,7 +1,67 @@
 \def\doctitle{Demo: Kelvin Water Dropper}\def\docsubtitle{Electrostatic feedback without a spark}\def\docstrap{observe charge separation; stop before discharge}
 \def\materialslist{\item Adult-built paired drip apparatus \item Two metal cans and two induction rings \item Plastic tubing \item Water tray \item Electroscope \item Grounding lead used only after flow stops}
 \def\prediction{How can initially neutral water and cans separate charge without a battery?}
-\def\diagram{\begin{center}\begin{tikzpicture}\foreach\x in {-1.5,1.5}{\draw[very thick](\x-.25,2.4)--(\x,1.8);\draw[very thick](\x,1.5)circle(.35);\foreach\y in {1.1,.7,.3}{\fill(\x,\y)circle(.04);}\draw[very thick](\x-.5,-.7)rectangle(\x+.5,0);}\draw[very thick](-1, -.35)--(1.5,1.5);\draw[very thick](1,-.35)--(-1.5,1.5);\node at(0,-1){cross-coupled collectors};\end{tikzpicture}\end{center}}
+\def\diagram{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  note/.style={font=\scriptsize,align=left},
+  wire/.style={line width=.7pt},
+  leader/.style={line width=.35pt,-{Stealth[length=1.3mm]}}]
+  % Reservoir and paired nozzles.
+  \path[fill=gray!7,rounded corners=2pt] (-2.65,1.82) rectangle (2.65,2.42);
+  \draw[line width=.8pt,rounded corners=2pt] (-2.65,1.82) rectangle (2.65,2.42);
+  \draw[line width=.3pt] (-2.47,2.08)
+    .. controls (-1.85,2.18) and (-1.15,1.99) .. (-.48,2.09)
+    .. controls (.25,2.19) and (1.20,2.01) .. (2.47,2.10);
+  \node[font=\scriptsize] at (0,2.20) {water reservoir};
+  \foreach \x in {-1.62,1.62}{
+    \draw[line width=.75pt] (\x-.16,1.82)--(\x-.16,1.48)--(\x-.08,1.35);
+    \draw[line width=.75pt] (\x+.16,1.82)--(\x+.16,1.48)--(\x+.08,1.35);
+    \draw[line width=.35pt] (\x-.08,1.35)--(\x+.08,1.35);
+    % Induction ring in perspective.
+    \draw[line width=1.05pt] (\x,.86) ellipse (.56 and .19);
+    \draw[line width=.35pt] (\x,.86) ellipse (.40 and .12);
+    \foreach \y/\r in {1.14/.045,.69/.050,.42/.055,.12/.060}
+      \path[fill=gray!28,draw=black,line width=.25pt] (\x,\y) circle (\r);
+  }
+  % Collector cans.
+  \foreach \x/\sgn in {-1.62/-,1.62/+}{
+    \path[fill=gray!8] (\x-.69,-1.27)--(\x-.57,-.03)
+      arc[start angle=180,end angle=360,x radius=.57,y radius=.15]
+      --(\x+.69,-1.27) arc[start angle=0,end angle=-180,x radius=.69,y radius=.18]--cycle;
+    \draw[line width=.85pt] (\x-.69,-1.27)--(\x-.57,-.03);
+    \draw[line width=.85pt] (\x+.69,-1.27)--(\x+.57,-.03);
+    \draw[line width=.75pt] (\x,-.03) ellipse (.57 and .15);
+    \draw[line width=.75pt] (\x,-1.27) arc[start angle=180,end angle=360,x radius=.69,y radius=.18];
+    \draw[line width=.3pt,dashed] (\x+.69,-1.27) arc[start angle=0,end angle=180,x radius=.69,y radius=.18];
+    \foreach \y in {-1.02,-.77,-.52}
+      \draw[line width=.22pt,gray!65] (\x-.62,\y) arc[start angle=180,end angle=360,x radius=.62,y radius=.14];
+    \node[font=\small\bfseries] at (\x,-.65) {\sgn};
+  }
+  % Cross-coupling stays behind the apparatus.
+  \draw[wire] (-2.28,-.92)--(-2.94,-.92)--(-2.94,1.22)--(1.06,1.22)--(1.06,.86);
+  \draw[wire] (2.28,-.92)--(2.94,-.92)--(2.94,1.48)--(-1.06,1.48)--(-1.06,.86);
+  \fill (-2.28,-.92) circle (.055);
+  \fill (2.28,-.92) circle (.055);
+  \fill (1.06,.86) circle (.055);
+  \fill (-1.06,.86) circle (.055);
+  % Spill tray and supports.
+  \draw[line width=.75pt] (-3.15,-1.52)--(-2.93,-1.73)--(2.93,-1.73)--(3.15,-1.52);
+  \draw[line width=.35pt] (-2.93,-1.62)--(2.93,-1.62);
+  \draw[line width=.55pt] (-2.78,2.56)--(-2.78,-1.76);
+  \draw[line width=.55pt] (2.78,2.56)--(2.78,-1.76);
+  \foreach \x in {-2.78,2.78}
+    \draw[line width=.75pt] (\x-.30,-1.76)--(\x+.30,-1.76);
+  % Labels.
+  \draw[leader] (-.95,.87)--(-.25,.58);
+  \node[note,anchor=west] at (-.20,.58) {induction ring};
+  \draw[leader] (.30,-.72)--(.94,-.72);
+  \node[note,anchor=west] at (.99,-.72) {collector can};
+  \node[note,fill=white,inner sep=1.5pt] at (0,1.38) {cross-coupled};
+  \node[note,align=center] at (0,-2.05)
+    {A tiny imbalance reinforces itself: each can biases the opposite falling stream.};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Adult checks stable supports, dry floor, spill tray, and generous ring separation. Operate indoors only, never during thunderstorm conditions.\item Start two smooth drips and watch the electroscope connected by the apparatus design.\item Stop flow well before any spark, snapping, hair raising, or painful sensation. Do not approach conductors while operating.\item With water stopped, adult discharges through the intended high-resistance path and verifies zero indication before touch.\end{enumerate}}
 \def\explanation{A tiny initial imbalance polarizes droplets; cross-coupling reinforces charge separation through positive feedback. Gravitational energy of falling water ultimately supplies the electrical energy. This edition uses the device only as an adult-built, no-spark electrostatic demonstration. It is not a learner wiring project.}
 \def\extension{Vary drip rate while keeping geometry fixed and compare time to a conservative electroscope mark; never use spark length as a measurement.}

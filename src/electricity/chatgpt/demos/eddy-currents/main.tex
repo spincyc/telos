@@ -1,7 +1,72 @@
 \def\doctitle{Demo: Eddy Currents}\def\docsubtitle{Magnetic braking and energy accounting}\def\docstrap{falling magnets, no electricity supply}
 \def\materialslist{\item Copper or aluminum tube \item Same-size nonconducting tube \item Neodymium magnet \item Same-size nonmagnetic slug \item Timer}
 \def\prediction{Will a magnet fall through a nonmagnetic metal tube at ordinary free-fall speed?}
-\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](-.6,2.5)--(-.6,-1);\draw[very thick](.6,2.5)--(.6,-1);\draw[very thick,fill=gray!20](-.4,1.8)rectangle(.4,1.3);\node at(0,1.55){N/S};\draw[->](0,1.2)--(0,.5);\foreach\y in {1,.4,-.2}{\draw[->](.8,\y)arc(0:300:.25 and .12);}\node[right]at(1.1,.4){induced loops};\end{tikzpicture}\end{center}}
+\def\diagram{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  note/.style={font=\scriptsize,align=left},
+  leader/.style={line width=.35pt,-{Stealth[length=1.3mm]}},
+  motion/.style={line width=.65pt,-{Stealth[length=2mm]}}]
+  % Cutaway tube.
+  \begin{scope}
+    \path[fill=gray!7] (-1.18,-1.45) -- (-1.18,1.92)
+      arc[start angle=180,end angle=360,x radius=1.18,y radius=.29]
+      -- (1.18,-1.45) arc[start angle=0,end angle=-180,x radius=1.18,y radius=.29] -- cycle;
+    \foreach \x in {-1.05,-.86,.86,1.05}
+      \draw[line width=.22pt,gray!65] (\x,-1.38)--(\x,1.86);
+    \draw[line width=.95pt] (-1.18,-1.45)--(-1.18,1.92);
+    \draw[line width=.95pt] (1.18,-1.45)--(1.18,1.92);
+    \draw[line width=.8pt] (0,1.92) ellipse (1.18 and .29);
+    \draw[line width=.35pt] (0,1.92) ellipse (.92 and .20);
+    \draw[line width=.8pt] (-1.18,-1.45) arc[start angle=180,end angle=360,x radius=1.18,y radius=.29];
+    \draw[line width=.3pt,dashed] (1.18,-1.45) arc[start angle=0,end angle=180,x radius=1.18,y radius=.29];
+    \foreach \y in {1.48,.92,.36,-.20,-.76}
+      \draw[line width=.28pt,gray!60] (-1.12,\y) arc[start angle=180,end angle=360,x radius=1.12,y radius=.22];
+    % Magnet.
+    \path[fill=gray!18] (-.54,.87) rectangle (.54,1.34);
+    \draw[line width=.8pt] (-.54,.87) rectangle (.54,1.34);
+    \draw[line width=.32pt] (0,.87)--(0,1.34);
+    \node[font=\scriptsize\bfseries] at (-.27,1.105) {N};
+    \node[font=\scriptsize\bfseries] at (.27,1.105) {S};
+    \draw[motion] (0,.72)--(0,.12);
+    \node[note,anchor=west] at (.12,.43) {slow fall};
+    % Eddy-current paths on the wall.
+    \foreach \y/\dir in {.64/1,.03/-1,-.58/1}{
+      \ifnum\dir=1
+        \draw[line width=.55pt,-{Stealth[length=1.4mm]}] (1.02,\y)
+          arc[start angle=5,end angle=328,x radius=.30,y radius=.12];
+      \else
+        \draw[line width=.55pt,-{Stealth[length=1.4mm]}] (1.02,\y)
+          arc[start angle=-5,end angle=-328,x radius=.30,y radius=.12];
+      \fi}
+    \draw[leader] (1.34,.05)--(2.35,.48);
+    \node[note,anchor=west] at (2.40,.48) {circulating currents\\in the tube wall};
+    \draw[leader] (-1.04,-.86)--(-2.26,-.53);
+    \node[note,anchor=east] at (-2.30,-.53) {copper or\\aluminum};
+  \end{scope}
+  % Comparison inset.
+  \begin{scope}[shift={(4.75,.14)}]
+    \node[font=\scriptsize\bfseries] at (0,1.77) {CURRENT-PATH TEST};
+    \path[fill=gray!7] (-1.48,-1.28) rectangle (-.28,1.38);
+    \draw[line width=.8pt] (-1.48,-1.28) rectangle (-.28,1.38);
+    \foreach \y in {-1.03,-.60,-.17,.26,.69,1.12}
+      \draw[line width=.45pt,-{Stealth[length=1.2mm]}]
+        (-1.36,\y) arc[start angle=190,end angle=-145,x radius=.48,y radius=.15];
+    \node[note] at (-.88,-1.57) {intact wall};
+    \path[fill=gray!7] (.32,-1.28) rectangle (1.52,1.38);
+    \draw[line width=.8pt] (.32,-1.28) rectangle (1.52,1.38);
+    \path[fill=white] (.82,-1.31) rectangle (1.01,1.41);
+    \draw[line width=.65pt] (.82,-1.28)--(.82,1.38);
+    \draw[line width=.65pt] (1.01,-1.28)--(1.01,1.38);
+    \foreach \y in {-1.03,-.60,-.17,.26,.69,1.12}{
+      \draw[line width=.35pt] (.44,\y) arc[start angle=190,end angle=270,x radius=.38,y radius=.15];
+      \draw[line width=.35pt] (1.40,\y) arc[start angle=-10,end angle=-90,x radius=.38,y radius=.15];}
+    \node[note] at (.92,-1.57) {lengthwise slit};
+    \node[note,align=center] at (0,-1.98)
+      {closed loops brake strongly \quad|\quad slit interrupts the loops};
+  \end{scope}
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Adult counts the magnet. Drop the nonmagnetic slug through both tubes and time.\item Drop the magnet through the nonconducting tube, then the metal tube. Catch over a padded tray.\item Repeat three times from the same height.\item Compare an intact tube with a lengthwise-slotted conductor if commercially prepared and burr-free.\end{enumerate}}
 \def\explanation{Changing flux drives circulating currents in the conductor. Their magnetic effect opposes the change, slowing the magnet. Gravitational potential energy becomes mainly thermal energy in the tube rather than disappearing. A slit interrupts current loops and weakens braking. The metal need not be ferromagnetic.}
 \def\extension{Graph transit time against tube material or wall thickness; do not substitute loose stacks of ingestible magnets.}

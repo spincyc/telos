@@ -1,7 +1,58 @@
 \def\doctitle{Lesson 3: Ohm's Law}\def\docsubtitle{Measure path, current, voltage, and power}\def\docstrap{a graph is stronger than a slogan}
 \def\materialslist{\item 2--4 AA-cell switched holder \item 100, 220, and 470 \(\Omega\) resistors \item LED with series resistor \item Digital multimeter}
 \def\prediction{For the same source, which resistor should permit the greatest current?}
-\def\diagram{\circuitdiagram}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  pencil/.style={draw=black!72,line width=.38pt},
+  edge/.style={draw=black,line width=.78pt},
+  wire/.style={draw=black,line width=1.05pt},
+  note/.style={font=\scriptsize,align=center}]
+% Soft graphite ground shadow and the battery holder.
+\fill[black!7] (-4.15,-1.02) ellipse (1.28 and .15);
+\path[fill=black!10,draw=black!65,line width=.35pt,rounded corners=2pt]
+  (-4.18,-.78) rectangle (-2.18,.58);
+\draw[edge,rounded corners=2pt] (-4.1,-.7) rectangle (-2.26,.5);
+\foreach \y in {-.39,.04}{
+  \draw[pencil] (-3.92,\y) rectangle (-2.46,\y+.31);
+  \draw[pencil] (-3.78,\y+.05) -- (-3.78,\y+.26);
+  \draw[pencil] (-2.62,\y+.09) -- (-2.53,\y+.09);
+  \draw[pencil] (-2.575,\y+.045) -- (-2.575,\y+.135);}
+\node[note] at (-3.18,-.91) {switched AA holder};
+% Resistor, with a second faint graphite contour.
+\draw[wire] (-2.18,-.08) .. controls (-1.78,-.08) and (-1.7,.46) .. (-1.2,.46);
+\draw[wire] (-1.2,.46)--(-.86,.46);
+\path[fill=black!4,draw=black,line width=.8pt,rounded corners=1.2pt]
+  (-.86,.23) rectangle (.86,.69);
+\draw[pencil] (-.79,.29) rectangle (.79,.63);
+\foreach \x/\w in {-.55/75,-.2/42,.2/75,.52/42}
+  {\fill[black!\w] (\x-.055,.24) rectangle (\x+.055,.68);}
+\draw[wire] (.86,.46)--(1.38,.46);
+\node[note,above] at (0,.76) {test resistor};
+% Meter body, display, dial, and jack detail.
+\fill[black!7] (2.16,-1.08) ellipse (1.25 and .14);
+\path[fill=black!8,draw=black,line width=.85pt,rounded corners=3pt]
+  (1.42,-.88) rectangle (3.52,1.05);
+\draw[pencil,rounded corners=2pt] (1.5,-.79) rectangle (3.44,.97);
+\path[fill=white,draw=black,line width=.58pt] (1.69,.43) rectangle (3.25,.82);
+\node[font=\small\ttfamily] at (2.47,.625) {2.20 V};
+\draw[edge] (2.47,-.08) circle (.39);
+\foreach \a in {20,55,...,335}\draw[pencil]
+  ($(2.47,-.08)+({.31*cos(\a)},{.31*sin(\a)})$)--
+  ($(2.47,-.08)+({.37*cos(\a)},{.37*sin(\a)})$);
+\draw[edge] (2.47,-.08)--(2.68,.13);
+\fill (1.86,-.63) circle (.075); \fill (3.06,-.63) circle (.075);
+\node[note,above] at (2.47,1.08) {digital voltmeter};
+% Two probe leads visibly bridge the resistor terminals.
+\draw[wire] (1.86,-.63) .. controls (1.12,-1.22) and (-1.23,-1.18) .. (-1.11,.31);
+\draw[wire] (3.06,-.63) .. controls (3.7,-1.38) and (1.25,-1.42) .. (1.07,.31);
+\draw[edge] (-1.18,.17)--(-1.05,.49); \draw[edge] (1.14,.17)--(1.01,.49);
+\fill (-1.05,.49) circle (.045); \fill (1.01,.49) circle (.045);
+% The return lead closes the current path.
+\draw[wire] (1.38,.46) .. controls (1.48,1.35) and (-3.25,1.43) .. (-3.92,.5);
+\draw[-{Stealth[length=2.2mm]},line width=.65pt] (-2.05,1.24)--(-1.15,1.24);
+\node[note,above] at (-1.6,1.25) {current path};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item With power off, build source--resistor--switch in one closed path. Adult checks meter jack and range.\item Place the ammeter in the path; record current. Disconnect.\item Put the voltmeter across the resistor; reconnect briefly and record voltage.\item Repeat with three resistors. Calculate \(R=V/I\) and \(P=VI\); graph \(V\) against \(I\).\end{enumerate}}
 \def\explanation{Current is charge per time; voltage describes energy transfer per charge. For an ohmic part at stable temperature, \(V=IR\). A voltmeter compares two points and an ammeter joins the current path. Putting an ammeter directly across a source makes a short circuit. Power \(P=VI\) tracks energy transfer rate, not a substance consumed by the first component.}
 \def\extension{Add a second resistor in series, then in parallel. Predict equivalent resistance before measuring.}

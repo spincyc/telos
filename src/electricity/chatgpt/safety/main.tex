@@ -3,13 +3,69 @@
 \def\docstrap{post this at the bench}
 \def\materialslist{\item This guide \item Safety glasses \item Parts tray \item Current-limited battery holder with switch}
 \def\prediction{An adult is present. Does that make work on an opened mains appliance acceptable? Write the reason, not just yes or no.}
-\def\diagram{\begin{center}\begin{tikzpicture}
-\node[draw,minimum width=3cm,minimum height=1cm](l){LEARNER: battery task};
-\node[draw,minimum width=3cm,minimum height=1cm,right=8mm of l](a){ADULT: inspect / stop};
-\node[draw,minimum width=3cm,minimum height=1cm,right=8mm of a](q){QUALIFIED: other work};
-\draw[very thick] ($(a.south west)+(-3.4,-.35)$)--($(a.south east)+(3.4,-.35)$);
-\node[below] at ($(a.south)+(0,-.35)$){hard boundary: roles do not merge};
-\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=.82cm,y=.82cm,line cap=round,line join=round]
+  % Isolated learner bench.
+  \draw[telos heavy] (-5.25,-.86)--(1.45,-.86);
+  \foreach \x in {-5.05,-4.72,...,1.25}
+    \draw[telos hair] (\x,-.86)--++(.16,-.11);
+  \draw[telos line,rounded corners=1pt] (-4.85,-.48) rectangle (-3.54,.42);
+  \draw[telos hair] (-4.67,-.34) rectangle (-4.25,.28);
+  \draw[telos hair] (-4.17,-.34) rectangle (-3.75,.28);
+  \node[font=\tiny] at (-4.46,-.04) {$+$};
+  \node[font=\tiny] at (-3.96,-.04) {$-$};
+  \draw[telos line] (-3.54,.03)--(-3.06,.03);
+  \fill (-3.01,.03) circle (.045);
+  \fill (-2.47,.03) circle (.045);
+  \draw[telos line] (-3.01,.03)--(-2.55,.35);
+  \node[telos label,anchor=south] at (-4.20,.53) {isolated battery};
+
+  % Adult inspection: hand above, not merged with learner.
+  \draw[telos line] (-1.98,-.43)--(-1.52,-.43);
+  \foreach \x in {-1.48,-1.25,...,-.56}
+    \draw[telos line] (\x,-.43) arc (180:0:.115 and .42);
+  \draw[telos line] (-.45,-.43)--(-.08,-.43)--(-.08,.03)--(-2.47,.03);
+  \draw[telos hair] (-1.72,.78) .. controls (-1.53,.45) and (-1.20,.38) .. (-.97,.58);
+  \draw[telos hair] (-1.72,.78)--(-1.94,1.10);
+  \draw[telos hair] (-1.54,.67)--(-1.73,1.08);
+  \draw[telos hair] (-1.35,.60)--(-1.50,1.04);
+  \draw[telos hair] (-1.17,.57)--(-1.27,.99);
+  \draw[telos hair] (-.97,.58) .. controls (-.73,.72) and (-.80,1.02) .. (-1.03,1.03);
+  \draw[telos arrow] (-1.16,.46)--(-1.16,.13);
+  \node[telos label,anchor=south] at (-1.38,1.15) {adult inspects};
+  \node[telos label,anchor=north] at (-1.15,-.98) {learner task: $\leq 12$ V DC};
+
+  % Bold physical stop line.
+  \draw[line width=2.1pt] (1.75,-1.12)--(1.75,1.30);
+  \node[font=\scriptsize\bfseries,rotate=90,fill=telospaper,inner sep=2pt]
+    at (1.75,.08) {STOP LINE};
+
+  % Forbidden opened mains appliance, rendered as a cutaway.
+  \draw[telos line,rounded corners=1.5pt] (2.17,-.58) rectangle (4.10,.70);
+  \draw[telos hair] (2.35,-.38) rectangle (3.92,.49);
+  \draw[telos line] (2.58,-.16) circle (.18);
+  \draw[telos hair] (3.08,-.36) rectangle (3.68,.29);
+  \foreach \y in {-.23,-.06,.11}
+    \draw[telos hair] (3.15,\y)--(3.61,\y);
+  \draw[telos line] (4.10,.04)--(4.45,.04)--(4.45,-.28);
+  \draw[telos line] (4.30,-.28)--(4.60,-.28);
+  \draw[telos line] (4.34,-.28)--(4.34,-.53);
+  \draw[telos line] (4.56,-.28)--(4.56,-.53);
+  \draw[line width=1.4pt] (2.06,-.72)--(4.72,.85);
+  \draw[line width=1.4pt] (2.06,.85)--(4.72,-.72);
+  \node[telos label,anchor=south,align=center] at (3.40,.93) {opened mains equipment\\qualified-person work only};
+
+  % Three unambiguous action cues.
+  \draw[telos arrow] (-4.87,-1.32)--(-3.60,-1.32)
+    node[midway,below,font=\tiny]{assemble deenergized};
+  \draw[telos arrow] (-2.82,-1.32)--(-1.52,-1.32)
+    node[midway,below,font=\tiny]{inspect};
+  \draw[telos arrow] (-.74,-1.32)--(.60,-1.32)
+    node[midway,below,font=\tiny]{switch briefly};
+\end{tikzpicture}
+\par\vspace{-0.2em}
+{\footnotesize\itshape Adult supervision controls the battery task; it never grants qualification beyond the stop line.}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Work dry, uncluttered, and away from jewelry, loose metal, drinks, and damaged cells.
 \item Assemble with power disconnected. Adult checks source, polarity, meter jacks, bare conductors, and likely short paths.
 \item Energize only for the stated interval. One hand owns the switch. Disconnect before moving a lead.

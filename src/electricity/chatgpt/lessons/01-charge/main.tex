@@ -1,7 +1,63 @@
 \def\doctitle{Lesson 1: Charge}\def\docsubtitle{Conservation, sign, and polarization}\def\docstrap{make an invisible interaction repeatable}
 \def\materialslist{\item Transparent tape \item Balloon or plastic comb \item Wool cloth \item Empty aluminum can}
 \def\prediction{Will two tape strips prepared the same way attract or repel? What result would distinguish two signs of charge?}
-\def\diagram{\fielddiagram}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  % A restrained double-line treatment gives the objects a hand-drawn,
+  % graphite edge while keeping the instructional geometry exact.
+  \tikzset{
+    graphite/.style={draw=black!72,line width=.42pt},
+    object/.style={draw=black!78,line width=.72pt},
+    grain/.style={draw=black!34,line width=.28pt},
+    charge/.style={font=\scriptsize,inner sep=0pt},
+    note/.style={font=\footnotesize,align=center,text width=3.15cm}
+  }
+
+  \node[font=\bfseries\small] at (-3.35,1.58) {A. Prepared tape strips};
+  \draw[grain] (-4.98,1.30) -- (-1.70,1.30);
+  \foreach \x in {-4.8,-4.55,...,-1.85}
+    \draw[grain] (\x,1.30) -- ++(.08,-.10);
+  \draw[object] (-4.55,1.24) -- (-4.34,-.52)
+    .. controls (-4.29,-.83) and (-4.05,-.91) .. (-3.92,-.65);
+  \draw[graphite] (-4.49,1.22) -- (-4.28,-.51)
+    .. controls (-4.24,-.69) and (-4.11,-.76) .. (-4.00,-.62);
+  \draw[object] (-2.13,1.24) -- (-2.34,-.52)
+    .. controls (-2.39,-.83) and (-2.63,-.91) .. (-2.76,-.65);
+  \draw[graphite] (-2.19,1.22) -- (-2.40,-.51)
+    .. controls (-2.44,-.69) and (-2.57,-.76) .. (-2.68,-.62);
+  \foreach \y in {.78,.28,-.22}
+    {\node[charge] at (-4.12,\y) {$+$};
+     \node[charge] at (-2.56,\y) {$+$};}
+  \draw[->,graphite] (-3.88,.18) -- (-3.42,.18);
+  \draw[->,graphite] (-2.80,.18) -- (-3.26,.18);
+  \node[note] at (-3.35,-1.22)
+    {same preparation\\repulsion is the evidence};
+
+  \draw[black!28,line width=.35pt] (0,-1.55)--(0,1.65);
+
+  \node[font=\bfseries\small] at (3.15,1.58) {B. Charged comb and neutral can};
+  \draw[object,rounded corners=.08cm]
+    (.55,.78) rectangle (2.62,1.17);
+  \foreach \x in {.68,.88,...,2.48}
+    \draw[object] (\x,.78)--(\x,.42);
+  \foreach \x in {.77,1.11,...,2.45}
+    \node[charge] at (\x,1.00) {$-$};
+  \draw[->,graphite] (2.78,.78)--(3.30,.78);
+  \node[font=\scriptsize] at (3.04,1.05) {approach};
+
+  \draw[object] (4.28,.12) ellipse (.34 and .91);
+  \draw[object] (4.28,1.03)--(5.34,1.03);
+  \draw[object] (4.28,-.79)--(5.34,-.79);
+  \draw[object] (5.34,.12) ellipse (.34 and .91);
+  \draw[grain] (4.33,.12) ellipse (.25 and .73);
+  \foreach \y in {.55,.12,-.31}
+    {\node[charge] at (4.05,\y) {$+$};
+     \node[charge] at (5.57,\y) {$-$};}
+  \draw[->,graphite] (4.85,-1.02) arc (105:45:.62);
+  \node[note] at (4.74,-1.38)
+    {charge shifts within the can;\\the nearer response dominates};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item Prepare two equal tape strips the same way; lift and suspend them side by side. Record attraction or repulsion.\item Stack two fresh strips, lift together, then separate. Compare top-to-top, bottom-to-bottom, and top-to-bottom.\item Charge a comb; approach a neutral can without touching and map the distance at which it begins to roll.\item Repeat three times, changing only distance.\end{enumerate}}
 \def\explanation{Like charge signs repel and unlike signs attract. Rubbing and peeling redistribute charge rather than creating net charge. A charged object can attract a neutral object because charges in the neutral material shift slightly; the nearer opposite response can dominate. Humidity can drain charge, so a weak result is evidence to record, not permission to invent a result.}
 \def\extension{Compare dry and humid conditions, or two insulating materials. Keep geometry and preparation count fixed.}

@@ -1,10 +1,63 @@
 \def\doctitle{Lesson 6: Transformers}\def\docsubtitle{Turns ratio under changing flux}\def\docstrap{use a tiny switched pulse, never mains}
 \def\materialslist{\item Two insulated coils on one iron core \item 2 AA cells \item Pushbutton \item Multimeter}
 \def\prediction{Will the second coil show a steady voltage while DC in the first coil is steady?}
-\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](-2,-1)rectangle(2,1);
-\foreach \y in {-0.7,-.35,...,.7}{\draw[very thick](-2.3,\y)arc(90:-90:.18 and .18);}
-\foreach \y in {-0.7,-.35,...,.7}{\draw[very thick](2.3,\y)arc(90:270:.18 and .18);}
-\node[left]at(-2.6,0){primary};\node[right]at(2.6,0){secondary};\draw[->](0,-1.25)--(0,-.75)node[midway,right]{shared flux};\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+% Laminated rectangular core, shown in cutaway.
+\fill[pattern=north east lines,pattern color=black!25]
+  (-1.95,-1.18) rectangle (1.95,1.18);
+\fill[white] (-1.17,-.60) rectangle (1.17,.60);
+\draw[very thick] (-1.95,-1.18) rectangle (1.95,1.18);
+\draw[very thick] (-1.17,-.60) rectangle (1.17,.60);
+\foreach \d in {.10,.20,.30}
+  \draw[black!45] (-1.95+\d,-1.18+\d)--(-1.17+\d,-.60+\d)
+    (1.95-\d,-1.18+\d)--(1.17-\d,-.60+\d);
+\node[font=\scriptsize] at (0,0){laminated iron core};
+% Primary and secondary windings have visibly different turn counts.
+\foreach \y in {-.88,-.56,...,.72}
+  \draw[line width=.9pt] (-2.18,\y)
+    .. controls (-2.52,\y+.05) and (-2.52,\y+.27) .. (-2.18,\y+.32);
+\foreach \y in {-.94,-.72,...,.82}
+  \draw[line width=.65pt] (2.18,\y)
+    .. controls (2.52,\y+.035) and (2.52,\y+.185) .. (2.18,\y+.22);
+\node[font=\scriptsize,anchor=east,align=right] at (-2.54,.08)
+  {primary\\fewer turns};
+\node[font=\scriptsize,align=center] at (2.18,1.43)
+  {secondary: more turns};
+% Primary: cells and a normally-open pushbutton.
+\draw[very thick] (-2.18,-.88) .. controls (-3.05,-1.32) and (-3.72,-1.35)
+  .. (-3.72,-1.70);
+\draw[very thick] (-3.72,-1.70)--(-4.08,-1.70);
+\draw[very thick] (-4.08,-2.02)--(-4.08,-1.38);
+\draw[very thick] (-4.31,-1.88)--(-4.31,-1.52);
+\draw[very thick] (-4.31,-1.70)--(-4.70,-1.70)--(-4.70,1.66)--(-3.88,1.66);
+\fill (-3.88,1.66) circle (.055);
+\fill (-3.18,1.66) circle (.055);
+\draw[line width=1pt] (-3.86,1.70)--(-3.24,1.96);
+\draw[very thick] (-3.18,1.66) .. controls (-2.82,1.62) and (-2.55,1.18)
+  .. (-2.18,.72);
+\node[font=\scriptsize,align=center] at (-4.05,-2.21){2 AA cells};
+\node[font=\scriptsize] at (-3.53,2.16){press / release};
+% Secondary: high-impedance meter, with no load attached.
+\draw[very thick] (2.18,-.94) .. controls (3.05,-1.30) and (3.62,-1.12)
+  .. (3.72,-.70);
+\draw[very thick] (2.18,1.04) .. controls (3.03,1.32) and (3.62,1.12)
+  .. (3.72,.70);
+\draw[very thick,fill=white] (3.72,-.94) rectangle (5.42,.94);
+\draw (.01+4.0,-.56) rectangle (5.14,.55);
+\draw (4.17,-.36) arc (205:-25:.40);
+\draw[very thick,-{Stealth[length=1.8mm]}] (4.57,-.02)--(4.91,-.29);
+\node[font=\scriptsize\bfseries] at (4.57,.30){mV};
+\node[font=\scriptsize,align=center] at (4.57,-1.18){voltmeter only};
+% Flux path and pulse notes.
+\draw[dashed,black!60,-{Stealth[length=2mm]}] (-.76,.88)--(.76,.88);
+\draw[dashed,black!60,-{Stealth[length=2mm]}] (.76,-.88)--(-.76,-.88);
+\node[font=\scriptsize,fill=white,inner sep=1pt] at (0,1.46)
+  {changing shared flux};
+\node[font=\scriptsize,align=center] at (0,-1.64)
+  {a pulse at make; opposite pulse at break};
+\end{tikzpicture}
+\end{center}}
 \def\procedure{\begin{enumerate}\item With power disconnected, put both coils on the core. Connect the secondary only to a voltmeter.\item Briefly press and release the primary pushbutton. Record both voltage pulses and their signs.\item Compare secondaries with different turn counts, keeping primary, core, and switching method unchanged.\item Repeat without the iron core.\end{enumerate}}
 \def\explanation{A transformer requires changing flux. With DC, change occurs mainly at make and break, hence pulses rather than steady secondary voltage. In the ideal sinusoidal model \(V_s/V_p=N_s/N_p\); this crude pulse experiment tests direction and relative magnitude, not precise regulation. Real winding resistance, leakage flux, and core loss matter.}
 \def\extension{Graph secondary peak against turn count. Do not connect any winding to an outlet or wall adapter.}

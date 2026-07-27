@@ -1,7 +1,45 @@
 \def\doctitle{Demo: Homopolar Motor}\def\docsubtitle{Magnetic force and torque in three parts}\def\docstrap{adult-controlled, five-second AA-cell trials}
 \def\materialslist{\item One fresh AA alkaline cell \item One neodymium disc magnet \item Bare copper wire \item Pliers \item Timer}
 \def\prediction{If the magnet flips, should rotation reverse? What if both cell and magnet flip?}
-\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick,fill=gray!15](0,0)rectangle(1,2.4);\node[rotate=90]at(.5,1.2){AA};\draw[very thick](-.2,-.3)rectangle(1.2,0);\node[right]at(1.3,-.15){magnet};\draw[very thick](.5,2.5)..controls(1.6,2.2)and(1.6,.5)..(1.2,-.1);\draw[very thick](.5,2.5)..controls(-.6,2.2)and(-.6,.5)..(-.2,-.1);\draw[->](2,1.8)arc(80:-80:.6);\end{tikzpicture}\end{center}}
+\def\diagram{\begin{center}\begin{tikzpicture}[scale=.72,transform shape,line cap=round,line join=round,>=Latex]
+% Bench shadow and cylindrical AA cell.
+\fill[black!7](-2.25,-.66)ellipse(2.15 and .18);
+\draw[black!28,thin](-2.1,-.62)..controls(-1.1,-.48)and(.2,-.48)..(1.95,-.63);
+\path[pattern=north east lines,pattern color=black!34](-.72,-.28)rectangle(.72,2.34);
+\fill[white,opacity=.76](-.48,-.24)rectangle(.38,2.3);
+\draw[very thick](-.72,-.28)--(-.72,2.34) arc[start angle=180,end angle=360,x radius=.72,y radius=.18]--(.72,-.28);
+\draw[very thick](-.72,-.28)arc[start angle=180,end angle=360,x radius=.72,y radius=.18];
+\draw[thin](-.72,2.34)arc[start angle=180,end angle=0,x radius=.72,y radius=.18];
+\draw[thick,fill=white](-.22,2.49)arc[start angle=180,end angle=360,x radius=.22,y radius=.065]--(.22,2.57)
+  arc[start angle=0,end angle=180,x radius=.22,y radius=.065]--cycle;
+\node[font=\scriptsize\bfseries,rotate=90,fill=white,inner sep=1pt]at(0,1.05){AA ALKALINE};
+\node[font=\scriptsize]at(0,.15){$-$};
+\node[font=\scriptsize]at(0,2.18){$+$};
+% Disc magnet, with hatched side wall and pole face.
+\path[pattern=horizontal lines,pattern color=black!45](-.98,-.57)rectangle(.98,-.26);
+\draw[very thick](-.98,-.57)--(-.98,-.27)arc[start angle=180,end angle=360,x radius=.98,y radius=.24]--(.98,-.57);
+\draw[very thick](-.98,-.57)arc[start angle=180,end angle=360,x radius=.98,y radius=.24];
+\draw[thick,fill=white](-.98,-.27)arc[start angle=180,end angle=540,x radius=.98,y radius=.24];
+\node[font=\scriptsize\bfseries]at(0,-.27){N};
+% Bent copper wire: doubled graphite strokes suggest a round conductor.
+\draw[black!30,line width=3.2pt](-.04,2.6)..controls(-1.54,2.58)and(-1.91,1.38)..(-1.62,.18)
+  ..controls(-1.55,-.18)and(-1.26,-.35)..(-.97,-.37);
+\draw[very thick](-.04,2.6)..controls(-1.54,2.58)and(-1.91,1.38)..(-1.62,.18)
+  ..controls(-1.55,-.18)and(-1.26,-.35)..(-.97,-.37);
+\draw[black!30,line width=3.2pt](.04,2.6)..controls(1.54,2.58)and(1.91,1.38)..(1.62,.18)
+  ..controls(1.55,-.18)and(1.26,-.35)..(.97,-.37);
+\draw[very thick](.04,2.6)..controls(1.54,2.58)and(1.91,1.38)..(1.62,.18)
+  ..controls(1.55,-.18)and(1.26,-.35)..(.97,-.37);
+\fill(0,2.59)circle(.055);\fill(-.97,-.37)circle(.045);\fill(.97,-.37)circle(.045);
+% Technical callouts.
+\draw[thin](-1.68,1.55)--(-3.08,1.88);\node[font=\scriptsize,anchor=e,align=right]at(-3.12,1.88){balanced bare\\copper wire};
+\draw[thin](-.88,-.48)--(-2.18,-1.03);\node[font=\scriptsize,anchor=e]at(-2.22,-1.03){disc magnet};
+\draw[thin](.08,2.62)--(2.48,2.87);\node[font=\scriptsize,anchor=west]at(2.52,2.87){pivot contact};
+\draw[thin](.98,-.37)--(2.56,-.76);\node[font=\scriptsize,anchor=west,align=left]at(2.6,-.76){light brush\\contact};
+\draw[->,line width=.8pt](2.16,1.72)arc[start angle=120,end angle=-80,x radius=.62,y radius=.47];
+\node[font=\scriptsize,anchor=west]at(2.58,1.25){rotation};
+\draw[<->,thin](-.98,-.91)--(.98,-.91);\node[font=\tiny,fill=white,inner sep=1pt]at(0,-.91){centered, level geometry};
+\end{tikzpicture}\end{center}}
 \def\procedure{\begin{enumerate}\item Adult counts and mounts the magnet on the negative cell end. Bend balanced wire to touch the positive button and barely brush the magnet edge.\item Clear the area; adult makes contact for no more than five seconds while learner observes direction.\item Disconnect, check wire and cell temperature, and allow cooling.\item Flip the magnet and repeat once. Store the magnet securely.\end{enumerate}}
 \def\explanation{Current crossing the magnet's field experiences force; the geometry turns that force into torque. Reversing either current or field reverses rotation; reversing both preserves it. This is nearly a direct short, so most input can become heat. That is why the trial is brief, adult-controlled, AA alkaline only, and never lithium.}
 \def\extension{Predict four combinations of cell direction and magnet direction before testing only the minimum needed to check the pattern.}

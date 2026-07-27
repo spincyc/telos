@@ -1,8 +1,76 @@
 \def\doctitle{Lesson 8: Resonance}\def\docsubtitle{Frequency, exchange, and damping}\def\docstrap{mechanical evidence before electrical analogy}
 \def\materialslist{\item String pendulum \item Small mass \item Ruler \item Phone stopwatch used away from apparatus \item Optional low-voltage signal source operated by adult}
 \def\prediction{Will pushes at any timing build the same amplitude?}
-\def\diagram{\begin{center}\begin{tikzpicture}\draw[very thick](0,1.8)--(0,0);\fill(0,0)circle(.15);\draw[dashed](0,0)arc(-90:-45:1.8);\draw[->,thick](.8,.5)arc(-20:35:.5);\node[right]at(.9,.8){timed push};\end{tikzpicture}\end{center}}
-\def\procedure{\begin{enumerate}\item Measure ten free oscillations and calculate period.\item Apply equal small pushes once per cycle; count cycles needed to reach a marked amplitude.\item Repeat with pushes deliberately early or late.\item Add gentle damping with a paper vane and repeat.\end{enumerate}}
-\def\explanation{Resonance is a large response when drive timing matches a system's natural exchange and losses are modest. In an ideal LC circuit, energy alternates between the capacitor's electric field and inductor's magnetic field. Resistance dissipates energy and broadens/reduces the response. Resonance selects and amplifies response; it does not create energy.}
-\def\extension{Make a qualitative response curve: drive timing on the horizontal axis, achieved amplitude on the vertical.}
+\def\diagram{\begin{center}\vspace{-.35em}
+\begin{tikzpicture}[scale=.72,transform shape,x=1.45cm,y=1cm,line cap=round,line join=round,
+  note/.style={font=\scriptsize,align=center},
+  grain/.style={telosmute,line width=.25pt}]
+  % clamp stand, drawn as a bench illustration
+  \draw[grain](-4.70,-1.10)..controls(-2.0,-1.01)and(1.9,-1.18)..(4.65,-1.08);
+  \draw[line width=.8pt,fill=telosfill](-4.35,-1.02)rectangle(-2.25,-.84);
+  \draw[line width=.85pt](-3.30,-.84)--(-3.30,1.62);
+  \draw[line width=.75pt](-3.31,1.48)--(-.76,1.48);
+  \draw[line width=.45pt](-3.21,1.38)--(-.83,1.38);
+  \draw[line width=.65pt,fill=telosfill](-1.10,1.25)rectangle(-.72,1.62);
+  \draw[grain](-1.02,1.28)--(-.80,1.56);
+  % pendulum: rest and ghosted amplitude positions
+  \coordinate (pivot) at (-.91,1.25);
+  \draw[line width=.75pt] (pivot)--(-.91,-.50);
+  \draw[line width=.75pt,fill=telosdeep](-.91,-.64)circle(.18);
+  \draw[densely dashed,telosmute] (pivot)--(-2.03,-.09);
+  \draw[densely dashed,telosmute] (pivot)--(.21,-.09);
+  \draw[telosmute](-2.03,-.09)circle(.17);
+  \draw[telosmute](.21,-.09)circle(.17);
+  \draw[<->,line width=.5pt](-1.91,.02)arc(220:320:1.30);
+  \node[note] at (-.92,-.94){one natural cycle};
+  % hand and timed push
+  \draw[line width=.55pt,fill=telosfill](.70,-.12)
+    ..controls(.46,-.22)and(.34,-.30)..(.17,-.37)
+    --(.01,-.22)..controls(.24,-.05)and(.34,.08)..(.52,.20)
+    ..controls(.66,.27)and(.80,.08)..(.70,-.12);
+  \draw[line width=.5pt](.49,.18)..controls(.42,.36)and(.55,.45)..(.68,.32);
+  \draw[line width=.5pt](.62,.25)..controls(.60,.43)and(.75,.48)..(.84,.33);
+  \draw[-{Latex[length=2.2mm]},line width=.9pt](.10,-.03)--(-.43,-.31);
+  \node[note,anchor=west] at (.50,.62){same small push\\at the same phase};
+  % ruler / amplitude witness
+  \draw[line width=.55pt](.50,-.75)rectangle(1.68,-.58);
+  \foreach \x in {.58,.72,...,1.58}\draw[line width=.3pt](\x,-.58)--(\x,-.67);
+  \node[font=\tiny,above] at (1.09,-.55){amplitude mark};
+  % response curve inset
+  \begin{scope}[shift={(2.28,-.72)},x=.93cm,y=.72cm]
+    \draw[->,line width=.5pt](0,0)--(2.55,0)node[right,font=\tiny]{push timing};
+    \draw[->,line width=.5pt](0,0)--(0,2.65)node[above,font=\tiny,align=center]{achieved\\amplitude};
+    \draw[line width=.9pt](.08,.12)..controls(.76,.18)and(.93,.56)..(1.25,2.32)
+      ..controls(1.52,.73)and(1.78,.22)..(2.40,.13);
+    \draw[densely dashed,telosmute](1.25,0)--(1.25,2.32);
+    \node[font=\tiny,align=center] at (1.25,2.52){natural\\timing};
+    \draw[line width=.45pt](.20,.08)..controls(.85,.11)and(1.00,.30)..(1.25,1.15)
+      ..controls(1.53,.32)and(1.78,.12)..(2.28,.08);
+    \node[font=\tiny,anchor=west] at (1.52,1.13){more damping};
+  \end{scope}
+  % LC energy-exchange vignette
+  \begin{scope}[shift={(2.55,1.26)}]
+    \draw[line width=.55pt](-.15,.12)--(.18,.12);
+    \draw[line width=.55pt](.18,-.18)--(.18,.42);
+    \draw[line width=.55pt](.42,-.18)--(.42,.42);
+    \draw[line width=.55pt](.42,.12)--(.74,.12);
+    \draw[line width=.55pt,decorate,decoration={coil,segment length=2.3mm,amplitude=1.7mm}]
+      (.74,.12)--(1.82,.12);
+    \draw[line width=.55pt](1.82,.12)--(2.10,.12)--(2.10,-.43)--(-.15,-.43)--(-.15,.12);
+    \draw[<->,line width=.45pt](-.02,.68)--(1.97,.68);
+    \node[font=\tiny,align=center] at (.98,.94){electric field \(\leftrightarrow\) magnetic field};
+    \node[font=\tiny] at (.30,-.05){\(C\)};
+    \node[font=\tiny] at (1.29,-.08){\(L\)};
+  \end{scope}
+  \node[note,anchor=west] at (-4.55,1.83){PENDULUM RESONANCE: TIMING, RESPONSE, DAMPING};
+\end{tikzpicture}\vspace{-.65em}
+\end{center}}
+\def\procedure{\small\begin{enumerate}\item Measure ten free oscillations and calculate period.\item Apply equal small pushes once per cycle; count cycles needed to reach a marked amplitude.\item Repeat with pushes deliberately early or late.\item Add gentle damping with a paper vane and repeat.\end{enumerate}}
+\def\explanation{\small Resonance is a large response when drive timing matches a system's natural exchange and losses are modest. In an ideal LC circuit, energy alternates between the capacitor's electric field and inductor's magnetic field. Resistance dissipates energy and broadens/reduces the response. Resonance selects and amplifies response; it does not create energy.}
+\def\extension{\small Make a qualitative response curve: drive timing on the horizontal axis, achieved amplitude on the vertical.}
+\AtBeginDocument{\renewenvironment{recordbox}{\begin{teloscard}{Evidence record}\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.12\linewidth}Xp{.12\linewidth}X@{}}
+Prediction & \rule{\linewidth}{.3pt} & One change & \rule{\linewidth}{.3pt}\\[.9em]
+Observation & \rule{\linewidth}{.3pt} & Claim + because & \rule{\linewidth}{.3pt}
+\end{tabularx}}{\end{teloscard}}}
 \input{electricity/chatgpt/shared/lesson-template.tex}
