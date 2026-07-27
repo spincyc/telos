@@ -55,6 +55,7 @@ SITE_TOOL := scripts/site
 ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
 WINDOWS_INSTALL_SOURCE ?= homelab/var/media/windows/install-source
+FACTORY_MEDIA_SEAL ?= homelab/var/media/factory-media-seal.json
 WINDOWS_25H2_EN_US_ISO ?= Win11_25H2_English_x64_v2.iso
 WINDOWS_25H2_EN_US_SHA256 := 768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3
 WINDOWS_INSTALL_SHA256 ?= $(WINDOWS_25H2_EN_US_SHA256)
@@ -247,28 +248,29 @@ homelab-factory-deps: homelab-bootstrap-deps
 homelab-factory-media: homelab-media
 
 homelab-factory-cache-seal:
-	@test -f '$(ARCH_ISO)' || { echo 'missing verified Arch ISO: $(ARCH_ISO)' >&2; exit 2; }
-	@test -f '$(ARCH_ISO).receipt.json' || { echo 'missing Arch receipt: $(ARCH_ISO).receipt.json' >&2; exit 2; }
-	@test -f '$(WINDOWS_ISO_CACHE)' || { echo 'missing Windows ISO: $(WINDOWS_ISO_CACHE)' >&2; exit 2; }
-	@test -f '$(WIMBOOT)' || { echo 'missing wimboot: $(WIMBOOT)' >&2; exit 2; }
-	@expected="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' '$(ARCH_ISO).receipt.json')"; \
-		actual="$$(sha256sum '$(ARCH_ISO)' | cut -d' ' -f1)"; \
-		test "$$actual" = "$$expected" || { echo 'Arch ISO digest mismatch' >&2; exit 1; }; \
-		echo 'PASS: Arch ISO matches receipt'
-	@homelab/bin/homelab-verify-windows \
-		--iso '$(WINDOWS_ISO_CACHE)' \
-		--sha256 '$(WINDOWS_25H2_EN_US_SHA256)' \
-		--receipt '$(WINDOWS_ISO_CACHE).verification.json'
-	@expected="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' homelab/media/wimboot.json)"; \
-		expected_size="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["size"])' homelab/media/wimboot.json)"; \
-		actual="$$(sha256sum '$(WIMBOOT)' | cut -d' ' -f1)"; \
-		actual_size="$$(stat -c %s '$(WIMBOOT)')"; \
-		test "$$actual" = "$$expected" || { echo 'wimboot digest mismatch' >&2; exit 1; }; \
-		test "$$actual_size" = "$$expected_size" || { echo 'wimboot size mismatch' >&2; exit 1; }; \
-		echo 'PASS: wimboot matches pinned metadata'
+	@homelab/bin/homelab-media-seal create \
+		--seal '$(FACTORY_MEDIA_SEAL)' \
+		--arch-iso '$(ARCH_ISO)' \
+		--arch-receipt '$(ARCH_ISO).receipt.json' \
+		--windows-iso '$(WINDOWS_ISO_CACHE)' \
+		--windows-provenance '$(WINDOWS_ISO_CACHE).provenance.json' \
+		--windows-verification '$(WINDOWS_ISO_CACHE).verification.json' \
+		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
+		--wimboot '$(WIMBOOT)' \
+		--wimboot-metadata homelab/media/wimboot.json >/dev/null
 	@printf '%s\n' 'PASS: local factory media cache is sealed'
 
-homelab-factory-offline-check: homelab-factory-cache-seal
+homelab-factory-offline-check:
+	@homelab/bin/homelab-media-seal verify \
+		--seal '$(FACTORY_MEDIA_SEAL)' \
+		--arch-iso '$(ARCH_ISO)' \
+		--arch-receipt '$(ARCH_ISO).receipt.json' \
+		--windows-iso '$(WINDOWS_ISO_CACHE)' \
+		--windows-provenance '$(WINDOWS_ISO_CACHE).provenance.json' \
+		--windows-verification '$(WINDOWS_ISO_CACHE).verification.json' \
+		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
+		--wimboot '$(WIMBOOT)' \
+		--wimboot-metadata homelab/media/wimboot.json >/dev/null
 	@printf '%s\n' \
 		'PASS: required local inputs verify without acquisition' \
 		'Network isolation is enforced by the lifecycle runner, not this cache check.'

@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
 superseded_by: null
 created_at: "2026-07-27T21:51:51Z"
-updated_at: "2026-07-27T21:58:25Z"
+updated_at: "2026-07-27T22:05:58Z"
 ---
 
 # Goal
@@ -38,3 +38,10 @@ media/PXE state is a shared mutable resource; only one executor may mutate it.
 First implement and checkpoint a deterministic aggregate media seal that
 reuses existing Arch, Windows, wimboot, and extracted-install-source
 verification. Then implement the transactional multi-target release set.
+
+## Progress
+
+The aggregate seal is implemented and verified against both fixtures and the
+live ignored cache. It records a stable content/provenance inventory, separate
+tool versions, and rejects unstable or unsafe inputs. The task remains active
+for the transactional controller/Arch/Windows release set.

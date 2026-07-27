@@ -22,6 +22,7 @@ REQUIRED = (
     "sources/boot.wim",
 )
 INSTALL_IMAGES = ("sources/install.wim", "sources/install.esd")
+RECEIPT_SCHEMA = 1
 FORBIDDEN_NAMES = {
     "autounattend.xml",
     "unattend.xml",
@@ -150,8 +151,10 @@ def _fsync_tree(root: Path) -> None:
 def _validate_receipt(receipt: object, expected_sha256: str) -> list[dict[str, object]]:
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_KEYS:
         raise InstallSourceError("install-source receipt fields are invalid")
-    if receipt["schema"] != 1:
-        raise InstallSourceError("install-source receipt schema is not 1")
+    if receipt["schema"] != RECEIPT_SCHEMA:
+        raise InstallSourceError(
+            f"install-source receipt schema is not {RECEIPT_SCHEMA}"
+        )
     digest = receipt["source_iso_sha256"]
     if (
         not isinstance(digest, str)
@@ -281,7 +284,7 @@ def stage(
             install_image = _check_required(temporary)
             records, total = _inventory(temporary)
             receipt = {
-                "schema": 1,
+                "schema": RECEIPT_SCHEMA,
                 "source_iso": iso.name,
                 "source_iso_sha256": expected_sha256.lower(),
                 "edition": verification.get("edition"),

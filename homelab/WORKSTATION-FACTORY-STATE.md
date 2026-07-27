@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260727.007`
+Document version: `20260727.008`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-27T16:55:44-05:00
+Last evidence/workstream review: 2026-07-27T17:05:58-05:00
 
-Repository baseline reviewed: `feae4b3`
+Repository baseline reviewed: `cd694e3`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -156,13 +156,21 @@ Fresh-clone reconstruction rules are in
 [media/FRESH-CLONE.md](media/FRESH-CLONE.md). The original repository-root
 Windows ISO is not a durable cache and must not appear in a commit.
 
+`make homelab-factory-cache-seal` now writes the ignored, atomic aggregate
+receipt `homelab/var/media/factory-media-seal.json`; the reviewed local receipt
+is 2,080 bytes with SHA-256
+`f1ea65dd03a790308d9f32fa3c6df02b9aca8172515a26e67bb1820bd39273f6`.
+`make homelab-factory-offline-check` verifies that existing receipt and every
+bound input without invoking acquisition or silently replacing the receipt.
+The seal records tool versions separately from content/provenance equivalence.
+
 ## Local lifecycle queue and acceptance gates
 
 Do not skip a gate or turn a planned assertion into a reported pass.
 
 | Order | Gate | Required proof | State |
 |---:|---|---|---|
-| 1 | Media intake | Verify Windows digest and receipt; inspect the image catalog for Windows 11 Pro; verify Arch signature/digest and `wimboot` pin; prove no media is tracked. | Windows digest and Windows 11 Pro index 6 verified; aggregate sealed-cache receipt pending |
+| 1 | Media intake | Verify Windows digest and receipt; inspect the image catalog for Windows 11 Pro; verify Arch signature/digest and `wimboot` pin; prove no media is tracked. | pass: aggregate seal binds Arch, Windows provenance/Pro verification, `wimboot`, and the 976-file Windows install source |
 | 2 | Immutable PXE releases | Build and verify versioned Windows, Arch, and controller targets; manifests bind every byte to `YYYYMMDD.NNN`; rejected input and rollback tests pass. | partial: existing Windows stage reaches WinPE; install-image/custom-WinPE path is active work |
 | 3 | Controller convergence | From a fresh offline-installed disposable controller, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, and verify the authority boundary without external access. | pass: `20260727T201057Z-controller.json`; release selection, backup, and restore remain lifecycle gates |
 | 4 | PXE authority boundary | Simulated gateway remains sole DHCP authority; controller supplies only the approved boot and identity services; packet evidence proves no rogue offer, forwarding, or external connection. | simultaneous fabric and PXE gateway implemented; integrated proof pending |
@@ -253,8 +261,8 @@ it already passed and should be repeated only after a material change to the
 manual console path or immediately before separately authorized physical
 attachment.
 
-The next implementation action is to complete sealed media intake and immutable
-Arch, Windows, and controller PXE releases, then keep the accepted configured
+The next implementation action is to complete immutable Arch, Windows, and
+controller PXE releases, then keep the accepted configured
 Controller alive on the isolated fabric and boot a disposable workstation
 through gateway-supplied options 66/67. First prove an actual x86-64 UEFI iPXE
 request and Arch installer handoff. Then exercise WinPE, Windows 11 Pro
