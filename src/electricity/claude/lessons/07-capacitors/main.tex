@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{7. Capacitors}
-  {A measured journey between empty and charged}{2026-07-27}
+  {A measured journey between empty and charged}{20260727.001}
 
 \newcommand{\tickbox}{\raisebox{.12ex}{\fbox{\rule{0pt}{.72ex}\rule{.72ex}{0pt}}}}
 \newcommand{\writein}[1]{\rule{#1}{.3pt}}
@@ -137,23 +137,10 @@ One learner calls the times, one reads the display, and one records. Keep probe
 clips fixed. At the call of “start,” the adult closes the switch. Record the
 first run, return to State A, then repeat without changing any part.
 
-\begin{center}\small
-\begin{tabular}{@{}r*{9}{c}@{}}
-\toprule
-Time (s) & 0 & 2 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
-\midrule
-Run 1 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}\\
-Run 2 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}\\
-Mean \(V_C/V_S\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
-\writein{.65cm}&\writein{.65cm}\\
-\bottomrule
-\end{tabular}
-\end{center}
+\begin{telosframe}
+\textbf{Record on the final worksheet.} Complete both charge rows before
+calculating the normalized mean.
+\end{telosframe}
 
 \begin{telospanel}{Pause at 5 s, 10 s, and 20 s}
 Which interval added the most voltage? \writein{2cm}\quad
@@ -197,17 +184,10 @@ is \writein{1.2cm} V. The two measured readings were \writein{1cm} and
 Charge for 50 s. Open the switch, remove the holder, and close only the resistor
 discharge path. Keep capacitor polarity and meter leads unchanged.
 
-\begin{center}\small
-\begin{tabular}{@{}r*{8}{c}@{}}
-\toprule
-Time (s) & 0 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
-\midrule
-\(V_C\) (V)&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
-\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
-\writein{.78cm}\\
-\bottomrule
-\end{tabular}
-\end{center}
+\begin{telosframe}
+\textbf{Record on the final worksheet.} Keep the meter leads unchanged so the
+sign as well as the magnitude remains evidence.
+\end{telosframe}
 
 \begin{center}
 \begin{tikzpicture}[x=.85cm,y=.34cm,line cap=round]
@@ -233,19 +213,10 @@ Time (s) & 0 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
 Substitute 22 k\(\Omega\) for 10 k\(\Omega\); change nothing else. Perform two
 charge trials. Use fractional voltage rather than a guessed visual endpoint.
 
-\begin{center}
-\begin{tabularx}{\linewidth}{@{}lCCCCCC@{}}
-\toprule
-Run & \(R\) & \(C\) & calculated \(\tau\) & \(0.632V_S\) &
-measured time to target & difference\\
-\midrule
-1 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[.9em]
-2 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[.9em]
-3 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\[.9em]
-4 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\
-\bottomrule
-\end{tabularx}
-\end{center}
+\begin{telosframe}
+\textbf{Record on the final worksheet.} Calculate each \(\tau\) before timing
+the corresponding run.
+\end{telosframe}
 
 \begin{predict}
 \(22/10=2.2\). If \(\tau=RC\), the target time should change by a factor of
@@ -262,20 +233,6 @@ Doubling voltage would multiply energy by \(2^2=4\), although capacitance did
 not change. This experiment stays at 3 V and never produces a spark; its useful
 observation is the measured voltage history.
 \vspace{-4pt}
-
-\begin{teloscard}{Questions that connect the curves to the circuit}
-\begin{enumerate}[itemsep=.12em,topsep=.12em]
-\item Why is the charge curve steepest at the beginning?
-  \par\writein{.92\linewidth}
-\item Why does opening the source path not make \(V_C\) instantly zero?
-  \par\writein{.92\linewidth}
-\item During discharge, did the voltage sign reverse or keep its sign while its
-  magnitude fell? \writein{3cm}
-\item What evidence distinguishes “the capacitor is empty” from “the source is
-  disconnected”? \writein{5cm}
-\end{enumerate}
-\end{teloscard}
-\vspace{-5pt}
 
 \lessonsection{Diagnose only in State A}
 
@@ -306,8 +263,70 @@ never infer zero charge merely because the battery is absent.
 \end{teloshazard}
 \vspace{-5pt}
 
+\lessonsection{Record sheets — keep with the completed investigation}
+\lessonsection{Timed measurements}
+
+\begin{center}\small
+\begin{tabular}{@{}r*{9}{c}@{}}
+\toprule
+Charge time (s) & 0 & 2 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
+\midrule
+Run 1 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+Run 2 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+Mean \(V_C/V_S\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}\small
+\begin{tabular}{@{}r*{8}{c}@{}}
+\toprule
+Discharge time (s) & 0 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
+\midrule
+\(V_C\) (V)&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
+\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
+\writein{.78cm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\lessonsection{Controlled-change record}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lCCCCCC@{}}
+\toprule
+Run & \(R\) & \(C\) & calculated \(\tau\) & \(0.632V_S\) &
+measured time to target & difference\\
+\midrule
+1 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[2em]
+2 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[2em]
+3 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\[2em]
+4 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Questions that connect the curves to the circuit}
+\begin{enumerate}[itemsep=1.15em,topsep=.35em]
+\item Why is the charge curve steepest at the beginning?
+  \par\writein{.92\linewidth}
+\item Why does opening the source path not make \(V_C\) instantly zero?
+  \par\writein{.92\linewidth}
+\item During discharge, did the voltage sign reverse or keep its sign while its
+  magnitude fell? \writein{3cm}
+\item What evidence distinguishes “the capacitor is empty” from “the source is
+  disconnected”? \writein{5cm}
+\end{enumerate}
+\end{teloscard}
+
 \begin{teloscard}{Final proof}
-\begin{enumerate}[itemsep=.08em,topsep=.08em]
+\begin{enumerate}[itemsep=.72em,topsep=.35em]
 \item \textbf{Repeatability:} the two 10 k\(\Omega\) values at 10 s differed by
   \writein{1cm} V.
 \item \textbf{Landmark:} mean \(V_C(10\,{\rm s})/V_S=\writein{1cm}\), compared

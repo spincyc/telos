@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{Demo: Homopolar Motor}{Contact, force, reversal, and heat from timed evidence}{2026-07-27}
+\telosmeta{Electricity \& Magnetism}{Demo: Homopolar Motor}{Contact, force, reversal, and heat from timed evidence}{20260727.001}
 \begin{document}
 \telosmasthead[Adult-controlled five-second AA-cell trials]
 \lessonhead{Demo A}{20 minutes}{after Lesson 4 --- adult controls every contact}
@@ -142,29 +142,9 @@ uncomfortable, swollen, leaking, discolored, chipped, or damaged.
 \end{tikzpicture}
 \end{center}
 
-\begin{center}\small
-\begin{tabular}{@{}lccccc@{}}\toprule
-Trial & start delay & turns / 5 s & direction & wire & cell / magnet\\\midrule
-Baseline & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} & CW / CCW &
-same / warmer / stop & same / warmer / stop\\
-\bottomrule
-\end{tabular}
-\end{center}
-
 \lessonsection{3. Predict and test reversals}
 Keep geometry, time limit, stop line, and cool-down constant. Predict every row;
 adult tests only the minimum stable combinations needed to check the pattern.
-
-\begin{center}\small
-\begin{tabular}{@{}clllc@{}}\toprule
-Trial & Pivot terminal & Magnet face down & Prediction & Observed\\\midrule
-A & \(+\) & N & baseline: \rule{1cm}{.3pt} & \rule{1cm}{.3pt}\\
-B & \(+\) & S & reverse / same & \rule{1cm}{.3pt}\\
-C & \(-\) & N & reverse / same & \rule{1cm}{.3pt}\\
-D & \(-\) & S & reverse / same & \rule{1cm}{.3pt}\\
-\bottomrule
-\end{tabular}
-\end{center}
 
 \begin{gate}{Stable assemblies only}
 Reversing the cell requires remounting the magnet and reshaping the wire. If
@@ -192,12 +172,38 @@ it. Contact quality determines whether torque beats friction, not direction.
 Most input energy can become heat, so timing and open-circuit temperature
 comparisons are evidence.
 
-\begin{telospanel}{Final proof and closeout}
-Use the smallest safe set of trials to support: ``one reversal reverses motion;
-two reversals restore it.'' Name the compared trials, report direction from
-above and turns in five seconds, and state a falsifying result. Finish after
-the adult confirms an open circuit, cool undamaged parts, a stored magnet, and
-no wire touching the cell.
-\end{telospanel}
+\lessonsection{Evidence worksheet}
 \scriptsize
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}\toprule
+Trial & start delay & turns / 5 s & direction & wire & cell / magnet\\\midrule
+Baseline & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} & CW / CCW &
+same / warmer / stop & same / warmer / stop\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\smallskip
+\begin{center}
+\begin{tabular}{@{}clllc@{}}\toprule
+Trial & Pivot terminal & Magnet face down & Prediction & Observed\\\midrule
+A & \(+\) & N & baseline: \rule{1cm}{.3pt} & \rule{1cm}{.3pt}\\
+B & \(+\) & S & reverse / same & \rule{1cm}{.3pt}\\
+C & \(-\) & N & reverse / same & \rule{1cm}{.3pt}\\
+D & \(-\) & S & reverse / same & \rule{1cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\smallskip
+\textbf{Final proof.} Compared trials: \rule{1.1cm}{.3pt} and
+\rule{1.1cm}{.3pt}. Claim + evidence:
+\rule{4.6cm}{.3pt}. A falsifying result would be:
+\rule{3.0cm}{.3pt}.
+
+\textbf{Adult closeout:} \fbox{\rule{0pt}{.8ex}\hspace{.8ex}} circuit open \quad
+\fbox{\rule{0pt}{.8ex}\hspace{.8ex}} parts cool and undamaged \quad
+\fbox{\rule{0pt}{.8ex}\hspace{.8ex}} magnet stored \quad
+\fbox{\rule{0pt}{.8ex}\hspace{.8ex}} wire off cell
+\tiny
 \end{document}

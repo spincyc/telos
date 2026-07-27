@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{3. Ohm's Law}
-  {A meter-and-circuit verification chapter}{2026-07-27}
+  {A meter-and-circuit verification chapter}{20260727.001}
 
 \newcommand{\writein}[1]{\rule{#1}{.35pt}}
 \newcommand{\dmm}[3]{%
@@ -179,36 +179,6 @@ actual resistance when contact quality matters.}
 \end{tabularx}
 \end{teloscard}
 
-\Needspace{10\baselineskip}
-\lessonsection{Preflight record}
-\begin{tabularx}{\linewidth}{@{}L L L L@{}}
-\toprule
-Check & Observed & Required state & Adult initials\\
-\midrule
-Lead insulation and probe guards & & intact & \\[.8em]
-Current input marking and fuse rating & & documented & \\[.8em]
-Probe-short resistance & & recorded & \\[.8em]
-Open-circuit source voltage & & below 3.4 V & \\[.8em]
-Largest predicted current & & below chosen range/fuse & \\
-\bottomrule
-\end{tabularx}
-
-\lessonsection{Predict before measuring}
-\small
-\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
-\toprule
-Marked \(R\) & tolerance & assumed loaded \(V_s\) &
-predicted \(I=V_s/R\) & predicted \(P=V_s^2/R\) & ranking/reason\\
-\midrule
-100 \(\Omega\) & & & & & \\[1em]
-220 \(\Omega\) & & & & & \\[1em]
-470 \(\Omega\) & & & & & \\[1em]
-1 k\(\Omega\) & & & & & \\[1em]
-10 k\(\Omega\) & & & & & \\
-\bottomrule
-\end{tabularx}
-\normalsize
-
 \lessonsection{Run the verification}
 \begin{enumerate}
 \item Execute State 0. Do not proceed until maximum predicted current and
@@ -226,22 +196,6 @@ remains comfortably within the selected fused range.
 \item Compute \(R_{VI}=V_R/I\), \(P=V_RI\), and percent difference from
 resistance mode. Plot \(V_R\) vertically against \(I\) horizontally.
 \end{enumerate}
-
-\lessonsection{Raw evidence --- never erase an anomalous run}
-\scriptsize
-\begin{tabularx}{\linewidth}{@{}c c c c c c c c L@{}}
-\toprule
-\(R\) marked & \(R_\Omega\) & \(V_s\) loaded & \(V_R\) run 1/2 &
-\(I\) run 1/2 & \(R_{VI}\) & \(P\) & warm? & function/range/jack/resolution\\
-\midrule
-100 \(\Omega\) & & & & & & & & \\[1.8em]
-220 \(\Omega\) & & & & & & & & \\[1.8em]
-470 \(\Omega\) & & & & & & & & \\[1.8em]
-1 k\(\Omega\) & & & & & & & & \\[1.8em]
-10 k\(\Omega\) & & & & & & & & \\
-\bottomrule
-\end{tabularx}
-\normalsize
 
 \lessonsection{Worked result: arithmetic with units}
 For \(V_R=2.86\ \mathrm{V}\) and \(I=12.9\ \mathrm{mA}
@@ -272,21 +226,6 @@ For a conservative resistance bound,
 \]
 Add half the absolute difference between the two rebuilt runs if it is larger
 than the resolution contribution. Report no decimal place finer than \(u_R\).
-
-\begin{teloscard}{Uncertainty and agreement}
-\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
-\toprule
-Part & \(u_V\) & \(u_I\) & \(R_{VI}\pm u_R\) &
-marked interval & overlap and conclusion\\
-\midrule
-100 \(\Omega\) & & & & & \\[1.4em]
-220 \(\Omega\) & & & & & \\[1.4em]
-470 \(\Omega\) & & & & & \\[1.4em]
-1 k\(\Omega\) & & & & & \\[1.4em]
-10 k\(\Omega\) & & & & & \\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
 
 \lessonsection{Questions from the graph and the circuit}
 \begin{multicols}{2}
@@ -336,7 +275,87 @@ no energized retest until cause is identified\\
 \end{tabularx}
 \normalsize
 
-\lessonsection{Plot and test the model}
+\lessonsection{Extension: change topology, repeat the proof}
+Predict the equivalent resistance and maximum current for two 470 \(\Omega\)
+resistors first in series, then in parallel. Verify each network using the same
+connection atlas, two rebuilt runs, uncertainty bound, and acceptance gate.
+Do not use an LED as the Ohm's-law test article: it is nonlinear and
+polarity-sensitive.
+
+\begin{telosframe}
+\textbf{Boundary retained.} This chapter authorizes only the isolated two-AA
+holder shown here. It does not authorize mains, opened appliances, large
+battery packs, power capacitors, ignition coils, sparks, or exposed high
+voltage. Adult supervision does not make a person electrically qualified.
+\end{telosframe}
+
+\lessonsection{Worksheets and records}
+Complete these sheets in order. Keep anomalous readings visible; corrections
+receive a single strike-through, initials, and a replacement value.
+
+\subsection{Preflight record}
+\begin{tabularx}{\linewidth}{@{}L L L L@{}}
+\toprule
+Check & Observed & Required state & Adult initials\\
+\midrule
+Lead insulation and probe guards & & intact & \\[.8em]
+Current input marking and fuse rating & & documented & \\[.8em]
+Probe-short resistance & & recorded & \\[.8em]
+Open-circuit source voltage & & below 3.4 V & \\[.8em]
+Largest predicted current & & below chosen range/fuse & \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Prediction record}
+\small
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Marked \(R\) & tolerance & assumed loaded \(V_s\) &
+predicted \(I=V_s/R\) & predicted \(P=V_s^2/R\) & ranking/reason\\
+\midrule
+100 \(\Omega\) & & & & & \\[1em]
+220 \(\Omega\) & & & & & \\[1em]
+470 \(\Omega\) & & & & & \\[1em]
+1 k\(\Omega\) & & & & & \\[1em]
+10 k\(\Omega\) & & & & & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\subsection{Raw evidence --- never erase an anomalous run}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}c c c c c c c c L@{}}
+\toprule
+\(R\) marked & \(R_\Omega\) & \(V_s\) loaded & \(V_R\) run 1/2 &
+\(I\) run 1/2 & \(R_{VI}\) & \(P\) & warm? & function/range/jack/resolution\\
+\midrule
+100 \(\Omega\) & & & & & & & & \\[1.8em]
+220 \(\Omega\) & & & & & & & & \\[1.8em]
+470 \(\Omega\) & & & & & & & & \\[1.8em]
+1 k\(\Omega\) & & & & & & & & \\[1.8em]
+10 k\(\Omega\) & & & & & & & & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\lessonsection{Analysis records}
+
+\begin{teloscard}{Uncertainty and agreement}
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Part & \(u_V\) & \(u_I\) & \(R_{VI}\pm u_R\) &
+marked interval & overlap and conclusion\\
+\midrule
+100 \(\Omega\) & & & & & \\[1.4em]
+220 \(\Omega\) & & & & & \\[1.4em]
+470 \(\Omega\) & & & & & \\[1.4em]
+1 k\(\Omega\) & & & & & \\[1.4em]
+10 k\(\Omega\) & & & & & \\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\subsection{Plot and test the model}
 \begin{center}
 \begin{tikzpicture}[x=.7cm,y=.55cm]
   \draw[step=1,black!18,very thin](0,0)grid(9,5);
@@ -362,7 +381,7 @@ resolution, repeatability, source sag, contact resistance, or none of these?
 \writein{2.1in}
 
 \newpage
-\lessonsection{Acceptance proof}
+\lessonsection{Acceptance record}
 \begin{gate}{No acceptance by impression}
 \begin{tabularx}{\linewidth}{@{}p{.42\linewidth} c L@{}}
 \toprule
@@ -397,18 +416,4 @@ One limitation of this proof & \writein{3.4in}
 \medskip
 Learner \writein{1.1in}\qquad Adult inspection \writein{1.1in}\qquad
 Date \writein{.8in}
-
-\lessonsection{Extension: change topology, repeat the proof}
-Predict the equivalent resistance and maximum current for two 470 \(\Omega\)
-resistors first in series, then in parallel. Verify each network using the same
-connection atlas, two rebuilt runs, uncertainty bound, and acceptance gate.
-Do not use an LED as the Ohm's-law test article: it is nonlinear and
-polarity-sensitive.
-
-\begin{telosframe}
-\textbf{Boundary retained.} This chapter authorizes only the isolated two-AA
-holder shown here. It does not authorize mains, opened appliances, large
-battery packs, power capacitors, ignition coils, sparks, or exposed high
-voltage. Adult supervision does not make a person electrically qualified.
-\end{telosframe}
 \end{document}

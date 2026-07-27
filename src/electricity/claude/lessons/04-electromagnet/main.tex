@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{4. Electromagnets}{A current makes a magnetic field}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{4. Electromagnets}{A current makes a magnetic field}{20260725.001}
 \begin{document}
 \telosmasthead[direction is not strength]
 \lessonhead{4}{two 55-minute sessions}{staged build; battery power only}
@@ -64,9 +64,9 @@ For each, predict both \emph{strength} and \emph{pole direction}. Do not use
   turns. Do not wind directly on the bolt: the removable sleeve makes a fair
   iron-versus-air comparison possible.
 \item With the battery disconnected, the adult checks that only the two lead
-  tips are bare. Measure resistance:
-  \(R_{30}=\rule{18mm}{.4pt}\,\Omega\). An open display means enamel or a broken
-  wire; near zero means a bypass around the winding.
+  tips are bare. Measure \(R_{30}\) and enter it in the end worksheet. An open
+  display means enamel or a broken wire; near zero means a bypass around the
+  winding.
 \end{enumerate}
 
 \begin{telospanel}{Checkpoint}
@@ -104,16 +104,9 @@ turn count changes? Which of those could change resistance as well as geometry?
   count clips still attached. Open the switch immediately. Wait \(30\,\mathrm{s}\)
   and return all clips before the next run.
 \item Complete four baseline trials. If the spread is more than two clips,
-  improve the method before comparing designs.
+  improve the method before comparing designs. Record every run in the
+  end-of-lesson worksheet.
 \end{enumerate}
-
-\begin{center}\small
-\begin{tabular}{@{}lcccccc@{}}\toprule
-coil & current (A) & trial 1 & trial 2 & trial 3 & trial 4 & range\\\midrule
-30 turns, iron & \rule{14mm}{.4pt} & \rule{8mm}{.4pt} & \rule{8mm}{.4pt} &
-\rule{8mm}{.4pt} & \rule{8mm}{.4pt} & \rule{10mm}{.4pt}\\
-\bottomrule\end{tabular}
-\end{center}
 
 \noindent\textbf{Pause and decide.} What caused the largest uncontrolled
 difference between trials? Would a one-clip improvement be larger than your
@@ -121,9 +114,9 @@ measurement noise?
 
 \lessonsection{Stage 3: separate turns, core, and direction}
 Add \(30\) turns beside the first layer, in the same winding direction and
-inside the same marked zone. Measure
-\(R_{60}=\rule{18mm}{.4pt}\,\Omega\). The adult then places the ammeter in
-series, verifies the current jack and range, and controls the first pulse.
+inside the same marked zone. Measure \(R_{60}\) and enter it in the end
+worksheet. The adult then places the ammeter in series, verifies the current
+jack and range, and controls the first pulse.
 
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
@@ -157,42 +150,10 @@ series, verifies the current jack and range, and controls the first pulse.
 \end{tikzpicture}
 \end{center}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}lccccccX@{}}\toprule
-test & turns & core & leads & current & mean lift & range & fixed controls\\\midrule
-A & 30 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
-B & 60 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
-C & 60 & air & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
-D & 60 & iron & reversed & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
-\bottomrule\end{tabularx}
-\end{center}
-
 Run four trials for each row. Between rows, name the one intended change aloud.
 For test D, hold a compass one bolt-length from the upper pole and record its
-direction before and after reversing the leads.
-
-\begin{center}\small
-\begin{tabular}{@{}lcccccl@{}}\toprule
-test & lift 1 & lift 2 & lift 3 & lift 4 & range & compass at upper pole\\\midrule
-A & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{22mm}{.4pt}\\
-B & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & ---\\
-C & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & ---\\
-D & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
-\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{22mm}{.4pt}\\
-\bottomrule\end{tabular}
-\end{center}
-
-\noindent\textbf{Evidence gate.} Before calculating a mean, mark each run
-\(\circ\) accept or \(\times\) repeat. Repeat only for a stated procedural
-failure---wrong gap, wrong pulse time, dropped clip, or disturbed coil---never
-because the number looks inconvenient.
+direction before and after reversing the leads. Use rows A--D in the
+end-of-lesson worksheet.
 
 \begin{telospanel}{Three questions before interpreting}
 \begin{enumerate}
@@ -204,7 +165,6 @@ because the number looks inconvenient.
 \end{enumerate}
 \end{telospanel}
 
-\clearpage
 \lessonsection{When the evidence looks wrong}
 \begin{center}\small
 \begin{tabularx}{\linewidth}{@{}p{.22\linewidth}X X@{}}\toprule
@@ -221,6 +181,62 @@ compass result wanders & steel objects, distance, starting direction & clear
 the bench and reset the compass position\\
 \bottomrule\end{tabularx}
 \end{center}
+
+\lessonsection{What the measurements mean}
+\begin{telosfacts}[0.20]
+\telosfact{Current makes field}{Moving charge produces a magnetic field. Around
+one straight conductor the field circles the wire; in a coil, the fields of
+successive turns reinforce along the axis.}
+\telosfact{Ampere-turns matter}{The useful comparison is \(NI\): turns
+multiplied by measured current. Added wire also adds resistance, so doubling
+turns does not guarantee double current-times-turns or double lifting force.}
+\telosfact{Iron changes the path}{Iron magnetizes strongly and concentrates
+flux through the bolt and the small air gap. The core test isolates that effect
+only because sleeve, coil, gap, clips, and pulse remain fixed.}
+\telosfact{Direction is not strength}{Reversing current swaps the poles. With
+the same current magnitude and geometry, it need not produce a large strength
+change. The compass and the clip count answer different questions.}
+\end{telosfacts}
+
+\clearpage
+\lessonsection{Experiment record}
+\noindent\textbf{Build check.}\quad
+\(R_{30}=\rule{18mm}{.4pt}\,\Omega\)\qquad
+\(R_{60}=\rule{18mm}{.4pt}\,\Omega\)
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lccccccX@{}}\toprule
+test & turns & core & leads & current & mean lift & range & fixed controls\\\midrule
+A & 30 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
+B & 60 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
+C & 60 & air & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
+D & 60 & iron & reversed & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
+\bottomrule\end{tabularx}
+\end{center}
+
+\begin{center}\small
+\begin{tabular}{@{}lcccccl@{}}\toprule
+test & lift 1 & lift 2 & lift 3 & lift 4 & range & compass at upper pole\\\midrule
+A & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{22mm}{.4pt}\\
+B & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & ---\\
+C & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & ---\\
+D & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & \rule{9mm}{.4pt} & \rule{22mm}{.4pt}\\
+\bottomrule\end{tabular}
+\end{center}
+
+\begin{telospanel}{Evidence gate}
+Before calculating a mean, mark each run \(\circ\) accept or \(\times\) repeat.
+Repeat only for a stated procedural failure---wrong gap, wrong pulse time,
+dropped clip, or disturbed coil---never because the number looks inconvenient.
+\end{telospanel}
 
 \lessonsection{Final evidence proof}
 Write one conclusion that your measurements, rather than the expected theory,
@@ -245,29 +261,6 @@ Conclusion justified: \rule{65mm}{.4pt}
 Name a possible next result that would make you withdraw or narrow that
 conclusion. A prediction confirmed once is not proof; a claim that survives a
 fair opportunity to fail is stronger evidence.
-\end{telospanel}
-
-\lessonsection{What the measurements mean}
-\begin{telosfacts}[0.20]
-\telosfact{Current makes field}{Moving charge produces a magnetic field. Around
-one straight conductor the field circles the wire; in a coil, the fields of
-successive turns reinforce along the axis.}
-\telosfact{Ampere-turns matter}{The useful comparison is \(NI\): turns
-multiplied by measured current. Added wire also adds resistance, so doubling
-turns does not guarantee double current-times-turns or double lifting force.}
-\telosfact{Iron changes the path}{Iron magnetizes strongly and concentrates
-flux through the bolt and the small air gap. The core test isolates that effect
-only because sleeve, coil, gap, clips, and pulse remain fixed.}
-\telosfact{Direction is not strength}{Reversing current swaps the poles. With
-the same current magnitude and geometry, it need not produce a large strength
-change. The compass and the clip count answer different questions.}
-\end{telosfacts}
-
-\begin{telospanel}{The link to later coils}
-Relays, motors, loudspeakers, and transformers all exploit controllable fields.
-Later high-frequency coils use different geometry and materials, but this
-lesson's habits remain: measure current, control geometry, time energization,
-and distinguish a pole reversal from a strength change.
 \end{telospanel}
 \lowvoltagenote
 \end{document}

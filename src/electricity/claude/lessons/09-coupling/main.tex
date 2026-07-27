@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{9. Coupling}{Two tuned circuits handing energy back and forth}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{9. Coupling}{Two tuned circuits handing energy back and forth}{20260725.001}
 \begin{document}
 \telosmasthead[The lesson that explains why a Tesla coil is not a transformer]
 \lessonhead{9}{about 75 minutes}{everyone builds; battery power only}
@@ -61,19 +61,6 @@ minute? Draw both, one under the other, against time.
   repeat. This separates frequency mismatch from coupling strength.
 \end{enumerate}
 
-\begin{teloscard}{Pendulum state record}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
-\toprule
-State & \(0\) s & \(5\) s & \(10\) s & \(15\) s & \(20\) s & transfer time\\
-\midrule
-Matched / slack & & & & & &\\[1em]
-Matched / tight & & & & & &\\[1em]
-Detuned / middle & & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
-
 \lessonsection{Then the coils --- geometry before resonance}
 \begin{enumerate}
 \item Disconnect both capacitors. Pulse the transmitter coil from the two AA
@@ -88,32 +75,6 @@ Detuned / middle & & & & & &\\
   coils. Remove it and recover the original baseline before proceeding.
 \end{enumerate}
 
-\begin{teloscard}{Repeated distance \(\times\) core matrix}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.15\linewidth}}p{.14\linewidth}X@{}}
-\toprule
-\(d\) (cm) & air: median \(|V|\) & core: median \(|V|\) & core/air & spread, anomaly, or control note\\
-\midrule
-0 & & & &\\[1em]1 & & & &\\[1em]2 & & & &\\[1em]
-4 & & & &\\[1em]8 & & & &\\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
-
-\begin{teloscard}{Repeated orientation matrix at \(d=2\) cm}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.16\linewidth}}XX@{}}
-\toprule
-\(\theta\) & median \(|V|\) & fraction of \(0^\circ\) & projected-area prediction & pulse sign\\
-\midrule
-\(0^\circ\) & & \(1.00\) & maximum &\\[1em]
-\(30^\circ\) & & & &\\[1em]
-\(60^\circ\) & & & &\\[1em]
-\(90^\circ\) & & & near minimum &\\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
-
 \lessonsection{Restore the two tuned tanks}
 \begin{enumerate}
 \item Reconnect the identical capacitors and set the coils coaxial at \(d=4\)
@@ -124,19 +85,6 @@ Detuned / middle & & & & & &\\
 \item Change only the receiver capacitor. Repeat at \(d=2\) cm. Then restore
   the capacitor and verify the original curve returns.
 \end{enumerate}
-
-\begin{teloscard}{Frequency-sweep matrix}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
-\toprule State & \(f_1\) & \(f_2\) & \(f_3\) & \(f_4\) & \(f_5\) & peak(s)\\
-\midrule
-\(d=4\) cm / matched & & & & & &\\[1em]
-\(d=2\) cm / matched & & & & & &\\[1em]
-\(d=1\) cm / matched & & & & & &\\[1em]
-\(d=2\) cm / detuned & & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{teloscard}
 
 \lessonsection{What it means}
 The pulse trials isolate mutual inductance before resonance complicates the
@@ -226,5 +174,62 @@ identify both states, recover the starting baseline within its measured spread,
 and observe opposite make/break pulse signs. Diagnose before repeating; never
 erase a failed trial.
 \end{gate}
+
+\clearpage
+\lessonsection{Worksheets and records}
+Use these in experimental order. Preserve raw readings; calculate medians and
+ratios only after every repeated trial is recorded.
+
+\begin{teloscard}{1 · Pendulum state record}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
+\toprule
+State & \(0\) s & \(5\) s & \(10\) s & \(15\) s & \(20\) s & transfer time\\
+\midrule
+Matched / slack & & & & & &\\[1.6em]
+Matched / tight & & & & & &\\[1.6em]
+Detuned / middle & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{2 · Repeated distance \(\times\) core matrix}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.15\linewidth}}p{.14\linewidth}X@{}}
+\toprule
+\(d\) (cm) & air: median \(|V|\) & core: median \(|V|\) & core/air & spread, anomaly, or control note\\
+\midrule
+0 & & & &\\[1.3em]1 & & & &\\[1.3em]2 & & & &\\[1.3em]
+4 & & & &\\[1.3em]8 & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{3 · Repeated orientation matrix at \(d=2\) cm}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.16\linewidth}}XX@{}}
+\toprule
+\(\theta\) & median \(|V|\) & fraction of \(0^\circ\) & projected-area prediction & pulse sign\\
+\midrule
+\(0^\circ\) & & \(1.00\) & maximum &\\[1.3em]
+\(30^\circ\) & & & &\\[1.3em]
+\(60^\circ\) & & & &\\[1.3em]
+\(90^\circ\) & & & near minimum &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{4 · Frequency-sweep matrix}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
+\toprule State & \(f_1\) & \(f_2\) & \(f_3\) & \(f_4\) & \(f_5\) & peak(s)\\
+\midrule
+\(d=4\) cm / matched & & & & & &\\[1.3em]
+\(d=2\) cm / matched & & & & & &\\[1.3em]
+\(d=1\) cm / matched & & & & & &\\[1.3em]
+\(d=2\) cm / detuned & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
 
 \end{document}

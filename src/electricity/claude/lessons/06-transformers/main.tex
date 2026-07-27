@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{6. Transformers}
-  {Commissioning a two-winding magnetic system}{2026-07-27}
+  {Commissioning a two-winding magnetic system}{20260727.001}
 
 \begin{document}
 \telosmasthead[Two circuits; one changing magnetic field]
@@ -73,21 +73,11 @@ open circuit from every lead to the metal core. A core-contact reading ends
 the investigation.
 \end{gate}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
-\toprule
-Winding & lead labels & turns & resistance & core isolated? & first inference\\
-\midrule
-A & & & & yes / stop & \\
-B & & & & yes / stop & \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
 \textbf{Inspection inference.}\enspace Resistance can help distinguish the
 windings, but it does not directly reveal turns because wire gauge and length
 both matter. Which observation supports your label choice?
 \rule{.30\linewidth}{.3pt}
+\par\smallskip\textit{Record winding identity and isolation on Worksheet A.}
 
 \newpage
 \telosmasthead[Commissioning sequence]
@@ -141,17 +131,8 @@ Observe the reading while held very briefly, then release for \textbf{break}.
 repeat one cycle. Restore the closed core afterward.
 \end{enumerate}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
-\toprule
-Configuration & make peak & held value & break peak & repeat spread & conclusion\\
-\midrule
-closed core & & & & &\\
-secondary reversed & & & & &\\
-core gap & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+\textit{Record all three configurations on Worksheet A; do not rely on memory
+when comparing pulse signs.}
 
 \begin{teloscard}{Interrogate the evidence}
 Why does release reverse the pulse? Which observation proves that a transformer
@@ -213,17 +194,7 @@ core or primary.
 \frac{\lvert V_s\rvert}{\lvert V_p\rvert}\approx\frac{N_s}{N_p}
 \]
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}CCCCCC@{}}
-\toprule
-\(N_p\) & \(N_s\) & turns ratio & primary peak & predicted secondary & measured secondary\\
-\midrule
-30 & 30 & 1.00 & & &\\
-30 & 60 & 2.00 & & &\\
-60 & 30 & 0.50 & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+\textit{Use Worksheet B for predicted and measured pulse ratios.}
 
 \begin{teloscard}{Worked forecast}
 With \(N_p=40\), \(N_s=120\), and a measured primary transition of
@@ -237,23 +208,9 @@ current falls.
 \end{teloscard}
 
 \lessonsection{Ratio drill before measuring}
-Complete the ideal prediction, then circle whether the winding is being used
-as a step-up, one-to-one, or step-down pair.
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}CCCCCL@{}}
-\toprule
-\(N_p\) & \(N_s\) & \(V_p\) & ideal \(V_s\) & ideal \(I_p/I_s\) & classification\\
-\midrule
-50 & 150 & \(\qty{1.6}{V}\) & & & up / same / down\\
-120 & 60 & \(\qty{2.4}{V}\) & & & up / same / down\\
-80 & 80 & \(\qty{2.0}{V}\) & & & up / same / down\\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\textbf{Model check.}\enspace Doubling \(N_s\) should double pulse magnitude.\par
-Support: \rule{.38\linewidth}{.3pt}\hfill
-Challenge: \rule{.35\linewidth}{.3pt}
+Worksheet B begins with three ideal-ratio forecasts. Complete those before
+energizing any winding; then use the same sheet to compare prediction with
+measurement and decide what would falsify the turns-ratio model.
 
 \newpage
 \telosmasthead[Load characterization]
@@ -288,16 +245,7 @@ series ammeter, then repeat the same brief switching motion.
 \item Record loaded \(V_s\), \(I_s\), and \(V_sI_s\). Disconnect immediately.
 \end{enumerate}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
-\toprule
-Test & \(V_s\) & \(I_s\) & output product & change from open circuit & evidence of loss\\
-\midrule
-open & & --- & --- & baseline &\\
-loaded & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+\textit{Enter open and loaded readings together on Worksheet C.}
 
 \lessonsection{Reconcile voltage, current, and power}
 For the loaded trial, calculate
@@ -309,17 +257,8 @@ P_s=V_{\mathrm{loaded}}I_s,
 \text{regulation drop}=
 \frac{V_{\mathrm{open}}-V_{\mathrm{loaded}}}{V_{\mathrm{open}}}\times100\%.
 \]
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}lCCCL@{}}
-\toprule
-Quantity & prediction & measurement & difference & what could explain it?\\
-\midrule
-secondary current & & & &\\
-secondary power & & & &\\
-voltage drop & & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+\textit{Worksheet C keeps the calculation beside the measured discrepancy and
+its physical explanation.}
 
 \begin{teloscard}{Meter-placement audit}
 \begin{minipage}[c]{.32\linewidth}
@@ -435,6 +374,145 @@ Remove cells. Look and smell. Verify winding continuity. Verify isolation to
 core. Check meter leads, jacks, and range. Restore the meter-only test. Add the
 known resistor last. Never diagnose heat by applying power again.
 \end{gate}
+
+\newpage
+\telosmasthead[Worksheet A --- commissioning record]
+\lessonhead{6R}{cold checks and pulses}{complete in test order}
+
+\lessonsection{Winding identity}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Winding & lead labels & turns & resistance & core isolated? & first inference\\
+\midrule
+A & & & & yes / stop & \\[1.2em]
+B & & & & yes / stop & \\[1.2em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Evidence for the label choice:}\quad\rule{.70\linewidth}{.3pt}
+
+\lessonsection{Make, hold, and break}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Configuration & make peak & held value & break peak & repeat spread & conclusion\\
+\midrule
+closed core & & & & &\\[1.2em]
+secondary reversed & & & & &\\[1.2em]
+core gap & & & & &\\[1.2em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Pulse claims}
+The held reading matters because:\quad\rule{.63\linewidth}{.3pt}\par
+\smallskip
+The reversed break pulse shows:\quad\rule{.65\linewidth}{.3pt}\par
+\smallskip
+The core-gap comparison isolates:\quad\rule{.61\linewidth}{.3pt}
+\end{teloscard}
+
+\lessonsection{Time sketch from your readings}
+\begin{center}
+\begin{tikzpicture}[x=.82cm,y=.70cm,>=Stealth]
+  \draw[step=1cm,gray!28,line width=.22pt] (0,-2) grid (10,2);
+  \draw[->] (0,0)--(10.35,0) node[right,font=\scriptsize]{time};
+  \draw[->] (.5,-2.25)--(.5,2.30) node[above,font=\scriptsize]{$V_s$};
+  \node[font=\scriptsize,anchor=north] at (2,-2.10){make};
+  \node[font=\scriptsize,anchor=north] at (8,-2.10){break};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\telosmasthead[Worksheet B --- turns-ratio record]
+\lessonhead{6R}{forecast, then measure}{same primary, core, range, and switch motion}
+
+\lessonsection{Ideal forecasts}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCCL@{}}
+\toprule
+\(N_p\) & \(N_s\) & \(V_p\) & ideal \(V_s\) & ideal \(I_p/I_s\) & classification\\
+\midrule
+50 & 150 & \(\qty{1.6}{V}\) & & & up / same / down\\[1.2em]
+120 & 60 & \(\qty{2.4}{V}\) & & & up / same / down\\[1.2em]
+80 & 80 & \(\qty{2.0}{V}\) & & & up / same / down\\[1.2em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{Measured ratios}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCCC@{}}
+\toprule
+\(N_p\) & \(N_s\) & turns ratio & primary peak & predicted secondary & measured secondary\\
+\midrule
+30 & 30 & 1.00 & & &\\[1.2em]
+30 & 60 & 2.00 & & &\\[1.2em]
+60 & 30 & 0.50 & & &\\[1.2em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Model check.}\enspace Doubling \(N_s\) should double pulse magnitude.\par
+\smallskip
+Support: \rule{.38\linewidth}{.3pt}\hfill
+Challenge: \rule{.35\linewidth}{.3pt}
+
+\lessonsection{Turns plot}
+\begin{center}
+\begin{tikzpicture}[x=.72cm,y=.62cm,>=Stealth]
+  \draw[step=1cm,gray!28,line width=.22pt] (0,0) grid (10,5);
+  \draw[->,line width=.7pt] (0,0)--(10.35,0) node[right,font=\scriptsize]{\(N_s\)};
+  \draw[->,line width=.7pt] (0,0)--(0,5.35) node[above,font=\scriptsize]{\(\lvert V_s\rvert\)};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\telosmasthead[Worksheet C --- load and loss record]
+\lessonhead{6R}{open circuit before load}{remove cells for every wiring change}
+
+\lessonsection{Load measurements}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Test & \(V_s\) & \(I_s\) & output product & change from open circuit & evidence of loss\\
+\midrule
+open & & --- & --- & baseline &\\[1.3em]
+loaded & & & & &\\[1.3em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{Reconcile prediction and evidence}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCL@{}}
+\toprule
+Quantity & prediction & measurement & difference & what could explain it?\\
+\midrule
+secondary current & & & &\\[1.3em]
+secondary power & & & &\\[1.3em]
+voltage drop & & & &\\[1.3em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\[
+I_{\mathrm{predicted}}=\frac{V_{\mathrm{open}}}{R_L},
+\quad P_s=V_{\mathrm{loaded}}I_s,
+\quad
+\text{drop}=\frac{V_{\mathrm{open}}-V_{\mathrm{loaded}}}
+{V_{\mathrm{open}}}\times100\%.
+\]
+
+\begin{teloscard}{Loss allocation}
+Copper evidence:\quad\rule{.73\linewidth}{.3pt}\par
+\smallskip
+Core-loss evidence:\quad\rule{.70\linewidth}{.3pt}\par
+\smallskip
+Coupling evidence:\quad\rule{.71\linewidth}{.3pt}
+\end{teloscard}
 
 \newpage
 \telosmasthead[Evidence hearing]

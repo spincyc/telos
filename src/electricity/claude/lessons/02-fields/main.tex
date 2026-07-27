@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{2. Fields}
-  {Build a force map from repeated compass tests}{2026-07-27}
+  {Build a force map from repeated compass tests}{20260727.001}
 
 \newcommand{\magnetstates}{%
 \begin{center}
@@ -147,22 +147,11 @@ container before changing state. Keep filings away from eyes, electronics, and
 the compass pivot. Filings show alignment and crowding, but they do not supply
 arrow direction; the compass does.
 
-\begin{teloscard}{Three-state evidence ledger}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}L L L@{}}
-\toprule
-State & Prediction before reveal & Filings: pattern only &
-Compass: north-end direction\\
-\midrule
-A: one magnet & & &\\[1.15em]
-B: opposite poles & & &\\[1.15em]
-C: like poles & & &\\
-\bottomrule
-\end{tabularx}
-\smallskip
-\textbf{Evidence rule:} use the filings column for shape and crowding; use the
-compass column for arrow direction. A neat pattern cannot replace a bearing.
-\end{teloscard}
+\begin{telosframe}
+\textbf{Evidence rule:} use filings for shape and crowding; use the compass for
+arrow direction. A neat pattern cannot replace a bearing. Record all three
+states in Worksheet A at the end.
+\end{telosframe}
 
 \newpage
 \telosmasthead[Walk one compass; keep every trial]
@@ -196,23 +185,8 @@ both? What repeat would decide which arrow to trust?
 
 \lessonsection{Repeated bearing record}
 Measure bearings clockwise from the top edge of the paper. Use identical grid
-points for all repeats.
-
-\begin{center}\footnotesize
-\begin{tabularx}{.96\linewidth}{@{}c c c c c c L@{}}
-\toprule
-Point & \(x\) (cm) & \(y\) (cm) & bearing 1 & bearing 2 &
-difference & observation\\
-\midrule
-A & & & & & &\\[.75em]
-B & & & & & &\\[.75em]
-C & & & & & &\\[.75em]
-D & & & & & &\\[.75em]
-E & & & & & &\\[.75em]
-F & & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+points for all repeats. Enter the six point records in Worksheet B at the end;
+do not erase discordant readings.
 
 \begin{telospanel}{Stop and judge the repeats}
 Circle the largest bearing difference. If it exceeds \(10^\circ\), make a third
@@ -250,18 +224,7 @@ compass angle is not directly proportional to magnetic-field strength.
 Repeat four fixed grid points for opposite poles facing and like poles facing.
 Use the same gap and compass.
 
-\begin{center}\footnotesize
-\begin{tabularx}{.96\linewidth}{@{}c c c c c L@{}}
-\toprule
-Point & opposite 1 & opposite 2 & like 1 & like 2 & what changed?\\
-\midrule
-centre & & & & &\\[.85em]
-above centre & & & & &\\[.85em]
-left of gap & & & & &\\[.85em]
-right of gap & & & & &\\
-\bottomrule
-\end{tabularx}
-\end{center}
+Enter the four matched-point comparisons in Worksheet C at the end.
 
 \begin{telospanel}{Intermediate claim check}
 For each state, write: ``At point \_\_, the needle pointed \_\_; therefore the
@@ -316,17 +279,9 @@ falls within tolerance. If not, revise the local curve or collect more points;
 do not revise the recorded bearings.
 \end{enumerate}
 
-\begin{teloscard}{Proof record}
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}Xp{.18\linewidth}X@{}}
-Point + prediction & \rule{\linewidth}{.3pt} &
-Tolerance & \rule{\linewidth}{.3pt}\\[1em]
-Hidden readings & \rule{\linewidth}{.3pt} &
-Difference & \rule{\linewidth}{.3pt}\\[1em]
-Pass / revise & \rule{\linewidth}{.3pt} &
-Reason & \rule{\linewidth}{.3pt}
-\end{tabularx}
-\end{teloscard}
+Write the prediction, tolerance, hidden readings, differences, and decision in
+the Proof record at the end. Preserve the prediction exactly as written before
+the compass is revealed.
 
 \lessonsection{What the proof establishes}
 A successful hidden prediction shows that the field map compresses earlier
@@ -347,4 +302,64 @@ from eyes, electronics, and the compass pivot. The habits that matter here are
 experimental: fix the source, change one state at a time, preserve every
 reading, and test the finished model against a new observation.
 \end{telosframe}
+
+\newpage
+\telosmasthead[Worksheets and records]
+\small
+\begin{teloscard}{Worksheet A --- three field states}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}L L L@{}}
+\toprule
+State & Prediction before reveal & Filings: pattern only &
+Compass: north-end direction\\
+\midrule
+A: one magnet & & &\\[1.4em]
+B: opposite poles & & &\\[1.4em]
+C: like poles & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Worksheet B --- repeated bearing record}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c c c c c c L@{}}
+\toprule
+Point & \(x\) (cm) & \(y\) (cm) & bearing 1 & bearing 2 &
+difference & observation\\
+\midrule
+A & & & & & &\\[1em]
+B & & & & & &\\[1em]
+C & & & & & &\\[1em]
+D & & & & & &\\[1em]
+E & & & & & &\\[1em]
+F & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Worksheet C --- matched points, changed state}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}c c c c L@{}}
+\toprule
+Point & opposite 1 & opposite 2 & like 1 & like 2 & what changed?\\
+\midrule
+centre & & & & &\\[1.2em]
+above centre & & & & &\\[1.2em]
+left of gap & & & & &\\[1.2em]
+right of gap & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Proof record --- hidden reading}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}Xp{.18\linewidth}X@{}}
+Point + prediction & \rule{\linewidth}{.3pt} &
+Tolerance & \rule{\linewidth}{.3pt}\\[1.25em]
+Hidden readings & \rule{\linewidth}{.3pt} &
+Difference & \rule{\linewidth}{.3pt}\\[1.25em]
+Pass / revise & \rule{\linewidth}{.3pt} &
+Reason & \rule{\linewidth}{.3pt}
+\end{tabularx}
+\end{teloscard}
 \end{document}

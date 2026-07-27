@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{Demo: Build a Speaker}
-  {Wind, align, measure, and prove a paper-cup loudspeaker}{2026-07-27}
+  {Wind, align, measure, and prove a paper-cup loudspeaker}{20260727.001}
 \begin{document}
 \telosmasthead[From electrical waveform to pressure waveform]
 \lessonhead{Demo D}{45--60 minutes}{after Lesson 4 --- isolated battery audio only}
@@ -142,22 +142,6 @@ for the frequency, record AC volts across the coil; otherwise write
 ``bandwidth not established.''
 \end{enumerate}
 
-\begin{center}\small
-\begin{tabularx}{.96\linewidth}{@{}r r r p{.18\linewidth}L@{}}
-\toprule
-\textbf{Hz} & \(\boldsymbol{V_{\rm coil}}\) & \textbf{Level 0--3} &
-\textbf{Motion} & \textbf{Buzz / scrape / other evidence}\\
-\midrule
-25 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-100 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-200 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-400 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-800 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-1200 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
-\bottomrule
-\end{tabularx}
-\end{center}
-
 \lessonsection{Diagnose; do not guess}
 \begin{tabularx}{\linewidth}{@{}p{.23\linewidth}p{.27\linewidth}L@{}}
 \toprule
@@ -203,7 +187,7 @@ sound proves air was driven. No one observation proves the whole chain.
 Tape one paper clip near the rim. Predict, then repeat 100, 200, 400, and
 800 Hz at the same source setting. Do not compare trials at different volume.
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=.72cm,line cap=round,line join=round]
+\begin{tikzpicture}[x=1cm,y=.55cm,line cap=round,line join=round]
 \draw[->,thick](0,0)--(10.7,0)node[right,font=\scriptsize]{frequency};
 \draw[->,thick](0,0)--(0,3.0)node[above,font=\scriptsize]{level};
 \foreach \x/\lab in {1/100,3.6/200,6.4/400,9.7/800}
@@ -217,17 +201,6 @@ Tape one paper clip near the rim. Predict, then repeat 100, 200, 400, and
 \node[font=\scriptsize,anchor=west]at(6.4,2.02){dashed: paper clip};
 \end{tikzpicture}
 \end{center}
-\begin{tabularx}{\linewidth}{@{}r p{.18\linewidth}p{.18\linewidth}L@{}}
-\toprule
-\textbf{Hz}&\textbf{Original 0--3}&\textbf{With mass 0--3}&\textbf{Change heard or seen}\\
-\midrule
-100&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\[.5em]
-200&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\[.5em]
-400&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\[.5em]
-800&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\
-\bottomrule
-\end{tabularx}
-
 \smallskip
 \textbf{Read your data.} Which frequency was strongest before and after? Did
 mass move the response as predicted? State one conclusion and one uncertainty.
@@ -239,7 +212,7 @@ tapping the table beside it. Do not strike the magnet or cup. Motion now moves
 the coil through the field and develops a voltage.
 
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=.84cm,line cap=round,line join=round,
+\begin{tikzpicture}[x=1cm,y=.64cm,line cap=round,line join=round,
   solid/.style={draw=black,line width=.65pt},
   fine/.style={draw=black!50,line width=.3pt},
   note/.style={font=\scriptsize,align=center}]
@@ -272,20 +245,54 @@ the coil through the field and develops a voltage.
 \end{tikzpicture}
 \end{center}
 
+\smallskip
+\textbf{Close the argument.} Reverse the electrical, mechanical, and acoustic
+labels for microphone mode. What shows reciprocity? Why can near-zero fail to
+prove that no voltage exists?
+
+\lessonsection{Evidence worksheets}
+\begingroup
+\renewcommand{\arraystretch}{0.90}
+\textbf{Baseline response.}\par\smallskip
+\begin{center}\small
+\begin{tabularx}{.96\linewidth}{@{}r r r p{.18\linewidth}L@{}}
+\toprule
+\textbf{Hz} & \(\boldsymbol{V_{\rm coil}}\) & \textbf{Level 0--3} &
+\textbf{Motion} & \textbf{Buzz / scrape / other evidence}\\
+\midrule
+25 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+100 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+200 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+400 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+800 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+1200 & \rule{1.1cm}{.3pt}&\rule{1.0cm}{.3pt}&\rule{1.6cm}{.3pt}&\rule{3.2cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Controlled-change comparison.}\par\smallskip
+\begin{tabularx}{\linewidth}{@{}r p{.18\linewidth}p{.18\linewidth}L@{}}
+\toprule
+\textbf{Hz}&\textbf{Original 0--3}&\textbf{With mass 0--3}&\textbf{Change heard or seen}\\
+\midrule
+100&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\
+200&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\
+400&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\
+800&\rule{1.5cm}{.3pt}&\rule{1.5cm}{.3pt}&\rule{4cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+
+\textbf{Reverse-mode record.}\par\smallskip
 \begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.18\linewidth}p{.22\linewidth}L@{}}
 \toprule
 \textbf{Input} & \textbf{Peak AC mV} & \textbf{Repeatable?} &
 \textbf{What moved the cup?}\\
 \midrule
-Quiet room & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\[.25em]
-Voice near cup & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\[.25em]
+Quiet room & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\
+Voice near cup & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\
 Tap beside base & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\
 \bottomrule
 \end{tabularx}
-
-\smallskip
-\textbf{Close the argument.} Reverse the electrical, mechanical, and acoustic
-labels for microphone mode. What shows reciprocity? Why can near-zero fail to
-prove that no voltage exists?
+\endgroup
 
 \end{document}

@@ -1,7 +1,7 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{1. Charge}
-  {Two kinds of it, and it never appears from nowhere}{2026-07-25}
+  {Two kinds of it, and it never appears from nowhere}{20260725.001}
 
 \begin{document}
 \telosmasthead[Build an electroscope, then make it prove the claim]
@@ -147,22 +147,6 @@ it forces good experimental habits.
 \end{tikzpicture}
 \end{center}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.12\linewidth}p{.18\linewidth}p{.18\linewidth}L@{}}
-\toprule
-Pair & Trial & First motion & Threshold gap & Anything touched?\\
-\midrule
-same-bench strips & 1 & & cm & \\[1.1em]
- & 2 & & cm & \\[1.1em]
- & 3, sides swapped & & cm & \\[1.1em]
-\midrule
-\(T_1\)-\(B_1\) & 1 & & cm & \\[1.1em]
-\(T_1\)-\(T_2\) & 1 & & cm & \\[1.1em]
-\(B_1\)-\(B_2\) & 1 & & cm & \\[1.1em]
-\bottomrule
-\end{tabularx}
-\end{center}
-
 \begin{telospanel}{Stop and argue}
 Attraction cannot, by itself, prove opposite net charges: a charged object can
 attract a neutral one. Which tape result \emph{cannot} be explained by a
@@ -214,18 +198,6 @@ neutral partner? Why is swapping the stands a useful control?
   \foreach \y in {.05,.30,.55}
     \node[font=\tiny] at (3.30,\y){\(+\ -\)};
 \end{tikzpicture}
-\end{center}
-
-\begin{center}\small
-\begin{tabularx}{.88\linewidth}{@{}p{.16\linewidth}p{.24\linewidth}p{.24\linewidth}L@{}}
-\toprule
-Trial & Charged can gap & Discharged gap & Water deflection\\
-\midrule
-1 & cm & cm / none & mm toward / away\\[1.1em]
-2 & cm & cm / none & mm toward / away\\[1.1em]
-3 & cm & cm / none & mm toward / away\\[1.1em]
-\bottomrule
-\end{tabularx}
 \end{center}
 
 \begin{telospanel}{The question that matters}
@@ -329,18 +301,8 @@ wire touches no metal lid, and the leaves touch nothing except the hook.
 \end{tikzpicture}
 \end{center}
 
-\begin{center}\small
-\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}L@{}}
-\toprule
-State & \(0\) s & \(10\) s & \(30\) s & \(60\) s & Returns after removal?\\
-\midrule
-contact charge & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & \\[1.1em]
-comb near, no touch & \(^\circ\) & & & & yes / no\\[1.1em]
-finger then comb removed & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & yes / no\\
-\bottomrule
-\end{tabularx}
-\end{center}
-
+\newpage
+\telosmasthead[Lesson 1 --- proof, diagnosis and conclusions]
 \lessonsection{The proof, not the performance}
 
 \begin{enumerate}
@@ -367,8 +329,6 @@ distinguishes transferred charge from temporary rearrangement. Removal order
 tests the induction explanation.
 \end{telospanel}
 
-\newpage
-\telosmasthead[Lesson 1 --- conclusions and the link forward]
 \lessonsection{When it refuses to work}
 
 \begin{tabularx}{\linewidth}{@{}p{.23\linewidth}L L@{}}
@@ -401,12 +361,56 @@ peeling transfer electrons between objects, leaving equal and opposite changes
 inside the larger system. Conductors let charge travel; insulators slow that
 travel. A nearby charge can rearrange charge without touching. The electroscope
 makes each of those sentences visible, but only the controls make them evidence.
+The Tesla-coil topload is likewise a smooth conductor that stores charge, and a
+streamer is charge escaping into air. The physics is related; the risk is not.
 
-\begin{telospanel}{The link to the coil}
-The topload of a Tesla coil is a smooth conductor that stores charge. A
-streamer is charge escaping into air. Your electroscope shows the same family
-of effects at a vastly smaller energy. Similar physics is not similar risk.
-\end{telospanel}
+\newpage
+\telosmasthead[Lesson 1 --- field records]
+\lessonsection{Record A --- tape comparisons}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.12\linewidth}p{.18\linewidth}p{.18\linewidth}L@{}}
+\toprule
+Pair & Trial & First motion & Threshold gap & Anything touched?\\
+\midrule
+same-bench strips & 1 & & cm & \\[1.35em]
+ & 2 & & cm & \\[1.35em]
+ & 3, sides swapped & & cm & \\[1.35em]
+\midrule
+\(T_1\)-\(B_1\) & 1 & & cm & \\[1.35em]
+\(T_1\)-\(T_2\) & 1 & & cm & \\[1.35em]
+\(B_1\)-\(B_2\) & 1 & & cm & \\[1.35em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{Record B --- neutral-object controls}
+
+\begin{center}\small
+\begin{tabularx}{.90\linewidth}{@{}p{.16\linewidth}p{.24\linewidth}p{.24\linewidth}L@{}}
+\toprule
+Trial & Charged can gap & Discharged gap & Water deflection\\
+\midrule
+1 & cm & cm / none & mm toward / away\\[1.35em]
+2 & cm & cm / none & mm toward / away\\[1.35em]
+3 & cm & cm / none & mm toward / away\\[1.35em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{Record C --- electroscope states}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}L@{}}
+\toprule
+State & \(0\) s & \(10\) s & \(30\) s & \(60\) s & Returns after removal?\\
+\midrule
+contact charge & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & \\[1.35em]
+comb near, no touch & \(^\circ\) & & & & yes / no\\[1.35em]
+finger then comb removed & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & yes / no\\
+\bottomrule
+\end{tabularx}
+\end{center}
 
 \lowvoltagenote
 \end{document}

@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{5. Induction}{A \emph{changing} magnetic field makes a voltage}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{5. Induction}{A \emph{changing} magnetic field makes a voltage}{20260725.001}
 \begin{document}
 \telosmasthead[The one idea the whole machine rests on]
 \lessonhead{5}{about 90 minutes}{everyone builds; no external power at all}
@@ -156,4 +156,103 @@ in a rapidly changing primary field; tuning lets successive cycles build.
 Lessons 6, 8 and 9 add turns ratio, oscillation, and coupling, but every clause
 still depends on \emph{change}, not field strength alone.
 \lowvoltagenote
+
+\clearpage
+\lessonsection{Evidence worksheet}
+\textit{Complete this record after the investigation. Keep the meter leads,
+marked coil face, guide, endpoints, and sign convention unchanged.}
+
+\begin{teloscard}{Apparatus and practical zero}
+\begin{tabularx}{\linewidth}{@{}p{.28\linewidth}L p{.25\linewidth}L@{}}
+\toprule
+Coil turns & & Meter range & \\
+Marked coil face & & Red lead on coil end & \\
+Magnet pole marking checked? & & Largest 10 s drift & \\
+Lead-wiggle pulse absent? & & Practical zero band & \\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Motion trials: write signed peak voltage}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.12\linewidth}*{5}{C}p{.12\linewidth}p{.12\linewidth}@{}}
+\toprule
+Pole + motion & Count & 1 & 2 & 3 & 4 & 5 & Median & Half-range\\
+\midrule
+N in & slow & & & & & & & \\[1.2em]
+N out & slow & & & & & & & \\[1.2em]
+N in & quick & & & & & & & \\[1.2em]
+N out & quick & & & & & & & \\[1.2em]
+S in & slow & & & & & & & \\[1.2em]
+S out & slow & & & & & & & \\[1.2em]
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{teloscard}
+
+\begin{teloscard}{Interpret before concluding}
+\begin{tabularx}{\linewidth}{@{}p{.34\linewidth}L@{}}
+Which reversal changed sign? & \\
+Which double reversal preserved sign? & \\[.7em]
+Did every stopped reading return inside the zero band? & \\[.7em]
+Do slow and quick trial ranges overlap? What can you claim? & \\[1.1em]
+Largest uncertainty and its likely cause & \\[1.1em]
+\end{tabularx}
+\end{teloscard}
+
+\clearpage
+\lessonsection{Final proof and braking record}
+
+\begin{teloscard}{Blind prediction and verification}
+Use the first N-in sign as \(a\). Write every prediction before moving the
+magnet; do not erase a failed prediction.
+\small
+\begin{tabularx}{\linewidth}{@{}p{.15\linewidth}p{.16\linewidth}p{.16\linewidth}p{.16\linewidth}L@{}}
+\toprule
+Motion & Predicted sign & Pass 1 sign & Pass 2 sign & Final reading inside zero band?\\
+\midrule
+N in & \(a\) & & & \\[1.4em]
+N out & & & & \\[1.4em]
+S in & & & & \\[1.4em]
+S out & & & & \\[1.4em]
+\bottomrule
+\end{tabularx}
+\normalsize
+\medskip
+\(\bigcirc\) Each pair repeated \quad
+\(\bigcirc\) either reversal changed sign \quad
+\(\bigcirc\) both reversals preserved sign
+\end{teloscard}
+
+\begin{teloscard}{Troubleshooting record}
+\begin{tabularx}{\linewidth}{@{}p{.28\linewidth}p{.28\linewidth}L@{}}
+\toprule
+Observed problem & One suspected cause & One correction; then full proof result\\
+\midrule
+ & & \\[2.1em]
+ & & \\[2.1em]
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Matched pipe drops}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}*{5}{C}p{.14\linewidth}p{.14\linewidth}@{}}
+\toprule
+Tube & 1 & 2 & 3 & 4 & 5 & Median & Range\\
+\midrule
+Cardboard & & & & & & & \\[1.4em]
+Copper & & & & & & & \\[1.4em]
+Aluminium, optional & & & & & & & \\[1.4em]
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{teloscard}
+
+\begin{telospanel}{Evidence claim}
+The data support the claim that \rule{.71\linewidth}{.35pt}\\[1em]
+because \rule{.89\linewidth}{.35pt}\\[1em]
+The strongest alternative explanation is \rule{.57\linewidth}{.35pt}\\[1em]
+and the evidence that addresses it is \rule{.55\linewidth}{.35pt}
+\end{telospanel}
 \end{document}
