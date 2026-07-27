@@ -1,7 +1,13 @@
 # ADR 0052: Build the first Controller from an existing workstation
 
-- Status: Accepted
+- Status: Superseded by ADR 0067
 - Date: 2026-07-25
+
+## Supersession
+
+ADR 0067 replaces the workstation-hosted ProxyDHCP bootstrap with an isolated
+Arch Controller VM whose service configuration is reusable on the permanent
+Controller. This ADR remains as the record of the earlier bootstrap design.
 
 ## Context
 

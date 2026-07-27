@@ -5,10 +5,9 @@
 
 ## Context
 
-ADR 0001 recorded `/home/ksh/git/codex/homelab-infrastructure` as the canonical
-working copy. That path is empty; the record actually lived at
-`/home/ksh/git/homelab`, so the accepted decision and reality disagreed and
-nobody noticed. Separately, the homelab needs printable standalone reconstruction
+ADR 0001 recorded one operator-specific path as the canonical working copy.
+The record later lived elsewhere, so the accepted decision and reality
+disagreed and nobody noticed. Separately, the homelab needs printable standalone reconstruction
 manuals, which is exactly what the Telos publication system already produces.
 
 Telos publishes to a public site. The homelab record contains real hostnames,
@@ -24,11 +23,12 @@ repository, and split it in two:
   roles, and both reconstruction manuals contain no instance data and publish to
   the Telos site.
 - **Instance material is private.** Real hostnames, addresses, interface names,
-  disk serials, DHCP reservations, share paths and per-machine inventory live in
-  `homelab/instance/`, which is gitignored and never rendered into the site.
+  disk serials, DHCP reservations, share paths and per-machine inventory live
+  in a separately versioned private sibling repository and are never rendered
+  into the site.
 
-Documents that need an instance value read it from the private overlay at build
-time and fall back to a clearly marked placeholder when the overlay is absent.
+Documents that need an instance value read it from the private contract at
+deployment time and use a clearly marked placeholder in public builds.
 A published document must be complete and useful without the overlay.
 
 ## Consequences
@@ -36,8 +36,8 @@ A published document must be complete and useful without the overlay.
 - The published manuals describe a reusable profile, not this house.
 - A reader who clones the repository can build the same system with their own
   overlay.
-- `homelab/instance/` is gitignored; losing it loses instance data, so it needs
-  its own off-host backup under the recovery policy, separate from Git.
+- The private sibling repository needs a verified private remote and its own
+  recovery policy, separate from the public repository.
 - The site build must fail closed if instance data ever reaches a published
   source file. `scripts/site` gains that check.
 - ADR 0001 is superseded.

@@ -204,7 +204,8 @@ change as its source.
 
 ## Traps that have already cost time
 
-- **`git`/shell cwd resets between commands.** Always `cd /home/ksh/git/telos`
+- **`git`/shell cwd resets between commands.** Return to the Telos checkout
+  root before running repository commands.
   first. `make` in the wrong directory has wasted many cycles.
 - **`tabularx` cannot span a macro boundary.** `telosfacts` is plain `tabular`
   with `\dimexpr` widths for this reason. Documents that need `tabularx` use it

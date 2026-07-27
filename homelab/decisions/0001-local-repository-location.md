@@ -13,13 +13,12 @@ This ADR remains as the record of the earlier decision.
 ## Context
 
 The infrastructure documentation needs a stable local Git working copy. The
-handoff proposed `/home/ksh/git/homelab-infrastructure`, while the active
-workspace is `/home/ksh/git/codex/homelab-infrastructure`.
+handoff and active workspace used different operator-specific paths.
 
 ## Decision
 
-Use `/home/ksh/git/codex/homelab-infrastructure` as the normal local working
-copy and initialize it as a Git repository with `main` as its initial branch.
+Use one explicitly recorded operator-local path as the normal working copy and
+initialize it as a Git repository with `main` as its initial branch.
 
 ## Consequences
 

@@ -21,7 +21,10 @@ class PublicationVersionTests(unittest.TestCase):
             if not count:
                 continue
             versions = len(VERSION.findall(text))
-            if versions < count or LEGACY_DATE.search(text):
+            metadata_lines = "\n".join(
+                line for line in text.splitlines() if META.search(line)
+            )
+            if versions < count or LEGACY_DATE.search(metadata_lines):
                 failures.append(
                     f"{source.relative_to(REPOSITORY_ROOT)}: "
                     f"{count} metadata declarations, {versions} versions"

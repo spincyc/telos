@@ -22,8 +22,9 @@ Use Samba Active Directory Domain Services as the directory.
 - Home directories stay local; `pam_mkhomedir` creates them on first login.
 - Every managed machine keeps a separately named local break-glass administrator
   with its own sudo rule, and that account is never a directory account.
-- UID and GID come from the directory. The existing local `ksh` at UID 1000 is
-  migrated deliberately and only after piloting with a separate test identity.
+- UID and GID come from the directory. Any pre-existing local account at the
+  workstation's first ordinary-user UID is migrated deliberately and only
+  after piloting with a separate test identity.
 - Set an explicit offline credential lifetime longer than a normal trip rather
   than relying on a default.
 
