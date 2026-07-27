@@ -19,7 +19,6 @@ samba
 krb5
 bind
 ntp
-systemd-timesyncd
 dnsmasq
 tftp-hpa
 nginx
