@@ -76,6 +76,17 @@ class SimulatedPxeGatewayTests(unittest.TestCase):
         self.assertEqual(deliveries, {})
         self.assertTrue(evidence[0]["blocked"])
 
+    def test_explicit_gateway_peer_is_the_only_dhcp_path(self):
+        policy = sim.HubPolicy(gateway_peer=3)
+        peers = {1, 2, 3}
+        request = dhcp(architecture=7)
+        deliveries, _ = policy.route(1, request, peers)
+        self.assertEqual(deliveries, {3: [request]})
+        reply = sim.Gateway().handle(request)[0]
+        deliveries, evidence = policy.route(3, reply, peers)
+        self.assertEqual(deliveries, {1: [reply]})
+        self.assertEqual(evidence[0]["peer"], "gateway")
+
     def test_hub_forwards_controller_client_unicast_and_broadcast(self):
         policy = sim.HubPolicy()
         peers = {1, 2}

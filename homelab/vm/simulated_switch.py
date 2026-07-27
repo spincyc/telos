@@ -131,7 +131,11 @@ class ConcurrentSwitch:
         self.accept_timeout = accept_timeout
         self.idle_timeout = idle_timeout
         self.ready_fd = ready_fd
-        self.policy = HubPolicy()
+        gateway_ports = [port.number for port in ports if port.name == "gateway"]
+        if len(gateway_ports) > 1:
+            raise ValueError("at most one pinned gateway port is allowed")
+        self.policy = HubPolicy(
+            gateway_peer=gateway_ports[0] if gateway_ports else None)
         self.evidence = Evidence(evidence_path)
         self.incoming: queue.Queue[tuple[int, bytes] | None] = queue.Queue(
             maxsize=QUEUE_DEPTH)

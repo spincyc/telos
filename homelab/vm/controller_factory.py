@@ -67,7 +67,7 @@ def verification_commands(spec: FactorySpec) -> tuple[str, ...]:
         f"host -t SRV _ldap._tcp.{spec.domain} 127.0.0.1",
         "systemctl is-active telos-factory-tftp.service",
         "nginx -t -c /etc/homelab/factory-nginx.conf",
-        "test -s /srv/http/homelab/boot.ipxe",
+        "test -s /srv/http/homelab/boot/boot.ipxe",
         "ss -H -lun | grep -E ':(53|69|123)[[:space:]]'",
         "ss -H -ltn | grep -E ':(53|80|88|389|445)[[:space:]]'",
         "! ss -H -lunp | grep ':53 ' | grep dnsmasq",
@@ -146,10 +146,10 @@ if ! ANSIBLE_CONFIG="$root/factory-ansible.cfg" \
   fi
   exit 2
 fi
-install -d -m 0755 /etc/homelab /srv/tftp /srv/http/homelab
+install -d -m 0755 /etc/homelab /srv/tftp /srv/http/homelab/boot
 install -m 0644 "$root/telos-factory-tftp.service" /etc/systemd/system/telos-factory-tftp.service
 install -m 0644 "$root/factory-nginx.conf" /etc/homelab/factory-nginx.conf
-install -m 0644 "$root/boot.ipxe" /srv/http/homelab/boot.ipxe
+install -m 0644 "$root/boot.ipxe" /srv/http/homelab/boot/boot.ipxe
 install -m 0644 /usr/share/ipxe/x86_64/ipxe.efi /srv/tftp/ipxe.efi
 echo 'TELOS FACTORY STEP services'
 systemctl daemon-reload
@@ -167,7 +167,7 @@ echo 'TELOS FACTORY CONTROLLER PASS'
 """
 
 
-def _nginx(spec: FactorySpec) -> str:
+def nginx_config(spec: FactorySpec) -> str:
     return f"""pid /run/factory-nginx.pid;
 error_log stderr notice;
 events {{}}
@@ -259,7 +259,7 @@ class FactoryBundle:
         (destination / "telos-factory-tftp.service").write_text(
             tftp_unit(self.spec), encoding="utf-8")
         (destination / "factory-nginx.conf").write_text(
-            _nginx(self.spec), encoding="utf-8")
+            nginx_config(self.spec), encoding="utf-8")
         (destination / "boot.ipxe").write_text(
             f"#!ipxe\nchain http://{self.spec.address}/arch/boot.ipxe\n",
             encoding="utf-8")
