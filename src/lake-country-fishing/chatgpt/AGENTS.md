@@ -28,8 +28,10 @@ read this file before changing anything below this directory.
   the live Wisconsin DNR rules for the exact water, species, and date.
 - Build lake maps independently from original DNR bathymetric material.
   Current public satellite imagery may be used to improve shoreline and access
-  research, but the printed result remains a clean line map. Do not reuse
-  Claude’s finished map.
+  research, but the printed result remains an original graphite field drawing
+  with crisp deterministic bathymetric, scale, orientation, and access
+  overlays. Omit private-property detail. Print the imagery and survey dates,
+  and do not reuse Claude’s finished map.
 
 ## Cooking guides
 

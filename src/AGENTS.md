@@ -38,6 +38,22 @@ procedure where the project safety contract forbids one.
 
 - Use ample original monochrome illustrations. One decorative overview image
   is not sufficient for a multi-stage process.
+- Default to high-fidelity graphite or pencil rendering for observational
+  subjects: landscapes, shorelines, vegetation, fish and wildlife, people,
+  hands, tools, materials, apparatus, food, and successive physical states.
+  Use a consistently lit white-paper ground and enough tonal range to survive
+  ordinary grayscale printing.
+- Reserve clean schematic rendering for information whose usefulness depends
+  on exact geometry or symbolic convention: circuit topology, wiring states,
+  measured cut lines, dimensions, graphs, coordinate grids, bathymetric
+  contours, scale bars, north arrows, safety boundaries, and flow or state
+  logic. A schematic may sit over or beside a graphite observational plate.
+- For maps, redraw the observable shoreline and public orientation context
+  from the newest authoritative public aerial imagery available to the
+  project, then combine it with independently sourced bathymetry. Keep
+  contours, soundings, dates, scale, orientation, and access status as crisp
+  deterministic overlays. Omit private-property detail unless it is necessary
+  to prevent a false access claim.
 - Draw the before state, connection or action, expected evidence, measurement
   point, and important failure state when those differ materially.
 - Keep labels, units, dimensions, arrows, and acceptance marks in TeX or
@@ -47,6 +63,10 @@ procedure where the project safety contract forbids one.
   vectors where precision matters more than texture.
 - Every figure needs a teaching job: orient, predict, perform, compare,
   diagnose, or verify. Do not add decorative filler.
+- Record each observational plate's source evidence, imagery or survey date,
+  generation/edit prompt, and review status near the asset. Generated texture
+  must never be allowed to invent a measurement, access point, component,
+  anatomical feature, or safe operating state.
 
 ## Questions and records
 
