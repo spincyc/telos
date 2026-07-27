@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-27T23:13:46Z"
+updated_at: "2026-07-27T23:49:01Z"
 ---
 
 # Goal
@@ -39,3 +39,12 @@ First reconcile the known boot-path mismatch and publish/capture boundary in
 the loopback lifecycle. Then prove real OVMF iPXE requests and Arch/WinPE
 handoffs from selected release `20260727.001`, retaining packet and manifest
 evidence without attaching any physical interface.
+
+## Progress
+
+Real OVMF now completes gateway-only DHCP, verified iPXE TFTP, selected
+bootstrap HTTP, and immutable Arch kernel/initramfs downloads. The fail-closed
+lifecycle retains bounded private evidence and verifies the exact publication
+before starting the workstation. Release `20260727.001` lacks serial-console
+arguments because it predates this implementation; mint `.002` and repeat for
+the post-kernel handoff marker.

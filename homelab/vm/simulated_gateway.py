@@ -393,9 +393,13 @@ def dhcp_packet_evidence(frame: bytes) -> dict[str, object] | None:
 class HubPolicy:
     """Pure routing policy for a concurrent isolated PXE Ethernet hub."""
 
-    def __init__(self, gateway: Gateway | None = None) -> None:
+    def __init__(
+        self, gateway: Gateway | None = None, *, gateway_peer: int | None = None,
+    ) -> None:
         self.gateway = gateway or Gateway()
+        self.gateway_peer = gateway_peer
         self.learned: dict[bytes, int] = {}
+        self.dhcp_clients: dict[str, int] = {}
 
     def route(self, sender: int, frame: bytes, peers: set[int]
               ) -> tuple[dict[int, list[bytes]], list[dict[str, object]]]:
@@ -404,6 +408,20 @@ class HubPolicy:
         if len(frame) < 14:
             return deliveries, evidence
         destination, source = frame[:6], frame[6:12]
+        if sender == self.gateway_peer:
+            if source != GATEWAY_MAC:
+                return deliveries, evidence
+            dhcp = dhcp_packet_evidence(frame)
+            if dhcp:
+                evidence.append({**dhcp, "peer": "gateway"})
+                target = self.dhcp_clients.get(str(dhcp["transaction"]))
+                if target in peers and target != sender:
+                    deliveries[target] = [frame]
+                return deliveries, evidence
+            target = self.learned.get(destination)
+            if target in peers and target != sender:
+                deliveries[target] = [frame]
+            return deliveries, evidence
         if source[0] & 1 or source == GATEWAY_MAC:
             return deliveries, evidence
         self.learned[source] = sender
@@ -414,6 +432,10 @@ class HubPolicy:
             # the simulated gateway and are not exposed to the controller.
             if dhcp["kind"] in ("OFFER", "ACK", "NAK"):
                 evidence[-1]["blocked"] = True
+                return deliveries, evidence
+            if self.gateway_peer in peers:
+                self.dhcp_clients[str(dhcp["transaction"])] = sender
+                deliveries[self.gateway_peer] = [frame]
                 return deliveries, evidence
             replies = self.gateway.handle(frame)
             if replies:
@@ -426,8 +448,11 @@ class HubPolicy:
                             "delivered_to": sender,
                         })
             return deliveries, evidence
-        for reply in self.gateway.handle(frame):
-            deliveries.setdefault(sender, []).append(reply)
+        if self.gateway_peer in peers and destination == GATEWAY_MAC:
+            deliveries.setdefault(self.gateway_peer, []).append(frame)
+        else:
+            for reply in self.gateway.handle(frame):
+                deliveries.setdefault(sender, []).append(reply)
         if destination == GATEWAY_MAC:
             return deliveries, evidence
         if destination == b"\xff" * 6 or destination[0] & 1:
@@ -485,18 +510,43 @@ def serve(
                             struct.pack("!I", len(reply)) + reply)
 
 
+def connect_peer(host: str, port: int) -> None:
+    if host != "127.0.0.1":
+        raise RuntimeError("gateway peer must connect only to 127.0.0.1")
+    gateway = Gateway()
+    with socket.create_connection((host, port)) as connection:
+        while True:
+            header = receive_exact(connection, 4)
+            if header is None:
+                return
+            size = struct.unpack("!I", header)[0]
+            if not 14 <= size <= 65535:
+                raise RuntimeError("invalid Ethernet frame size")
+            frame = receive_exact(connection, size)
+            if frame is None:
+                raise RuntimeError("truncated Ethernet frame")
+            for reply in gateway.handle(frame):
+                connection.sendall(struct.pack("!I", len(reply)) + reply)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=12962)
     parser.add_argument("--connections", type=int, default=1)
     parser.add_argument("--listener-fd", type=int)
     parser.add_argument("--audit-first", type=Path)
+    parser.add_argument("--connect", action="store_true")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be an unprivileged TCP port")
     if not 1 <= args.connections <= 8:
         parser.error("--connections must be between 1 and 8")
-    serve(args.port, args.connections, args.listener_fd, args.audit_first)
+    if args.connect:
+        if args.listener_fd is not None or args.connections != 1:
+            parser.error("--connect cannot use --listener-fd or --connections")
+        connect_peer("127.0.0.1", args.port)
+    else:
+        serve(args.port, args.connections, args.listener_fd, args.audit_first)
     return 0
 
 

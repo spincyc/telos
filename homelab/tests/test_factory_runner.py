@@ -1,6 +1,8 @@
 """Contract tests for the bounded concurrent factory skeleton."""
 
+import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +12,63 @@ from homelab.vm.qemu_boundary import audit_disposable_controller
 
 
 class FactoryRunnerTests(unittest.TestCase):
+    def test_failure_evidence_is_private_bounded_and_redacted(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "controller-publication.log").write_bytes(
+                b"x" * (factory_runner.EVIDENCE_LIMIT + 10)
+                + b"\npassword=exposed\n")
+            destination = factory_runner.retain_failure_evidence(
+                runtime, root / "evidence", RuntimeError("token=exposed"))
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o700)
+            log = destination / "controller-publication.log"
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            self.assertLessEqual(log.stat().st_size,
+                                 factory_runner.EVIDENCE_LIMIT)
+            self.assertNotIn(b"exposed", log.read_bytes())
+            result = destination / "result.json"
+            self.assertEqual(result.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("exposed", result.read_text())
+
+    def test_publication_and_service_readiness_timeouts_are_distinct(self):
+        read_fd, write_fd = __import__("os").pipe()
+        reader = __import__("os").fdopen(read_fd, "rb", buffering=0)
+
+        class Process:
+            stdin = __import__("io").BytesIO()
+            stdout = reader
+
+            @staticmethod
+            def poll():
+                return None
+
+        def emit():
+            __import__("os").write(
+                write_fd, b"#\nTELOS PXE PUBLICATION PASS\n")
+
+        thread = threading.Thread(target=emit)
+        thread.start()
+        with tempfile.TemporaryDirectory() as temp_name:
+            with self.assertRaisesRegex(RuntimeError, "services.*ready"):
+                factory_runner.activate_publication(
+                    Process(), Path(temp_name) / "serial.log", timeout=0.1)
+        thread.join()
+        __import__("os").close(write_fd)
+        reader.close()
+
+    def test_direct_script_help_resolves_local_imports(self):
+        result = subprocess.run(
+            [
+                "python3", str(Path(factory_runner.__file__).resolve()),
+                "--help",
+            ],
+            check=False, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--releases", result.stdout)
+
     def test_commands_use_one_loopback_switch_and_disposable_paths(self):
         with mock.patch.object(
                 factory_runner, "ovmf_pair",
@@ -43,9 +102,89 @@ class FactoryRunnerTests(unittest.TestCase):
         command = factory_runner.switch_command(9, Path("/run/evidence"))
         text = " ".join(command)
         self.assertIn("--listener-fd 9", text)
+        self.assertIn("gateway=52:54:00:31:11:01", text)
         self.assertIn("controller=52:54:00:31:11:12", text)
         self.assertIn("workstation=52:54:00:31:12:12", text)
         self.assertNotIn("0.0.0.0", text)
+
+    def test_gateway_is_explicit_loopback_switch_peer(self):
+        command = factory_runner.gateway_command(31415)
+        self.assertIn("--connect", command)
+        self.assertIn("31415", command)
+        self.assertNotIn("0.0.0.0", " ".join(command))
+
+    def test_handoff_requires_dhcp_bootstrap_and_installer_markers(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            switch = root / "switch.jsonl"
+            switch.write_text("\n".join(
+                f'{{\"kind\":\"{kind}\",\"peer\":\"gateway\"}}'
+                for kind in ("DISCOVER", "OFFER", "REQUEST", "ACK")))
+            controller = root / "controller.log"
+            controller.write_text(
+                'TELOS PXE SERVICES READY\n'
+                'GET /boot/boot.ipxe HTTP/1.1\n'
+                'GET /arch-workstation/20260727.001/boot.ipxe HTTP/1.1\n'
+                'GET /arch-workstation/20260727.001/payload/arch/boot/'
+                'x86_64/vmlinuz-linux HTTP/1.1\n'
+                'GET /arch-workstation/20260727.001/payload/arch/boot/'
+                'x86_64/initramfs-linux.img HTTP/1.1\n')
+            workstation = root / "workstation.log"
+            workstation.write_text("archiso login: ")
+            self.assertEqual(factory_runner.assess_handoff(
+                switch, controller, workstation, "20260727.001"), [])
+            workstation.write_text("firmware only")
+            self.assertIn("no Arch or WinPE handoff was observed",
+                          factory_runner.assess_handoff(
+                              switch, controller, workstation,
+                              "20260727.001"))
+
+    def test_handoff_correlates_ipxe_client_urls_with_ready_probe(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            switch = root / "switch.jsonl"
+            switch.write_text("\n".join(
+                f'{{\"kind\":\"{kind}\",\"peer\":\"gateway\"}}'
+                for kind in ("DISCOVER", "OFFER", "REQUEST", "ACK")))
+            controller = root / "controller.log"
+            controller.write_text("TELOS PXE SERVICES READY\n")
+            workstation = root / "workstation.log"
+            base = "http://10.1.31.2/arch-workstation/20260727.001/"
+            workstation.write_text(
+                "http://10.1.31.2/boot/boot.ipxe\n"
+                + base + "boot.ipxe\n"
+                + base + "payload/arch/boot/x86_64/vmlinuz-linux\n"
+                + base + "payload/arch/boot/x86_64/initramfs-linux.img\n"
+                + "archiso login: ")
+            self.assertEqual(factory_runner.assess_handoff(
+                switch, controller, workstation, "20260727.001"), [])
+
+    def test_controller_receives_publication_as_read_only_media(self):
+        with mock.patch.object(
+                factory_runner, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch(
+                    "homelab.vm.simulated_topology.ovmf_pair",
+                    return_value=(Path("/code"), Path("/vars"))):
+            command = factory_runner.qemu_commands(
+                Path("/run/controller.raw"),
+                Path("/run/controller-vars.fd"),
+                Path("/run/workstation.qcow2"),
+                Path("/run/workstation-vars.fd"),
+                31415, None, Path("/run/publication.iso"),
+            )["controller"]
+        text = " ".join(command)
+        self.assertIn("media=cdrom,readonly=on", text)
+        self.assertIn("file=/run/publication.iso", text)
+        self.assertNotIn("file=/run/publication.iso,writable", text)
+
+    def test_publication_bootstrap_is_guest_local_and_resumes_systemd(self):
+        command = factory_runner.publication_bootstrap_command().decode()
+        self.assertIn("mount -L TELOS_PXE_RELEASE", command)
+        self.assertIn("/run/telos-pxe-release/publish", command)
+        self.assertIn("exec /usr/lib/systemd/systemd", command)
+        for forbidden in ("tap", "bridge", "curl", "ssh", "http://"):
+            self.assertNotIn(forbidden, command)
 
     def test_controller_command_passes_strict_standalone_raw_audit(self):
         disk = Path("/run/disposable/controller.raw")

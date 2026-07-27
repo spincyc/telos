@@ -17,7 +17,10 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-import pxe_release
+try:
+    from . import pxe_release
+except ImportError:
+    import pxe_release
 
 SCHEMA = 1
 TARGETS = ("controller", "arch-workstation", "windows")

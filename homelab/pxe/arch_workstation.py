@@ -186,6 +186,7 @@ kernel ${{base}}/arch/boot/x86_64/vmlinuz-linux \\
     archiso_http_srv=${{base}}/ \\
     ip=dhcp \\
     copytoram=n \\
+    console=ttyS0,115200 console=tty0 \\
     initrd=initramfs-linux.img
 initrd ${{base}}/arch/boot/x86_64/initramfs-linux.img
 boot || goto failed
