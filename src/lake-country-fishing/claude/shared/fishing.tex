@@ -309,6 +309,45 @@
     \telosfact{Proof at depth}{#3}
     \telosfact{If it fails}{#4 Change one variable, repeat the same cast or drop, and keep the first setting that restores the expected proof.}
   \end{telosfacts}
+  \section{Record the adjustment}
+  \begin{tabularx}{\linewidth}{@{}c p{.16\linewidth}p{.15\linewidth}p{.17\linewidth}p{.16\linewidth}L@{}}
+  \toprule
+  \textbf{Try}&\textbf{Depth / distance}&\textbf{Sink count}&
+  \textbf{Observed action}&\textbf{Fish response}&\textbf{Next single change}\\
+  \midrule
+  1&&&&&\\[.55em]
+  2&&&&&\\[.55em]
+  3&&&&&\\
+  \bottomrule
+  \end{tabularx}
+
+  \begin{telospanel}{Questions before another cast}
+  Did the rig reach the intended depth? What visible line, rod-tip, bottom, or
+  lure response proves that? Did the connection and hook point survive the
+  retrieve? Was a follow, bite, snag, or refusal observed rather than assumed?
+  Name one variable to change and one to hold constant. If the observation
+  cannot answer those questions, repeat the same short controlled cast before
+  changing the setup.
+  \end{telospanel}
+
+  \begin{center}
+  \begin{tikzpicture}[x=1cm,y=1cm]
+    \draw[telos hair] (0,0) rectangle (10.8,3.2);
+    \foreach \x in {.6,1.2,...,10.2}\draw[telos hair] (\x,0)--(\x,3.2);
+    \foreach \y in {.6,1.2,...,3.0}\draw[telos hair] (0,\y)--(10.8,\y);
+    \node[anchor=south west,font=\scriptsize\bfseries,fill=white]
+      at (.15,2.88) {Sketch the cast: surface, cover, target depth, line angle, and where the response occurred};
+  \end{tikzpicture}
+  \end{center}
+
+  \begin{tabularx}{\linewidth}{@{}p{.25\linewidth}L@{}}
+  \textbf{Evidence-based verdict} &
+  \fbox{\phantom{x}} repeat unchanged \quad
+  \fbox{\phantom{x}} alter one variable \quad
+  \fbox{\phantom{x}} retire or repair the rig\\[.8em]
+  \textbf{Reason and next prediction} & \hrulefill\\[1.05em]
+  & \hrulefill
+  \end{tabularx}
 }
 
 % Terminal-tackle drawing library, used by every rig sheet.

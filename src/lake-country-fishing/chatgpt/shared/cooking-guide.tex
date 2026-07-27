@@ -125,7 +125,7 @@ qualified food-safety process. Discard abnormal-smelling or badly diseased
 flesh; when uncertain, do not eat it.
 \end{telospanel}
 
-\newpage
+\Needspace{.48\textheight}
 \section{Species-specific first cuts}
 \FilletMethod
 \FilletPlate
@@ -138,7 +138,7 @@ blindly. A cut gut means stop, clean the station, and reassess the edible
 margin before continuing.
 \end{telospanel}
 
-\newpage
+\ifdefempty{\FilletPlate}{}{\newpage}
 \section{Bone map and deboning}
 \BoneDiagram
 
@@ -192,7 +192,34 @@ Thickness / time & \rule{1.4cm}{.4pt} in & \rule{1.4cm}{.4pt} in &
 \end{tabularx}
 \end{center}
 
-\newpage
+\begin{teloscard}{Plan an even batch}
+Arrange the portions before heat and mark the thickest center in the sketch
+frame below. Which piece should be checked first? Which thin piece may need to
+leave the heat early? State the observation—not crust color or elapsed time—
+that will trigger each decision.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[thin] (0,0) rectangle (10.6,2.35);
+\foreach \x in {2.65,5.3,7.95}\draw[thin,dashed] (\x,0)--(\x,2.35);
+\node[font=\scriptsize,anchor=north west] at (.12,2.2)
+  {Sketch portions in pan / rack order; label thickness and probe entry};
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.17\linewidth}p{.18\linewidth}L@{}}
+\toprule
+\textbf{Piece / position}&\textbf{Thickness}&\textbf{First check}&
+\textbf{Predicted action if below or above target}\\
+\midrule
+&&&\\[.55em]
+&&&\\[.55em]
+&&&\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\Needspace{.48\textheight}
 \section{Two dependable methods}
 \CookingPlate
 \begin{teloscard}{\CookOne}
