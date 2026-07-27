@@ -179,6 +179,49 @@ class TestProfileIsBootable(StagingCase):
         profiledef = (ROOT / "archiso/profiledef.sh").read_text()
         self.assertIn("buildmodes=('netboot')", profiledef)
 
+    def test_the_initramfs_can_fetch_its_root_over_http(self):
+        configuration = (
+            ROOT / "archiso/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+        ).read_text()
+        hooks = configuration.split("HOOKS=(", 1)[1].split(")", 1)[0].split()
+        for hook in image.REQUIRED_INITRAMFS_HOOKS:
+            with self.subTest(hook=hook):
+                self.assertIn(hook, hooks)
+        self.assertLess(
+            hooks.index("archiso_pxe_common"),
+            hooks.index("archiso_pxe_http"),
+        )
+        for hook in image.FORBIDDEN_INITRAMFS_HOOKS:
+            with self.subTest(hook=hook):
+                self.assertNotIn(hook, hooks)
+
+        packages = (ROOT / "archiso/packages.x86_64").read_text().splitlines()
+        self.assertNotIn("syslinux", packages)
+
+    def test_the_audit_refuses_an_initramfs_without_http_pxe(self):
+        build = self.stage()
+        configuration = (
+            build / "airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+        )
+        configuration.write_text(
+            configuration.read_text().replace(" archiso_pxe_http", "")
+        )
+        self.assertTrue(any(
+            "archiso_pxe_http" in problem for problem in image.audit(build)
+        ))
+
+    def test_the_audit_refuses_memdisk_without_syslinux(self):
+        build = self.stage()
+        configuration = (
+            build / "airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+        )
+        configuration.write_text(
+            configuration.read_text().replace(" kms archiso", " kms memdisk archiso")
+        )
+        self.assertTrue(any(
+            "memdisk" in problem for problem in image.audit(build)
+        ))
+
     def test_pacman_conf_is_present(self):
         # mkarchiso reads the file profiledef.sh names; without it the build
         # fails immediately and unhelpfully.
@@ -189,12 +232,18 @@ class TestProfileIsBootable(StagingCase):
     def test_the_network_comes_up_by_dhcp(self):
         # The provisioning environment gets its address from the Controller it
         # is booting from; the installer unit waits for it.
-        network = (ROOT / "archiso/airootfs/etc/systemd/network/"
-                          "20-ethernet.network").read_text()
+        profile = ROOT / "archiso/airootfs"
+        network = (
+            profile / "etc/systemd/network/20-ethernet.network"
+        ).read_text()
         self.assertIn("DHCP=yes", network)
-        unit = (ROOT / "archiso/airootfs/etc/systemd/system/"
-                       "homelab-installer.service").read_text()
+        unit = (
+            profile / "etc/systemd/system/homelab-installer.service"
+        ).read_text()
         self.assertIn("systemd-networkd-wait-online.service", unit)
+        for relative in image.REQUIRED_NETWORKD_LINKS:
+            with self.subTest(link=relative):
+                self.assertTrue((profile / relative).is_symlink())
 
     def test_the_installer_is_on_the_serial_console(self):
         # ADR 0056: the acceptance matrix attaches to ttyS0.

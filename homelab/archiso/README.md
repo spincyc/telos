@@ -23,9 +23,12 @@ bound to the versioned release:
       VERSION=YYYYMMDD.NNN \
       BASE_URL=http://controller.example/controller/YYYYMMDD.NNN
 
-The target refuses links, special files, missing or empty boot payloads, and an
-existing release directory. Publication to a Controller is a separate,
-explicit step after release-set verification.
+The target accepts the mkarchiso root image as either `airootfs.erofs` (the
+current profile output) or the older `airootfs.sfs`, but requires exactly one.
+It verifies the generated `airootfs.sha512`, refuses links, special files,
+missing or empty boot payloads, and an existing release directory. The iPXE
+entrypoint enables Archiso's HTTP `checksum=y` verification. Publication to a
+Controller is a separate, explicit step after release-set verification.
 
 The profile does not currently produce or pin a CMS signing identity, so its
 iPXE entrypoint does not claim `cms_verify=y`. Every served byte remains bound

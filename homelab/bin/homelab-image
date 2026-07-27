@@ -50,6 +50,18 @@ FORBIDDEN_CONTENT = (
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "a private key"),
     (re.compile(r"^\$[0-9a-z]+\$", re.MULTILINE), "a crypt(3) password hash"),
 )
+REQUIRED_INITRAMFS_HOOKS = (
+    "archiso", "archiso_loop_mnt", "archiso_pxe_common", "archiso_pxe_http",
+)
+FORBIDDEN_INITRAMFS_HOOKS = (
+    "memdisk", "archiso_pxe_nbd", "archiso_pxe_nfs",
+)
+REQUIRED_NETWORKD_LINKS = (
+    "etc/systemd/system/multi-user.target.wants/systemd-networkd.service",
+    "etc/systemd/system/network-online.target.wants/"
+    "systemd-networkd-wait-online.service",
+    "etc/systemd/system/sockets.target.wants/systemd-networkd.socket",
+)
 
 
 class StagingError(RuntimeError):
@@ -197,6 +209,38 @@ def audit(build: Path) -> list[str]:
         problems.append("the installer is not in the image")
     elif "--fixture" not in installer.read_text():
         problems.append("the staged installer is not the one the tests drive")
+
+    initramfs = (
+        build / "airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+    )
+    if not initramfs.is_file():
+        problems.append("the Archiso mkinitcpio configuration is missing")
+    else:
+        hooks_match = re.search(
+            r"^\s*HOOKS=\(([^)]*)\)", initramfs.read_text(), re.MULTILINE
+        )
+        hooks = hooks_match.group(1).split() if hooks_match else []
+        missing_hooks = [
+            hook for hook in REQUIRED_INITRAMFS_HOOKS if hook not in hooks
+        ]
+        if missing_hooks:
+            problems.append(
+                "the Archiso initramfs is missing hooks: "
+                + ", ".join(missing_hooks)
+            )
+        forbidden_hooks = [
+            hook for hook in FORBIDDEN_INITRAMFS_HOOKS if hook in hooks
+        ]
+        if forbidden_hooks:
+            problems.append(
+                "the HTTP-only Archiso initramfs has unsupported hooks: "
+                + ", ".join(forbidden_hooks)
+            )
+
+    for relative in REQUIRED_NETWORKD_LINKS:
+        link = build / "airootfs" / relative
+        if not link.is_symlink():
+            problems.append(f"the DHCP boot network link is missing: {relative}")
 
     return problems
 

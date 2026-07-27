@@ -1,6 +1,7 @@
 """Tests for the offline, versioned Controller PXE target."""
 
 import importlib.util
+import hashlib
 import json
 import os
 import shutil
@@ -28,7 +29,16 @@ class ControllerTargetCase(unittest.TestCase):
             path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(relative.encode())
+        self.root_image = self.source / controller.ROOT_IMAGES[0]
+        self.root_image.parent.mkdir(parents=True, exist_ok=True)
+        self.root_image.write_bytes(b"root image")
+        self.write_root_checksum()
         self.releases = self.temp / "releases"
+
+    def write_root_checksum(self):
+        digest = hashlib.sha512(self.root_image.read_bytes()).hexdigest()
+        (self.root_image.parent / "airootfs.sha512").write_text(
+            f"{digest}  {self.root_image.name}\n")
 
     def stage(self):
         return controller.stage(
@@ -53,7 +63,11 @@ class TestBuild(ControllerTargetCase):
                         "sha256": controller.sha256(self.source / relative),
                         "size": (self.source / relative).stat().st_size,
                     }
-                    for relative in controller.REQUIRED_PAYLOADS
+                    for relative in (
+                        *controller.REQUIRED_PAYLOADS,
+                        controller.ROOT_IMAGES[0],
+                        controller.ROOT_CHECKSUM,
+                    )
                 },
             },
         })
@@ -68,6 +82,7 @@ class TestBuild(ControllerTargetCase):
         self.assertNotIn("menu", script.lower())
         self.assertIn("shell", script)
         self.assertNotIn("cms_verify=y", script)
+        self.assertIn("checksum=y", script)
 
     def test_manifest_covers_metadata_entrypoint_and_payload(self):
         release = self.stage()
@@ -83,8 +98,33 @@ class TestBuild(ControllerTargetCase):
             self.stage()
 
     def test_missing_root_filesystem_stops_staging(self):
-        (self.source / "arch/x86_64/airootfs.sfs").unlink()
-        with self.assertRaisesRegex(controller.TargetError, "required"):
+        self.root_image.unlink()
+        with self.assertRaisesRegex(controller.TargetError, "exactly one"):
+            self.stage()
+
+    def test_accepts_current_mkarchiso_erofs_layout(self):
+        self.root_image.unlink()
+        self.root_image = self.source / controller.ROOT_IMAGES[1]
+        self.root_image.write_bytes(b"erofs root image")
+        self.write_root_checksum()
+        (self.source / "arch/version").write_text("2026.07.27\n")
+        (self.source / "arch/pkglist.x86_64.txt").write_text("base\n")
+        release = self.stage()
+        metadata = json.loads((release / "target.json").read_text())
+        artifacts = metadata["source"]["artifacts"]
+        self.assertIn("arch/x86_64/airootfs.erofs", artifacts)
+        self.assertIn("arch/x86_64/airootfs.sha512", artifacts)
+        self.assertIn("arch/version", artifacts)
+        self.assertEqual(controller.verify(release), [])
+
+    def test_two_root_images_are_refused(self):
+        (self.source / controller.ROOT_IMAGES[1]).write_bytes(b"other root")
+        with self.assertRaisesRegex(controller.TargetError, "exactly one"):
+            self.stage()
+
+    def test_root_image_checksum_mismatch_is_refused(self):
+        self.root_image.write_bytes(b"changed after checksum")
+        with self.assertRaisesRegex(controller.TargetError, "SHA-512"):
             self.stage()
 
     def test_version_must_be_document_style(self):
