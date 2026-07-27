@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://telos.invalid/schemas/workstation-layout.json",
+  "title": "Telos dual-boot workstation disk layout",
+  "type": "object",
+  "oneOf": [
+    {
+      "properties": {
+        "$schema": {"type": "string"},
+        "mode": {"const": "ratio"},
+        "windows_percent": {"type": "integer", "minimum": 50, "maximum": 90},
+        "recovery_mib": {"type": "integer", "minimum": 1024, "maximum": 8192}
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "$schema": {"type": "string"},
+        "mode": {"const": "fixed"},
+        "windows_gib": {"type": "integer", "minimum": 160},
+        "arch_gib": {"type": "integer", "minimum": 64},
+        "leftover": {"const": "unallocated"},
+        "recovery_mib": {"type": "integer", "minimum": 1024, "maximum": 8192}
+      },
+      "required": ["mode", "windows_gib", "arch_gib", "leftover"],
+      "additionalProperties": false
+    }
+  ]
+}

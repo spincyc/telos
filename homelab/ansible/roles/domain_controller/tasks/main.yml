@@ -1,0 +1,268 @@
+---
+- name: Validate the permanent directory identity
+  ansible.builtin.assert:
+    that:
+      - homelab_ad_dns_domain | length > 0
+      - homelab_ad_realm | length > 0
+      - homelab_ad_netbios_domain | length > 0
+      - homelab_ad_expected_hostname | length > 0
+      - ansible_hostname == homelab_ad_expected_hostname
+      - ansible_fqdn == homelab_ad_expected_hostname ~ '.' ~ homelab_ad_dns_domain
+      - homelab_ad_dns_domain == (homelab_ad_dns_domain | lower)
+      - homelab_ad_realm == (homelab_ad_dns_domain | upper)
+      - homelab_ad_netbios_domain == (homelab_ad_netbios_domain | upper)
+      - homelab_ad_netbios_domain | length <= 15
+      - homelab_ad_server_role == 'dc'
+      - homelab_ad_dns_backend == 'SAMBA_INTERNAL'
+    fail_msg: >-
+      Refusing to provision an ambiguous AD identity. The DNS domain must be
+      lower case, the realm its upper-case equivalent, and the NetBIOS domain
+      upper case and no longer than 15 characters.
+
+- name: Resolve the permanent Controller name before mutation
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/getent
+      - ahostsv4
+      - "{{ homelab_ad_expected_hostname }}.{{ homelab_ad_dns_domain }}"
+  register: homelab_ad_name_resolution
+  changed_when: false
+  check_mode: false
+
+- name: Inspect clock synchronization before mutation
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timedatectl
+      - show
+      - --property=NTPSynchronized
+      - --value
+  register: homelab_ad_clock_sync
+  changed_when: false
+  check_mode: false
+
+- name: Require working name resolution and synchronized time
+  ansible.builtin.assert:
+    that:
+      - homelab_ad_name_resolution.stdout | trim | length > 0
+      - homelab_ad_clock_sync.stdout | trim == 'yes'
+    fail_msg: >-
+      Refusing AD convergence before mutation. The permanent Controller FQDN
+      must resolve on this host and timedatectl must report NTPSynchronized=yes.
+
+- name: Report a successful non-mutating Controller preflight
+  ansible.builtin.debug:
+    msg: >-
+      Controller identity, FQDN resolution, and clock synchronization passed.
+      Check mode stops here because package and first-domain state cannot be
+      validated safely before those changes exist.
+  when: ansible_check_mode
+
+- name: Stop after the useful check-mode preflight
+  ansible.builtin.meta: end_host
+  when: ansible_check_mode
+
+- name: Check for an existing directory database
+  ansible.builtin.stat:
+    path: "{{ homelab_ad_private_dir }}/sam.ldb"
+  register: homelab_ad_database
+
+- name: Check for a pre-existing Samba configuration
+  ansible.builtin.stat:
+    path: "{{ homelab_ad_smb_conf }}"
+  register: homelab_ad_existing_smb_conf
+  when: not homelab_ad_database.stat.exists
+
+- name: Refuse to overwrite an unexplained Samba configuration
+  ansible.builtin.assert:
+    that: not homelab_ad_existing_smb_conf.stat.exists
+    fail_msg: >-
+      {{ homelab_ad_smb_conf }} exists but no AD database exists. Inspect and
+      remove or archive that file deliberately; first-DC provisioning will not
+      overwrite an unexplained Samba configuration.
+  when: not homelab_ad_database.stat.exists
+
+- name: Inspect the one-time password file
+  ansible.builtin.stat:
+    path: "{{ homelab_ad_admin_password_file }}"
+  register: homelab_ad_password
+  when: not homelab_ad_database.stat.exists
+  no_log: true
+
+- name: Require explicit authorization for first provisioning
+  ansible.builtin.assert:
+    that: homelab_ad_provision_enabled | bool
+    fail_msg: >-
+      No directory exists. Set homelab_ad_provision_enabled=true for the
+      deliberate first provisioning run; return it to false immediately
+      afterwards.
+  when: not homelab_ad_database.stat.exists
+
+- name: Require a protected one-time password file
+  ansible.builtin.assert:
+    that:
+      - homelab_ad_admin_password_file | length > 0
+      - homelab_ad_password.stat.exists
+      - homelab_ad_password.stat.isreg
+      - homelab_ad_password.stat.uid == 0
+      - homelab_ad_password.stat.mode == '0600'
+      - homelab_ad_password.stat.size > 0
+    fail_msg: >-
+      First provisioning requires a root-owned 0600 password file already on
+      the target. Prefer /run/secrets/samba-ad-admin; do not put the password
+      in inventory, Git, an Ansible variable, or the command line.
+  when: not homelab_ad_database.stat.exists
+  no_log: true
+
+- name: Install Samba AD dependencies
+  ansible.builtin.package:
+    name:
+      - samba
+      - krb5
+      - ntp
+      - python-cryptography
+      - python-dnspython
+      - python-markdown
+      - python-pexpect
+      - openresolv
+      - bind
+    state: present
+
+- name: Stop incompatible Samba member services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - smb.service
+    - nmb.service
+    - winbind.service
+  failed_when: false
+
+- name: Provision with an ephemeral credential feeder
+  when: not homelab_ad_database.stat.exists
+  block:
+    - name: Install the one-time provisioning driver
+      ansible.builtin.copy:
+        src: provision-domain.py
+        dest: /usr/local/libexec/homelab-provision-domain
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Provision the first domain controller
+      # The driver answers samba-tool's terminal prompt from the protected file.
+      # The password therefore enters neither Ansible data nor a process argv.
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/homelab-provision-domain
+          - --password-file
+          - "{{ homelab_ad_admin_password_file }}"
+          - --realm
+          - "{{ homelab_ad_realm }}"
+          - --domain
+          - "{{ homelab_ad_netbios_domain }}"
+          - --server-role
+          - "{{ homelab_ad_server_role }}"
+          - --dns-backend
+          - "{{ homelab_ad_dns_backend }}"
+          - "{{ '--use-rfc2307' if homelab_ad_enable_rfc2307 else '--without-rfc2307' }}"
+      no_log: true
+      notify: restart samba ad dc
+  always:
+    - name: Remove the one-time provisioning driver
+      ansible.builtin.file:
+        path: /usr/local/libexec/homelab-provision-domain
+        state: absent
+
+- name: Install the domain Kerberos client configuration
+  ansible.builtin.copy:
+    src: "{{ homelab_ad_private_dir }}/krb5.conf"
+    dest: /etc/krb5.conf
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart samba ad dc
+
+- name: Enable the Samba AD DC
+  ansible.builtin.systemd:
+    name: samba.service
+    enabled: true
+    state: started
+
+- name: Configure authenticated domain time
+  ansible.builtin.template:
+    src: ntp.conf.j2
+    dest: /etc/ntp.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart ntpd
+
+- name: Allow ntpd to reach the Samba signing socket
+  ansible.builtin.file:
+    path: "{{ homelab_ad_private_dir }}/ntp_signd"
+    owner: root
+    group: ntp
+    mode: "0750"
+    state: directory
+  notify: restart ntpd
+
+- name: Enable domain time
+  ansible.builtin.systemd:
+    name: ntpd.service
+    enabled: true
+    state: started
+
+- name: Verify the provisioned directory identity
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/samba-tool
+      - domain
+      - info
+      - "127.0.0.1"
+  register: homelab_ad_domain_info
+  changed_when: false
+
+- name: Validate the generated Samba configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/testparm
+      - --suppress-prompt
+  changed_when: false
+
+- name: Check the directory database
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/samba-tool
+      - dbcheck
+      - --cross-ncs
+  changed_when: false
+  register: homelab_ad_dbcheck
+  failed_when: >-
+    homelab_ad_dbcheck.rc != 0 or
+    'ERROR' in homelab_ad_dbcheck.stdout
+
+- name: Verify LDAP service discovery
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/host
+      - -t
+      - SRV
+      - "_ldap._tcp.{{ homelab_ad_dns_domain }}"
+      - "127.0.0.1"
+  changed_when: false
+
+- name: Refuse an existing directory with a different realm
+  ansible.builtin.assert:
+    that:
+      - >-
+        ('Realm' ~ ':' ~ ' ' ~ homelab_ad_realm)
+        in homelab_ad_domain_info.stdout
+      - >-
+        ('Domain' ~ ':' ~ ' ' ~ homelab_ad_netbios_domain)
+        in homelab_ad_domain_info.stdout
+    fail_msg: >-
+      The existing Samba database does not describe
+      {{ homelab_ad_netbios_domain }} / {{ homelab_ad_realm }}. Ansible will
+      not rename or replace a directory.

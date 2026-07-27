@@ -3,11 +3,15 @@
 import importlib.util
 import json
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+import pxe_release  # noqa: E402
+
 MODULE = ROOT / "pxe/targets/controller.py"
 SPEC = importlib.util.spec_from_file_location("controller_target", MODULE)
 controller = importlib.util.module_from_spec(SPEC)
@@ -28,7 +32,7 @@ class ControllerTargetCase(unittest.TestCase):
     def stage(self):
         return controller.stage(
             self.source, self.releases, "20260727.001",
-            "http://boot.ad.home.arpa/controller/20260727.001")
+            "http://boot.example.test/controller/20260727.001")
 
 
 class TestBuild(ControllerTargetCase):
@@ -43,11 +47,12 @@ class TestBuild(ControllerTargetCase):
             "entrypoints": ["boot.ipxe"],
         })
         self.assertEqual(controller.verify(release), [])
+        self.assertEqual(pxe_release.verify(release), [])
 
     def test_boots_only_the_versioned_payload(self):
         script = (self.stage() / "boot.ipxe").read_text()
         self.assertIn(
-            "http://boot.ad.home.arpa/controller/20260727.001", script)
+            "http://boot.example.test/controller/20260727.001", script)
         self.assertIn("/payload/arch/boot/x86_64/vmlinuz-linux", script)
         self.assertNotIn("menu", script.lower())
         self.assertIn("shell", script)
@@ -55,7 +60,7 @@ class TestBuild(ControllerTargetCase):
     def test_manifest_covers_metadata_entrypoint_and_payload(self):
         release = self.stage()
         names = set(json.loads(
-            (release / "manifest.json").read_text())["artifacts"])
+            (release / "release.json").read_text())["artifacts"])
         self.assertIn("target.json", names)
         self.assertIn("boot.ipxe", names)
         self.assertIn("payload/arch/x86_64/airootfs.sfs", names)
@@ -73,7 +78,7 @@ class TestBuild(ControllerTargetCase):
     def test_version_must_be_document_style(self):
         with self.assertRaisesRegex(controller.TargetError, "YYYYMMDD"):
             controller.stage(self.source, self.releases, "latest",
-                             "http://boot.ad.home.arpa/controller/latest")
+                             "http://boot.example.test/controller/latest")
 
     def test_non_http_base_url_is_refused(self):
         with self.assertRaisesRegex(controller.TargetError, "http"):

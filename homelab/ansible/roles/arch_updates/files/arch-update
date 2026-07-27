@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+
+evidence_dir=${HOMELAB_UPDATE_EVIDENCE_DIR:-/var/log/homelab/updates}
+policy=${HOMELAB_UPDATE_POLICY:-/usr/local/lib/homelab/arch_policy.py}
+mkdir -p "$evidence_dir"
+stamp=$(date --iso-8601=seconds | tr ':' '-')
+report="$evidence_dir/$stamp"
+
+if ! "$policy" --json >"$report-gates.json"; then
+    logger -t homelab-update "upgrade deferred; see $report-gates.json"
+    exit 0
+fi
+
+pacman -Q >"$report-before.packages"
+cp /var/log/pacman.log "$report-pacman-before.log"
+if ! pacman -Syu --noconfirm; then
+    logger -t homelab-update "upgrade failed; no rollback attempted"
+    exit 1
+fi
+pacman -Q >"$report-after.packages"
+uname -a >"$report-running-kernel.txt"
+
+if ! cmp -s "$report-before.packages" "$report-after.packages"; then
+    touch /run/homelab-update-completed
+fi
+if ! pacman -Dk >/dev/null; then
+    logger -t homelab-update "package database verification failed"
+    exit 1
+fi
+
+running_kernel=$(uname -r)
+if [[ ! -d "/usr/lib/modules/$running_kernel" ]]; then
+    touch /run/homelab-reboot-recommended
+    logger -t homelab-update "reboot recommended; user session was not interrupted"
+fi
+logger -t homelab-update "automatic full upgrade complete; evidence prefix $report"

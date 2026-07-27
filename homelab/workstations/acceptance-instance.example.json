@@ -1,0 +1,10 @@
+{
+  "dns_domain": "lab.home.arpa",
+  "kerberos_realm": "LAB.HOME.ARPA",
+  "netbios_domain": "LAB",
+  "storage_host": "storage.lab.home.arpa",
+  "daily_administrator": "daily-admin",
+  "domain_administrator": "domain-admin",
+  "standard_user": "acceptance-user",
+  "local_rescue": "rescue-admin"
+}

@@ -20,7 +20,7 @@ SCHEMA = 1
 TARGET_ID = "controller"
 KIND = "archiso-netboot"
 VERSION_PATTERN = re.compile(r"^\d{8}\.\d{3}$")
-MANIFEST_NAME = "manifest.json"
+MANIFEST_NAME = "release.json"
 REQUIRED_PAYLOADS = (
     "arch/boot/x86_64/vmlinuz-linux",
     "arch/boot/x86_64/initramfs-linux.img",
@@ -79,9 +79,10 @@ shell
 """
 
 
-def _manifest(release: Path) -> dict:
+def _manifest(release: Path, version: str) -> dict:
     return {
         "schema": SCHEMA,
+        "version": version,
         "target": TARGET_ID,
         "artifacts": {
             path.relative_to(release).as_posix(): {
@@ -127,7 +128,7 @@ def stage(source: Path, releases: Path, version: str, base_url: str) -> Path:
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
         (temporary / MANIFEST_NAME).write_text(
-            json.dumps(_manifest(temporary), indent=2, sort_keys=True) + "\n",
+            json.dumps(_manifest(temporary, version), indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
         problems = verify(temporary, expected_version=version)
         if problems:
@@ -173,9 +174,13 @@ def verify(release: Path, *, expected_version: str | None = None) -> list[str]:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        problems.append(f"manifest.json cannot be read: {error}")
+        problems.append(f"{MANIFEST_NAME} cannot be read: {error}")
         return problems
-    if manifest.get("schema") != SCHEMA or manifest.get("target") != TARGET_ID:
+    if (
+        manifest.get("schema") != SCHEMA
+        or manifest.get("version") != directory_version
+        or manifest.get("target") != TARGET_ID
+    ):
         problems.append("manifest identity is invalid")
     listed = manifest.get("artifacts")
     if not isinstance(listed, dict):

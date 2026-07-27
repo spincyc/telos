@@ -1,0 +1,43 @@
+---
+# Stable client-facing identity. Changing these values after provisioning is a
+# directory migration, not an Ansible convergence.
+homelab_ad_dns_domain: ""
+homelab_ad_realm: ""
+homelab_ad_netbios_domain: ""
+homelab_ad_server_role: dc
+homelab_ad_dns_backend: SAMBA_INTERNAL
+homelab_ad_provision_enabled: false
+homelab_ad_expected_hostname: ""
+
+# First provisioning is the sole task that needs the initial Administrator
+# password. The operator places this root-owned 0600 file on the target (a
+# /run path is preferable) and removes it after the first successful run.
+# Ansible never copies, reads, logs, or retains its contents.
+homelab_ad_admin_password_file: ""
+
+homelab_ad_smb_conf: /etc/samba/smb.conf
+homelab_ad_private_dir: /var/lib/samba/private
+homelab_ad_enable_rfc2307: true
+
+# Documentation/input for the surrounding firewall role. This role does not
+# guess which firewall owns the host or network policy.
+homelab_ad_tcp_ports:
+  - 53
+  - 88
+  - 135
+  - 139
+  - 389
+  - 445
+  - 464
+  - 636
+  - 3268
+  - 3269
+homelab_ad_udp_ports:
+  - 53
+  - 88
+  - 123
+  - 137
+  - 138
+  - 389
+  - 464
+homelab_ad_rpc_dynamic_tcp_range: 49152-65535

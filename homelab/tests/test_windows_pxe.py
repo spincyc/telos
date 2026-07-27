@@ -3,9 +3,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+import pxe_release  # noqa: E402
+
 WINDOWS = ROOT / "pxe" / "windows"
 
 
@@ -26,32 +30,32 @@ class WindowsPxeTests(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(f"fixture:{relative}".encode())
-        records = [
-            {
-                "path": relative,
-                "bytes": (root / relative).stat().st_size,
+        records = {
+            relative: {
+                "size": (root / relative).stat().st_size,
                 "sha256": self.common.sha256(root / relative),
             }
             for relative in (*self.common.PAYLOADS, "boot.ipxe")
-        ]
-        (root / "manifest.json").write_text(
+        }
+        (root / "release.json").write_text(
             json.dumps(
                 {
                     "schema": 1,
-                    "release": root.name,
-                    "target": "windows-11-pro-winpe",
+                    "version": root.name,
+                    "target": "windows",
                     "redistributable": False,
-                    "files": records,
+                    "artifacts": records,
                 }
             )
         )
 
     def test_valid_release(self):
         with tempfile.TemporaryDirectory() as name:
-            release = Path(name) / "20260727.001"
-            release.mkdir()
+            release = Path(name) / "windows" / "20260727.001"
+            release.mkdir(parents=True)
             self.make_release(release)
             self.assertEqual([], self.common.verify_release(release))
+            self.assertEqual([], pxe_release.verify(release))
 
     def test_tampered_payload_fails(self):
         with tempfile.TemporaryDirectory() as name:

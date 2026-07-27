@@ -1,0 +1,11 @@
+[Unit]
+Description=Automatic gated Arch full-system update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-arch-update
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

@@ -36,7 +36,10 @@ ARCH_WORKFLOW_PACKAGES := git openai-codex
 # headless (-nographic, -nodefaults, no audio device at all), so none of that
 # branch is wanted. `make check` verifies the closure stays free of it.
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
-	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible
+	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
+	python-cryptography python-dnspython python-pexpect openresolv bind \
+	openssh rsync \
+	wimlib libisoburn
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty
 # because the list above needs nothing: keep it that way rather than growing it.
@@ -86,7 +89,16 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
 	homelab-test homelab-lab homelab-matrix homelab-image \
-	homelab-converge-check \
+	homelab-converge-check homelab-bootstrap-deps \
+	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
+	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
+	homelab-bootstrap-vm-destroy homelab-bootstrap-controller \
+	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
+	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
+	homelab-pxe-publish homelab-pxe-rollback \
+	homelab-workstation-plan homelab-workstation-verify \
+	homelab-arch-update-check homelab-arch-update-test \
+	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
 .DELETE_ON_ERROR:
@@ -157,6 +169,155 @@ homelab-image:
 homelab-matrix:
 	@cd homelab && $(PYTHON) qemu/matrix.py
 
+# Install the complete Arch build-host dependency set. This is an explicit
+# alias so the workstation manual can name the phase it prepares.
+homelab-bootstrap-deps: install-dependencies-arch
+
+# The bootstrap VM is isolated by construction. Planning is the default;
+# create/run require APPLY=1, and destroy additionally requires the exact
+# confirmation consumed by bootstrap_dc.py.
+homelab-bootstrap-vm-plan:
+	@$(PYTHON) homelab/vm/bootstrap_dc.py create
+
+homelab-bootstrap-vm-status:
+	@$(PYTHON) homelab/vm/bootstrap_dc.py status
+
+homelab-bootstrap-vm-create:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to create bootstrap-dc'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py create; \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py create --apply; \
+	fi
+
+homelab-bootstrap-vm-run:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to run bootstrap-dc'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run $(if $(ISO),--iso '$(ISO)'); \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run $(if $(ISO),--iso '$(ISO)') --apply; \
+	fi
+
+homelab-bootstrap-vm-destroy:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'refusing destruction; require APPLY=1 CONFIRM=bootstrap-dc' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py destroy --confirm '$(CONFIRM)'
+
+# Converge only the temporary Controller role. The private inventory supplies
+# every identity value and the opt-in provisioning secret path. Check mode is
+# the default; APPLY=1 is required to mutate the guest.
+homelab-bootstrap-controller:
+	@if [ -z '$(INVENTORY)' ]; then \
+		echo 'require INVENTORY=<private Ansible inventory>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' = 1 ]; then \
+		cd homelab/ansible && ansible-playbook -i '$(abspath $(INVENTORY))' \
+			playbooks/bootstrap-controller.yml; \
+	else \
+		cd homelab/ansible && ansible-playbook -i '$(abspath $(INVENTORY))' \
+			playbooks/bootstrap-controller.yml --check --diff; \
+	fi
+
+# Each PXE target is built independently from operator-supplied media.
+# VERSION uses the publication form YYYYMMDD.NNN.
+homelab-pxe-controller:
+	@if [ -z '$(SOURCE)' ] || [ -z '$(VERSION)' ] || [ -z '$(BASE_URL)' ]; then \
+		echo 'require SOURCE=<controller tree> VERSION=YYYYMMDD.NNN BASE_URL=<immutable URL>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/pxe/targets/controller.py build \
+		--source '$(SOURCE)' --releases homelab/var/pxe \
+		--version '$(VERSION)' --base-url '$(BASE_URL)'
+
+homelab-pxe-arch:
+	@if [ -z '$(SOURCE)' ] || [ -z '$(VERSION)' ] || [ -z '$(BASE_URL)' ]; then \
+		echo 'require SOURCE=<mounted Arch ISO> VERSION=YYYYMMDD.NNN BASE_URL=<immutable URL>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/pxe/arch-workstation stage \
+		--source '$(SOURCE)' --releases homelab/var/pxe \
+		--version '$(VERSION)' --base-url '$(BASE_URL)'
+
+homelab-pxe-windows:
+	@if [ -z '$(ISO)' ] || [ -z '$(WIMBOOT)' ] || [ -z '$(VERSION)' ]; then \
+		echo 'require ISO=<Windows 11 ISO> WIMBOOT=<wimboot binary> VERSION=YYYYMMDD.NNN' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/pxe/windows/stage.py \
+		--iso '$(ISO)' --wimboot '$(WIMBOOT)' \
+		--output homelab/var/pxe/windows --release '$(VERSION)' \
+		$(if $(BASE_URL),--base-url '$(BASE_URL)',)
+
+homelab-pxe-all:
+	@$(MAKE) --no-print-directory homelab-pxe-controller \
+		SOURCE='$(CONTROLLER_SOURCE)' VERSION='$(VERSION)' BASE_URL='$(CONTROLLER_BASE_URL)'
+	@$(MAKE) --no-print-directory homelab-pxe-arch \
+		SOURCE='$(ARCH_SOURCE)' VERSION='$(VERSION)' BASE_URL='$(ARCH_BASE_URL)'
+	@$(MAKE) --no-print-directory homelab-pxe-windows \
+		ISO='$(WINDOWS_ISO)' WIMBOOT='$(WIMBOOT)' VERSION='$(VERSION)' \
+		BASE_URL='$(WINDOWS_BASE_URL)'
+
+homelab-pxe-test:
+	@cd homelab && $(PYTHON) -m unittest \
+		tests.test_pxe_release tests.test_pxe_controller_target \
+		tests.test_arch_workstation_pxe tests.test_windows_pxe \
+		tests.test_pxe_deploy -v
+
+homelab-pxe-verify:
+	@if [ -z '$(RELEASE)' ]; then \
+		echo 'require RELEASE=<versioned release directory>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-release verify '$(RELEASE)'
+
+homelab-pxe-publish:
+	@if [ -z '$(RELEASE)' ] || [ -z '$(DESTINATION)' ]; then \
+		echo 'require RELEASE=<local release> DESTINATION=<host:/absolute/root>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-deploy publish \
+		'$(RELEASE)' '$(DESTINATION)' $(if $(filter 1,$(APPLY)),--apply,)
+
+homelab-pxe-rollback:
+	@if [ -z '$(TARGET)' ] || [ -z '$(VERSION)' ] || [ -z '$(DESTINATION)' ]; then \
+		echo 'require TARGET=<controller|arch-workstation|windows> VERSION=YYYYMMDD.NNN DESTINATION=<host:/absolute/root>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-deploy rollback \
+		'$(TARGET)' '$(VERSION)' '$(DESTINATION)' \
+		$(if $(filter 1,$(APPLY)),--apply,)
+
+homelab-workstation-plan:
+	@if [ -z '$(DISK_BYTES)' ]; then \
+		echo 'require DISK_BYTES=<exact integer byte count>' >&2; exit 2; \
+	fi
+	@PYTHONPATH=. $(PYTHON) homelab/workstations/layout.py \
+		--disk-bytes '$(DISK_BYTES)' \
+		--profile '$(or $(LAYOUT_PROFILE),$(PROFILE),homelab/workstations/profiles/default-layout.json)' \
+		--workstation-profile '$(or $(WORKSTATION_PROFILE),homelab/workstations/profiles/phase1-windows-primary.json)' \
+		$(if $(RECORD),--record '$(RECORD)',)
+
+homelab-workstation-verify:
+	@if [ -z '$(INSTANCE)' ]; then \
+		echo 'require INSTANCE=<private acceptance-instance JSON>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/workstations/acceptance.py --instance '$(INSTANCE)' validate
+
+homelab-arch-update-check:
+	@rc=0; $(PYTHON) homelab/updates/arch_policy.py || rc=$$?; \
+		test "$$rc" -eq 0 -o "$$rc" -eq 75
+
+homelab-arch-update-test:
+	@cd homelab && $(PYTHON) -m unittest tests.test_arch_updates -v
+
+homelab-private-bootstrap:
+	@$(PYTHON) scripts/telos-private bootstrap --git-init
+
+homelab-private-onboard:
+	@$(PYTHON) scripts/telos-private onboard --git-init
+
+homelab-private-check:
+	@if [ -z '$(IDENTIFIERS)' ]; then \
+		echo 'require IDENTIFIERS=<private denylist file>' >&2; exit 2; \
+	fi
+	@$(PYTHON) scripts/telos-private check-public --identifiers '$(IDENTIFIERS)'
+
 # Seed the private instance overlay from the tracked template. Never overwrites:
 # the overlay is not in Git, so clobbering it loses the only copy.
 homelab-instance:
@@ -222,6 +383,7 @@ help:
 		'make check      Validate the site manifest and run the homelab tests' \
 		'make homelab-test         Run the homelab suite verbosely' \
 		'make homelab-lab          Report whether the QEMU lab can run' \
+		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \
 		'' \

@@ -1,0 +1,40 @@
+---
+- name: Install the normal and fallback kernels
+  community.general.pacman:
+    name:
+      - linux
+      - linux-lts
+      - curl
+    state: present
+    update_cache: true
+
+- name: Install the update policy evaluator
+  ansible.builtin.copy:
+    src: arch_policy.py
+    dest: /usr/local/lib/homelab/arch_policy.py
+    mode: "0755"
+
+- name: Install the automatic update runner
+  ansible.builtin.copy:
+    src: arch-update
+    dest: /usr/local/sbin/homelab-arch-update
+    mode: "0755"
+
+- name: Install the update service
+  ansible.builtin.copy:
+    src: homelab-arch-update.service
+    dest: /etc/systemd/system/homelab-arch-update.service
+    mode: "0644"
+
+- name: Install the randomized daily timer
+  ansible.builtin.copy:
+    src: homelab-arch-update.timer
+    dest: /etc/systemd/system/homelab-arch-update.timer
+    mode: "0644"
+
+- name: Enable automatic full-system updates
+  ansible.builtin.systemd:
+    name: homelab-arch-update.timer
+    enabled: "{{ homelab_arch_automatic_updates }}"
+    state: "{{ 'started' if homelab_arch_automatic_updates else 'stopped' }}"
+    daemon_reload: true

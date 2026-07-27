@@ -92,25 +92,26 @@ def stage(args: argparse.Namespace) -> Path:
                 shutil.copyfile(source, destination)
             write_ipxe(staged / "boot.ipxe", args.release, args.base_url)
 
-            records = []
+            records = {}
             for relative in (*PAYLOADS, "boot.ipxe"):
                 path = staged / relative
-                records.append(
-                    {"path": relative, "bytes": path.stat().st_size, "sha256": sha256(path)}
-                )
+                records[relative] = {
+                    "size": path.stat().st_size,
+                    "sha256": sha256(path),
+                }
             manifest = {
                 "schema": 1,
-                "release": args.release,
-                "target": "windows-11-pro-winpe",
+                "version": args.release,
+                "target": "windows",
                 "architecture": "x86_64-uefi",
                 "edition_verified": "Windows 11 Pro",
                 "install_image_source": install_image,
                 "redistributable": False,
                 "source_iso_sha256": sha256(iso),
                 "wimboot_sha256": sha256(wimboot),
-                "files": records,
+                "artifacts": records,
             }
-            (staged / "manifest.json").write_text(
+            (staged / "release.json").write_text(
                 json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
             errors = verify_release(staged, args.release)
@@ -126,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wimboot", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release", required=True)
-    parser.add_argument("--base-url", default="http://boot.ad.home.arpa/windows")
+    parser.add_argument("--base-url", default="http://boot.example.test/windows")
     return parser.parse_args()
 
 

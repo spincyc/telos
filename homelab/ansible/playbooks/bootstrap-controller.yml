@@ -1,0 +1,30 @@
+---
+# Converge the temporary host-level domain controller. The private inventory
+# owns every identity value. First provisioning remains a separate explicit
+# opt-in inside roles/domain_controller.
+- name: Converge the isolated bootstrap Controller
+  hosts: bootstrap_controllers
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Read the installation manifest
+      ansible.builtin.slurp:
+        src: /etc/homelab/manifest.json
+      register: homelab_manifest_raw
+
+    - name: Parse the manifest
+      ansible.builtin.set_fact:
+        homelab_manifest: "{{ homelab_manifest_raw.content | b64decode | from_json }}"
+
+    - name: Refuse a non-Controller host
+      ansible.builtin.assert:
+        that:
+          - homelab_manifest.profile == 'controller'
+          - homelab_manifest.hostname == ansible_hostname
+        fail_msg: >-
+          Refusing {{ inventory_hostname }}: its signed-off installation
+          identity does not match this Controller host.
+
+  roles:
+    - role: domain_controller

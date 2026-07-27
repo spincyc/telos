@@ -39,7 +39,7 @@ def sha256(path: Path) -> str:
 
 def _files(root: Path, *, omit_manifest: bool = False):
     for path in sorted(root.rglob("*")):
-        if path.is_file() and not (omit_manifest and path.name == "manifest.json"):
+        if path.is_file() and not (omit_manifest and path.name == "release.json"):
             yield path
 
 
@@ -87,12 +87,17 @@ shell
 """
 
 
-def build_manifest(root: Path) -> dict:
+def build_manifest(root: Path, version: str) -> dict:
     entries = {}
     for path in _files(root, omit_manifest=True):
         relative = path.relative_to(root).as_posix()
         entries[relative] = {"sha256": sha256(path), "size": path.stat().st_size}
-    return {"schema": 1, "target": TARGET_ID, "artifacts": entries}
+    return {
+        "schema": 1,
+        "version": version,
+        "target": TARGET_ID,
+        "artifacts": entries,
+    }
 
 
 def verify(root: Path, *, expected_version: str | None = None) -> list[str]:
@@ -104,20 +109,22 @@ def verify(root: Path, *, expected_version: str | None = None) -> list[str]:
         _refuse_links(root)
     except TargetError as error:
         problems.append(str(error))
-    manifest_path = root / "manifest.json"
+    manifest_path = root / "release.json"
     if not manifest_path.is_file():
-        return problems + ["manifest.json: missing"]
+        return problems + ["release.json: missing"]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        return problems + [f"manifest.json: invalid JSON: {error}"]
+        return problems + [f"release.json: invalid JSON: {error}"]
     if manifest.get("schema") != 1:
-        problems.append("manifest.json: unsupported schema")
+        problems.append("release.json: unsupported schema")
+    if manifest.get("version") != (expected_version or root.name):
+        problems.append("release.json: version must match release directory")
     if manifest.get("target") != TARGET_ID:
-        problems.append(f"manifest.json: target must be {TARGET_ID}")
+        problems.append(f"release.json: target must be {TARGET_ID}")
     listed = manifest.get("artifacts")
     if not isinstance(listed, dict):
-        return problems + ["manifest.json: artifacts must be an object"]
+        return problems + ["release.json: artifacts must be an object"]
 
     actual_names = {
         path.relative_to(root).as_posix()
@@ -191,8 +198,8 @@ def stage(*, source: Path, releases: Path, version: str, base_url: str) -> Path:
         (temporary / "target.json").write_text(
             json.dumps(descriptor, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
-        (temporary / "manifest.json").write_text(
-            json.dumps(build_manifest(temporary), indent=2, sort_keys=True) + "\n",
+        (temporary / "release.json").write_text(
+            json.dumps(build_manifest(temporary, version), indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
         problems = verify(temporary, expected_version=version)
         if problems:

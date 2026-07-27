@@ -1,0 +1,6 @@
+{
+  "$schema": "../layout.schema.json",
+  "mode": "ratio",
+  "windows_percent": 75,
+  "recovery_mib": 2048
+}

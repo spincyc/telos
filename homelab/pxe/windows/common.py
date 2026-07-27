@@ -31,7 +31,7 @@ def validate_release_name(release: str) -> None:
 
 
 def load_manifest(release_dir: Path) -> dict:
-    manifest_path = release_dir / "manifest.json"
+    manifest_path = release_dir / "release.json"
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
@@ -44,17 +44,17 @@ def verify_release(release_dir: Path, expected_release: str | None = None) -> li
 
     if manifest.get("schema") != 1:
         errors.append("manifest schema is not 1")
-    if manifest.get("release") != (expected_release or release_dir.name):
+    if manifest.get("version") != (expected_release or release_dir.name):
         errors.append("manifest release does not match directory")
-    if manifest.get("target") != "windows-11-pro-winpe":
+    if manifest.get("target") != "windows":
         errors.append("unexpected target")
     if manifest.get("redistributable") is not False:
         errors.append("Microsoft payload must be marked non-redistributable")
 
-    records = manifest.get("files")
-    if not isinstance(records, list):
-        return errors + ["manifest files is not a list"]
-    by_name = {record.get("path"): record for record in records if isinstance(record, dict)}
+    records = manifest.get("artifacts")
+    if not isinstance(records, dict):
+        return errors + ["manifest artifacts is not an object"]
+    by_name = records
     required = set(PAYLOADS) | {"boot.ipxe"}
     if set(by_name) != required:
         errors.append("manifest file set differs from required payload")
@@ -65,7 +65,7 @@ def verify_release(release_dir: Path, expected_release: str | None = None) -> li
             errors.append(f"missing {relative}")
             continue
         record = by_name.get(relative, {})
-        if record.get("bytes") != path.stat().st_size:
+        if record.get("size") != path.stat().st_size:
             errors.append(f"size mismatch: {relative}")
         if record.get("sha256") != sha256(path):
             errors.append(f"digest mismatch: {relative}")

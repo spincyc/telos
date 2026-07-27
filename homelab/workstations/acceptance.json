@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "dns_domain": "{{dns_domain}}",
+    "kerberos_realm": "{{kerberos_realm}}",
+    "netbios_domain": "{{netbios_domain}}",
+    "storage_host": "{{storage_host}}"
+  },
+  "principals": {
+    "daily_administrator": {
+      "name": "{{daily_administrator}}",
+      "scope": "domain",
+      "workstation_role": "administrator",
+      "domain_role": "user"
+    },
+    "domain_administrator": {
+      "name": "{{domain_administrator}}",
+      "scope": "domain",
+      "workstation_role": "administrator",
+      "domain_role": "administrator"
+    },
+    "standard_user": {
+      "name": "{{standard_user}}",
+      "scope": "domain",
+      "workstation_role": "standard",
+      "domain_role": "user"
+    },
+    "local_rescue": {
+      "name": "{{local_rescue}}",
+      "scope": "local",
+      "workstation_role": "administrator",
+      "domain_role": "none"
+    }
+  },
+  "accepted_limitations": [
+    {
+      "id": "offline-revocation",
+      "statement": "A user who has logged on successfully may use cached credentials indefinitely while the workstation is disconnected. Disabling the AD account cannot revoke that offline cached logon.",
+      "review_phase": 2
+    }
+  ],
+  "checks": [
+    {
+      "id": "win-domain-discovery",
+      "os": "windows",
+      "category": "identity",
+      "actor": "operator",
+      "precondition": "Windows is online and configured to use {{dns_domain}} AD DNS.",
+      "action": "Resolve the AD LDAP and Kerberos service records, then inspect the joined domain.",
+      "expected": "Both service records resolve and the joined domain is {{dns_domain}}.",
+      "pass": "The DNS queries succeed and the workstation reports {{netbios_domain}} or {{dns_domain}} as its domain.",
+      "failure": "Stop domain testing; repair DNS or the domain join before continuing.",
+      "evidence": "Save command output showing the service records and joined domain.",
+      "commands": [
+        "Resolve-DnsName -Type SRV _ldap._tcp.{{dns_domain}}",
+        "Resolve-DnsName -Type SRV _kerberos._tcp.{{dns_domain}}",
+        "Get-CimInstance Win32_ComputerSystem | Select-Object Domain,PartOfDomain"
+      ]
+    },
+    {
+      "id": "win-daily-admin",
+      "os": "windows",
+      "category": "authorization",
+      "actor": "daily_administrator",
+      "precondition": "Windows is online and {{daily_administrator}} has not previously logged on to this workstation.",
+      "action": "Log on as {{netbios_domain}}\\{{daily_administrator}} and start an elevated terminal.",
+      "expected": "The domain logon succeeds and elevation grants local workstation administration.",
+      "pass": "whoami reports {{netbios_domain}}\\{{daily_administrator}} and the elevated Administrators membership check succeeds.",
+      "failure": "Do not add Domain Admins to local Administrators; repair only the daily administrator workstation-role assignment.",
+      "evidence": "Record whoami and the elevated membership result.",
+      "commands": [
+        "whoami",
+        "whoami /groups"
+      ]
+    },
+    {
+      "id": "win-standard-denied",
+      "os": "windows",
+      "category": "authorization",
+      "actor": "standard_user",
+      "precondition": "Windows is online and {{standard_user}} is enabled.",
+      "action": "Log on as {{netbios_domain}}\\{{standard_user}} and attempt an administrator-only elevation.",
+      "expected": "Interactive logon succeeds, but the account cannot elevate using its own credentials.",
+      "pass": "whoami reports {{netbios_domain}}\\{{standard_user}} and Administrators is absent from enabled groups.",
+      "failure": "Stop minting; remove unintended group membership before another workstation is deployed.",
+      "evidence": "Record whoami, group output, and the denied elevation result.",
+      "commands": [
+        "whoami",
+        "whoami /groups"
+      ]
+    },
+    {
+      "id": "win-local-recovery",
+      "os": "windows",
+      "category": "recovery",
+      "actor": "local_rescue",
+      "precondition": "Disconnect all network interfaces.",
+      "action": "Log on using .\\{{local_rescue}} and open an elevated terminal.",
+      "expected": "The local account works without AD and has local administrator rights.",
+      "pass": "whoami names the local computer and the Administrators membership check succeeds.",
+      "failure": "Do not release the workstation; repair the break-glass account offline.",
+      "evidence": "Record the disconnected state, whoami, and group result without recording the password.",
+      "commands": [
+        "whoami",
+        "whoami /groups"
+      ]
+    },
+    {
+      "id": "win-offline-cache",
+      "os": "windows",
+      "category": "offline",
+      "actor": "standard_user",
+      "precondition": "{{standard_user}} has completed one successful online logon and logoff.",
+      "action": "Disconnect all network interfaces and log on again as {{netbios_domain}}\\{{standard_user}}.",
+      "expected": "Cached domain logon succeeds; domain and NAS services remain unavailable.",
+      "pass": "The desktop opens offline and no network dependency delays or prevents logon.",
+      "failure": "Repair cached-logon policy before treating the laptop as portable.",
+      "evidence": "Record the disconnected state, successful desktop logon, and current identity.",
+      "commands": [
+        "whoami"
+      ]
+    },
+    {
+      "id": "arch-domain-discovery",
+      "os": "arch",
+      "category": "identity",
+      "actor": "operator",
+      "precondition": "Arch is online and configured to use AD DNS.",
+      "action": "Resolve AD service records and query {{standard_user}} through the system identity service.",
+      "expected": "LDAP and Kerberos records resolve and the AD user is returned.",
+      "pass": "Both DNS queries and the identity lookup succeed.",
+      "failure": "Stop login testing; repair DNS, time synchronization, Kerberos, or SSSD.",
+      "evidence": "Save resolver and getent output.",
+      "commands": [
+        "resolvectl query --type=SRV _ldap._tcp.{{dns_domain}}",
+        "resolvectl query --type=SRV _kerberos._tcp.{{dns_domain}}",
+        "getent passwd {{standard_user}}@{{dns_domain}}"
+      ]
+    },
+    {
+      "id": "arch-daily-admin",
+      "os": "arch",
+      "category": "authorization",
+      "actor": "daily_administrator",
+      "precondition": "Arch is online and {{daily_administrator}} has not previously logged on to this workstation.",
+      "action": "Log on as {{daily_administrator}}@{{dns_domain}} and run a permitted command through sudo.",
+      "expected": "The domain logon succeeds and the daily administrator has workstation sudo authority.",
+      "pass": "id identifies the domain account and sudo -v succeeds.",
+      "failure": "Do not grant broad domain administration; repair only the workstation sudo policy.",
+      "evidence": "Record id output and the sudo verification result.",
+      "commands": [
+        "id",
+        "sudo -v"
+      ]
+    },
+    {
+      "id": "arch-standard-denied",
+      "os": "arch",
+      "category": "authorization",
+      "actor": "standard_user",
+      "precondition": "Arch is online and {{standard_user}} is enabled.",
+      "action": "Log on as {{standard_user}}@{{dns_domain}} and test sudo authorization.",
+      "expected": "Interactive logon succeeds, but sudo authorization is denied.",
+      "pass": "id identifies the domain account and sudo -n true fails.",
+      "failure": "Stop minting; remove unintended sudo or administrative group membership.",
+      "evidence": "Record id output and the denied sudo result.",
+      "commands": [
+        "id",
+        "sudo -n true"
+      ]
+    },
+    {
+      "id": "arch-local-recovery",
+      "os": "arch",
+      "category": "recovery",
+      "actor": "local_rescue",
+      "precondition": "Disconnect all network interfaces.",
+      "action": "Log on as {{local_rescue}} and verify sudo authority.",
+      "expected": "The local account works without AD and has local sudo rights.",
+      "pass": "getent identifies a local account and sudo -v succeeds.",
+      "failure": "Do not release the workstation; repair the break-glass account offline.",
+      "evidence": "Record the disconnected state and results without recording the password.",
+      "commands": [
+        "getent passwd {{local_rescue}}",
+        "sudo -v"
+      ]
+    },
+    {
+      "id": "arch-offline-cache",
+      "os": "arch",
+      "category": "offline",
+      "actor": "standard_user",
+      "precondition": "{{standard_user}} has completed one successful online logon and logoff.",
+      "action": "Disconnect all network interfaces and log on again as {{standard_user}}@{{dns_domain}}.",
+      "expected": "Cached SSSD logon succeeds; domain and NAS services remain unavailable.",
+      "pass": "The session opens offline and no network dependency delays or prevents logon.",
+      "failure": "Repair SSSD offline-credential policy before treating the laptop as portable.",
+      "evidence": "Record the disconnected state, successful session, and current identity.",
+      "commands": [
+        "id"
+      ]
+    },
+    {
+      "id": "windows-smb-available",
+      "os": "windows",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled and {{storage_host}} is reachable and permits this user.",
+      "action": "Log on and open the mapped personal storage location.",
+      "expected": "Logon succeeds and the user can create, read, and remove a test file.",
+      "pass": "The round trip preserves file contents and the test file is removed.",
+      "failure": "Keep the local profile usable; report storage unavailable without failing logon.",
+      "evidence": "Record login duration, mapped path, and file round-trip result.",
+      "commands": [
+        "Get-SmbMapping"
+      ]
+    },
+    {
+      "id": "windows-smb-unreachable",
+      "os": "windows",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled and {{storage_host}} is deliberately unreachable.",
+      "action": "Log on and allow the storage mapping attempt to fail.",
+      "expected": "The local desktop opens promptly and storage is reported unavailable.",
+      "pass": "Logon succeeds without a blocking retry loop or temporary profile.",
+      "failure": "Remove the storage dependency from the logon path before release.",
+      "evidence": "Record login duration and the non-fatal storage error.",
+      "commands": [
+        "Get-SmbMapping"
+      ]
+    },
+    {
+      "id": "windows-smb-denied",
+      "os": "windows",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled, {{storage_host}} is reachable, and access is deliberately denied.",
+      "action": "Log on and allow the storage mapping attempt to receive access denied.",
+      "expected": "The local desktop opens promptly and access denied is reported without repeated credential prompts.",
+      "pass": "Logon succeeds and no alternate credentials are cached.",
+      "failure": "Remove the storage dependency or credential prompt from the logon path.",
+      "evidence": "Record login duration, the denial, and absence of repeated prompts.",
+      "commands": [
+        "Get-SmbMapping"
+      ]
+    },
+    {
+      "id": "arch-smb-available",
+      "os": "arch",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled and {{storage_host}} is reachable and permits this user.",
+      "action": "Log on, access the personal mount, and perform a test-file round trip.",
+      "expected": "Logon succeeds and the user can create, read, and remove a test file.",
+      "pass": "The round trip preserves contents and the test file is removed.",
+      "failure": "Keep the local home usable; report storage unavailable without failing logon.",
+      "evidence": "Record login duration, mount path, and file round-trip result.",
+      "commands": [
+        "findmnt -t cifs"
+      ]
+    },
+    {
+      "id": "arch-smb-unreachable",
+      "os": "arch",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled and {{storage_host}} is deliberately unreachable.",
+      "action": "Log on and allow the automount attempt to time out.",
+      "expected": "The local session opens promptly and storage is reported unavailable.",
+      "pass": "Logon succeeds without a blocking retry loop and the local home remains writable.",
+      "failure": "Remove the storage dependency from PAM and the home-directory path.",
+      "evidence": "Record login duration, local-home write result, and non-fatal mount error.",
+      "commands": [
+        "findmnt -t cifs"
+      ]
+    },
+    {
+      "id": "arch-smb-denied",
+      "os": "arch",
+      "category": "optional-storage",
+      "actor": "standard_user",
+      "precondition": "Optional SMB storage is enabled, {{storage_host}} is reachable, and access is deliberately denied.",
+      "action": "Log on and allow the automount attempt to receive access denied.",
+      "expected": "The local session opens promptly and denial is reported without repeated credential prompts.",
+      "pass": "Logon succeeds, the local home remains writable, and no alternate credentials are cached.",
+      "failure": "Remove the mount from the login-critical path before release.",
+      "evidence": "Record login duration, local-home write result, and denial.",
+      "commands": [
+        "findmnt -t cifs"
+      ]
+    }
+  ]
+}

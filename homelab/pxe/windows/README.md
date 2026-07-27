@@ -31,7 +31,7 @@ python homelab/pxe/windows/stage.py \
 The command refuses an ISO that does not advertise Windows 11 Pro in
 `sources/install.wim` or `sources/install.esd`. It extracts the ISO into a
 temporary sibling directory, copies only the WinPE boot inputs into a
-versioned release, hashes every staged file, writes `manifest.json` last, and
+versioned release, hashes every staged file, writes `release.json` last, and
 then renames the complete directory into place.
 
 The generated `boot.ipxe` loads:

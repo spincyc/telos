@@ -1,0 +1,10 @@
+---
+- name: restart samba ad dc
+  ansible.builtin.systemd:
+    name: samba.service
+    state: restarted
+
+- name: restart ntpd
+  ansible.builtin.systemd:
+    name: ntpd.service
+    state: restarted

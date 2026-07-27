@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "profile_id": "phase1-windows-primary",
+  "firmware": {
+    "boot_mode": "uefi",
+    "partition_table": "gpt",
+    "secure_boot": false
+  },
+  "operating_systems": {
+    "windows": {
+      "release": "11",
+      "edition": "Pro",
+      "default_boot": true
+    },
+    "arch_linux": {
+      "default_boot": false
+    }
+  },
+  "boot_menu": {
+    "timeout_seconds": 5
+  },
+  "phase1_security": {
+    "bitlocker": false,
+    "luks": false,
+    "tpm_enrollment": false,
+    "recovery_keys": false
+  },
+  "future_migrations": [
+    {
+      "feature": "windows-bitlocker",
+      "requires_reinstall": false,
+      "status": "deferred"
+    },
+    {
+      "feature": "arch-luks",
+      "requires_reinstall": "test-before-promising",
+      "status": "deferred"
+    },
+    {
+      "feature": "secure-boot",
+      "requires_reinstall": false,
+      "status": "deferred"
+    }
+  ]
+}

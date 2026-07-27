@@ -24,5 +24,7 @@
 
   roles:
     - common
+    - role: arch_updates
+      when: homelab_arch_automatic_updates | default(true)
     - role: identity_client
       when: homelab_identity_enabled | default(false)

@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pxe"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import arch_workstation as target  # noqa: E402
+import pxe_release  # noqa: E402
 
 
 def fake_media(root: Path) -> Path:
@@ -40,7 +42,7 @@ class TestMediaValidation(unittest.TestCase):
             with self.assertRaisesRegex(target.TargetError, "YYYYMMDD"):
                 target.stage(source=fake_media(root / "media"),
                              releases=root / "releases", version="latest",
-                             base_url="http://boot.ad.home.arpa/pxe/releases")
+                             base_url="http://boot.example.test/pxe/releases")
 
 
 class TestRelease(unittest.TestCase):
@@ -51,7 +53,7 @@ class TestRelease(unittest.TestCase):
             source=fake_media(self.root / "media"),
             releases=self.root / "releases",
             version="20260727.001",
-            base_url="http://boot.ad.home.arpa/pxe/releases")
+            base_url="http://boot.example.test/pxe/releases")
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -75,6 +77,7 @@ class TestRelease(unittest.TestCase):
 
     def test_an_untouched_release_verifies(self):
         self.assertEqual(target.verify(self.release), [])
+        self.assertEqual(pxe_release.verify(self.release), [])
 
     def test_changed_content_fails_verification(self):
         image = self.release / "payload/arch/x86_64/airootfs.sfs"
@@ -92,14 +95,14 @@ class TestRelease(unittest.TestCase):
             target.stage(
                 source=self.root / "media", releases=self.root / "releases",
                 version="20260727.001",
-                base_url="http://boot.ad.home.arpa/pxe/releases")
+                base_url="http://boot.example.test/pxe/releases")
 
     def test_no_partial_release_survives_a_failed_copy(self):
         with self.assertRaises(target.TargetError):
             target.stage(
                 source=self.root / "missing", releases=self.root / "releases",
                 version="20260727.002",
-                base_url="http://boot.ad.home.arpa/pxe/releases")
+                base_url="http://boot.example.test/pxe/releases")
         self.assertFalse(
             (self.root / "releases/arch-workstation/20260727.002").exists())
 
