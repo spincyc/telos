@@ -78,19 +78,23 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("--print-guest-command", text)
         self.assertIn("--output", text)
 
-    def test_pxe_aggregate_requires_local_source_trees(self):
+    def test_pxe_aggregate_derives_arch_and_defaults_controller_source(self):
         declaration = re.search(
             r"^homelab-factory-pxe:(.*)$", MAKEFILE, re.MULTILINE)
         self.assertIsNotNone(declaration)
         self.assertIn(
             "homelab-factory-offline-check", declaration.group(1))
         text = recipe("homelab-factory-pxe")
-        self.assertIn("CONTROLLER_SOURCE", text)
+        self.assertIn("FACTORY_CONTROLLER_SOURCE", text)
         self.assertIn("ARCH_SOURCE", text)
         self.assertIn("homelab-pxe-release-set", text)
         self.assertIn("BASE_URL", text)
         self.assertNotIn("homelab-pxe-all", text)
         self.assertNotIn("fetch-", text)
+        release = recipe("homelab-pxe-release-set")
+        self.assertIn("FACTORY_ARCH_SOURCE_CACHE", release)
+        self.assertIn("--arch-cache", release)
+        self.assertIn("--arch-source", release)
 
     def test_release_set_build_consumes_the_verified_seal(self):
         text = recipe("homelab-pxe-release-set")

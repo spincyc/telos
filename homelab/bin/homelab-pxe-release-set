@@ -60,7 +60,14 @@ def main() -> int:
     build.add_argument("--releases", type=Path, required=True)
     build.add_argument("--version", required=True)
     build.add_argument("--controller-source", type=Path, required=True)
-    build.add_argument("--arch-source", type=Path, required=True)
+    build.add_argument(
+        "--arch-source", type=Path,
+        help="verified extracted Arch tree (default: extract the sealed ISO)",
+    )
+    build.add_argument(
+        "--arch-cache", type=Path,
+        help="digest-addressed cache used for mount-free Arch ISO extraction",
+    )
     build.add_argument("--base-url", required=True)
     add_media(build)
     verify = commands.add_parser("verify")
@@ -88,6 +95,20 @@ def main() -> int:
 
     inventory = media_inventory(args)
     media_seal.verify(args.seal, inventory)
+    arch_digest = next(
+        record["sha256"] for record in inventory["content"]
+        if record["name"] == "arch-iso"
+    )
+    if args.arch_source is None:
+        if args.arch_cache is None:
+            raise ValueError("--arch-cache is required when --arch-source is omitted")
+        arch_source = arch_workstation.extract_iso(
+            args.arch_iso,
+            args.arch_cache,
+            expected_sha256=arch_digest,
+        )
+    else:
+        arch_source = args.arch_source
     base = args.base_url.rstrip("/")
 
     def stage_leaves(root: Path) -> dict[str, Path]:
@@ -97,7 +118,7 @@ def main() -> int:
                 f"{base}/controller/{args.version}",
             ),
             "arch-workstation": arch_workstation.stage(
-                source=args.arch_source, releases=root, version=args.version,
+                source=arch_source, releases=root, version=args.version,
                 base_url=base,
             ),
             "windows": windows_stage.stage(argparse.Namespace(
