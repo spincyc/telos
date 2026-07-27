@@ -38,7 +38,7 @@ ARCH_WORKFLOW_PACKAGES := git openai-codex
 ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
 	python-cryptography python-dnspython python-pexpect openresolv bind \
-	openssh rsync gnupg \
+	openssh rsync gnupg fakeroot \
 	wimlib libisoburn
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty

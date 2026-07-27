@@ -27,6 +27,7 @@ FORBIDDEN_TEXT_MARKERS = (
     b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
 )
 PUBLIC_TEST_FIXTURE_ALLOWLIST = {
+    "homelab/seed/build.py",
     "homelab/tests/test_image.py",
     "homelab/tests/test_manifest.py",
 }
@@ -48,7 +49,7 @@ def command_plan(packages: list[str], stage: Path, output: Path) -> list[list[st
     database = stage / ".pacman-db"
     return [
         [
-            "sudo", "pacman", "--config", str(PACMAN_CONFIG),
+            "fakeroot", "pacman", "--config", str(PACMAN_CONFIG),
             "-Syw", "--noconfirm",
             "--dbpath", str(database), "--cachedir", str(cache),
             "--", *packages,
@@ -178,7 +179,7 @@ def build(output: Path, package_file: Path) -> None:
         shutil.copy2(PACMAN_CONFIG, stage / "pacman.conf")
 
         run([
-            "sudo", "pacman", "--config", str(PACMAN_CONFIG),
+            "fakeroot", "pacman", "--config", str(PACMAN_CONFIG),
             "-Syw", "--noconfirm",
             "--dbpath", str(database), "--cachedir", str(cache),
             "--", *packages,

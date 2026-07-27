@@ -14,8 +14,8 @@ python homelab/seed/build.py
 The default output is
 `homelab/var/seed/telos-controller-seed.iso`. The builder synchronizes isolated
 pacman databases on every run and downloads the full closure even when a
-package is installed on the build host. Root is used only for pacman's
-download; staging and final publication remain owned by the caller. The ISO is
+package is installed on the build host. Pacman runs under `fakeroot`; staging
+and final publication remain owned by the caller. The ISO is
 written under a temporary name and atomically replaces the prior output only
 after `xorriso` succeeds.
 
