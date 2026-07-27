@@ -34,6 +34,11 @@ class ControllerInstallSecurityTests(unittest.TestCase):
             r"(sha256sum|hashlib|verify[-_]seed|verify[-_]receipt)",
         )
 
+    def test_live_keyring_is_populated_before_first_disk_write(self) -> None:
+        populate = self.source.index("pacman-key --populate archlinux")
+        first_write = self.source.index("wipefs ")
+        self.assertLess(populate, first_write)
+
     def test_source_archive_is_copied_inert_not_extracted_as_root(self) -> None:
         self.assertNotIn('tar -xzf "$seed_root/source/telos.tar.gz"', self.source)
         self.assertNotRegex(self.source, r"\btar\s+.*(?:-[^\n]*x|--extract)")

@@ -53,7 +53,12 @@ class SeedInstallerContractTests(unittest.TestCase):
         self.assertRegex(self.source, r'mkfs\.ext4')
 
     def test_installs_only_from_seed_packages(self) -> None:
-        self.assertRegex(self.source, r'pacstrap[^\n]*\s-U(?:\s|$)')
+        self.assertRegex(
+            self.source,
+            r'pacstrap\s+-C\s+"\$seed_root/pacman\.conf"\s+-U\s+'
+            r'"\$target"\s+"\$@"',
+        )
+        self.assertNotIn('"$target" -- "$@"', self.source)
         self.assertNotRegex(self.source, r'\bpacstrap\b[^\n]*\s-[^\n]*\bS')
         self.assertNotRegex(self.source, r'\bpacman\s+(?:-[^\n ]*)?S(?:y|u|yu)?\b')
 

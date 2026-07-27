@@ -27,8 +27,12 @@ trap cleanup EXIT HUP INT TERM
 command -v pacstrap >/dev/null || fail "pacstrap is unavailable"
 command -v genfstab >/dev/null || fail "genfstab is unavailable"
 command -v python >/dev/null || fail "python is unavailable"
+command -v pacman-key >/dev/null || fail "pacman-key is unavailable"
 python "$seed_root/verify-seed" "$seed_root" ||
     fail "seed receipt verification failed"
+
+pacman-key --init
+pacman-key --populate archlinux
 
 disk=
 matches=0
@@ -89,7 +93,7 @@ mount "$efi_partition" "$target/boot"
 # The seed carries the fresh package closure and detached Arch signatures.
 # -U prevents mirror use; the seed policy requires every local signature.
 set -- "$seed_root"/packages/*.pkg.tar.zst
-pacstrap -C "$seed_root/pacman.conf" "$target" -U -- "$@"
+pacstrap -C "$seed_root/pacman.conf" -U "$target" "$@"
 
 genfstab -U "$target" >"$target/etc/fstab"
 printf '%s\n' bootstrap-dc >"$target/etc/hostname"
