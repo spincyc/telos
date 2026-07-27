@@ -19,6 +19,7 @@ from pathlib import Path
 
 GATEWAY_IP = ipaddress.IPv4Address("10.1.31.1")
 LEASE_IP = ipaddress.IPv4Address("10.1.31.11")
+CONTROLLER_IP = ipaddress.IPv4Address("10.1.31.2")
 NETMASK = ipaddress.IPv4Address("255.255.255.240")
 GATEWAY_MAC = bytes.fromhex("525400311101")
 DNS_NAME = "updates.sim.test"
@@ -26,6 +27,13 @@ NTP_NAME = "time.sim.test"
 NTP_IP = ipaddress.IPv4Address("198.51.100.10")
 UDP_PROBE_PORT = 31337
 NTP_EPOCH = 2_208_988_800
+IPXE_SCRIPT = f"http://{CONTROLLER_IP}/boot/boot.ipxe"
+PXE_BOOT_FILES = {
+    0: "undionly.kpxe",
+    6: "ipxe-i386.efi",
+    7: "ipxe.efi",
+    9: "ipxe.efi",
+}
 
 
 def checksum(data: bytes) -> int:
@@ -199,7 +207,16 @@ class Gateway:
         fixed = bytearray(data[:236])
         fixed[0] = 2
         fixed[16:20] = LEASE_IP.packed
-        fixed[20:24] = GATEWAY_IP.packed
+        architecture = None
+        if len(options.get(93, b"")) == 2:
+            architecture = struct.unpack("!H", options[93])[0]
+        boot_file = PXE_BOOT_FILES.get(architecture)
+        if 175 in options or options.get(77, b"").lower() == b"ipxe":
+            boot_file = IPXE_SCRIPT
+        # Retain the gateway identity for ordinary DHCP acceptance checks;
+        # PXE leases deliberately name the separate boot controller.
+        fixed[20:24] = (
+            CONTROLLER_IP.packed if boot_file else GATEWAY_IP.packed)
         options = b"\x63\x82\x53\x63"
         options += bytes((53, 1, response_type))
         options += bytes((54, 4)) + GATEWAY_IP.packed
@@ -207,6 +224,11 @@ class Gateway:
         options += bytes((3, 4)) + GATEWAY_IP.packed
         options += bytes((6, 4)) + GATEWAY_IP.packed
         options += bytes((51, 4)) + struct.pack("!I", 600)
+        if boot_file:
+            server = str(CONTROLLER_IP).encode("ascii")
+            filename = boot_file.encode("ascii")
+            options += bytes((66, len(server))) + server
+            options += bytes((67, len(filename))) + filename
         options += b"\xff"
         packet = udp(67, 68, bytes(fixed) + options)
         ip = ipv4(GATEWAY_IP, ipaddress.IPv4Address("255.255.255.255"), 17, packet)
@@ -308,6 +330,90 @@ def dhcp_server_message(frame: bytes) -> str | None:
     names = {2: "OFFER", 5: "ACK", 6: "NAK"}
     value = options.get(53, b"")
     return names.get(value[0]) if len(value) == 1 else None
+
+
+def dhcp_packet_evidence(frame: bytes) -> dict[str, object] | None:
+    """Return bounded, human-readable DHCP evidence from an Ethernet frame."""
+    if len(frame) < 14 + 20 + 8 or frame[12:14] != b"\x08\x00":
+        return None
+    ip = frame[14:]
+    ihl = (ip[0] & 15) * 4
+    if ihl < 20 or len(ip) < ihl + 8 or ip[9] != 17:
+        return None
+    source, target = struct.unpack("!HH", ip[ihl:ihl + 4])
+    if (source, target) not in ((68, 67), (67, 68)):
+        return None
+    bootp = ip[ihl + 8:]
+    if len(bootp) < 240:
+        return None
+    options = dhcp_options(bootp)
+    value = options.get(53, b"")
+    names = {1: "DISCOVER", 2: "OFFER", 3: "REQUEST", 5: "ACK", 6: "NAK"}
+    if len(value) != 1 or value[0] not in names:
+        return None
+    result: dict[str, object] = {
+        "kind": names[value[0]],
+        "source_mac": ":".join(f"{part:02x}" for part in frame[6:12]),
+        "transaction": bootp[4:8].hex(),
+    }
+    architecture = options.get(93)
+    if architecture is not None and len(architecture) == 2:
+        result["architecture"] = struct.unpack("!H", architecture)[0]
+    if 66 in options:
+        result["next_server"] = options[66].decode("ascii", "replace")
+    if 67 in options:
+        result["boot_file"] = options[67].decode("ascii", "replace")
+    return result
+
+
+class HubPolicy:
+    """Pure routing policy for a concurrent isolated PXE Ethernet hub."""
+
+    def __init__(self, gateway: Gateway | None = None) -> None:
+        self.gateway = gateway or Gateway()
+        self.learned: dict[bytes, int] = {}
+
+    def route(self, sender: int, frame: bytes, peers: set[int]
+              ) -> tuple[dict[int, list[bytes]], list[dict[str, object]]]:
+        deliveries: dict[int, list[bytes]] = {}
+        evidence: list[dict[str, object]] = []
+        if len(frame) < 14:
+            return deliveries, evidence
+        destination, source = frame[:6], frame[6:12]
+        if source[0] & 1 or source == GATEWAY_MAC:
+            return deliveries, evidence
+        self.learned[source] = sender
+        dhcp = dhcp_packet_evidence(frame)
+        if dhcp:
+            evidence.append({**dhcp, "peer": sender})
+            # No peer can act as a DHCP server.  Client requests terminate at
+            # the simulated gateway and are not exposed to the controller.
+            if dhcp["kind"] in ("OFFER", "ACK", "NAK"):
+                evidence[-1]["blocked"] = True
+                return deliveries, evidence
+            replies = self.gateway.handle(frame)
+            if replies:
+                deliveries[sender] = replies
+                for reply in replies:
+                    reply_evidence = dhcp_packet_evidence(reply)
+                    if reply_evidence:
+                        evidence.append({
+                            **reply_evidence, "peer": "gateway",
+                            "delivered_to": sender,
+                        })
+            return deliveries, evidence
+        for reply in self.gateway.handle(frame):
+            deliveries.setdefault(sender, []).append(reply)
+        if destination == GATEWAY_MAC:
+            return deliveries, evidence
+        if destination == b"\xff" * 6 or destination[0] & 1:
+            targets = peers - {sender}
+        else:
+            target = self.learned.get(destination)
+            targets = {target} if target in peers and target != sender else set()
+        for target in targets:
+            deliveries.setdefault(target, []).append(frame)
+        return deliveries, evidence
 
 
 def serve(
