@@ -171,6 +171,13 @@ class TestRelease(unittest.TestCase):
         script = (self.release / "boot.ipxe").read_text()
         self.assertIn("/arch-workstation/20260727.001/payload", script)
         self.assertIn("archiso_http_srv=${base}/", script)
+        self.assertIn(
+            "earlycon=uart8250,io,0x3f8,115200n8", script)
+        self.assertIn(
+            "console=tty0 console=ttyS0,115200n8", script)
+        self.assertIn("TELOS IPXE PRE-BOOT", script)
+        self.assertIn("imgstat", script)
+        self.assertIn("TELOS IPXE BOOT RETURNED", script)
 
     def test_an_untouched_release_verifies(self):
         self.assertEqual(target.verify(self.release), [])

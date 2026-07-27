@@ -159,6 +159,27 @@ class FactoryRunnerTests(unittest.TestCase):
             self.assertEqual(factory_runner.assess_handoff(
                 switch, controller, workstation, "20260727.001"), [])
 
+    def test_ipxe_preboot_marker_is_not_kernel_handoff(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            switch = root / "switch.jsonl"
+            switch.write_text("\n".join(
+                f'{{\"kind\":\"{kind}\",\"peer\":\"gateway\"}}'
+                for kind in ("DISCOVER", "OFFER", "REQUEST", "ACK")))
+            controller = root / "controller.log"
+            controller.write_text("TELOS PXE SERVICES READY\n")
+            workstation = root / "workstation.log"
+            base = "http://10.1.31.2/arch-workstation/20260727.001/"
+            workstation.write_text(
+                "http://10.1.31.2/boot/boot.ipxe\n"
+                + base + "boot.ipxe\n"
+                + base + "payload/arch/boot/x86_64/vmlinuz-linux\n"
+                + base + "payload/arch/boot/x86_64/initramfs-linux.img\n"
+                + "TELOS IPXE PRE-BOOT: selected files loaded\n")
+            problems = factory_runner.assess_handoff(
+                switch, controller, workstation, "20260727.001")
+            self.assertIn("no Arch or WinPE handoff was observed", problems)
+
     def test_controller_receives_publication_as_read_only_media(self):
         with mock.patch.object(
                 factory_runner, "ovmf_pair",
