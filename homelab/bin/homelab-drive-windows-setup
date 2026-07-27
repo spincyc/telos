@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Drive a reviewed Windows Setup navigation plan through a local QMP socket."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from homelab.vm.windows_gui import QmpClient, WindowsSetupDriver, load_plan
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--qmp", type=Path, required=True)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--references", type=Path, required=True)
+    parser.add_argument("--evidence", type=Path, required=True)
+    args = parser.parse_args()
+
+    evidence = args.evidence.resolve()
+    evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(evidence, 0o700)
+    plan = load_plan(args.plan.resolve(strict=True), args.references)
+    client = QmpClient.connect(args.qmp.resolve(strict=True))
+    try:
+        events = WindowsSetupDriver(client, evidence).run(plan)
+    finally:
+        client.close()
+
+    receipt = {
+        "schema": 1,
+        "result": "pass",
+        "plan": args.plan.name,
+        "events": events,
+    }
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".windows-gui-", dir=evidence)
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(receipt, output, indent=2)
+            output.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, evidence / "receipt.json")
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -50,6 +50,16 @@ def verify_release(release_dir: Path, expected_release: str | None = None) -> li
         errors.append("unexpected target")
     if manifest.get("redistributable") is not False:
         errors.append("Microsoft payload must be marked non-redistributable")
+    provenance = manifest.get("wimboot_provenance")
+    if not isinstance(provenance, dict):
+        errors.append("wimboot provenance is missing")
+    else:
+        if provenance.get("project") != "https://github.com/ipxe/wimboot":
+            errors.append("wimboot provenance is not official")
+        if provenance.get("sha256") != manifest.get("wimboot_sha256"):
+            errors.append("wimboot provenance digest differs")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("sha256", ""))):
+            errors.append("wimboot provenance digest is malformed")
 
     records = manifest.get("artifacts")
     if not isinstance(records, dict):
@@ -69,6 +79,12 @@ def verify_release(release_dir: Path, expected_release: str | None = None) -> li
             errors.append(f"size mismatch: {relative}")
         if record.get("sha256") != sha256(path):
             errors.append(f"digest mismatch: {relative}")
+    if isinstance(provenance, dict):
+        record = by_name.get("wimboot", {})
+        if provenance.get("sha256") != record.get("sha256"):
+            errors.append("wimboot artifact differs from provenance")
+        if provenance.get("size") != record.get("size"):
+            errors.append("wimboot size differs from provenance")
 
     for path in release_dir.rglob("*"):
         if path.is_file() and path.name.casefold() in FORBIDDEN:

@@ -41,7 +41,12 @@ Individual targets are useful when resuming a failed or interactive download:
 make homelab-media-arch
 make homelab-media-wimboot
 make homelab-media-windows
+make homelab-stage-windows-source
 ```
+
+The last target creates the complete, read-only Windows Setup source used by
+the local workstation factory. It is an atomic, receipt-backed ignored cache;
+the operator-downloaded ISO remains unchanged.
 
 The Windows step deliberately pauses with a nonzero status when Microsoft
 requires a browser. Follow the continuation it prints, then rerun the target.

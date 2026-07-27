@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 from common import PAYLOADS, sha256, validate_release_name, verify_release
+
+DEFAULT_WIMBOOT_METADATA = (
+    Path(__file__).resolve().parents[2] / "media" / "wimboot.json"
+)
 
 
 def run(command: list[str]) -> str:
@@ -60,12 +65,48 @@ def write_ipxe(path: Path, release: str, base_url: str) -> None:
     )
 
 
+def wimboot_provenance(binary: Path, metadata_path: Path) -> dict:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    required = {"schema", "name", "version", "source", "release", "url", "size", "sha256"}
+    if set(metadata) != required or metadata["schema"] != 1:
+        raise RuntimeError("invalid wimboot provenance metadata")
+    if metadata["source"] != "https://github.com/ipxe/wimboot":
+        raise RuntimeError("wimboot provenance is not the official iPXE project")
+    expected_url = (
+        "https://github.com/ipxe/wimboot/releases/download/"
+        f"v{metadata['version']}/wimboot"
+    )
+    if metadata["url"] != expected_url:
+        raise RuntimeError("wimboot provenance does not name the official release asset")
+    if (
+        not isinstance(metadata["size"], int)
+        or metadata["size"] <= 0
+        or not isinstance(metadata["sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", metadata["sha256"])
+    ):
+        raise RuntimeError("wimboot provenance checksum metadata is malformed")
+    actual_size = binary.stat().st_size
+    actual_digest = sha256(binary)
+    if actual_size != metadata["size"] or actual_digest != metadata["sha256"]:
+        raise RuntimeError("wimboot does not match pinned provenance")
+    return {
+        "project": metadata["source"],
+        "release": metadata["release"],
+        "version": metadata["version"],
+        "url": metadata["url"],
+        "size": metadata["size"],
+        "sha256": metadata["sha256"],
+    }
+
+
 def stage(args: argparse.Namespace) -> Path:
     validate_release_name(args.release)
     iso = args.iso.resolve(strict=True)
     wimboot = args.wimboot.resolve(strict=True)
     if not iso.is_file() or not wimboot.is_file():
         raise RuntimeError("ISO and wimboot inputs must be regular files")
+    provenance = wimboot_provenance(
+        wimboot, args.wimboot_metadata.resolve(strict=True))
     missing = [name for name in ("7z", "wimlib-imagex") if shutil.which(name) is None]
     if missing:
         raise RuntimeError(
@@ -116,6 +157,7 @@ def stage(args: argparse.Namespace) -> Path:
                 "redistributable": False,
                 "source_iso_sha256": sha256(iso),
                 "wimboot_sha256": sha256(wimboot),
+                "wimboot_provenance": provenance,
                 "artifacts": records,
             }
             (staged / "release.json").write_text(
@@ -132,6 +174,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iso", type=Path, required=True)
     parser.add_argument("--wimboot", type=Path, required=True)
+    parser.add_argument(
+        "--wimboot-metadata", type=Path, default=DEFAULT_WIMBOOT_METADATA)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release", required=True)
     parser.add_argument("--base-url", default="http://boot.example.test/windows")

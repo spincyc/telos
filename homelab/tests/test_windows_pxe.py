@@ -44,6 +44,15 @@ class WindowsPxeTests(unittest.TestCase):
                     "version": root.name,
                     "target": "windows",
                     "redistributable": False,
+                    "wimboot_sha256": records["wimboot"]["sha256"],
+                    "wimboot_provenance": {
+                        "project": "https://github.com/ipxe/wimboot",
+                        "release": "https://github.com/ipxe/wimboot/releases/tag/v2.9.0",
+                        "version": "2.9.0",
+                        "url": "https://github.com/ipxe/wimboot/releases/download/v2.9.0/wimboot",
+                        "size": records["wimboot"]["size"],
+                        "sha256": records["wimboot"]["sha256"],
+                    },
                     "artifacts": records,
                 }
             )
@@ -79,6 +88,17 @@ class WindowsPxeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.common.validate_release_name("../current")
         self.common.validate_release_name("20260727.001")
+
+    def test_provenance_must_match_staged_wimboot(self):
+        with tempfile.TemporaryDirectory() as name:
+            release = Path(name) / "20260727.001"
+            release.mkdir()
+            self.make_release(release)
+            manifest = json.loads((release / "release.json").read_text())
+            manifest["wimboot_provenance"]["sha256"] = "0" * 64
+            (release / "release.json").write_text(json.dumps(manifest))
+            errors = self.common.verify_release(release)
+            self.assertTrue(any("provenance" in error for error in errors))
 
 
 if __name__ == "__main__":

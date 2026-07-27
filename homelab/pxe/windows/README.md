@@ -25,7 +25,7 @@ Windows 11 Pro.
 ## Inputs
 
 - a local Windows 11 x86-64 ISO;
-- a local `wimboot` binary obtained from the official iPXE project;
+- the repository-pinned official `wimboot` binary;
 - `7z` and `wimlib-imagex` (the Microsoft image is UDF); and
 - a release name containing only letters, digits, dots, underscores, or
   hyphens.
@@ -34,6 +34,40 @@ Keep the ISO, extracted files, `wimboot`, answer files, passwords, domain-join
 material, and generated release outside Git. The repository ignore rules cover
 the default `homelab/var/` workspace, but an operator must still inspect
 `git status` before committing.
+
+## Local installation source
+
+Stage the complete Microsoft UDF tree for the isolated factory:
+
+```sh
+make homelab-stage-windows-source
+```
+
+The target verifies the cached ISO digest, UEFI/WinPE chain, and exact Windows
+11 Pro edition before extraction. It inventories every extracted file, rejects
+answer files and unsafe file types, makes the complete tree read-only, and
+atomically promotes it beneath ignored `homelab/var/`. Repeated runs verify and
+reuse the cache; they do not trust its directory name. A changed byte or mode
+stops the factory rather than silently refreshing evidence.
+
+Read-only modes prevent accidental edits; they are not a security boundary
+against another process running as the same Unix user. Staging holds a lock,
+copies the ISO into a private work directory, and verifies and extracts only
+that copy, closing the verify/extract replacement window. Keep the build
+account single-operator during staging and do not run untrusted same-UID
+processes. Stronger multi-user isolation requires a dedicated account or VM.
+
+Fetch `wimboot` from the pinned official iPXE release before staging:
+
+```sh
+make homelab-media-wimboot
+```
+
+The fetch is fresh on every invocation. It downloads to a temporary file,
+requires the recorded byte size and SHA-256 digest, then atomically replaces
+`homelab/var/media/wimboot`. The Windows release manifest retains its upstream
+project, release, URL, size, and digest so the published PXE payload remains
+auditable without committing the binary.
 
 ## Stage and verify
 

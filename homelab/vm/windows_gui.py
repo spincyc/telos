@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Fail-closed Windows Setup driving through QMP screenshots and key events."""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Iterator
+
+
+class WindowsGuiError(RuntimeError):
+    """The observed display did not prove the expected setup state."""
+
+
+SAFE_KEYS = frozenset({
+    "esc", "tab", "backtab", "ret", "spc", "up", "down", "left", "right",
+    "home", "end", "pgup", "pgdn",
+})
+
+
+@dataclass(frozen=True)
+class Image:
+    width: int
+    height: int
+    pixels: bytes
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    name: str
+    reference: Path
+    keys: tuple[str, ...]
+    timeout: float = 90.0
+    threshold: float = 6.0
+    crop: tuple[int, int, int, int] | None = None
+
+
+def read_ppm(path: Path) -> Image:
+    """Read the binary PPM emitted by QEMU's screendump command."""
+    raw = path.read_bytes()
+    tokens: list[bytes] = []
+    cursor = 0
+    while len(tokens) < 4:
+        while cursor < len(raw) and raw[cursor] in b" \t\r\n":
+            cursor += 1
+        if cursor < len(raw) and raw[cursor] == ord("#"):
+            cursor = raw.find(b"\n", cursor)
+            if cursor < 0:
+                break
+            continue
+        start = cursor
+        while cursor < len(raw) and raw[cursor] not in b" \t\r\n":
+            cursor += 1
+        tokens.append(raw[start:cursor])
+    if len(tokens) != 4 or tokens[0] != b"P6":
+        raise WindowsGuiError(f"{path}: expected binary PPM")
+    try:
+        width, height, maximum = map(int, tokens[1:4])
+    except ValueError as error:
+        raise WindowsGuiError(f"{path}: malformed PPM header") from error
+    if width < 320 or height < 200 or maximum != 255:
+        raise WindowsGuiError(f"{path}: implausible PPM geometry")
+    if cursor >= len(raw) or raw[cursor] not in b" \t\r\n":
+        raise WindowsGuiError(f"{path}: missing PPM pixel separator")
+    # Netpbm requires one whitespace separator. Pixel bytes may themselves be
+    # whitespace, so consuming an arbitrary run here would corrupt the image.
+    cursor += 2 if raw[cursor:cursor + 2] == b"\r\n" else 1
+    pixels = raw[cursor:]
+    if len(pixels) != width * height * 3:
+        raise WindowsGuiError(f"{path}: truncated PPM pixels")
+    return Image(width, height, pixels)
+
+
+def image_distance(actual: Image, reference: Image) -> float:
+    """Return mean absolute RGB distance; exact geometry is mandatory."""
+    if (actual.width, actual.height) != (reference.width, reference.height):
+        return float("inf")
+    if not actual.pixels:
+        return float("inf")
+    return sum(abs(a - b) for a, b in zip(
+        actual.pixels, reference.pixels, strict=True)) / len(actual.pixels)
+
+
+def crop_image(image: Image, crop: tuple[int, int, int, int] | None) -> Image:
+    """Select a stable x/y/width/height region, excluding clocks or spinners."""
+    if crop is None:
+        return image
+    x, y, width, height = crop
+    if (x < 0 or y < 0 or width < 16 or height < 16
+            or x + width > image.width or y + height > image.height):
+        raise WindowsGuiError("checkpoint crop is outside the screenshot")
+    rows = []
+    stride = image.width * 3
+    for row in range(y, y + height):
+        start = row * stride + x * 3
+        rows.append(image.pixels[start:start + width * 3])
+    return Image(width, height, b"".join(rows))
+
+
+def useful_frame(image: Image) -> bool:
+    """Reject blank/solid frames that can otherwise match during transitions."""
+    samples = image.pixels[::max(3, len(image.pixels) // 4096)]
+    return bool(samples) and max(samples) - min(samples) >= 24
+
+
+class QmpClient:
+    """Small synchronous QMP client with correlated responses."""
+
+    def __init__(self, connection: socket.socket) -> None:
+        self.connection = connection
+        self.reader = connection.makefile("rb")
+        self.sequence = 0
+
+    @classmethod
+    def connect(cls, path: Path, timeout: float = 5.0) -> "QmpClient":
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(timeout)
+        connection.connect(str(path))
+        client = cls(connection)
+        greeting = client._message()
+        if "QMP" not in greeting:
+            raise WindowsGuiError("QMP greeting missing")
+        client.execute("qmp_capabilities")
+        return client
+
+    def close(self) -> None:
+        self.reader.close()
+        self.connection.close()
+
+    def _message(self) -> dict:
+        while True:
+            line = self.reader.readline()
+            if not line:
+                raise WindowsGuiError("QMP connection closed")
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise WindowsGuiError("QMP returned malformed JSON") from error
+            if "event" not in message:
+                return message
+
+    def execute(self, command: str, arguments: dict | None = None) -> dict:
+        self.sequence += 1
+        identifier = f"windows-gui-{self.sequence}"
+        request = {"execute": command, "id": identifier}
+        if arguments:
+            request["arguments"] = arguments
+        self.connection.sendall(
+            json.dumps(request, separators=(",", ":")).encode() + b"\r\n")
+        while True:
+            response = self._message()
+            if response.get("id") != identifier:
+                continue
+            if "error" in response:
+                raise WindowsGuiError(
+                    f"QMP {command} failed: {response['error']}")
+            return response.get("return", {})
+
+    def screenshot(self, path: Path) -> None:
+        self.execute("screendump", {"filename": str(path)})
+
+    def key(self, name: str) -> None:
+        if name not in SAFE_KEYS:
+            raise WindowsGuiError(f"unsafe GUI key: {name}")
+        self.execute("send-key", {
+            "keys": [{"type": "qcode", "data": name}],
+            "hold-time": 60,
+        })
+
+
+class WindowsSetupDriver:
+    """Advance only after each expected Windows Setup screen is observed."""
+
+    def __init__(
+        self,
+        qmp: QmpClient,
+        evidence_root: Path,
+        *,
+        interval: float = 1.0,
+        clock: Callable[[], float] = time.monotonic,
+        pause: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if evidence_root.is_symlink():
+            raise WindowsGuiError("evidence root must not be a symlink")
+        root = evidence_root.resolve()
+        if not root.is_dir():
+            raise WindowsGuiError("evidence root must be an existing directory")
+        self.qmp = qmp
+        self.root = root
+        self.interval = interval
+        self.clock = clock
+        self.pause = pause
+
+    def _screens(self, name: str) -> Iterator[Path]:
+        counter = 0
+        while True:
+            counter += 1
+            yield self.root / f"{counter:04d}-{name}.ppm"
+
+    def wait(self, checkpoint: Checkpoint) -> Path:
+        reference = read_ppm(checkpoint.reference)
+        deadline = self.clock() + checkpoint.timeout
+        screens = self._screens(checkpoint.name)
+        best = float("inf")
+        while self.clock() < deadline:
+            path = next(screens)
+            self.qmp.screenshot(path)
+            os.chmod(path, 0o600)
+            actual = read_ppm(path)
+            distance = image_distance(
+                crop_image(actual, checkpoint.crop),
+                crop_image(reference, checkpoint.crop),
+            )
+            best = min(best, distance)
+            if useful_frame(actual) and distance <= checkpoint.threshold:
+                return path
+            path.unlink(missing_ok=True)
+            self.pause(self.interval)
+        raise WindowsGuiError(
+            f"timed out at {checkpoint.name}; best image distance {best:.2f}")
+
+    def run(self, plan: tuple[Checkpoint, ...]) -> tuple[str, ...]:
+        if not plan:
+            raise WindowsGuiError("empty Windows Setup plan")
+        events: list[str] = []
+        for checkpoint in plan:
+            self.wait(checkpoint)
+            events.append(f"observed:{checkpoint.name}")
+            for key in checkpoint.keys:
+                self.qmp.key(key)
+                events.append(f"key:{key}")
+                self.pause(0.15)
+        return tuple(events)
+
+
+def load_plan(path: Path, reference_root: Path) -> tuple[Checkpoint, ...]:
+    """Load a non-secret, navigation-only plan from tracked JSON."""
+    payload = json.loads(path.read_text())
+    if payload.get("schema") != 1 or not isinstance(payload.get("steps"), list):
+        raise WindowsGuiError("invalid Windows Setup plan")
+    root = reference_root.resolve()
+    plan: list[Checkpoint] = []
+    names: set[str] = set()
+    for record in payload["steps"]:
+        if set(record) - {
+                "name", "reference", "keys", "timeout", "threshold", "crop"}:
+            raise WindowsGuiError("unknown Windows Setup plan field")
+        name = record.get("name")
+        if not isinstance(name, str) or not name or name in names:
+            raise WindowsGuiError("step names must be unique non-empty strings")
+        names.add(name)
+        reference = (root / record["reference"]).resolve()
+        if root not in reference.parents:
+            raise WindowsGuiError("reference escapes reference root")
+        keys = tuple(record.get("keys", ()))
+        if any(key not in SAFE_KEYS for key in keys):
+            raise WindowsGuiError("plan contains text-capable or unknown key")
+        timeout = float(record.get("timeout", 90))
+        threshold = float(record.get("threshold", 6))
+        raw_crop = record.get("crop")
+        crop = None
+        if raw_crop is not None:
+            if (not isinstance(raw_crop, list) or len(raw_crop) != 4
+                    or any(not isinstance(value, int) for value in raw_crop)):
+                raise WindowsGuiError("crop must be four integers")
+            crop = tuple(raw_crop)
+        if not 1 <= timeout <= 900 or not 0 <= threshold <= 32:
+            raise WindowsGuiError("plan bounds are invalid")
+        plan.append(Checkpoint(name, reference, keys, timeout, threshold, crop))
+    return tuple(plan)
