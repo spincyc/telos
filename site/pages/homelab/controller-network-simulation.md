@@ -1,11 +1,16 @@
 # Controller network simulation
 
-Version `20260727.001`
+Version `20260727.002`
 
 Use this rehearsal before changing UniFi. It runs a userspace gateway, boots
 the installed `bootstrap-dc` from a disposable overlay in one foreground QEMU
 guest, and then runs a synthetic wire-level client. Their Ethernet transport
 is a QEMU socket bound only to host loopback.
+
+Most development cycles are automated with a credential that exists only for
+one disposable Controller boot. The ordinary `local-rescue` password is not
+read or changed. A separate final human cycle uses the real console login as
+an explicit attachment gate.
 
 The rehearsal answers four questions:
 
@@ -53,7 +58,8 @@ between physical peers on one VLAN.
 | Stage | Human question | Safe outcome |
 |---|---|---|
 | Plan | Does every virtual NIC use a `127.0.0.1` socket? | Continue only if yes |
-| Run | Does the Controller boot from disposable state? | Complete the manual operator gate, then power it off |
+| Iterate | Does the Controller boot from disposable state and pass the exact installed preflight? | Repeat automated cycles without disclosing the ordinary console password |
+| Human gate | Does the same check pass through the ordinary console login? | Record one final operator-confirmed result |
 | Verify | Does the sequential synthetic-client cycle pass? | Retain the generated evidence and terminal result |
 | Roll back | Are all simulation processes and disposable files gone? | The real Controller remains unchanged |
 
@@ -112,7 +118,49 @@ Its `-netdev` must use `socket` with `connect=127.0.0.1:…`. It must contain
 **Intermediate question:** does the printed topology match that exact
 boundary? If not, stop. Do not add `--apply`.
 
-### 3. Run the disposable lab
+### 3. Run automated disposable cycles
+
+Use automation for code and evidence iteration:
+
+```sh
+make homelab-sim-auto-run APPLY=1
+```
+
+The runner locks and hashes the canonical Controller state, creates a sparse
+raw disposable disk and writable firmware copy, and injects a one-run
+systemd-boot entry into that copy with rootless tooling. The entry reaches an
+initial shell only on the guest serial console. The runner remounts the
+disposable root read-write, generates a random password in memory, and enters
+it through `passwd`'s no-echo serial prompts. It then starts the normal init
+system, logs in as `local-rescue`, runs the exact installed
+network-attachment preflight, requires its exact `RESULT PASS` line and return
+code zero, and powers off the guest.
+
+The temporary password changes only the disposable copy; it does not read or
+change the ordinary `local-rescue` password or hash. It never appears in an
+argument, file, raw serial transcript, or evidence record. The runner drops
+its in-memory credential references, deletes the disposable disk and firmware copy, and
+verifies both canonical hashes. A password must never be accepted as an input
+through Make, an environment variable, a command argument, an answer file, or
+the repository.
+
+To look for intermittent lifecycle failures, run a bounded number of fresh
+cycles:
+
+```sh
+make homelab-sim-auto-repeat APPLY=1 SIM_CYCLES=10
+```
+
+Each cycle must create new disposable state. A failure stops the sequence; it
+does not authorize continuing to the physical-network gate.
+
+> **What this buys**
+>
+> Developers can repeat boot, preflight, shutdown, client-continuity, evidence,
+> and cleanup checks without asking a person to re-enter their real password.
+> It does not make the final human observation unnecessary.
+
+### 4. Run the final human gate
 
 ```sh
 make homelab-sim-run APPLY=1
@@ -163,7 +211,7 @@ listening, or any route points outside the simulated topology.
 > observation with the criteria above. Otherwise record `FAIL`, power off the
 > guest, and do not treat the later runner result as approval.
 
-### 4. Run the automated boundary checks
+### 5. Run the automated boundary checks
 
 The model and runner checks are available separately:
 
@@ -185,9 +233,9 @@ The suite must report `OK`. The relevant tests check:
 - unchanged canonical Controller state.
 
 A unit-test pass does not prove real firewall enforcement and does not replace
-the operator gate in section 3.
+the operator gate in section 4.
 
-### 5. Exercise Controller loss
+### 6. Exercise Controller loss
 
 At the Controller console, shut down only the Controller:
 
@@ -202,11 +250,24 @@ userspace gateway. Wait for these final lines:
 ```text
 PASS gateway is sole DHCP authority
 PASS client DHCP, DNS, NTP and probe survived controller poweroff
-PASS host network state was unchanged
+PASS observable host network state was unchanged
 ```
 
 These statements are limited to this simulator and its transcript. They do
 not describe the real UniFi network.
+
+If the current user cannot query nftables, the runner also prints:
+
+```text
+NOTE host firewall rules were unavailable to this user
+```
+
+That note is a measurement limit, not a firewall pass. The runner still
+requires the other captured host observations to remain stable and the
+loopback-only QEMU boundary to pass. It does not claim that unobserved host
+firewall rules were unchanged. Use a separately authorized privileged
+observation if firewall-rule evidence is required; never make the simulation
+privileged merely to suppress the note.
 
 **Verify:** the host has no remaining simulation process:
 
@@ -216,7 +277,7 @@ pgrep -af 'qemu-system-x86_64.*telos-sim-' || true
 
 Expected result: no match.
 
-### 6. Prove rollback
+### 7. Prove rollback
 
 Recompute the Controller-disk hash:
 
@@ -247,11 +308,20 @@ pkill -TERM -f 'qemu-system-x86_64.*telos-sim-'
 Re-run the process query and disk hash. Do not delete the canonical Controller
 disk.
 
-### 7. Retain evidence
+### 8. Retain evidence
 
 Keep the generated detailed evidence locally. It can contain private host
-network details and is not suitable for the public repository. Keep a
-separate secret-free summary containing:
+network details and is not suitable for the public repository. Evidence
+directories are mode `0700`; individual artifacts are atomically written as
+mode `0600`. Existing symlinks, FIFOs, and other non-regular destinations are
+rejected. These protections reduce accidental disclosure but do not make the
+contents public-safe.
+
+The evidence set includes host snapshots, the gateway log, the packet
+transcript, the Controller DHCP-authority audit, and structured
+verification/result receipts. The automation records event names and results,
+not serial bytes. Console input and plaintext credentials must never be
+recorded. Keep a separate secret-free summary containing:
 
 - date, operator, and Telos commit;
 - canonical Controller-disk SHA-256 value;
@@ -259,6 +329,7 @@ separate secret-free summary containing:
 - the manual operator-gate status and preflight `RESULT` line;
 - the unittest summary;
 - the runner's three final `PASS` lines;
+- any firewall-observability `NOTE`;
 - the local evidence-directory run ID, but not the contents of
   `before.json`, `during.json`, or `after.json`;
 - the post-run process query;
