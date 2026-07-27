@@ -1,9 +1,10 @@
 """Plan and render a fail-closed Arch-after-Windows installation.
 
 The emitted installer is intentionally boring.  Windows has already authored
-the GPT.  Arch may format exactly the partition carrying the Linux root type
-GUID, mount the existing ESP without formatting it, and add its own loader
-entry.  It must not resize, delete, or recreate any partition.
+the GPT.  Arch may use either an existing, unformatted Linux-root partition or
+the sole free extent whose measured size exactly matches the approved plan.
+It mounts the existing ESP without formatting it and never resizes, deletes,
+or recreates a Windows partition.
 """
 
 from __future__ import annotations
@@ -22,11 +23,11 @@ LINUX_ROOT_X86_64 = "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
 WINDOWS_RECOVERY = "DE94BBA4-06D1-4D40-A16A-BFD50179D6AC"
 
 EXPECTED = (
-    (1, "esp", ESP),
-    (2, "msr", MSR),
-    (3, "windows", WINDOWS),
-    (4, "arch", LINUX_ROOT_X86_64),
-    (5, "recovery", WINDOWS_RECOVERY),
+    ("esp", ESP),
+    ("msr", MSR),
+    ("windows", WINDOWS),
+    ("arch", LINUX_ROOT_X86_64),
+    ("recovery", WINDOWS_RECOVERY),
 )
 SAFE_HOSTNAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_SERIAL = re.compile(r"^[A-Za-z0-9_.:+-]{1,128}$")
@@ -44,6 +45,7 @@ class Partition:
     type_guid: str
     size_bytes: int
     filesystem: str | None = None
+    start_sector: int | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ class Disk:
     serial: str
     partition_table: str
     partitions: tuple[Partition, ...]
+    size_bytes: int | None = None
+    logical_sector_bytes: int | None = None
 
 
 def _partition_number(path: str, disk_path: str) -> int:
@@ -88,6 +92,7 @@ def parse_lsblk(document: Mapping[str, Any], disk_path: str) -> Disk:
         guid = child.get("parttype")
         size = child.get("size")
         filesystem = child.get("fstype")
+        start = child.get("start")
         if not isinstance(path, str) or not isinstance(guid, str):
             raise InstallContractError("partition path or type GUID is missing")
         if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
@@ -95,6 +100,7 @@ def parse_lsblk(document: Mapping[str, Any], disk_path: str) -> Disk:
         partitions.append(Partition(
             _partition_number(path, disk_path), path, guid.upper(), size,
             filesystem if isinstance(filesystem, str) and filesystem else None,
+            start if isinstance(start, int) and not isinstance(start, bool) else None,
         ))
     serial = item.get("serial")
     pttype = item.get("pttype")
@@ -102,7 +108,13 @@ def parse_lsblk(document: Mapping[str, Any], disk_path: str) -> Disk:
         raise InstallContractError(f"{disk_path} has no stable serial")
     if not isinstance(pttype, str):
         raise InstallContractError(f"{disk_path} has no partition-table type")
-    return Disk(disk_path, serial, pttype.lower(), tuple(partitions))
+    disk_size = item.get("size")
+    sector_size = item.get("log-sec")
+    return Disk(
+        disk_path, serial, pttype.lower(), tuple(partitions),
+        disk_size if isinstance(disk_size, int) else None,
+        sector_size if isinstance(sector_size, int) else None,
+    )
 
 
 def validate_windows_first(
@@ -123,9 +135,16 @@ def validate_windows_first(
         raise InstallContractError("Windows-first disk must use GPT")
     if len(expected_sizes_mib) != len(EXPECTED):
         raise InstallContractError("five expected partition sizes are required")
-    by_number = {part.number: part for part in disk.partitions}
-    if len(by_number) != len(disk.partitions) or set(by_number) != {1, 2, 3, 4, 5}:
-        raise InstallContractError("disk must contain exactly partitions 1 through 5")
+    if len({part.number for part in disk.partitions}) != len(disk.partitions):
+        raise InstallContractError("disk contains duplicate partition numbers")
+    by_guid: dict[str, list[Partition]] = {}
+    for part in disk.partitions:
+        by_guid.setdefault(part.type_guid, []).append(part)
+    known_guids = {guid for _, guid in EXPECTED}
+    if any(part.type_guid not in known_guids for part in disk.partitions):
+        raise InstallContractError("disk contains an unexpected partition type")
+    if len(disk.partitions) not in {4, 5}:
+        raise InstallContractError("disk must contain four Windows roles and optional Arch")
     roles: dict[str, str] = {}
     expected_filesystems = {
         "esp": "vfat",
@@ -134,27 +153,82 @@ def validate_windows_first(
         "arch": None,
         "recovery": "ntfs",
     }
-    for (number, role, guid), expected_mib in zip(EXPECTED, expected_sizes_mib):
-        part = by_number[number]
-        if part.type_guid != guid:
-            raise InstallContractError(
-                f"partition {number} ({role}) has unexpected type GUID"
-            )
+    for (role, guid), expected_mib in zip(EXPECTED, expected_sizes_mib):
+        matches = by_guid.get(guid, [])
+        if role == "arch" and not matches:
+            continue
+        if len(matches) != 1:
+            raise InstallContractError(f"expected exactly one {role} partition")
+        part = matches[0]
         actual_mib = part.size_bytes // 1024**2
         if abs(actual_mib - expected_mib) > tolerance_mib:
             raise InstallContractError(
-                f"partition {number} ({role}) size mismatch: "
+                f"partition {part.number} ({role}) size mismatch: "
                 f"expected {expected_mib} MiB, found {actual_mib} MiB"
             )
         if part.filesystem != expected_filesystems[role]:
             expected = expected_filesystems[role] or "unformatted"
             found = part.filesystem or "unformatted"
             raise InstallContractError(
-                f"partition {number} ({role}) filesystem mismatch: "
+                f"partition {part.number} ({role}) filesystem mismatch: "
                 f"expected {expected}, found {found}"
             )
         roles[role] = part.path
+    required_windows_roles = {"esp", "msr", "windows", "recovery"}
+    if not required_windows_roles.issubset(roles):
+        raise InstallContractError("one or more Windows partition roles are missing")
+    if "arch" not in roles:
+        start, sectors = _find_arch_gap(
+            disk, expected_sizes_mib[3], tolerance_mib=tolerance_mib
+        )
+        roles["_arch_start_sector"] = str(start)
+        roles["_arch_size_sectors"] = str(sectors)
     return roles
+
+
+def _find_arch_gap(
+    disk: Disk, expected_mib: int, *, tolerance_mib: int
+) -> tuple[int, int]:
+    """Find the sole planned free extent; reject unknown or ambiguous space."""
+    if not disk.size_bytes or not disk.logical_sector_bytes:
+        raise InstallContractError("disk geometry is required for an unallocated Arch slot")
+    sector = disk.logical_sector_bytes
+    if sector <= 0 or disk.size_bytes % sector:
+        raise InstallContractError("disk has invalid logical-sector geometry")
+    if any(part.start_sector is None for part in disk.partitions):
+        raise InstallContractError("partition starts are required for free-space proof")
+    # Reserve the conventional first and last MiB for GPT/alignment metadata.
+    margin = 1024**2 // sector
+    disk_sectors = disk.size_bytes // sector
+    extents = sorted(
+        (part.start_sector, part.start_sector + part.size_bytes // sector)
+        for part in disk.partitions
+    )
+    cursor = margin
+    gaps = []
+    for start, end in extents:
+        if start < cursor or end <= start or end > disk_sectors - margin:
+            raise InstallContractError("partition extents overlap or exceed the safe disk area")
+        if start > cursor:
+            gaps.append((cursor, start - cursor))
+        cursor = end
+    if cursor < disk_sectors - margin:
+        gaps.append((cursor, disk_sectors - margin - cursor))
+    tolerance_sectors = tolerance_mib * 1024**2 // sector
+    expected_sectors = expected_mib * 1024**2 // sector
+    material = [
+        gap for gap in gaps
+        if gap[1] > tolerance_sectors
+    ]
+    candidates = [
+        gap for gap in material
+        if abs(gap[1] - expected_sectors) <= tolerance_sectors
+    ]
+    if len(candidates) != 1 or len(material) != 1:
+        raise InstallContractError(
+            "disk does not contain exactly one planned unallocated Arch extent"
+        )
+    return candidates[0]
 
 
 def render_installer(
@@ -192,10 +266,20 @@ expected_sizes={sizes!r}
 python3 /usr/local/lib/telos/arch-second-verify.py \
   --disk "$disk" --serial "$required_serial" --sizes-mib "$expected_sizes"
 
-# The verifier emits shell assignments only after checking all five partitions.
+# Assignments are emitted only after proving every Windows role and either the
+# existing Arch slot or the sole planned free extent.
 eval "$(python3 /usr/local/lib/telos/arch-second-verify.py \
   --disk "$disk" --serial "$required_serial" --sizes-mib "$expected_sizes" \
   --shell)"
+if [[ -z "$ARCH_PART" ]]; then
+  printf '%s,%s,%s\\n' "$ARCH_START" "$ARCH_SECTORS" \
+    {LINUX_ROOT_X86_64!r} | sfdisk --append "$disk"
+  partprobe "$disk"
+  udevadm settle
+  eval "$(python3 /usr/local/lib/telos/arch-second-verify.py \
+    --disk "$disk" --serial "$required_serial" --sizes-mib "$expected_sizes" \
+    --shell)"
+fi
 [[ -n "$ARCH_PART" && -n "$ESP_PART" ]] || exit 1
 if findmnt -rn -S "$ARCH_PART" >/dev/null || \
    findmnt -rn -S "$ESP_PART" >/dev/null; then
@@ -244,7 +328,7 @@ def main() -> int:
     sizes = tuple(int(value) for value in args.sizes_mib.split(","))
     output = subprocess.run(
         ("lsblk", "--bytes", "--json", "-o",
-         "PATH,TYPE,SERIAL,PTTYPE,PARTTYPE,SIZE,FSTYPE", args.disk),
+         "PATH,TYPE,SERIAL,PTTYPE,PARTTYPE,SIZE,FSTYPE,START,LOG-SEC", args.disk),
         check=True, text=True, capture_output=True,
     )
     disk = parse_lsblk(json.loads(output.stdout), args.disk)
@@ -253,7 +337,9 @@ def main() -> int:
     )
     if args.shell:
         print(f"ESP_PART={roles['esp']!r}")
-        print(f"ARCH_PART={roles['arch']!r}")
+        print(f"ARCH_PART={roles.get('arch', '')!r}")
+        print(f"ARCH_START={roles.get('_arch_start_sector', '')!r}")
+        print(f"ARCH_SECTORS={roles.get('_arch_size_sectors', '')!r}")
     else:
         print("PASS: Windows-first GPT matches the approved Arch install contract")
     return 0

@@ -60,6 +60,37 @@ class IdentityLifecycleTests(unittest.TestCase):
         self.assertNotIn("ksh", names)
         self.assertNotIn("ksh-root", names)
 
+    def test_revocation_contract_preserves_the_offline_limit(self):
+        revocation = next(
+            item for item in self.contract["deferred_checks"]
+            if item["id"] == "disable-reenable"
+        )
+        self.assertEqual(revocation["applies_to"], ["windows", "arch"])
+        self.assertEqual(revocation["release_gate"], "deferred")
+        sequence = revocation["required_sequence"]
+        self.assertLess(
+            sequence.index("connected-login-denied"),
+            sequence.index("cached-offline-login-still-allowed"),
+        )
+        self.assertIn("connected-network-access-denied", sequence)
+        self.assertIn("old-credential-denied-online", sequence)
+        self.assertEqual(sequence[-1], "new-credential-accepted-offline")
+
+    def test_phase_one_requires_indefinite_cached_login_on_both_systems(self):
+        required = self.contract["required_checks"]
+        for os_name in ("windows", "arch"):
+            self.assertIn(f"{os_name}-cached-login", required)
+            self.assertIn(f"{os_name}-uncached-denied", required)
+            self.assertIn(f"{os_name}-local-rescue", required)
+
+    def test_human_acceptance_guide_names_the_non_revocation_boundary(self):
+        guide = (ROOT / "IDENTITY-LIFECYCLE-ACCEPTANCE.md").read_text()
+        self.assertIn("offline_credentials_expiration = 0", guide)
+        self.assertIn("does not erase credentials already cached", guide)
+        self.assertIn("Windows secure channel", guide)
+        self.assertIn("Arch identity", guide)
+        self.assertIn("Phase-two revocation remains deferred", guide)
+
     def test_complete_local_lifecycle_passes(self):
         result = lifecycle.judge(self.contract, valid_events(self.contract))
         self.assertEqual(result["result"], "pass")

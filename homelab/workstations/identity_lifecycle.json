@@ -50,7 +50,29 @@
     {
       "id": "disable-reenable",
       "phase": 2,
-      "reason": "Cached offline credentials cannot provide immediate revocation. Phase 2 must test online disable, cached-offline behavior, re-enable, and credential rotation explicitly."
+      "reason": "Cached offline credentials cannot provide immediate revocation. Phase 2 must test online disable, cached-offline behavior, re-enable, and credential rotation explicitly.",
+      "required_sequence": [
+        "prime-cache-online",
+        "disable-directory-account",
+        "connected-login-denied",
+        "connected-network-access-denied",
+        "disconnect-controller",
+        "cached-offline-login-still-allowed",
+        "local-data-policy-observed",
+        "reconnect-controller",
+        "reenable-directory-account",
+        "connected-login-restored",
+        "rotate-credential",
+        "new-credential-accepted-online",
+        "old-credential-denied-online",
+        "refresh-offline-cache",
+        "new-credential-accepted-offline"
+      ],
+      "applies_to": [
+        "windows",
+        "arch"
+      ],
+      "release_gate": "deferred"
     }
   ]
 }
