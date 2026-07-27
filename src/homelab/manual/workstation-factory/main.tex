@@ -1,0 +1,435 @@
+\input{common/preamble.tex}
+\input{homelab/shared/homelab.tex}
+
+\telosmeta{Homelab}{Workstation Factory}
+  {From an isolated bootstrap VM to repeatable Windows 11 and Arch laptops}{20260727.001}
+
+\tikzset{
+  wf pencil/.style={draw=black!78,line width=.48pt,line cap=round,line join=round},
+  wf faint/.style={draw=black!32,line width=.27pt,line cap=round,line join=round},
+  wf flow/.style={-{Stealth[length=1.8mm]},draw=black!72,line width=.55pt},
+  wf deny/.style={draw=black!62,line width=.45pt,dashed}
+}
+\newcommand{\wfcaption}[1]{\par\smallskip{\centering\footnotesize\itshape #1\par}}
+
+\begin{document}
+\telosmasthead[Operator manual]
+
+This manual creates a dual-boot laptop that can authenticate the same person
+under Windows 11 Pro or Arch Linux. It starts with an isolated Arch virtual
+machine named \texttt{bootstrap-dc}; it does not require a permanent Controller.
+The public procedure uses placeholders. Put household names, addresses,
+machine inventory and encrypted secret material in the private instance
+repository.
+
+\begin{gate}{Phase-1 boundary}
+UniFi remains the only DHCP authority. The Controller hosts Samba AD with
+integrated DNS, and HTTP/iPXE services. Workstation disks are deliberately
+\textbf{not encrypted}; Secure Boot is deliberately disabled. Cached domain
+login may work indefinitely while a laptop is away, so a disconnected laptop
+cannot be remotely revoked. Treat every phase-1 workstation as unsuitable for
+unrecoverable or sensitive data.
+\end{gate}
+
+\section{The result}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  % Gateway appliance.
+  \draw[wf pencil,rounded corners=1pt] (-5.8,.05) rectangle (-3.65,1.55);
+  \draw[wf faint] (-5.62,.23) rectangle (-3.83,1.37);
+  \foreach \y in {.43,.69,.95}
+    {\draw[wf pencil] (-5.42,\y) rectangle (-4.18,\y+.14);
+     \fill[black!58] (-3.99,\y+.07) circle (.035);}
+  \node[align=center] at (-4.72,1.10) {UniFi\\gateway};
+  \node[align=center] at (-4.72,-.18) {addresses + policy};
+
+  % Host and VM.
+  \draw[wf pencil,rounded corners=1pt] (-1.9,-.05) rectangle (1.35,1.70);
+  \draw[wf faint] (-1.72,.12) rectangle (1.17,1.53);
+  \draw[wf pencil] (-1.42,.37) rectangle (.87,1.25);
+  \draw[wf faint] (-1.27,.52) rectangle (.72,1.10);
+  \node[align=center] at (-.28,.83) {\texttt{bootstrap-dc}\\Arch VM};
+  \node[align=center] at (-.28,-.18) {AD/DNS + boot};
+
+  % Laptop.
+  \draw[wf pencil,rounded corners=1pt] (3.60,.34) rectangle (5.85,1.72);
+  \draw[wf faint] (3.74,.48) rectangle (5.71,1.58);
+  \draw[wf pencil] (3.25,.03)--(6.20,.03)--(5.85,.34)--(3.60,.34)--cycle;
+  \draw[wf faint] (4.22,.20) rectangle (5.23,.29);
+  \node[align=center] at (4.73,1.05) {Windows 11\\Arch Linux};
+  \node[align=center] at (4.73,-.18) {one domain identity};
+
+  \draw[wf flow] (-3.65,.87)--(-1.90,.87)
+    node[midway,above,align=center]{DHCP\\DNS route};
+  \draw[wf flow] (1.35,.87)--(3.60,.87)
+    node[midway,above,align=center]{PXE + AD\\authentication};
+\end{tikzpicture}
+\wfcaption{Stable names and AD discovery decouple each workstation from the temporary VM.}
+\end{center}
+
+\begin{telosfacts}[0.22]
+\telosfact{Identity}{The permanent DNS domain comes from \texttt{identity\_dns\_domain}. Clients discover domain controllers through DNS service records, never a baked-in machine address.}
+\telosfact{Boot}{Windows is the default after a five-second UEFI boot menu; Arch remains independently bootable.}
+\telosfact{Storage}{The default ratio is 75 percent Windows and 25 percent Arch after fixed partitions, subject to 160 GiB and 64 GiB minimums.}
+\telosfact{Network home}{A local profile always opens. Optional SMB storage mounts afterward and fails soft.}
+\end{telosfacts}
+
+\section{Stage 0 --- Record inputs without secrets}
+
+Create a private instance record before changing the network. It names the
+site prefix, VLANs, subnets, gateway, Controller addresses, workstation
+hostname, disk serial, desired layout and physical switch ports. It contains
+no plaintext password, Wi-Fi key, recovery material or reusable join token.
+
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}p{.33\linewidth}L@{}}
+\toprule
+\textbf{Public constant} & \textbf{Private instance value} & \textbf{Secret channel}\\
+\midrule
+\texttt{identity\_dns\_domain}; Windows 11 Pro; UEFI & Addresses, hostnames, serials, MACs, port assignments & AD bootstrap password, join credential, Wi-Fi key\\
+75/25 default; 160/64 GiB floors & Approved per-machine override and disk identity & Local rescue and user passwords\\
+\texttt{boot\_service\_fqdn} alias & Current server behind the alias & NAS and deployment credentials\\
+\bottomrule
+\end{tabularx}
+
+\askbefore{Does the machine name satisfy both DNS and Windows naming rules, and
+is it absent from AD and DNS? Does the disk's physical label match the recorded
+model, serial and capacity? Who owns the switch port and DHCP scope?}
+
+\section{Stage 1 --- Build the isolated bootstrap VM}
+
+Run the repository dependency target on an Arch build host, then create the
+virtual machine. The VM has four vCPUs, 8 GiB RAM and an 80 GiB disk. During
+this stage it attaches only to an isolated virtual network.
+
+\begin{shellblock}
+make homelab-bootstrap-deps
+make homelab-bootstrap-vm-create APPLY=1
+make homelab-bootstrap-vm-run APPLY=1
+make homelab-bootstrap-controller INVENTORY=<private-inventory>
+\end{shellblock}
+
+\expectthis{The VM reports hostname
+\texttt{bootstrap\_dc\_fqdn}; Samba, Kerberos and DNS tests pass; no
+packet from the VM reaches the household LAN.}
+\failurebranch{If a target is missing, reports a proposed command instead of
+running it, or cannot prove isolation, stop. Do not improvise package commands
+or bridge the VM manually; fix the reproducible target.}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \draw[wf pencil] (-5.55,-.25) rectangle (-2.55,1.38);
+  \draw[wf faint] (-5.37,-.07) rectangle (-2.73,1.20);
+  \node[align=center] at (-4.05,.71) {Arch build host\\Make + QEMU};
+  \draw[wf pencil] (-1.00,-.03) rectangle (1.55,1.16);
+  \draw[wf faint] (-.84,.13) rectangle (1.39,1.00);
+  \node[align=center] at (.28,.58) {\texttt{bootstrap-dc}\\isolated NIC};
+  \draw[wf flow] (-2.55,.57)--(-1.00,.57);
+  \draw[wf deny] (2.45,-.15)--(2.45,1.25);
+  \draw[wf pencil] (2.20,1.00)--(2.70,.10);
+  \draw[wf pencil] (2.20,.10)--(2.70,1.00);
+  \draw[wf faint] (3.35,-.25) rectangle (5.65,1.38);
+  \node[align=center] at (4.50,.62) {household LAN\\unchanged};
+\end{tikzpicture}
+\wfcaption{The first proof is negative: the unfinished services cannot reach the live LAN.}
+\end{center}
+
+\proofpair{make homelab-test}{The repository's VM, identity, PXE and
+workstation tests pass; save the test report and artifact digests.}
+\proofpair{make homelab-bootstrap-vm-status}{Reports the expected isolated VM
+state without changing the VM or UniFi.}
+
+\section{Stage 2 --- Establish the permanent identity plane}
+
+The first domain controller creates the permanent forest
+\texttt{identity\_dns\_domain}, \texttt{kerberos\_realm}, and
+\texttt{netbios\_name}. The Controller's implementation may later move to a VM or
+physical machine; those names do not change.
+
+\begin{gate}{DNS is part of Active Directory}
+Windows and Arch locate LDAP and Kerberos through DNS SRV records. All
+domain-member workstation interfaces must query AD DNS. The AD DNS service may
+forward unrelated queries, but a public resolver cannot replace it.
+\end{gate}
+
+\proofpair{samba-tool domain level show}{The forest and domain levels are
+reported without error.}
+\proofpair{host -t SRV \_ldap.\_tcp.\placeholder{identity-domain}}{At least one domain
+controller target and port 389 are returned.}
+\proofpair{host -t SRV \_kerberos.\_udp.\placeholder{domain}}{At least one domain
+controller target and port 88 are returned.}
+\proofpair{kinit <domain-admin> \&\& klist}{A ticket for
+\placeholder{kerberos-realm} exists; destroy it after the test with \texttt{kdestroy}.}
+
+\section{Stage 3 --- Build versioned boot targets}
+
+Build each payload independently, then build the signed-off set. The Windows
+target consumes a locally supplied Microsoft ISO and never redistributes it.
+Every release directory is immutable and contains a SHA-256 manifest.
+
+\begin{shellblock}
+make homelab-pxe-controller
+make homelab-pxe-arch
+make homelab-pxe-windows WINDOWS\_ISO=/private/path/windows-11.iso
+make homelab-pxe-all
+make homelab-pxe-test
+\end{shellblock}
+
+\expectthis{The test boots each menu entry in an isolated UEFI virtual machine,
+fetches every payload over HTTP, verifies each digest, and stops before disk
+writes unless a disposable test disk and full serial authorization are
+present.}
+\failurebranch{A missing Microsoft driver, changed ISO digest or failed fetch
+invalidates the release. Never edit an artifact in place; repair the source and
+build a new version.}
+
+\begin{center}
+\begin{tikzpicture}[node distance=8mm and 8mm,font=\scriptsize]
+  \node[role] (source) {source\\+ local ISO};
+  \node[role,right=of source] (build) {build\\isolated};
+  \node[role,right=of build] (test) {UEFI test\\all targets};
+  \node[role,right=of test] (release) {release\\manifest};
+  \node[role,right=of release] (current) {\texttt{current}\\atomic link};
+  \draw[flow] (source)--(build);
+  \draw[flow] (build)--(test);
+  \draw[flow] (test)--(release);
+  \draw[flow] (release)--(current);
+  \draw[flow,dashed] (test.south) to[bend right=30]
+    node[hlabel,below]{failure: new build}(source.south);
+\end{tikzpicture}
+\wfcaption{Promotion changes one pointer; rollback selects the previous verified release.}
+\end{center}
+
+\section{Stage 4 --- Choose the real network attachment}
+
+This is a deployment gate, not a build prerequisite. Choose exactly one:
+existing LAN, a dedicated second interface, or a VLAN trunk. Record the reason,
+the recovery path and the observed switch-port configuration. UniFi remains
+the sole address authority in every choice.
+
+\begin{gate}{Recommended production boundary}
+Use a dedicated provisioning VLAN with UniFi DHCP options pointing UEFI
+clients at the stable boot endpoint. Permit only AD/DNS, boot HTTP, time,
+approved package sources and explicitly tested storage. A final deny rule is
+added only after each required flow passes independently.
+\end{gate}
+
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.31\linewidth}L@{}}
+\toprule
+\textbf{Attachment} & \textbf{What it buys} & \textbf{Cost or risk}\\
+\midrule
+Existing LAN & Fastest first hardware trial & Weakest destructive-install boundary; noisy policy\\
+Dedicated interface & Existing host path stays untouched & Needs a second cable and switch port\\
+VLAN trunk & Several isolated services over one cable & Bridge and recovery procedure are more complex\\
+\bottomrule
+\end{tabularx}
+
+\proofpair{make homelab-workstation-verify
+INSTANCE=<private-acceptance.json>}{Validates the recorded DHCP, AD DNS, boot
+HTTP, time and cross-zone acceptance evidence without changing the network.}
+\askbefore{Which physical port is the build port? Can an ordinary household
+client see the installer? Can a build client reach a management interface? Is
+there a tested local-console recovery path if the bridge is wrong?}
+
+\section{Stage 5 --- Configure UniFi, one dependency at a time}
+
+Create the small provisioning network at the expected device count, leaving
+adjacent space available. Prefer simple human-facing gateway and service
+addresses such as \texttt{.1}; the actual CIDR boundary remains technically
+valid. Configure DHCP, AD DNS, time and internet update access before setting
+network boot options. Add isolation rules last.
+
+\begin{enumerate}
+\item Create the VLAN and subnet. \textit{This gives build traffic a bounded
+address space.} Verify one ordinary lease, gateway reachability and the exact
+CIDR.
+\item Set the network's DNS server to the AD DNS address. \textit{This enables
+domain service discovery.} Verify the LDAP and Kerberos SRV records from a
+client on that VLAN.
+\item Permit time synchronization. \textit{Kerberos rejects sufficiently
+skewed clocks.} Verify both client and DC report synchronized time.
+\item Configure network boot for x86-64 UEFI, with the Controller address and
+iPXE filename. \textit{This hands firmware to the versioned HTTP boot chain.}
+Verify a test VM or laptop reaches the menu.
+\item Permit only required update and service flows. \textit{This makes
+installation useful without exposing management networks.} Test each allow
+rule before the final deny.
+\end{enumerate}
+
+\failurebranch{If isolation breaks a client, inspect DHCP, DNS, time, then the
+specific destination port. Do not disable the entire policy as a diagnostic
+shortcut; enable or log one dependency at a time.}
+
+\section{Stage 6 --- Mint one disposable pilot}
+
+Connect the laptop through a known UEFI-PXE-capable USB-C Ethernet adapter.
+Disable Secure Boot, select UEFI network boot, and choose the approved
+workstation profile. The installer asks for the bespoke hostname, disk serial,
+Windows/Arch allocation and default OS. It rejects a disk that cannot satisfy
+both filesystem minimums.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \draw[wf pencil] (-5.7,-.55) rectangle (5.65,1.45);
+  \foreach \x in {-5.05,-2.65,-.25,2.15,4.55}
+    \draw[wf faint] (\x,-.55)--(\x,1.45);
+  \node[align=center] at (-5.38,.45) {ESP\\1 GiB};
+  \node[align=center] at (-3.85,.45) {Windows 11\\75\%\\min 160 GiB};
+  \node[align=center] at (-1.45,.45) {recovery\\image-sized};
+  \node[align=center] at (.95,.45) {Arch root\\25\%\\min 64 GiB};
+  \node[align=center] at (3.80,.45) {free/derived\\alignment};
+  \draw[wf pencil,<->] (-5.68,-.82)--(5.63,-.82);
+  \node[below] at (0,-.83) {one GPT disk; exact sectors frozen before authorization};
+\end{tikzpicture}
+\wfcaption{The ratio is a policy default, never permission to violate either minimum.}
+\end{center}
+
+\begin{gate}{Destructive authorization}
+The operator must compare the visible physical device with model, serial and
+capacity, then type the complete disk serial. A profile selection, hostname or
+\texttt{yes} is not authorization.
+\end{gate}
+
+\expectthis{Windows Setup completes first; Arch fills its declared partition;
+both write independent UEFI entries; Windows becomes the default after a
+five-second menu. The system does not join the domain until both native boots
+pass.}
+\proofpair{efibootmgr -v}{Windows and Arch entries both exist; the documented
+default points to the five-second selector.}
+\proofpair{lsblk -o NAME,SIZE,FSTYPE,PARTLABEL,UUID}{Observed partitions match
+the frozen preflight plan within declared alignment tolerances.}
+
+\input{homelab/manual/workstation-factory/install-procedure.tex}
+
+\section{Stage 7 --- Join and test Windows}
+
+Join Windows 11 Pro to \placeholder{identity-domain}, restart, and log in online once
+with an ordinary domain test account. Test the daily administrator separately;
+do not use the domain-wide administrator for ordinary desktop work.
+
+\proofpair{whoami}{Returns the short domain and the intended user.}
+\proofpair{whoami /groups}{The ordinary test user lacks local Administrators;
+the approved workstation administrator has it.}
+\proofpair{klist}{Kerberos tickets name the permanent realm.}
+\proofpair{Resolve-DnsName -Type SRV \_ldap.\_tcp.\placeholder{identity-domain}}{The client
+discovers the DC through AD DNS rather than a hosts-file entry.}
+
+Disconnect the network and restart. The previously tested user must be able to
+open the cached local profile. Reconnect, disable the account in AD, and prove
+connected login is denied. Record that disconnected cached login remains a
+known phase-1 limitation.
+
+\section{Stage 8 --- Join and test Arch}
+
+Configure SSSD against the same domain. Create local homes on first login;
+never make the base home path depend on network storage. Grant sudo only
+through an explicit AD workstation-administrator group.
+
+\proofpair{id <test-user>}{Returns a stable domain UID, primary group and
+expected memberships.}
+\proofpair{kinit <test-user> \&\& klist}{The realm ticket succeeds while
+online; destroy the ticket after recording the result.}
+\proofpair{getent passwd <test-user>}{The NSS record and home path are present
+without editing local \texttt{/etc/passwd}.}
+\proofpair{sudo -l -U <test-user>}{The ordinary test user has no sudo rule.}
+
+Repeat online login, offline cached login, connected account disable, DNS
+failure and time-skew tests. A friendly desktop symptom is not evidence:
+record command output and the exact expected boundary.
+
+\input{homelab/manual/workstation-factory/identity-procedures.tex}
+
+\input{homelab/manual/workstation-factory/optional-services.tex}
+
+\section{Stage 11 --- Publish and migrate}
+
+Publishing a PXE release uploads to a new immutable version directory, verifies
+the remote bytes with a checksum comparison, and atomically moves
+\texttt{current}. Rollback selects a previous verified release; it never edits
+that release.
+
+\begin{shellblock}
+make homelab-pxe-publish RELEASE=<local-release> \textbackslash
+  DESTINATION=<host:/absolute/root>
+make homelab-pxe-rollback TARGET=<target> VERSION=<previous-version> \textbackslash
+  DESTINATION=<host:/absolute/root>
+\end{shellblock}
+
+The permanent physical Controller later joins as \texttt{permanent\_dc\_fqdn}.
+Validate AD/DNS replication. Move the boot alias and UniFi boot settings, then
+demote \texttt{bootstrap-dc}. Workstations are not rebuilt because their
+permanent domain, realm and discovery mechanism do not change.
+
+\begin{telosfacts}[0.27]
+\telosfact{Future VM candidate}{Samba AD/DNS can move behind the same names after an additional DC replicates and roles transfer.}
+\telosfact{Future VM candidate}{A deployment credential broker can issue short-lived joins without placing reusable credentials in artifacts.}
+\telosfact{Future VM candidate}{Windows deployment helpers, certificate services, audit collection and management services can be isolated later.}
+\telosfact{No rebuild trigger}{A service move is acceptable only when an existing Windows and Arch client passes discovery and login unchanged.}
+\end{telosfacts}
+
+\clearpage
+\section{Final acceptance worksheet}
+
+Complete this only after the procedure. Worksheets belong at the back so they
+support the instruction rather than interrupt its flow.
+
+\begin{tabularx}{\linewidth}{@{}p{.31\linewidth}p{.20\linewidth}L@{}}
+\toprule
+\textbf{Claim} & \textbf{Pass / fail} & \textbf{Evidence location or measured value}\\
+\midrule
+One DHCP authority observed & & \\
+AD LDAP and Kerberos SRV records resolve & & \\
+Controller and client clocks synchronized & & \\
+PXE release version and manifest verified & & \\
+Disk serial matched before first write & & \\
+Windows/Arch allocation matches plan & & \\
+Windows is default after five seconds & & \\
+Ordinary user logs in on Windows & & \\
+Ordinary user logs in on Arch & & \\
+Ordinary user lacks admin and sudo & & \\
+Workstation administrator has intended rights & & \\
+Both systems permit tested offline login & & \\
+Connected disabled account is denied & & \\
+SMB unavailable does not block login & & \\
+No plaintext secret appears in Git or logs & & \\
+\bottomrule
+\end{tabularx}
+
+\medskip
+\noindent Workstation hostname:\ \rule{.38\linewidth}{.35pt}\hfill
+Disk serial:\ \rule{.30\linewidth}{.35pt}
+
+\medskip
+\noindent PXE release:\ \rule{.30\linewidth}{.35pt}\hfill
+Operator/date:\ \rule{.35\linewidth}{.35pt}
+
+\begin{gate}{Release decision}
+Every row passes with evidence, or the workstation remains a disposable pilot.
+Record exceptions explicitly; familiarity, a successful desktop login, and
+``it worked once'' are not acceptance evidence.
+\end{gate}
+
+\subsection*{Exception and retest record}
+\noindent Record each failed gate and its evidence; strike unused rows.
+
+\renewcommand{\arraystretch}{1.65}
+\begin{tabularx}{\linewidth}{@{}p{.08\linewidth}p{.34\linewidth}p{.35\linewidth}L@{}}
+\toprule
+\textbf{Gate} & \textbf{Failure and measurement} & \textbf{Correction and retest evidence} & \textbf{Result}\\
+\midrule
+ & & & \\
+\cmidrule(lr){1-4}
+ & & & \\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\smallskip
+\noindent Evidence packet location/checksum:\ \rule{.60\linewidth}{.35pt}
+
+\smallskip
+\noindent Reviewer/date:\ \rule{.24\linewidth}{.35pt}\hfill
+\textbf{Disposition:}\quad
+\textbf{release}\quad/\quad\textbf{pilot only}\quad/\quad\textbf{rebuild}
+
+\end{document}

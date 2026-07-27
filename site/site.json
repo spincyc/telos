@@ -109,6 +109,27 @@
       "description": "A provider-neutral reproducible network-provisioning system."
     },
     {
+      "source": "site/pages/homelab/workstation-factory.md",
+      "output": "projects/homelab/workstation-factory/index.html",
+      "title": "Workstation Factory",
+      "layout": "default",
+      "description": "Build and verify dual-boot Windows and Arch workstations with shared identity."
+    },
+    {
+      "source": "site/pages/homelab/workstation-owner-guide.md",
+      "output": "projects/homelab/workstation-owner-guide/index.html",
+      "title": "Workstation Owner Guide",
+      "layout": "default",
+      "description": "Normal use, automatic updates, recovery, and safe evidence for a Telos workstation."
+    },
+    {
+      "source": "site/pages/homelab/workstation-identity-procedures.md",
+      "output": "projects/homelab/workstation-factory/workstation-identity-procedures/index.html",
+      "title": "Workstation Identity Procedures",
+      "layout": "default",
+      "description": "Join and verify Windows and Arch workstation identity without losing recovery access."
+    },
+    {
       "source": "PROVIDER-EDITIONS.md",
       "output": "provider-editions.html",
       "title": "Provider editions",

@@ -1,0 +1,217 @@
+% Detailed dual-boot installation procedure.
+% Included by main.tex after the pilot's disk plan has been frozen.
+
+\section{Pilot installation --- measure, write, prove}
+
+The profile is a proposed geometry, not permission to erase a disk. Print the
+plan, then compare it with the laptop in front of you. Use sectors as the
+authoritative unit; rounded GiB figures are only a human cross-check.
+
+\begin{enumerate}
+\item Photograph the firmware summary and the physical disk label if it is
+accessible. Record firmware revision, disk model, serial and advertised
+capacity.
+\item Boot the approved PXE release in UEFI mode. Record the release version
+and manifest digest shown by the installer.
+\item Run the read-only preflight. Save \texttt{lsblk -b -o
+NAME,SIZE,MODEL,SERIAL,TYPE,TRAN} and \texttt{wipefs -n} output.
+\item Compare the discovered logical-sector size, last usable sector and disk
+serial with the frozen plan. Differences are a stop condition.
+\end{enumerate}
+
+\askbefore{Is this the one authorized internal disk? Is the PXE or USB medium
+absent from the target list? Does the disk have at least the Windows and Arch
+minimums after the ESP, Microsoft reserved partition and recovery allowance?
+Are there files on the existing disk that have not been independently
+recovered and opened?}
+
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.22\linewidth}p{.24\linewidth}L@{}}
+\toprule
+\textbf{Measurement} & \textbf{Frozen value} & \textbf{Observed value} & \textbf{Pass rule}\\
+\midrule
+Disk model and serial & \placeholder{plan} & \placeholder{preflight} & Exact serial; model consistent\\
+Disk bytes & \placeholder{plan} & \placeholder{lsblk} & Exact byte count\\
+Logical sector bytes & \placeholder{plan} & \placeholder{blockdev} & Exact match\\
+First/last usable LBA & \placeholder{plan} & \placeholder{sgdisk} & Exact match\\
+PXE release digest & \placeholder{release} & \placeholder{screen} & Exact SHA-256\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Last reversible point}
+Do not type the disk serial until the table passes. The next operation destroys
+the selected partition table. No hostname, device name such as
+\texttt{/dev/nvme0n1}, or general confirmation substitutes for the complete
+serial.
+\end{gate}
+
+\subsection{Create and verify the GPT}
+
+The automation creates, in order, one shared EFI System Partition (ESP), one
+Microsoft Reserved partition (MSR), the Windows partition, Windows recovery,
+and the Arch root partition. Start each resizable partition on the alignment
+boundary emitted by the profile. Do not calculate boundaries by eye in a GUI.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \draw[wf pencil] (-5.75,-.20) rectangle (5.70,1.10);
+  \draw[wf faint] (-5.22,-.20)--(-5.22,1.10);
+  \draw[wf faint] (-4.93,-.20)--(-4.93,1.10);
+  \draw[wf faint] (1.25,-.20)--(1.25,1.10);
+  \draw[wf faint] (2.05,-.20)--(2.05,1.10);
+  \node[rotate=90] at (-5.49,.45) {ESP};
+  \node[rotate=90] at (-5.08,.45) {MSR};
+  \node at (-1.84,.45) {Windows};
+  \node[rotate=90] at (1.65,.45) {WinRE};
+  \node at (3.87,.45) {Arch root};
+  \draw[wf pencil,<->] (-5.75,-.47)--(-5.22,-.47);
+  \node[below] at (-5.49,-.48) {1 GiB};
+  \draw[wf pencil,<->] (-4.93,-.47)--(1.25,-.47);
+  \node[below] at (-1.84,-.48) {profile-derived};
+  \draw[wf pencil,<->] (2.05,-.47)--(5.70,-.47);
+  \node[below] at (3.87,-.48) {profile-derived};
+\end{tikzpicture}
+\wfcaption{One GPT and one shared ESP; exact LBA boundaries come from the signed plan.}
+\end{center}
+
+\expectthis{A second read of the GPT reports the planned partition count,
+type GUIDs, start sectors and end sectors. No filesystem signature exists
+outside the partitions declared by the profile.}
+\failurebranch{If any start sector, type GUID, serial or disk byte count differs,
+stop before formatting. Save both observations, remove installer power, and
+regenerate the plan for the hardware actually present.}
+
+\subsection{Install Windows first}
+
+Boot Windows Setup from the versioned PXE entry. Load only the driver bundle
+whose hardware identifiers and digest were approved with the release. At the
+disk chooser, select the pre-created partition labelled for Windows; do not
+delete the table and do not allow Setup to consume the Arch partition.
+
+\begin{enumerate}
+\item Confirm Setup reports the planned Windows partition size within its
+display-rounding tolerance. Ask: ``Which partition will Setup format, and what
+two observed facts identify it?''
+\item Install Windows 11 Pro. Firmware activation may occur later; activation
+status is not an installation gate.
+\item At the first desktop, install firmware and drivers from the laptop
+vendor or Windows Update. Record each device that retains a warning icon.
+\item Apply all update rounds, restarting and checking again until two
+successive scans report no required update. Optional preview drivers remain
+excluded unless a recorded hardware fault requires one.
+\end{enumerate}
+
+\proofpair{Get-Disk | Format-Table Number,FriendlyName,SerialNumber,Size}{The
+system disk serial and byte count identify the authorized disk.}
+\proofpair{Get-Partition | Sort-Object Offset}{Partition offsets and sizes
+match the frozen plan; no unexpected data partition exists.}
+\proofpair{Get-PnpDevice | Where-Object Status -ne 'OK'}{Returns no unexplained
+device; record any intentional disabled device.}
+\proofpair{Confirm-SecureBootUEFI}{Reports \texttt{False}, consistent with the
+phase-1 boundary; an unsupported result is investigated, not assumed.}
+\proofpair{manage-bde -status}{All workstation volumes report protection off;
+device encryption must not have silently enabled itself.}
+
+\begin{gate}{Windows recovery proof}
+Open the Windows Recovery Environment once before installing Arch. Confirm the
+keyboard works and that Startup Repair and Command Prompt are visible. Exit
+without changing the disk. This proves the recovery partition is bootable
+before another operating system changes UEFI entries.
+\end{gate}
+
+\subsection{Install Arch into its declared partition}
+
+Return to the same PXE release and select Arch. Re-run disk identity preflight;
+a successful Windows boot does not waive serial authorization. Format only the
+Arch root partition. Mount the existing ESP at \texttt{/efi}; never format it.
+
+\begin{enumerate}
+\item Check time synchronization before package installation. Record clock
+offset and time source; Kerberos will depend on this later.
+\item Mount Arch root, then mount the existing FAT32 ESP. List
+\texttt{/efi/EFI/Microsoft/Boot/bootmgfw.efi}; its presence is a stop-check
+before installing a boot manager.
+\item Install the base system, Intel microcode, NetworkManager, an LTS-capable
+kernel path, and the approved graphics, Wi-Fi and firmware packages.
+\item Generate \texttt{/etc/fstab} by UUID. Inspect every line: root must use
+the Arch filesystem UUID and the ESP must use the shared FAT UUID.
+\item Install \texttt{systemd-boot} without removing the Microsoft directory.
+Create the Arch entry, set a five-second timeout, and set Windows
+\texttt{auto-windows} as the default.
+\end{enumerate}
+
+\proofpair{findmnt --verify --verbose}{Reports no fstab parse or unreachable
+source error.}
+\proofpair{bootctl status}{Shows the shared ESP, an Arch entry and the automatic
+Windows entry; default is Windows and timeout is five seconds.}
+\proofpair{Verify the Windows EFI loader exists}{Confirm
+\texttt{/efi/EFI/Microsoft/Boot/bootmgfw.efi} remains present after
+the Arch boot manager is installed.}
+\proofpair{lspci -k}{Each storage, graphics, Ethernet and wireless controller
+has the expected kernel driver bound.}
+\proofpair{systemctl --failed}{Returns no unexplained failed unit after a native
+Arch boot.}
+
+\failurebranch{If the automatic Windows entry is absent, do not hand-edit or
+copy Microsoft binaries. Verify the ESP mount and the original Microsoft path.
+If Windows files are missing, use Windows recovery media to repair them, then
+rerun \texttt{bootctl status}.}
+
+\subsection{Prove both native boot paths}
+
+Power the laptop fully off between tests. A reboot alone may preserve firmware
+or device state and conceal a cold-start defect.
+
+\begin{enumerate}
+\item Power on without touching a key. Measure from menu appearance until
+Windows begins loading. Pass only if Windows is selected after five seconds.
+\item Restart, select Arch, and measure time to a local login prompt. Record
+network association time separately from operating-system boot time.
+\item Use the firmware's one-time boot menu to start Windows Boot Manager
+directly, then to start Linux Boot Manager directly.
+\item Repeat once with Ethernet disconnected. Both local operating systems must
+reach login independently of PXE, AD, DNS and network storage.
+\end{enumerate}
+
+\begin{tabularx}{\linewidth}{@{}p{.27\linewidth}p{.20\linewidth}p{.24\linewidth}L@{}}
+\toprule
+\textbf{Boot path} & \textbf{Expected} & \textbf{Measured} & \textbf{Evidence}\\
+\midrule
+Default menu & Windows, 5 s & & video / stopwatch\\
+Selected Arch & local login & & journal boot ID\\
+Firmware Windows entry & Windows login & & firmware photo\\
+Firmware Linux entry & Arch login & & firmware photo\\
+Both, cable absent & local login & & two boot IDs\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Recovery order}
+
+Recovery preserves the other operating system before it improves convenience.
+Do not repartition to repair a boot menu.
+
+\begin{enumerate}
+\item \textbf{Firmware first:} open the one-time menu. If either native entry
+works, boot it and record \texttt{efibootmgr -v} or
+\texttt{bcdedit /enum firmware}.
+\item \textbf{Selector second:} from Arch media, mount the existing root and
+ESP, confirm their UUIDs, chroot, then reinstall systemd-boot and regenerate
+the Arch entry. Do not format either filesystem.
+\item \textbf{Windows files third:} if the Microsoft EFI binary is absent or
+Windows reports boot damage, use the matching Windows 11 recovery image and
+\texttt{bcdboot} against the existing Windows and ESP volumes.
+\item \textbf{Rollback last:} select the previous verified PXE release if a
+current installer or driver bundle is suspect. A PXE rollback does not modify
+an already installed workstation.
+\end{enumerate}
+
+\askbefore{Which layer failed: firmware entry, selector file, OS loader,
+filesystem, or operating system? Which read-only observation proves that
+classification? Can the repair be performed without formatting or moving a
+partition? Where is the recovery evidence saved?}
+
+\begin{gate}{Escalation boundary}
+If neither filesystem is readable, the disk reports new media errors, or the
+observed partition boundaries differ from the signed plan, stop. Image the disk
+or replace the disposable pilot; do not use filesystem repair, partition
+reconstruction, or installation retry as an exploratory diagnostic.
+\end{gate}

@@ -1,0 +1,196 @@
+\% Integration point: place after Stage 8's local-rescue prerequisite and
+\% before optional storage. This file deliberately contains no document wrapper.
+\subsection{Join and prove Windows 11}
+
+Start on a wired provisioning connection. Log in as the tested local rescue
+administrator, set the permanent workstation name, and point the interface at
+AD DNS. Do not join while the client is using public, gateway, or fallback
+DNS.
+
+\begin{shellblock}
+Rename-Computer -NewName "<workstation-name>" -Restart
+Get-DnsClientServerAddress -AddressFamily IPv4
+Resolve-DnsName -Type SRV "\_ldap.\_tcp.dc.\_msdcs.<identity-domain>"
+w32tm /query /source
+Test-NetConnection <dc-fqdn> -Port 445
+\end{shellblock}
+
+\expectthis{The computer name is exact; every active domain-member interface
+lists only approved AD DNS servers; the SRV answer names a DC; time has a
+source; TCP 445 succeeds.}
+\failurebranch{If ordinary names resolve but the SRV query fails, correct DHCP
+or interface DNS. If the clock differs from the DC by five minutes or more,
+correct time before touching the domain. Do not work around either fault with
+a hosts-file entry.}
+
+Join from \textit{Settings > System > About > Domain or workgroup > Change},
+select \textit{Domain}, enter \placeholder{identity-domain}, and supply the
+temporary delegated join credential. A domain administrator is not required
+for routine joins. Restart when Windows asks.
+
+\begin{shellblock}
+Get-CimInstance Win32\_ComputerSystem |
+  Select-Object Name,PartOfDomain,Domain
+nltest /dsgetdc:<identity-domain>
+Test-ComputerSecureChannel -Verbose
+\end{shellblock}
+
+\expectthis{\texttt{PartOfDomain} is true, \texttt{Domain} is exact,
+\texttt{nltest} discovers a DC through DNS, and the secure channel reports
+\texttt{True}. Record the DC name and test time.}
+
+At the sign-in screen choose \textit{Other user}. Sign in once as the standard
+test identity using \texttt{DOMAIN\textbackslash user} or the full user
+principal name. Open a non-elevated PowerShell session:
+
+\begin{shellblock}
+whoami
+whoami /groups
+echo \$env:USERPROFILE
+net localgroup Administrators
+\end{shellblock}
+
+\proofpair{The reported identity is the standard domain test user}{Its profile
+is local, its SID is present, and it is absent from the local Administrators
+group.}
+\proofpair{Sign in as the approved daily administrator}{A deliberate elevation
+prompt succeeds, but the reserved domain-administrator identity has not been
+used for daily work.}
+\proofpair{Disconnect every network interface and restart}{The previously used
+domain identity signs in from its cached credential; network resources fail
+without delaying or preventing the local desktop.}
+\proofpair{Reconnect, disable the standard test identity, then attempt a fresh
+online sign-in}{Connected authentication is denied. Record separately that an
+already cached offline credential cannot be revoked in phase 1.}
+
+\askbefore{Did the join use a delegated credential? Can local rescue still sign
+in with the DC powered off? Is the standard identity non-administrative? Did
+the test measure DNS answer, clock source, secure-channel state, and profile
+path rather than infer success from a desktop appearing?}
+
+\subsection{Join and prove Arch Linux}
+
+Finish a full system update before the join; Arch does not support partial
+upgrades. Install the declared identity client as one transaction:
+
+\begin{shellblock}
+sudo pacman -Syu --needed sssd samba krb5 bind
+resolvectl status
+timedatectl show -p NTPSynchronized --value
+host -t SRV \_ldap.\_tcp.dc.\_msdcs.<identity-domain>
+\end{shellblock}
+
+\expectthis{AD DNS is active, time reports \texttt{yes}, the LDAP SRV answer
+names a DC, and the packages came from enabled official Arch repositories.}
+\failurebranch{Stop if discovery fails, time is not synchronized, or Network
+Manager can replace AD DNS with a public resolver. A successful ping is not an
+identity-plane test.}
+
+Create a one-use delegated join identity or obtain a time-limited credential
+from the encrypted secret channel. Generate the Samba configuration from
+private values with \texttt{security = ads}, the exact
+\texttt{workgroup = <netbios-name>} and
+\texttt{realm = <kerberos-realm>}. Set the Kerberos method to
+\texttt{secrets and keytab}. Generate the root-owned, mode-0600 SSSD
+configuration with:
+
+\begin{shellblock}
+[sssd]
+services = nss, pam
+config\_file\_version = 2
+domains = <identity-domain>
+
+[domain/<identity-domain>]
+id\_provider = ad
+auth\_provider = ad
+access\_provider = ad
+ad\_domain = <identity-domain>
+krb5\_realm = <kerberos-realm>
+cache\_credentials = true
+use\_fully\_qualified\_names = true
+fallback\_homedir = /home/\%u
+default\_shell = /bin/bash
+ldap\_id\_mapping = true
+\end{shellblock}
+
+Review both rendered files before joining. Join interactively; never place the
+password in a command, shell history, answer file, or repository.
+
+\begin{shellblock}
+sudo net ads join -U '<delegated-join-user>'
+sudo net ads testjoin
+sudo klist -k /etc/krb5.keytab
+sudo test "\$(stat -c \%a /etc/sssd/sssd.conf)" = 600
+sudo systemctl enable --now sssd
+\end{shellblock}
+
+\expectthis{\texttt{net ads testjoin} reports success, the machine keytab
+contains the expected host principals, \texttt{/etc/sssd/sssd.conf} is
+root-owned mode 0600, and \texttt{sssd.service} is active. Revoke or expire
+the join credential now.}
+
+Keep the naming rule explicit. Either retain fully qualified login names
+(\texttt{user@domain}) or set a reviewed, site-wide short-name rule; never
+allow different domains or local accounts to collapse onto the same visible
+name. Confirm that \texttt{sss} appears on the \texttt{passwd}, \texttt{group},
+and \texttt{shadow} lines in \texttt{/etc/nsswitch.conf}. Then verify lookups:
+
+\begin{shellblock}
+getent passwd '<standard-user>@<identity-domain>'
+id '<standard-user>@<identity-domain>'
+getent group '<approved-admin-group>@<identity-domain>'
+sssctl user-checks '<standard-user>@<identity-domain>' -s login
+\end{shellblock}
+
+\expectthis{The user resolves once, has a stable numeric UID and GID, is absent
+from the approved administrator group, and SSSD authorizes the login service.
+Record the numeric IDs; optional SMB files must present compatible ownership.}
+
+Local home creation is a PAM action, not a network-home mount. Before editing,
+save the package-owned file's digest and a private evidence copy. Add this line
+to the session stack used by the workstation login path, normally
+\texttt{/etc/pam.d/system-login}, after the other required session setup:
+
+\begin{shellblock}
+session optional pam\_mkhomedir.so skel=/etc/skel umask=0077
+\end{shellblock}
+
+Review the complete PAM stack before rebooting. Do not add
+\texttt{pam\_mkhomedir} to authentication or account sections, and do not
+replace package-managed includes. Test first from a second TTY while the local
+rescue session remains open.
+
+\begin{shellblock}
+getent passwd '<standard-user>@<identity-domain>'
+findmnt --target '/home/<resolved-home>'
+stat -c '\%U \%G \%a \%n' '/home/<resolved-home>'
+sudo -l -U '<standard-user>@<identity-domain>'
+\end{shellblock}
+
+\proofpair{First online login}{Creates exactly the home path returned by
+\texttt{getent}; it is a local filesystem path, owned by the resolved UID/GID,
+and begins with restrictive permissions.}
+\proofpair{Standard-user authorization}{The user receives no workstation
+administration through \texttt{sudo}.}
+\proofpair{Approved administrator authorization}{Only the reviewed domain
+group receives the intended narrow \texttt{sudo} policy; a real elevation is
+tested and logged.}
+\proofpair{Offline restart after one successful online login}{The cached
+identity signs in, the same numeric UID and GID are returned, and the existing
+local home opens even when DNS, LDAP, Kerberos, and SMB are unavailable.}
+\proofpair{Local rescue with the DC unavailable}{Login and \texttt{sudo}
+succeed without SSSD. If they do not, restore the PAM/NSS configuration from
+the still-open rescue session.}
+
+\begin{gate}{UID, time, and storage proof}
+Record UID, primary GID, supplementary groups, client time, DC time, and the
+SMB file owner observed from both operating systems. A name that merely looks
+correct is not proof. NFS remains disabled until numeric-ID mapping is designed
+and tested; phase 1 uses SMB and a local home.
+\end{gate}
+
+\askbefore{What exact login spelling is canonical? Which AD group alone grants
+local administration? Does the home exist and open with storage powered off?
+Do UID and GID remain unchanged across two cold boots? Is clock offset below
+the Kerberos limit? Does disabling an account deny a new connected login while
+the documented offline-cache limitation remains understood?}

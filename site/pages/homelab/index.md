@@ -1,9 +1,8 @@
 # Homelab
 
-A Git-controlled, reproducible network-provisioning system: network boot a
-machine, supply and validate its parameters, explicitly authorize the wipe, and
-install a reusable profile. Then converge it continuously instead of
-reinstalling it.
+A Git-controlled workstation factory: prove the services in an isolated VM,
+publish immutable network-boot releases, explicitly authorize one disk, and
+build a dual-boot Windows and Arch machine with shared identity.
 
 This is a **generic profile**, not a description of one house. Real hostnames,
 addresses, interface MACs and per-machine inventory live in a private overlay
@@ -15,17 +14,36 @@ leaks into a published source.
 | Document | What it is | |
 |---|---|---|
 | **Controller Design** | What the Controller owns, what it deliberately does not, storage and network boundaries, the install-once/converge-continuously split | [PDF](../../doc/homelab/design/controller.pdf) |
+| **Network Design** | Right-sized private networks, UniFi configuration order, traffic policy, PXE and restricted managed Wi-Fi | [PDF](../../doc/homelab/design/network.pdf) |
 | **Controller Rebuild** | Bare metal to serving DHCP, written on the assumption that the Controller is dead and nothing it hosted is available | [PDF](../../doc/homelab/manual/controller-rebuild.pdf) |
+| **Workstation Factory** | Isolated bootstrap through a verified Windows/Arch workstation, with every gate and failure branch | [HTML](workstation-factory/index.md) · [PDF](../../doc/homelab/manual/workstation-factory.pdf) |
+| **Workstation Owner Guide** | Normal use, automatic updates, travel checks, recovery, and a secret-free help bundle for the person carrying the laptop | [HTML](workstation-owner-guide/index.md) · [PDF](../../doc/homelab/manual/workstation-owner-guide.pdf) |
 | **Provisioning Design** | Network boot, the authorization boundary, what cannot be offered, and how the whole thing is tested | [PDF](../../doc/homelab/design/provisioning.pdf) |
 | **Convergence Design** | Where install ends and day two begins, why the manifest is the authority, and getting back in when the directory is down | [PDF](../../doc/homelab/design/convergence.pdf) |
-| **Decision Record** | All 63 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](../../doc/homelab/decisions.pdf) |
+| **Decision Record** | All 75 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](../../doc/homelab/decisions.pdf) |
 
-## Shape of it
+## Active phase
 
-- **Controller** — one Arch host owning boot, storage, the managed interface, bundled DHCPv4 and `home.arpa` DNS, PXE and the artifact service. No routing, no NAT, no default route advertised.
+The active phase is deliberately narrower than the older Controller design:
+
+- UniFi remains the only DHCP authority.
+- The temporary Arch VM hosts Samba AD/DNS and PXE services at host level.
+- A permanent Controller can later replace it without rebuilding clients.
+- Workstations use Windows 11 Pro and Arch on UEFI/GPT.
+- Pilot disks are unencrypted and Secure Boot is disabled; this is an explicit
+  temporary risk acceptance, not the production security target.
+- User files remain local. Optional SMB storage must never block login.
+
+[Open the step-by-step workstation factory →](workstation-factory/index.md)
+
+## Stable shape
+
+- **Controller** — one Arch host owning PXE artifacts and the directory. UniFi
+  owns DHCP; Samba owns the directory DNS zone.
 - **Workstation** — pivots on its Controller's fully qualified name.
 - **Services** — optional and off by default. Homebridge, openHAB and similar as Podman quadlets with host networking, because HomeKit and UPnP discovery need mDNS. Can run on the Controller today and move to its own machine later by changing which host claims the role.
-- **Identity** — Samba AD DC in a VM, so Windows and Linux share accounts and laptops keep cached logons away from home.
+- **Identity** — Samba AD lets Windows and Linux share accounts. Laptops retain
+  cached logons away from home; disconnected revocation is therefore deferred.
 
 ## Two things that make it different from the usual
 
@@ -47,7 +65,7 @@ The installer exists and is driven end to end by an acceptance harness that
 answers its genuine prompts through a pseudo-terminal — there is no unattended
 code path for the harness to use, so there is nothing to abuse on real hardware.
 
-    make check            site checks plus 297 tests
+    make check            site, publication, privacy, and implementation checks
     make homelab-test     the suite, verbosely
     make homelab-matrix   the acceptance matrix
     make homelab-image    stage the provisioning image for building
@@ -80,7 +98,6 @@ needs a spare machine.
 
 ## Status
 
-Milestone A — the functional proof — is the active target. Encryption at rest is
-real throughout; Secure Boot and TPM unlock are deliberately deferred until the
-provisioning path is proven, and the known defects in that deferred design are
-written down rather than left to be rediscovered.
+The isolated bootstrap milestone is implemented without changing the host
+network or UniFi. Physical attachment, destructive installation, encryption,
+Secure Boot, and offline revocation remain explicit later gates.

@@ -1,0 +1,292 @@
+\input{common/preamble.tex}
+\input{homelab/shared/homelab.tex}
+
+\telosmeta{Homelab}{Workstation Owner Guide}
+  {Normal use, automatic updates, recovery, and useful evidence}{20260727.001}
+\newcommand{\ownercheck}[2]{\par\needspace{3\baselineskip}\noindent
+  \begin{tabularx}{\linewidth}{@{}p{.30\linewidth}L@{}}
+  {\footnotesize\textbf{Do:} #1} & {\footnotesize\textbf{Check:} #2}\\
+  \end{tabularx}\vspace{.16em}}
+
+\begin{document}
+\telosmasthead[Keep this copy on the laptop]
+
+This is the first-stop guide for someone using a Telos dual-boot workstation
+away from home. It covers ordinary use and safe, reversible recovery. It
+contains no household names, addresses, credentials, recovery keys, or
+administrator-only procedure.
+
+\begin{gate}{The safe boundary}
+You may restart, choose either operating system, reconnect Wi-Fi, check update
+status, free your own ordinary storage, test optional storage, and collect the
+evidence listed here. Stop before changing firmware, partitions, boot entries,
+directory membership, system time by hand, package databases, security policy,
+or another person's files.
+\end{gate}
+
+\section{Know the normal state}
+
+\begin{center}
+\begin{tikzpicture}[node distance=8mm and 9mm,font=\scriptsize]
+  \node[role] (power) {power on};
+  \node[role,right=of power] (menu) {five-second\\boot menu};
+  \node[role,above right=5mm and 10mm of menu] (win) {Windows 11\\default};
+  \node[role,below right=5mm and 10mm of menu] (arch) {Arch Linux\\choose explicitly};
+  \node[role,right=15mm of win] (local) {local profile\\opens};
+  \node[role,right=15mm of arch] (local2) {local home\\opens};
+  \draw[flow] (power)--(menu);
+  \draw[flow] (menu)--(win);
+  \draw[flow] (menu)--(arch);
+  \draw[flow] (win)--(local);
+  \draw[flow] (arch)--(local2);
+\end{tikzpicture}
+\end{center}
+
+Windows starts if nobody touches the menu. Select Arch before the countdown
+ends when you need it. Your files live on the laptop, so login must work
+without home Wi-Fi, the Controller, or optional network storage.
+
+\ownercheck{Sign in once while connected, disconnect Wi-Fi, lock, and sign in
+again.}{The same account opens the same local profile without a network error.
+Repeat once in each operating system before a long trip.}
+\ownercheck{Save work and sign out. Shut down before packing the laptop.}{No
+update screen, activity light, or warm fan remains when it enters the bag.}
+
+\begin{gate}{Offline login has a limit}
+A previously used account may continue to open this laptop while disconnected,
+even after an administrator disables its network access. This protects travel
+use but is not remote erasure. Report a lost laptop promptly.
+\end{gate}
+
+\section{Connect to Wi-Fi}
+
+Use the managed-workstation network supplied with the laptop. Its credential
+may be unique to this machine. Do not copy it to phones, televisions, guests,
+or another laptop.
+
+\begin{enumerate}
+\item Turn Wi-Fi off, wait five seconds, and turn it on.
+\item Select the saved managed-workstation network.
+\item Open one ordinary HTTPS site.
+\item Check that the clock and time zone are correct automatically.
+\item At home, sign out and in once to prove directory contact.
+\end{enumerate}
+
+\expectthis{Internet access works. Management pages, peer devices, and
+unrelated household networks may remain unreachable by design.}
+\failurebranch{If the network is absent, test one other known network or a
+phone hotspot. If other networks work, record ``managed network absent.'' If
+none work, restart once and collect the Wi-Fi evidence on page
+\pageref{sec:evidence}. Do not forget and recreate the saved network unless an
+administrator asks.}
+
+\section{Automatic updates}
+
+\textbf{Windows:} leave Windows Update enabled. Windows downloads and installs
+security and quality updates automatically, then asks for or schedules a
+restart. Plug in overnight at least weekly. Never use an advertised
+third-party ``driver updater.''
+
+\textbf{Arch:} a daily system timer attempts one complete
+\texttt{pacman -Syu} transaction. It runs only on AC power, with at least
+8 GiB free, no other package transaction, and the official mirror reachable.
+A missed run is retried after the next boot. It records before/after package
+lists and verifies installed package files. It never interrupts a user session
+for a reboot.
+
+\begin{center}
+\begin{tikzpicture}[node distance=7mm,font=\scriptsize]
+  \node[role] (timer) {daily timer};
+  \node[role,right=of timer] (gate) {power + space\\network + lock};
+  \node[role,right=of gate] (upgrade) {one full\\upgrade};
+  \node[role,right=of upgrade] (verify) {verify +\\save evidence};
+  \node[roleoff,below=of gate] (later) {defer safely\\try later};
+  \draw[flow] (timer)--(gate);
+  \draw[flow] (gate)--node[above]{ready}(upgrade);
+  \draw[flow] (upgrade)--(verify);
+  \draw[flow] (gate)--node[right]{not ready}(later);
+\end{tikzpicture}
+\end{center}
+
+\ownercheck{Plug in, connect to the internet, and leave the laptop awake for
+an hour each week.}{Windows shows no pending security update. On Arch,
+\texttt{systemctl status homelab-arch-update.timer} says \texttt{active
+(waiting)} and shows a next run.}
+\ownercheck{Restart after an update requests it, or when Arch reports a reboot
+recommendation. Reopen your work first.}{The selected OS boots, Wi-Fi
+reconnects, the clock is correct, and login succeeds.}
+
+\begin{gate}{Never partially update Arch}
+Do not run \texttt{pacman -Sy}, force package replacement, delete the pacman
+lock, change mirrors during a transaction, or power off while packages are
+being installed. Arch is maintained by full-system upgrades.
+\end{gate}
+
+\section{Optional network storage}
+
+Optional storage is a convenience, not your home directory. It appears after
+login as a mapped drive in Windows or a mounted folder under your Arch home.
+Login must succeed when storage is absent.
+
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.32\linewidth}L@{}}
+\toprule
+\textbf{What you see} & \textbf{Likely meaning} & \textbf{Safe response}\\
+\midrule
+Drive/folder opens & Network and authorization work & Use normally\\
+Storage unavailable & Away, server down, or route blocked & Work locally;
+retry later\\
+Access denied & Server reachable; identity or permission differs & Record the
+exact message; do not alter permissions\\
+Login itself fails & Not an acceptable storage failure & Disconnect Wi-Fi,
+test cached login, escalate\\
+\bottomrule
+\end{tabularx}
+
+\ownercheck{Before travel, disconnect from the home network and open ordinary
+local documents.}{The desktop and local files open promptly; the optional
+share may show unavailable without delaying login.}
+\ownercheck{Copy important work to its intended backup location when
+available.}{Open the copied file from the destination. A visible name alone
+does not prove the bytes arrived.}
+
+\section{Recovery ladder}
+
+Use this order. Stop as soon as normal operation returns; do not stack
+unrelated fixes.
+
+\begin{enumerate}
+\item \textbf{Protect the work.} Save open files locally. Photograph the exact
+message if saving is impossible.
+\item \textbf{Check simple state.} Connect power. Check airplane mode, Wi-Fi,
+free storage, date, time zone, and Caps Lock.
+\item \textbf{Retry once.} Repeat the failed action and note any change.
+\item \textbf{Restart normally.} Use Restart, not a forced power-off.
+\item \textbf{Try the other OS.} This separates hardware or firmware trouble
+from one operating system.
+\item \textbf{Try offline login.} Disconnect Wi-Fi and use an account that has
+previously signed in on this machine.
+\item \textbf{Use local rescue only when directed.} It regains local access;
+it does not administer the directory. Never send its password.
+\item \textbf{Escalate with evidence.} Stop before firmware, boot, disk,
+identity, or security changes.
+\end{enumerate}
+
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.35\linewidth}L@{}}
+\toprule
+\textbf{Symptom} & \textbf{One safe test} & \textbf{Stop boundary}\\
+\midrule
+No power & Known-good outlet and charger; hold power once & Burning smell,
+swelling, liquid, unusual heat\\
+No boot menu & Remove docks and USB devices; power on once & Firmware settings
+or boot-entry editing\\
+One OS fails & Boot the other OS; record the failing stage & Repair media,
+partition, or bootloader commands\\
+Password rejected & Check layout/Caps Lock; test offline once & Repeated
+guesses, account tools, clock edits\\
+No internet & Test another known network & Network reset or driver replacement\\
+Disk nearly full & Review your trash/downloads & System paths, another user's
+files, partitions\\
+Update failed & Leave power/network connected; record status & Forced package
+removal, lock deletion, firmware update\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Immediate stop}
+Power down, unplug, and seek help for a swollen battery, liquid ingress, smoke,
+burning odor, crackling, repeated thermal shutdown, exposed conductors, or a
+charger/port too hot to touch. Never recharge a visibly damaged battery.
+\end{gate}
+
+\section{Collect useful evidence without secrets}
+\label{sec:evidence}
+
+Create a plain-text note named with the date and machine label. Include:
+
+\begin{itemize}
+\item OS, whether it reached the desktop, and whether power was connected;
+\item local date/time shown and approximate location;
+\item what you attempted, exact result, and whether it worked before;
+\item exact error text or a photo cropped to the relevant window;
+\item last successful boot, login, and update;
+\item whether restart, the other OS, offline login, and another network worked;
+\item Windows Update history or these read-only Arch results:
+\end{itemize}
+
+\begin{shellblock}
+systemctl status homelab-arch-update.timer --no-pager
+systemctl status homelab-arch-update.service --no-pager
+journalctl -u homelab-arch-update.service -b --no-pager
+df -h /
+\end{shellblock}
+
+\expectthis{The commands report timer state, the most recent update attempt,
+and free space. They do not change the machine.}
+
+\textbf{Remove before sharing:} passwords; Wi-Fi keys or QR codes; recovery
+keys; tokens; private keys; browser contents; personal documents; full
+addresses; public IP addresses; serial numbers; and another person's name or
+files. Send the bundle only through the family's agreed private channel. Never
+paste it into a public issue or chat.
+
+\askbefore{Can another person reproduce the symptom from this note? Does it
+say what succeeded as well as what failed? Did you open every file and image
+to confirm no secret or unrelated personal material is visible?}
+
+\section{When to ask for help}
+
+\textbf{Ask soon:} update failure persists through the next powered,
+internet-connected attempt; free space stays below 8 GiB; time repeatedly
+drifts; optional storage says access denied; either OS stops booting; or login
+works only offline.
+
+\textbf{Ask immediately:} possible hardware damage; both operating systems
+fail; the disk disappears; a recovery key is unexpectedly requested; an
+unknown administrator prompt appears; the laptop is lost or stolen; or you
+suspect account compromise.
+
+\textbf{Administrator work only:} directory accounts and revocation, domain
+rejoin, rescue-account rotation, firmware and Secure Boot, disk layout,
+encryption, boot entries, PXE, network policy, update policy, package repair,
+and storage authorization.
+
+\section{Keep this guide available offline}
+
+Every workstation image should install this versioned PDF at
+\path{/usr/local/share/doc/telos/workstation-owner-guide.pdf} on Arch and in
+the shared Telos documentation folder on Windows, with a desktop or Start-menu
+shortcut. The public web copy is convenient but is not the recovery copy.
+
+Controller convergence distributes a newer reviewed guide by version; it
+never requires reinstalling the workstation. Deployment copies a new file,
+verifies its SHA-256 digest, then replaces the shortcut atomically. Keep the
+previous copy until the new PDF opens locally.
+
+\ownercheck{Disconnect every network and open the shortcut in each operating
+system.}{The title is ``Workstation Owner Guide,'' footer version is
+\texttt{20260727.001}, all pages render, and the recovery ladder needs no link.}
+\ownercheck{After an update, compare its version with the published
+manifest.}{The new digest matches and the previous readable copy remains until
+acceptance is complete.}
+
+\begin{gate}{Before leaving home}
+Boot both operating systems, complete automatic updates, restart each once,
+test offline login, open local files without optional storage, connect to one
+non-home network, and open this guide with all networks disabled.
+\end{gate}
+
+\section{Owner handoff record}
+
+\begin{tabularx}{\linewidth}{@{}p{.38\linewidth}L@{}}
+\toprule
+Machine label & \rule{0pt}{2.5ex}\hrulefill\\
+Guide version verified & \rule{0pt}{2.5ex}\hrulefill\\
+Windows boot/update/offline login & \rule{0pt}{2.5ex}\hrulefill\\
+Arch boot/update/offline login & \rule{0pt}{2.5ex}\hrulefill\\
+Non-home Wi-Fi tested & \rule{0pt}{2.5ex}\hrulefill\\
+Optional storage fails soft & \rule{0pt}{2.5ex}\hrulefill\\
+Private help channel recorded offline & \rule{0pt}{2.5ex}\hrulefill\\
+Owner and administrator review date & \rule{0pt}{2.5ex}\hrulefill\\
+\bottomrule
+\end{tabularx}
+
+\end{document}

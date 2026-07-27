@@ -1,0 +1,209 @@
+\section{Stage 9 --- Add optional SMB storage}
+
+Integrate the NAS with AD before touching a workstation. Give each person a
+private share, or a folder whose ACL grants that AD person and the storage
+administrators access. Do not store a second copy of the person's password.
+The workstation presents the current Kerberos identity to SMB.
+
+\begin{gate}{The local profile is authoritative}
+Windows must reach its desktop and Arch must reach its local home without the
+NAS. Network storage is a convenience mounted after login. Never redirect
+\texttt{Desktop}, \texttt{Documents}, \texttt{\%USERPROFILE\%}, or
+\texttt{/home} during phase 1.
+\end{gate}
+
+\subsection*{Prove the server before configuring a client}
+
+\begin{enumerate}
+\item From AD DNS, resolve \placeholder{storage-host}. Record the returned
+address and resolver. \textit{This catches split-DNS and stale-record errors.}
+\item With an ordinary test identity, list the intended share. Confirm that a
+different ordinary identity is denied. \textit{This proves the server ACL
+instead of relying on a drive letter or desktop icon.}
+\item Create a uniquely named test file, read it back, remove it, and record
+the server-side owner. \textit{This detects guest fallback and identity-mapping
+errors.}
+\item Compare client, domain-controller, and NAS time. Keep observed skew below
+the site's Kerberos limit. \textit{SMB may look like an ACL failure when the
+ticket is actually too old or the clocks disagree.}
+\end{enumerate}
+
+\failurebranch{If the owner is guest, an unexpected numeric identity, or
+another household user, stop. Correct the NAS domain join and ACL model before
+automating any workstation mount. Do not compensate with a shared credential
+or a permissive ACL.}
+
+\subsection*{Windows: map after desktop login}
+
+\begin{enumerate}
+\item Log in online once as the ordinary domain test user. Run
+\texttt{klist}; obtain a ticket before continuing.
+\item In File Explorer, map the approved UNC path to the documented drive
+letter. Select reconnect, but do not select alternate credentials and do not
+save a password in Credential Manager.
+\item Put the mapping action in a per-user logon task with an eight-second
+timeout and no ``wait for network'' prerequisite. The task may report failure;
+it may not hold the desktop open. Record the task name and exported,
+secret-free definition.
+\item Sign out and back in with the NAS reachable. Create a file, disconnect
+the mapping, reconnect it, and read the same bytes. Record the path, SHA-256
+digest, elapsed login time, and effective AD owner.
+\end{enumerate}
+
+\proofpair{Get-SmbMapping}{The approved drive points to the approved UNC path,
+uses the signed-in domain identity, and reports no guest mapping.}
+\proofpair{cmd /c ``net use''}{No obsolete drive letter, alternate NAS name,
+or unexpected cached connection is present.}
+
+\subsection*{Arch: mount in the user session}
+
+Install the repository-declared SMB and desktop virtual-filesystem packages.
+Use the desktop's user-session SMB mount, such as GVfs, so no network
+filesystem participates in boot or local-home creation.
+
+\begin{enumerate}
+\item Log in online as the ordinary domain test user. Run \texttt{klist}; fix
+SSSD or Kerberos first if no current ticket exists.
+\item Open \texttt{smb://\placeholder{storage-host}/\placeholder{user-share}}
+from the desktop file manager. Choose the current domain identity and decline
+permanent password storage.
+\item If automatic connection is wanted, create a user-session service that
+runs the mount after the graphical session starts, has an eight-second
+timeout, and is not required by the session target. Never add the SMB path to
+\texttt{/etc/fstab}, the boot target, or the local-home unit.
+\item Create, hash, unmount, remount, and read the same test file. Record the
+Kerberos principal and effective server-side owner.
+\end{enumerate}
+
+\proofpair{gio mount -l}{The approved SMB location appears only when reachable;
+the local home remains an ordinary local filesystem.}
+\proofpair{systemctl --user --failed}{A failed optional mount may be visible,
+but no login, home, or graphical-session unit depends on it.}
+
+\subsection*{Run the three-state failure drill on both systems}
+
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}p{.31\linewidth}L@{}}
+\toprule
+\textbf{State} & \textbf{Action and measurement} & \textbf{Pass boundary}\\
+\midrule
+Available & Login, create and hash a file; unmount and remount & Same bytes,
+same AD owner, no password prompt\\
+Unreachable & Block or disconnect only the NAS; cold-login with a stopwatch &
+Local desktop/home opens within the declared limit; bounded warning only\\
+Denied & Keep the host reachable but remove the test user's share access &
+Explicit access-denied result; local login works; no guest or alternate user\\
+\bottomrule
+\end{tabularx}
+
+\askbefore{Did each test begin from a cold sign-in rather than an already
+connected session? Was the NAS itself unreachable in the second test, but
+reachable in the third? Did either client silently reuse an old connection or
+credential?}
+
+\failurebranch{If login waits on storage, remove the mapping from every boot,
+profile, shell-startup and required-session dependency, then repeat all three
+states. If access denied becomes access granted after a prompt, remove the
+saved credential and inspect the server ACL.}
+
+\section{Stage 10 --- Add restricted managed Wi-Fi}
+
+Create a dedicated managed-workstation SSID and VLAN. Prefer one PPSK per
+workstation so one lost laptop can be removed without changing every machine.
+Retrieve the selected key from the private secret store only while minting the
+machine. Phase-1 disks are unencrypted; assume physical access can recover any
+stored wireless credential.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \draw[wf pencil,rounded corners=1pt] (-5.6,-.10) rectangle (-3.35,1.22);
+  \draw[wf faint] (-5.42,.08) rectangle (-3.53,1.04);
+  \node[align=center] at (-4.48,.56) {managed\\workstation};
+  \draw[wf flow] (-3.35,.56)--(-1.63,.56) node[midway,above]{PPSK};
+  \draw[wf pencil] (-1.63,.18)--(-1.15,.56)--(-1.63,.94);
+  \draw[wf pencil] (-1.35,.05)--(-.71,.56)--(-1.35,1.07);
+  \draw[wf pencil] (-1.03,-.09)--(-.20,.56)--(-1.03,1.21);
+  \node[below] at (-.92,-.13) {restricted SSID};
+  \draw[wf flow] (-.20,.56)--(1.10,.56);
+  \draw[wf pencil] (1.10,-.10) rectangle (2.65,1.22);
+  \node[align=center] at (1.88,.56) {AD/DNS\\updates\\approved SMB};
+  \draw[wf deny] (3.12,-.10)--(3.12,1.22);
+  \draw[wf pencil] (2.91,1.06)--(3.33,.06);
+  \draw[wf pencil] (2.91,.06)--(3.33,1.06);
+  \draw[wf faint] (3.72,-.10) rectangle (5.58,1.22);
+  \node[align=center] at (4.65,.56) {management\\household peers};
+\end{tikzpicture}
+\wfcaption{A stored credential reaches only the services a managed workstation needs.}
+\end{center}
+
+\subsection*{Prove UniFi policy before storing a key}
+
+Using a temporary test client, verify association, DHCP lease, gateway, AD
+DNS, time, domain ports, approved SMB, and both operating systems' update
+destinations. Then verify denials to gateway administration, Controller
+administration, infrastructure management, household-client, peer-client, and
+IoT destinations. Save a small source/destination/port/result table.
+
+\failurebranch{If an allow fails, inspect association, DHCP, DNS, time, then
+the single destination and port. If a deny fails, quarantine the SSID. Do not
+store its credential on a workstation until both directions match policy.}
+
+\subsection*{Windows: install one machine profile}
+
+\begin{enumerate}
+\item Create a WLAN profile for only the managed SSID and its assigned PPSK.
+Import it for all users from the local console. Do not add household,
+management, or provisioning SSIDs.
+\item Delete the plaintext import file immediately after the profile appears.
+Check Git status, the build log, answer files and shell history for the SSID
+key; store only the key's secret-manager reference in evidence.
+\item Disconnect Ethernet, restart, and log in with a previously cached
+ordinary account. Confirm automatic association and the expected managed-VLAN
+lease.
+\item Forget or disable the profile, restart, and prove that Windows does not
+fall back to another known private network. Restore only the approved profile.
+\end{enumerate}
+
+\proofpair{netsh wlan show profiles}{Exactly the approved preload set appears;
+captured output contains no key material.}
+\proofpair{Get-NetConnectionProfile}{The active wireless interface has the
+expected network category and no second active route into a private zone.}
+
+\subsection*{Arch: install one root-owned NetworkManager profile}
+
+\begin{enumerate}
+\item Create one system connection for the managed SSID with NetworkManager,
+binding it to the workstation PPSK and enabling autoconnect. Avoid typing the
+key in a command that will be retained in shell history.
+\item Confirm its file under
+\texttt{/etc/NetworkManager/system-connections/} is owned by root, mode 600,
+and excluded from logs, artifacts, backups without secret encryption, and Git.
+\item Disconnect Ethernet, restart NetworkManager or reboot, and log in with a
+previously cached ordinary account. Confirm association, expected lease, AD
+DNS, time, and the default route.
+\item Set the connection down and prove that no household or management SSID
+autoconnects. Bring back only the approved profile.
+\end{enumerate}
+
+\proofpair{nmcli -f NAME,TYPE,AUTOCONNECT connection show}{Only approved
+wireless profiles autoconnect; do not include secret fields in evidence.}
+\proofpair{stat -c '\%U \%G \%a \%n'
+/etc/NetworkManager/system-connections/*}{Every stored system profile is
+root-owned and mode 600.}
+
+\subsection*{Wireless-only acceptance}
+
+Repeat AD DNS SRV lookup, clock check, ordinary online login, administrator
+authorization, OS update check and optional-SMB three-state drill with Ethernet
+physically disconnected. Measure association-to-lease and login time. Scan
+each forbidden zone from only its documented small CIDR; do not substitute a
+wide private-range scan.
+
+\askbefore{Does revoking this workstation's PPSK leave every other workstation
+connected? Does the revoked machine fail to associate after its cached radio
+state is cleared? Can it reach all required update endpoints but no management
+page or peer workstation?}
+
+\failurebranch{If wireless onboarding fails, continue over the deployment
+cable. Never inject the household Wi-Fi key or broaden the VLAN to make the
+test pass. If a required vendor update cannot be bounded yet, record that
+exception and keep the workstation a pilot.}
