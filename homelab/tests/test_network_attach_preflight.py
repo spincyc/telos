@@ -21,6 +21,7 @@ class NetworkAttachPreflightTests(unittest.TestCase):
 
     def test_checks_effective_ssh_policy(self) -> None:
         self.assertIn("sshd -T", self.source)
+        self.assertIn("tr '[:upper:]' '[:lower:]'", self.source)
         self.assertIn("permitrootlogin no", self.source)
         self.assertIn("passwordauthentication no", self.source)
         self.assertIn("kbdinteractiveauthentication no", self.source)
@@ -32,6 +33,7 @@ class NetworkAttachPreflightTests(unittest.TestCase):
             self.assertIn(unit, self.source)
         self.assertIn("expected masked", self.source)
         self.assertIn("systemctl show --property=LoadState --value", self.source)
+        self.assertIn("loaded|masked)", self.source)
         self.assertIn('systemctl is-active "$unit"', self.source)
         self.assertIn("expected inactive", self.source)
 

@@ -30,7 +30,7 @@ check_forwarding() {
 
 check_ssh() {
     local policy
-    if ! policy=$(sshd -T 2>/dev/null); then
+    if ! policy=$(sshd -T 2>/dev/null | tr '[:upper:]' '[:lower:]'); then
         fail "sshd effective policy could not be read"
         return
     fi
@@ -62,14 +62,17 @@ check_units() {
             fail "$unit load state could not be read"
             continue
         fi
-        if [ "$load" = not-found ]; then
-            pass "$unit is not installed"
-            continue
-        fi
-        if [ "$load" != loaded ]; then
-            fail "$unit load state is $load; expected loaded or not-found"
-            continue
-        fi
+        case "$load" in
+            not-found)
+                pass "$unit is not installed"
+                continue
+                ;;
+            loaded|masked) ;;
+            *)
+                fail "$unit load state is $load; expected loaded, masked, or not-found"
+                continue
+                ;;
+        esac
 
         enabled=$(systemctl is-enabled "$unit" 2>/dev/null)
         case "$enabled" in
