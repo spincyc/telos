@@ -1,5 +1,7 @@
 # Offline local factory lifecycle
 
+Document version: `20260727.001`
+
 Status: implementation contract  
 Recorded: 2026-07-27
 
@@ -23,9 +25,12 @@ workstation-factory acceptance test.
 - The public rehearsal uses generated names, accounts, addresses, and
   short-lived credentials. Real people, machines, network values, credentials,
   and secrets remain in `telos-private` or an encrypted secret store.
-- Windows and Arch updates are automatic. A local offline update repository is
-  used for the isolated proof; the later network policy permits controlled
-  upstream updates.
+- Windows and Arch updates are automatic in deployed workstations. The
+  no-uplink factory proves configuration, gating, failure behavior, and locally
+  staged signed-package handling. It cannot prove Microsoft Update or an
+  official Arch mirror is reachable; those transactions remain an explicitly
+  measured external-integration gate. Arch's deployed policy remains a full
+  signed `pacman -Syu` from an official mirror, not a Controller dependency.
 - Local profiles and cached logons must remain usable indefinitely away from
   home. Optional SMB user storage must never block logon.
 - Temporary offline-logon revocation remains a later phase.
@@ -33,6 +38,11 @@ workstation-factory acceptance test.
   locally hashed and never committed or published.
 - Every build, start, verify, teardown, recovery, and remint operation has a
   Make target. Mutating targets are dry runs unless `APPLY=1` is explicit.
+- Each workstation has a distinct, non-domain `local-rescue` account protected
+  by a dedicated break-glass public key. The synthetic factory creates a
+  per-run key pair, exposes no private key to a guest artifact, and destroys it
+  after retaining only redacted access evidence. Real private key custody is
+  outside both public and private Telos repositories.
 
 ## Topology
 
@@ -240,6 +250,9 @@ Pass on both operating systems:
   `offline_credentials_expiration = 0` are asserted, including stale-cache
   behavior after an online password change; finite testing cannot prove the
   literal passage of unlimited time;
+- Windows' cached-logon count is explicitly configured above the complete
+  managed-user roster plus an administrative margin; a non-expiring cache is
+  useless if a later user silently evicts the intended traveler's entry;
 - the evidence explicitly notes that disconnected cached credentials cannot be
   revoked in phase one; and
 - service restoration recovers without rejoining or rebuilding.
@@ -314,6 +327,45 @@ Every target that creates, starts, changes, or deletes state requires
 `APPLY=1`. `homelab-factory-accept` must start from either a new run identifier
 or an explicitly selected resumable run, and must never treat a partial
 receipt as a pass.
+
+## Durable restart protocol
+
+The current implementation state, verified evidence pointer, blockers, and
+literal next action live in
+[WORKSTATION-FACTORY-STATE.md](WORKSTATION-FACTORY-STATE.md). That ledger is
+the first read after a session change; this lifecycle document is the stable
+acceptance contract.
+
+Resume without starting a guest:
+
+```sh
+git status --short
+git log -1 --oneline
+sed -n '1,240p' homelab/WORKSTATION-FACTORY-STATE.md
+make homelab-sim-deps
+make homelab-sim-auto-plan
+```
+
+Preserve unexplained local changes. A missing ignored artifact is `NOT RUN`,
+not permission to infer a prior pass. Read an existing receipt before deciding
+whether to recreate it.
+
+When the controller network-safety rehearsal itself needs fresh evidence, use:
+
+```sh
+make homelab-sim-auto-run APPLY=1
+```
+
+That cycle creates its own disposable credential, records structured private
+evidence, verifies canonical disk and firmware hashes, and tears down without
+the operator's password. Use `make homelab-sim-auto-repeat APPLY=1
+SIM_CYCLES=N` for a deliberate bounded repeatability check. Neither command
+proves the complete factory.
+
+The distinct `make homelab-sim-run APPLY=1` path is a foreground human console
+gate. Do not ask the operator to repeat it during ordinary code/test
+iteration. Repeat it only after a material change to the manual path or as the
+last rehearsal before separately authorized physical attachment.
 
 ## Evidence and promotion
 

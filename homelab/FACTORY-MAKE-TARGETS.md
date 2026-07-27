@@ -1,6 +1,6 @@
 # Workstation factory Make contract
 
-Document version: `20260727.001`
+Document version: `20260727.002`
 
 Status: interface proposal; targets marked **implemented** are available now.
 The remaining names are reserved for the local lifecycle runner. Do not attach
@@ -96,11 +96,27 @@ rather than reimplemented:
   `homelab-pxe-windows`, `homelab-pxe-verify`
 - `homelab-workstation-plan`, `homelab-workstation-verify`
 - `homelab-arch-update-check`
+- `homelab-sim-deps`, `homelab-sim-auto-plan`
 - `homelab-sim-auto-run`, `homelab-sim-auto-repeat`
 
 The aggregate factory targets may delegate to a leaf only after its inputs and
 outputs match this contract. In particular, do not claim the current simulator
 proves PXE installation, AD join, or dual boot.
+
+The simulation automation is deliberately separate from the final human gate:
+
+```sh
+make homelab-sim-deps
+make homelab-sim-auto-plan
+make homelab-sim-auto-run APPLY=1
+make homelab-sim-auto-repeat APPLY=1 SIM_CYCLES=10
+```
+
+The dependency target checks only; it does not install or update packages.
+Planning starts no guest. Automatic live targets generate and wipe their own
+one-run credential and accept no password input. `homelab-sim-run APPLY=1`
+remains the foreground operator-login cycle and is not a dependency of any
+automatic target.
 
 ## Acceptance measurements
 
@@ -119,4 +135,3 @@ measurements, assertions, and cleanup result. The final verifier also confirms:
 - optional storage absence does not delay or prevent login; and
 - no tracked or publishable artifact contains media, credentials, private
   values, or oversized generated objects.
-
