@@ -102,6 +102,11 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("FACTORY_MEDIA_SEAL", text)
         self.assertIn("WINDOWS_INSTALL_SOURCE", text)
         self.assertNotIn("homelab-pxe-all", text)
+        release_set_tool = (
+            ROOT / "homelab/bin/homelab-pxe-release-set"
+        ).read_text(encoding="utf-8")
+        self.assertIn("stage_from_install_source", release_set_tool)
+        self.assertNotIn("windows_stage.stage(argparse.Namespace", release_set_tool)
 
 
 if __name__ == "__main__":

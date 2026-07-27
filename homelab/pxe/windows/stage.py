@@ -8,10 +8,14 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from common import PAYLOADS, sha256, validate_release_name, verify_release
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+import windows_install_source  # noqa: E402
 
 DEFAULT_WIMBOOT_METADATA = (
     Path(__file__).resolve().parents[2] / "media" / "wimboot.json"
@@ -99,6 +103,92 @@ def wimboot_provenance(binary: Path, metadata_path: Path) -> dict:
     }
 
 
+def stage_tree(
+    *,
+    extracted: Path,
+    install_image: str,
+    source_iso_sha256: str,
+    wimboot: Path,
+    provenance: dict,
+    output: Path,
+    release: str,
+    base_url: str,
+) -> Path:
+    """Stage only WinPE boot files from an already verified source tree."""
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    final = output / release
+    if final.exists():
+        raise RuntimeError(f"release already exists: {final}")
+    with tempfile.TemporaryDirectory(prefix=".windows-stage-", dir=output) as stage_name:
+        staged = Path(stage_name)
+        sources = {
+            "wimboot": wimboot,
+            "bootmgr": locate_casefold(extracted, "bootmgr"),
+            "boot/BCD": locate_casefold(extracted, "boot/BCD"),
+            "boot/boot.sdi": locate_casefold(extracted, "boot/boot.sdi"),
+            "sources/boot.wim": locate_casefold(extracted, "sources/boot.wim"),
+        }
+        for relative, source in sources.items():
+            if source.is_symlink() or not source.is_file():
+                raise RuntimeError(f"unsafe or missing Windows boot input: {relative}")
+            destination = staged / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+        write_ipxe(staged / "boot.ipxe", release, base_url)
+
+        records = {}
+        for relative in (*PAYLOADS, "boot.ipxe"):
+            path = staged / relative
+            records[relative] = {
+                "size": path.stat().st_size,
+                "sha256": sha256(path),
+            }
+        manifest = {
+            "schema": 1,
+            "version": release,
+            "target": "windows",
+            "architecture": "x86_64-uefi",
+            "edition_verified": "Windows 11 Pro",
+            "install_image_source": Path(install_image).name,
+            "redistributable": False,
+            "source_iso_sha256": source_iso_sha256,
+            "wimboot_sha256": sha256(wimboot),
+            "wimboot_provenance": provenance,
+            "artifacts": records,
+        }
+        (staged / "release.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        errors = verify_release(staged, release)
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        staged.rename(final)
+    return final
+
+
+def stage_from_install_source(args: argparse.Namespace) -> Path:
+    """Stage from the sealed, complete extracted source without host extractors."""
+    validate_release_name(args.release)
+    wimboot = args.wimboot.resolve(strict=True)
+    if not wimboot.is_file():
+        raise RuntimeError("wimboot input must be a regular file")
+    provenance = wimboot_provenance(
+        wimboot, args.wimboot_metadata.resolve(strict=True))
+    receipt = windows_install_source.verify_cache(
+        args.install_source, args.source_iso_sha256)
+    return stage_tree(
+        extracted=args.install_source,
+        install_image=receipt["install_image"],
+        source_iso_sha256=receipt["source_iso_sha256"],
+        wimboot=wimboot,
+        provenance=provenance,
+        output=args.output,
+        release=args.release,
+        base_url=args.base_url,
+    )
+
+
 def stage(args: argparse.Namespace) -> Path:
     validate_release_name(args.release)
     iso = args.iso.resolve(strict=True)
@@ -117,62 +207,28 @@ def stage(args: argparse.Namespace) -> Path:
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    final = output / args.release
-    if final.exists():
-        raise RuntimeError(f"release already exists: {final}")
-
     with tempfile.TemporaryDirectory(prefix=".windows-extract-", dir=output) as extract_name:
         extracted = Path(extract_name)
         run(["7z", "x", "-tUdf", "-y", f"-o{extracted}", str(iso)])
         install_image = assert_windows_11_pro(extracted)
-        with tempfile.TemporaryDirectory(prefix=".windows-stage-", dir=output) as stage_name:
-            staged = Path(stage_name)
-            sources = {
-                "wimboot": wimboot,
-                "bootmgr": locate_casefold(extracted, "bootmgr"),
-                "boot/BCD": locate_casefold(extracted, "boot/BCD"),
-                "boot/boot.sdi": locate_casefold(extracted, "boot/boot.sdi"),
-                "sources/boot.wim": locate_casefold(extracted, "sources/boot.wim"),
-            }
-            for relative, source in sources.items():
-                destination = staged / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, destination)
-            write_ipxe(staged / "boot.ipxe", args.release, args.base_url)
-
-            records = {}
-            for relative in (*PAYLOADS, "boot.ipxe"):
-                path = staged / relative
-                records[relative] = {
-                    "size": path.stat().st_size,
-                    "sha256": sha256(path),
-                }
-            manifest = {
-                "schema": 1,
-                "version": args.release,
-                "target": "windows",
-                "architecture": "x86_64-uefi",
-                "edition_verified": "Windows 11 Pro",
-                "install_image_source": install_image,
-                "redistributable": False,
-                "source_iso_sha256": sha256(iso),
-                "wimboot_sha256": sha256(wimboot),
-                "wimboot_provenance": provenance,
-                "artifacts": records,
-            }
-            (staged / "release.json").write_text(
-                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
-            errors = verify_release(staged, args.release)
-            if errors:
-                raise RuntimeError("; ".join(errors))
-            staged.rename(final)
-    return final
+        return stage_tree(
+            extracted=extracted,
+            install_image=install_image,
+            source_iso_sha256=sha256(iso),
+            wimboot=wimboot,
+            provenance=provenance,
+            output=args.output,
+            release=args.release,
+            base_url=args.base_url,
+        )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--iso", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--iso", type=Path)
+    source.add_argument("--install-source", type=Path)
+    parser.add_argument("--source-iso-sha256")
     parser.add_argument("--wimboot", type=Path, required=True)
     parser.add_argument(
         "--wimboot-metadata", type=Path, default=DEFAULT_WIMBOOT_METADATA)
@@ -184,6 +240,13 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     try:
-        print(stage(parse_args()))
+        arguments = parse_args()
+        if arguments.install_source:
+            if not arguments.source_iso_sha256:
+                raise ValueError(
+                    "--source-iso-sha256 is required with --install-source")
+            print(stage_from_install_source(arguments))
+        else:
+            print(stage(arguments))
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
         raise SystemExit(f"error: {exc}")
