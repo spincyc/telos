@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-27T23:49:01Z"
+updated_at: "2026-07-27T23:57:01Z"
 ---
 
 # Goal
@@ -48,3 +48,8 @@ lifecycle retains bounded private evidence and verifies the exact publication
 before starting the workstation. Release `20260727.001` lacks serial-console
 arguments because it predates this implementation; mint `.002` and repeat for
 the post-kernel handoff marker.
+
+Release `.002` proved full selected image download and non-returning iPXE
+control transfer. Direct Q35 boot proved the exact kernel/initramfs valid.
+The next `.003` release adds early UART and serial-primary diagnostics to
+observe the remaining EFI-to-kernel boundary without weakening acceptance.

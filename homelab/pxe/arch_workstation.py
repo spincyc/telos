@@ -186,13 +186,17 @@ kernel ${{base}}/arch/boot/x86_64/vmlinuz-linux \\
     archiso_http_srv=${{base}}/ \\
     ip=dhcp \\
     copytoram=n \\
-    console=ttyS0,115200 console=tty0 \\
+    earlycon=uart8250,io,0x3f8,115200n8 \\
+    ignore_loglevel \\
+    console=tty0 console=ttyS0,115200n8 \\
     initrd=initramfs-linux.img
 initrd ${{base}}/arch/boot/x86_64/initramfs-linux.img
+echo TELOS IPXE PRE-BOOT: selected Arch kernel and initramfs loaded
+imgstat
 boot || goto failed
 
 :failed
-echo Arch workstation boot failed.
+echo TELOS IPXE BOOT RETURNED: Arch kernel handoff failed
 echo Verify this release and confirm that ${{base}} is reachable.
 shell
 """
