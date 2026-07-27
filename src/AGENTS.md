@@ -137,6 +137,34 @@ Page count is subordinate to clarity. Do not compress a real investigation or
 procedure into a one-page card when the steps, figures, questions, and records
 need more room.
 
+### Homelab publication format
+
+Homelab's active deliverables are version-controlled Markdown and
+human-readable HTML on GitHub Pages. New or revised homelab material does not
+require a PDF during the current implementation phase. Do not delete existing
+homelab PDFs; treat them as retained artifacts until a later publication
+decision.
+
+Apply the same instruction-and-verification standard to the active Markdown
+and HTML. Review navigation, heading hierarchy, command wrapping, callouts,
+tables, diagrams, links, and small-screen readability in the rendered site.
+Examples must remain generic and secret-free.
+
+Queue a complete homelab documentation pass after the implementation and
+network design stabilize. That pass must provide two coordinated reading
+layers:
+
+1. a concise human guide explaining purpose, normal use, maintenance,
+   recovery, decisions, and when to seek help; and
+2. a detailed operator runbook giving exact prerequisites, commands, expected
+   observations, pass criteria, failure branches, rollback, and final
+   verification.
+
+The human guide links to detail at the point it becomes useful. The operator
+runbook must not assume the reader inferred a hidden transition from the
+high-level guide. Both layers must cover initial deployment, routine operation,
+updates, diagnosis, recovery, rebuild, and handoff to a workstation owner.
+
 Before publication:
 
 - build every affected PDF;
@@ -151,6 +179,12 @@ Before publication:
 - confirm that safety and evidence boundaries survived the expansion;
 - run repository validation; and
 - promote the reviewed PDF together with its source.
+
+For a homelab-only change during the current phase, replace the PDF-specific
+items above with: build the site, inspect every affected rendered HTML page,
+run link, privacy, and repository validation, and publish the Markdown and HTML
+together. Existing homelab PDFs need not be rebuilt unless their source or
+linked artifact is intentionally changed.
 
 ## Document versions
 

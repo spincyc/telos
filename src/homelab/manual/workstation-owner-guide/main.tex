@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Workstation Owner Guide}
-  {Normal use, automatic updates, recovery, and useful evidence}{20260727.001}
+  {Normal use, automatic updates, recovery, and useful evidence}{20260727.002}
 \newcommand{\ownercheck}[2]{\par\needspace{3\baselineskip}\noindent
   \begin{tabularx}{\linewidth}{@{}p{.30\linewidth}L@{}}
   {\footnotesize\textbf{Do:} #1} & {\footnotesize\textbf{Check:} #2}\\
@@ -149,6 +149,40 @@ share may show unavailable without delaying login.}
 available.}{Open the copied file from the destination. A visible name alone
 does not prove the bytes arrived.}
 
+\section{When the home Controller is unreachable}
+
+The laptop must remain useful while the home Controller is powered off,
+isolated for maintenance, or unreachable from college. Ordinary boot, cached
+login, local files, public Internet access, and automatic operating-system
+updates do not depend on reaching it. Directory changes, optional home
+storage, PXE recovery, and newly granted access may wait until the Controller
+is available.
+
+\begin{enumerate}
+\item Connect to a known non-home network and open an ordinary HTTPS site.
+\item Sign in with an account that has previously used this laptop.
+\item Open one local file without opening an optional network share.
+\item Check the operating system's update status.
+\item Treat only the home storage or directory operation as unavailable.
+\end{enumerate}
+
+\ownercheck{Test login, one local file, public Internet access, and update
+status without the home Controller.}{The desktop opens promptly, local work
+remains present, Internet access works, and an unavailable home service does
+not produce repeated credential prompts.}
+
+\begin{gate}{Stop before changing identity}
+Stop if offline login fails, local files disappear, the laptop repeatedly
+asks for a home-service password, or normal Internet access depends on a home
+VPN that was not intentionally enabled. Collect evidence. Do not remove the
+machine from the directory, clear cached credentials, or recreate storage
+mappings.
+\end{gate}
+
+After returning home, connect normally and sign out and back in once. Confirm
+that optional storage reconnects and updates remain current. A Controller
+maintenance window must never require rebuilding a workstation.
+
 \section{Recovery ladder}
 
 Use this order. Stop as soon as normal operation returns; do not stack
@@ -263,7 +297,7 @@ previous copy until the new PDF opens locally.
 
 \ownercheck{Disconnect every network and open the shortcut in each operating
 system.}{The title is ``Workstation Owner Guide,'' footer version is
-\texttt{20260727.001}, all pages render, and the recovery ladder needs no link.}
+\texttt{20260727.002}, all pages render, and the recovery ladder needs no link.}
 \ownercheck{After an update, compare its version with the published
 manifest.}{The new digest matches and the previous readable copy remains until
 acceptance is complete.}

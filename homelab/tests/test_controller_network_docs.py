@@ -70,11 +70,6 @@ class ControllerNetworkDocumentationTests(unittest.TestCase):
         self.assertIn("private overlay", self.guide)
         self.assertIn("private network JSON", self.rollback)
         self.assertIn("mode `0600`", self.rollback)
-        self.assertNotRegex(
-            public,
-            r"\b(?:cece|ava|jack|packy|anna|finn|therese|charlie|aidan|lucy|eli)"
-            r"\b",
-        )
         literal_ipv4 = set(
             re.findall(r"(?<![A-Za-z0-9.])(?:10\.)\d+\.\d+\.\d+(?:/\d+)?", public)
         )

@@ -1,5 +1,7 @@
 # Workstation Owner Guide
 
+Version `20260727.002`
+
 This is the first-stop guide for someone using a Telos Windows 11 and Arch
 laptop away from home. It covers normal use, automatic updates, optional
 storage, safe recovery, and the evidence that makes remote help effective.
@@ -78,6 +80,37 @@ It is not your home directory.
 When copying important work to a backup, open the copied file from the
 destination. A visible filename does not prove its bytes arrived.
 
+## When the home Controller is unreachable
+
+The laptop must remain useful while the home Controller is powered off,
+isolated for maintenance, or unreachable from college. Ordinary boot, cached
+login, local files, public Internet access, and automatic operating-system
+updates do not depend on reaching it. Directory changes, optional home
+storage, PXE recovery, and newly granted access may wait until the Controller
+is available.
+
+Use this check before blaming the laptop:
+
+1. Connect to a known non-home network and open an ordinary HTTPS site.
+2. Sign in with an account that has previously used this laptop.
+3. Open one local file without opening an optional network share.
+4. Check the operating system's update status.
+5. Treat only the home storage or directory operation as unavailable.
+
+**Verify:** local login and files work, the public Internet works, and an
+unavailable home service does not delay the desktop or produce repeated
+credential prompts.
+
+**Stop if:** login fails offline, local files disappear, the laptop repeatedly
+asks for a home-service password, or normal Internet access depends on a home
+VPN that was not intentionally enabled. Collect evidence; do not remove the
+machine from the directory, clear cached credentials, or recreate storage
+mappings.
+
+After returning home, connect normally and sign out and back in once. Confirm
+that optional storage reconnects and that updates remain current. A Controller
+maintenance window must never require rebuilding a workstation.
+
 ## Recovery ladder
 
 Use this order and stop as soon as normal operation returns:
@@ -137,4 +170,4 @@ update copies a new version, verifies its SHA-256 digest, then changes the
 shortcut. The previous copy remains until the new one opens successfully.
 
 Disconnect every network and open the shortcut. Verify the footer says
-`20260727.001` and the recovery ladder is readable without following a link.
+`20260727.002` and the recovery ladder is readable without following a link.

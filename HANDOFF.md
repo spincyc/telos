@@ -19,6 +19,9 @@ homelab. The decisions are the contract; the code is an implementation of them.
   speed-to-first-run against thoroughness, take the speed. ADR 0062 records this.
 - **Never run `sudo` unasked.** Hand privileged commands to the owner with the
   exact argv.
+- **Homelab is Markdown/HTML-first for now.** Homelab changes do not require
+  new or rebuilt PDFs during the active implementation phase. Keep existing
+  PDFs, but publish and review the human-readable GitHub Pages path.
 
 ## What this repository is
 
@@ -69,6 +72,26 @@ layouts are expected.
 not authorize or imply a generic agent launcher.
 
 ## Homelab: where things stand
+
+### Documentation queue
+
+After implementation and the network design stabilize, make a complete
+documentation pass in two linked layers:
+
+- a terse human guide for purpose, ordinary use, maintenance, recovery, and
+  knowing when to ask for help; and
+- an exact operator runbook with prerequisites, commands, expected output,
+  pass/fail gates, troubleshooting, rollback, rebuild, and final verification.
+
+Cover Controller deployment and attachment, UniFi configuration, directory and
+PXE operation, workstation minting, automatic updates, travel/offline use,
+normal maintenance, fault recovery, and owner handoff. Keep the public layer
+generic and secret-free; instance values belong in the private overlay.
+
+The active deliverables are source Markdown and rendered GitHub Pages HTML.
+Review the rendered pages for navigation, command wrapping, callouts, diagrams,
+links, and small-screen use. Do not delete the existing homelab PDFs, and do
+not let PDF work block the implementation cycle.
 
 ### The shape
 

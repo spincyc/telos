@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Provisioning Design}
-  {Network boot, the authorization boundary, and how it is tested}{20260726.001}
+  {Network boot, the authorization boundary, and how it is tested}{20260727.002}
 
 \begin{document}
 \telosmasthead[High-level design]
@@ -96,7 +96,7 @@ plus that typed confirmation \emph{is} the authorization model.
 
 \begin{telosfacts}[0.20]
 \telosfact{Why the split}{TFTP is unauthenticated and slow, so it carries only the first-stage loader. Kernels, initramfs images and the root filesystem travel over HTTP, where they can be checksummed against a published manifest. \governedby{ADR 0044, ADR 0048}}
-\telosfact{One DHCP authority}{Never two on one segment, at any stage, including transitions. Where external infrastructure already owns DHCP, the bootstrap host runs in ProxyDHCP mode and supplies boot options only. \governedby{ADR 0008, ADR 0052}}
+\telosfact{One DHCP authority}{Never two on one segment, at any stage, including transitions. Where UniFi owns DHCP, UniFi supplies the approved boot-server and boot-filename options; Controller ProxyDHCP is excluded. An isolated bench may instead use Controller DHCP as its sole authority. \governedby{ADR 0008, ADR 0066, ADR 0074}}
 \telosfact{No menu}{The iPXE script boots exactly one thing. A menu with a single entry is a timeout waiting to select the wrong option.}
 \telosfact{Checksums, not signatures}{During Milestone A artifact integrity comes from a published SHA-256 manifest that the installer verifies before use. Authenticated boot is Milestone B. \governedby{ADR 0043}}
 \end{telosfacts}

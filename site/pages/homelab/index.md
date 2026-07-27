@@ -15,6 +15,7 @@ leaks into a published source.
 |---|---|---|
 | **Controller Design** | What the Controller owns, what it deliberately does not, storage and network boundaries, the install-once/converge-continuously split | [PDF](../../doc/homelab/design/controller.pdf) |
 | **Network Design** | Right-sized private networks, UniFi configuration order, traffic policy, PXE and restricted managed Wi-Fi | [PDF](../../doc/homelab/design/network.pdf) |
+| **Controller Network Gate** | Safely attach the proven bootstrap VM as an ordinary client on a restricted UniFi network, verify isolation, and roll back | [HTML](controller-network-gate/index.md) |
 | **Controller Rebuild** | Bare metal to serving DHCP, written on the assumption that the Controller is dead and nothing it hosted is available | [PDF](../../doc/homelab/manual/controller-rebuild.pdf) |
 | **Workstation Factory** | Isolated bootstrap through a verified Windows/Arch workstation, with every gate and failure branch | [HTML](workstation-factory/index.md) · [PDF](../../doc/homelab/manual/workstation-factory.pdf) |
 | **Workstation Owner Guide** | Normal use, automatic updates, travel checks, recovery, and a secret-free help bundle for the person carrying the laptop | [HTML](workstation-owner-guide/index.md) · [PDF](../../doc/homelab/manual/workstation-owner-guide.pdf) |
@@ -35,6 +36,8 @@ The active phase is deliberately narrower than the older Controller design:
 - User files remain local. Optional SMB storage must never block login.
 
 [Open the step-by-step workstation factory →](workstation-factory/index.md)
+
+[Attach and verify the bootstrap Controller →](controller-network-gate/index.md)
 
 ## Stable shape
 
