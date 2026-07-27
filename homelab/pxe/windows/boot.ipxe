@@ -1,0 +1,10 @@
+#!ipxe
+isset ${release} || echo release variable is required
+isset ${release} || exit 1
+set release-root http://boot.ad.home.arpa/windows/${release}
+kernel ${release-root}/wimboot
+initrd ${release-root}/bootmgr bootmgr
+initrd ${release-root}/boot/BCD BCD
+initrd ${release-root}/boot/boot.sdi boot.sdi
+initrd ${release-root}/sources/boot.wim boot.wim
+boot

@@ -9,3 +9,4 @@ __pycache__/
 # ADR 0046: private homelab instance data. Real hostnames, addresses, interface
 # names, disk serials and per-machine inventory never enter the published site.
 /homelab/instance/
+/homelab/var/

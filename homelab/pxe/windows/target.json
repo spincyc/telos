@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "windows",
+  "kind": "windows",
+  "entrypoints": [
+    "boot.ipxe"
+  ],
+  "local_input_only": true,
+  "redistributable": false
+}
