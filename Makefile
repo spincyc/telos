@@ -54,10 +54,14 @@ DOC_ROOT := doc
 SITE_TOOL := scripts/site
 ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
+WINDOWS_INSTALL_SOURCE ?= homelab/var/media/windows/install-source
 WINDOWS_25H2_EN_US_ISO ?= Win11_25H2_English_x64_v2.iso
 WINDOWS_25H2_EN_US_SHA256 := 768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3
+WINDOWS_INSTALL_SHA256 ?= $(WINDOWS_25H2_EN_US_SHA256)
 WIMBOOT ?= homelab/var/media/wimboot
 SIM_CYCLES ?= 2
+FACTORY_CONTROLLER_BUNDLE ?= homelab/var/factory/controller-convergence.iso
+FACTORY_DURATION ?= 120
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -98,6 +102,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-converge-check homelab-bootstrap-deps \
 	homelab-media homelab-media-arch homelab-media-windows \
 	homelab-media-windows-25h2-en-us \
+	homelab-stage-windows-source \
 	homelab-media-wimboot homelab-bootstrap-seed \
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
@@ -116,6 +121,10 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-pxe-publish homelab-pxe-rollback \
 	homelab-workstation-plan homelab-workstation-verify \
 	homelab-arch-update-check homelab-arch-update-test \
+	homelab-factory-deps homelab-factory-media \
+	homelab-factory-cache-seal homelab-factory-offline-check \
+	homelab-factory-controller-bundle homelab-factory-pxe \
+	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
@@ -222,8 +231,75 @@ homelab-media-windows-25h2-en-us:
 		--expected-sha256 '$(WINDOWS_25H2_EN_US_SHA256)' \
 		--output '$(WINDOWS_ISO_CACHE)'
 
+homelab-stage-windows-source:
+	@homelab/bin/homelab-stage-windows-source \
+		--iso '$(WINDOWS_ISO_CACHE)' \
+		--expected-sha256 '$(WINDOWS_INSTALL_SHA256)' \
+		--output '$(WINDOWS_INSTALL_SOURCE)'
+
 homelab-media-wimboot:
 	@homelab/bin/homelab-fetch-wimboot --output '$(WIMBOOT)'
+
+# Local factory acquisition is the only aggregate stage allowed to fetch.
+# Everything below homelab-factory-cache-seal consumes the ignored cache.
+homelab-factory-deps: homelab-bootstrap-deps
+
+homelab-factory-media: homelab-media
+
+homelab-factory-cache-seal:
+	@test -f '$(ARCH_ISO)' || { echo 'missing verified Arch ISO: $(ARCH_ISO)' >&2; exit 2; }
+	@test -f '$(ARCH_ISO).receipt.json' || { echo 'missing Arch receipt: $(ARCH_ISO).receipt.json' >&2; exit 2; }
+	@test -f '$(WINDOWS_ISO_CACHE)' || { echo 'missing Windows ISO: $(WINDOWS_ISO_CACHE)' >&2; exit 2; }
+	@test -f '$(WIMBOOT)' || { echo 'missing wimboot: $(WIMBOOT)' >&2; exit 2; }
+	@expected="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' '$(ARCH_ISO).receipt.json')"; \
+		actual="$$(sha256sum '$(ARCH_ISO)' | cut -d' ' -f1)"; \
+		test "$$actual" = "$$expected" || { echo 'Arch ISO digest mismatch' >&2; exit 1; }; \
+		echo 'PASS: Arch ISO matches receipt'
+	@homelab/bin/homelab-verify-windows \
+		--iso '$(WINDOWS_ISO_CACHE)' \
+		--sha256 '$(WINDOWS_25H2_EN_US_SHA256)' \
+		--receipt '$(WINDOWS_ISO_CACHE).verification.json'
+	@expected="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' homelab/media/wimboot.json)"; \
+		expected_size="$$($(PYTHON) -c 'import json,sys; print(json.load(open(sys.argv[1]))["size"])' homelab/media/wimboot.json)"; \
+		actual="$$(sha256sum '$(WIMBOOT)' | cut -d' ' -f1)"; \
+		actual_size="$$(stat -c %s '$(WIMBOOT)')"; \
+		test "$$actual" = "$$expected" || { echo 'wimboot digest mismatch' >&2; exit 1; }; \
+		test "$$actual_size" = "$$expected_size" || { echo 'wimboot size mismatch' >&2; exit 1; }; \
+		echo 'PASS: wimboot matches pinned metadata'
+	@printf '%s\n' 'PASS: local factory media cache is sealed'
+
+homelab-factory-offline-check: homelab-factory-cache-seal
+	@printf '%s\n' \
+		'PASS: required local inputs verify without acquisition' \
+		'Network isolation is enforced by the lifecycle runner, not this cache check.'
+
+# This ISO contains a generated synthetic AD password. It is ignored, mode
+# 0600, and must be deleted by the lifecycle runner after controller convergence.
+homelab-factory-controller-bundle:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to build the ephemeral controller bundle'; \
+		$(PYTHON) homelab/vm/controller_factory.py --print-guest-command; \
+	else \
+		$(PYTHON) homelab/vm/controller_factory.py \
+			--output '$(FACTORY_CONTROLLER_BUNDLE)'; \
+	fi
+
+# Build the three immutable PXE leaves from already-local inputs. Arch requires
+# an extracted/mounted ISO tree; this target never mounts media or downloads.
+homelab-factory-pxe: homelab-factory-offline-check
+	@if [ -z '$(VERSION)' ] || [ -z '$(CONTROLLER_SOURCE)' ] || [ -z '$(ARCH_SOURCE)' ]; then \
+		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<netboot tree> ARCH_SOURCE=<mounted Arch ISO>' >&2; \
+		exit 2; \
+	fi
+	@$(MAKE) --no-print-directory homelab-pxe-all \
+		VERSION='$(VERSION)' \
+		CONTROLLER_SOURCE='$(CONTROLLER_SOURCE)' \
+		CONTROLLER_BASE_URL='$(or $(CONTROLLER_BASE_URL),http://10.1.31.2/controller/$(VERSION))' \
+		ARCH_SOURCE='$(ARCH_SOURCE)' \
+		ARCH_BASE_URL='$(or $(ARCH_BASE_URL),http://10.1.31.2/arch/$(VERSION))' \
+		WINDOWS_ISO='$(WINDOWS_ISO_CACHE)' \
+		WIMBOOT='$(WIMBOOT)' \
+		WINDOWS_BASE_URL='$(or $(WINDOWS_BASE_URL),http://10.1.31.2/windows/$(VERSION))'
 
 homelab-bootstrap-seed:
 	@$(PYTHON) homelab/seed/build.py \
@@ -379,7 +455,7 @@ homelab-bootstrap-network-teardown:
 homelab-sim-plan:
 	@$(PYTHON) homelab/vm/simulated_topology.py
 
-homelab-sim-run:
+homelab-sim-run: homelab-sim-deps
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to run one isolated cycle'; \
 		$(PYTHON) homelab/vm/simulated_topology.py; \
@@ -399,7 +475,7 @@ homelab-sim-deps:
 	done; \
 	test "$$missing" -eq 0
 
-homelab-sim-repeat:
+homelab-sim-repeat: homelab-sim-deps
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 SIM_CYCLES=<positive integer>'; \
 		$(PYTHON) homelab/vm/simulated_topology.py; \
@@ -438,6 +514,19 @@ homelab-sim-auto-repeat: homelab-sim-deps
 			$(PYTHON) homelab/vm/simulated_topology.py --automated --apply; \
 			cycle=$$((cycle + 1)); \
 		done; \
+	fi
+
+# Bounded concurrent Controller/workstation factory skeleton. State is always
+# disposable and its switch listens only on loopback.
+homelab-factory-sim-plan:
+	@$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)')
+
+homelab-factory-sim-run: homelab-sim-deps
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to run the bounded factory skeleton'; \
+		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)'); \
+	else \
+		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') --apply; \
 	fi
 
 # Converge only the temporary Controller role. The private inventory supplies
@@ -629,6 +718,8 @@ help:
 		'make homelab-sim-auto-repeat APPLY=1 SIM_CYCLES=2' \
 		'make homelab-sim-check   Run simulation acceptance tests' \
 		'make homelab-sim-repeat APPLY=1 SIM_CYCLES=2' \
+		'make homelab-factory-sim-plan  Plan the bounded factory skeleton' \
+		'make homelab-factory-sim-run APPLY=1 FACTORY_DURATION=120' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

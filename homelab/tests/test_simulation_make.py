@@ -30,6 +30,8 @@ class SimulationMakeTests(unittest.TestCase):
             "homelab-sim-auto-plan",
             "homelab-sim-auto-run",
             "homelab-sim-auto-repeat",
+            "homelab-factory-sim-plan",
+            "homelab-factory-sim-run",
         ):
             self.assertIn(name, phony)
             self.assertIn(f"{name}:", MAKEFILE)
@@ -101,12 +103,50 @@ class SimulationMakeTests(unittest.TestCase):
         for forbidden in ("pacman", "sudo", "install-dependencies"):
             self.assertNotIn(forbidden, body)
 
+    def test_every_applied_runner_checks_dependencies_first(self):
+        for name in (
+            "homelab-sim-run",
+            "homelab-sim-repeat",
+            "homelab-sim-auto-run",
+            "homelab-sim-auto-repeat",
+        ):
+            first_line = target(name).splitlines()[0]
+            self.assertIn("homelab-sim-deps", first_line)
+
     def test_check_covers_all_homelab_acceptance_suites(self):
         body = target("homelab-sim-check")
         self.assertIn(
             "unittest discover -s homelab/tests -t . -v", body)
         self.assertIn("PYTHONPATH=.", body)
         self.assertNotIn("-p 'test_sim*.py'", body)
+
+    def test_factory_runner_is_separate_and_apply_gated(self):
+        plan = target("homelab-factory-sim-plan")
+        run = target("homelab-factory-sim-run")
+        self.assertIn("factory_runner.py", plan)
+        self.assertNotIn("--apply", plan)
+        self.assertNotIn("simulated_topology.py", plan + run)
+        self.assertIn("homelab-sim-deps", run.splitlines()[0])
+        self.assertIn("if [ '$(APPLY)' != 1 ]", run)
+        self.assertEqual(run.count("--apply"), 1)
+        for option in (
+            "FACTORY_DURATION",
+            "FACTORY_CONTROLLER_STATE",
+            "WORKSTATION_ISO",
+        ):
+            self.assertIn(option, plan)
+            self.assertIn(option, run)
+
+    def test_factory_runner_make_surface_has_no_network_mutators(self):
+        combined = target("homelab-factory-sim-plan") + target(
+            "homelab-factory-sim-run")
+        for forbidden in (
+            "sudo",
+            "NETWORK_CONFIG",
+            "homelab-host-network",
+            "--network",
+        ):
+            self.assertNotIn(forbidden, combined)
 
 
 if __name__ == "__main__":
