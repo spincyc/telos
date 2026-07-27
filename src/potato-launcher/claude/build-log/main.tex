@@ -38,7 +38,20 @@ exists because somebody, somewhere, guessed instead of checking.
 \telosfact{Builder}{\rule{0.72\linewidth}{0.4pt}}
 \telosfact{Adult in charge}{\rule{0.72\linewidth}{0.4pt}}
 \telosfact{Build started}{\rule{0.34\linewidth}{0.4pt}\qquad Finished \rule{0.30\linewidth}{0.4pt}}
+\telosfact{Launcher ID}{\rule{0.32\linewidth}{0.4pt}\qquad Log page \rule{0.12\linewidth}{0.4pt} of \rule{0.12\linewidth}{0.4pt}}
 \end{telosfacts}
+
+\section{Before work --- questions that must have answers}
+\begin{tabularx}{\linewidth}{@{}p{0.48\linewidth}L@{}}
+\toprule
+\textbf{Question} & \textbf{Answer / evidence location}\\
+\midrule
+Which drawing revision governs this build? & \rule{0.86\linewidth}{0.4pt}\\[0.55em]
+Are all pressure parts new, undamaged, and traceable? & \rule{0.86\linewidth}{0.4pt}\\[0.55em]
+Which adult may stop the work without discussion? & \rule{0.86\linewidth}{0.4pt}\\[0.55em]
+Where will rejected parts be marked and isolated? & \rule{0.86\linewidth}{0.4pt}\\
+\bottomrule
+\end{tabularx}
 
 \section{Materials --- copy from the printing on the pipe}
 \begin{tabularx}{\linewidth}{@{}p{0.20\linewidth}p{0.16\linewidth}p{0.24\linewidth}L@{}}
@@ -71,6 +84,15 @@ Barrel & \rule{0.8\linewidth}{0.4pt} & \rule{0.8\linewidth}{0.4pt} & \rule{0.8\l
 \end{tabularx}
 \governedby{Craft 1 and Craft 2}
 
+\begin{telosframe}
+\textbf{Measurement record.} Tool used \rule{0.24\linewidth}{0.4pt}\quad
+Tool condition checked \rule{0.20\linewidth}{0.4pt}\quad
+Reference end marked \rule{0.16\linewidth}{0.4pt}\par
+\smallskip
+If the two readings disagree, do not average them. Find the cause, mark the
+piece HOLD, and record the decision on the fault page.
+\end{telosframe}
+
 \section{Every end deburred and chamfered}
 \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}p{0.16\linewidth}p{0.16\linewidth}L@{}}
 \toprule
@@ -83,6 +105,22 @@ Barrel, muzzle & \rule{0.7\linewidth}{0.4pt} & \rule{0.7\linewidth}{0.4pt} & \ru
 \bottomrule
 \end{tabularx}
 \governedby{Craft 3}
+
+\section{First inspection hold point}
+\begin{tabularx}{\linewidth}{@{}p{0.45\linewidth}p{0.18\linewidth}L@{}}
+\toprule
+\textbf{Evidence reviewed} & \textbf{Pass / hold} & \textbf{Inspector, date, time}\\
+\midrule
+Ratings copied and legible on the actual parts & & \\[0.6em]
+Lengths independently re-read from the reference end & & \\[0.6em]
+Four-position squareness and every edge examined & & \\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{A blank is a hold, not a pass}
+The inspector asks: What did you observe? What did you measure? Where is it
+written? If an answer depends on memory, stop and make the observation again.
+\end{gate}
 
 \newpage
 \section{Joints --- the page that matters most}
@@ -100,6 +138,24 @@ Reducer to barrel & \rule{0.85\linewidth}{0.4pt} & \rule{0.7\linewidth}{0.4pt} &
 \bottomrule
 \end{tabularx}
 \governedby{Craft 4}
+
+\section{Joint-by-joint inspection record}
+\begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}p{0.18\linewidth}p{0.20\linewidth}L@{}}
+\toprule
+\textbf{Joint} & \textbf{Dry fit / insertion mark} & \textbf{Observed defect?} & \textbf{Disposition / initials}\\
+\midrule
+Cleanout to chamber & & & \\[0.8em]
+Chamber to reducer & & & \\[0.8em]
+Reducer to barrel & & & \\
+\bottomrule
+\end{tabularx}
+
+\begin{telosframe}
+\textbf{Intermediate question.} Is the bead truly continuous, or merely hidden
+from view? Rotate the whole assembly under good light. Record any gap, movement,
+misalignment, contamination, or uncertainty as a fault. Do not fill a suspect
+gap or ``touch up'' a cured joint; reject and remake the affected assembly.
+\end{telosframe}
 
 \vspace{0.4em}
 \begin{gate}{The cure gate --- compute it, do not estimate it}
@@ -127,6 +183,76 @@ Epoxy fully cured before first pressure & \rule{0.7\linewidth}{0.4pt}\\
 \end{tabularx}
 \governedby{Craft 5}
 
+\begin{telosframe}
+\textbf{Igniter inspection note.} Lighting used \rule{0.19\linewidth}{0.4pt}
+\quad Magnification used \rule{0.15\linewidth}{0.4pt}
+\quad Inspection date/time \rule{0.22\linewidth}{0.4pt}\par
+\smallskip
+Question raised during inspection: \rule{0.64\linewidth}{0.4pt}\par
+\smallskip
+Evidence that resolved it: \rule{0.70\linewidth}{0.4pt}
+\end{telosframe}
+
+\newpage
+\section{Fault, hold, and remake record}
+Use one row for every departure from the drawing, procedure, or expected
+appearance. ``No fault found'' is a result only after the inspection is written
+down. Rejected pressure parts are never repaired for launcher use.
+
+\begin{tabularx}{\linewidth}{@{}p{0.10\linewidth}p{0.25\linewidth}p{0.20\linewidth}p{0.20\linewidth}L@{}}
+\toprule
+\textbf{ID} & \textbf{Observation / measurement} & \textbf{Immediate hold} &
+\textbf{Decision and reason} & \textbf{Verified by}\\
+\midrule
+& & & & \\[1.15em]
+& & & & \\[1.15em]
+& & & & \\[1.15em]
+& & & & \\[1.15em]
+& & & & \\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Permitted dispositions}
+\textbf{Accept} only when the drawing and every stated criterion are met.
+\textbf{Remake} means a new part or assembly, followed by every earlier check
+that the replacement affects. \textbf{Retire} means mark it permanently, isolate
+it, and make it unusable. There is no ``use carefully,'' ``probably fine,'' or
+performance-based exception.
+\end{telospanel}
+
+\section{Remake trace}
+\begin{tabularx}{\linewidth}{@{}p{0.13\linewidth}p{0.22\linewidth}p{0.22\linewidth}L@{}}
+\toprule
+\textbf{Fault ID} & \textbf{Removed part marked / isolated} &
+\textbf{Replacement identity} & \textbf{Checks repeated; pages / initials}\\
+\midrule
+& & & \\[0.9em]
+& & & \\[0.9em]
+& & & \\
+\bottomrule
+\end{tabularx}
+
+\section{Final dimensional and visual proof}
+\begin{tabularx}{\linewidth}{@{}p{0.43\linewidth}p{0.22\linewidth}L@{}}
+\toprule
+\textbf{Proof item} & \textbf{Observed / measured} & \textbf{Witness, date, time}\\
+\midrule
+Overall assembly matches the governing drawing & & \\[0.7em]
+Chamber and barrel identity markings remain legible & & \\[0.7em]
+All joint beads viewed through a full rotation & & \\[0.7em]
+No crack, craze, whitening, deformation, or loose part & & \\[0.7em]
+Cure-gate calculation independently checked & & \\[0.7em]
+All fault IDs closed by accept, remake, or retire & & \\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Final release is not a firing test}
+Do not use firing to prove that construction is sound. Release means only that
+the documented build and inspection criteria have been met. It does not waive
+the separate pre-firing inspection, site controls, or adult stop authority.
+\end{gate}
+
+\newpage
 \section{Pre-firing inspection --- all ten, every session}
 Run the Craft 6 list. Initial each. Any single failure stops the session.
 
@@ -148,15 +274,15 @@ Run the Craft 6 list. Initial each. Any single failure stops the session.
 \end{tabularx}
 \governedby{Craft 6}
 
-\section{Firing record}
-\begin{tabularx}{\linewidth}{@{}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}L@{}}
+\section{Session record --- observation, not optimization}
+\begin{tabularx}{\linewidth}{@{}p{0.13\linewidth}p{0.18\linewidth}p{0.16\linewidth}p{0.16\linewidth}L@{}}
 \toprule
-\textbf{Date} & \textbf{Fuel dose} & \textbf{Angle} & \textbf{Range} & \textbf{Notes / anything unexpected}\\
+\textbf{Date} & \textbf{Adult in charge} & \textbf{Site / backstop} &
+\textbf{Inspection result} & \textbf{Unexpected observation / stop decision}\\
 \midrule
-& & & & \\[0.9em]
-& & & & \\[0.9em]
-& & & & \\[0.9em]
-& & & & \\[0.9em]
+& & & & \\[1.0em]
+& & & & \\[1.0em]
+& & & & \\[1.0em]
 & & & & \\
 \bottomrule
 \end{tabularx}
@@ -168,11 +294,21 @@ new one. Record the date and the reason here:
 \rule{0.5\linewidth}{0.4pt}
 \end{telosframe}
 
+\section{Final proof and custody}
+\begin{tabularx}{\linewidth}{@{}p{0.45\linewidth}L@{}}
+\toprule
+\textbf{Statement} & \textbf{Name / initials / date}\\
+\midrule
+Builder: entries were made at the time of the work & \\[0.7em]
+Inspector: evidence was checked, not reconstructed from memory & \\[0.7em]
+Adult in charge: open faults and holds are understood & \\[0.7em]
+Log stored with launcher at & \rule{0.60\linewidth}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+
 \begin{telospanel}{Why a form, and not just care}
-Because memory is confident and wrong. ``I'm fairly sure we glued it Friday'' is
-not a cure time, and the person saying it is not lying --- they genuinely believe
-it. A written date removes the argument entirely, and it removes it in advance,
-which is when removing arguments is useful. Every serious workshop, laboratory
-and aircraft hangar in the world runs on exactly this idea.
+Memory is confident and wrong. ``I'm fairly sure'' is not evidence. A dated
+entry removes the argument before it begins and lets another person verify the
+same facts.
 \end{telospanel}
 \end{document}

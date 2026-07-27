@@ -79,15 +79,51 @@ threads alone to hold pressure.
 
 \section{Method for the igniter electrodes}
 \begin{enumerate}
-\item Mark both positions, roughly a third of the way along the chamber from the breech, well clear of any welded joint. \sheetref{Craft 1: Measure \& Mark}
-\item Pilot-drill small and slow. Check the pilot is where you meant it before opening up.
+\item Mark both positions from the drawing, well clear of any welded joint.
+Write the specified hole diameter beside each cross. Measure the distance to
+the nearest socket edge and record it before cutting. \sheetref{Craft 1: Measure \& Mark}
+\item Pilot-drill small and slow. Stop and measure the pilot centre from the
+same datum. If it is not where the drawing puts it, remake the part; do not
+steer, slot or overlap the hole.
 \item Open to size with a step drill, backing off pressure at breakthrough.
-\item Deburr both sides of the hole. A burr under a washer stops it seating flat. \sheetref{Craft 3: Deburr \& Chamfer}
+\item Measure the finished hole in two directions, $90^\circ$ apart. Both
+readings must match the drawing and each other. An oval or oversize hole is a
+remake. Deburr both sides. \sheetref{Craft 3: Deburr \& Chamfer}
 \item Fit the screw with a washer inside and out, and a nut inside. Do not overtighten --- PVC creeps, and a nut torqued hard today is loose next month.
 \item Set the internal electrode gap at 3 to 5\,mm and \textbf{test the spark before sealing anything}, with the chamber open.
 \item Seal the outside face with an epoxy fillet all the way round the screw. The epoxy is the pressure seal; the nut only holds position.
 \item Let the epoxy cure fully before the chamber sees any pressure.
 \end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \foreach \x/\n/\lab in {0/1/mark,2.15/2/pilot,4.30/3/measure,6.45/4/inspect}{
+    \node[cflabel,anchor=south] at (\x+.78,1.48) {\n.\ \lab};
+    \fill[telosfill] (\x,.45) rectangle (\x+1.56,1.05);
+    \draw[craftheavy] (\x,.45) rectangle (\x+1.56,1.05);
+  }
+  \draw[craftdetail] (.63,.63)--(.93,.87);
+  \draw[craftdetail] (.63,.87)--(.93,.63);
+  \draw[craftdetail] (2.93,.75) circle (.09);
+  \draw[craftline] (4.72,.45)--(4.72,1.05);
+  \draw[craftline] (5.44,.45)--(5.44,1.05);
+  \draw[<->,craftdetail] (4.72,.27)--node[below,font=\scriptsize]{two axes}(5.44,.27);
+  \draw[craftheavy] (7.23,.75) circle (.25);
+  \foreach \a in {25,115,205,295}
+    {\draw[craftdetail] (7.23,.75)--++(\a:.42);}
+  \draw[->,craftdetail] (1.65,.75)--(2.05,.75);
+  \draw[->,craftdetail] (3.80,.75)--(4.20,.75);
+  \draw[->,craftdetail] (5.95,.75)--(6.35,.75);
+\end{tikzpicture}
+\end{center}
+
+\begin{gate}{Four stops before sealant}
+\textbf{After marking:} Is the centre referenced to a datum, not guessed?
+\textbf{After the pilot:} Is it still on the cross?
+\textbf{After opening:} Do two diameter readings agree?
+\textbf{After deburring:} Does raking light show a clean, round edge with no
+white lines? Record each answer. A doubtful answer means remake, not repair.
+\end{gate}
 
 \begin{gate}{Test before you seal}
 Once the epoxy is on, changing the gap means destroying the seal. Test the spark
@@ -109,6 +145,14 @@ around the hole from several angles. You are looking for \textbf{crazing} --- a
 faint web of tiny white lines --- and for any crack, however short. Crazing means
 the material was stressed while you drilled it. Either is a reason to remake the
 part, not to seal over it.}
+
+\begin{telospanel}{Final proof}
+Before accepting the part, make one record containing the drawing diameter,
+both measured diameters, distance from the chosen datum, cure start time and
+cure-complete time. Add one close photograph in raking light before sealant and
+one after cure, with the complete fillet visible. Initial the record. This is
+proof that the checks happened; it is not permission to test with pressure.
+\end{telospanel}
 
 \begin{telospanel}{The habit worth taking away}
 Match the tool to the material rather than forcing the tool you have. A twist

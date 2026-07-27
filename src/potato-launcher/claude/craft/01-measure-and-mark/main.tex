@@ -74,6 +74,51 @@ overlaps is automatically perpendicular to the pipe axis. Draw along it.
 the two ends of the line miss each other, the paper was not aligned and the mark
 is not square --- start again rather than splitting the difference.}
 
+\section{Proof before the tool starts}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % A compact evidence sequence: establish, repeat, wrap, inspect.
+  \foreach \x/\n/\lab in {0/1/reference,3.0/2/measure twice,6.0/3/wrap + mark,9.0/4/inspect} {
+    \draw[craftline,rounded corners=2pt] (\x,0) rectangle ++(2.45,1.55);
+    \node[cfsmall,anchor=north west] at (\x+0.12,1.43) {\textbf{\n}};
+    \node[cflabel,anchor=south] at (\x+1.22,-0.34) {\lab};
+  }
+  \draw[craftheavy] (0.34,0.35) rectangle ++(1.75,0.43);
+  \draw[craftheavy] (0.34,0.27) -- (0.34,0.88);
+  \node[cfsmall,anchor=west] at (0.48,1.08) {same end};
+  \draw[craftheavy] (3.30,0.48) -- (5.12,0.48);
+  \draw[craftdetail,<->] (3.48,0.86) -- node[cfsmall,fill=telospaper] {312 mm} (4.92,0.86);
+  \draw[craftpencil] (4.92,0.30) -- (4.92,1.08);
+  \node[cfsmall] at (4.21,0.21) {312 = 312};
+  \draw[craftheavy] (6.30,0.52) -- (8.18,0.52);
+  \draw[craftdetail] (7.20,0.25) ellipse (0.18 and 0.55);
+  \draw[craftpencil] (7.26,0.18) -- (7.26,1.10);
+  \draw[craftheavy] (9.34,0.52) -- (11.20,0.52);
+  \draw[craftpencil] (10.28,0.18) -- (10.28,1.10);
+  \draw[craftdetail,<->] (9.45,0.92) -- node[cfsmall,fill=telospaper] {312 mm} (10.28,0.92);
+  \craftyes{10.82}{1.13}
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Choose one clean reference end. Ask: \emph{Is the hook seated, the tape
+straight, and my eye directly above the graduation?}
+\item Measure, put the tape down, pause, and measure again from that same end.
+Write both readings. They must agree within 1\,mm.
+\item Wrap the paper with its edge exactly meeting itself. Draw one thin line
+around the pipe and put an X on the waste side.
+\item Remove the paper. Ask: \emph{Does the line meet itself? Is the X on the
+side I intend to discard? Does a final measurement still match the cut list?}
+\end{enumerate}
+
+\begin{telospanel}{Pass, correct, or remake}
+\textbf{Pass:} two measurements agree within 1\,mm, the line closes within
+1\,mm, and the waste side is unambiguous. \textbf{Correct:} erase a faint,
+wrong mark completely and repeat the whole sequence. \textbf{Remake the cut
+plan:} if several dark lines cannot be distinguished, move to sound unmarked
+stock; never guess which line was intended.
+\end{telospanel}
+
 \section{Where error comes from, in order of size}
 \begin{tabularx}{\linewidth}{@{}p{0.24\linewidth}p{0.14\linewidth}L@{}}
 \toprule
@@ -88,11 +133,11 @@ Parallax --- eye off to one side & under 1 mm & Look straight down at the mark.\
 \bottomrule
 \end{tabularx}
 
-\checkyourself{Lay your marked pipe on the bench and roll it slowly. The line
-should stay at the same height all the way round --- if it wanders up and down,
-it is not square and the cut made from it will not be either. Then measure the
-marked length again, from the reference end, with the tape you did not use the
-first time if you have two.}
+\checkyourself{Record the proof: first reading \rule{12mm}{0.2pt}\,mm; second
+reading \rule{12mm}{0.2pt}\,mm; final reading \rule{12mm}{0.2pt}\,mm. Roll the
+pipe slowly: does the line stay at one height? \rule{9mm}{0.2pt}. Does the line
+close within 1\,mm? \rule{9mm}{0.2pt}. Is the waste X visible?
+\rule{9mm}{0.2pt}. All answers must pass before cutting.}
 
 \begin{telospanel}{Why this sheet is first}
 Every later skill is downstream of this one. A cut cannot be squarer than its

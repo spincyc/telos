@@ -67,11 +67,35 @@ to see once you know to look.
 \item Mark all the way round. A cut is only as square as its mark.
 \item Set the pipe in the mitre box with the mark aligned to the slot, and hold it against the fence so it cannot roll.
 \item Start the cut with the saw pulled backwards a couple of times to make a kerf. Do not start on the push.
-\item Saw with long strokes and light pressure, letting the guide keep the angle. Rotate the pipe a quarter turn every few strokes if the wall is thick --- this keeps the cut following the mark all the way round rather than drifting on one side.
+\item Saw with long strokes and light pressure, letting the guide keep the
+angle. If thick pipe must be turned, stop, remove the saw, rotate the pipe, and
+secure it again before restarting. Never turn stock against a moving blade.
 \item Support the offcut so it does not snap free.
 \end{enumerate}
 
 \section{Checking, and what to do if it is off}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \x/\n/\lab in {0/1/deburr,3.0/2/check four ways,6.0/3/test for rock,9.0/4/pass or remake} {
+    \draw[craftline,rounded corners=2pt] (\x,0) rectangle ++(2.45,1.55);
+    \node[cfsmall,anchor=north west] at (\x+0.12,1.43) {\textbf{\n}};
+    \node[cflabel,anchor=south] at (\x+1.22,-0.34) {\lab};
+  }
+  \draw[craftheavy] (0.42,0.38) rectangle ++(1.58,0.48);
+  \draw[craftpencil] (1.98,0.31) -- (2.13,0.48);
+  \draw[craftpencil] (1.98,0.93) -- (2.13,0.77);
+  \draw[craftdetail,->] (1.72,1.17) arc[start angle=150,end angle=25,radius=0.35];
+  \squarecheck{3.20}{0.31}{0.58}{0}
+  \draw[craftdetail,->] (4.89,0.35) arc[start angle=-50,end angle=240,radius=0.34];
+  \node[cfsmall] at (4.22,1.20) {$0^\circ,90^\circ,180^\circ,270^\circ$};
+  \draw[craftheavy] (6.30,0.32) -- (8.15,0.32);
+  \draw[craftheavy] (6.72,0.35) rectangle ++(1.00,0.78);
+  \draw[craftdetail,<->] (6.48,0.48) arc[start angle=210,end angle=330,radius=0.70];
+  \squarecheck{9.20}{0.31}{0.58}{0}
+  \craftyes{11.02}{1.10}
+\end{tikzpicture}
+\end{center}
+
 \begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}L@{}}
 \toprule
 \textbf{Test} & \textbf{What it tells you}\\
@@ -82,15 +106,23 @@ Dry-fit and rotate & Push the pipe into its fitting and rotate it. If the gap at
 \bottomrule
 \end{tabularx}
 
-If it is off: \textbf{re-cut, do not sand it true.} Sanding a 3\,in face flat by
-hand takes longer than a fresh cut, removes an unpredictable amount, and usually
-produces a face that is flat but no longer perpendicular. Pipe is cheap. Cut
-again and keep the bad piece as a test coupon for practising welds on.
+\begin{telospanel}{Inspection decision}
+First remove only loose burrs; do not reshape the face. Ask: \emph{Is there
+light at any of four square positions? Does the pipe rock on glass? Does the
+fitting shoulder gap change as the dry fit turns?}
 
-\checkyourself{Hold the try square against the pipe with the blade across the
-cut face, and hold the pair up to a window or a lamp. You are looking for light.
-Then turn the square 90 degrees around the pipe and look again, and again, and
-again --- four positions. No light in any of them means it is square.}
+\textbf{Pass} only if every answer is no and the finished length remains within
+1\,mm of the cut list. If any answer is yes, \textbf{re-cut from a new mark}.
+Do not sand the face square: it removes an unknown amount and can round the
+edge. If re-cutting would make the part undersize, \textbf{remake the part} from
+new stock. Keep the rejected piece only as a clearly marked practice coupon.
+\end{telospanel}
+
+\checkyourself{Record the final proof: finished length
+\rule{12mm}{0.2pt}\,mm; light at $0^\circ$ no / yes; $90^\circ$ no / yes;
+$180^\circ$ no / yes; $270^\circ$ no / yes; rocking no / yes; rotating shoulder
+gap no / yes. Circle \textbf{PASS / RE-CUT / REMAKE}. Only PASS proceeds to a
+joint.}
 
 \begin{telospanel}{The habit worth taking away}
 Every trade has a version of this: use a guide rather than your eye, and then

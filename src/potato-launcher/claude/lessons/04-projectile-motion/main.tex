@@ -29,9 +29,14 @@ whether the best angle is higher or lower --- and why.
 
 \lessonsection{Then on the range}
 \begin{enumerate}
-\item \textbf{Fire flat, from a measured height.} Muzzle horizontal, height $h$ measured. Time the fall from $h$, then measure how far downrange it lands. Muzzle velocity is simply distance divided by that fall time --- no clever equipment required.
-\item \textbf{Or film it.} Slow motion at 240 frames per second, with two marker flags a known distance apart in shot. Count frames between them. This is the more accurate method and boys will prefer it.
-\item \textbf{Angle series.} Three shots each at 30, 40, 45 and 50 degrees, same fuel dose, and record every range. Plot it.
+\item \textbf{Use a classroom projectile.} Roll a ball horizontally from a
+table into a clear floor area. Measure height and range; compute horizontal
+speed. Keep feet and faces out of the landing area.
+\item \textbf{Or film the ball.} Put two scale marks in the same plane as the
+motion. Count frames and report frame-rate and parallax uncertainty.
+\item \textbf{Angle series.} Use a low-energy classroom ball launcher or water
+stream within its instructions. Never use the combustion launcher to optimize
+angle or range.
 \item \textbf{Compare with Lesson 3.} You predicted a muzzle velocity from the gas law. How close was it? If it is much lower, where did the energy go?
 \end{enumerate}
 
@@ -42,22 +47,48 @@ whether the best angle is higher or lower --- and why.
 \telosfact{Range in air}{Not 45 degrees. Drag takes energy out for the whole flight, so a flatter, shorter flight loses less --- the real optimum for a blunt, light projectile is usually somewhere between 35 and 42 degrees. Your measurements should show this, and it is a genuinely satisfying disagreement with the textbook.}
 \telosfact{A potato is a bad projectile}{Light for its size, blunt, irregular and rough. Drag dominates, so it decelerates hard and falls well short of the vacuum prediction. Compare your measured range with $v^2/g$ and see how much air took.}
 \telosfact{The energy}{$\tfrac{1}{2}mv^2$. A \qty{200}{g} potato at \qty{100}{m/s} carries about \qty{1000}{J} --- comparable to a handgun round, with far more mass and less speed. This is the number that justifies every rule on the \textbf{Safety} sheet.}
-\telosfact{Your safety distance}{Fire at 45 degrees and measure the longest range you can produce. Then \textbf{double it} and treat that as the minimum clear ground. A projectile does not care what you intended.}
+\telosfact{A trajectory is not a boundary}{Never fire to discover maximum
+range and never double a measured range to invent a safety distance. Safety
+requires a walked empty range and positive earthen backstop independent of the
+equation.}
 \end{telosfacts}
 
 \lessonsection{Break it}
 \begin{telosfacts}[0.20]
-\telosfact{Change the projectile}{A potato, a wet rag wad, a tennis ball, a carrot. Same launcher, same fuel, and very different ranges. Which variables changed --- mass, drag, seal --- and which mattered most?}
-\telosfact{Fuel versus range}{Overlay your Lesson 2 fuel-dose series on the range plot. The peak should be in the same place.}
-\telosfact{Predict, then check}{Before the last shot of the day, predict the range from your own numbers and mark the spot with a flag. Then fire.}
+\telosfact{Change the model projectile}{Compare safe foam and rubber balls in a
+classroom apparatus. Record mass, diameter, and range. Never substitute
+projectiles in a combustion launcher.}
+\telosfact{Model versus data}{Overlay low-energy trials on the vacuum prediction
+and graph the residual. A mismatch is a result, not a reason to add energy.}
+\telosfact{Predict, then check}{Predict the next ball trial with an uncertainty
+interval, then measure it. The interval matters more than hitting a flag.}
 \telosfact{Wind}{Fire the same shot with and against a steady wind. A light, blunt projectile is affected far more than they expect.}
 \end{telosfacts}
 
 \begin{telospanel}{The point of the numbers}
-The reason to measure all this is not the physics grade. It is that once you
-have measured a muzzle velocity, computed the energy and seen where a 45-degree
-shot actually lands, the safety distance stops being a rule somebody imposed and
-becomes a number you worked out yourself. Nobody argues with their own
-arithmetic.
+The reason to measure is to learn where a model succeeds and fails. A measured
+classroom velocity and a calculated trajectory become evidence with stated
+uncertainty, not permission to fire or a boundary for a real range. The model
+never replaces the walked range or positive earthen backstop.
 \end{telospanel}
+\lessonsection{Measurement and acceptance}
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+\textbf{Trial} & $h$ (m) & $x$ (m) & frames & $v_x$ (m/s) &
+uncertainty / landing observation\\
+\midrule
+1 & & & & & \rule{0pt}{2.6ex}\\
+2 & & & & &\\
+3 & & & & &\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{Questions}
+Which measurements dominate uncertainty? Why does a side camera create
+parallax? Which assumptions fail for an irregular potato? Why can one accurate
+trial still fail to predict another?
+\end{telospanel}
+\begin{teloshazard}{Acceptance gate}
+Pass only when learners distinguish a vacuum model, a low-energy trial, and a
+real range boundary. No combustion-launcher shot is authorized by this lesson.
+\end{teloshazard}
 \end{document}

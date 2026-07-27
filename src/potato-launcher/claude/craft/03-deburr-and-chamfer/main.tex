@@ -75,6 +75,42 @@ directions and you should feel the chamfer as a gentle ramp, not a sharp step.
 \item \textbf{Wipe the swarf off.} Loose plastic shavings inside a chamber are exactly the debris you do not want near an igniter.
 \end{enumerate}
 
+\section{Make the evidence in order}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \x/\n/\lab in {0/1/inside lip,2.8/2/outside ramp,5.6/3/even ring,8.4/4/final proof}{
+    \node[cflabel,anchor=south] at (\x+.75,.92) {\n.\ \lab};
+    \draw[craftline] (\x,.05) rectangle (\x+1.5,.70);
+  }
+  \draw[craftheavy] (0.08,.13)--(.28,.35)--(.08,.62);
+  \draw[craftpencil] (.30,.35)--(1.25,.35);
+  \draw[craftheavy] (2.88,.13)--(3.10,.30)--(3.10,.45)--(2.88,.62);
+  \craftdim{2.88}{-.18}{3.10}{-.18}{1--2 mm}
+  \foreach \a in {0,45,...,315}
+    {\draw[craftpencil] (6.35,.37) ++(\a:.27) -- ++(\a:.38);}
+  \draw[craftheavy] (6.35,.37) circle (.29);
+  \draw[craftheavy] (9.05,.15)--(9.05,.60);
+  \draw[craftpencil] (8.90,.20)--(9.20,.55);
+  \craftyes{10.15}{.37}
+  \foreach \x in {1.72,4.52,7.32}
+    {\draw[->,craftline] (\x,.37)--(\x+.55,.37);}
+\end{tikzpicture}
+\end{center}
+
+\noindent\textbf{Ask at each arrow:} Is the inner lip gone? Is the outside ramp
+only 1--2\,mm? Does its width stay constant through one full turn? Is the end
+clean and smooth in both fingertip directions? Record the measured chamfer
+width at its narrowest and widest points: \rule{1.2cm}{.3pt}\,mm /
+\rule{1.2cm}{.3pt}\,mm.
+
+\begin{gate}{Accept, correct, or remake}
+\textbf{Accept} only when no burr catches, the full circumference carries the
+small ramp, and loose swarf is gone. \textbf{Correct} a remaining bright patch
+with a few controlled strokes, then repeat every check. \textbf{Remake} the end
+if the chamfer exceeds 2\,mm, is deeply gouged, or the pipe end is no longer
+square. Do not hide a failed end in a socket.
+\end{gate}
+
 \section{What each defect looks like later}
 \begin{tabularx}{\linewidth}{@{}p{0.24\linewidth}L@{}}
 \toprule
@@ -91,6 +127,12 @@ Cleaning up swarf & Loose plastic in the chamber, and grit in the cement on the 
 edge and then the outside edge. Eyes closed genuinely helps --- your fingertip
 resolves a burr far better than your eye does, and closing your eyes stops you
 believing what the pipe looks like instead of what it feels like.}
+
+\expectcraft{\textbf{Final proof before assembly:} show a second person the
+unbroken chamfer ring under raking light; let them repeat the two-direction
+fingertip check; point to the narrowest and widest measurements above. Both
+people initial here only after all three agree: maker \rule{1.2cm}{.3pt}\quad
+checker \rule{1.2cm}{.3pt}.}
 
 \begin{telospanel}{The habit worth taking away}
 The defects that matter most are usually the ones that become invisible the

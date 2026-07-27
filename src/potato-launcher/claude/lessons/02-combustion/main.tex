@@ -36,7 +36,9 @@ twice the fuel --- does it fire twice as hard?
 \telosfact{Air is one-fifth oxygen}{About 21\%. The other 79\% is mostly nitrogen, which does not burn but does get heated --- and heated gas is exactly what pushes your potato, so the nitrogen is doing real work.}
 \telosfact{The stoichiometric ratio}{There is one ratio of fuel to air at which both are used up exactly. Above it the mixture is \emph{rich}; below it, \emph{lean}. Both burn worse than the ideal, and far enough either way it will not ignite at all.}
 \telosfact{Why more fuel is worse}{This is the whole lesson. A chamber with too much hairspray in it has no oxygen left to burn it with. It will not fire, and the next thing most people do --- add more --- makes it further from working, not closer. \sheetref{Safety}}
-\telosfact{The flammability window is narrow}{For most hydrocarbons only a few per cent of fuel by volume in air will ignite at all. Your measured one-second burst is an attempt to land inside that window.}
+\telosfact{The flammability window is limited}{A mixture can be too lean or
+rich. This explains a hazard; it does not yield a launcher dose. Container
+pressure, nozzle, formulation, and temperature defeat timing by spray count.}
 \telosfact{Exhaust does not burn}{After a shot the chamber is full of carbon dioxide and water vapour. There is no oxygen left. Fanning it out is not superstition --- it is the difference between a shot and a misfire.}
 \end{telosfacts}
 
@@ -45,7 +47,8 @@ twice the fuel --- does it fire twice as hard?
 \telosfact{Two candles, one jar}{Half the time, roughly. Two consumers, one fixed supply.}
 \telosfact{Surface area}{A block of wood is hard to light; sawdust flashes. Powdered flour explodes. The chemistry has not changed --- only how much fuel is touching oxygen at once. Hairspray is an aerosol for exactly this reason.}
 \telosfact{Predict the launcher}{Your chamber is about \qty{1.4}{L}. Roughly a fifth of that is oxygen. Before you ever fire it, argue out how much fuel could possibly be burnt by that much oxygen --- and notice how small the answer is.}
-\telosfact{Test it for real}{On the range, vary the spray count in half-second steps and measure range for each. You will find the peak, and you will find both failure modes either side of it.}
+\telosfact{Never map it by firing}{Varying spray count is uncontrolled fuel
+tuning. It deliberately seeks failures and stronger shots, and is forbidden.}
 \end{telosfacts}
 
 \begin{telospanel}{The link to the launcher}
@@ -55,4 +58,24 @@ problem, and almost always it is too rich rather than too lean. Once a teenager
 has watched a pile of flour refuse to light while a puff of the same flour
 flashes, they understand the fix without being told it.
 \end{telospanel}
+\lessonsection{Measure without a launcher}
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}p{0.24\linewidth}p{0.20\linewidth}L@{}}
+\toprule
+\textbf{Trial} & \textbf{Fuel arrangement} & \textbf{Oxygen access} &
+\textbf{Observation / uncertainty}\\
+\midrule
+Steel wool & spread / compact & open air & \rule{0pt}{2.6ex}\\
+Candle A & one flame & fixed jar &\\
+Candle B & two flames & same jar &\\
+Flour & dispersed / pile & adult demo &\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{Questions}
+Which result distinguishes more fuel from more surface? What evidence shows
+oxygen became limiting? Why can none of these trials determine a launcher dose?
+\end{telospanel}
+\begin{teloshazard}{Acceptance gate}
+Pass only when everyone can explain: no top-up after a misfire, no dose-finding
+series, and no classroom result authorizes a launcher procedure.
+\end{teloshazard}
 \end{document}

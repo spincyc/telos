@@ -1,90 +1,416 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{5. Build and Fire}{Cut, glue, cure, test, shoot}{2026-07-25}
+\telosmeta{Potato Launcher}{5. Build and Verify}{Measure, inspect, remake, prove}{2026-07-27}
 \begin{document}
 \telosmasthead[A weekend to build, 48 hours to cure]
 \launchernote
 
-\section{Parts}
-\begin{tabularx}{\linewidth}{@{}p{0.20\linewidth}p{0.22\linewidth}L@{}}
+\begin{telospanel}{The standard}
+Do not reward a finished-looking launcher. Reward a documented sequence of
+square cuts, clean sockets, fully seated joints, a complete cure, and an
+adult's final decision. A doubtful pressure part is not repaired or ``good
+enough'': mark it \textsc{reject}, make it unusable, and replace it.
+\end{telospanel}
+
+\section{Parts and acceptance}
+\begin{tabularx}{\linewidth}{@{}p{0.19\linewidth}p{0.25\linewidth}L@{}}
 \toprule
-\textbf{Part} & \textbf{Typical} & \textbf{Notes}\\
+\textbf{Part} & \textbf{Required evidence} & \textbf{Reject if}\\
 \midrule
-Chamber & 3\,in Sch 40 pressure PVC, about 12\,in long & The volume that holds the fuel and air. Pressure-rated only.\\
-Cleanout & 3\,in threaded cleanout adapter and plug & The breech. Screws off to load fuel, to vent a misfire, and to wipe residue out. Do not glue the plug.\\
-Reducer & 3\,in to 1.5\,in bushing or reducing coupler & Joins chamber to barrel.\\
-Barrel & 1.5\,in Sch 40 pressure PVC, about 30\,in & Sized so a potato is a firm push fit.\\
-Igniter & BBQ or gas-lighter piezo unit & Two electrodes into the chamber, 3--5\,mm apart, roughly a third of the way along.\\
-Electrodes & Two stainless screws with nuts and washers & Through drilled and sealed holes in the chamber wall.\\
-Cement & PVC primer and Sch 40 solvent cement & Both. Primer is not optional; it softens the surface so the weld actually forms.\\
-Fuel & Aerosol hairspray & Cheap, widely available, and hard to over-deliver badly in a single measured burst.\\
-Ammunition & Potatoes slightly larger than the bore & Firm ones. A soft potato disintegrates instead of sealing.\\
+Chamber & 3\,in Sch 40 pressure PVC; rating and manufacturer print legible &
+DWV, foam/cellular core, unknown rating, crack, whitening, deep gouge\\
+Cleanout & Matching pressure-rated adapter and undamaged threaded plug &
+Plug binds, rocks, or has damaged threads; plug must never be glued\\
+Reducer & Pressure-rated fitting; sockets clean and round &
+Socket chipped, distorted, contaminated, or a loose dry fit\\
+Barrel & 1.5\,in Sch 40 pressure PVC; straight and fully printed &
+Split, deep score, distortion, or unknown rating\\
+Igniter assembly & Piezo unit; stainless screws, nuts, and washers &
+Loose hardware, damaged insulation, unreliable spark\\
+Joining materials & Compatible primer and pressure-PVC cement, in date &
+Gel, skin, contamination, missing label, expired shelf life\\
 \bottomrule
 \end{tabularx}
 
 \pvcnote
 
-\section{Build it}
+\subsection{Before touching a tool}
+\begin{tabularx}{\linewidth}{@{}L p{0.22\linewidth}p{0.26\linewidth}@{}}
+\toprule
+\textbf{Question} & \textbf{Record} & \textbf{Adult check}\\
+\midrule
+Can you point to the pressure rating on every pressure part? &
+Rating: \rule{0.7in}{0.4pt} & Initials/date: \rule{0.9in}{0.4pt}\\
+Which face will be the chamber end of each fitting? &
+Pencil arrows made: yes / no & All mating faces identified: yes / no\\
+Where will the assembly cure untouched for 48 hours? &
+Place: \rule{0.8in}{0.4pt} & Start time: \rule{0.65in}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+
+\clearpage
+\section{1. Lay out and measure}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-\launchersection{0}{0}{0.95}{4.0}{6.2}
-\lncall{-0.22}{0.75}{-0.5}{2.2}{south}{cleanout: never glued}
-\lncall{1.6}{2.2}{2.7}{2.75}{west}{piezo, electrodes 3--5\,mm apart}
-\lncall{4.3}{0.4}{4.5}{-1.0}{north}{reducer}
-\lndim{0}{-0.5}{3.8}{-0.5}{12 in}
-\lndim{4.5}{-0.5}{10.4}{-0.5}{30 in}
+  \draw[pencil light] (-.3,-.25)--(12.4,-.25);
+  \draw[pencil] (.2,.2) rectangle (3.7,1.35);
+  \draw[pencil] (4.15,.2)--(4.85,.62)--(4.85,.93)--(4.15,1.35)--cycle;
+  \draw[pencil] (5.3,.62) rectangle (11.9,.93);
+  \draw[pencil light,dashed] (.2,.2)--(.2,-.48);
+  \draw[pencil light,dashed] (3.7,.2)--(3.7,-.48);
+  \lndim{.2}{-.43}{3.7}{-.43}{record actual chamber length}
+  \draw[pencil light,dashed] (5.3,.2)--(5.3,-.95);
+  \draw[pencil light,dashed] (11.9,.62)--(11.9,-.95);
+  \lndim{5.3}{-.9}{11.9}{-.9}{record actual barrel length}
+  \draw[pencil light] (3.7,1.7)--(4.15,1.7);
+  \foreach \x in {3.73,3.82,...,4.12}\draw[pencil light] (\x,1.62)--(\x,1.78);
+  \lncall{3.92}{1.7}{2.75}{2.3}{south}{measure socket depth\\before marking cut length}
+  \node[lnsmall,align=center] at (1.95,.78) {chamber};
+  \node[lnsmall,align=center] at (4.5,.78) {reducer};
+  \node[lnsmall,align=center] at (8.6,.78) {barrel};
 \end{tikzpicture}
 \end{center}
 
 \begin{enumerate}
-\item \textbf{Cut square.} A mitre box or a pipe cutter. An out-of-square cut does not seat fully and leaves a weak joint.
-\item \textbf{Deburr inside and out.} A knife or sandpaper. A burr inside the barrel scores every potato and a burr inside a socket ruins the weld.
-\item \textbf{Dry-fit everything.} Check the whole assembly before any cement comes out. Mark each joint with a pencil line across it so you can see if it has rotated home.
-\item \textbf{Drill the electrode holes} in the chamber, about a third of the way from the breech. Fit the screws with washers and nuts and seal them with epoxy on the outside. Set the internal gap at 3--5\,mm and check that the piezo sparks across it before you glue anything.
-\item \textbf{Prime, then cement.} Primer on both surfaces, cement on both surfaces, push together with a quarter-turn twist, and \textbf{hold for thirty seconds} --- solvent joints push themselves apart while they set.
-\item \textbf{Write today's date on the chamber} and leave it \textbf{48 hours}. Not four. This is the step everybody shortens and it is the step that matters.
+\item Place every dry, uncemented part in order. Match the printed ratings to
+the parts list. Photograph or sketch the rating marks before they disappear
+under fittings.
+\item Measure the depth of each socket with a rule. Mark insertion depth on
+each pipe end, then draw an alignment line across each future joint.
+\item Measure the pipe twice at points 90 degrees apart. If the readings
+differ, stop: the end is out of round.
+\item Dry-fit without forcing. Every pipe must reach its depth mark. Never
+``fix'' a loose fit with extra cement.
 \end{enumerate}
 
-\section{First firing}
-\begin{enumerate}
-\item Walk the range. Mark the firing line. Read the checklist on the \textbf{Safety} sheet aloud.
-\item \textbf{Test the spark} with the cleanout open and no fuel: you should hear and see it clearly across the gap.
-\item \textbf{Load the potato} from the muzzle. Push it in about 6\,in with a dowel --- firm, sealing, but not so deep that it starts against the reducer.
-\item \textbf{Open the cleanout, spray a measured one-second burst}, and screw the plug fully home. The adult does this and nobody else.
-\item \textbf{Shoulder or brace it, muzzle downrange}, everyone behind the line, call the shot, and fire.
-\item If it does not fire: \textbf{sixty seconds}, muzzle still downrange. Then open the cleanout, fan it out, wait, and start over with a fresh dose. Never add fuel to a failed shot.
-\item Between shots, \textbf{open the cleanout and fan the chamber} --- a chamber full of exhaust has no oxygen in it and the next shot will fail if you do not.
-\end{enumerate}
-
-\section{Tuning it}
-\begin{telosfacts}[0.20]
-\telosfact{Fuel first}{Vary the spray count in half-second steps, three shots each, and measure range. There is a clear peak, and both sides of it are worse. That peak is the stoichiometric ratio you predicted in Lesson 2.}
-\telosfact{Then the potato}{Too loose and gas blows past it; too tight and it will not accelerate. A firm push fit that takes real effort with a dowel is right.}
-\telosfact{Then the barrel}{If you built a spare barrel, compare. Longer gives the pressure more distance to work over, up to the point where friction and falling pressure take over. Lesson 3 predicts roughly where.}
-\telosfact{Keep a log}{Date, fuel dose, barrel, angle, range. Three columns and a pencil. Without it you are guessing, and with it you have a real experiment.}
-\telosfact{Air it out}{Between every shot. This one habit fixes most reliability complaints.}
-\end{telosfacts}
-
-\section{If it does not work}
-\begin{tabularx}{\linewidth}{@{}p{0.26\linewidth}L@{}}
+\begin{teloscard}{Layout record}
+\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}p{0.17\linewidth}p{0.20\linewidth}L@{}}
 \toprule
-\textbf{Symptom} & \textbf{Look at}\\
+\textbf{Feature} & \textbf{Planned} & \textbf{Measured} & \textbf{Pass / remake}\\
 \midrule
-No spark & Piezo faulty, gap too wide, or an electrode loose. Test with the cleanout open, always.\\
-Spark but no bang & Too much fuel, far more often than too little. Vent, fan out, and try a shorter burst. Or the chamber still holds exhaust from the last shot.\\
-Weak pop, potato dribbles out & Under-fuelled, or the potato is not sealing. Check the fit first.\\
-Bang but poor range & Potato too loose, barrel too short, or the potato is soft and disintegrating.\\
-Fires only sometimes & Residue on the electrodes, or you are not airing the chamber between shots.\\
-Any crazing or whitening & Stop. Retire the chamber. \sheetref{Safety}\\
+Chamber cut length & \rule{0.55in}{0.4pt} & \rule{0.55in}{0.4pt} & \rule{0.85in}{0.4pt}\\
+Barrel cut length & \rule{0.55in}{0.4pt} & \rule{0.55in}{0.4pt} & \rule{0.85in}{0.4pt}\\
+Reducer socket depth & \rule{0.55in}{0.4pt} & \rule{0.55in}{0.4pt} & \rule{0.85in}{0.4pt}\\
+Cleanout socket depth & \rule{0.55in}{0.4pt} & \rule{0.55in}{0.4pt} & \rule{0.85in}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{telosframe}
+\textbf{Pause and explain.} Why does a socket-depth mark reveal an incomplete
+joint? Why is a square end stronger than a slanted end? Have the builder answer
+before cutting. \sheetref{01 Measure and Mark}
+\end{telosframe}
+
+\clearpage
+\section{2. Cut, deburr, and inspect}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[lnlabel,font=\bfseries] at (1.5,2.4) {A. guide the cut};
+  \draw[pencil] (.15,.2) rectangle (2.85,1.35);
+  \draw[pencil light] (.35,.45)--(2.65,1.12);
+  \draw[pencil] (1.5,-.15)--(1.5,1.75);
+  \draw[pencil light,dashed] (1.35,-.15)--(1.35,1.75);
+  \node[lnsmall,align=center] at (1.5,-.55) {keep the blade on\\one square plane};
+
+  \node[lnlabel,font=\bfseries] at (5.1,2.4) {B. remove both burrs};
+  \draw[pencil] (4.15,.25) rectangle (5.95,1.35);
+  \draw[pencil] (4.15,.25) arc (210:510:.26 and .55);
+  \draw[pencil light] (4.32,.36)--(4.54,.52);
+  \draw[pencil light] (4.32,1.24)--(4.54,1.08);
+  \draw[-{Stealth[length=1.5mm]},pencil light] (3.65,.35)--(4.18,.5);
+  \draw[-{Stealth[length=1.5mm]},pencil light] (3.65,1.25)--(4.18,1.1);
+  \node[lnsmall,align=center] at (5.1,-.2) {smooth inside and outside;\\do not thin the wall};
+
+  \node[lnlabel,font=\bfseries] at (9.5,2.4) {C. prove square};
+  \draw[pencil] (7.85,.15) rectangle (10.95,1.45);
+  \draw[pencil,line width=1.1pt] (9.75,.15)--(9.75,1.45);
+  \draw[pencil] (9.75,.15)--(11.6,.15)--(11.6,.48);
+  \draw[pencil light] (9.95,.35) rectangle (10.16,.56);
+  \lncall{9.75}{1.25}{11.25}{1.95}{west}{no daylight\\against square}
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Clamp the pipe without crushing it. Cut at the waste side of the mark,
+using a mitre box or pipe cutter. Do not hurry the final stroke.
+\item Deburr the full circumference inside and out. Make only a small chamfer;
+the pressure wall must remain full thickness.
+\item Hold a square at four positions around the end. Shine a light behind it.
+Record the largest visible gap with a feeler gauge or rule.
+\item Wipe the end clean with a dry white cloth. Inspect under raking light.
+\end{enumerate}
+
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}p{0.13\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
+\toprule
+\textbf{End} & \textbf{Gap} & \textbf{Inner burr} & \textbf{Outer burr} & \textbf{Decision / initials}\\
+\midrule
+Chamber A & \rule{0.42in}{0.4pt} & none / found & none / found & \rule{1.05in}{0.4pt}\\
+Chamber B & \rule{0.42in}{0.4pt} & none / found & none / found & \rule{1.05in}{0.4pt}\\
+Barrel A & \rule{0.42in}{0.4pt} & none / found & none / found & \rule{1.05in}{0.4pt}\\
+Barrel B & \rule{0.42in}{0.4pt} & none / found & none / found & \rule{1.05in}{0.4pt}\\
 \bottomrule
 \end{tabularx}
 
-\begin{telospanel}{What you built}
-A single-cycle heat engine. Fuel and air burn in a fixed volume, the pressure
-rises by roughly a factor of three, and that pressure does work on the base of a
-potato for the length of the barrel. Everything you measured in the four lessons
---- the pressure of the atmosphere, the fuel-air ratio, the gas law, the
-projectile's arc --- is happening in that fifth of a second, and you can predict
-the range before you fire it.
+\begin{teloshazard}{Remake decision}
+If an end is visibly slanted, chipped, cracked, deeply scored, heat-damaged, or
+too short after correction, do not advance it. Mark the defect, cut back to
+sound material if the planned dimensions still permit, or replace the pipe.
+Never fill a bad cut with cement or epoxy.
+\end{teloshazard}
+
+\clearpage
+\section{3. Drill and prove the ignition assembly}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[lnlabel,font=\bfseries] at (1.65,2.35) {A. mark opposite holes};
+  \draw[pencil] (.2,.35) rectangle (3.1,1.45);
+  \draw[pencil light,dashed] (.2,.9)--(3.1,.9);
+  \draw[pencil light,dashed] (1.65,.1)--(1.65,1.75);
+  \fill[telosink] (1.65,.35) circle (.05);
+  \fill[telosink] (1.65,1.45) circle (.05);
+  \node[lnsmall] at (1.65,-.15) {center-punch lightly};
+
+  \node[lnlabel,font=\bfseries] at (5.15,2.35) {B. drill supported};
+  \draw[pencil] (4.1,.35) rectangle (6.2,1.45);
+  \draw[pencil hatch] (4.1,.35) rectangle (6.2,.55);
+  \draw[pencil] (5.15,2.05)--(5.15,.55);
+  \draw[pencil light] (4.95,1.7)--(5.35,1.7);
+  \draw[pencil light] (5.02,1.58)--(5.28,1.82);
+  \node[lnsmall,align=center] at (5.15,-.15) {back the wall;\\slow, straight drill};
+
+  \node[lnlabel,font=\bfseries] at (9.15,2.35) {C. fit and measure};
+  \draw[pencil] (7.55,.35) rectangle (10.75,1.45);
+  \draw[pencil] (8.95,1.75)--(8.95,.83);
+  \draw[pencil] (9.35,1.75)--(9.35,.83);
+  \draw[pencil] (8.75,1.5) rectangle (9.15,1.65);
+  \draw[pencil] (9.15,1.5) rectangle (9.55,1.65);
+  \lndim{8.95}{.72}{9.35}{.72}{3--5 mm}
+  \lncall{8.95}{1.58}{7.45}{2.02}{south}{nuts cannot loosen}
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Mark hole centers on the agreed chamber location. Confirm that hardware
+will clear the cleanout, reducer, and hands.
+\item Support the inside of the pipe. Drill small pilot holes, then only to the
+diameter required by the fasteners. Deburr without enlarging them.
+\item Install washers and nuts. Set the internal electrode gap to 3--5\,mm.
+Seal only as specified on the craft sheet; sealant does not compensate for a
+loose or oversized hole.
+\item With the cleanout open, chamber empty, and no fuel present, have the
+adult operate the piezo. Observe from the open end, never over the chamber.
+\end{enumerate}
+
+\begin{teloscard}{Ignition inspection}
+\begin{tabularx}{\linewidth}{@{}L p{0.22\linewidth}p{0.22\linewidth}@{}}
+\toprule
+\textbf{Check} & \textbf{Measurement / result} & \textbf{Decision}\\
+\midrule
+Electrode gap at closest point & \rule{0.65in}{0.4pt}\,mm & pass / remake\\
+Ten empty-chamber clicks & \rule{0.45in}{0.4pt} sparks seen & pass / remake\\
+Hardware movement by hand & none / present & pass / remake\\
+Hole edge under raking light & clean / cracked / enlarged & pass / remake\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{telosframe}
+\textbf{Pause and explain.} Why test the ignition before cementing the chamber?
+What defect would make replacement safer than adding more sealant?
+\sheetref{05 Drill and Seal}
+\end{telosframe}
+
+\clearpage
+\section{4. Dry-fit, solvent-weld, and witness}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[lnlabel,font=\bfseries] at (1.4,2.35) {A. dry fit};
+  \draw[pencil] (.15,.45) rectangle (1.65,1.45);
+  \draw[pencil] (1.65,.65) rectangle (2.75,1.25);
+  \draw[pencil light,dashed] (2.25,.45)--(2.25,1.45);
+  \draw[pencil] (2.25,1.5)--(2.25,1.75);
+  \node[lnsmall,align=center] at (1.4,.05) {depth and alignment\\marks agree};
+
+  \node[lnlabel,font=\bfseries] at (5.2,2.35) {B. prime and cement};
+  \draw[pencil] (4,.45) rectangle (5.3,1.45);
+  \draw[pencil] (5.3,.65) rectangle (6.4,1.25);
+  \draw[pencil light] (5.12,.5)--(5.12,1.4);
+  \foreach \y in {.58,.75,.92,1.09,1.26}
+    \draw[pencil light] (4.93,\y)--(5.28,\y+.08);
+  \node[lnsmall,align=center] at (5.2,.05) {coat both mating\\surfaces completely};
+
+  \node[lnlabel,font=\bfseries] at (9.4,2.35) {C. seat, turn, hold};
+  \draw[pencil] (7.85,.45) rectangle (9.6,1.45);
+  \draw[pencil] (9.6,.65) rectangle (10.95,1.25);
+  \draw[pencil,line width=1pt] (9.25,.45)--(9.25,1.45);
+  \draw[-{Stealth[length=1.5mm]},pencil] (11.7,.95)--(11.05,.95);
+  \draw[-{Stealth[length=1.5mm]},pencil] (9.55,1.8) arc (20:160:.45 and .22);
+  \node[lnsmall,align=center] at (9.4,.05) {mark reaches socket;\\hold 30 seconds};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Rehearse the complete movement dry: orient, insert fully, quarter-turn,
+hold. Assign one adult to read time and one to witness the marks.
+\item Work one joint at a time in ventilation specified by the product labels.
+Prime both mating surfaces, then cement both; follow the manufacturer's
+application and temperature instructions.
+\item Push to the socket-depth mark, turn a quarter turn, restore the alignment
+mark, and hold for 30 seconds. Do not disturb the joint.
+\item Wipe only the exterior excess. Never scrape, heat, pressure-test, or
+``exercise'' a fresh joint.
+\end{enumerate}
+
+\begin{longtable}{@{}p{0.18\linewidth}p{0.16\linewidth}p{0.14\linewidth}p{0.15\linewidth}p{0.19\linewidth}@{}}
+\toprule
+\textbf{Joint} & \textbf{Start time} & \textbf{Held to} & \textbf{Mark seated} & \textbf{Witness / decision}\\
+\midrule
+\endhead
+Cleanout--chamber & \rule{0.55in}{0.4pt} & \rule{0.45in}{0.4pt} & yes / no & \rule{0.9in}{0.4pt}\\
+Chamber--reducer & \rule{0.55in}{0.4pt} & \rule{0.45in}{0.4pt} & yes / no & \rule{0.9in}{0.4pt}\\
+Reducer--barrel & \rule{0.55in}{0.4pt} & \rule{0.45in}{0.4pt} & yes / no & \rule{0.9in}{0.4pt}\\
+\bottomrule
+\end{longtable}
+
+\begin{teloshazard}{Stop, do not patch}
+Reject a joint that backs out, misses its depth mark, rotates away from its
+alignment mark, contains a visible dry area, or was assembled after the cement
+had skinned. Do not add cement around the outside. Retire the affected pressure
+part and remake the assembly. \sheetref{04 Solvent Weld}
+\end{teloshazard}
+
+\clearpage
+\section{5. Cure and inspect}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \launchersection{.3}{.35}{.62}{4}{7.3}
+  \draw[pencil light] (.1,.1)--(8.3,.1);
+  \draw[pencil hatch] (.35,.1) rectangle (1.15,.28);
+  \draw[pencil hatch] (6.9,.1) rectangle (7.7,.28);
+  \lncall{1.8}{1.45}{1.1}{2.15}{south}{date written\\on chamber}
+  \lncall{3.25}{.43}{4.2}{-.3}{north}{supported straight;\\joints unloaded}
+  \draw[pencil] (9.15,.2) circle (1.15);
+  \draw[pencil] (9.15,.2)--(9.15,1.05);
+  \draw[pencil] (9.15,.2)--(9.78,-.15);
+  \foreach \a in {0,30,...,330}\draw[pencil light]
+    ({9.15+1.02*cos(\a)},{.2+1.02*sin(\a)})--
+    ({9.15+1.15*cos(\a)},{.2+1.15*sin(\a)});
+  \node[lnlabel,font=\bfseries] at (9.15,-1.25) {48 hours minimum};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Write assembly date and time on the chamber. Place it horizontally on
+two broad supports where nobody will lift, twist, load, or test it.
+\item Leave it at least 48 hours, and longer if the cement label requires it
+for the actual pipe size, temperature, or humidity. The label governs.
+\item After cure, inspect every joint in bright raking light. Turn the assembly
+slowly. Look for a continuous seated shoulder, alignment, cracks, whitening,
+bulges, gaps, and disturbed witness marks.
+\item Inspect the cleanout threads dry. The plug must run fully home by hand
+without cross-threading. Never glue, tape over, or force damaged threads.
+\end{enumerate}
+
+\begin{teloscard}{Cure record}
+\begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}p{0.26\linewidth}L@{}}
+\toprule
+\textbf{Evidence} & \textbf{Record} & \textbf{Adult initials}\\
+\midrule
+Assembly finished & date/time: \rule{0.85in}{0.4pt} & \rule{0.7in}{0.4pt}\\
+Earliest allowed inspection & date/time: \rule{0.85in}{0.4pt} & \rule{0.7in}{0.4pt}\\
+Actual inspection & date/time: \rule{0.85in}{0.4pt} & \rule{0.7in}{0.4pt}\\
+Label required longer cure? & no / yes: \rule{0.55in}{0.4pt} & \rule{0.7in}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{360-degree inspection}
+\begin{tabularx}{\linewidth}{@{}L p{0.15\linewidth}p{0.27\linewidth}@{}}
+\toprule
+\textbf{Feature} & \textbf{Result} & \textbf{Defect location / decision}\\
+\midrule
+Cleanout joint and threads & pass / reject & \rule{1.25in}{0.4pt}\\
+Chamber surface and electrodes & pass / reject & \rule{1.25in}{0.4pt}\\
+Reducer joints & pass / reject & \rule{1.25in}{0.4pt}\\
+Barrel surface and muzzle & pass / reject & \rule{1.25in}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\clearpage
+\section{6. Final proof: permission to proceed}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[draw=telosink,line width=.7pt,minimum width=2.1cm,minimum height=.8cm,
+    font=\small\bfseries] (a) at (1.2,1.2) {records complete};
+  \node[draw=telosink,line width=.7pt,minimum width=2.1cm,minimum height=.8cm,
+    font=\small\bfseries] (b) at (4.2,1.2) {visual pass};
+  \node[draw=telosink,line width=.7pt,minimum width=2.1cm,minimum height=.8cm,
+    font=\small\bfseries] (c) at (7.2,1.2) {empty spark pass};
+  \node[draw=telosink,line width=.7pt,minimum width=2.1cm,minimum height=.8cm,
+    font=\small\bfseries] (d) at (10.2,1.2) {adult release};
+  \draw[-{Stealth[length=1.8mm]},pencil] (a)--(b);
+  \draw[-{Stealth[length=1.8mm]},pencil] (b)--(c);
+  \draw[-{Stealth[length=1.8mm]},pencil] (c)--(d);
+  \node[lnsmall,align=center] at (4.2,.25) {any failed gate};
+  \draw[-{Stealth[length=1.8mm]},pencil] (4.2,.8)--(4.2,.48)--(7.2,.48)--(7.2,.02);
+  \node[draw=telosink,line width=1.1pt,minimum width=3.1cm,minimum height=.72cm,
+    font=\small\bfseries] at (7.2,-.35) {REJECT / REMAKE};
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{0.47\linewidth}p{0.15\linewidth}L@{}}
+\toprule
+\textbf{Gate} & \textbf{Result} & \textbf{Evidence}\\
+\midrule
+Every pressure part was identified and accepted before work &
+pass / reject & Parts record complete\\
+Every cut and joint has a measurement and witness decision &
+pass / reject & Pages 2--5 complete\\
+At least 48 hours and the label-required cure elapsed &
+pass / reject & Cure times complete\\
+Full surface and all joints passed bright-light inspection &
+pass / reject & No defect left blank\\
+Cleanout operates by hand; electrodes are immobile &
+pass / reject & Adult observed\\
+Ten empty, unfuelled ignition clicks produced ten clear sparks &
+pass / reject & Count: \rule{0.35in}{0.4pt}/10\\
+Safety sheet was read aloud at the chosen legal range &
+pass / reject & Reader: \rule{0.7in}{0.4pt}\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{No improvised pressure proof}
+Do not plug the barrel, add compressed air, hydrostatically pressurize this
+assembly, strike it, heat it, or perform a close-range ``test shot.'' Those
+tests introduce hazards and do not convert questionable workmanship into
+proof. A failed inspection means retire and remake.
+\end{teloshazard}
+
+\begin{telospanel}{Adult release}
+I reviewed the complete record, inspected the assembly after cure, confirmed
+that every gate above passes, and accept responsibility for deciding whether
+and where any later operation is lawful and safe.
+
+\vspace{0.7em}
+Adult name: \rule{1.75in}{0.4pt}\hfill
+Signature: \rule{1.75in}{0.4pt}\hfill
+Date: \rule{0.85in}{0.4pt}
 \end{telospanel}
+
+\section{Operation is a separate gate}
+This build record gives no permission to fire. Before any use, the supervising
+adult must apply the \textbf{Safety} sheet, local law, landowner rules, weather,
+backstop, exclusion zone, eye and hearing protection, muzzle control, and
+misfire procedure. Use only the single approved operating procedure; do not
+vary fuel, projectile fit, barrel, angle, or other variables to seek more
+pressure, speed, or range. If performance seems abnormal, stop and inspect;
+never ``tune'' a combustion launcher.
+
+\begin{telosframe}
+\textbf{Final question.} What evidence would make you retire this launcher
+today? Write three observations before any operation:
+\rule{1.0in}{0.4pt}, \rule{1.0in}{0.4pt}, and \rule{1.0in}{0.4pt}.
+\end{telosframe}
 \end{document}

@@ -1,101 +1,282 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Demo: Ruben's Tube}{Make a sound wave visible as a wall of flame}{2026-07-26}
+\telosmeta{Potato Launcher}{Demo: Rubens' Tube}{See, measure, and verify a standing wave safely}{2026-07-27}
 \begin{document}
-\telosmasthead[The best-looking thing you can build with a drill and a pipe]
-\lessonhead{Demo}{an afternoon to build}{\textbf{adult owns the gas, always}}
+\telosmasthead[An observation notebook for a professionally assembled flame demonstration]
+\lessonhead{Demo}{one supervised session}{\textbf{adult demonstrator owns every flame and gas control}}
 
-\begin{teloshazard}{Propane in a perforated pipe --- outdoors only}
-This is a pipe full of flammable gas with an open flame along its length. Build
-and run it \textbf{outdoors}, never indoors, never in a garage, never under
-anything. An adult owns the cylinder, the regulator and the valve, and lights it
---- the same rule as the launcher's fuel. Purge and light promptly: a tube left
-filling unlit accumulates gas and then lights all at once. Keep the extinguisher
-on the bench, not in the house.
+\begin{teloshazard}{Demonstration apparatus --- not a student gas project}
+Use only outdoors in a cleared demonstration area, with a trained adult operating
+a sound, commercially made or professionally assembled metal apparatus. Follow
+its written instructions and fuel supplier's rules. Students do not build,
+connect, fill, light, adjust, touch, or approach it. No improvised pressure
+parts, no indoor or garage operation, and no attempt to make flames larger.
+Extinguisher and fuel shutoff stay with the operator. Any leak, damage, unstable
+flame, unexpected sound, or loss of supervision means: shut off remotely if it
+is safe to do so, withdraw, and do not relight.
 \end{teloshazard}
 
+\section{First make a prediction}
 \noindent
-\begin{minipage}[t]{0.47\linewidth}
-\vspace{0pt}
+\begin{minipage}[t]{0.49\linewidth}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  % the tube in section, with flames along the top
-  \draw[pvc,pvcfill] (0,0) rectangle (7.2,0.85);
-  \draw[pencil light] (0,.12)--(7.2,.12);
-  \draw[pencil light,dashed] (0,.42)
-    ..controls (1.2,.78) and (1.6,.08)..(2.4,.42)
-    ..controls (3.2,.82) and (4,.02)..(4.8,.42)
-    ..controls (5.6,.82) and (6.4,.08)..(7.2,.42);
-  \foreach \x in {0.4,0.8,...,7.0} {
-    \draw[pvcdetail] (\x,0.85) -- (\x,0.72);
-    \draw[pencil] (\x,0.85) ellipse (.045 and .018);}
-  % standing wave: flame height follows pressure
-  \foreach \x/\h in {0.4/0.30, 0.8/0.55, 1.2/0.72, 1.6/0.55, 2.0/0.30,
-                     2.4/0.14, 2.8/0.30, 3.2/0.62, 3.6/0.80, 4.0/0.62,
-                     4.4/0.30, 4.8/0.14, 5.2/0.30, 5.6/0.58, 6.0/0.75,
-                     6.4/0.58, 6.8/0.30} {
-    \draw[pvc] (\x,0.85) .. controls (\x-0.07,0.85+\h*0.6) and (\x+0.07,0.85+\h*0.7)
-      .. (\x,0.85+\h);}
-  \foreach \x/\h in {0.4/0.30,1.2/0.72,2.0/0.30,2.8/0.30,3.6/0.80,4.4/0.30,5.2/0.30,6.0/0.75,6.8/0.30}
-    \draw[pencil light] (\x-.035,.9)..controls(\x-.1,.9+\h*.45)and(\x+.035,.9+\h*.7)..(\x,.85+\h);
-  % speaker at one end, sealed cap at the other
-  \draw[pvc,pvcfill] (-0.7,-0.2) rectangle (0,1.05);
-  \draw[pvc] (-0.55,0.15) -- (-0.15,0.42) -- (-0.15,0.43) -- (-0.55,0.70) -- cycle;
-  \node[lnsmall,anchor=east] at (-0.8,0.42) {speaker};
-  \draw[pvc,pvcfill] (7.2,-0.2) rectangle (7.6,1.05);
-  \node[lnsmall,anchor=west] at (7.7,0.42) {sealed};
-  % gas inlet
-  \draw[pvc] (3.6,0) -- (3.6,-0.7);
-  \node[lnsmall,anchor=north] at (3.6,-0.75) {propane in};
-  \node[lnsmall,anchor=north,align=center] at (3.6,-1.25)
-    {tall flames at pressure antinodes,\\short at nodes --- the wave, standing still};
-  \draw[|<->|,pencil light] (0,-1.62)--(7.2,-1.62);
-  \node[lnsmall,fill=telospaper,inner sep=1pt] at (3.6,-1.62) {perforated resonant cavity};
+\begin{tikzpicture}[x=.82cm,y=.82cm]
+  \draw[pencil] (0,0) rectangle (7.15,.74);
+  \draw[pencil light] (0,.12)--(7.15,.12);
+  \foreach \x in {.3,.65,...,6.95}
+    \draw[pencil] (\x,.74) ellipse (.035 and .015);
+  \draw[pencil,pvcfill] (-.62,-.13) rectangle (0,.9);
+  \draw[pencil] (-.51,.08)--(-.13,.37)--(-.51,.66)--cycle;
+  \draw[pencil,pvcfill] (7.15,-.13) rectangle (7.48,.9);
+  \draw[pencil light,dashed] (0,.38)
+    ..controls (1.1,.72) and (1.45,.04)..(2.2,.38)
+    ..controls (2.95,.72) and (3.45,.04)..(4.2,.38)
+    ..controls (4.95,.72) and (5.55,.04)..(6.25,.38)
+    ..controls (6.65,.57) and (6.9,.48)..(7.15,.38);
+  \node[lnsmall,anchor=east] at (-.72,.37) {speaker};
+  \node[lnsmall,anchor=west] at (7.50,.37) {closed end};
+  \node[lnsmall,align=center] at (3.55,-.52)
+    {the drawing is a model of pressure inside --- not a build plan};
 \end{tikzpicture}
 \end{center}
-\end{minipage}%
-\hfill
-\begin{minipage}[t]{0.50\linewidth}
-\vspace{0pt}
 \begin{predict}
-Sound is a travelling wave. Play a steady tone into a closed tube full of gas
-with a row of small flames along the top. Do the flames ripple along like waves
-on water, all flicker together, or something else? Draw what you expect before
-you light it.
+When the operator plays one steady tone, will the row stay level, flicker
+together, travel from end to end, or settle into fixed tall and short regions?
+Sketch your prediction before the apparatus is lit.
+\vspace{13mm}
 \end{predict}
-\begin{telosfacts}[0.22]
-\telosfact{What happens}{The flames settle into a fixed pattern of tall and short that does not move. Change the frequency and the pattern changes to a different fixed arrangement.}
-\telosfact{Why}{The tone reflects off the sealed end and interferes with itself. At the right frequencies the two waves cancel at fixed points and reinforce at others, producing a \textbf{standing wave} --- a wave whose peaks stay put.}
-\telosfact{Flame height reads pressure}{Higher pressure inside pushes more gas out of the holes there, so a tall flame marks an antinode and a short one a node. You are looking at a graph of pressure along the tube, drawn in fire.}
-\telosfact{Measure the speed of sound}{Twice the distance between adjacent nodes is one wavelength. Multiply by the frequency and you have the speed of sound \emph{in propane} --- around \qty{250}{m/s}, noticeably slower than in air, because the gas is heavier.}
-\telosfact{The link to the launcher}{Same physics, different use: pressure in a closed volume of gas, and gas that burns only where fuel and air are in the right proportion. \sheetref{2. Combustion}}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+\begin{telosfacts}[0.20]
+\telosfact{Question 1}{What observation would distinguish a travelling pattern from a standing one?}
+\telosfact{Question 2}{If two neighbouring short regions are nodes, where should the tallest region lie?}
+\telosfact{Question 3}{Which is evidence: one striking photograph, or the same fixed pattern seen repeatedly at the same tone? Why?}
+\telosfact{Control}{Record one steady-tone observation and one ``speaker silent'' observation. The difference is more informative than spectacle alone.}
 \end{telosfacts}
 \end{minipage}
 
-\section{Build it}
+\section{The wave the flames reveal}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil] (0,0) rectangle (14.2,.75);
+  \foreach \x in {.35,.7,...,13.9}\draw[pencil] (\x,.75) ellipse (.035 and .015);
+  \foreach \x/\h in {.35/.25,.7/.42,1.05/.66,1.4/.86,1.75/.65,2.1/.42,2.45/.20,
+    2.8/.38,3.15/.62,3.5/.84,3.85/.65,4.2/.40,4.55/.19,4.9/.38,5.25/.62,
+    5.6/.85,5.95/.62,6.3/.38,6.65/.19,7/.39,7.35/.65,7.7/.86,8.05/.63,
+    8.4/.39,8.75/.19,9.1/.39,9.45/.64,9.8/.84,10.15/.63,10.5/.4,10.85/.2,
+    11.2/.4,11.55/.64,11.9/.84,12.25/.63,12.6/.4,12.95/.21,13.3/.39,13.65/.6}
+    \draw[pencil] (\x,.75)..controls(\x-.07,{.75+.58*\h})and(\x+.08,{.75+.68*\h})..(\x,{.75+\h});
+  \foreach \x in {2.45,4.55,6.65,8.75,10.85,12.95}{
+    \draw[pencil light,dashed] (\x,.12)--(\x,1.95);
+    \node[lnsmall,anchor=south,rotate=90] at (\x,1.98) {short region};}
+  \draw[|<->|,pencil light] (4.55,-.28)--(6.65,-.28);
+  \node[lnsmall,fill=telospaper,inner sep=1pt] at (5.6,-.28) {node spacing \(d\)};
+  \node[lnsmall,anchor=west] at (10.15,1.67) {tall region between nodes};
+\end{tikzpicture}
+\end{center}
+\smallskip\noindent\small
+\textbf{Read the pattern cautiously.} Reflection and interference can make fixed
+pressure regions, but drafts, warming, geometry, and hole differences also
+affect height. Use repeated short-region centres as qualitative markers. The
+safe aim is a modest, stable pattern; flame size is never a score.
+\normalsize
+
+\newpage
+\telosmasthead[Observe in order --- do not change two things at once]
+\lessonhead{Sequence}{predict, control, observe, repeat}{\textbf{operator calls every hold point}}
+
+\section{A controlled observation sequence}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \x/\n/\lab in {0/1/inspect,3.3/2/silent control,6.6/3/steady tone,9.9/4/repeat,13.2/5/shut down}{
+    \draw[pencil] (\x,0) circle (.62);
+    \node[font=\bfseries] at (\x,.08) {\n};
+    \node[lnsmall,align=center,anchor=north] at (\x,-.78) {\lab};
+  }
+  \foreach \x in {.65,3.95,7.25,10.55}
+    \draw[-{Stealth[length=1.8mm]},pencil light] (\x,0)--(\x+1.95,0);
+  \draw[pencil] (-.32,-.08)--(.28,.25);
+  \draw[pencil] (-.30,.23)--(.3,-.1);
+  \draw[pencil] (2.92,-.15) rectangle (3.68,.16);
+  \draw[pencil light] (3.05,.28)--(3.55,.28);
+  \draw[pencil] (6.2,-.15) rectangle (7,.16);
+  \foreach \q in {6.34,6.5,...,6.85}\draw[pencil] (\q,.16)--(\q,.43);
+  \draw[pencil] (9.5,-.15) rectangle (10.3,.16);
+  \foreach \q/\h in {9.62/.2,9.78/.42,9.94/.18,10.1/.4,10.22/.2}
+    \draw[pencil] (\q,.16)--(\q,{.16+\h});
+  \draw[pencil] (12.85,-.18)--(13.55,.4);
+  \draw[pencil] (12.85,.4)--(13.55,-.18);
+\end{tikzpicture}
+\end{center}
+
 \begin{enumerate}
-\item \textbf{Pipe.} A 1\,m to 2\,m length of steel or copper pipe, \qtyrange{50}{75}{mm} across. \textbf{Not PVC:} this one has open flame along its whole length, and the pipe gets hot. The launcher's pressure-rated PVC rule does not transfer here --- different job, different material.
-\item \textbf{Drill the holes.} A row of \qty{1.5}{mm} holes along the top, evenly spaced every \qtyrange{15}{25}{mm}, all the way down, in a straight line. Mark the line first and carry it the whole length. \sheetref{Craft 1: Measure \& Mark}
-\item \textbf{Deburr every hole.} A burr changes the flame at that hole and puts a false reading in your pattern. \sheetref{Craft 3: Deburr \& Chamfer}
-\item \textbf{Seal one end} with a solid cap. The reflection off this end is what makes the standing wave; a leaky end gives a poor pattern.
-\item \textbf{Fit the speaker} at the other end over a flexible membrane --- a rubber sheet or a balloon stretched and clamped. It must seal the tube while still moving freely.
-\item \textbf{Gas inlet} in the underside near the middle, with a valve. Adult keeps the valve.
-\item \textbf{Leak-check with soapy water} before any flame goes near it, at full working pressure. Bubbles anywhere means stop.
+\item \textbf{Cold hold point.} Operator verifies the written apparatus checklist,
+clear outdoor area, stable supports, intact barrier, weather, extinguisher, and
+shutoff access. Students remain behind the marked line.
+\item \textbf{Silent control.} With no speaker drive, observe only from the
+assigned position. Record whether the row is acceptably stable; do not diagnose
+or correct apparatus faults while it is operating.
+\item \textbf{One steady tone.} The operator selects a documented, permitted
+setting. Wait for a stable pattern; observers mark short-region centres without
+approaching the tube.
+\item \textbf{Repeat.} Shut down as the apparatus instructions require. After the
+operator authorizes another observation, repeat the same setting. Agreement is
+the test; do not chase a prettier pattern.
+\item \textbf{Final shutdown.} Operator closes the fuel supply, follows the
+manufacturer's shutdown procedure, maintains the exclusion zone through
+cool-down, and records completion.
 \end{enumerate}
 
-\section{Run it}
-\begin{telosfacts}[0.20]
-\telosfact{Purge first}{Let gas flow long enough to displace the air inside, then light along the row promptly. Do not let it fill unlit.}
-\telosfact{Find the resonances}{Sweep a tone generator slowly from about \qty{50}{Hz} upward. Most frequencies do nothing interesting; at particular ones the pattern snaps into place. Those are the tube's resonances --- exactly the behaviour from \sheetref{8. Resonance} in the electricity course, in a different medium.}
-\telosfact{Count the nodes}{Each resonance has one more node than the last. Record frequency against node count; the relationship is a straight line and you can predict the next one before you find it.}
-\telosfact{Do the arithmetic}{Node spacing times two is the wavelength. Wavelength times frequency is the speed of sound in the gas. Compare with \qty{343}{m/s} in air and explain the difference.}
-\telosfact{Then play music}{Once the measurements are done. A bass line makes the whole tube dance, and it is worth every minute of the build.}
+\begin{telospanel}{Fault gate --- stop means stop}
+If the pre-use checklist fails, the row is irregular before sound is applied,
+the pattern changes without a commanded change, flame appears anywhere except
+the intended row, wind disturbs the demonstration, a support moves, the speaker
+seal changes, or any person crosses the boundary: the run fails. The operator
+shuts down if safe, isolates the apparatus, and has the defective part remade or
+professionally repaired. Never patch, tighten, drill, or adjust a fueled or hot
+apparatus. A failed run produces no measurement.
+\end{telospanel}
+
+\section{Observation record}
+\renewcommand{\arraystretch}{1.45}
+\begin{tabularx}{\linewidth}{|p{.095\linewidth}|p{.13\linewidth}|X|p{.14\linewidth}|p{.12\linewidth}|}
+\hline
+\textbf{Run} & \textbf{Tone / ID} & \textbf{Short-region positions from fixed scale} & \textbf{Stable?} & \textbf{Keep / reject}\\ \hline
+control & silent & & & \\ \hline
+1A & & & & \\ \hline
+1B repeat & & & & \\ \hline
+2A & & & & \\ \hline
+2B repeat & & & & \\ \hline
+\end{tabularx}
+
+\newpage
+\telosmasthead[Measure the record, not the flame]
+\lessonhead{Measurement}{fixed scale and repeated marks}{\textbf{rejected runs stay out of the arithmetic}}
+
+\section{Measure node spacing from a safe distance}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil] (.4,.3) rectangle (13.6,.92);
+  \foreach \x in {.75,1.1,...,13.3}\draw[pencil] (\x,.92)--(\x,1.12);
+  \foreach \x in {2.2,4.35,6.5,8.65,10.8,12.95}{
+    \draw[pencil light,dashed] (\x,.3)--(\x,2);
+    \fill[telosink] (\x,.13) circle (.045);}
+  \draw[pencil] (.4,.13)--(13.6,.13);
+  \foreach \x in {.4,1.4,...,13.4}\draw[pencil] (\x,.03)--(\x,.23);
+  \draw[|<->|,pencil] (4.35,2.14)--(10.8,2.14);
+  \node[lnsmall,fill=telospaper,inner sep=1pt] at (7.58,2.14)
+    {span \(L\) across three intervals};
+  \node[lnsmall,anchor=north,align=center] at (7,-.18)
+    {fixed scale read by camera or distant observer --- nobody measures over the apparatus};
+\end{tikzpicture}
+\end{center}
+
+\noindent
+\begin{minipage}[t]{0.48\linewidth}
+\begin{teloscard}{Calculation}
+Choose several consecutive, clearly repeated short regions. Measure the span
+\(L\) from the first centre to the last and count the number \(N\) of
+\emph{intervals}, not marks:
+\[
+  d=\frac{L}{N},\qquad \lambda\approx2d,\qquad v=f\lambda .
+\]
+The last relation is a model estimate. Label it with the gas, apparatus, tone,
+date, and uncertainty; do not report it as a universal constant.
+\end{teloscard}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\linewidth}
+\begin{teloscard}{Measurement questions}
+\begin{enumerate}
+\item Why is a span across several intervals better than one gap?
+\item Did repeats place each short region at the same scale mark?
+\item Which centre was hardest to locate? How much could it move?
+\item Does the silent control contain an equally regular spacing?
+\item Would your conclusion survive the largest reasonable marking error?
+\end{enumerate}
+\end{teloscard}
+\end{minipage}
+
+\section{Measurement record}
+\renewcommand{\arraystretch}{1.55}
+\begin{tabularx}{\linewidth}{|p{.08\linewidth}|p{.12\linewidth}|p{.12\linewidth}|p{.10\linewidth}|p{.11\linewidth}|p{.12\linewidth}|X|}
+\hline
+\textbf{Run} & \(f\) / source & first--last & \(L\) & intervals \(N\) & \(d=L/N\) & uncertainty / note\\ \hline
+ & & & & & & \\ \hline
+ & & & & & & \\ \hline
+repeat & & & & & & \\ \hline
+\end{tabularx}
+
+\vspace{2mm}
+\begin{telosfacts}[0.18]
+\telosfact{Accept}{The cold inspection passed; control was recorded; the pattern remained stable; repeated marks agree within stated reading uncertainty; and every number is traceable to a retained run.}
+\telosfact{Reject}{Any safety fault, missing control, moving pattern, ambiguous centres, undocumented setting, or disagreement larger than the stated uncertainty. Cross out the arithmetic but keep the row as evidence of why it failed.}
+\telosfact{Remake decision}{A damaged, leaking, distorted, or unstable component is not ``good enough for one more run.'' Tag the apparatus out. A qualified adult decides whether the maker replaces the component or the entire assembly.}
 \end{telosfacts}
 
-\begin{telospanel}{Why this is worth building}
-Standing waves are on every physics syllabus and almost nobody has seen one. A
-diagram of nodes and antinodes is an abstraction; a metre of fire holding
-perfectly still while a speaker plays is not. Your boys will be able to point at
-a node and say what it is, and they will still be able to in ten years.
+\newpage
+\telosmasthead[Close the evidence chain]
+\lessonhead{Final proof}{inspection, repeatability, shutdown}{\textbf{a photograph alone is not proof}}
+
+\section{Final verification plate}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil] (0,0) rectangle (3.7,2.35);
+  \draw[pencil light] (.25,.32)--(3.45,.32);
+  \foreach \x/\h in {.45/.35,.75/.68,1.05/.35,1.35/.17,1.65/.36,1.95/.7,2.25/.34,2.55/.16,2.85/.35,3.15/.68}
+    \draw[pencil] (\x,.32)--(\x,{.32+\h});
+  \node[lnsmall,anchor=south] at (1.85,1.62) {retained pattern image};
+  \node[lnsmall] at (1.85,-.3) {OBSERVATION};
+  \draw[-{Stealth[length=2mm]},pencil light] (4.05,1.18)--(5.3,1.18);
+  \draw[pencil] (5.65,0) rectangle (9.35,2.35);
+  \draw[pencil light] (6,.45)--(9,.45);
+  \foreach \x in {6.45,7.4,8.35}\draw[pencil light,dashed] (\x,.45)--(\x,1.75);
+  \draw[|<->|,pencil] (6.45,1.88)--(8.35,1.88);
+  \node[lnsmall,fill=telospaper] at (7.4,1.88) {two intervals};
+  \node[lnsmall] at (7.5,-.3) {MEASUREMENT};
+  \draw[-{Stealth[length=2mm]},pencil light] (9.7,1.18)--(10.95,1.18);
+  \draw[pencil] (11.3,0) rectangle (15,2.35);
+  \draw[pencil] (11.7,1.73)--(11.94,1.5)--(12.35,2.03);
+  \node[lnsmall,anchor=west] at (12.55,1.75) {repeat agrees};
+  \draw[pencil] (11.7,1.12)--(11.94,.89)--(12.35,1.42);
+  \node[lnsmall,anchor=west] at (12.55,1.14) {fault log clear};
+  \draw[pencil] (11.7,.52)--(11.94,.29)--(12.35,.82);
+  \node[lnsmall,anchor=west] at (12.55,.54) {shutdown signed};
+  \node[lnsmall] at (13.15,-.3) {VERDICT};
+\end{tikzpicture}
+\end{center}
+
+\section{Inspection and disposition record}
+\begin{tabularx}{\linewidth}{|p{.27\linewidth}|X|p{.18\linewidth}|}
+\hline
+\textbf{Hold point} & \textbf{Evidence / record ID} & \textbf{Operator initials}\\ \hline
+Cold apparatus checklist passed & & \\ \hline
+Area, barrier, weather, extinguisher, shutoff passed & & \\ \hline
+Silent control retained & & \\ \hline
+Steady-tone run and same-setting repeat retained & & \\ \hline
+Node centres and uncertainty recorded & & \\ \hline
+Faults resolved by stop / repair / remake before any later run & & \\ \hline
+Fuel isolated; apparatus cooled; area released & & \\ \hline
+\end{tabularx}
+
+\section{Final claim}
+\begin{telospanel}{Complete only after shutdown}
+At the documented tone, the retained observations
+\fbox{\phantom{x}} do \quad \fbox{\phantom{x}} do not
+show fixed short regions that recur at the same positions. The silent control
+\fbox{\phantom{x}} does \quad \fbox{\phantom{x}} does not
+show the same regular pattern. Repeated spacing estimates agree within
+\(\pm\)\rule{12mm}{.4pt}. Therefore the evidence
+\fbox{\phantom{x}} supports \quad \fbox{\phantom{x}} does not yet support
+the standing-wave model for this session.
+
+\vspace{3mm}
+Observer:\ \rule{38mm}{.4pt}\quad Date:\ \rule{25mm}{.4pt}\quad
+Adult operator:\ \rule{38mm}{.4pt}
 \end{telospanel}
+
+\begin{telosfacts}[0.18]
+\telosfact{What counts as proof}{A passed inspection, an explicit control, two agreeing observations, traceable measurements, a fault record, and confirmed safe shutdown.}
+\telosfact{What does not}{A dramatic flame, an unrecorded setting, a single image, selected ``best'' gaps, or a run performed after a stop condition.}
+\telosfact{Physics conclusion}{A fixed, repeatable pattern tied to a steady tone supports the model that reflection and interference create stationary pressure regions. The demonstration makes the pattern visible; the record makes the conclusion defensible.}
+\end{telosfacts}
 \end{document}
