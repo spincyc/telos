@@ -16,7 +16,7 @@ import pxe_release  # noqa: E402
 
 def fake_media(root: Path) -> Path:
     files = {
-        ".disk/info": b"Arch Linux test media\n",
+        "arch/version": b"2026.07.01\n",
         "arch/boot/x86_64/vmlinuz-linux": b"kernel",
         "arch/boot/x86_64/initramfs-linux.img": b"initramfs",
         "arch/x86_64/airootfs.sfs": b"root image",
@@ -59,7 +59,7 @@ class TestIsoExtraction(unittest.TestCase):
                 fake_media(Path(command[-1]))
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            extracted = target.extract_iso(image, root / "cache", runner)
+            extracted = target.extract_iso(image, root / "cache", runner=runner)
             self.assertEqual(extracted.parent.name, target.sha256(image))
             self.assertEqual(calls[0][0][0:3], ("xorriso", "-osirrox", "on"))
             self.assertNotIn("mount", calls[0][0])
@@ -83,8 +83,8 @@ class TestIsoExtraction(unittest.TestCase):
                 fake_media(Path(command[-1]))
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            first = target.extract_iso(image, root / "cache", runner)
-            second = target.extract_iso(image, root / "cache", runner)
+            first = target.extract_iso(image, root / "cache", runner=runner)
+            second = target.extract_iso(image, root / "cache", runner=runner)
             self.assertEqual(first, second)
             self.assertEqual(calls, 1)
 
@@ -98,10 +98,10 @@ class TestIsoExtraction(unittest.TestCase):
                 fake_media(Path(command[-1]))
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            extracted = target.extract_iso(image, root / "cache", runner)
+            extracted = target.extract_iso(image, root / "cache", runner=runner)
             (extracted / "arch/x86_64/airootfs.sfs").write_bytes(b"tampered")
             with self.assertRaisesRegex(target.TargetError, "invalid.*cache"):
-                target.extract_iso(image, root / "cache", runner)
+                target.extract_iso(image, root / "cache", runner=runner)
 
     def test_failed_extraction_leaves_no_cache_entry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -113,8 +113,33 @@ class TestIsoExtraction(unittest.TestCase):
                 raise subprocess.CalledProcessError(5, command, stderr="bad ISO")
 
             with self.assertRaisesRegex(target.TargetError, "bad ISO"):
-                target.extract_iso(image, root / "cache", runner)
+                target.extract_iso(image, root / "cache", runner=runner)
             self.assertEqual(list((root / "cache").iterdir()), [])
+
+    def test_refuses_iso_that_does_not_match_sealed_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"changed")
+            with self.assertRaisesRegex(target.TargetError, "sealed media digest"):
+                target.extract_iso(
+                    image, root / "cache", expected_sha256="0" * 64)
+            self.assertFalse((root / "cache").exists())
+
+    def test_read_only_iso_directories_are_made_cleanup_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"iso bytes")
+
+            def runner(command, **_options):
+                media = fake_media(Path(command[-1]))
+                (media / "arch").chmod(0o555)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            extracted = target.extract_iso(
+                image, root / "cache", runner=runner)
+            self.assertTrue(extracted.stat().st_mode & 0o200)
 
 
 class TestRelease(unittest.TestCase):

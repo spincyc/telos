@@ -56,6 +56,10 @@ ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
 WINDOWS_INSTALL_SOURCE ?= homelab/var/media/windows/install-source
 FACTORY_MEDIA_SEAL ?= homelab/var/media/factory-media-seal.json
+FACTORY_ARCH_SOURCE_CACHE ?= homelab/var/media/arch/extracted
+# A Controller release needs a purpose-built mkarchiso netboot tree. The
+# convergence seed is a data disc and is never substituted for this payload.
+FACTORY_CONTROLLER_SOURCE ?= homelab/var/media/controller/netboot
 WINDOWS_25H2_EN_US_ISO ?= Win11_25H2_English_x64_v2.iso
 WINDOWS_25H2_EN_US_SHA256 := 768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3
 WINDOWS_INSTALL_SHA256 ?= $(WINDOWS_25H2_EN_US_SHA256)
@@ -287,16 +291,17 @@ homelab-factory-controller-bundle:
 			--output '$(FACTORY_CONTROLLER_BUNDLE)'; \
 	fi
 
-# Build the three immutable PXE leaves from already-local inputs. Arch requires
-# an extracted/mounted ISO tree; this target never mounts media or downloads.
+# Build the three immutable PXE leaves from already-local inputs. Arch is
+# extracted without mounting into a digest-addressed ignored cache. A genuine
+# Controller mkarchiso netboot tree remains a separate required local artifact.
 homelab-factory-pxe: homelab-factory-offline-check
-	@if [ -z '$(VERSION)' ] || [ -z '$(CONTROLLER_SOURCE)' ] || [ -z '$(ARCH_SOURCE)' ]; then \
-		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<netboot tree> ARCH_SOURCE=<mounted Arch ISO>' >&2; \
+	@if [ -z '$(VERSION)' ]; then \
+		echo 'require VERSION=YYYYMMDD.NNN' >&2; \
 		exit 2; \
 	fi
 	@$(MAKE) --no-print-directory homelab-pxe-release-set \
 		VERSION='$(VERSION)' \
-		CONTROLLER_SOURCE='$(CONTROLLER_SOURCE)' \
+		CONTROLLER_SOURCE='$(or $(CONTROLLER_SOURCE),$(FACTORY_CONTROLLER_SOURCE))' \
 		ARCH_SOURCE='$(ARCH_SOURCE)' \
 		BASE_URL='$(or $(BASE_URL),http://10.1.31.2)'
 
@@ -580,12 +585,13 @@ homelab-pxe-all:
 		BASE_URL='$(WINDOWS_BASE_URL)'
 
 homelab-pxe-release-set:
-	@if [ -z '$(VERSION)' ] || [ -z '$(CONTROLLER_SOURCE)' ] || [ -z '$(ARCH_SOURCE)' ] || [ -z '$(BASE_URL)' ]; then \
-		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<tree> ARCH_SOURCE=<extracted ISO> BASE_URL=<immutable root URL>' >&2; exit 2; \
+	@if [ -z '$(VERSION)' ] || [ -z '$(CONTROLLER_SOURCE)' ] || [ -z '$(BASE_URL)' ]; then \
+		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<mkarchiso netboot tree> BASE_URL=<immutable root URL>' >&2; exit 2; \
 	fi
 	@$(PYTHON) homelab/bin/homelab-pxe-release-set build \
 		--releases homelab/var/pxe --version '$(VERSION)' \
-		--controller-source '$(CONTROLLER_SOURCE)' --arch-source '$(ARCH_SOURCE)' \
+		--controller-source '$(CONTROLLER_SOURCE)' \
+		$(if $(strip $(ARCH_SOURCE)),--arch-source '$(ARCH_SOURCE)',--arch-cache '$(FACTORY_ARCH_SOURCE_CACHE)') \
 		--base-url '$(BASE_URL)' --seal '$(FACTORY_MEDIA_SEAL)' \
 		--arch-iso '$(ARCH_ISO)' --arch-receipt '$(ARCH_ISO).receipt.json' \
 		--windows-iso '$(WINDOWS_ISO_CACHE)' \

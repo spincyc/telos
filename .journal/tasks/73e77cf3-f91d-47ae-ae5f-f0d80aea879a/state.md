@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
 superseded_by: null
 created_at: "2026-07-27T21:51:51Z"
-updated_at: "2026-07-27T22:13:32Z"
+updated_at: "2026-07-27T22:39:26Z"
 ---
 
 # Goal
@@ -49,5 +49,7 @@ for the first real controller/Arch/Windows release set.
 The transactional builder now stages all three leaves privately, binds them
 and the sealed Windows SMB source into one aggregate receipt, and selects only
 after complete verification. Negative, interruption, and rollback tests pass.
-The next slice must derive the missing controller and Arch source trees from
-sealed local inputs and build the first set.
+The sealed Arch ISO now derives a mount-free, digest-addressed 96-file source
+cache. The next slice must build the missing purpose-built Controller
+mkarchiso netboot output and then build the first set. The `TELOS_SEED` data
+disc is not a valid substitute.

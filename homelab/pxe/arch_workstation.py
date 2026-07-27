@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ from typing import Callable
 TARGET_ID = "arch-workstation"
 VERSION = re.compile(r"^\d{8}\.\d{3}$")
 REQUIRED_MEDIA = (
-    Path(".disk/info"),
+    Path("arch/version"),
     Path("arch/boot/x86_64/vmlinuz-linux"),
     Path("arch/boot/x86_64/initramfs-linux.img"),
     Path("arch/x86_64/airootfs.sfs"),
@@ -108,6 +109,8 @@ def _valid_extraction(directory: Path, image_digest: str) -> bool:
 def extract_iso(
     image: Path,
     cache: Path,
+    *,
+    expected_sha256: str | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> Path:
     """Extract an Arch ISO without mounting it, caching only verified output."""
@@ -115,6 +118,8 @@ def extract_iso(
     if not image.is_file():
         raise TargetError(f"Arch ISO is not a regular file: {image}")
     image_digest = sha256(image)
+    if expected_sha256 is not None and image_digest != expected_sha256:
+        raise TargetError("Arch ISO does not match the sealed media digest")
     destination = Path(cache) / image_digest
     if _valid_extraction(destination, image_digest):
         return destination / "root"
@@ -144,6 +149,12 @@ def extract_iso(
             detail = (error.stderr or "").strip()
             suffix = f": {detail}" if detail else ""
             raise TargetError(f"xorriso could not extract {image.name}{suffix}") from error
+        # Rock Ridge media commonly records directories as 0555.  The cache is
+        # disposable caller-owned state, so restore owner write permission on
+        # directories to make atomic cleanup and replacement reliable.  File
+        # bytes and their receipt remain unchanged.
+        for directory in (root, *(path for path in root.rglob("*") if path.is_dir())):
+            os.chmod(directory, directory.stat().st_mode | 0o700)
         validate_source(root)
         (temporary / "receipt.json").write_text(
             json.dumps(
@@ -284,7 +295,7 @@ def stage(*, source: Path, releases: Path, version: str, base_url: str) -> Path:
             render_ipxe(
                 release_url=f"{base_url.rstrip('/')}/{TARGET_ID}/{version}"),
             encoding="utf-8")
-        media_info = (Path(source) / ".disk/info").read_text(
+        media_info = (Path(source) / "arch/version").read_text(
             encoding="utf-8", errors="replace").strip()
         descriptor = {
             "schema": 1,
