@@ -1,0 +1,46 @@
+\section{Prove the meal before serving}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,font=\scriptsize,
+  every node/.style={align=center}]
+\node[draw,rounded corners,minimum width=2.4cm,minimum height=.9cm] (cold) at (0,0)
+  {\textbf{Cold chain}\\fish $\leq40^\circ$F};
+\node[draw,rounded corners,minimum width=2.4cm,minimum height=.9cm] (clean) at (3.1,0)
+  {\textbf{Clean cut}\\no gut spill};
+\node[draw,rounded corners,minimum width=2.4cm,minimum height=.9cm] (bone) at (6.2,0)
+  {\textbf{Bone sweep}\\both directions};
+\node[draw,rounded corners,minimum width=2.4cm,minimum height=.9cm] (heat) at (9.3,0)
+  {\textbf{Heat proof}\\thickest part $145^\circ$F};
+\draw[->,very thick] (cold)--(clean);
+\draw[->,very thick] (clean)--(bone);
+\draw[->,very thick] (bone)--(heat);
+\node[draw,minimum width=11.7cm,minimum height=.72cm,anchor=north west] at (-1.2,-.85)
+  {If any gate fails: stop, isolate the portion, correct it, then repeat that check.};
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.23\linewidth}LL@{}}
+\toprule
+\textbf{Ask now} & \textbf{Pass condition} & \textbf{If it fails}\\
+\midrule
+Is the fish still cold? & Firm, clean-smelling flesh at or below
+\qty{40}{^\circ F}. & If time above \qty{40}{^\circ F} is uncertain, discard;
+do not try to ``cook safety back in.''\\
+Did the knife enter gut or gall? & No green stain, fecal material, or sour
+odor on edible flesh. & Cut away a generous contaminated margin; wash hands,
+knife, and board before touching clean meat.\\
+Are the portions actually boneless? & Bright light plus two slow fingertip
+passes, head-to-tail and tail-to-head. & Return the portion to the clean board;
+trim or recut. Never rely on batter or sauce to hide a bone.\\
+Is the center done? & A clean instant-read probe enters sideways into the
+thickest piece and reads \qty{145}{^\circ F}. & Keep cooking in short
+increments; clean the probe before rechecking.\\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Final proof}
+Set one finished portion on a clean plate, split its thickest point, and confirm
+opaque, separating flakes with no translucent core. Record the time and
+temperature once when learning a new pan, oven, or portion thickness. Cool
+leftovers shallowly and refrigerate within two hours. The proof is the measured
+center, not a timer, crust color, or confident guess.
+\end{telospanel}

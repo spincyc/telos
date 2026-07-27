@@ -1,0 +1,44 @@
+\section{Use a closed-loop check}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,font=\scriptsize]
+\node[draw,rounded corners,minimum width=2.45cm,minimum height=.95cm,
+  align=center] (n0) at (0,0) {\textbf{Observe}\\water, weather, wear};
+\node[draw,rounded corners,minimum width=2.45cm,minimum height=.95cm,
+  align=center] (n3) at (3,0) {\textbf{Choose}\\one clear next move};
+\node[draw,rounded corners,minimum width=2.45cm,minimum height=.95cm,
+  align=center] (n6) at (6,0) {\textbf{Test}\\three careful attempts};
+\node[draw,rounded corners,minimum width=2.45cm,minimum height=.95cm,
+  align=center] (n9) at (9,0) {\textbf{Prove}\\result or no result};
+\draw[->,very thick] (n0)--(n3);
+\draw[->,very thick] (n3)--(n6);
+\draw[->,very thick] (n6)--(n9);
+\draw[->,very thick] (n9.south) -- +(0,-.5) -| (n0.south);
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}LL@{}}
+\toprule
+\textbf{Question} & \textbf{Check} & \textbf{Recovery}\\
+\midrule
+What changed? & Name one visible or measurable fact: wind direction, depth,
+water temperature, abrasion, knot shape, lure track, fish reflex, or elapsed
+time. & If you cannot name the change, observe for one minute before changing
+equipment.\\
+What am I testing? & Change one variable only and state what success will look
+like before the attempt. & Restore the last known setup; avoid changing lure,
+depth, speed, and location together.\\
+Is the system sound? & Trace the full chain from hand to fish: line, knot,
+leader, hook, drag, handling tool, route home. & Stop on any rough line, crossed
+wrap, open snap, dull point, missing tool, or unsafe condition; repair or leave.\\
+What proves completion? & A repeatable result and a final tactile/visual check,
+not merely finishing the written steps. & Repeat slowly under good light. If
+the check is ambiguous, treat it as a failure.\\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Final proof before the next cast}
+Say the plan in one sentence. Tug-test the terminal connection, touch-check the
+last two feet of line, confirm hook point and snap closure, set the drag, and
+identify the safe landing and release route. If weather, visibility, footing,
+or fish condition makes that route doubtful, change the plan before casting.
+\end{telospanel}

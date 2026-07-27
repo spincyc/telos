@@ -37,6 +37,69 @@ Original graphite portrait for this ChatGPT edition. Morphology reviewed
 against Wisconsin DNR species references.}
 \end{center}
 
+\newpage
+\section{Read the fish before naming it}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+\path[use as bounding box] (-.2,-1.25) rectangle (16.2,2.15);
+\draw[thick] (.4,0) .. controls (1.4,1.05) and (4.5,1.2) .. (6.5,.5)
+  .. controls (7.4,.2) and (7.4,-.2) .. (6.5,-.5)
+  .. controls (4.3,-1.08) and (1.45,-1.0) .. (.4,0);
+\draw[thick] (6.5,.5)--(7.6,1.05)--(7.35,0)--(7.6,-1.05)--(6.5,-.5);
+\draw (.85,.12) circle (.11);
+\draw[|-|] (.4,-1.12)--(7.6,-1.12);
+\node[font=\scriptsize,fill=white] at (4,-1.12) {total length: snout compressed to longest tail ray};
+\draw[densely dashed] (1.2,-.78)--(1.2,.78);
+\draw[densely dashed] (5.7,-.7)--(5.7,.7);
+\node[font=\scriptsize,align=center] at (1.2,1.55) {jaw reach\\against the eye};
+\node[font=\scriptsize,align=center] at (5.7,1.55) {fin origin, notch,\\and ray/spine count};
+\draw[thick] (9.1,-.7) rectangle (11.1,.7);
+\draw (9.65,0) circle (.16);
+\draw[thick] (9.1,-.28)--(10.05,-.18)--(10.55,-.02);
+\draw[densely dashed] (10.05,-.75)--(10.05,.75);
+\node[font=\scriptsize,align=center] at (10.1,1.35) {close the mouth; compare\\jaw tip with eye landmarks};
+\draw[thick] (12.2,-.65) .. controls (13.1,.15) and (14,.15) .. (14.9,-.65);
+\draw[thick] (12.2,.65) .. controls (13.1,-.15) and (14,-.15) .. (14.9,.65);
+\draw[densely dashed] (13.55,-.9)--(13.55,.9);
+\node[font=\scriptsize,align=center] at (13.55,1.35) {tail: rounded, square,\\forked, or pointed lobes?};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item \textbf{Silhouette first.} \CheckpointOne
+\item \textbf{Hard structure second.} \CheckpointTwo
+\item \textbf{Markings last.} \CheckpointThree
+\end{enumerate}
+
+\begin{telospanel}{Intermediate questions}
+Before looking at the species name, answer aloud: \emph{Where does the closed
+jaw end? Are dorsal sections joined or separate? What is the tail-lobe shape?
+Which mark is structural enough to survive poor light?} If two answers conflict,
+record ``unresolved'' and do not force the identification.
+\end{telospanel}
+
+\section{Confusion-pair gate}
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}L@{}}
+\toprule
+Candidate & \FishName\\
+Nearest alternative & \Confusion\\
+Required gate & \DecisionGate\\
+Independent check & \Verification\\
+\bottomrule
+\end{tabularx}
+
+\begin{center}
+\begin{tikzpicture}[node distance=.55cm,every node/.style={font=\small,align=center}]
+\node[draw,rounded corners,minimum width=3.1cm,minimum height=.75cm] (a) {observe two\\independent traits};
+\node[draw,diamond,aspect=2,right=of a] (b) {agree?};
+\node[draw,rounded corners,minimum width=2.7cm,minimum height=.75cm,right=of b] (c) {name and\\photograph};
+\node[draw,rounded corners,minimum width=2.7cm,minimum height=.75cm,below=of b] (d) {unresolved:\\release / no harvest};
+\draw[-{Latex}] (a)--(b);
+\draw[-{Latex}] (b)--node[above,font=\scriptsize]{yes}(c);
+\draw[-{Latex}] (b)--node[right,font=\scriptsize]{no}(d);
+\end{tikzpicture}
+\end{center}
+
 \section{Find it on these waters}
 \begin{tabularx}{\linewidth}{@{}p{.12\linewidth}L@{}}
 \toprule
@@ -49,12 +112,34 @@ testable habitat hypotheses, not abundance findings.\\
 \bottomrule
 \end{tabularx}
 
+\section{Field evidence log}
+\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.14\linewidth}p{.12\linewidth}p{.18\linewidth}L@{}}
+\toprule
+Date/time & Water + station & Depth/temp & Two observed traits & Habitat, lure, result\\
+\midrule
+\rule{0pt}{1.25cm} & & & &\\
+\midrule
+\rule{0pt}{1.25cm} & & & &\\
+\bottomrule
+\end{tabularx}
+
+{\small\textbf{Evidence threshold.} One sighting is an observation, not an
+abundance claim. Repeat the same identification gate on another fish, retain a
+clear lateral photograph when lawful and safe, and note failed searches as
+carefully as catches. \EvidenceTest}
+
 \section{Presentations}
 \begin{enumerate}
 \item \textbf{\MethodOne.} \MethodOneText
 \item \textbf{\MethodTwo.} \MethodTwoText
 \item \textbf{Stop rule.} \StopRule
 \end{enumerate}
+
+\begin{teloscard}{On-water verification}
+After the first response, ask: \emph{Did the fish, depth, cover, and bite match
+the prediction?} Repeat once. If the second result disagrees, return to search
+mode rather than explaining away the evidence.
+\end{teloscard}
 
 \begin{teloshazard}{Handling decides the outcome}
 \Handling

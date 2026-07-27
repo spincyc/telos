@@ -1,33 +1,100 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{First Trip}{A small, complete plan}{2026-07-26}
+\telosmeta{Lake Country Fishing}{First Trip}{A small, complete plan}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
-\section{Before leaving}
-\begin{enumerate}
-\item Confirm legal access, weather, exact-water 2026--27 rules, consumption
-advice and posted boating ordinances. Leave a float plan.
-\item Pack fitted PFDs, water, sun/weather layers, charged waterproofed phone,
-first aid, pliers, cutters, knotless rubber net and AIS-cleaning supplies.
-\item Rig one slip bobber and one simple jig or split-shot setup; carry a spare.
-Use legal bait from a lawful source.
-\end{enumerate}
-\section{A two-hour search}
-\begin{tabularx}{\linewidth}{@{}p{.2\linewidth}X@{}}
-\toprule
-First 15 min & Observe wind, clarity, temperature, vegetation, traffic and bait.\\
-Next 45 min & Fish one shallow edge. Change depth before changing everything.\\
-Next 45 min & Test one break or saddle. Record bottom and contact depth.\\
-Last 15 min & Photograph notes, clean/drain/remove, secure hooks and leave on time.\\
+\begin{teloshazard}{The trip begins with a live check}
+Confirm legal access, weather, exact-water 2026--27 rules, consumption advice,
+and posted boating ordinances. Leave a float plan. Return early for thunder,
+rising wind, poor visibility, equipment trouble, cold stress, unsafe traffic,
+or uncertainty about access or law. Wear the fitted PFD.
+\end{teloshazard}
+
+\section{Pack by function}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.18\linewidth}X>{\raggedright\arraybackslash}p{.25\linewidth}@{}}
+\toprule Function&Minimum kit&Observable check\\\midrule
+Life safety&Fitted PFDs, whistle, phone in waterproof pouch, first aid, water,
+sun/weather layers&PFD closes snugly; phone is charged; float plan names ramp
+and return time.\\
+Fish safely&Pliers, cutters, knotless rubber net, towel, ruler&Tools open
+one-handed; cutters sever the leader; ruler starts at a hard stop.\\
+Fish simply&One slip bobber, one jig or split-shot rig, one spare of each&Every
+knot survives a firm pull; hooks are secured until launch.\\
+Leave clean&AIS brush/bag, drain-plug reminder, trash container&No plant
+fragments remain on trailer, anchor, line, or livewell.\\
 \bottomrule
 \end{tabularx}
-\section{Beginner rule}
-One safe, repeatable presentation fished attentively teaches more than a box of
-constant changes. A bite is evidence; no bite is also evidence. Move only after
-you can state what depth, cover and speed you actually tested.
-\begin{teloshazard}{Stop conditions}
-Return early for thunder, rising wind, poor visibility, equipment trouble,
-cold stress, unsafe traffic or uncertainty about access or law. A small open
-boat is not lightning shelter. Wear the PFD.
-\end{teloshazard}
+
+\section{Rig and rehearse at home}
+\begin{center}
+\begin{tikzpicture}[node distance=8mm,every node/.style={draw,rounded corners,
+font=\small,align=center,minimum width=3.25cm,minimum height=9mm}]
+\node (a){tie and pull-test}; \node[right=of a] (b){set stop at 5 ft};
+\node[right=of b] (c){stage pliers and net};
+\node[below=of c] (d){secure every hook};
+\draw[-{Latex}] (a)--(b);\draw[-{Latex}] (b)--(c);\draw[-{Latex}] (c)--(d);
+\node[draw=none,font=\scriptsize,below=2mm of a]{No slipping coils};
+\node[draw=none,font=\scriptsize,below=2mm of b]{Weight hangs freely};
+\end{tikzpicture}
+\end{center}
+\textbf{Ask before leaving:} Can I cast this rig without opening the tackle
+box? Can I reach cutters while seated? Can my partner state the return plan?
+If any answer is no, fix it on shore.
+
+\newpage
+\section{A measured two-hour search}
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.25\linewidth}X@{}}
+\toprule Time&Job&Record before moving\\\midrule
+0--15 min&Idle observation&Wind direction, visibility, surface temperature,
+plant height, traffic, and one safe return bearing.\\
+15--60 min&One shallow edge&Starting stop depth; depth of each weed touch,
+bottom touch, bite, or fish. Adjust stop in 1-ft increments.\\
+60--105 min&One break or saddle&Cast both across and along it. Record boat
+depth, lure depth, bottom character, and speed.\\
+105--120 min&Close cleanly&Photograph notes; secure hooks; clean, drain, remove;
+message the float-plan contact.\\
+\bottomrule
+\end{tabularx}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[very thick] (0,1.9)..controls(2,1.6)and(3,1.1)..(4.2,.8)
+ ..controls(5.3,.48)and(7,.45)..(9,.4);
+\draw[densely dotted] (0,1.25)--(9,1.25);
+\foreach \x/\d in {1/3,3/5,5/8,7/11}{\draw[|-|] (\x,1.25)--(\x,{1.9-.16*\x});
+\node[font=\scriptsize,fill=white] at(\x,{1.52-.08*\x}){\d\ ft};}
+\draw[-{Latex},very thick] (1.1,2.3)..controls(3.5,2.7)and(5.4,2.1)..(6.8,1.05);
+\node[font=\small,anchor=west] at(.2,2.55){cast across the break};
+\node[font=\scriptsize,anchor=west] at(5.7,.15){bottom contact verifies depth};
+\end{tikzpicture}
+\end{center}
+
+\section{The one-variable ladder}
+\begin{enumerate}
+\item \textbf{Depth:} move the bobber stop 1 ft; make 5 attentive casts.
+\item \textbf{Speed:} keep depth fixed; compare still, slow pull, then pause.
+\item \textbf{Position:} shift one cast length along the same edge.
+\item \textbf{Presentation:} change lure only after you can name the water
+column and cover already tested.
+\end{enumerate}
+\textbf{Intermediate question:} Was “no bite” a complete test, or did the lure
+foul, miss depth, or spend most of the retrieve away from the feature?
+
+\section{Troubleshooting}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.23\linewidth}X@{}}
+\toprule Symptom&Corrective check\\\midrule
+Bobber lies flat&Weight may be on bottom or missing. Shorten depth until it
+stands, then lower in measured steps.\\
+Constant weed fouling&Confirm hook is clean every cast; move 1 ft shallower or
+parallel the outside edge.\\
+Cannot repeat contact&Mark boat position and casting direction; reduce wind
+drift before changing lure.\\
+Too many decisions&Return to one rig, one edge, and the next 1-ft depth step.\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{Trip complete when}
+You returned on time, left no plants or line, recorded at least one verified
+depth/cover observation, and can name the first test for the next visit. A
+catch is useful evidence, not the only measure of success.
+\end{telospanel}
 \small Source basis: Wisconsin DNR Hook, Line \& Thinker; boating safety; PFD;
 AIS and bait law; 2026--27 regulations; NOAA/NWS inland boating.
 \end{document}

@@ -267,6 +267,50 @@
     \rule{\linewidth}{0.3pt}
   \end{minipage}\par}
 
+% Field proof belongs beside advice: a reader should know what observation
+% would confirm the identification, and what result would disprove it.
+\newcommand{\speciesfieldproof}[4]{%
+  \section{Prove it in hand}
+  \begin{center}
+  \begin{tikzpicture}[x=1cm,y=1cm]
+    \foreach \x/\n/\t in {0/1/observe,2.75/2/compare,5.5/3/measure,8.25/4/decide}{
+      \node[circle,draw=telosink,line width=.7pt,minimum size=5mm,
+            font=\scriptsize\bfseries] at (\x,0) {\n};
+      \node[font=\scriptsize\bfseries,anchor=west] at (\x+.34,0) {\t};}
+    \foreach \x in {1.05,3.8,6.55}{\draw[-{Stealth[length=1.6mm]},telos hair] (\x,0)--(\x+1.08,0);}
+  \end{tikzpicture}
+  \end{center}
+  \begin{telosfacts}[0.18]
+    \telosfact{Ask first}{#1}
+    \telosfact{Rule out}{#2}
+    \telosfact{Measure}{Close the mouth, pinch the tail only if the rule says to, and read total length against a rigid board: #3}
+    \telosfact{Field proof}{#4 Photograph the whole side profile and the decisive feature before release if the identification remains uncertain.}
+  \end{telosfacts}
+}
+
+% A rig is finished only after it passes a dry test and a water test.
+\newcommand{\rigfieldproof}[4]{%
+  \section{Prove the rig}
+  \begin{center}
+  \begin{tikzpicture}[x=1cm,y=1cm,node distance=.35cm]
+    \node[draw,minimum width=2.75cm,minimum height=.72cm,align=center,font=\scriptsize] (a)
+      {\textbf{1 · bench}\\pull every knot};
+    \node[draw,minimum width=2.75cm,minimum height=.72cm,align=center,font=\scriptsize,right=of a] (b)
+      {\textbf{2 · shallows}\\watch it work};
+    \node[draw,minimum width=2.75cm,minimum height=.72cm,align=center,font=\scriptsize,right=of b] (c)
+      {\textbf{3 · fishing depth}\\confirm contact};
+    \draw[-{Stealth[length=1.8mm]}] (a)--(b);
+    \draw[-{Stealth[length=1.8mm]}] (b)--(c);
+  \end{tikzpicture}
+  \end{center}
+  \begin{telosfacts}[0.19]
+    \telosfact{Bench test}{#1}
+    \telosfact{Water test}{#2}
+    \telosfact{Proof at depth}{#3}
+    \telosfact{If it fails}{#4 Change one variable, repeat the same cast or drop, and keep the first setting that restores the expected proof.}
+  \end{telosfacts}
+}
+
 % Terminal-tackle drawing library, used by every rig sheet.
 \input{lake-country-fishing/claude/shared/rigart.tex}
 

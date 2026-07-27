@@ -1,35 +1,99 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{Four Working Knots}{Tie, inspect, test}{2026-07-26}
+\telosmeta{Lake Country Fishing}{Four Working Knots}{Tie, inspect, test}{2026-07-27}
+\newcommand{\knotsteps}[4]{%
+\begin{center}\begin{tikzpicture}[node distance=5mm,every node/.style={draw,
+rounded corners,font=\scriptsize,align=center,text width=2.25cm,minimum height=9mm}]
+\node(a){#1};\node[right=of a](b){#2};\node[right=of b](c){#3};
+\node[right=of c](d){#4};\draw[-{Latex}](a)--(b);\draw[-{Latex}](b)--(c);
+\draw[-{Latex}](c)--(d);\end{tikzpicture}\end{center}}
 \begin{document}\telosmasthead[ChatGPT edition]
-\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.18\linewidth}X@{}}
-\toprule
-Improved clinch & Pass through eye; make 5--7 wraps; return through the first
-loop, then the large loop; moisten and draw tight. General hook/lure knot.\\
-Palomar & Double line through eye; tie a loose overhand; pass loop over tackle;
-moisten and seat without crossing strands. Strong when the doubled loop fits.\\
-Uni knot & Pass through eye; form a loop alongside standing line; wrap tag
-through loop 5--7 times; moisten, close, and slide to eye. Versatile connection.\\
-Surgeon's loop & Double the line; make an overhand loop, pass doubled end
-through twice; moisten and seat evenly. Useful for loop-to-loop leaders.\\
-\bottomrule
-\end{tabularx}
-\section{Every time}
-Leave enough tag to finish correctly. Wet monofilament/fluorocarbon before
-seating. Pull standing line and tag firmly, inspect for crossing, flattening or
-heat damage, trim safely, then test harder than the expected presentation load.
-Retie after abrasion, snags, tooth contact or unexplained failure.
-\begin{center}
-\begin{tikzpicture}
-\draw[line width=.8pt] (0,0)..controls(1,.7)and(2,-.7)..(3,0)
- ..controls(4,.7)and(5,-.7)..(6,0);
-\draw[line width=.8pt] (0,.2)..controls(1,-.5)and(2,.9)..(3,.2)
- ..controls(4,-.5)and(5,.9)..(6,.2);
-\node[font=\small] at (3,-.6){seat wraps side by side; reject crossed coils};
-\end{tikzpicture}
-\end{center}
-\begin{teloshazard}{Hooks under tension}
+\begin{teloshazard}{Control hooks and stored energy}
 Point hooks away from faces and hands. Wear eye protection when testing or
 pulling free. Cut snagged line under control; never snap it toward the boat.
 \end{teloshazard}
+
+\section{Choose the knot before tying}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.18\linewidth}p{.29\linewidth}X@{}}
+\toprule Knot&Use when&Do not choose when\\\midrule
+Improved clinch&Small hook or lure eye; mono/fluoro; familiar general knot&Very
+heavy or exceptionally slippery line without testing.\\
+Palomar&Doubled line fits through eye; high strength with few wraps&Large lure
+cannot pass through the loop cleanly.\\
+Uni&Versatile terminal connection; easy to inspect and slide&Wraps cannot be
+kept parallel around very stiff material.\\
+Surgeon's loop&Fast fixed end loop for loop-to-loop leaders&A compact terminal
+knot directly against a hook eye is required.\\
+\bottomrule
+\end{tabularx}
+
+\section{Improved clinch}
+\knotsteps{Pass tag through eye; leave 6--8 in}{Make 5--7 neat turns around
+standing line}{Return through eye-side loop, then new large loop}{Wet; pull tag
+to close, standing line to seat}
+\textbf{Look for:} a compact barrel of parallel coils ending against the eye.
+\textbf{Reject if:} one wrap crosses the others, coils show white flattening,
+or the tag retreats during the pull test.
+
+\section{Palomar}
+\knotsteps{Double 6--8 in; pass loop through eye}{Tie a loose overhand with the
+doubled line}{Pass the entire hook or lure through loop}{Wet; draw all four
+strands evenly, then seat}
+\textbf{Intermediate question:} Did the loop pass over the tackle without
+twisting around a hook point? Before seating, both strands through the eye must
+lie side by side, not cross.
+
+\newpage
+\section{Uni knot}
+\knotsteps{Pass through eye; lay tag beside standing line}{Turn tag back to form
+an open loop}{Wrap tag through loop 5--7 times}{Wet; close coils, then slide
+the knot to eye}
+\textbf{Measurement:} begin with 8--10 in of tag while learning. The finished
+coil should be roughly one line-diameter stack per wrap, not a loose spiral.
+
+\section{Surgeon's loop}
+\knotsteps{Double 8 in of line}{Form a loose overhand loop}{Pass doubled end
+through the opening twice}{Wet; pull both doubled legs evenly}
+\textbf{Look for:} two turns seated together and a loop that remains open
+without one leg slipping. Trim only after loading both legs.
+
+\section{What seating should look like}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round]
+\foreach \x in {1.5,1.85,...,3.25}{\draw[line width=1pt](\x,.45)arc(90:450:.18 and .45);}
+\draw[line width=1pt](0,0)--(1.55,0);\draw[line width=1pt](3.25,0)--(5.7,0);
+\node[font=\scriptsize] at(2.4,-.75){PASS: coils touch and remain parallel};
+\begin{scope}[xshift=7cm]
+\foreach \x/\r in {0/.35,.45/-.2,.9/.3,1.35/-.25,1.8/.25}
+{\draw[line width=1pt,rotate around={\r*30:(\x,0)}](\x,-.4)--(\x,.4);}
+\node[font=\scriptsize] at(.9,-.75){FAIL: crossed, gapped, uneven};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\section{The repeatable finish}
+\begin{enumerate}
+\item Wet mono/fluoro; keep braid wraps controlled.
+\item Close the knot slowly while guiding coils with fingers.
+\item Pull standing line and tag firmly; then load the tackle connection.
+\item Inspect under light from both sides. Trim safely, leaving a short tag.
+\item Test harder than the presentation load, away from face and hook path.
+\end{enumerate}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.25\linewidth}X@{}}
+\toprule Failure&Correction\\\midrule
+Knot slips&Retie with adequate tag and correct wrap count; do not “fix” by
+melting a tag end.\\
+Line curls or whitens&Friction damaged it. Cut above the damaged section, wet,
+and seat more slowly.\\
+Break occurs above knot&Inspect guides and line for abrasion; remove enough
+line to reach undamaged material.\\
+Knot looks different each time&Use the same tag length and count wraps aloud
+until the sequence is automatic.\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{Retie now}
+Retie after abrasion, snags, tooth contact, a day of repeated casting, or any
+unexplained failure. A passing knot is compact, undamaged, motionless under a
+firm pull, and reproducible twice in succession.
+\end{telospanel}
 \small Source basis: Wisconsin DNR Hook, Line \& Thinker.
 \end{document}

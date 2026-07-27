@@ -123,6 +123,163 @@ If you fish both, do not carry one lake's habits to the other.
   the best reason to fish it.}
 \end{telosfacts}
 
+\newpage
+\section{Treat the two basins as an experiment}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[contour5] (0,0) ellipse (1.45 and .9);
+\draw[contour20] (0,0) ellipse (1.03 and .58);
+\draw[contour40] (0,0) ellipse (.55 and .28);
+\draw[contour5] (5.4,0) ellipse (1.75 and 1.05);
+\draw[contour20] (5.4,0) ellipse (1.27 and .7);
+\draw[contour40] (5.4,0) ellipse (.7 and .38);
+\draw[contour5] (1.4,.12)..controls(2.25,.38)and(3.3,.38)..(3.7,.12);
+\draw[contour20] (1.0,-.16)..controls(2.2,-.43)and(3.4,-.43)..(4.16,-.16);
+\node[font=\small] at (0,1.25) {river lobe};
+\node[font=\small] at (5.4,1.42) {main basin};
+\node[font=\small] at (2.7,.9) {the neck};
+\draw[-{Latex}] (2.7,.76)--(2.7,.24);
+\end{tikzpicture}
+\end{center}
+
+North gives you a built-in comparison. Use it:
+\begin{enumerate}
+\item Put one station in the river lobe, one at each side of the neck and one
+in the main basin. Keep the measurement method identical.
+\item On the map, draw the shortest route from spot 7 to spot 3 through spot 5.
+Mark every contour crossed and the one place current could distort boat track.
+\item Compare spots 3 and 7. Which has the tighter break? Write the boat-depth
+window that keeps a cast in the 12--25 ft band.
+\item After rain, predict which station will change clarity and temperature
+first. What reading would prove the prediction wrong?
+\end{enumerate}
+
+\begin{teloscard}{Make the comparison falsifiable}
+I expect the \rule{1.25in}{.4pt} basin/lobe to be \rule{1.5in}{.4pt} because
+\rule{2.15in}{.4pt}. I will compare it with \rule{1.8in}{.4pt}. A single bite
+does / does not count because \rule{1.75in}{.4pt}.
+\end{teloscard}
+
+\section{Old contours, new questions}
+\begin{tabularx}{\linewidth}{@{}p{.31\linewidth}X@{}}
+\toprule
+\textbf{Question} & \textbf{Verification}\\
+\midrule
+Does every fish pass the neck today? & Scan both lips on reciprocal headings;
+record current, bait and fish instead of assuming traffic.\\
+Does the weed line stop at 8--12 ft? & Cross living vegetation twice in each
+basin and record the outside edge separately.\\
+Is the mapped access usable and lawful? & Confirm the current public route,
+signs, craft limits and fees before loading the vehicle.\\
+\bottomrule
+\end{tabularx}
+
+\newpage
+\section{Measure without changing the method}
+
+\begin{enumerate}
+\item \textbf{Name four stations.} Use the river lobe, west lip of the neck,
+east lip and main-basin break. Record a map number or lawful waypoint.
+\item \textbf{Depth.} Outside traffic and current, let sonar stabilize. Repeat
+on the reciprocal heading. Use a marked sounding line only with propulsion
+stopped, PFD worn and line clear of feet and propeller.
+\item \textbf{Temperature.} Shade the thermometer. Measure surface, 5, 10 and
+20 ft where possible, with the same wait at each depth and station. Do not
+substitute a surface sonar reading for a lowered thermometer.
+\item \textbf{Clarity.} Lower a black-and-white Secchi disk on the shaded side
+to disappearance; raise it to reappearance. Average the two depths and repeat.
+Stay seated or braced; skip the test when waves make it unsafe.
+\item \textbf{Context.} Record recent rain, wind, sky, visible current,
+vegetation height, debris, traffic and confidence in each reading.
+\end{enumerate}
+
+\begin{telospanel}{Stained is an observation, not a number}
+Use the same disk, line, side of craft and units. Temperature and clarity can
+suggest where to look, but neither proves dissolved oxygen. Measure oxygen with
+calibrated gear or record it as unknown.
+\end{telospanel}
+
+\subsection{Two-basin water log}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.12\linewidth}p{.09\linewidth}
+p{.15\linewidth}p{.15\linewidth}X@{}}
+\toprule
+Date/time & Station & Depth ft & Temp: surface/5/10/20 ft &
+Secchi: down/up/mean ft & Rain, current, growth, bait, confidence\\
+\midrule
+\rule{0pt}{1.0cm}&&&&&\\ \midrule
+\rule{0pt}{1.0cm}&&&&&\\ \midrule
+\rule{0pt}{1.0cm}&&&&&\\ \midrule
+\rule{0pt}{1.0cm}&&&&&\\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\subsection{Interrogate the difference}
+\begin{enumerate}
+\item Which reading differed most between basins? \rule{1.25in}{.4pt}. Was that
+difference greater than variation between repeated readings?
+\item Did opposite depth headings agree within \rule{.45in}{.4pt} ft? If not,
+was slope, weeds, current, speed or setup the likelier cause?
+\item Which basin held more repeatable bait marks? \rule{1in}{.4pt}. What
+comparison pass will keep that conclusion honest?
+\end{enumerate}
+
+\newpage
+\section{Choose from what repeated}
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm and 7mm,
+every node/.style={draw,align=center,font=\small,minimum height=8mm},
+flow/.style={-{Latex},line width=.55pt}]
+\node (gate) {Access, rules and\\weather certain now?};
+\node[right=of gate] (stop) {No: no launch;\\find lawful certainty};
+\node[below=of gate] (four) {Yes: compare lobe,\\neck and main basin};
+\node[below left=of four] (similar) {Measurements and life\\broadly similar?};
+\node[below=of four] (different) {One basin clearly\\more active?};
+\node[below right=of four] (neck) {Bait or fish repeat\\at the neck?};
+\node[below=of similar] (a) {Test the same structure\\in both basins};
+\node[below=of different] (b) {Focus there; retain\\one control pass};
+\node[below=of neck] (c) {Fish current lip/depth;\\reject one-pass noise};
+\draw[flow] (gate)--node[above,font=\scriptsize,draw=none]{no}(stop);
+\draw[flow] (gate)--node[left,font=\scriptsize,draw=none]{yes}(four);
+\draw[flow] (four)--(similar);\draw[flow] (four)--(different);\draw[flow] (four)--(neck);
+\draw[flow] (similar)--(a);\draw[flow] (different)--(b);\draw[flow] (neck)--(c);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Access and weather gate}
+\begin{tabularx}{\linewidth}{@{}p{.30\linewidth}X p{.14\linewidth}@{}}
+\toprule
+\textbf{Verify today} & \textbf{Evidence, source, time} & \textbf{Go?}\\
+\midrule
+Current lawful public access and route && Yes / No\\
+Exact-water regulation; posted ordinance && Yes / No\\
+Forecast, radar, wind direction and gusts && Yes / No\\
+Lightning, fog, waves, current or high water && Yes / No\\
+Craft fit, PFDs, lights, communication, return && Yes / No\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{A map symbol does not grant access}
+Confirm the public route from a current authoritative source and read the
+signs on site. A path, road label or online pin is not permission. If access,
+weather, current or a safe return remains uncertain, do not launch.
+\end{teloshazard}
+
+\subsection{Claim and counter-evidence log}
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.18\linewidth}X X@{}}
+\toprule
+Time / spot & Claim tested & Evidence for and against & Next move and reason\\
+\midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\
+\bottomrule
+\end{tabularx}
+
+\newpage
 \begin{teloshazard}{Check the regulations before every trip}
 The 2026--27 rules for this water are the same as Pine Lake's: largemouth and
 smallmouth bass 14\,in minimum, 5 per day, 2 May--7 March, catch-and-release the
@@ -132,5 +289,22 @@ through 31 December; panfish 25 per day; cisco and whitefish 10 per day.
 \textbf{These change.} The Wisconsin DNR publishes the current rules for this
 exact water body, and only that publication is authoritative.
 \end{teloshazard}
+
+\section{Close the comparison at home}
+\begin{teloscard}{A result needs its counterexample}
+The clearest basin difference was \rule{2.6in}{.4pt}. It repeated on
+\rule{.55in}{.4pt} of \rule{.55in}{.4pt} passes. The observation most likely
+to overturn it next trip is \rule{2.5in}{.4pt}.
+\end{teloscard}
+\begin{enumerate}
+\item Compare paired stations, not the best pass from one basin with the worst
+from the other.
+\item Save waypoints with date, current/rain context and confidence. Never
+publish an unverified access or hazard mark.
+\item Write what changed at the neck and what did not.
+\item Clean, drain and remove plants and animals before moving equipment.
+\item After three comparable trips, revise the ``North differs from Pine''
+claims that the measurements did not support.
+\end{enumerate}
 
 \end{document}

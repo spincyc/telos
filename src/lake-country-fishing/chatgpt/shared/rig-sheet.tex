@@ -11,14 +11,118 @@
  \node[font=\scriptsize,anchor=south] at (4.05,1.77) {line / direction of pull};
 \end{tikzpicture}}
 
+\newcommand{\rigstep}[3]{%
+\begin{minipage}[t]{.235\linewidth}
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+ \draw[line width=.65pt] (.15,.55)--(1.75,.55);
+ \fill[white,draw=black,line width=.7pt] (.95,.55) circle (.13);
+ \draw[-{Stealth[length=1.8mm]},line width=.45pt] (.15,.9)--(1.75,.9);
+ \node[font=\bfseries\scriptsize] at (.15,1.22) {#1};
+ \node[font=\fontsize{7}{8}\selectfont,align=center,text width=1.8cm,
+   anchor=north] at (.95,.35) {#2};
+\end{tikzpicture}
+
+{\fontsize{7.5}{9}\selectfont #3}
+\end{minipage}}
+
+\newcommand{\rigsequence}[4]{%
+\rigstep{1}{#1}{Lay out and inspect.}\hfill
+\rigstep{2}{#2}{Thread or tie in order.}\hfill
+\rigstep{3}{#3}{Seat, trim, and orient.}\hfill
+\rigstep{4}{#4}{Add bait; test before casting.}}
+
+\newcommand{\riglog}{%
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{@{}p{1.15cm}p{1.05cm}p{1.05cm}p{1.15cm}LL@{}}
+\toprule
+Date & Water & Depth & Setting & Evidence seen or felt & Next change\\
+\midrule
+\rule{0pt}{1.2em}&&&&&\\ \midrule
+\rule{0pt}{1.2em}&&&&&\\ \midrule
+\rule{0pt}{1.2em}&&&&&\\ \midrule
+\rule{0pt}{1.2em}&&&&&\\
+\bottomrule
+\end{tabularx}}
+
 \newcommand{\RigSheet}[9]{%
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{#1}{Rig sheet --- original assembly diagram}{2026-07-26}
+\telosmeta{Lake Country Fishing}{#1}{Build, tune, test, diagnose}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
 \textbf{Job.} #2\par
 \begin{center}\rigassembly#3\end{center}
-\section{Components and build}
+\section{Components and build order}
 #4\par
+\medskip
+\noindent\rigsequence#3
+
+\begin{telospanel}{Before tying}
+Reject nicked line, distorted eyes, dull points, cracked swivels, and hardware
+whose rating is unknown. Lay the four stages above in order. Which connection
+must pass through another component first? Which knot or crimp becomes
+inaccessible after the next stage? Measure leader, drop, stop, or bait position
+before trimming.
+\end{telospanel}
+
+\section{Measure and tune}
+\begin{enumerate}
+\item Record line type and strength, leader or drop length, hook size, weight,
+bait size, and the intended depth. Do not call a rig ``about right'' without a
+number that can be repeated.
+\item Ask: \emph{What should remain fixed while one variable changes?} Begin
+with this rig's main control: #8
+\item Ask: \emph{What does success look like beside the boat?} State expected
+sink rate, posture, clearance, or tracking before fishing.
+\item Change one variable at a time and write the old and new values in the
+evidence log. If wind, depth, speed, or cover changed too, the comparison is
+not controlled.
+\end{enumerate}
+
+\newpage
+\section{Bench verification}
+\begin{teloscard}{Pull test}
+Wet and seat every knot. Wrap the line around smooth dowels or a scale---never
+bare hands---and pull steadily to a load safely above the expected fishing
+load but below the line's rated strength. Hold for ten seconds. Reject the rig
+if a knot creeps, a tag shortens, line whitens or curls, a crimp slips, or
+hardware opens. Recheck after any snag or fish.
+\end{teloscard}
+
+\begin{teloscard}{Behavior test}
+Lower the finished rig beside the boat, dock, or into a clear tub. Pull it at
+the speed used on the water, then stop and restart. Confirm the four stages
+remain in order, the bait is upright and free, the hook point is positioned as
+intended, and no component spins, fouls, or masks a bite. Repeat after the
+first cast.
+\end{teloscard}
+
+\section{Fault isolation}
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.33\linewidth}L@{}}
+\toprule
+Observed fault & Isolate before changing & One-variable correction\\
+\midrule
+Rig spins or twists & Remove bait; pull bare rig, then each stage & Straighten
+bait, correct orientation, or replace the faulty swivel\\
+Tangles on cast or drop & Shorten the cast; watch which branch crosses first &
+Shorten one branch, slow the cast, or separate stages\\
+No bottom/depth certainty & Verify measured depth and sink time & Adjust only
+weight, stop, or drop length\\
+Poor bite detection & Test slack, posture, and connection seating & Change
+line angle or slack control before changing bait\\
+Break or slip & Inspect the exact failure point under bright light & Retie or
+replace damaged line and repeat the pull test\\
+Hook fouls or bait tears & Test hook and bait alone & Correct hook size,
+entry point, exposure, or support\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{Stop after a failed test}
+A failed pull or behavior test is evidence, not bad luck. Do not strengthen a
+weak system by adding random hardware. Identify the first component that
+changed, correct it, and restart the full verification sequence.
+\end{teloshazard}
+
+\newpage
 \section{Fish it}
 #5\par
 \begin{telosfacts}[.20]
@@ -26,6 +130,23 @@
 \telosfact{North Lake}{#7}
 \telosfact{Adjustment}{#8}
 \end{telosfacts}
+
+\section{On-water proof}
+Before the first cast, write a prediction: where the rig should travel, what
+contact or posture should be felt or seen, and which event will trigger the
+next change. After each controlled trial, log direct evidence---bottom ticks,
+weed contact, bait condition, line angle, missed strike, landed fish---rather
+than ``worked'' or ``didn't work.''
+
+\medskip
+\riglog
+
+\begin{telospanel}{Decision rule}
+Keep a setting only when the expected behavior repeats. If it fails twice
+under comparable conditions, isolate one fault and change one measurement.
+If conditions changed, start a new row rather than crediting the tackle.
+\end{telospanel}
+
 \begin{teloshazard}{Control the hooks, fish and law}
 #9 Use tackle strong enough to retrieve the target promptly. Prepare pliers and
 a knotless rubber net before the cast. If a hook is deep, cutting the line can

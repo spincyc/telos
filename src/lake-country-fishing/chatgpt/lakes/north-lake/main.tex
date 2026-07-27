@@ -85,6 +85,164 @@ current official information and direct observation.
 \end{teloshazard}
 
 \newpage
+\section{Read two basins as a connected system}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[cgten] (0,0) ellipse (1.45 and .9);
+\draw[cgtwenty] (0,0) ellipse (1.05 and .6);
+\draw[cgforty] (0,0) ellipse (.58 and .3);
+\draw[cgten] (5.4,0) ellipse (1.7 and 1.05);
+\draw[cgtwenty] (5.4,0) ellipse (1.25 and .7);
+\draw[cgforty] (5.4,0) ellipse (.72 and .38);
+\draw[cgten] (1.42,.12)..controls(2.4,.38)and(3.1,.38)..(3.72,.12);
+\draw[cgtwenty] (1.0,-.18)..controls(2.25,-.45)and(3.3,-.45)..(4.18,-.18);
+\node[font=\small] at (0,1.25) {west lobe};
+\node[font=\small] at (5.4,1.42) {main basin};
+\node[font=\small,align=center] at (2.65,.92) {saddle / corridor};
+\draw[-{Latex}] (2.65,.78)--(2.65,.25);
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item On the lake map, draw a route that samples location 5, then 6, then 3
+without crossing the same contour more than necessary.
+\item At location 6, mark one station on each lip of the saddle. Predict which
+lip receives today's wind and which offers the quieter measurement station.
+\item Compare locations 2 and 4. Circle the one with tighter contour spacing;
+write how much boat-position error you can tolerate before a cast misses the
+break.
+\item Trace the shallowest apparent route between locations 8 and 9. List two
+reasons the historical route may not be safe or navigable now.
+\end{enumerate}
+
+\begin{teloscard}{Prediction before launch}
+If the two lobes differ, I expect \rule{1.55in}{.4pt} to have clearer /
+warmer water because \rule{2.2in}{.4pt}. I will test that claim with
+\rule{2in}{.4pt}, not with the first bite alone.
+\end{teloscard}
+
+\section{Questions the antique contours cannot settle}
+\begin{tabularx}{\linewidth}{@{}X X@{}}
+\toprule
+\textbf{Question} & \textbf{Direct check}\\
+\midrule
+Does the central corridor carry bait today? & Scan both lips on reciprocal
+headings; require repeatable marks before fishing.\\
+Where does living vegetation end? & Measure the outside edge in each lobe;
+do not transfer one basin's depth to the other.\\
+Is the south neck lawful and passable? & Verify access, signs, depth, current
+and obstructions from a safe position; turn back if uncertain.\\
+\bottomrule
+\end{tabularx}
+
+\newpage
+\section{Measure both lobes the same way}
+
+\begin{enumerate}
+\item \textbf{Choose four stations.} Use one protected shelf, the west-lobe
+rim, one saddle lip and an eastern main-basin break. Identify each by map
+number or lawful waypoint.
+\item \textbf{Depth.} Stop safely outside traffic. Let sonar stabilize and
+repeat the pass on the reciprocal heading. With a marked sounding line, stop
+propulsion, wear a PFD and keep line away from hands, feet and propeller.
+\item \textbf{Temperature.} Shade the thermometer. Measure surface, 5, 10 and
+20 ft where possible, pausing for a stable reading. Use the same depths and
+wait time in each lobe; write ``not measured'' instead of estimating.
+\item \textbf{Clarity.} From the shaded side, lower a standard black-and-white
+Secchi disk to disappearance, then raise it to reappearance. Average the two
+depths and repeat. Do not lean overboard in waves.
+\item \textbf{Context.} Record wind, sky, recent rain, surface film, vegetation
+height, boat traffic and any current through the corridor.
+\end{enumerate}
+
+\begin{telospanel}{Compare stations, not impressions}
+North's basins may differ on the same day. Use the same tool, units and method
+at every station. Temperature and clarity do not by themselves prove adequate
+oxygen; measure oxygen with suitable calibrated equipment or leave it unknown.
+\end{telospanel}
+
+\subsection{North Lake comparison log}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.12\linewidth}p{.09\linewidth}
+p{.14\linewidth}p{.14\linewidth}X@{}}
+\toprule
+Date/time & Station/lobe & Depth ft & Temp surface/5/10/20 ft &
+Secchi down/up/avg ft & Wind, growth, bait, confidence\\
+\midrule
+\rule{0pt}{1.05cm}&&&&&\\ \midrule
+\rule{0pt}{1.05cm}&&&&&\\ \midrule
+\rule{0pt}{1.05cm}&&&&&\\ \midrule
+\rule{0pt}{1.05cm}&&&&&\\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\subsection{Verification questions}
+\begin{enumerate}
+\item Which measurement differed most between lobes? \rule{1.3in}{.4pt}.
+Was the difference larger than repeated-measurement variation?
+\item Did reciprocal depth passes agree within \rule{.45in}{.4pt} ft? If not,
+name the likely source: slope, weeds, waves, heading or instrument setting.
+\item Were repeatable bait marks above, within or below the fastest
+temperature change? \rule{1.1in}{.4pt}. What evidence would change that answer?
+\end{enumerate}
+
+\newpage
+\section{Choose the next test from evidence}
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm and 8mm,
+every node/.style={draw,align=center,font=\small,minimum height=8mm},
+go/.style={-{Latex},line width=.55pt}]
+\node (start) {Legal access, signs and\\weather verified now?};
+\node[right=of start] (stop) {No: do not launch;\\find lawful certainty};
+\node[below=of start] (sample) {Yes: compare lobe,\\saddle and break};
+\node[below left=of sample] (same) {Stations broadly\\similar?};
+\node[below=of sample] (diff) {One lobe clearer, warmer\\or holding more life?};
+\node[below right=of sample] (corr) {Repeatable bait in\\central corridor?};
+\node[below=of same] (s1) {Test structure type\\on both basins};
+\node[below=of diff] (s2) {Concentrate there; retain\\one comparison pass};
+\node[below=of corr] (s3) {Fish mark depth and lip;\\leave one-pass noise};
+\draw[go] (start)--node[above,font=\scriptsize,draw=none]{no}(stop);
+\draw[go] (start)--node[left,font=\scriptsize,draw=none]{yes}(sample);
+\draw[go] (sample)--(same);\draw[go] (sample)--(diff);\draw[go] (sample)--(corr);
+\draw[go] (same)--(s1);\draw[go] (diff)--(s2);\draw[go] (corr)--(s3);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Access and weather gate}
+\begin{tabularx}{\linewidth}{@{}p{.31\linewidth}X p{.16\linewidth}@{}}
+\toprule
+\textbf{Verify on trip day} & \textbf{Evidence seen/heard} & \textbf{Go?}\\
+\midrule
+Legal public access and permission route && Yes / No\\
+Exact-water rules; posted local restrictions && Yes / No\\
+Forecast, current radar, wind direction/gusts && Yes / No\\
+Lightning, fog, high-water or hazard notice && Yes / No\\
+Craft, PFDs, lights, communication and return route && Yes / No\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{Unverified access means no trip}
+A road, worn path, map label or online pin is not permission. Confirm the
+launch and route through a current authoritative source and the signs on site.
+Recheck weather at the water. If access, visibility, waves or restrictions are
+uncertain, do not launch or return immediately.
+\end{teloshazard}
+
+\subsection{Evidence-to-decision log}
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.18\linewidth}X X@{}}
+\toprule
+Time / map \# & Claim tested & Evidence for and against & Next pass and why\\
+\midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\
+\bottomrule
+\end{tabularx}
+
+\newpage
 \section{2026--27 rules printed for departure planning}
 
 \begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}X@{}}

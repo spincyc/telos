@@ -1,33 +1,87 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{Handling \& Release}{Prepare before the bite}{2026-07-26}
+\telosmeta{Lake Country Fishing}{Handling \& Release}{Prepare before the bite}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
-\section{Before casting}
+\section{Build the release station}
 Match tackle to the largest plausible fish. Open pliers and cutters; wet and
-stage a knotless rubber net; decide whether the fish can be released beside the
-boat. Favor tackle that limits deep hooking when release is likely.
+stage a knotless rubber net; set the camera before casting. Decide whether the
+fish can remain beside the boat.
 \begin{center}
-\begin{tikzpicture}[x=1.25cm,y=1cm]
-\foreach \x/\n/\t in {0/1/{fight promptly},1.6/2/{net calmly},3.2/3/{wet hands},
-4.8/4/{support level},6.4/5/{unhook / cut},8/6/{release balanced}}{
-\node[circle,draw=black,minimum size=6mm,font=\bfseries] at (\x,1){\n};
-\node[font=\scriptsize,align=center,text width=1.5cm,anchor=north] at(\x,.6){\t};}
-\draw[-{Stealth}] (.3,1)--(7.7,1);
+\begin{tikzpicture}[x=1.2cm,y=1cm]
+\foreach \x/\n/\t in {0/1/{fight\\promptly},1.55/2/{net\\calmly},3.1/3/{wet\\hands},
+4.65/4/{support\\level},6.2/5/{unhook\\or cut},7.75/6/{release\\balanced}}{
+\node[circle,draw,minimum size=7mm,font=\bfseries] at(\x,1){\n};
+\node[font=\scriptsize,align=center] at(\x,.43){\t};}
+\draw[-{Latex},very thick] (.35,1)--(7.4,1);
 \end{tikzpicture}
 \end{center}
-\section{At the fish}
+\begin{telospanel}{Before-cast check}
+Pliers open one-handed; cutters sever the actual leader; net is untangled and
+wet; measuring board is ready; camera is awake. If release is likely, favor
+tackle that limits deep hooking.
+\end{telospanel}
+
+\section{At the fish: decide at each gate}
 \begin{enumerate}
-\item Keep it in water when possible. Wet hands; never squeeze gills or eyes.
-\item Support a large fish horizontally with two hands. Minimize air exposure;
-photograph only when tools and camera are already ready.
-\item Back out an accessible hook. If deep extraction will prolong trauma,
-cut the line promptly; avoid stainless hooks where one may be left.
-\item Return the fish when it maintains balance. Face it into gentle current
-only when present; do not pump it violently.
+\item \textbf{Control.} Use steady pressure and adequate tackle. If the fish
+still surges, keep it in water; do not drag it onto a dry floor.
+\item \textbf{Net or boatside?} Net only when it reduces handling. Guide the
+fish headfirst; never chase its tail with the hoop.
+\item \textbf{Hook access?} Back out an exposed hook with the fish supported.
+If deep extraction is slow or destructive, cut the line promptly.
+\item \textbf{Photo?} Only if camera and hands are ready. Lift horizontally,
+close to the water, then return it without delay.
+\item \textbf{Release.} Support upright in water. Let go when it holds balance
+and swims under its own power; face gentle current only when one exists.
 \end{enumerate}
+\textbf{Ask mid-process:} Is the next action for the fish, or for the picture?
+Has air exposure stopped being brief? Would cutting now cause less injury?
+
+\newpage
+\section{Support map}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round]
+\draw[very thick] (0,1)..controls(1.2,2.1)and(4.7,2.1)..(6.4,1)
+ ..controls(4.8,-.05)and(1.25,-.05)..cycle;
+\draw (6.4,1)--(7.3,1.65)--(7.1,1)--(7.3,.35)--cycle;
+\draw[very thick] (1.1,.35) arc[start angle=190,end angle=350,x radius=.75,y radius=.4];
+\draw[very thick] (4.55,.25) arc[start angle=190,end angle=350,x radius=.85,y radius=.4];
+\node[font=\scriptsize,align=center] at(1.1,-.45){hand under\\head/shoulder};
+\node[font=\scriptsize,align=center] at(4.55,-.45){hand under\\belly or tail wrist};
+\draw[-{Latex}] (1.1,-.05)--(1.35,.45);
+\draw[-{Latex}] (4.55,-.05)--(4.45,.4);
+\node[font=\small,anchor=west] at(7.55,1){level, never hanging};
+\end{tikzpicture}
+\end{center}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}X@{}}
+\toprule Avoid&Observable correction\\\midrule
+Dry hands / dry deck&Skin remains glossy and wet; fish touches wet net or wet
+hands, not carpet or clothing.\\
+Vertical jaw hold&Second hand carries body weight; spine stays nearly level.\\
+Gill contact&Fingers remain outside gill plate and away from eyes.\\
+Repeated measuring&Use a hard-stop board once; release immediately if short.\\
+Violent ``reviving''&Hold balanced without pumping. Movement is self-directed.\\
+\bottomrule
+\end{tabularx}
+
+\section{Troubleshooting the release}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.25\linewidth}X@{}}
+\toprule Observation&Response\\\midrule
+Fish rolls on its side&Keep supported upright in water; reduce handling. If
+legal harvest is not an option, give it quiet time rather than pumping.\\
+Hook will not reverse&Expose only what is necessary; cut hook or line with
+staged cutters instead of tearing tissue.\\
+Fish repeatedly caught deep&Change target depth, location, tackle, or species;
+do not keep proving the same harm.\\
+Warm fish fights poorly&Shorten the fight and air time; consider ending or
+changing the trip before another capture.\\
+\bottomrule
+\end{tabularx}
 \begin{teloshazard}{Depth and temperature}
 Deep capture and warm water increase risk. Wisconsin DNR does not recommend
-artificial swim-bladder deflation. Change location, depth, tackle or target
+artificial swim-bladder deflation. Change location, depth, tackle, or target
 rather than repeatedly producing fish unlikely to survive.
 \end{teloshazard}
+\textbf{Release verified:} the fish remains upright without hand pressure,
+shows coordinated fin movement, and leaves under its own power.
 \small Source: Wisconsin DNR Catch-and-Release Guidelines.
 \end{document}

@@ -1,32 +1,106 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{Lures \& Baits}{Choose by job}{2026-07-26}
+\telosmeta{Lake Country Fishing}{Lures \& Baits}{Choose by job}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
-\begin{longtable}{@{}p{.2\linewidth}p{.24\linewidth}p{.28\linewidth}p{.2\linewidth}@{}}
-\toprule
-\textbf{Tool}&\textbf{Job}&\textbf{Start on these lakes}&\textbf{Adjustment}\\\midrule
-Small jig&Depth contact; compact prey&Breaks, saddle, panfish or walleye
-search&Change weight first.\\
-Slip bobber + legal bait&Hold exact depth&Vegetation edges and flats&Move stop
-in one-foot steps.\\
-Straight soft worm&Slow bass fall&Sparse cover and clear shelf edges&Weightless,
-then minimally weighted.\\
-Weedless plastic&Enter vegetation&West Pine shelf; North flats&Match weight to
-penetration needed.\\
-Crankbait&Cover water at a band&Hard edges with safe clearance&Choose running
-depth, then speed.\\
-Spinner / spoon&Flash and vibration&Weed lanes and active pike water&Add a
-bite-resistant leader when warranted.\\
-Live minnow&Natural movement&Jig, float or lawful predator rig&Keep lively;
-obey purchase and transport law.\\
-Leech / crawler&Slow natural bait&Float or bottom rig&Use only what can be
-presented and released responsibly.\\
-\bottomrule
-\end{longtable}
 \begin{teloshazard}{Bait is regulated}
-Inspect, remove and drain before transport. Do not move live fish away from a
-waterbody. Put unwanted bait in trash and obey current source, water and
+Inspect, remove, and drain before transport. Do not move live fish away from a
+waterbody. Put unwanted bait in trash and obey current source, water, and
 transport rules. Secure every exposed hook in storage.
 \end{teloshazard}
+
+\section{Start with the job, not the brand}
+\begin{longtable}{@{}p{.17\linewidth}p{.22\linewidth}p{.31\linewidth}p{.22\linewidth}@{}}
+\toprule\textbf{Tool}&\textbf{Job}&\textbf{Start here}&\textbf{First adjustment}\\\midrule
+Small jig&Depth contact; compact prey&Breaks, saddle, panfish or walleye
+search&Change weight to restore feel.\\
+Slip bobber + legal bait&Hold exact depth&Vegetation edges and flats&Move stop
+in 1-ft steps.\\
+Straight soft worm&Slow bass fall&Sparse cover and clear shelf edges&Weightless,
+then minimally weighted.\\
+Weedless plastic&Enter vegetation&West Pine shelf; North flats&Add only enough
+weight to penetrate.\\
+Crankbait&Cover a depth band&Hard edges with safe clearance&Running depth first,
+then speed.\\
+Spinner / spoon&Flash and vibration&Weed lanes and active pike water&Add a
+bite-resistant leader when warranted.\\
+Live minnow&Natural movement&Jig, float, or lawful predator rig&Keep lively;
+verify source and transport law.\\
+Leech / crawler&Slow natural bait&Float or bottom rig&Downsize hook and use only
+what can be presented responsibly.\\
+\bottomrule
+\end{longtable}
+
+\section{Depth-band picture}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[very thick](0,3)--(10,3);\node[anchor=east,font=\scriptsize]at(0,3){surface};
+\draw[very thick](0,.25)..controls(2,.5)and(4,1)..(6,.55)..controls(8,.1)and(9,.4)..(10,.3);
+\foreach \y/\t in {2.55/{float / weightless},1.65/{crank / spinner},.72/{jig / bottom bait}}
+{\draw[densely dotted](.3,\y)--(9.7,\y);\node[fill=white,font=\small]at(5,\y){\t};}
+\foreach \x in {7.1,7.5,...,9.4}{\draw(\x,.35)--(\x,{1.2+mod(\x*10,4)/8});}
+\node[font=\scriptsize,anchor=west]at(7,1.45){vegetation top};
+\end{tikzpicture}
+\end{center}
+\textbf{Intermediate question:} Which band did the lure actually occupy? A
+nominal “deep” lure that fouls on weeds may spend no useful time at depth.
+
+\newpage
+\section{Tune one presentation}
+\begin{enumerate}
+\item \textbf{Verify action beside the boat.} The lure runs upright; soft
+plastic is straight; bait can move; hook point is clear.
+\item \textbf{Establish depth.} Count down a jig, measure the bobber stop, or
+confirm bottom contact. Record the number.
+\item \textbf{Make five comparable casts.} Same lane, distance, speed, and
+pause. Note weed, bottom, bite, or clean water.
+\item \textbf{Change one variable.} Depth by 1 ft, jig weight one step, or
+retrieve from steady to stop-and-go. Repeat.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[node distance=6mm,every node/.style={draw,rounded corners,
+font=\small,align=center,minimum width=2.6cm,minimum height=9mm}]
+\node(a){check action};\node[right=of a](b){verify depth};
+\node[right=of b](c){5 casts};\node[right=of c](d){one change};
+\draw[-{Latex}](a)--(b);\draw[-{Latex}](b)--(c);\draw[-{Latex}](c)--(d);
+\draw[-{Latex}](d.south)to[out=-100,in=-80]node[below,draw=none,font=\scriptsize]
+{record, then repeat}(a.south);
+\end{tikzpicture}
+\end{center}
+
+\section{Measurements that transfer}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.24\linewidth}X@{}}
+\toprule Record&How to verify\\\midrule
+Float depth&Measure stop to hook; subtract the suspended weight/hook drop if
+precision matters.\\
+Jig fall&Count seconds to first bottom touch in known depth; repeat with taut
+and semi-slack line.\\
+Crank clearance&Rod tip and retrieve keep periodic bottom/weed ticks without
+continuous fouling.\\
+Weed penetration&Weight enters the canopy yet comes back with the hook point
+clear often enough to fish efficiently.\\
+\bottomrule
+\end{tabularx}
+
+\section{Troubleshooting}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.24\linewidth}X@{}}
+\toprule Symptom&Corrective sequence\\\midrule
+Lure spins&Check bent shaft, crooked plastic, fouled hook, and excessive speed
+beside the boat before casting again.\\
+No bottom feel&Use thinner line or one weight step heavier; shorten cast; verify
+in known depth.\\
+Every cast fouls&Inspect the actual weed-top depth; fish 1 ft above it, parallel
+the edge, or switch to a weedless geometry.\\
+Live bait dies quickly&Correct temperature, oxygen, crowding, and handling;
+discard lawfully rather than moving it to another water.\\
+One short strike&Inspect and sharpen/replace hook; do not instantly change
+three variables. Repeat the verified lane first.\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{Presentation passes when}
+It enters the intended depth band, remains correctly rigged, returns free of
+hidden fouling, and can be repeated within the same cast lane. Only then does a
+bite or no-bite compare meaningfully.
+\end{telospanel}
 \small Source basis: Wisconsin DNR Hook Your Catch; Fishing for Dinner; Boat
 Transportation and Bait Laws.
 \end{document}

@@ -86,6 +86,164 @@ current lawful aids and direct observation, never this sheet.
 \end{teloshazard}
 
 \newpage
+\section{Read the map, then predict}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[cgten] (0,.2)..controls(1.1,1.0)and(2.0,1.0)..(3.1,.2)
+  ..controls(4.2,-.6)and(5.1,-.6)..(6.2,.2);
+\draw[cgtwenty] (.45,-.15)..controls(1.35,.48)and(1.85,.48)..(2.65,-.15)
+  ..controls(4.05,-1.05)and(5.15,-1.05)..(5.75,-.15);
+\draw[cgforty] (1.05,-.48)..controls(1.55,-.18)and(1.8,-.18)..(2.15,-.48)
+  ..controls(3.7,-1.35)and(4.85,-1.35)..(5.15,-.48);
+\node[font=\scriptsize,anchor=south] at (1.55,.95) {wide spacing};
+\node[font=\scriptsize,anchor=south] at (4.75,.56) {tight spacing};
+\draw[-{Latex}] (1.55,.85)--(1.55,.35);
+\draw[-{Latex}] (4.75,.45)--(4.75,-.55);
+\node[font=\small,align=center] at (1.55,-1.25) {gradual shelf:\\more search width};
+\node[font=\small,align=center] at (4.75,-1.75) {steep break:\\less horizontal room};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Put a pencil dot on map locations 2, 5 and 7. At each dot, trace the
+shortest path from shallow water to the 20-ft contour.
+\item Circle the path with the widest contour spacing. Predict where a boat
+could hold outside the break while a cast crosses several depths.
+\item Box the tightest spacing. Predict how a 10-ft depth error would change
+boat position there.
+\item At location 4, draw the two routes fish could use between the island,
+saddle and basin. Mark the route exposed to today's wind.
+\end{enumerate}
+
+\begin{teloscard}{Before looking at electronics}
+My first shallow test is \rule{1.8in}{.4pt} because
+\rule{2.5in}{.4pt}. My first break test is \rule{1.8in}{.4pt}.
+I will leave either after \rule{.55in}{.4pt} minutes without
+\rule{1.6in}{.4pt}.
+\end{teloscard}
+
+\section{Three claims the map cannot answer}
+\begin{tabularx}{\linewidth}{@{}X X@{}}
+\toprule
+\textbf{Question} & \textbf{Direct check}\\
+\midrule
+Where is today's outside weed edge? & Idle across it twice; record the depth
+where continuous growth ends on both passes.\\
+Is the marked break hard or soft? & Compare sonar return and a lawful bottom
+contact; record the evidence, not merely ``gravel.''\\
+Are predators or bait suspended? & Scan the water column on two headings;
+separate repeatable marks from one-pass noise.\\
+\bottomrule
+\end{tabularx}
+
+\newpage
+\section{Measure the water consistently}
+
+\begin{enumerate}
+\item \textbf{Choose stations.} Use the same three Pine stations each trip:
+one protected shelf, one wind-exposed break and one basin-adjacent point.
+Write the map number or a lawful GPS waypoint before measuring.
+\item \textbf{Depth.} Stop safely outside traffic. Record sonar depth only
+after the reading stabilizes; then repeat from the opposite heading. If using
+a marked sounding line, stop propulsion, wear a PFD and keep the line clear of
+hands, feet and propeller.
+\item \textbf{Temperature.} Shade the thermometer. Record surface temperature
+after it stabilizes. Lower it to 5, 10 and 20 ft where the station is deep
+enough, pausing at each mark. Write ``not measured'' rather than estimating.
+\item \textbf{Clarity.} On the shaded side, lower a standard black-and-white
+Secchi disk until it disappears; mark depth. Raise it until it reappears; mark
+again. Record the average and repeat once. Do not lean overboard in waves.
+\item \textbf{Context.} Record wind direction/strength, sky, recent rain,
+surface debris, vegetation height and whether boat traffic affected the test.
+\end{enumerate}
+
+\begin{telospanel}{Comparable beats precise-looking}
+Use the same tool, side of the boat, units and station each trip. A repeatable
+rough measurement is more useful than a decimal copied from unstable gear.
+Never infer oxygen from temperature alone.
+\end{telospanel}
+
+\subsection{Pine station log}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{@{}p{.11\linewidth}p{.11\linewidth}p{.10\linewidth}
+p{.13\linewidth}p{.13\linewidth}X@{}}
+\toprule
+Date/time & Station & Depth ft & Temp surface/5/10/20 ft & Secchi down/up/avg ft
+& Wind, growth, bait, confidence\\
+\midrule
+\rule{0pt}{1.15cm}&&&&&\\ \midrule
+\rule{0pt}{1.15cm}&&&&&\\ \midrule
+\rule{0pt}{1.15cm}&&&&&\\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1}
+
+\subsection{Verification questions}
+\begin{enumerate}
+\item Did two depth passes agree within \rule{.45in}{.4pt} ft? If not, what
+changed: heading, waves, weeds, bottom slope or instrument setting?
+\item Was the Secchi average deeper or shallower than last trip by
+\rule{.45in}{.4pt} ft? Name one observation that could explain the change.
+\item At what depth did temperature change fastest? \rule{.7in}{.4pt}.
+Did bait marks occur above, within or below that change? \rule{1in}{.4pt}.
+\end{enumerate}
+
+\newpage
+\section{Turn observations into the next pass}
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm and 8mm,
+every node/.style={draw,align=center,font=\small,minimum height=8mm},
+go/.style={-{Latex},line width=.55pt}]
+\node (start) {Launch, rules and weather\\verified now?};
+\node[right=of start] (stop) {No: do not launch;\\resolve the conflict};
+\node[below=of start] (water) {Yes: measure three\\stations first};
+\node[below left=of water] (shallow) {New growth, warmer water\\or visible life?};
+\node[below=of water] (break) {Repeatable bait/fish\\on a break?};
+\node[below right=of water] (open) {Suspended marks over\\basin-adjacent water?};
+\node[below=of shallow] (s1) {Test shelf/weed edge;\\record contact depth};
+\node[below=of break] (s2) {Fish contour deliberately;\\repeat productive angle};
+\node[below=of open] (s3) {Match mark depth;\\leave empty water};
+\draw[go] (start)--node[above,font=\scriptsize,draw=none]{no}(stop);
+\draw[go] (start)--node[left,font=\scriptsize,draw=none]{yes}(water);
+\draw[go] (water)--(shallow);\draw[go] (water)--(break);\draw[go] (water)--(open);
+\draw[go] (shallow)--(s1);\draw[go] (break)--(s2);\draw[go] (open)--(s3);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Access and weather gate}
+\begin{tabularx}{\linewidth}{@{}p{.31\linewidth}X p{.16\linewidth}@{}}
+\toprule
+\textbf{Verify on trip day} & \textbf{Evidence seen/heard} & \textbf{Go?}\\
+\midrule
+Exact-water rules and season && Yes / No\\
+Landing sign, hours, fee, local ordinance && Yes / No\\
+Forecast and current radar; wind direction/gusts && Yes / No\\
+Lightning, fog, high-water or hazard notice && Yes / No\\
+Craft, PFDs, lights, communication and return route && Yes / No\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{A forecast is not clearance}
+Check before departure and again at the water. If observed wind, lightning,
+visibility, waves, access or posted restrictions exceed the people or craft,
+do not launch or return immediately. A planned fishing test never outranks a
+safe return.
+\end{teloshazard}
+
+\subsection{Evidence-to-decision log}
+\begin{tabularx}{\linewidth}{@{}p{.13\linewidth}p{.18\linewidth}X X@{}}
+\toprule
+Time / map \# & Claim tested & Evidence for and against & Next pass and why\\
+\midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\ \midrule
+\rule{0pt}{1.2cm}&&&\\
+\bottomrule
+\end{tabularx}
+
+\newpage
 \section{2026--27 rules printed for departure planning}
 
 \begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}X@{}}

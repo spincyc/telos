@@ -1,32 +1,101 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{Reading Water}{Turn observations into tests}{2026-07-26}
+\telosmeta{Lake Country Fishing}{Reading Water}{Turn observations into tests}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
-\section{Read in this order}
-\begin{longtable}{@{}p{.18\linewidth}p{.31\linewidth}p{.43\linewidth}@{}}
-\toprule
-\textbf{Signal}&\textbf{What it can mean}&\textbf{Test, not conclusion}\\\midrule
-Windward edge&Food and warmer surface water may collect.&Make one controlled
+\begin{teloshazard}{Map discipline}
+Historical contours are generalized and not for navigation. Watch traffic,
+weather, depth, and hazards directly. Never stare at electronics while
+underway.
+\end{teloshazard}
+
+\section{Read in layers}
+\begin{longtable}{@{}p{.17\linewidth}p{.29\linewidth}p{.46\linewidth}@{}}
+\toprule\textbf{Signal}&\textbf{Possible meaning}&\textbf{Test, not conclusion}\\\midrule
+Windward edge&Food or warmer surface water may collect.&Make one controlled
 pass, then compare the sheltered side.\\
-Point / inside turn&Travel route between depths.&Cast across and along it;
-record the depth of every contact.\\
-Vegetation edge&Cover plus an oxygen/light boundary.&Find the actual outside
-edge today; old maps cannot show it.\\
-Hard/soft change&Different prey and spawning habitat.&Use bottom feel or lawful
-electronics; mark where texture changes.\\
+Point / inside turn&Travel route between depths.&Cast across and along; record
+depth of every contact.\\
+Vegetation edge&Cover plus oxygen/light boundary.&Find today's actual inside,
+top, and outside edges; old maps cannot show them.\\
+Hard/soft change&Different prey or spawning habitat.&Use bottom feel or lawful
+electronics; mark where texture changes twice.\\
 Bait on electronics&Forage is present at that moment.&Fish its depth, including
 suspended water; leave if predators never appear.\\
-Temperature / clarity&Changes visibility, metabolism and plant depth.&Adjust
-distance, speed, size and depth one variable at a time.\\
+Temperature / clarity&Visibility, metabolism, and plant depth differ.&Adjust
+distance, speed, size, and depth one variable at a time.\\
 \bottomrule
 \end{longtable}
-\section{Three-pass method}
-First pass maps depth, bottom and cover. Second pass holds presentation constant
-through the best feature. Third pass changes one variable. A named “spot” is
-only a hypothesis until current evidence supports it.
-\begin{teloshazard}{Map discipline}
-Historical lake contours are generalized and not for navigation. Watch traffic,
-weather, depth and hazards directly. Never stare at electronics while underway.
-\end{teloshazard}
+
+\section{Draw the feature before naming it}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[very thick](0,3.2)..controls(2,3)and(3.1,2.8)..(4,2.25)
+ ..controls(5,1.6)and(5.5,.75)..(7,.55)--(10,.45);
+\foreach \x in {1.4,1.8,...,3.6}{\draw(\x,{3.12-.08*\x})--(\x,{2.2+.08*\x});}
+\draw[densely dashed](4.05,2.25)--(4.05,3.5);
+\draw[densely dashed](6.2,.7)--(6.2,3.5);
+\node[font=\scriptsize]at(2.3,2.2){weed top};
+\node[font=\scriptsize]at(4.05,3.7){outside edge};
+\node[font=\scriptsize]at(6.2,3.7){break foot};
+\draw[-{Latex},very thick](1,4)..controls(4,4.4)and(6,3.4)..(7.2,1);
+\node[font=\small]at(3.5,4.55){cross-feature cast reveals two boundaries};
+\end{tikzpicture}
+\end{center}
+\textbf{Ask:} Where does depth change begin? Where does vegetation stop? Which
+observation was repeated rather than guessed?
+
+\newpage
+\section{Three passes, one comparison}
+\begin{enumerate}
+\item \textbf{Map pass.} Travel safely and slowly. Record surface temperature,
+depth at weed top, outside edge, bottom transition, bait height, and wind angle.
+\item \textbf{Control pass.} Hold lure, depth, speed, and line angle constant
+through the best feature. Mark every bottom/weed touch and bite.
+\item \textbf{Change pass.} Alter one variable: 1 ft shallower/deeper, one speed
+step, or along-feature instead of across-feature.
+\end{enumerate}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[rounded corners,thick](0,0)rectangle(10,3);
+\draw[thick](1,2.5)..controls(3,1.1)and(6,2.6)..(9,.6);
+\foreach \y/\t in {2.5/{1 map},1.55/{2 control},.6/{3 change one thing}}
+{\draw[-{Latex},very thick](.5,\y)--(9.5,\y);\node[fill=white,font=\small]at(5,\y){\t};}
+\end{tikzpicture}
+\end{center}
+
+\section{Field measurements}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}p{.32\linewidth}X@{}}
+\toprule Measure&Method&Verification\\\midrule
+Contact depth&Known stop length, jig bottom count, or electronics&Same depth
+appears on two passes.\\
+Edge position&Waypoint plus boat depth and casting bearing&Lure finds the edge
+again from a new approach.\\
+Bottom change&Compare sharp taps, dragging, and plant debris&Texture change
+persists over several feet, not one rock.\\
+Bait height&Read top and bottom of the school&Presentation intersects that
+band, not merely the boat depth.\\
+\bottomrule
+\end{tabularx}
+
+\section{Troubleshooting the inference}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.25\linewidth}X@{}}
+\toprule Problem&Correction\\\midrule
+Waypoint produces nothing&Re-find depth, cover, and wind angle; a coordinate is
+not the feature.\\
+Electronics show “fish”&Check arch consistency, boat speed, and repeated
+returns; then fish the marked depth as a test.\\
+Bottom feels inconsistent&Shorten cast, use enough weight, and compare in known
+hard and soft areas.\\
+Wind prevents repetition&Use a shorter drift, controlled angle, or sheltered
+comparison. Safety outranks completing the pass.\\
+Too many signals&Rank them: safe access, depth, cover, bait, then presentation.
+Write one sentence predicting the next contact.\\
+\bottomrule
+\end{tabularx}
+\begin{telospanel}{A feature is verified when}
+You can relocate both of its boundaries, place the lure in the intended band,
+and reproduce contact from a recorded position. Fish presence remains a
+time-specific observation, never a permanent property of the waypoint.
+\end{telospanel}
 \small Source basis: Wisconsin DNR Hook Your Catch and lake records; editorial
 test method.
 \end{document}

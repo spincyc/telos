@@ -1,29 +1,105 @@
 \input{common/preamble.tex}
-\telosmeta{Lake Country Fishing}{Seasonal Calendar}{Phenology, not a guarantee}{2026-07-26}
+\telosmeta{Lake Country Fishing}{Seasonal Calendar}{Phenology, not a guarantee}{2026-07-27}
 \begin{document}\telosmasthead[ChatGPT edition]
-\begin{longtable}{@{}p{.19\linewidth}p{.34\linewidth}p{.39\linewidth}@{}}
-\toprule
-\textbf{Period}&\textbf{Starting hypothesis}&\textbf{Evidence to seek}\\\midrule
+\begin{teloshazard}{Calendar does not open a season}
+For 2026--27, resolve the exact water, species, and date in current Wisconsin
+DNR rules. No date, appearance, or reported thickness makes ice completely
+safe.
+\end{teloshazard}
+
+\section{Use a loop, not a date}
+\begin{center}
+\begin{tikzpicture}[node distance=8mm,every node/.style={draw,rounded corners,
+font=\small,align=center,minimum width=2.5cm,minimum height=9mm}]
+\node(a){observe water};\node[right=of a](b){name stage};
+\node[right=of b](c){choose feature};\node[right=of c](d){verify fish};
+\draw[-{Latex}](a)--(b);\draw[-{Latex}](b)--(c);\draw[-{Latex}](c)--(d);
+\draw[-{Latex}](d.south)to[out=-110,in=-70]node[below,draw=none,font=\scriptsize]
+{conditions changed?}(a.south);
+\end{tikzpicture}
+\end{center}
+
+\begin{longtable}{@{}p{.17\linewidth}p{.31\linewidth}p{.44\linewidth}@{}}
+\toprule\textbf{Period}&\textbf{Starting hypothesis}&\textbf{Evidence before committing}\\\midrule
 Ice-out / early spring&Protected shallows may warm first; pike and panfish may
-use emerging cover.&Temperature difference, green growth, bait and legal
-season.\\
-Late spring&Spawning and post-spawn movement can concentrate fish shallow.&Beds,
+use emerging cover.&Repeatable temperature difference, green growth, bait,
+safe access, and legal season.\\
+Late spring&Spawn/post-spawn movement can concentrate fish shallow.&Beds,
 recovering fish, water temperature; avoid damaging nests.\\
-Early summer&Vegetation edges and hard-bottom breaks develop.&Actual weed depth,
-insect activity and repeated contact depth.\\
-Mid-summer&Some fish use deep edges or suspend; oxygen can constrain usable
-depth.&Thermocline/oxygen evidence, bait height, warm-water release risk.\\
+Early summer&Vegetation edges and hard-bottom breaks develop.&Actual weed-top
+and outside-edge depths, insect activity, repeated contact depth.\\
+Mid-summer&Some fish use deep edges or suspend; oxygen can constrain depth.&
+Thermocline/oxygen evidence, bait height, and warm-water release risk.\\
 Early fall&Cooling can redistribute forage and predators.&Turnover signs,
-temperature uniformity, wind and bait.\\
-Late fall&Slow, depth-controlled presentations often become useful.&Bottom
-contact, short feeding windows, cold-water safety.\\
-Ice season&Tip-ups and small vertical lures can cover lawful targets.&Current
-local ice assessment; avoid inlets, outlets and narrows.\\
+temperature uniformity, wind, clarity change, and bait.\\
+Late fall&Slow, depth-controlled presentations often help.&Repeated bottom
+contact, short feeding windows, cold-water protection.\\
+Ice season&Vertical lures and tip-ups can cover lawful targets.&Current local
+ice assessment; avoid inlets, outlets, narrows, and pressure features.\\
 \bottomrule
 \end{longtable}
-\begin{teloshazard}{Calendar does not open a season}
-For 2026--27, resolve the exact water, species and date in current Wisconsin
-DNR rules. No date, appearance or reported thickness makes ice completely safe.
-\end{teloshazard}
-\small Source basis: Wisconsin DNR season dates, Hook Your Catch and Ice Safety.
+
+\newpage
+\section{Observable seasonal cross-section}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\draw[very thick](0,3)--(10,3);\draw[very thick](0,.2)..controls(3,.3)and(4,1.2)..(6,.7)--(10,.35);
+\draw[densely dotted](0,1.8)--(10,1.8);
+\node[font=\scriptsize,fill=white]at(2.2,1.8){warm-water layering: verify, do not assume};
+\foreach \x in {1.2,1.6,...,3.3}{\draw(\x,.5)--(\x,{1.35+mod(\x*10,3)/7});}
+\node[font=\scriptsize]at(2.2,.35){growing vegetation};
+\draw[decorate,decoration={snake,amplitude=.7mm,segment length=4mm}](6.2,2.35)--(8.5,2.35);
+\node[font=\scriptsize]at(7.35,2.65){suspended bait band};
+\end{tikzpicture}
+\end{center}
+
+\section{Measurements to carry forward}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.24\linewidth}X@{}}
+\toprule Observation&Record so it can be compared\\\midrule
+Surface temperature&Instrument, location, time, sun/wind, and sheltered versus
+windward difference; avoid false precision.\\
+Plant stage&First green shoots, top depth, outside-edge depth, density, and
+whether hooks return clean.\\
+Water column&Temperature/oxygen evidence if available; depth of bait and fish;
+never infer oxygen from depth alone.\\
+Turnover candidate&Near-uniform temperature, mixed clarity/odor, dispersed
+bait, and changed bite together—not the calendar alone.\\
+Ice condition&Direct local observations along the whole route; thickness at
+one hole never certifies an area.\\
+\bottomrule
+\end{tabularx}
+
+\section{Stage checks and first tests}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.2\linewidth}p{.35\linewidth}X@{}}
+\toprule Stage&Intermediate questions&Controlled first test\\\midrule
+Warming shallows&Is it warmer on two readings? Is new cover present?&Compare
+one protected edge with adjacent main-lake water at equal depth.\\
+Developed weeds&Where are inside, top, and outside edges today?&Fish 1 ft above
+the top, then the outside wall.\\
+Layered summer&Is bait suspended? Is deep release responsible?&Hold at bait
+height; change target/location if fish show stress.\\
+Cooling / turnover&Are temperatures actually converging? Has clarity changed?&
+Search multiple depths before slowing on a single feature.\\
+Cold / ice&Can the route and return be made safely?&If uncertain, do not enter;
+fish open water only with cold-water boating protection.\\
+\bottomrule
+\end{tabularx}
+
+\section{Troubleshooting calendar errors}
+\begin{itemize}
+\item \textbf{“They should be shallow.”} Measure temperature and cover; compare
+the next available depth rather than repeating the story.
+\item \textbf{“Turnover killed the bite.”} Seek multiple matching indicators;
+wind, turbidity, or presentation failure may look similar.
+\item \textbf{“The weeds are gone.”} Check deeper, shorter, and greener growth;
+surface dieback does not map the full plant bed.
+\item \textbf{“Ice was safe yesterday.”} Conditions and routes change. Reassess
+locally every trip; uncertainty is a stop condition.
+\end{itemize}
+\begin{telospanel}{Hypothesis passes when}
+Two or more observable indicators agree, the predicted feature can be located,
+and a controlled presentation can be repeated there. A catch strengthens the
+case; a calendar label never substitutes for evidence.
+\end{telospanel}
+\small Source basis: Wisconsin DNR season dates, Hook Your Catch, and Ice Safety.
 \end{document}
