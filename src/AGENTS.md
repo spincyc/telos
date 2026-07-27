@@ -58,6 +58,31 @@ procedure where the project safety contract forbids one.
 - State the expected pattern separately from fabricated sample data. Never
   imply that a reader obtained a measurement they did not take.
 
+## Page flow and useful space
+
+- Lay out each publication as a continuous professional book, not a stack of
+  independently filled cards. Avoid orphan lines, stranded captions, nearly
+  empty end pages, accidental blanks, and abrupt page breaks that leave a
+  large white-only void.
+- Treat an unexplained white void as a content warning as well as a layout
+  defect. Before tightening spacing, ask whether the reader is missing an
+  intermediate state, illustration, question, worked example, measurement
+  record, diagnostic branch, or synthesis step.
+- Do not manufacture density with decorative filler, oversized headings, or
+  repeated prose. Add material only when it advances orientation, prediction,
+  performance, comparison, diagnosis, or verification.
+- Intentional working space must state its purpose at the point of use and be
+  visibly usable: provide ruled lines, a grid, table cells, a sketch frame, or
+  another clear recording structure. A heading above an otherwise blank half
+  page is not a worksheet.
+- As a review trigger, investigate any unlabeled white-only region approaching
+  one third of the live page. Also inspect the preceding and following pages:
+  a void often indicates a misplaced forced break or content that belongs in
+  the surrounding sequence.
+- Balance facing and consecutive pages when practical. Keep a figure with its
+  setup, question, caption, and immediate interpretation; keep a table with
+  the directions and acceptance criteria needed to complete it.
+
 ## Completeness and review
 
 Page count is subordinate to clarity. Do not compress a real investigation or
@@ -68,7 +93,8 @@ Before publication:
 
 - build every affected PDF;
 - inspect every affected page in grayscale at normal print scale;
-- check figure order, captions, labels, units, writing space, and page breaks;
+- check figure order, captions, labels, units, writing space, page breaks,
+  orphaned fragments, and unexplained white-only regions;
 - keep every tracked publication below 50,000,000 bytes. Composite binders
   must use a reproducible grayscale/downsampling stage rather than embedding
   every source raster at capture resolution. Never rely on Git LFS for
