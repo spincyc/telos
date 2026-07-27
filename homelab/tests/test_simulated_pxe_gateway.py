@@ -37,6 +37,10 @@ class SimulatedPxeGatewayTests(unittest.TestCase):
         self.assertEqual(evidence["boot_file"], "ipxe.efi")
         self.assertEqual(reply[14 + 20 + 8 + 20:14 + 20 + 8 + 24],
                          sim.CONTROLLER_IP.packed)
+        options = sim.dhcp_options(reply[14 + 20 + 8:])
+        self.assertEqual(options[6], sim.CONTROLLER_IP.packed)
+        self.assertEqual(options[15], b"lab.home.arpa")
+        self.assertEqual(options[42], sim.NTP_IP.packed)
 
     def test_ipxe_chainloads_immutable_http_entrypoint(self):
         reply = sim.Gateway().handle(dhcp(architecture=7, ipxe=True))[0]
@@ -48,6 +52,16 @@ class SimulatedPxeGatewayTests(unittest.TestCase):
         evidence = sim.dhcp_packet_evidence(reply)
         self.assertNotIn("next_server", evidence)
         self.assertNotIn("boot_file", evidence)
+        options = sim.dhcp_options(reply[14 + 20 + 8:])
+        self.assertEqual(options[6], sim.GATEWAY_IP.packed)
+
+    def test_bios_and_ipxe_user_class_get_correct_stages(self):
+        bios = sim.Gateway().handle(dhcp(architecture=0))[0]
+        self.assertEqual(
+            sim.dhcp_packet_evidence(bios)["boot_file"], "undionly.kpxe")
+        ipxe = sim.Gateway().handle(dhcp(architecture=7, ipxe=True))[0]
+        self.assertEqual(
+            sim.dhcp_packet_evidence(ipxe)["boot_file"], sim.IPXE_SCRIPT)
 
     def test_gateway_is_only_dhcp_authority(self):
         policy = sim.HubPolicy()

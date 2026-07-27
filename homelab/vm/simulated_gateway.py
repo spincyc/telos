@@ -16,6 +16,11 @@ import struct
 import time
 from pathlib import Path
 
+try:
+    from .simulation_evidence import append_json_event
+except ImportError:
+    from simulation_evidence import append_json_event
+
 
 GATEWAY_IP = ipaddress.IPv4Address("10.1.31.1")
 LEASE_IP = ipaddress.IPv4Address("10.1.31.11")
@@ -23,6 +28,8 @@ CONTROLLER_IP = ipaddress.IPv4Address("10.1.31.2")
 NETMASK = ipaddress.IPv4Address("255.255.255.240")
 GATEWAY_MAC = bytes.fromhex("525400311101")
 DNS_NAME = "updates.sim.test"
+CONTROLLER_NAME = "bootstrap-dc.lab.home.arpa"
+DNS_SUFFIX = "lab.home.arpa"
 NTP_NAME = "time.sim.test"
 NTP_IP = ipaddress.IPv4Address("198.51.100.10")
 UDP_PROBE_PORT = 31337
@@ -222,7 +229,11 @@ class Gateway:
         options += bytes((54, 4)) + GATEWAY_IP.packed
         options += bytes((1, 4)) + NETMASK.packed
         options += bytes((3, 4)) + GATEWAY_IP.packed
-        options += bytes((6, 4)) + GATEWAY_IP.packed
+        dns_server = CONTROLLER_IP if boot_file else GATEWAY_IP
+        options += bytes((6, 4)) + dns_server.packed
+        suffix = DNS_SUFFIX.encode("ascii")
+        options += bytes((15, len(suffix))) + suffix
+        options += bytes((42, 4)) + NTP_IP.packed
         options += bytes((51, 4)) + struct.pack("!I", 600)
         if boot_file:
             server = str(CONTROLLER_IP).encode("ascii")
@@ -248,7 +259,11 @@ class Gateway:
         if end + 4 > len(data):
             return []
         qtype, qclass = struct.unpack("!HH", data[end:end + 4])
-        addresses = {DNS_NAME: GATEWAY_IP, NTP_NAME: NTP_IP}
+        addresses = {
+            DNS_NAME: GATEWAY_IP,
+            NTP_NAME: NTP_IP,
+            CONTROLLER_NAME: CONTROLLER_IP,
+        }
         found = name in addresses and qtype == 1 and qclass == 1
         flags = 0x8180 if found else 0x8183
         header = data[:2] + struct.pack("!HHHHH", flags, 1, int(found), 0, 0)
@@ -452,11 +467,10 @@ def serve(
                     if connection_number == 0 and audit_first is not None:
                         message = dhcp_server_message(frame)
                         if message:
-                            with audit_first.open("a", encoding="utf-8") as log:
-                                log.write(json.dumps({
-                                    "kind": message,
-                                    "actor": "controller",
-                                }, sort_keys=True) + "\n")
+                            append_json_event(audit_first, {
+                                "kind": message,
+                                "actor": "controller",
+                            })
                     for reply in gateway.handle(frame):
                         connection.sendall(
                             struct.pack("!I", len(reply)) + reply)

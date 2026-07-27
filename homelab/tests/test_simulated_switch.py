@@ -63,6 +63,51 @@ class SimulatedSwitchTests(unittest.TestCase):
         thread.join(5)
         self.assertFalse(thread.is_alive())
 
+    def test_readiness_precedes_peer_connections(self):
+        listener = self.listener()
+        read_fd, write_fd = __import__("os").pipe()
+        fabric = switch.ConcurrentSwitch(
+            listener, [switch.Port(1, "client", CLIENT)],
+            ready_fd=write_fd, accept_timeout=2, idle_timeout=2)
+        thread = threading.Thread(target=fabric.run)
+        thread.start()
+        self.assertEqual(__import__("os").read(read_fd, 6), b"READY\n")
+        client = socket.create_connection(listener.getsockname())
+        receipt = bytearray()
+        while True:
+            part = __import__("os").read(read_fd, 4096)
+            if not part:
+                break
+            receipt.extend(part)
+        self.assertEqual(
+            receipt,
+            b"ACCEPTED client 52:54:00:31:11:11\nALL-PEERS\n")
+        client.close()
+        thread.join(5)
+        __import__("os").close(read_fd)
+        self.assertFalse(thread.is_alive())
+
+    def test_accept_timeout_bounds_the_complete_peer_set(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        fabric = switch.ConcurrentSwitch(listener, [
+            switch.Port(1, "client", CLIENT),
+            switch.Port(2, "controller", CONTROLLER),
+        ], accept_timeout=0.1)
+
+        def connect_one():
+            connection = socket.create_connection(address)
+            threading.Event().wait(0.3)
+            connection.close()
+
+        connector = threading.Thread(target=connect_one)
+        connector.start()
+        started = __import__("time").monotonic()
+        with self.assertRaises(TimeoutError):
+            fabric.run()
+        self.assertLess(__import__("time").monotonic() - started, 0.25)
+        connector.join()
+
     def test_blocks_wrong_source_and_rogue_dhcp(self):
         listener = self.listener()
         address = listener.getsockname()
@@ -97,6 +142,10 @@ class SimulatedSwitchTests(unittest.TestCase):
             self.assertTrue(any(
                 item["event"] == "dhcp" and item.get("blocked")
                 for item in events))
+            dhcp = [item for item in events if item["event"] == "dhcp"]
+            self.assertEqual(dhcp[0]["peer"], "controller")
+            self.assertEqual(events[-1]["event"], "switch-summary")
+            self.assertEqual(events[-1]["blocked"], 1)
 
     @staticmethod
     def _discover(mac):

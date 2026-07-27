@@ -94,7 +94,7 @@ class SerialAutomation:
     def run(self) -> SerialResult:
         if self.password is None:
             self._wait(
-                rb"(?:^|\n)[^\n]*local-rescue[^\n]*\$\s*$",
+                rb"(?:^|\n)[^\n]*local-rescue[^\n]*\$\s+$",
                 "simulation-autologin-shell",
             )
         else:
@@ -102,7 +102,7 @@ class SerialAutomation:
             self._send(b"local-rescue", "username-sent")
             self._wait(rb"(?:^|\n)Password:\s*$", "login-password-prompt")
             self._send(self.password, "login-password-sent")
-            self._wait(rb"(?:^|\n)[^\n]*\$\s*$", "shell-prompt")
+            self._wait(rb"(?:^|\n)[^\n]*\$\s+$", "shell-prompt")
 
         prompt = f"__TELOS_SUDO_{self.token}__".encode()
         begin = f"__TELOS_BEGIN_{self.token}__".encode()
@@ -135,7 +135,7 @@ class SerialAutomation:
             raise SerialAutomationError(
                 f"preflight printed PASS but returned {returncode}")
 
-        self._wait(rb"(?:^|\n)[^\n]*\$\s*$", "post-check-shell-prompt")
+        self._wait(rb"(?:^|\n)[^\n]*\$\s+$", "post-check-shell-prompt")
         poweroff = f"__TELOS_POWEROFF_{self.token}__".encode()
         self._send(
             b"printf '\\n" + poweroff

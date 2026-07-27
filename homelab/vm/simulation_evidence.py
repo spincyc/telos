@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
@@ -24,25 +25,61 @@ def redact(data: bytes) -> bytes:
 
 
 def private_directory(path: Path) -> None:
+    path = path.absolute()
+    for ancestor in reversed((path, *path.parents)):
+        try:
+            mode = ancestor.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise RuntimeError(
+                f"evidence path contains a symlink: {ancestor}")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.is_symlink() or not path.is_dir():
+    mode = path.lstat().st_mode
+    if not stat.S_ISDIR(mode):
         raise RuntimeError(f"evidence path is not a private directory: {path}")
-    path.chmod(0o700)
+    path.chmod(0o700, follow_symlinks=False)
+
+
+def _reject_destination(path: Path) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise RuntimeError(
+            f"evidence destination is not a regular file: {path}")
 
 
 def private_file(path: Path, data: bytes = b"") -> None:
-    """Create or replace a private file without following a final symlink."""
+    """Atomically create or replace a private regular file."""
     private_directory(path.parent)
-    descriptor = os.open(
-        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    _reject_destination(path)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent)
     try:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-    finally:
         os.close(descriptor)
+        descriptor = -1
+        _reject_destination(path)
+        os.replace(temporary, path)
+        directory = os.open(
+            path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
 
 
 class RedactedLog:
@@ -51,8 +88,10 @@ class RedactedLog:
     def __init__(self, path: Path) -> None:
         private_file(path)
         self.path = path
-        self._stream: BinaryIO = path.open("ab", buffering=0)
-        os.chmod(path, 0o600)
+        descriptor = os.open(
+            path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
+        os.fchmod(descriptor, 0o600)
+        self._stream: BinaryIO = os.fdopen(descriptor, "ab", buffering=0)
 
     def write(self, data: bytes) -> int:
         cleaned = redact(data)
@@ -103,6 +142,7 @@ def write_result(
         }
     private_directory(evidence)
     target = evidence / "result.json"
+    _reject_destination(target)
     encoded = (
         json.dumps(document, indent=2, sort_keys=True) + "\n"
     ).encode()
@@ -116,6 +156,7 @@ def write_result(
             os.fsync(stream.fileno())
         os.close(descriptor)
         descriptor = -1
+        _reject_destination(target)
         os.replace(temporary, target)
         os.chmod(target, 0o600)
     finally:
@@ -126,6 +167,24 @@ def write_result(
         except FileNotFoundError:
             pass
     return target
+
+
+def append_json_event(path: Path, event: dict[str, object]) -> None:
+    """Append one private JSONL event without following links."""
+    private_directory(path.parent)
+    _reject_destination(path)
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        payload = (json.dumps(event, sort_keys=True) + "\n").encode()
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def write_serial_events(

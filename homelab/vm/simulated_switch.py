@@ -9,9 +9,9 @@ the embedded simulated gateway supplies DHCP, DNS, NTP, ARP, and health probes.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import queue
+import re
 import socket
 import struct
 import threading
@@ -19,7 +19,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from homelab.vm.simulated_gateway import HubPolicy
+try:
+    from .simulated_gateway import HubPolicy
+    from .simulation_evidence import append_json_event
+except ImportError:
+    from simulated_gateway import HubPolicy
+    from simulation_evidence import append_json_event
 
 
 MAX_FRAME = 65_535
@@ -95,17 +100,7 @@ class Evidence:
 
     def _append(self, event: dict[str, object]) -> None:
         assert self.path is not None
-        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(self.path, flags, 0o600)
-        try:
-            os.fchmod(descriptor, 0o600)
-            encoded = (
-                json.dumps(event, sort_keys=True) + "\n").encode("utf-8")
-            os.write(descriptor, encoded)
-        finally:
-            os.close(descriptor)
+        append_json_event(self.path, event)
 
 
 class ConcurrentSwitch:
@@ -117,6 +112,7 @@ class ConcurrentSwitch:
         ports: list[Port],
         *,
         evidence_path: Path | None = None,
+        ready_fd: int | None = None,
         accept_timeout: float = 30.0,
         idle_timeout: float = 120.0,
     ) -> None:
@@ -124,13 +120,17 @@ class ConcurrentSwitch:
             raise ValueError("ports must have unique numbers")
         if len({port.mac for port in ports}) != len(ports):
             raise ValueError("ports must have unique MAC addresses")
+        if accept_timeout <= 0 or idle_timeout <= 0:
+            raise ValueError("switch timeouts must be positive")
         address = listener.getsockname()
         if not isinstance(address, tuple) or address[0] != "127.0.0.1":
             raise RuntimeError("listener must be bound to 127.0.0.1")
         self.listener = listener
         self.ports = ports
+        self.port_names = {port.number: port.name for port in ports}
         self.accept_timeout = accept_timeout
         self.idle_timeout = idle_timeout
+        self.ready_fd = ready_fd
         self.policy = HubPolicy()
         self.evidence = Evidence(evidence_path)
         self.incoming: queue.Queue[tuple[int, bytes] | None] = queue.Queue(
@@ -141,6 +141,9 @@ class ConcurrentSwitch:
         self.connections: dict[int, socket.socket] = {}
         self.stop = threading.Event()
         self.error: queue.Queue[BaseException] = queue.Queue()
+        self.frames = 0
+        self.deliveries = 0
+        self.blocked = 0
 
     def _fail(self, error: BaseException) -> None:
         if self.error.empty():
@@ -148,8 +151,12 @@ class ConcurrentSwitch:
         self.stop.set()
 
     def _accept(self) -> None:
-        self.listener.settimeout(self.accept_timeout)
+        deadline = time.monotonic() + self.accept_timeout
         for port in self.ports:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("timed out waiting for all switch peers")
+            self.listener.settimeout(remaining)
             connection, address = self.listener.accept()
             if address[0] != "127.0.0.1":
                 connection.close()
@@ -161,6 +168,32 @@ class ConcurrentSwitch:
                 "port": port.name,
                 "mac": mac_text(port.mac),
             })
+            self._signal(f"ACCEPTED {port.name} {mac_text(port.mac)}\n")
+        self._signal("ALL-PEERS\n", close=True)
+
+    def _signal(self, message: str, *, close: bool = False) -> None:
+        if self.ready_fd is None:
+            return
+        try:
+            os.write(self.ready_fd, message.encode("ascii"))
+        except BrokenPipeError:
+            os.close(self.ready_fd)
+            self.ready_fd = None
+            return
+        if close:
+            os.close(self.ready_fd)
+            self.ready_fd = None
+
+    def _ready(self) -> None:
+        """Signal that the inherited listener has passed boundary checks."""
+        self.evidence.write({
+            "event": "switch-ready",
+            "ports": [
+                {"port": port.name, "mac": mac_text(port.mac)}
+                for port in self.ports
+            ],
+        })
+        self._signal("READY\n")
 
     def _reader(self, port: Port) -> None:
         connection = self.connections[port.number]
@@ -232,12 +265,22 @@ class ConcurrentSwitch:
                 disconnected += 1
                 continue
             sender, frame = item
+            self.frames += 1
             last_frame = time.monotonic()
             deliveries, events = self.policy.route(sender, frame, peers)
             for event in events:
-                self.evidence.write({"event": "dhcp", **event})
+                named = dict(event)
+                if isinstance(named.get("peer"), int):
+                    named["peer"] = self.port_names[int(named["peer"])]
+                if isinstance(named.get("delivered_to"), int):
+                    named["delivered_to"] = self.port_names[
+                        int(named["delivered_to"])]
+                if named.get("blocked"):
+                    self.blocked += 1
+                self.evidence.write({"event": "dhcp", **named})
             for target, frames in deliveries.items():
                 for delivered in frames:
+                    self.deliveries += 1
                     try:
                         self.outgoing[target].put(delivered, timeout=1.0)
                     except queue.Full:
@@ -247,6 +290,7 @@ class ConcurrentSwitch:
     def run(self) -> None:
         threads: list[threading.Thread] = []
         try:
+            self._ready()
             self._accept()
             for port in self.ports:
                 threads.extend([
@@ -262,6 +306,9 @@ class ConcurrentSwitch:
                 raise self.error.get()
         finally:
             self.stop.set()
+            if self.ready_fd is not None:
+                os.close(self.ready_fd)
+                self.ready_fd = None
             for output in self.outgoing.values():
                 try:
                     output.put_nowait(None)
@@ -276,6 +323,13 @@ class ConcurrentSwitch:
             self.listener.close()
             for thread in threads:
                 thread.join(timeout=2.0)
+            self.evidence.write_unbounded({
+                "event": "switch-summary",
+                "frames": self.frames,
+                "deliveries": self.deliveries,
+                "blocked": self.blocked,
+                "accepted_ports": len(self.connections),
+            })
             self.evidence.close()
         if not self.error.empty():
             raise self.error.get()
@@ -286,8 +340,10 @@ def parse_port(value: str, number: int) -> Port:
         name, mac = value.split("=", 1)
     except ValueError as error:
         raise ValueError("port must be NAME=MAC") from error
-    if not name or len(name) > 32:
-        raise ValueError("port name must contain 1-32 characters")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", name):
+        raise ValueError(
+            "port name must contain 1-32 letters, digits, dots, dashes, "
+            "or underscores")
     return Port(number, name, mac_bytes(mac))
 
 
@@ -296,6 +352,7 @@ def main() -> int:
     parser.add_argument("--listener-fd", required=True, type=int)
     parser.add_argument("--port", action="append", required=True)
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--ready-fd", type=int)
     parser.add_argument("--accept-timeout", type=float, default=30.0)
     parser.add_argument("--idle-timeout", type=float, default=120.0)
     args = parser.parse_args()
@@ -306,6 +363,7 @@ def main() -> int:
     listener = socket.socket(fileno=args.listener_fd)
     ConcurrentSwitch(
         listener, ports, evidence_path=args.evidence,
+        ready_fd=args.ready_fd,
         accept_timeout=args.accept_timeout,
         idle_timeout=args.idle_timeout,
     ).run()

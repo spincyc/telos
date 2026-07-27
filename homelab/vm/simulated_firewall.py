@@ -33,11 +33,13 @@ class SimulatedFirewall:
         *,
         gateway: str,
         dns: str,
+        ntp: str = "198.51.100.10",
         update_addresses: frozenset[str],
         household_networks: tuple[str, ...],
     ) -> None:
         self.gateway = ipaddress.ip_address(gateway)
         self.dns = ipaddress.ip_address(dns)
+        self.ntp = ipaddress.ip_address(ntp)
         self.update_addresses = frozenset(
             ipaddress.ip_address(value) for value in update_addresses
         )
@@ -64,6 +66,8 @@ class SimulatedFirewall:
             and flow.port == 443
         ):
             return self._count(True, "allow-update")
+        if destination == self.ntp and protocol == "udp" and flow.port == 123:
+            return self._count(True, "allow-ntp")
         if any(destination in network for network in self.household_networks):
             return self._count(False, "deny-household")
         if any(destination in network for network in PRIVATE_NETWORKS):
@@ -79,6 +83,7 @@ class SimulatedFirewall:
             "allow-gateway",
             "allow-dns",
             "allow-update",
+            "allow-ntp",
             "deny-household",
             "deny-private",
             "deny-default",
@@ -91,6 +96,7 @@ def acceptance_probe_matrix(
     gateway: str = "10.1.31.1",
     dns: str = "10.1.31.1",
     update_address: str = "198.51.100.11",
+    ntp: str = "198.51.100.10",
 ) -> tuple[tuple[Flow, Decision], ...]:
     """Exact positive and negative probes required by the simulation."""
     return (
@@ -98,6 +104,9 @@ def acceptance_probe_matrix(
         (Flow("udp", dns, 53), Decision(True, "allow-dns")),
         (Flow("tcp", dns, 53), Decision(True, "allow-dns")),
         (Flow("tcp", update_address, 443), Decision(True, "allow-update")),
+        (Flow("udp", ntp, 123), Decision(True, "allow-ntp")),
+        (Flow("tcp", ntp, 123), Decision(False, "deny-default")),
+        (Flow("udp", ntp, 124), Decision(False, "deny-default")),
         (Flow("tcp", update_address, 80), Decision(False, "deny-default")),
         (Flow("icmp", "10.0.0.1"), Decision(False, "deny-household")),
         (Flow("tcp", "10.0.7.254", 443), Decision(False, "deny-household")),
@@ -114,6 +123,7 @@ def verify_acceptance(firewall: SimulatedFirewall) -> tuple[str, ...]:
         gateway=str(firewall.gateway),
         dns=str(firewall.dns),
         update_address=str(sorted(firewall.update_addresses)[0]),
+        ntp=str(firewall.ntp),
     ):
         actual = firewall.decide(flow)
         if actual != expected:

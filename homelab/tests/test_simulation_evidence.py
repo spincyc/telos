@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 
 from homelab.vm.simulation_evidence import (
-    RedactedLog, private_directory, private_file, redact, write_result,
-    write_serial_events,
+    RedactedLog, append_json_event, private_directory, private_file, redact,
+    write_result, write_serial_events,
 )
 
 
@@ -80,9 +80,40 @@ class SimulationEvidenceTests(unittest.TestCase):
         outside = self.root.parent / "outside"
         outside.write_bytes(b"keep")
         (self.root / "serial.log").symlink_to(outside)
-        with self.assertRaises(OSError):
+        with self.assertRaisesRegex(RuntimeError, "not a regular file"):
             private_file(self.root / "serial.log", b"replace")
         self.assertEqual(outside.read_bytes(), b"keep")
+
+    def test_refuses_symlink_in_evidence_path(self):
+        real = self.root.parent / "real"
+        real.mkdir()
+        self.root.symlink_to(real, target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, "contains a symlink"):
+            private_file(self.root / "result.json", b"secret")
+        self.assertEqual(list(real.iterdir()), [])
+
+    def test_private_file_replacement_is_atomic(self):
+        target = self.root / "result.json"
+        private_file(target, b"old")
+        old_inode = target.stat().st_ino
+        private_file(target, b"new")
+        self.assertNotEqual(old_inode, target.stat().st_ino)
+        self.assertEqual(target.read_bytes(), b"new")
+        self.assert_mode(target, 0o600)
+
+    def test_json_event_append_is_private_and_rejects_symlink(self):
+        target = self.root / "audit.jsonl"
+        append_json_event(target, {"kind": "DISCOVER"})
+        self.assertEqual(
+            json.loads(target.read_text()), {"kind": "DISCOVER"})
+        self.assert_mode(target, 0o600)
+        target.unlink()
+        outside = self.root.parent / "outside"
+        outside.write_text("keep")
+        target.symlink_to(outside)
+        with self.assertRaisesRegex(RuntimeError, "not a regular file"):
+            append_json_event(target, {"kind": "OFFER"})
+        self.assertEqual(outside.read_text(), "keep")
 
 
 if __name__ == "__main__":

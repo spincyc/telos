@@ -64,6 +64,16 @@ class SimulatedGatewayTests(unittest.TestCase):
         reply = self.gateway.handle(request_ip(17, sim.udp(43210, 53, query)))[0]
         self.assertTrue(reply.endswith(sim.NTP_IP.packed))
 
+    def test_dns_has_deliberate_controller_name(self):
+        question = (
+            b"\x0cbootstrap-dc\x03lab\x04home\x04arpa\0"
+            + struct.pack("!HH", 1, 1)
+        )
+        query = b"\x12\x35\x01\0\0\x01\0\0\0\0\0\0" + question
+        reply = self.gateway.handle(
+            request_ip(17, sim.udp(43210, 53, query)))[0]
+        self.assertTrue(reply.endswith(sim.CONTROLLER_IP.packed))
+
     def test_ntp_response_is_from_simulated_external_peer(self):
         gateway = sim.Gateway(clock=lambda: 1_700_000_000.25)
         query = bytearray(48)
