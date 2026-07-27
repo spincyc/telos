@@ -11,11 +11,15 @@
   \noindent\begin{minipage}{0.84\linewidth}#2\end{minipage}\par\clearpage}
 \newcommand{\bindsheet}[1]{%
   \includepdf[pages=-]{\CompendiumBuildRoot/#1.pdf}}
+\newcommand{\bindpages}[2]{%
+  \includepdf[pages={#2}]{\CompendiumBuildRoot/#1.pdf}}
 \newcommand{\bindspecies}[1]{%
   \bindsheet{fish/#1}\bindsheet{cooking/#1}}
+\newcommand{\bindspeciesworkbook}[2]{%
+  \bindsheet{fish/#1}\bindpages{cooking/#1}{1-#2}}
 
 \telosmeta{Lake Country Fishing · ChatGPT}{\LakeName\ Complete Guide}
-  {\LakeSubtitle}{20260727.001}
+  {\LakeSubtitle}{20260727.002}
 \begin{document}
 
 \thispagestyle{empty}
@@ -46,7 +50,8 @@ spincyc.github.io/telos}\par
 I. Lake & Independent bathymetric line map, access context, evidence limits,
 and dated rules for \LakeName.\\
 II. Fish + kitchen & Confirmed fish first, then a clearly divided candidate
-panfish module; each field sheet is followed by its cooking guide.\\
+panfish module; each field sheet is followed by its cooking instruction.
+Write-on batch sheets are collected in Part V.\\
 III. Rigs & Eleven retained rig sheets, each useful for at least one supported
 fish group or seasonal presentation on this water.\\
 IV. Reference & Reading water, lures and bait, calendar, knots, handling and
@@ -67,25 +72,25 @@ water level, hazards, and posted ordinances at departure.}
 are paired with complete harvest preparation. Named panfish are excluded
 because a broad group record does not establish individual presence. A legal
 fish is not automatically the preferred fish to keep.}
-\bindspecies{largemouth-bass}
-\bindspecies{smallmouth-bass}
-\bindspecies{walleye}
-\bindspecies{northern-pike}
+\bindspeciesworkbook{largemouth-bass}{5}
+\bindspeciesworkbook{smallmouth-bass}{6}
+\bindspeciesworkbook{walleye}{6}
+\bindspeciesworkbook{northern-pike}{5}
 \bindpart{Candidate module \quad Panfish}{The current DNR lake record supports
 the broad panfish group but does not name these five species individually.
 Use these sheets for identification only after a catch or current survey
 confirms the species; do not read inclusion as a presence or abundance claim.}
-\bindspecies{bluegill}
+\bindspeciesworkbook{bluegill}{6}
 \bindspecies{pumpkinseed}
 \bindspecies{black-crappie}
-\bindspecies{yellow-perch}
-\bindspecies{rock-bass}
+\bindspeciesworkbook{yellow-perch}{5}
+\bindspeciesworkbook{rock-bass}{6}
 \ifdefstring{\PineEdition}{yes}{
   \bindpart{Historical module \quad Cisco}{Historical Pine evidence makes this
   useful for identification and interpretation, but the current broad DNR
   record does not confirm cisco. Do not target or harvest cisco without
   current authoritative presence evidence.}
-  \bindspecies{cisco}}{}
+  \bindspeciesworkbook{cisco}{6}}{}
 
 \bindpart{III \quad Rigs}{Build and fish the presentation as a system. Hook
 choice, leader, weight, depth, and stop rule matter more than a lure name.}
@@ -104,12 +109,12 @@ choice, leader, weight, depth, and stop rule matter more than a lure name.}
 \bindpart{IV \quad Reference}{Use these sheets across targets: interpret
 structure and season, select bait deliberately, tie and inspect connections,
 handle fish before the cast, and run a safe first trip.}
-\bindsheet{reference/reading-water}
+\bindpages{reference/reading-water}{1-2}
 \bindsheet{reference/lures-and-baits}
-\bindsheet{reference/seasonal-calendar}
-\bindsheet{reference/knots}
-\bindsheet{reference/handling-and-release}
-\bindsheet{reference/first-trip}
+\bindpages{reference/seasonal-calendar}{1-2}
+\bindpages{reference/knots}{1-2}
+\bindpages{reference/handling-and-release}{1-3}
+\bindpages{reference/first-trip}{1-2}
 
 \bindpart{V \quad Field workbook}{Turn the preceding lake, fish, rig, kitchen,
 and reference teaching into a prediction, a field record, and a reviewable
@@ -218,4 +223,24 @@ printed evidence class until a current authoritative record changes it.
 \noindent\textbf{Repeat:}\ \dotfill\par\vspace{1.2em}
 \noindent\textbf{Change one variable:}\ \dotfill\par\vspace{1.2em}
 \noindent\textbf{Question still open:}\ \dotfill
+
+\bindpart{Working copies \quad Use after the instruction}{These pages retain
+their source-guide headings and checks, but are bound here so every write-on
+record is together at the literal back of the document. The fish, kitchen, and
+reference modules point here whenever they ask you to record a result.}
+
+\bindpages{reference/reading-water}{3}
+\bindpages{reference/seasonal-calendar}{3}
+\bindpages{reference/knots}{3}
+\bindpages{reference/handling-and-release}{4}
+\bindpages{reference/first-trip}{3}
+
+\bindpages{cooking/largemouth-bass}{6}
+\bindpages{cooking/smallmouth-bass}{7}
+\bindpages{cooking/walleye}{7}
+\bindpages{cooking/northern-pike}{6}
+\bindpages{cooking/bluegill}{7}
+\bindpages{cooking/yellow-perch}{6}
+\bindpages{cooking/rock-bass}{7}
+\ifdefstring{\PineEdition}{yes}{\bindpages{cooking/cisco}{7}}{}
 \end{document}
