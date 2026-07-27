@@ -1,0 +1,108 @@
+"""Tests for the offline Arch workstation PXE release builder."""
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pxe"))
+
+import arch_workstation as target  # noqa: E402
+
+
+def fake_media(root: Path) -> Path:
+    files = {
+        ".disk/info": b"Arch Linux test media\n",
+        "arch/boot/x86_64/vmlinuz-linux": b"kernel",
+        "arch/boot/x86_64/initramfs-linux.img": b"initramfs",
+        "arch/x86_64/airootfs.sfs": b"root image",
+        "arch/pkglist.x86_64.txt": b"base\nlinux\n",
+    }
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    return root
+
+
+class TestMediaValidation(unittest.TestCase):
+    def test_requires_the_boot_and_root_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media = fake_media(Path(directory))
+            (media / "arch/x86_64/airootfs.sfs").unlink()
+            with self.assertRaisesRegex(target.TargetError, "airootfs.sfs"):
+                target.validate_source(media)
+
+    def test_rejects_a_non_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(target.TargetError, "YYYYMMDD"):
+                target.stage(source=fake_media(root / "media"),
+                             releases=root / "releases", version="latest",
+                             base_url="http://boot.ad.home.arpa/pxe/releases")
+
+
+class TestRelease(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.release = target.stage(
+            source=fake_media(self.root / "media"),
+            releases=self.root / "releases",
+            version="20260727.001",
+            base_url="http://boot.ad.home.arpa/pxe/releases")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_uses_the_shared_target_contract(self):
+        descriptor = json.loads((self.release / "target.json").read_text())
+        self.assertEqual(descriptor["schema"], 1)
+        self.assertEqual(descriptor["id"], "arch-workstation")
+        self.assertEqual(descriptor["kind"], "archiso-netboot")
+        self.assertEqual(descriptor["entrypoints"], ["boot.ipxe"])
+
+    def test_copies_the_complete_arch_tree_beneath_payload(self):
+        self.assertEqual(
+            (self.release / "payload/arch/pkglist.x86_64.txt").read_text(),
+            "base\nlinux\n")
+
+    def test_ipxe_uses_the_immutable_version_url(self):
+        script = (self.release / "boot.ipxe").read_text()
+        self.assertIn("/arch-workstation/20260727.001/payload", script)
+        self.assertIn("archiso_http_srv=${base}/", script)
+
+    def test_an_untouched_release_verifies(self):
+        self.assertEqual(target.verify(self.release), [])
+
+    def test_changed_content_fails_verification(self):
+        image = self.release / "payload/arch/x86_64/airootfs.sfs"
+        image.write_bytes(b"changed")
+        self.assertTrue(any("airootfs.sfs: checksum mismatch" in problem
+                            for problem in target.verify(self.release)))
+
+    def test_unlisted_content_fails_verification(self):
+        (self.release / "payload/surprise").write_text("no")
+        self.assertIn("payload/surprise: present but not listed",
+                      target.verify(self.release))
+
+    def test_existing_version_is_immutable(self):
+        with self.assertRaisesRegex(target.TargetError, "already exists"):
+            target.stage(
+                source=self.root / "media", releases=self.root / "releases",
+                version="20260727.001",
+                base_url="http://boot.ad.home.arpa/pxe/releases")
+
+    def test_no_partial_release_survives_a_failed_copy(self):
+        with self.assertRaises(target.TargetError):
+            target.stage(
+                source=self.root / "missing", releases=self.root / "releases",
+                version="20260727.002",
+                base_url="http://boot.ad.home.arpa/pxe/releases")
+        self.assertFalse(
+            (self.root / "releases/arch-workstation/20260727.002").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

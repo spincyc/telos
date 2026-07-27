@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Stage or verify the Arch workstation PXE target."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import arch_workstation  # noqa: E402
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    stage = commands.add_parser("stage", help="stage locally supplied Arch media")
+    stage.add_argument("--source", required=True, type=Path,
+                       help="mounted or extracted Arch ISO root")
+    stage.add_argument("--releases", required=True, type=Path)
+    stage.add_argument("--version", required=True)
+    stage.add_argument("--base-url", required=True,
+                       help="URL whose children are target release directories")
+
+    check = commands.add_parser("verify", help="verify one staged release")
+    check.add_argument("release", type=Path)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "stage":
+            output = arch_workstation.stage(
+                source=args.source, releases=args.releases,
+                version=args.version, base_url=args.base_url)
+            print(f"staged {arch_workstation.TARGET_ID} {args.version}: {output}")
+            print("verified manifest: pass")
+            return 0
+        problems = arch_workstation.verify(args.release)
+        if problems:
+            print("Arch workstation target verification failed:", file=sys.stderr)
+            for problem in problems:
+                print(f"  {problem}", file=sys.stderr)
+            return 1
+        print(f"verified Arch workstation target: {args.release}")
+        return 0
+    except arch_workstation.TargetError as error:
+        print(f"arch-workstation: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
