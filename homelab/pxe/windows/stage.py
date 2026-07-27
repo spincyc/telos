@@ -66,6 +66,13 @@ def stage(args: argparse.Namespace) -> Path:
     wimboot = args.wimboot.resolve(strict=True)
     if not iso.is_file() or not wimboot.is_file():
         raise RuntimeError("ISO and wimboot inputs must be regular files")
+    missing = [name for name in ("7z", "wimlib-imagex") if shutil.which(name) is None]
+    if missing:
+        raise RuntimeError(
+            "missing Windows media dependencies: "
+            + ", ".join(missing)
+            + " (run make homelab-bootstrap-deps)"
+        )
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -75,7 +82,7 @@ def stage(args: argparse.Namespace) -> Path:
 
     with tempfile.TemporaryDirectory(prefix=".windows-extract-", dir=output) as extract_name:
         extracted = Path(extract_name)
-        run(["xorriso", "-osirrox", "on", "-indev", str(iso), "-extract", "/", str(extracted)])
+        run(["7z", "x", "-tUdf", "-y", f"-o{extracted}", str(iso)])
         install_image = assert_windows_11_pro(extracted)
         with tempfile.TemporaryDirectory(prefix=".windows-stage-", dir=output) as stage_name:
             staged = Path(stage_name)

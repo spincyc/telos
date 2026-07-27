@@ -67,13 +67,23 @@ multi-edition download, so the repository does not scrape the page or silently
 replace it with Enterprise evaluation, Insider, UUP-reconstructed, or
 third-party media. The importer requires the exact SHA-256 shown in Microsoft's
 current per-language verification table and refuses a mismatch. PXE staging
-independently refuses media that does not advertise Windows 11 Pro.
+independently refuses media that does not advertise Windows 11 Pro. Current
+Microsoft consumer media is UDF, so the verifier deliberately uses `7z`;
+`xorriso` and `bsdtar` expose only its small ISO-9660 compatibility tree.
+`wimlib-imagex` then inspects `sources/install.wim` or `install.esd` and
+requires the exact edition name `Windows 11 Pro`.
 
-The Windows import writes a machine-readable provenance receipt beside the
-artifact. The Arch fetcher can emit its verified source, selected image, and
-digest as JSON; `wimboot` is checked against tracked release metadata. Retain
-those records and the command output with acceptance evidence. They contain no
-credentials.
+The Windows import verifies the UEFI boot chain and Pro edition before it
+atomically promotes a copied file. It writes separate provenance and content
+verification receipts beside the artifact. A failed content check leaves an
+older verified cache untouched. The Arch fetcher can emit its verified source,
+selected image, and digest as JSON; `wimboot` is checked against tracked
+release metadata. Retain those records and the command output with acceptance
+evidence. They contain no credentials.
+
+The accepted 25H2 V2 English (United States) media identity is durably recorded
+in `windows-11-25h2-en-us.json`. This is an audit record, not permission to
+silently accept another filename, language, release, size, or digest.
 
 ## Windows interactive fallback
 

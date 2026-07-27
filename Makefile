@@ -39,7 +39,7 @@ ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
 	python-cryptography python-dnspython python-pexpect openresolv bind \
 	openssh rsync gnupg fakeroot mtools util-linux \
-	wimlib libisoburn
+	wimlib libisoburn 7zip
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty
 # because the list above needs nothing: keep it that way rather than growing it.
@@ -54,6 +54,8 @@ DOC_ROOT := doc
 SITE_TOOL := scripts/site
 ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
+WINDOWS_25H2_EN_US_ISO ?= Win11_25H2_English_x64_v2.iso
+WINDOWS_25H2_EN_US_SHA256 := 768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3
 WIMBOOT ?= homelab/var/media/wimboot
 SIM_CYCLES ?= 2
 
@@ -95,6 +97,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-test homelab-lab homelab-matrix homelab-image \
 	homelab-converge-check homelab-bootstrap-deps \
 	homelab-media homelab-media-arch homelab-media-windows \
+	homelab-media-windows-25h2-en-us \
 	homelab-media-wimboot homelab-bootstrap-seed \
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
@@ -199,13 +202,25 @@ homelab-media-arch:
 	@homelab/media/fetch-arch
 
 homelab-media-windows:
-	@if [ -z '$(WINDOWS_ISO)' ] || [ -z '$(WINDOWS_SHA256)' ]; then \
-		homelab/bin/homelab-fetch-windows --output '$(WINDOWS_ISO_CACHE)'; \
-	else \
+	@if { [ -n '$(WINDOWS_ISO)' ] && [ -z '$(WINDOWS_SHA256)' ]; } || \
+	    { [ -z '$(WINDOWS_ISO)' ] && [ -n '$(WINDOWS_SHA256)' ]; }; then \
+		echo 'WINDOWS_ISO and WINDOWS_SHA256 must be supplied together' >&2; \
+		exit 2; \
+	elif [ -n '$(WINDOWS_ISO)' ] && [ -n '$(WINDOWS_SHA256)' ]; then \
 		homelab/bin/homelab-fetch-windows \
 			--source '$(WINDOWS_ISO)' --expected-sha256 '$(WINDOWS_SHA256)' \
 			--output '$(WINDOWS_ISO_CACHE)'; \
+	elif [ -f '$(WINDOWS_25H2_EN_US_ISO)' ]; then \
+		$(MAKE) --no-print-directory homelab-media-windows-25h2-en-us; \
+	else \
+		homelab/bin/homelab-fetch-windows --output '$(WINDOWS_ISO_CACHE)'; \
 	fi
+
+homelab-media-windows-25h2-en-us:
+	@homelab/bin/homelab-fetch-windows \
+		--source '$(WINDOWS_25H2_EN_US_ISO)' \
+		--expected-sha256 '$(WINDOWS_25H2_EN_US_SHA256)' \
+		--output '$(WINDOWS_ISO_CACHE)'
 
 homelab-media-wimboot:
 	@homelab/bin/homelab-fetch-wimboot --output '$(WIMBOOT)'

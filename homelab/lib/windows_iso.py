@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -20,7 +21,7 @@ BOOT_CHAIN = (
     "/boot/bcd",
     "/boot/boot.sdi",
     "/efi/boot/bootx64.efi",
-    "/efi/microsoft/boot/bootmgfw.efi",
+    "/efi/microsoft/boot/cdboot.efi",
     "/sources/boot.wim",
 )
 INSTALL_IMAGES = ("/sources/install.wim", "/sources/install.esd")
@@ -43,19 +44,31 @@ def _run(command: list[str]) -> str:
     return result.stdout
 
 
+def _require_tools() -> None:
+    missing = [
+        name for name in ("7z", "wimlib-imagex") if shutil.which(name) is None
+    ]
+    if missing:
+        raise VerificationError(
+            "missing Windows media dependencies: "
+            + ", ".join(missing)
+            + " (run make homelab-bootstrap-deps)"
+        )
+
+
 def _iso_files(iso: Path, run: Callable[[list[str]], str]) -> dict[str, str]:
-    # With no explicit action, xorriso's -find prints each matching path.
-    output = run(["xorriso", "-indev", str(iso), "-find", "/", "-type", "f"])
+    # Microsoft's current consumer image uses UDF. xorriso and libarchive see
+    # only its tiny ISO-9660 compatibility tree, while 7-Zip reads the UDF tree.
+    output = run(["7z", "l", "-tUdf", "-slt", str(iso)])
     files: dict[str, str] = {}
     duplicates: set[str] = set()
     for line in output.splitlines():
-        # xorriso shell-quotes reported paths. The boot-chain names contain no
-        # quote characters, so removing the surrounding pair is unambiguous.
-        path = line.strip()
-        if len(path) >= 2 and path[0] == path[-1] == "'":
-            path = path[1:-1]
-        if not path.startswith("/"):
+        if not line.casefold().startswith("path = "):
             continue
+        reported = line.split("=", 1)[1].strip()
+        if reported in {str(iso), iso.name}:
+            continue
+        path = "/" + reported.lstrip("/")
         folded = path.casefold()
         if folded in files:
             duplicates.add(folded)
@@ -86,6 +99,8 @@ def verify(
             f"Windows ISO SHA-256 mismatch: expected {expected}, got {actual}"
         )
 
+    if run is _run:
+        _require_tools()
     files = _iso_files(iso, run)
     missing = [path for path in BOOT_CHAIN if path.casefold() not in files]
     if missing:
@@ -103,14 +118,13 @@ def verify(
         image = Path(name) / Path(images[0]).name
         run(
             [
-                "xorriso",
-                "-osirrox",
-                "on",
-                "-indev",
+                "7z",
+                "e",
+                "-tUdf",
+                "-y",
+                f"-o{name}",
                 str(iso),
-                "-extract",
-                images[0],
-                str(image),
+                images[0].lstrip("/"),
             ]
         )
         info = run(["wimlib-imagex", "info", str(image)])

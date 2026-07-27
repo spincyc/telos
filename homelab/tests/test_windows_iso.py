@@ -11,15 +11,16 @@ import windows_iso  # noqa: E402
 
 
 FILES = "\n".join(
+    ["Path = " + path.lstrip("/") for path in
     [
         "/bootmgr",
         "/Boot/BCD",
         "/boot/boot.sdi",
         "/efi/boot/bootx64.efi",
-        "/efi/microsoft/boot/bootmgfw.efi",
+        "/efi/microsoft/boot/cdboot.efi",
         "/sources/boot.wim",
         "/sources/install.wim",
-    ]
+    ]]
 )
 
 
@@ -33,8 +34,9 @@ class FakeTools:
         self.commands.append(command)
         if command[0] == "wimlib-imagex":
             return self.info
-        if "-extract" in command:
-            Path(command[-1]).write_bytes(b"fixture install image")
+        if command[0] == "7z" and command[1] == "e":
+            output = next(value[2:] for value in command if value.startswith("-o"))
+            Path(output, "install.wim").write_bytes(b"fixture install image")
             return ""
         return self.listing
 
@@ -52,7 +54,9 @@ class WindowsIsoTests(unittest.TestCase):
         receipt = windows_iso.verify(self.iso, self.digest.upper(), run=tools)
         self.assertEqual("Windows 11 Pro", receipt["edition"])
         self.assertEqual("/sources/install.wim", receipt["install_image"])
-        self.assertEqual("xorriso", tools.commands[0][0])
+        self.assertEqual("7z", tools.commands[0][0])
+        self.assertIn("-tUdf", tools.commands[0])
+        self.assertIn("-tUdf", tools.commands[-2])
         self.assertEqual("wimlib-imagex", tools.commands[-1][0])
 
     def test_checksum_mismatch_stops_before_external_tools(self):
@@ -66,12 +70,12 @@ class WindowsIsoTests(unittest.TestCase):
             windows_iso.verify(self.iso, "sha256:1234", run=FakeTools())
 
     def test_missing_uefi_boot_file_is_rejected(self):
-        listing = FILES.replace("/efi/boot/bootx64.efi\n", "")
+        listing = FILES.replace("Path = efi/boot/bootx64.efi\n", "")
         with self.assertRaisesRegex(windows_iso.VerificationError, "bootx64.efi"):
             windows_iso.verify(self.iso, self.digest, run=FakeTools(listing=listing))
 
     def test_requires_exactly_one_install_image(self):
-        listing = FILES + "\n/sources/install.esd"
+        listing = FILES + "\nPath = sources/install.esd"
         with self.assertRaisesRegex(windows_iso.VerificationError, "exactly one"):
             windows_iso.verify(self.iso, self.digest, run=FakeTools(listing=listing))
 
@@ -90,7 +94,7 @@ class WindowsIsoTests(unittest.TestCase):
         self.assertEqual("/SOURCES/INSTALL.WIM", receipt["install_image"])
 
     def test_xorriso_shell_quoted_paths_are_accepted(self):
-        listing = "\n".join(f"'{path}'" for path in FILES.splitlines())
+        listing = FILES
         receipt = windows_iso.verify(
             self.iso, self.digest, run=FakeTools(listing=listing)
         )

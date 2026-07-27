@@ -26,7 +26,7 @@ Windows 11 Pro.
 
 - a local Windows 11 x86-64 ISO;
 - a local `wimboot` binary obtained from the official iPXE project;
-- `xorriso` and `wimlib-imagex`; and
+- `7z` and `wimlib-imagex` (the Microsoft image is UDF); and
 - a release name containing only letters, digits, dots, underscores, or
   hyphens.
 

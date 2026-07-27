@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import windows_media  # noqa: E402
+import windows_iso  # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -29,9 +31,17 @@ def main(argv=None) -> int:
         parser.error("--expected-sha256 is required with --source")
     try:
         record = windows_media.import_iso(
-            args.source, args.output, args.expected_sha256
+            args.source,
+            args.output,
+            args.expected_sha256,
+            content_verifier=windows_iso.verify,
         )
-    except windows_media.MediaError as error:
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        windows_media.MediaError,
+        windows_iso.VerificationError,
+    ) as error:
         print(error, file=sys.stderr)
         return 2
     print(f"imported {args.output}")

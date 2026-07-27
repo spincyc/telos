@@ -1,0 +1,12 @@
+{
+  "architecture": "x64",
+  "bytes": 8471603200,
+  "digest_authority": "Microsoft download verification table",
+  "download_page": "https://www.microsoft.com/software-download/windows11",
+  "edition": "multi-edition consumer media including Windows 11 Pro",
+  "filename": "Win11_25H2_English_x64_v2.iso",
+  "language": "English (United States)",
+  "release": "Windows 11 25H2 V2",
+  "schema": 1,
+  "sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3"
+}

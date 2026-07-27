@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import fcntl
 from pathlib import Path
+from typing import Callable
 
 DOWNLOAD_PAGE = "https://www.microsoft.com/software-download/windows11"
 MINIMUM_ISO_BYTES = 1024 * 1024
@@ -68,7 +69,13 @@ def _atomic_json(path: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def import_iso(source: Path, output: Path, expected_sha256: str) -> dict:
+def import_iso(
+    source: Path,
+    output: Path,
+    expected_sha256: str,
+    *,
+    content_verifier: Callable[[Path, str], dict] | None = None,
+) -> dict:
     """Atomically copy operator-acquired media and record its provenance."""
     source = source.resolve()
     output = output.absolute()
@@ -82,8 +89,10 @@ def import_iso(source: Path, output: Path, expected_sha256: str) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     _reject_symlink(output, "output")
     record_path = output.with_suffix(output.suffix + ".provenance.json")
+    verification_path = output.with_suffix(output.suffix + ".verification.json")
     lock_path = output.with_suffix(output.suffix + ".lock")
     _reject_symlink(record_path, "provenance receipt")
+    _reject_symlink(verification_path, "verification receipt")
     _reject_symlink(lock_path, "cache lock")
     lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
@@ -91,6 +100,7 @@ def import_iso(source: Path, output: Path, expected_sha256: str) -> dict:
             fcntl.flock(lock, fcntl.LOCK_EX)
             _reject_symlink(output, "output")
             _reject_symlink(record_path, "provenance receipt")
+            _reject_symlink(verification_path, "verification receipt")
             actual = sha256(source)
             if actual != expected:
                 raise MediaError(
@@ -104,6 +114,11 @@ def import_iso(source: Path, output: Path, expected_sha256: str) -> dict:
                 shutil.copyfile(source, temporary)
                 if sha256(temporary) != expected:
                     raise MediaError("Windows ISO changed while it was copied")
+                verification = (
+                    content_verifier(temporary, expected)
+                    if content_verifier is not None
+                    else None
+                )
                 os.replace(temporary, output)
             finally:
                 temporary.unlink(missing_ok=True)
@@ -119,6 +134,14 @@ def import_iso(source: Path, output: Path, expected_sha256: str) -> dict:
                 "digest_authority": "operator-supplied Microsoft-published SHA-256",
             }
             _atomic_json(record_path, record)
+            if verification is not None:
+                verification = dict(verification)
+                verification["iso"] = output.name
+                verification["schema"] = 1
+                _atomic_json(
+                    verification_path,
+                    verification,
+                )
     finally:
         # fdopen owns lock_fd after it succeeds; close only an early open failure.
         try:

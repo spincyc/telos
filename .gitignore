@@ -10,3 +10,7 @@ __pycache__/
 # names, disk serials and per-machine inventory never enter the published site.
 /homelab/instance/
 /homelab/var/
+
+# Operator-downloaded installation media may be handed to the build at the
+# repository root. It is never source material and must never enter Git.
+/*.iso

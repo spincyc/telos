@@ -47,6 +47,49 @@ class WindowsMediaTests(unittest.TestCase):
             self.assertEqual("Microsoft Software Download", saved["source"])
             self.assertEqual(expected, saved["expected_sha256"])
 
+    def test_content_verification_precedes_promotion_and_gets_receipt(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source = root / "Win11.iso"
+            self.write_iso(source)
+            output = root / "cache" / "windows-11.iso"
+            expected = windows_media.sha256(source)
+
+            def verify(path, digest):
+                self.assertNotEqual(source, path)
+                self.assertEqual(expected, digest)
+                return {"sha256": digest, "edition": "Windows 11 Pro"}
+
+            windows_media.import_iso(
+                source, output, expected, content_verifier=verify
+            )
+            receipt = json.loads(
+                output.with_suffix(".iso.verification.json").read_text()
+            )
+            self.assertEqual("windows-11.iso", receipt["iso"])
+            self.assertEqual("Windows 11 Pro", receipt["edition"])
+
+    def test_failed_content_verification_never_replaces_cached_iso(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source = root / "Win11.iso"
+            self.write_iso(source)
+            output = root / "cache" / "windows-11.iso"
+            output.parent.mkdir()
+            output.write_bytes(b"previous verified cache")
+
+            def reject(_path, _digest):
+                raise windows_media.MediaError("bad content")
+
+            with self.assertRaisesRegex(windows_media.MediaError, "bad content"):
+                windows_media.import_iso(
+                    source,
+                    output,
+                    windows_media.sha256(source),
+                    content_verifier=reject,
+                )
+            self.assertEqual(b"previous verified cache", output.read_bytes())
+
     def test_rejects_missing_non_iso_and_small_inputs(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -100,6 +143,12 @@ class WindowsMediaTests(unittest.TestCase):
             output.unlink()
             receipt = output.with_suffix(".iso.provenance.json")
             receipt.symlink_to(target)
+            with self.assertRaisesRegex(windows_media.MediaError, "symbolic link"):
+                windows_media.import_iso(source, output, expected)
+            self.assertEqual("keep", target.read_text())
+            receipt.unlink()
+            verification = output.with_suffix(".iso.verification.json")
+            verification.symlink_to(target)
             with self.assertRaisesRegex(windows_media.MediaError, "symbolic link"):
                 windows_media.import_iso(source, output, expected)
             self.assertEqual("keep", target.read_text())
