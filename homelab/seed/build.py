@@ -30,6 +30,8 @@ PUBLIC_TEST_FIXTURE_ALLOWLIST = {
     "homelab/seed/build.py",
     "homelab/tests/test_image.py",
     "homelab/tests/test_manifest.py",
+    "homelab/tests/test_seed_build.py",
+    "homelab/tests/test_seed_security.py",
 }
 
 
