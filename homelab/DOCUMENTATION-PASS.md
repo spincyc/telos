@@ -1,11 +1,19 @@
 # Homelab documentation pass
 
+Document version: `20260727.001`
+
 Status: queued
 
 The current implementation work continues without waiting for this pass.
 Homelab documentation is HTML/Markdown-first. No Homelab PDF is required at
 this time, and a missing PDF must not block implementation, testing, or
 publication.
+
+The live implementation state, accepted decisions, local evidence, remaining
+factory gates, and literal restart point are maintained in
+[WORKSTATION-FACTORY-STATE.md](WORKSTATION-FACTORY-STATE.md). Update that
+ledger before ending a work session so continuation does not depend on chat
+history.
 
 ## Required document layers
 
