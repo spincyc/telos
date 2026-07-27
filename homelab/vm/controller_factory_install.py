@@ -75,7 +75,7 @@ class DisposableFactoryController:
         volume = subprocess.run(
             ["xorriso", "-indev", str(self.arch_iso), "-pvd_info"],
             check=True, capture_output=True, text=True)
-        match = re.search(r"^Volume id\\s*:\\s*'([A-Z0-9_]{1,32})'$",
+        match = re.search(r"^\s*Volume id\s*:\s*'([A-Z0-9_]{1,32})'\s*$",
                           volume.stdout + volume.stderr, re.MULTILINE)
         if not match:
             raise RuntimeError("Arch ISO has no safe volume identifier")
