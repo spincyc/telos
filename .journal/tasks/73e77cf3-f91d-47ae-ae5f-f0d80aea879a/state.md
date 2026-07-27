@@ -59,6 +59,12 @@ payloads; target metadata binds the complete copied source inventory. The
 unsupported `cms_verify=y` claim was removed pending a defined signing-key
 contract.
 
+A real rootless build additionally corrected the intake for current EROFS
+output and SHA-512 sidecars. The Archiso profile now contains and audits the
+minimal UEFI HTTP-PXE hook chain and wired DHCP activation while excluding
+unused MEMDISK, NBD, and NFS transports. A clean reproducible rebuild remains
+before import and release selection.
+
 ## Cleared blocker
 
 The audited profile is staged at `/tmp/homelab-image/profile`. The environment

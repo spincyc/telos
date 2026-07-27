@@ -24,8 +24,12 @@ MANIFEST_NAME = "release.json"
 REQUIRED_PAYLOADS = (
     "arch/boot/x86_64/vmlinuz-linux",
     "arch/boot/x86_64/initramfs-linux.img",
-    "arch/x86_64/airootfs.sfs",
 )
+ROOT_IMAGES = (
+    "arch/x86_64/airootfs.sfs",
+    "arch/x86_64/airootfs.erofs",
+)
+ROOT_CHECKSUM = "arch/x86_64/airootfs.sha512"
 
 
 class TargetError(RuntimeError):
@@ -34,6 +38,14 @@ class TargetError(RuntimeError):
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha512(path: Path) -> str:
+    digest = hashlib.sha512()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -93,6 +105,34 @@ def validate_source(source: Path) -> dict[str, dict[str, object]]:
             raise TargetError(f"required netboot payload is missing: {relative}")
         if payload.stat().st_size == 0:
             raise TargetError(f"required netboot payload is empty: {relative}")
+    root_images = [
+        relative for relative in ROOT_IMAGES
+        if (source / relative).is_file() and not (source / relative).is_symlink()
+    ]
+    if len(root_images) != 1:
+        raise TargetError(
+            "mkarchiso output must contain exactly one supported root image "
+            "(airootfs.sfs or airootfs.erofs)")
+    root_image = source / root_images[0]
+    if root_image.stat().st_size == 0:
+        raise TargetError(f"required netboot payload is empty: {root_images[0]}")
+    checksum_path = source / ROOT_CHECKSUM
+    if not checksum_path.is_file() or checksum_path.is_symlink():
+        raise TargetError(f"required netboot payload is missing: {ROOT_CHECKSUM}")
+    try:
+        checksum_parts = checksum_path.read_text(encoding="ascii").strip().split()
+    except UnicodeDecodeError as error:
+        raise TargetError("root image SHA-512 receipt is not ASCII") from error
+    expected_name = root_image.name
+    if (
+        len(checksum_parts) != 2
+        or not re.fullmatch(r"[0-9a-fA-F]{128}", checksum_parts[0])
+        or checksum_parts[1].lstrip("*") != expected_name
+    ):
+        raise TargetError("root image SHA-512 receipt is malformed")
+    digest = sha512(root_image)
+    if checksum_parts[0].lower() != digest:
+        raise TargetError("root image does not match its SHA-512 receipt")
     return _arch_inventory(source)
 
 
@@ -108,6 +148,7 @@ echo Loading versioned Controller installer from ${{base}}
 kernel ${{base}}/payload/arch/boot/x86_64/vmlinuz-linux \\
     archisobasedir=arch \\
     archiso_http_srv=${{base}}/payload/ \\
+    checksum=y \\
     console=ttyS0,115200 console=tty0 \\
     initrd=initramfs-linux.img
 initrd ${{base}}/payload/arch/boot/x86_64/initramfs-linux.img
@@ -251,9 +292,10 @@ def verify(release: Path, *, expected_version: str | None = None) -> list[str]:
             problems.append(f"{name}: checksum mismatch")
         if entry.get("size") != path.stat().st_size:
             problems.append(f"{name}: size mismatch")
-    for relative in REQUIRED_PAYLOADS:
-        if not (release / "payload" / relative).is_file():
-            problems.append(f"required payload missing: payload/{relative}")
+    try:
+        validate_source(release / "payload")
+    except TargetError as error:
+        problems.append(str(error))
     return problems
 
 

@@ -4,9 +4,9 @@ repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
 head_observed: "269a3445f76ef48707221adbb6e6599a4cf417fc"
-working_tree_state: "clean-rootless-controller-build-resumed"
+working_tree_state: "controller-real-build-contract-fixes-verified"
 active_tasks: ["73e77cf3-f91d-47ae-ae5f-f0d80aea879a"]
-updated_at: "2026-07-27T23:03:14Z"
+updated_at: "2026-07-27T23:09:05Z"
 ---
 
 # Repository recovery state
