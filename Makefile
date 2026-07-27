@@ -118,7 +118,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-sim-auto-plan homelab-sim-auto-run homelab-sim-auto-repeat \
 	homelab-bootstrap-controller \
 	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
-	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
+	homelab-pxe-all homelab-pxe-release-set homelab-pxe-release-set-verify \
+	homelab-pxe-release-set-rollback homelab-pxe-test homelab-pxe-verify \
 	homelab-pxe-publish homelab-pxe-rollback \
 	homelab-workstation-plan homelab-workstation-verify \
 	homelab-arch-update-check homelab-arch-update-test \
@@ -293,15 +294,11 @@ homelab-factory-pxe: homelab-factory-offline-check
 		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<netboot tree> ARCH_SOURCE=<mounted Arch ISO>' >&2; \
 		exit 2; \
 	fi
-	@$(MAKE) --no-print-directory homelab-pxe-all \
+	@$(MAKE) --no-print-directory homelab-pxe-release-set \
 		VERSION='$(VERSION)' \
 		CONTROLLER_SOURCE='$(CONTROLLER_SOURCE)' \
-		CONTROLLER_BASE_URL='$(or $(CONTROLLER_BASE_URL),http://10.1.31.2/controller/$(VERSION))' \
 		ARCH_SOURCE='$(ARCH_SOURCE)' \
-		ARCH_BASE_URL='$(or $(ARCH_BASE_URL),http://10.1.31.2/arch/$(VERSION))' \
-		WINDOWS_ISO='$(WINDOWS_ISO_CACHE)' \
-		WIMBOOT='$(WIMBOOT)' \
-		WINDOWS_BASE_URL='$(or $(WINDOWS_BASE_URL),http://10.1.31.2/windows/$(VERSION))'
+		BASE_URL='$(or $(BASE_URL),http://10.1.31.2)'
 
 homelab-bootstrap-seed:
 	@$(PYTHON) homelab/seed/build.py \
@@ -582,9 +579,39 @@ homelab-pxe-all:
 		ISO='$(WINDOWS_ISO)' WIMBOOT='$(WIMBOOT)' VERSION='$(VERSION)' \
 		BASE_URL='$(WINDOWS_BASE_URL)'
 
+homelab-pxe-release-set:
+	@if [ -z '$(VERSION)' ] || [ -z '$(CONTROLLER_SOURCE)' ] || [ -z '$(ARCH_SOURCE)' ] || [ -z '$(BASE_URL)' ]; then \
+		echo 'require VERSION=YYYYMMDD.NNN CONTROLLER_SOURCE=<tree> ARCH_SOURCE=<extracted ISO> BASE_URL=<immutable root URL>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-release-set build \
+		--releases homelab/var/pxe --version '$(VERSION)' \
+		--controller-source '$(CONTROLLER_SOURCE)' --arch-source '$(ARCH_SOURCE)' \
+		--base-url '$(BASE_URL)' --seal '$(FACTORY_MEDIA_SEAL)' \
+		--arch-iso '$(ARCH_ISO)' --arch-receipt '$(ARCH_ISO).receipt.json' \
+		--windows-iso '$(WINDOWS_ISO_CACHE)' \
+		--windows-provenance '$(WINDOWS_ISO_CACHE).provenance.json' \
+		--windows-verification '$(WINDOWS_ISO_CACHE).verification.json' \
+		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
+		--wimboot '$(WIMBOOT)' --wimboot-metadata homelab/media/wimboot.json
+
+homelab-pxe-release-set-verify:
+	@if [ -z '$(RELEASE_SET)' ]; then \
+		echo 'require RELEASE_SET=<versioned release-set directory>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-release-set verify \
+		'$(RELEASE_SET)' --seal '$(FACTORY_MEDIA_SEAL)'
+
+homelab-pxe-release-set-rollback:
+	@if [ -z '$(VERSION)' ]; then \
+		echo 'require VERSION=YYYYMMDD.NNN' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-release-set select \
+		--releases homelab/var/pxe --version '$(VERSION)'
+
 homelab-pxe-test:
 	@$(PYTHON) -m unittest \
 		homelab.tests.test_pxe_release \
+		homelab.tests.test_pxe_release_set \
 		homelab.tests.test_pxe_controller_target \
 		homelab.tests.test_arch_workstation_pxe \
 		homelab.tests.test_windows_pxe \

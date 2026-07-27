@@ -79,11 +79,25 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("--output", text)
 
     def test_pxe_aggregate_requires_local_source_trees(self):
+        declaration = re.search(
+            r"^homelab-factory-pxe:(.*)$", MAKEFILE, re.MULTILINE)
+        self.assertIsNotNone(declaration)
+        self.assertIn(
+            "homelab-factory-offline-check", declaration.group(1))
         text = recipe("homelab-factory-pxe")
         self.assertIn("CONTROLLER_SOURCE", text)
         self.assertIn("ARCH_SOURCE", text)
-        self.assertIn("WINDOWS_ISO_CACHE", text)
+        self.assertIn("homelab-pxe-release-set", text)
+        self.assertIn("BASE_URL", text)
+        self.assertNotIn("homelab-pxe-all", text)
         self.assertNotIn("fetch-", text)
+
+    def test_release_set_build_consumes_the_verified_seal(self):
+        text = recipe("homelab-pxe-release-set")
+        self.assertIn("homelab-pxe-release-set build", text)
+        self.assertIn("FACTORY_MEDIA_SEAL", text)
+        self.assertIn("WINDOWS_INSTALL_SOURCE", text)
+        self.assertNotIn("homelab-pxe-all", text)
 
 
 if __name__ == "__main__":
