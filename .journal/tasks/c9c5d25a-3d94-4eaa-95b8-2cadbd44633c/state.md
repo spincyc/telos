@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"
 title: "Prove integrated isolated PXE handoff"
-status: "queued"
+status: "active"
 priority: "high"
 priority_reason: "Required integration proof before destructive guest installation"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-27T21:51:52Z"
+updated_at: "2026-07-27T23:13:46Z"
 ---
 
 # Goal
@@ -32,3 +32,10 @@ served bytes.
 
 Owns the disposable isolated PXE integration environment. Serialize with other
 tasks that mutate the same controller or generated release state.
+
+## Activation plan
+
+First reconcile the known boot-path mismatch and publish/capture boundary in
+the loopback lifecycle. Then prove real OVMF iPXE requests and Arch/WinPE
+handoffs from selected release `20260727.001`, retaining packet and manifest
+evidence without attaching any physical interface.

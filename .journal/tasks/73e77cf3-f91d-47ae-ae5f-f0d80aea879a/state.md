@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "73e77cf3-f91d-47ae-ae5f-f0d80aea879a"
 title: "Complete sealed media and immutable PXE releases"
-status: "active"
+status: "done"
 priority: "high"
 priority_reason: "First incomplete executable factory gates"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
 superseded_by: null
 created_at: "2026-07-27T21:51:51Z"
-updated_at: "2026-07-27T23:03:14Z"
+updated_at: "2026-07-27T23:13:46Z"
 ---
 
 # Goal
@@ -65,14 +65,15 @@ minimal UEFI HTTP-PXE hook chain and wired DHCP activation while excluding
 unused MEMDISK, NBD, and NFS transports. A clean reproducible rebuild remains
 before import and release selection.
 
+The reproducible rebuild and transactional release `20260727.001` now pass.
+The selected aggregate manifest binds all three immutable leaves and the
+sealed Windows SMB source. Full validation passes with 31 root and 829
+homelab tests.
+
 ## Cleared blocker
 
 The audited profile is staged at `/tmp/homelab-image/profile`. The environment
 now supports `unshare --map-auto --map-root-user`, so modern `mkarchiso` can
 use its rootless build path without an operator credential.
 
-## Resume
-
-Build the disposable netboot output, import it into the ignored Controller
-cache, then build and verify the first transactional release set. Physical
-launch remains explicitly reserved for the user's own session.
+Physical launch remains explicitly reserved for the user's own session.

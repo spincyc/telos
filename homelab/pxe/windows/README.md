@@ -71,6 +71,15 @@ auditable without committing the binary.
 
 ## Stage and verify
 
+The transactional factory release consumes the already verified, read-only
+installation source created by `homelab-stage-windows-source`. It verifies that
+tree against the sealed Windows ISO digest, then copies only the WinPE boot
+payload into the immutable HTTP release. This offline path does not re-extract
+the ISO and therefore does not require `7z` or `wimlib-imagex` after the media
+seal has been created.
+
+Direct ISO staging remains available as a diagnostic and compatibility path:
+
 ```sh
 python homelab/pxe/windows/stage.py \
   --iso /absolute/path/to/Win11_English_x64.iso \
@@ -84,6 +93,20 @@ The command refuses an ISO that does not advertise Windows 11 Pro in
 temporary sibling directory, copies only the WinPE boot inputs into a
 versioned release, hashes every staged file, writes `release.json` last, and
 then renames the complete directory into place.
+
+For an already sealed source tree, the equivalent low-level form is:
+
+```sh
+python homelab/pxe/windows/stage.py \
+  --install-source homelab/var/media/windows/install-source \
+  --source-iso-sha256 <sealed-ISO-SHA-256> \
+  --wimboot homelab/var/media/wimboot \
+  --output homelab/var/pxe/windows \
+  --release 20260727.001
+```
+
+The aggregate factory command supplies the sealed digest itself; operators
+should normally use `make homelab-factory-pxe` instead of invoking this form.
 
 The generated `boot.ipxe` loads:
 
