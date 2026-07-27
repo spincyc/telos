@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -45,6 +46,16 @@ class TestBuild(ControllerTargetCase):
             "kind": "archiso-netboot",
             "version": "20260727.001",
             "entrypoints": ["boot.ipxe"],
+            "source": {
+                "kind": "mkarchiso-netboot",
+                "artifacts": {
+                    relative: {
+                        "sha256": controller.sha256(self.source / relative),
+                        "size": (self.source / relative).stat().st_size,
+                    }
+                    for relative in controller.REQUIRED_PAYLOADS
+                },
+            },
         })
         self.assertEqual(controller.verify(release), [])
         self.assertEqual(pxe_release.verify(release), [])
@@ -56,6 +67,7 @@ class TestBuild(ControllerTargetCase):
         self.assertIn("/payload/arch/boot/x86_64/vmlinuz-linux", script)
         self.assertNotIn("menu", script.lower())
         self.assertIn("shell", script)
+        self.assertNotIn("cms_verify=y", script)
 
     def test_manifest_covers_metadata_entrypoint_and_payload(self):
         release = self.stage()
@@ -90,6 +102,25 @@ class TestBuild(ControllerTargetCase):
         with self.assertRaisesRegex(controller.TargetError, "symlink"):
             self.stage()
 
+    def test_symlink_as_source_root_is_refused(self):
+        linked = self.temp / "linked-output"
+        linked.symlink_to(self.source, target_is_directory=True)
+        with self.assertRaisesRegex(controller.TargetError, "symlink"):
+            controller.stage(
+                linked, self.releases, "20260727.001",
+                "http://boot.example.test/controller/20260727.001")
+
+    def test_special_file_in_source_is_refused(self):
+        fifo = self.source / "arch/input.fifo"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(controller.TargetError, "special"):
+            self.stage()
+
+    def test_empty_required_payload_is_refused(self):
+        (self.source / controller.REQUIRED_PAYLOADS[0]).write_bytes(b"")
+        with self.assertRaisesRegex(controller.TargetError, "empty"):
+            self.stage()
+
 
 class TestVerify(ControllerTargetCase):
     def test_altered_payload_is_rejected(self):
@@ -111,6 +142,22 @@ class TestVerify(ControllerTargetCase):
         problems = controller.verify(renamed)
         self.assertTrue(any("YYYYMMDD" in problem for problem in problems))
         self.assertTrue(any("target contract" in problem for problem in problems))
+
+    def test_source_provenance_mutation_is_rejected_even_if_manifest_is_rewritten(self):
+        release = self.stage()
+        payload = release / "payload/arch/x86_64/airootfs.sfs"
+        payload.write_bytes(b"replacement")
+        manifest_path = release / "release.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["artifacts"]["payload/arch/x86_64/airootfs.sfs"] = {
+            "sha256": controller.sha256(payload),
+            "size": payload.stat().st_size,
+        }
+        manifest_path.write_text(json.dumps(manifest))
+        self.assertTrue(any(
+            "target contract" in problem
+            for problem in controller.verify(release)
+        ))
 
 
 if __name__ == "__main__":

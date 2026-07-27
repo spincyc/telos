@@ -12,14 +12,25 @@ Requires the `archiso` package. `buildmodes=('netboot')` produces the kernel,
 initramfs and rootfs the iPXE script in `lib/artifacts.py` expects, rather than
 an ISO.
 
-## Publish
+## Stage an immutable PXE release
 
-Copy the output into the artifact root and regenerate the checksum manifest:
+Treat the completed `out/` tree as a local build input. Stage it through the
+Controller target so every copied byte and the source-tree provenance are
+bound to the versioned release:
 
-    homelab/bin/homelab-artifacts publish out/ /srv/http/boot
+    make homelab-pxe-controller \
+      SOURCE="$PWD/out" \
+      VERSION=YYYYMMDD.NNN \
+      BASE_URL=http://controller.example/controller/YYYYMMDD.NNN
 
-The installer verifies every artifact against that manifest before using it
-(ADR 0043, ADR 0048).
+The target refuses links, special files, missing or empty boot payloads, and an
+existing release directory. Publication to a Controller is a separate,
+explicit step after release-set verification.
+
+The profile does not currently produce or pin a CMS signing identity, so its
+iPXE entrypoint does not claim `cms_verify=y`. Every served byte remains bound
+to the release SHA-256 manifest. Add CMS verification only together with a
+defined signing-key custody and verification contract.
 
 ## What is deliberately absent
 
