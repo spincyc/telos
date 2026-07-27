@@ -55,6 +55,7 @@ SITE_TOOL := scripts/site
 ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
 WIMBOOT ?= homelab/var/media/wimboot
+SIM_CYCLES ?= 2
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -103,6 +104,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-bootstrap-network-receipt homelab-bootstrap-network-authorize \
 	homelab-bootstrap-network-run homelab-bootstrap-network-check \
 	homelab-bootstrap-network-teardown \
+	homelab-sim-plan homelab-sim-run homelab-sim-check \
+	homelab-sim-repeat \
 	homelab-bootstrap-controller \
 	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
 	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
@@ -356,6 +359,36 @@ homelab-bootstrap-network-teardown:
 		sudo env APPLY=1 homelab/bin/homelab-host-network teardown; \
 	fi
 
+# Entirely local simulation: no TAP, bridge, host route, or UniFi mutation.
+homelab-sim-plan:
+	@$(PYTHON) homelab/vm/simulated_topology.py
+
+homelab-sim-run:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to run one isolated cycle'; \
+		$(PYTHON) homelab/vm/simulated_topology.py; \
+	else \
+		$(PYTHON) homelab/vm/simulated_topology.py --apply; \
+	fi
+
+homelab-sim-check:
+	@PYTHONPATH=. $(PYTHON) -m unittest discover -s homelab/tests -t . -v
+
+homelab-sim-repeat:
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 SIM_CYCLES=<positive integer>'; \
+		$(PYTHON) homelab/vm/simulated_topology.py; \
+	else \
+		case '$(SIM_CYCLES)' in \
+			''|*[!0-9]*|0) echo 'SIM_CYCLES must be a positive integer' >&2; exit 2;; \
+		esac; \
+		cycle=1; while [ "$$cycle" -le '$(SIM_CYCLES)' ]; do \
+			echo "isolated simulation cycle $$cycle/$(SIM_CYCLES)"; \
+			$(PYTHON) homelab/vm/simulated_topology.py --apply; \
+			cycle=$$((cycle + 1)); \
+		done; \
+	fi
+
 # Converge only the temporary Controller role. The private inventory supplies
 # every identity value and the opt-in provisioning secret path. Check mode is
 # the default; APPLY=1 is required to mutate the guest.
@@ -539,6 +572,10 @@ help:
 		'make homelab-bootstrap-vm-boot  Boot the installed Controller disk' \
 		'make homelab-bootstrap-network-plan NETWORK_CONFIG=<private JSON>' \
 		'                         Plan the controlled physical attachment' \
+		'make homelab-sim-plan    Plan without changing local state' \
+		'make homelab-sim-run APPLY=1  Run one isolated cycle' \
+		'make homelab-sim-check   Run simulation acceptance tests' \
+		'make homelab-sim-repeat APPLY=1 SIM_CYCLES=2' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

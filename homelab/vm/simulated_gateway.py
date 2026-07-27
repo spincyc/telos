@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""Small, unprivileged gateway simulator for an isolated QEMU socket NIC.
+
+It implements only ARP, DHCP, DNS, ICMP echo, NTP, and a UDP echo probe.  It
+never forwards general traffic and its only host socket is a TCP listener on
+127.0.0.1.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import socket
+import struct
+import time
+from pathlib import Path
+
+
+GATEWAY_IP = ipaddress.IPv4Address("10.1.31.1")
+LEASE_IP = ipaddress.IPv4Address("10.1.31.11")
+NETMASK = ipaddress.IPv4Address("255.255.255.240")
+GATEWAY_MAC = bytes.fromhex("525400311101")
+DNS_NAME = "updates.sim.test"
+NTP_NAME = "time.sim.test"
+NTP_IP = ipaddress.IPv4Address("198.51.100.10")
+UDP_PROBE_PORT = 31337
+NTP_EPOCH = 2_208_988_800
+
+
+def checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\0"
+    words = struct.unpack(f"!{len(data) // 2}H", data)
+    total = sum(words)
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def ethernet(dst: bytes, src: bytes, kind: int, payload: bytes) -> bytes:
+    return dst + src + struct.pack("!H", kind) + payload
+
+
+def ipv4(src: ipaddress.IPv4Address, dst: ipaddress.IPv4Address,
+         protocol: int, payload: bytes, ident: int = 0) -> bytes:
+    header = struct.pack(
+        "!BBHHHBBH4s4s", 0x45, 0, 20 + len(payload), ident, 0,
+        64, protocol, 0, src.packed, dst.packed,
+    )
+    header = header[:10] + struct.pack("!H", checksum(header)) + header[12:]
+    return header + payload
+
+
+def udp(src_port: int, dst_port: int, payload: bytes) -> bytes:
+    return struct.pack("!HHHH", src_port, dst_port, 8 + len(payload), 0) + payload
+
+
+def dns_name(data: bytes, offset: int) -> tuple[str, int]:
+    labels: list[str] = []
+    wire_size = 1
+    while True:
+        if offset >= len(data):
+            raise ValueError("truncated DNS name")
+        size = data[offset]
+        offset += 1
+        if size == 0:
+            return ".".join(labels).lower(), offset
+        if size & 0xC0 or size > 63:
+            raise ValueError("invalid DNS label")
+        if offset + size > len(data) or wire_size + size + 1 > 255:
+            raise ValueError("truncated or oversized DNS name")
+        labels.append(data[offset:offset + size].decode("ascii"))
+        offset += size
+        wire_size += size + 1
+
+
+def dhcp_options(data: bytes) -> dict[int, bytes]:
+    result: dict[int, bytes] = {}
+    offset = 240
+    if data[236:240] != b"\x63\x82\x53\x63":
+        return result
+    while offset < len(data):
+        kind = data[offset]
+        offset += 1
+        if kind == 255:
+            break
+        if kind == 0:
+            continue
+        if offset >= len(data):
+            return {}
+        size = data[offset]
+        offset += 1
+        if offset + size > len(data):
+            return {}
+        result[kind] = data[offset:offset + size]
+        offset += size
+    return result
+
+
+class Gateway:
+    def __init__(self, clock=time.time) -> None:
+        self.lease_mac: bytes | None = None
+        self.clock = clock
+
+    def handle(self, frame: bytes) -> list[bytes]:
+        if len(frame) < 14:
+            return []
+        dst, src, kind = frame[:6], frame[6:12], struct.unpack("!H", frame[12:14])[0]
+        if dst not in (GATEWAY_MAC, b"\xff" * 6):
+            return []
+        if src == GATEWAY_MAC or src[0] & 1:
+            return []
+        payload = frame[14:]
+        if kind == 0x0806:
+            return self._arp(src, payload)
+        if kind != 0x0800 or len(payload) < 20 or payload[0] >> 4 != 4:
+            return []
+        ihl = (payload[0] & 0x0F) * 4
+        total_length = struct.unpack("!H", payload[2:4])[0]
+        fragment = struct.unpack("!H", payload[6:8])[0]
+        if ihl < 20 or total_length < ihl or total_length > len(payload):
+            return []
+        if fragment & 0x3FFF:
+            return []
+        payload = payload[:total_length]
+        if checksum(payload[:ihl]) != 0:
+            return []
+        target = ipaddress.IPv4Address(payload[16:20])
+        source_ip = ipaddress.IPv4Address(payload[12:16])
+        protocol = payload[9]
+        body = payload[ihl:]
+        if protocol == 1 and target == GATEWAY_IP:
+            if self.lease_mac is not None and (
+                    src != self.lease_mac or source_ip != LEASE_IP):
+                return []
+            return self._icmp(src, payload, body)
+        if protocol != 17 or len(body) < 8:
+            return []
+        src_port, dst_port, length, _ = struct.unpack("!HHHH", body[:8])
+        if length < 8 or length > len(body) or src_port == 0:
+            return []
+        request = body[8:length]
+        if src_port == 68 and dst_port == 67:
+            return self._dhcp(src, request)
+        if self.lease_mac is not None and (
+                src != self.lease_mac or source_ip != LEASE_IP):
+            return []
+        if dst_port == 53 and target == GATEWAY_IP:
+            return self._dns(src, payload[12:16], src_port, request)
+        if dst_port == 123 and target == NTP_IP:
+            return self._ntp(src, payload[12:16], src_port, request)
+        if (dst_port == UDP_PROBE_PORT and target == GATEWAY_IP
+                and len(request) <= 1400):
+            return [self._udp_reply(src, payload[12:16], UDP_PROBE_PORT,
+                                    src_port, b"sim-ok:" + request)]
+        return []
+
+    def _arp(self, source_mac: bytes, data: bytes) -> list[bytes]:
+        if len(data) < 28:
+            return []
+        htype, ptype, hlen, plen, operation = struct.unpack("!HHBBH", data[:8])
+        if (htype, ptype, hlen, plen, operation) != (1, 0x0800, 6, 4, 1):
+            return []
+        if data[8:14] != source_mac:
+            return []
+        sender_ip = data[14:18]
+        if data[24:28] != GATEWAY_IP.packed:
+            return []
+        reply = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 2)
+        reply += GATEWAY_MAC + GATEWAY_IP.packed + source_mac + sender_ip
+        return [ethernet(source_mac, GATEWAY_MAC, 0x0806, reply)]
+
+    def _dhcp(self, source_mac: bytes, data: bytes) -> list[bytes]:
+        if len(data) < 240:
+            return []
+        if data[0:4] != b"\x01\x01\x06\x00":
+            return []
+        if data[28:34] != source_mac:
+            return []
+        options = dhcp_options(data)
+        message_option = options.get(53, b"")
+        if len(message_option) != 1:
+            return []
+        message = message_option[0]
+        if message not in (1, 3):
+            return []
+        if self.lease_mac not in (None, source_mac):
+            return []
+        if message == 3:
+            requested = options.get(50)
+            server = options.get(54)
+            if requested not in (None, LEASE_IP.packed):
+                return []
+            if server not in (None, GATEWAY_IP.packed):
+                return []
+        self.lease_mac = source_mac
+        response_type = 2 if message == 1 else 5
+        fixed = bytearray(data[:236])
+        fixed[0] = 2
+        fixed[16:20] = LEASE_IP.packed
+        fixed[20:24] = GATEWAY_IP.packed
+        options = b"\x63\x82\x53\x63"
+        options += bytes((53, 1, response_type))
+        options += bytes((54, 4)) + GATEWAY_IP.packed
+        options += bytes((1, 4)) + NETMASK.packed
+        options += bytes((3, 4)) + GATEWAY_IP.packed
+        options += bytes((6, 4)) + GATEWAY_IP.packed
+        options += bytes((51, 4)) + struct.pack("!I", 600)
+        options += b"\xff"
+        packet = udp(67, 68, bytes(fixed) + options)
+        ip = ipv4(GATEWAY_IP, ipaddress.IPv4Address("255.255.255.255"), 17, packet)
+        return [ethernet(b"\xff" * 6, GATEWAY_MAC, 0x0800, ip)]
+
+    def _dns(self, source_mac: bytes, source_ip: bytes,
+             source_port: int, data: bytes) -> list[bytes]:
+        if len(data) < 12:
+            return []
+        flags, questions = struct.unpack("!HH", data[2:6])
+        if flags & 0x8000 or questions != 1:
+            return []
+        try:
+            name, end = dns_name(data, 12)
+        except (ValueError, IndexError, UnicodeDecodeError):
+            return []
+        if end + 4 > len(data):
+            return []
+        qtype, qclass = struct.unpack("!HH", data[end:end + 4])
+        addresses = {DNS_NAME: GATEWAY_IP, NTP_NAME: NTP_IP}
+        found = name in addresses and qtype == 1 and qclass == 1
+        flags = 0x8180 if found else 0x8183
+        header = data[:2] + struct.pack("!HHHHH", flags, 1, int(found), 0, 0)
+        answer = b""
+        if found:
+            answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 30, 4)
+            answer += addresses[name].packed
+        payload = header + data[12:end + 4] + answer
+        return [self._udp_reply(source_mac, source_ip, 53, source_port, payload)]
+
+    @staticmethod
+    def _ntp_timestamp(value: float) -> bytes:
+        seconds = int(value) + NTP_EPOCH
+        fraction = int((value - int(value)) * (1 << 32))
+        return struct.pack("!II", seconds, fraction)
+
+    def _ntp(self, source_mac: bytes, source_ip: bytes,
+             source_port: int, data: bytes) -> list[bytes]:
+        version = data[0] >> 3 & 0x7 if data else 0
+        if (len(data) != 48 or data[0] & 0x7 != 3 or
+                version not in (3, 4) or data[40:48] == b"\0" * 8):
+            return []
+        now = self.clock()
+        response = bytearray(48)
+        response[0] = 0x24  # NTPv4, server response
+        response[1] = 2     # synchronized secondary server
+        response[2] = data[2]
+        response[3] = 0xEC  # precision: 2^-20 seconds
+        response[4:8] = struct.pack("!I", 1 << 16)
+        response[8:12] = struct.pack("!I", 1 << 12)
+        response[12:16] = b"SIM\0"
+        response[16:24] = self._ntp_timestamp(now - 1)
+        response[24:32] = data[40:48]
+        response[32:40] = self._ntp_timestamp(now)
+        response[40:48] = self._ntp_timestamp(now)
+        return [self._udp_reply(
+            source_mac, source_ip, 123, source_port, bytes(response),
+            source_ip=NTP_IP,
+        )]
+
+    def _icmp(self, source_mac: bytes, ip: bytes, data: bytes) -> list[bytes]:
+        if len(data) < 8 or data[0] != 8 or checksum(data) != 0:
+            return []
+        reply = b"\0" + data[1:2] + b"\0\0" + data[4:]
+        reply = reply[:2] + struct.pack("!H", checksum(reply)) + reply[4:]
+        packet = ipv4(GATEWAY_IP, ipaddress.IPv4Address(ip[12:16]), 1, reply)
+        return [ethernet(source_mac, GATEWAY_MAC, 0x0800, packet)]
+
+    def _udp_reply(self, target_mac: bytes, target_ip: bytes,
+                   source_port: int, target_port: int, payload: bytes,
+                   source_ip: ipaddress.IPv4Address = GATEWAY_IP) -> bytes:
+        packet = udp(source_port, target_port, payload)
+        ip = ipv4(source_ip, ipaddress.IPv4Address(target_ip), 17, packet)
+        return ethernet(target_mac, GATEWAY_MAC, 0x0800, ip)
+
+
+def receive_exact(connection: socket.socket, size: int) -> bytes | None:
+    chunks = bytearray()
+    while len(chunks) < size:
+        chunk = connection.recv(size - len(chunks))
+        if not chunk:
+            return None
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def dhcp_server_message(frame: bytes) -> str | None:
+    """Return a server message name, if this Ethernet frame contains one."""
+    if len(frame) < 14 + 20 + 8 or frame[12:14] != b"\x08\x00":
+        return None
+    ip = frame[14:]
+    ihl = (ip[0] & 15) * 4
+    if ihl < 20 or len(ip) < ihl + 8 or ip[9] != 17:
+        return None
+    source, target = struct.unpack("!HH", ip[ihl:ihl + 4])
+    if (source, target) != (67, 68):
+        return None
+    options = dhcp_options(ip[ihl + 8:])
+    names = {2: "OFFER", 5: "ACK", 6: "NAK"}
+    value = options.get(53, b"")
+    return names.get(value[0]) if len(value) == 1 else None
+
+
+def serve(
+    port: int,
+    connections: int = 1,
+    listener_fd: int | None = None,
+    audit_first: Path | None = None,
+) -> None:
+    supplied = listener_fd is not None
+    with (socket.socket(fileno=listener_fd) if supplied else socket.socket()) as listener:
+        if supplied:
+            address = listener.getsockname()
+            if address[0] != "127.0.0.1":
+                raise RuntimeError("inherited listener is not loopback-only")
+        else:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", port))
+            listener.listen(1)
+        print(f"simulated gateway listening on {listener.getsockname()}", flush=True)
+        for connection_number in range(connections):
+            gateway = Gateway()
+            connection, address = listener.accept()
+            if address[0] != "127.0.0.1":
+                raise RuntimeError("refusing non-loopback peer")
+            with connection:
+                while True:
+                    header = receive_exact(connection, 4)
+                    if header is None:
+                        break
+                    size = struct.unpack("!I", header)[0]
+                    if size > 65535:
+                        raise RuntimeError("invalid QEMU frame size")
+                    frame = receive_exact(connection, size)
+                    if frame is None:
+                        break
+                    if connection_number == 0 and audit_first is not None:
+                        message = dhcp_server_message(frame)
+                        if message:
+                            with audit_first.open("a", encoding="utf-8") as log:
+                                log.write(json.dumps({
+                                    "kind": message,
+                                    "actor": "controller",
+                                }, sort_keys=True) + "\n")
+                    for reply in gateway.handle(frame):
+                        connection.sendall(
+                            struct.pack("!I", len(reply)) + reply)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=12962)
+    parser.add_argument("--connections", type=int, default=1)
+    parser.add_argument("--listener-fd", type=int)
+    parser.add_argument("--audit-first", type=Path)
+    args = parser.parse_args()
+    if not 1024 <= args.port <= 65535:
+        parser.error("--port must be an unprivileged TCP port")
+    if not 1 <= args.connections <= 8:
+        parser.error("--connections must be between 1 and 8")
+    serve(args.port, args.connections, args.listener_fd, args.audit_first)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

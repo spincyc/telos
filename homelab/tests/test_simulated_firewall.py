@@ -1,0 +1,84 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from vm.simulated_firewall import (  # noqa: E402
+    Decision,
+    Flow,
+    SimulatedFirewall,
+    verify_acceptance,
+)
+
+
+def firewall():
+    return SimulatedFirewall(
+        gateway="10.1.31.1",
+        dns="10.1.31.1",
+        update_addresses=frozenset({"198.51.100.11"}),
+        household_networks=("10.0.0.0/21",),
+    )
+
+
+class TestSimulatedFirewall(unittest.TestCase):
+    def test_exact_acceptance_matrix_passes(self):
+        subject = firewall()
+        self.assertEqual(verify_acceptance(subject), ())
+        self.assertEqual(
+            subject.report(),
+            (
+                "allow-gateway packets=1",
+                "allow-dns packets=2",
+                "allow-update packets=1",
+                "deny-household packets=2",
+                "deny-private packets=3",
+                "deny-default packets=2",
+            ),
+        )
+
+    def test_update_allow_is_address_protocol_and_port_specific(self):
+        subject = firewall()
+        self.assertEqual(
+            subject.decide(Flow("tcp", "198.51.100.11", 443)),
+            Decision(True, "allow-update"),
+        )
+        for flow in (
+            Flow("udp", "198.51.100.11", 443),
+            Flow("tcp", "198.51.100.11", 80),
+            Flow("tcp", "198.51.100.12", 443),
+        ):
+            with self.subTest(flow=flow):
+                self.assertFalse(subject.decide(flow).allowed)
+
+    def test_dns_allow_does_not_open_other_gateway_services(self):
+        subject = firewall()
+        for protocol in ("udp", "tcp"):
+            self.assertTrue(subject.decide(Flow(protocol, "10.1.31.1", 53)).allowed)
+            self.assertFalse(subject.decide(Flow(protocol, "10.1.31.1", 67)).allowed)
+
+    def test_existing_household_subnet_has_a_distinct_counter(self):
+        subject = firewall()
+        result = subject.decide(Flow("tcp", "10.0.3.10", 22))
+        self.assertEqual(result, Decision(False, "deny-household"))
+        self.assertIn("deny-household packets=1", subject.report())
+
+    def test_other_private_ranges_are_denied(self):
+        subject = firewall()
+        for address in ("10.9.1.1", "172.31.255.254", "192.168.99.1"):
+            with self.subTest(address=address):
+                self.assertEqual(
+                    subject.decide(Flow("icmp", address)),
+                    Decision(False, "deny-private"),
+                )
+
+    def test_unrecognized_public_destination_is_default_denied(self):
+        subject = firewall()
+        self.assertEqual(
+            subject.decide(Flow("tcp", "203.0.113.44", 443)),
+            Decision(False, "deny-default"),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
