@@ -87,7 +87,7 @@ def _invalid_evidence(evidence: dict[str, object], label: str) -> list[str]:
             violations.append(f"{label} evidence contains a malformed observation")
             continue
         raw_command = item.get("command")
-        if (not isinstance(raw_command, list)
+        if (not isinstance(raw_command, (list, tuple))
                 or not all(isinstance(part, str) for part in raw_command)):
             violations.append(f"{label} evidence contains a malformed command")
             continue

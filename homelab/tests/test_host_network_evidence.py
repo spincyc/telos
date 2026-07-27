@@ -27,6 +27,12 @@ class HostNetworkEvidenceTests(unittest.TestCase):
     def test_identical_snapshots_pass(self):
         self.assertEqual(evidence.compare(fixture(), fixture()), [])
 
+    def test_in_memory_capture_tuple_commands_are_valid(self):
+        captured = fixture()
+        for item in captured["observations"]:
+            item["command"] = tuple(item["command"])
+        self.assertEqual(evidence.compare(captured, copy.deepcopy(captured)), [])
+
     def test_matching_failed_commands_do_not_pass(self):
         before = fixture()
         after = fixture()
