@@ -33,6 +33,20 @@
 \node[font=\scriptsize,align=center,fill=white] at (3.5,-1.68) {#2};
 \end{tikzpicture}
 \end{center}}
+\providecommand{\CleaningPlate}{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+\FishOutline\FishDetails
+\draw[densely dashed] (1.35,-.72)--(1.35,.72);
+\draw[very thick,-{Latex}] (5.8,-.62)--(1.25,-.62);
+\node[font=\scriptsize,fill=white] at (3.6,-.62) {shallow belly opening: vent toward throat};
+\node[font=\scriptsize,align=center,fill=white] at (1.35,1.25) {collar cut\\behind gill plate};
+\node[font=\scriptsize,align=center,fill=white] at (5.7,1.25) {\SkinNote};
+\end{tikzpicture}
+\end{center}}
+\providecommand{\FilletPlate}{}
+\providecommand{\CookingPlate}{}
+\providecommand{\DispatchPlate}{}
 \telosmeta{Lake Country Fishing · ChatGPT}{Cooking \FishName}{From legal fish to boneless meal}{2026-07-26}
 \begin{document}
 \telosmasthead[\LatinName\ · kitchen guide]
@@ -67,6 +81,7 @@ chilled and used promptly.
 \draw[-{Latex}] (a)--(b);\draw[-{Latex}] (b)--(c);\draw[-{Latex}] (c)--(d);
 \end{tikzpicture}
 \end{center}
+\DispatchPlate
 \begin{enumerate}
 \item Use a decisive percussive blow to the skull immediately above and just
 behind the eyes. Follow with a spike or narrow knife into the brain cavity.
@@ -78,16 +93,7 @@ water. At home, work in small batches and return finished portions to ice.
 
 \newpage
 \section{Clean without contaminating the flesh}
-\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
-\FishOutline\FishDetails
-\draw[densely dashed] (1.35,-.72)--(1.35,.72);
-\draw[very thick,-{Latex}] (5.8,-.62)--(1.25,-.62);
-\node[font=\scriptsize,fill=white] at (3.6,-.62) {shallow belly opening: vent toward throat};
-\node[font=\scriptsize,align=center,fill=white] at (1.35,1.25) {collar cut\\behind gill plate};
-\node[font=\scriptsize,align=center,fill=white] at (5.7,1.25) {\SkinNote};
-\end{tikzpicture}
-\end{center}
+\CleaningPlate
 \begin{enumerate}
 \item \textbf{Set up.} Flexible sharp fillet knife, cut-resistant glove on the
 non-knife hand, scaler or spoon if needed, pliers, clean towels, two trays.
@@ -107,8 +113,10 @@ qualified food-safety process. Discard abnormal-smelling or badly diseased
 flesh; when uncertain, do not eat it.
 \end{telospanel}
 
+\newpage
 \section{Species-specific first cuts}
 \FilletMethod
+\FilletPlate
 
 \newpage
 \section{Bone map and deboning}
@@ -137,6 +145,7 @@ refrigeration; discard marinade that contacted raw fish unless boiled.
 
 \newpage
 \section{Two dependable methods}
+\CookingPlate
 \begin{teloscard}{\CookOne}
 \CookOneText
 \end{teloscard}

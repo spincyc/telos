@@ -7,11 +7,72 @@
 \newcommand{\SkinNote}{sharp dorsal and gill cover; skin optional}
 \newcommand{\ScaleSkin}{For skin-on portions, scale tail-to-head while controlling the spiny dorsal. For classic skinless fillets, leave scales and remove the skin after filleting.}
 \newcommand{\FilletMethod}{Cut tight behind gill plate to backbone, turn toward tail, and follow the frame. Lift and sweep over ribs. Remove cheeks only from a lawfully retained fish with a shallow cut behind the eye.}
-\newcommand{\BoneDiagram}{\FishBonePlate{5.0}{pin bones along front center}{cheek is separate boneless morsel}}
+\newcommand{\BoneDiagram}{%
+\begin{center}
+\begin{tikzpicture}[line cap=round,line join=round]
+\node[inner sep=0] (plate) {\includegraphics[width=.86\linewidth]{lake-country-fishing/chatgpt/cooking/walleye/art/deboning-graphite.png}};
+\draw[semithick,-{Latex}] ([xshift=-3.45cm,yshift=1.55cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,left] {curved rib cage}
+  ([xshift=-2.9cm,yshift=-.05cm]plate.center);
+\draw[semithick,-{Latex}] ([xshift=-.2cm,yshift=1.6cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,right] {short pin-bone row}
+  ([xshift=-1.25cm,yshift=.1cm]plate.center);
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=north west]
+  at ([xshift=1.35cm,yshift=1.55cm]plate.center) {pull forward at bone angle};
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=north west]
+  at ([xshift=1.35cm,yshift=-.42cm]plate.center) {alternative: shallow V-cut};
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=south]
+  at ([xshift=-2.4cm,yshift=-1.65cm]plate.center) {cheek: inspect separately};
+\end{tikzpicture}
+\end{center}}
 \newcommand{\Debone}{Pull the firm pin bones in their forward angle or V-cut the front-center line. Inspect the shoulder and any cheek pieces independently.}
 \newcommand{\TrimNotes}{Remove rib membrane, belly fat, and dark lateral tissue. Trimmed fat can reduce some fat-soluble contaminants but not mercury.}
 \newcommand{\Prep}{Separate thick shoulder from tail; pat dry. Reserve equal portions for the same pan so none overcook.}
 \newcommand{\CookOne}{Classic shallow-fried walleye}\newcommand{\CookOneText}{Apply a thin dry coating; fry in clean oil, turn once, and verify \qty{145}{^\circ F} in the thickest shoulder.}
 \newcommand{\CookTwo}{Mustard-roasted walleye}\newcommand{\CookTwoText}{Brush with mustard and fine crumbs, roast on a preheated sheet, and remove when the center reaches \qty{145}{^\circ F}.}
 \newcommand{\Advisory}{Statewide inland walleye baseline: women under 50 and children under 15, up to one serving/month; women 50+ and men, up to one/week. Length-specific or lake advice may be stricter.}
+\newcommand{\CleaningPlate}{%
+\begin{center}
+\begin{tikzpicture}[line cap=round,line join=round]
+\node[inner sep=0] (plate) {\includegraphics[width=.82\linewidth]{lake-country-fishing/chatgpt/cooking/walleye/art/cleaning-graphite.png}};
+\draw[semithick,-{Latex}] ([xshift=-1cm,yshift=-.05cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,below] {tip only: vent toward throat}
+  ([xshift=-2.9cm,yshift=.48cm]plate.center);
+\draw[semithick,-{Latex}] ([xshift=2.8cm,yshift=-1.34cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,right] {scrape kidney line}
+  ([xshift=2.35cm,yshift=-.62cm]plate.center);
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=north west]
+  at ([xshift=-3.7cm,yshift=1.7cm]plate.center) {control head; mind spiny dorsal};
+\end{tikzpicture}
+\end{center}}
+\newcommand{\FilletPlate}{%
+\section*{Walleye fillet sequence}
+\begin{center}
+\begin{tikzpicture}[line cap=round,line join=round]
+\node[inner sep=0] (plate) {\includegraphics[width=.94\linewidth]{lake-country-fishing/chatgpt/cooking/walleye/art/filleting-graphite.png}};
+\draw[semithick,-{Latex}] ([xshift=-2.7cm,yshift=1.58cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,left] {1 · collar cut to backbone}
+  ([xshift=-2.35cm,yshift=.45cm]plate.center);
+\draw[semithick,-{Latex}] ([xshift=2.2cm,yshift=1.58cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,right] {2 · turn and follow frame}
+  ([xshift=2.3cm,yshift=.28cm]plate.center);
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=south]
+  at ([xshift=2.15cm,yshift=-1.72cm]plate.center) {lift fillet; sweep shallowly over ribs};
+\end{tikzpicture}
+\end{center}}
+\newcommand{\CookingPlate}{%
+\begin{center}
+\begin{tikzpicture}[line cap=round,line join=round]
+\node[inner sep=0] (plate) {\includegraphics[width=.76\linewidth]{lake-country-fishing/chatgpt/cooking/walleye/art/cooking-graphite.png}};
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=north]
+  at ([xshift=-2.15cm,yshift=1.42cm]plate.center) {shallow fry · turn once};
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=north]
+  at ([xshift=2.05cm,yshift=1.42cm]plate.center) {mustard + fine crumbs · roast};
+\draw[semithick,-{Latex}] ([xshift=2.65cm,yshift=-1.3cm]plate.center)
+  -- node[font=\scriptsize,fill=white,inner sep=2pt,right] {\qty{145}{^\circ F} at thickest center}
+  ([xshift=2.2cm,yshift=.04cm]plate.center);
+\node[font=\scriptsize,fill=white,inner sep=2pt,anchor=south]
+  at ([yshift=-1.58cm]plate.center) {sort thick shoulder from thin tail before heating};
+\end{tikzpicture}
+\end{center}}
 \input{lake-country-fishing/chatgpt/shared/cooking-guide.tex}

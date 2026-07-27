@@ -7,7 +7,27 @@
 \newcommand{\SkinNote}{stout spines; scale or skin}
 \newcommand{\ScaleSkin}{Scale for whole or skin-on cooking, working around the stout dorsal and anal spines. Otherwise leave scales on, fillet, and remove skin flat.}
 \newcommand{\FilletMethod}{Cut behind gill plate, follow backbone to tail, then sweep across the broad rib cage. The shoulder carries most usable meat, so keep the first cut tight to the head.}
-\newcommand{\BoneDiagram}{\FishBonePlate{4.55}{firm pin bones at shoulder}{broad ribs under front fillet}}
+\newcommand{\RockBassPlate}[2]{%
+\begin{center}
+\includegraphics[width=\linewidth,height=#2,keepaspectratio]{%
+lake-country-fishing/chatgpt/cooking/rock-bass/plates/#1.png}
+\end{center}}
+\newcommand{\CleaningPlate}{%
+\RockBassPlate{cleaning}{2.25in}
+\begin{center}\footnotesize
+Lift the belly wall; use only the knife tip from vent toward throat.
+\end{center}}
+\newcommand{\FilletPlate}{%
+\RockBassPlate{filleting}{2.25in}
+\begin{center}\footnotesize
+Start tight behind the operculum; then ride the backbone toward the tail.
+\end{center}}
+\newcommand{\BoneDiagram}{%
+\RockBassPlate{bone-map}{2.65in}
+\begin{center}\footnotesize
+Flesh side: broad front rib fan and short, firm shoulder-pin row.
+\end{center}}
+\newcommand{\CookingPlate}{\RockBassPlate{cooking}{2.45in}}
 \newcommand{\Debone}{Pull the few firm shoulder pins in their forward angle or remove a narrow V-strip. Recheck the thick shoulder from both directions.}
 \newcommand{\TrimNotes}{Remove rib membrane and dark lateral strip. Whole-fish cooks must remove gills, viscera, and kidney line.}
 \newcommand{\Prep}{Separate thick shoulders from tails for even timing. A short salt rest firms the flesh; keep refrigerated.}

@@ -1,0 +1,180 @@
+\input{common/preamble.tex}
+\input{lake-country-fishing/chatgpt/shared/fish-art/\FishArtSlug.tex}
+\newcommand{\FishBonePlate}[3]{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+\path[use as bounding box] (-.2,-1.55) rectangle (7.2,1.75);
+\FishOutline\FishDetails
+\draw[very thick] (1.15,0)--(6.25,0);
+\foreach \x in {1.55,1.9,...,4.7}{\draw[line width=.45pt] (\x,0)--(\x+.26,-.62);}
+\draw[very thick,dashed] (1.4,.18)--(#1,.18);
+\draw[line width=.4pt] (3.1,.2)--(3.1,1.22);
+\node[font=\scriptsize,anchor=south,fill=white] at (3.1,1.25) {#2};
+\node[font=\scriptsize,align=center,fill=white] at (3.25,-1.28) {rib sweep: shallow blade\\from backbone toward belly};
+\node[font=\scriptsize,align=center,fill=white] at (5.75,1.32) {#3};
+\end{tikzpicture}
+\end{center}}
+\newcommand{\YBonePlate}[2]{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+\path[use as bounding box] (-.2,-1.9) rectangle (7.2,1.85);
+\FishOutline\FishDetails
+\draw[very thick] (1.2,0)--(6.25,0);
+\foreach \x in {1.75,2.12,...,4.34}{
+  \draw (\x,.04)--(\x+.18,.42);
+  \draw (\x+.18,.42)--(\x+.02,.68);
+  \draw (\x+.18,.42)--(\x+.38,.66);
+}
+\draw[very thick,densely dashed] (1.52,.78)--(4.85,.78);
+\draw[very thick,densely dashed] (1.52,.12)--(4.85,.12);
+\draw[very thick,densely dashed] (4.85,-.72)--(4.85,.72);
+\node[font=\scriptsize,anchor=south,fill=white] at (3.0,1.38) {upper cut above fork tips};
+\node[font=\scriptsize,align=center,fill=white] at (5.75,1.35) {#1};
+\node[font=\scriptsize,align=center,fill=white] at (3.5,-1.68) {#2};
+\end{tikzpicture}
+\end{center}}
+\telosmeta{Lake Country Fishing · ChatGPT}{Cooking \FishName}{From legal fish to boneless meal}{2026-07-26}
+\begin{document}
+\telosmasthead[\LatinName\ · kitchen guide]
+
+\begin{teloshazard}{Start with a lawful, cold fish}
+Confirm the live Wisconsin DNR rule and consumption advisory for the exact
+water, species, length, and date. Kill a retained fish promptly; do not let it
+suffocate slowly. Bleed only where lawful and practical, then place it in a
+draining ice slurry or on ice. Keep raw fish at or below \qty{40}{^\circ F};
+wash hands, knife, and board after contact with viscera.
+\end{teloshazard}
+
+\section{Keep or release?}
+\begin{tabularx}{\linewidth}{@{}p{.21\linewidth}L@{}}
+\toprule
+Legal floor & \Legal\\
+Preferred table fish & \EatingSize\\
+Why & \SizeReason\\
+\bottomrule
+\end{tabularx}
+\textbf{Legal is not the same as desirable.} A fish may be lawful yet a poor
+choice because it is a large breeder, exceeds current meal advice, or cannot be
+chilled and used promptly.
+
+\section{Dispatch and field care}
+\begin{center}
+\begin{tikzpicture}[node distance=.5cm, every node/.style={font=\small,align=center}]
+\node[draw,minimum width=2.25cm,minimum height=.7cm] (a) {stun firmly\\above brain};
+\node[draw,minimum width=2.25cm,minimum height=.7cm,right=of a] (b) {destroy brain\\confirm no reflex};
+\node[draw,minimum width=2.25cm,minimum height=.7cm,right=of b] (c) {bleed if chosen\\clean cut at gills};
+\node[draw,minimum width=2.25cm,minimum height=.7cm,right=of c] (d) {bag and ice\\drain meltwater};
+\draw[-{Latex}] (a)--(b);\draw[-{Latex}] (b)--(c);\draw[-{Latex}] (c)--(d);
+\end{tikzpicture}
+\end{center}
+\begin{enumerate}
+\item Use a decisive percussive blow to the skull immediately above and just
+behind the eyes. Follow with a spike or narrow knife into the brain cavity.
+\item Confirm loss of rhythmic gill movement and eye reflex. If either remains,
+repeat immediately. Cut the gill arches only after insensibility.
+\item Keep the fish shaded, clean, and cold. Do not soak flesh in warm lake
+water. At home, work in small batches and return finished portions to ice.
+\end{enumerate}
+
+\newpage
+\section{Clean without contaminating the flesh}
+\begin{center}
+\includegraphics[width=\linewidth,height=.31\textheight,keepaspectratio]{lake-country-fishing/chatgpt/cooking/pumpkinseed/plates/cleaning.png}
+
+{\scriptsize\textit{Main: lift the belly wall and open shallowly from vent
+toward throat. Inset: scale tail-to-head before whole or skin-on cooking.}}
+\end{center}
+\begin{enumerate}
+\item \textbf{Set up.} Flexible sharp fillet knife, cut-resistant glove on the
+non-knife hand, scaler or spoon if needed, pliers, clean towels, two trays.
+\item \textbf{Scale or skin.} \ScaleSkin
+\item \textbf{Open shallowly.} From vent toward the throat, lift the belly wall
+away from organs and use the tip only. Remove viscera intact. Avoid puncturing
+the gall bladder; trim and rinse any contaminated tissue.
+\item \textbf{Kidney line.} Scrape the dark tissue along the backbone and rinse
+briefly with clean potable water. Pat dry. Never use soap on food.
+\end{enumerate}
+
+\begin{telospanel}{Parasites and raw fish}
+Freezing and pickling are not substitutes for a validated parasite-control
+process. Cook wild freshwater fish to an internal temperature of
+\qty{145}{^\circ F}, or until opaque and separating easily, unless following a
+qualified food-safety process. Discard abnormal-smelling or badly diseased
+flesh; when uncertain, do not eat it.
+\end{telospanel}
+
+\section{Species-specific first cuts}
+\FilletMethod
+
+\newpage
+\section{Bone map and deboning}
+\begin{center}
+\includegraphics[width=\linewidth,height=.37\textheight,keepaspectratio]{lake-country-fishing/chatgpt/cooking/pumpkinseed/plates/fillet-bones.png}
+
+{\scriptsize\textit{Keep the blade against the frame while lifting the fillet.
+Inset: feel for the short center pin line; remove it with a narrow V.}}
+\end{center}
+
+\begin{enumerate}
+\item Keep the skin side down so the blade can ride on, not through, the bones.
+\item Remove the rib cage with a shallow sweep, sacrificing as little belly
+meat as possible. Run fingertips both directions along every cut surface.
+\item \Debone
+\item Portion only after a final fingertip inspection under a bright light.
+Bones become harder to locate once batter, crumbs, or sauce is added.
+\end{enumerate}
+
+\begin{teloscard}{Trim map}
+\TrimNotes
+\end{teloscard}
+
+\section{Prepare before heat}
+\begin{itemize}
+\item Pat portions dry. Equal thickness matters more than equal weight.
+\item \Prep
+\item Refrigerate while the pan, oven, or grill heats. Marinate under
+refrigeration; discard marinade that contacted raw fish unless boiled.
+\end{itemize}
+
+\newpage
+\section{Two dependable methods}
+\begin{center}
+\includegraphics[width=\linewidth,height=.28\textheight,keepaspectratio]{lake-country-fishing/chatgpt/cooking/pumpkinseed/plates/cooking.png}
+
+{\scriptsize\textit{Left: skillet-cook the scaled whole fish. Right:
+crumb-bake matched fillets. Verify \qty{145}{^\circ F} in the thickest flesh.}}
+\end{center}
+\begin{teloscard}{\CookOne}
+\CookOneText
+\end{teloscard}
+\begin{teloscard}{\CookTwo}
+\CookTwoText
+\end{teloscard}
+
+\section{Current safe-eating advice · checked 2026-07-26}
+\Advisory
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[draw,minimum width=2.2cm,minimum height=.75cm] at (0,0) {1 serving};
+\node[anchor=west,font=\small] at (1.35,.22) {adult: about the palm of the hand};
+\node[anchor=west,font=\small] at (1.35,-.22) {child: about the child's palm};
+\draw[|-|] (-1.1,-.55)--(1.1,-.55);
+\node[font=\scriptsize] at (0,-.9) {count all fish meals from all sources};
+\end{tikzpicture}
+\end{center}
+
+\begin{teloshazard}{The query beats the printed sheet}
+Wisconsin has a statewide inland baseline and water-specific exceptions.
+Before eating, use DNR's Fish Consumption Advisory Query for Pine Lake
+(WBIC 779200) or North Lake (WBIC 850800), and match species and length. People
+who are pregnant, may become pregnant, are breastfeeding, and children need
+the more protective category. When advice changes, follow the current query.
+\end{teloshazard}
+
+{\footnotesize\textbf{Sources.} Wisconsin DNR Eating Your Catch and 2026--27
+water-specific regulations; Wisconsin DHS Eat Fish Safely; USDA/FoodSafety.gov
+Safe Minimum Internal Temperature Chart; University of Minnesota Extension,
+Preserving Food at Home: Meat, Fish and Poultry. Cleaning sequence and
+monochrome diagrams are original editorial synthesis, checked 2026-07-26.}
+\end{document}
