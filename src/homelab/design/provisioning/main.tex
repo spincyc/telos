@@ -237,6 +237,39 @@ metal.
 \telosfact{Fresh firmware every run}{Each guest gets its own OVMF variable store, so boot entries from one run cannot make a later run pass.}
 \end{telosfacts}
 
+\begin{telospanel}{A bug this found}
+The rule that matters most is that the Controller's address must never sit
+inside the DHCP pool --- dnsmasq must not be able to lease the address its own
+DNS answers on. Asked in ADR 0045's order, that violation surfaced two prompts
+late, while the operator was being asked for the pool's last address and told
+that a different field was wrong. The questions are therefore asked subnet,
+pool, Controller address: last, so the error lands on the prompt that caused it.
+Driving the real interface found that; no unit test would have.
+\end{telospanel}
+
+\begin{gate}{Milestone A is disposable by construction}
+Every installation during the functional proof is labelled
+\texttt{development-proof} in its manifest, requires the LUKS2 passphrase at
+every boot, and carries no production data. That label is a recorded state, not
+a remembered one, so later tooling can refuse to treat such a machine as
+production. \governedby{ADR 0043, ADR 0060}
+\end{gate}
+
+\section{Handoff to acceptance}
+Before leaving the installer test phase, the operator records four answers:
+\begin{enumerate}
+\item Which frozen source revision and artifact-manifest digest produced the
+candidate?
+\item Which negative transcript proves that refusal and cancellation made zero
+writes?
+\item Which injected failure proves that execution stopped before every later
+driver step?
+\item Which fresh-OVMF boot and read-back prove that the installed manifest,
+disk layout and boot artifacts match the authorized summary?
+\end{enumerate}
+If any answer points only to a screenshot, remembered command or reused
+firmware state, the candidate does not enter the acceptance matrix.
+
 \section{Acceptance matrix}
 \begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.33\linewidth}L@{}}
 \toprule
@@ -283,21 +316,4 @@ not evidence that the erase boundary, isolation boundary or stop-on-error rule
 worked.
 \end{gate}
 
-\begin{telospanel}{A bug this found}
-The rule that matters most is that the Controller's address must never sit
-inside the DHCP pool --- dnsmasq must not be able to lease the address its own
-DNS answers on. Asked in ADR 0045's order, that violation surfaced two prompts
-late, while the operator was being asked for the pool's last address and told
-that a different field was wrong. The questions are therefore asked subnet,
-pool, Controller address: last, so the error lands on the prompt that caused it.
-Driving the real interface found that; no unit test would have.
-\end{telospanel}
-
-\begin{gate}{Milestone A is disposable by construction}
-Every installation during the functional proof is labelled
-\texttt{development-proof} in its manifest, requires the LUKS2 passphrase at
-every boot, and carries no production data. That label is a recorded state, not
-a remembered one, so later tooling can refuse to treat such a machine as
-production. \governedby{ADR 0043, ADR 0060}
-\end{gate}
 \end{document}

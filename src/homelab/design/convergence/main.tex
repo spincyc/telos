@@ -188,7 +188,7 @@ from the generator side and one read back from the host.
 \midrule
 \texttt{cat /etc/homelab/manifest.json} & parsed profile and disposable flag &
 Exact intended profile before any role changes state.\\
-\texttt{ansible-playbook -{}-check -{}-diff} & reviewed task/file diff &
+check-mode playbook & reviewed task/file diff &
 No unexplained deletion, restart or secret-bearing value.\\
 generator output & host-side \texttt{sha256sum} & Byte-identical configuration,
 not merely valid syntax.\\
@@ -213,7 +213,7 @@ Generator refusal & Existing installed file remains & Save rejected inputs and
 generator diagnostic; correct the network plan.\\
 Config syntax failure & Service not restarted & Preserve candidate and syntax
 output; fix generation or role logic.\\
-Activation invariant fails & Both DHCP and HTTP services stopped & Read
+Activation invariant fails & DHCP and HTTP both stopped & Read
 first-boot journal; identify interface, address or competing DHCP authority.\\
 Second run changes & Not accepted & Name the changing task and before/after
 value; repair idempotence before another mutation.\\

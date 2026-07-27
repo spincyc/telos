@@ -259,6 +259,32 @@ Never ``test around'' a failed bundle member by leaving the other running. A
 partial DHCP/DNS/PXE service is a failed Controller, and its evidence bundle
 must retain the first failure rather than only the successful retry.
 
+\section{Proof-bundle anatomy}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=5mm and 6mm,
+  proof/.style={draw,rounded corners=1pt,text width=3.25cm,
+    minimum height=.72cm,align=center,font=\scriptsize},
+  link/.style={-{Stealth[length=1.5mm]},line width=.5pt}]
+\node[proof] (inputs) {frozen inputs\\manifest · MAC · disk · subnet};
+\node[proof,right=of inputs] (events) {ordered events\\boot · units · checkpoint · power};
+\node[proof,right=of events] (observed) {external observations\\capture · lease · DNS · PXE};
+\node[proof,below=of inputs] (state) {state identity\\UUIDs · subvolumes · artifact hashes};
+\node[proof,right=of state] (failures) {first failures\\stderr · logs · rejected candidate};
+\node[proof,right=of failures] (review) {review result\\explained diffs · operator sign-off};
+\draw[link] (inputs)--(events);
+\draw[link] (events)--(observed);
+\draw[link] (state)--(failures);
+\draw[link] (failures)--(review);
+\draw[link] (inputs)--(state);
+\draw[link] (observed)--(review);
+\end{tikzpicture}
+\end{center}
+The bundle is complete only when it connects declared inputs to observations
+made outside the Controller. Server logs corroborate client evidence; they do
+not replace it. Secrets, passphrases and private key material never enter the
+bundle.
+
 \section{Optional roles}
 \begin{telosfacts}[0.22]
 \telosfact{Services}{Homebridge, openHAB and similar, as Podman quadlets with host networking --- required, because HomeKit and UPnP discovery depend on mDNS and do not survive bridged container networking. USB radios bound by stable \texttt{by-id} path. Application state on its own subvolume with its own backup, because its restore point is not the operating system's. Disabled by default. \governedby{ADR 0054}}
@@ -276,7 +302,7 @@ must retain the first failure rather than only the successful retry.
 \end{telosfacts}
 
 \section{Measurable acceptance}
-\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.31\linewidth}L@{}}
+\begin{longtable}{@{}p{.22\linewidth}p{.31\linewidth}p{.41\linewidth}@{}}
 \toprule
 \textbf{Property} & \textbf{Threshold} & \textbf{Final proof}\\
 \midrule
@@ -287,7 +313,7 @@ Rollback & Failed system candidate reverted within 30 minutes; mutable service s
 Rebuild fidelity & Rebuilt manifest matches recorded role, disk, MAC and network inputs; every declared package/service difference is explained & Manifest diff, configuration diff, acceptance transcript and signed-off exceptions.\\
 Safety boundary & No production data or production signing material on a \texttt{development-proof} system & Storage inventory and manifest-mode assertion included in the proof bundle.\\
 \bottomrule
-\end{tabularx}
+\end{longtable}
 
 \begin{gate}{Final proof is a bundle, not a verdict}
 Acceptance consists of the input manifest, cable/port record, preflight and
@@ -304,6 +330,26 @@ decryption material needed to rebuild it. Every recovery path in this design is
 tested with the Controller assumed dead. That is the whole reason this document
 is printable.
 \end{gate}
+
+\section{Final review worksheet}
+\begin{tabularx}{\linewidth}{@{}p{.32\linewidth}L@{}}
+\toprule
+\textbf{Reviewer must answer} & \textbf{Evidence reference or disposition}\\
+\midrule
+Can the Controller be rebuilt while its disks, DNS and artifact service are unavailable? & Offline-media run ID, manifest digest and rebuild transcript:\\[3em]
+Did any foreign DHCP authority answer during preflight or activation? & Capture file, interface and observation window:\\[3em]
+Do client observations agree with server logs for lease, DNS and PXE? & Client probe report and correlated log interval:\\[3em]
+Did three cold boots restore the same declared authority without configuration edits? & Power-event IDs and probe reports:\\[3em]
+Did rollback preserve excluded mutable state and restore the named system checkpoint? & Before/after subvolume and checkpoint identities:\\[3em]
+Are all differences, waivers and failed candidates retained rather than silently normalized? & Review record, owner and expiry:\\[3em]
+\bottomrule
+\end{tabularx}
+
+\textbf{Disposition:}\quad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} accept \qquad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} reject \qquad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} repeat named proof
+\hfill Reviewer / date:\ \rule{3.1cm}{.4pt}
 \end{document}
 
 % leak test

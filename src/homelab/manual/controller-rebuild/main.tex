@@ -344,8 +344,8 @@ the configured pool; record address, prefix and client MAC.}
 route is an acceptance failure.}
 \proofpair{dig +short <host>.home.arpa @<controller>}{Exactly the recorded
 Controller address, with no extra answer.}
-\proofpair{curl -fsS -o /tmp/ipxe <boot-URL> \&\& sha256sum /tmp/ipxe}{HTTP
-succeeds and the observed digest matches the artifact manifest.}
+\proofpair{sha256sum /tmp/ipxe}{After fetching from the printed boot URL, HTTP
+succeeded and the observed digest matches the artifact manifest.}
 
 \begin{telosfacts}[0.30]
 \telosfact{Lease}{Inside the pool, and never the Controller's own address.}
@@ -395,7 +395,7 @@ services active, or neither active.\\
 Artifacts & boot URL; observed SHA-256 & Fetch succeeds; digest matches.\\
 Convergence & first-run recap; second check recap & Intended changes applied;
 final changed count is zero.\\
-Recovery & recovery-UKI boot date; key-custody check & Non-destructive boot
+Recovery & recovery UKI date; custody check & Non-destructive boot
 proved; off-host material located without exposing it.\\
 \bottomrule
 \end{tabularx}
@@ -403,6 +403,20 @@ proved; off-host material located without exposing it.\\
 \begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}Xp{0.12\linewidth}X@{}}
 Operator: & \hrulefill & Date/time: & \hrulefill\\[1.4em]
 Witness/reviewer: & \hrulefill & Record ID: & \hrulefill
+\end{tabularx}
+
+\smallskip
+\noindent\textbf{Attachments retained with this record}\par\smallskip
+\begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}Xp{0.25\linewidth}@{}}
+\toprule
+\textbf{Attachment} & \textbf{Filename or record reference} &
+\textbf{Observed digest / result}\\
+\midrule
+Installer manifest and image & &\\[0.75em]
+Authorization summary and disk inventory & &\\[0.75em]
+First-boot journal and client proof & &\\[0.75em]
+Apply recap and final check recap & &\\
+\bottomrule
 \end{tabularx}
 
 \section{Recovering instead of rebuilding}
