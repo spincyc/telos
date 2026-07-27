@@ -69,3 +69,20 @@ instructional diagrams, including distinct structures such as pike Y-bones.
   previews before publication. Confusion pairs (pike/musky, largemouth/
   smallmouth, bluegill/pumpkinseed, walleye/perch) must remain distinct at
   normal print scale.
+
+## Verification-centered field teaching
+
+- Apply the repository-wide instructional contract to identification, rigging,
+  map reading, fish care, cleaning, cooking, and trip planning.
+- Do not reduce a field skill to a finished diagram. Show setup, action,
+  observable response, measurement point, common failure, correction, and
+  final check as distinct views when they materially differ.
+- Ask frequent questions about diagnostic anatomy, water evidence, depth,
+  temperature, clarity, distance, knot or connection security, legal status,
+  cold-chain time and temperature, bone location, and doneness as applicable.
+- Provide compact field records and decision gates. A bite, follow, refusal,
+  snag, failed pull test, temperature reading, map disagreement, or absent
+  species evidence must lead to a reasoned next check rather than guesswork.
+- Current rules, access, weather, water conditions, and consumption guidance
+  remain live external facts. Teach the reader how to verify them; never turn
+  a printed value into a timeless assurance.

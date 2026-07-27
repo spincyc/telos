@@ -1,4 +1,5 @@
 PDFLATEX ?= pdflatex
+GHOSTSCRIPT ?= gs
 PYTHON ?= python3
 PDF_JOBS ?= 4
 INSTALL ?= install
@@ -23,7 +24,7 @@ ARCH_CORE_PACKAGES := make bash findutils coreutils
 ARCH_PYTHON_PACKAGES := python python-markdown
 ARCH_TEX_PACKAGES := texlive-bin texlive-basic texlive-latex \
 	texlive-latexrecommended texlive-latexextra texlive-pictures \
-	texlive-fontsrecommended
+	texlive-fontsrecommended ghostscript
 ARCH_WORKFLOW_PACKAGES := git openai-codex
 # Homelab provisioning: image build, disk layout and the QEMU acceptance matrix.
 #
@@ -262,6 +263,16 @@ $(BUILD_ROOT)/%.pdf: $(SOURCE_ROOT)/%/main.tex $(COMMON_SOURCES)
 	cd $(SOURCE_ROOT)/$* && TEXINPUTS=.:$(abspath $(SOURCE_ROOT)): \
 		$(PDFLATEX) -interaction=nonstopmode -halt-on-error \
 		-jobname=$(notdir $*) -output-directory=$(abspath $(@D)) main.tex
+	@if [ '$(filter lake-country-fishing/chatgpt/compendium/%,$*)' ]; then \
+		$(GHOSTSCRIPT) -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 \
+			-dPDFSETTINGS=/prepress -dDetectDuplicateImages=true \
+			-dColorImageDownsampleType=/Bicubic -dColorImageResolution=200 \
+			-dGrayImageDownsampleType=/Bicubic -dGrayImageResolution=200 \
+			-dMonoImageDownsampleType=/Subsample -dMonoImageResolution=600 \
+			-sColorConversionStrategy=Gray -dProcessColorModel=/DeviceGray \
+			-dNOPAUSE -dQUIET -dBATCH -sOutputFile='$@.optimized' '$@'; \
+		mv -- '$@.optimized' '$@'; \
+	fi
 
 $(DOC_ROOT)/%.pdf: $(BUILD_ROOT)/%.pdf
 	@mkdir -p $(@D)
@@ -269,6 +280,7 @@ $(DOC_ROOT)/%.pdf: $(BUILD_ROOT)/%.pdf
 
 check-tools:
 	@command -v $(PDFLATEX) >/dev/null || { echo "Missing $(PDFLATEX)"; exit 1; }
+	@command -v $(GHOSTSCRIPT) >/dev/null || { echo "Missing $(GHOSTSCRIPT)"; exit 1; }
 	@command -v $(PYTHON) >/dev/null || { echo "Missing $(PYTHON)"; exit 1; }
 	@command -v $(INSTALL) >/dev/null || { echo "Missing $(INSTALL)"; exit 1; }
 

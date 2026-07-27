@@ -187,6 +187,21 @@ Ask **one at a time**, recommended option first.
 - **No second domain controller.** ADR 0055 requires one on separate physical
   hardware before the directory is production, deferred until the first works.
 
+## Publication teaching standard
+
+`src/AGENTS.md` is the durable contract for every Telos publication. New and
+revised material must teach the reader how to verify each important step:
+questions before explanations, illustrations at meaningful state changes,
+recorded observations and repeated measurements, worked examples with units,
+safe fault isolation, reject or stop conditions, and a final acceptance proof.
+Do not compress these away to preserve a one-page format. Project-local
+contracts may tighten safety and evidence boundaries but may not weaken the
+verification standard.
+
+Review source and PDF together. Build every affected publication, inspect every
+page at normal grayscale print scale, and promote the reviewed PDF in the same
+change as its source.
+
 ## Traps that have already cost time
 
 - **`git`/shell cwd resets between commands.** Always `cd /home/ksh/git/telos`

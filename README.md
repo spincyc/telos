@@ -66,6 +66,16 @@ not rewrites of Claude prose.
 Every publication is generated from source with `make` and reviewed as a PDF.
 The website is a directory, not the product: the useful thing is the sheet in a
 tackle box, the lesson on a workbench, or the checklist beside the tool.
+Tracked PDFs stay below GitHub's 50 MB threshold. Large composite binders are
+reproducibly reduced to print-resolution grayscale during the build instead of
+requiring Git LFS or a separate download path.
+
+Telos teaches through verification. A project does not merely tell the reader
+what to do: it shows meaningful intermediate states, asks questions before
+revealing the explanation, provides places to record measurements, and pairs
+each important action with observable acceptance evidence. Troubleshooting,
+stop conditions, and the final claim-evidence-reasoning proof are part of the
+instruction rather than afterthoughts. Page count yields to clarity.
 
 See [Projects](projects.md) for the full directory and [About](about.md) for the
 research and edition model.
