@@ -28,8 +28,8 @@ class SeedInstallerContractTests(unittest.TestCase):
 
     def test_discovers_one_disk_by_exact_serial(self) -> None:
         self.assertIn("lsblk -dnpo NAME,SERIAL,TYPE", self.source)
-        self.assertIn("TELOS-BOOTSTRAP-DC-001", self.source)
-        self.assertNotRegex(self.source, r'grep\s+.*TELOS-BOOTSTRAP-DC-001')
+        self.assertIn("TELOS-BOOTSTRAP-DC1", self.source)
+        self.assertNotRegex(self.source, r'grep\s+.*TELOS-BOOTSTRAP-DC1')
         self.assertRegex(
             self.source,
             r'\[\s*"\$serial"\s*=\s*"\$expected_serial"\s*\]',
@@ -37,7 +37,7 @@ class SeedInstallerContractTests(unittest.TestCase):
         self.assertRegex(self.source, r'\[\s*"\$matches"\s*-eq\s*1\s*\]')
 
     def test_requires_the_full_erase_phrase(self) -> None:
-        self.assertIn("expected_serial=TELOS-BOOTSTRAP-DC-001", self.source)
+        self.assertIn("expected_serial=TELOS-BOOTSTRAP-DC1", self.source)
         self.assertIn("Type ERASE %s to continue", self.source)
         self.assertRegex(
             self.source,

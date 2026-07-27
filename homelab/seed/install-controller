@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-expected_serial=TELOS-BOOTSTRAP-DC-001
+expected_serial=TELOS-BOOTSTRAP-DC1
 seed_root=${1:-/run/media/telos/TELOS_SEED}
 target=/mnt
 mounted=0

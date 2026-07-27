@@ -23,7 +23,7 @@ NAME = "bootstrap-dc"
 VCPUS = 4
 MEMORY_MIB = 8192
 DISK_SIZE = "80G"
-DISK_SERIAL = "TELOS-BOOTSTRAP-DC-001"
+DISK_SERIAL = "TELOS-BOOTSTRAP-DC1"
 DEFAULT_STATE = Path("build/homelab/vm/bootstrap-dc")
 OVMF_PAIRS = (
     (

@@ -14,6 +14,9 @@ from vm import bootstrap_dc
 
 
 class BootstrapVmTests(unittest.TestCase):
+    def test_disk_serial_fits_virtio_limit(self) -> None:
+        self.assertLessEqual(len(bootstrap_dc.DISK_SERIAL), 20)
+
     def test_command_is_isolated_and_has_declared_shape(self):
         with mock.patch.object(
                 bootstrap_dc, "ovmf_pair",
@@ -26,7 +29,7 @@ class BootstrapVmTests(unittest.TestCase):
         self.assertIn("-serial mon:stdio", joined)
         self.assertIn("-boot strict=on,menu=off", joined)
         self.assertIn(
-            "serial=TELOS-BOOTSTRAP-DC-001,bootindex=1", joined)
+            "serial=TELOS-BOOTSTRAP-DC1,bootindex=1", joined)
         self.assertIn("socket,id=bootstrap,listen=127.0.0.1:12961", joined)
         self.assertNotIn("bridge", joined)
         self.assertNotIn("tap", joined)
@@ -42,7 +45,7 @@ class BootstrapVmTests(unittest.TestCase):
             "if=none,id=installmedia,media=cdrom,readonly=on,"
             "file=/media/arch.iso", command)
         joined = " ".join(command)
-        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
+        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC1,bootindex=2",
                       joined)
         self.assertIn(
             "scsi-cd,bus=mediabus.0,drive=installmedia,bootindex=1",
@@ -68,7 +71,7 @@ class BootstrapVmTests(unittest.TestCase):
             "scsi-cd,bus=mediabus.0,drive=installmedia,bootindex=1",
             joined,
         )
-        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
+        self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC1,bootindex=2",
                       joined)
         self.assertIn(
             "scsi-cd,bus=mediabus.0,drive=seedmedia,bootindex=3",

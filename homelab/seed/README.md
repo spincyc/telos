@@ -67,8 +67,8 @@ Run the interactive installer:
 /run/telos-seed/install-controller /run/telos-seed
 ```
 
-It accepts only the VM disk with serial `TELOS-BOOTSTRAP-DC-001` and requires
-the exact phrase `ERASE TELOS-BOOTSTRAP-DC-001` before erasing it. It then
+It accepts only the VM disk with serial `TELOS-BOOTSTRAP-DC1` and requires
+the exact phrase `ERASE TELOS-BOOTSTRAP-DC1` before erasing it. It then
 prompts at the console for the temporary `local-rescue` password twice. The
 operator must type it directly; it must not appear in a command, answer file,
 Make variable, transcript, or Git repository.

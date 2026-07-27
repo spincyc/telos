@@ -24,7 +24,7 @@ Boot installation media with
 `APPLY=1` prints the complete QEMU command without starting the guest.
 When `ISO` is present, firmware always tries that read-only medium before the
 virtual disk. Without `ISO`, only the installed disk is bootable. The disk has
-the stable serial `TELOS-BOOTSTRAP-DC-001`, so installer authorization does not
+the stable serial `TELOS-BOOTSTRAP-DC1`, so installer authorization does not
 depend on a changing `/dev` name.
 
 An optional offline seed may be attached as a second read-only CD:
@@ -45,11 +45,11 @@ sudo /run/telos-seed/install-controller /run/telos-seed
 ```
 
 The installer accepts exactly one writable disk whose reported serial is
-`TELOS-BOOTSTRAP-DC-001`. Before erasing it, the console requires the complete
+`TELOS-BOOTSTRAP-DC1`. Before erasing it, the console requires the complete
 phrase:
 
 ```text
-ERASE TELOS-BOOTSTRAP-DC-001
+ERASE TELOS-BOOTSTRAP-DC1
 ```
 
 This is not a general-purpose hardware installer: a missing, duplicate or
