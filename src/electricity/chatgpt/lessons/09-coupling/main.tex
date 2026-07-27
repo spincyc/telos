@@ -1,14 +1,190 @@
-\def\doctitle{Lesson 9: Coupling}\def\docsubtitle{Geometry controls shared changing flux}\def\docstrap{send a pulse without a wire between coils}
-\def\materialslist{\item Two insulated coils \item 2 AA cells and pushbutton \item Multimeter \item Iron core \item Ruler}
-\def\prediction{Which matters more to the received pulse: coil separation or wire length between the meter and receiver?}
-\def\diagram{\begin{center}
-\includegraphics[width=.94\linewidth,height=2.35in,keepaspectratio]{%
-  electricity/chatgpt/lessons/09-coupling/assets/coupling-pencil.png}
-\par\footnotesize\emph{Change one geometric variable at a time: gap,
-orientation, or the removable common core. Faint contours show that only
-part of the transmitter's changing flux links the receiver.}
+\def\doctitle{Lesson 9: Coupling}
+\def\docsubtitle{Geometry controls shared changing flux}
+\def\docstrap{measure what reaches the second coil}
+\def\materialslist{\item Two insulated coils \item 2 AA cells and pushbutton
+  \item Multimeter with peak/min--max mode \item Removable iron core
+  \item Ruler, protractor, graph paper \item Tape and nonmetallic supports}
+\def\prediction{Rank these changes before testing: halve the gap, rotate the
+receiver \(90^\circ\), insert a common iron core, or double the meter-lead
+length. Which should change the received pulse most? Why?}
+
+\def\diagram{\begin{center}\vspace{-.5em}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
+  lab/.style={font=\fontsize{5.8}{6.7}\selectfont,align=center}]
+  \node[lab,font=\scriptsize\bfseries] at (-4.4,1.25){A · COAXIAL};
+  \draw[line width=.8pt,double distance=1pt](-5.15,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt,double distance=1pt](-3.65,.45)ellipse(.42 and .30);
+  \draw[->,telosmute](-4.72,.45)--(-4.08,.45);
+  \draw[<->](-4.72,-.10)--(-4.08,-.10);
+  \node[lab,below]at(-4.40,-.10){gap \(d\)};
+
+  \node[lab,font=\scriptsize\bfseries] at (-1.45,1.25){B · FARTHER};
+  \draw[line width=.8pt,double distance=1pt](-2.55,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt,double distance=1pt](-.35,.45)ellipse(.42 and .30);
+  \draw[->,telosmute](-2.12,.45)--(-.78,.45);
+  \node[lab,below]at(-1.45,-.10){less shared flux};
+
+  \node[lab,font=\scriptsize\bfseries] at (1.55,1.25){C · \(90^\circ\)};
+  \draw[line width=.8pt,double distance=1pt](.60,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt](2.22,.05)--(2.22,.85);
+  \draw[line width=.8pt](2.10,.05)--(2.10,.85);
+  \draw[->,telosmute](1.03,.45)--(1.93,.45);
+  \node[lab,below]at(1.45,-.10){receiver edge-on};
+
+  \node[lab,font=\scriptsize\bfseries] at (4.65,1.25){D · COMMON CORE};
+  \draw[fill=telosfill,line width=.55pt](3.35,.31)rectangle(5.95,.59);
+  \draw[line width=.75pt](3.65,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](3.85,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](5.40,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](5.60,.02)ellipse(.14 and .52);
+  \node[lab,below]at(4.65,-.32){iron links both coils};
+
+  \draw[telosmute](-5.45,-.72)--(6.05,-.72);
+  \node[lab,font=\scriptsize\bfseries,anchor=west]at(-5.35,-1.02){ONE BUTTON CYCLE};
+  \draw[->](-3.75,-1.52)--(5.95,-1.52);
+  \draw[line width=.75pt](-3.55,-1.52)--(-3.55,-1.10)--(-1.05,-1.10)
+    --(-1.05,-1.52)--(.45,-1.52);
+  \node[lab,below]at(-3.55,-1.72){make};
+  \node[lab,below]at(-2.30,-1.72){held};
+  \node[lab,below]at(-1.05,-1.72){break};
+  \draw[line width=.75pt](1.10,-1.52)--(1.10,-1.05)--(1.38,-1.52);
+  \draw[line width=.75pt](3.05,-1.52)--(3.05,-1.99)--(3.33,-1.52);
+  \node[lab,below]at(1.24,-2.02){make pulse};
+  \node[lab,below]at(3.19,-2.02){opposite break};
+  \node[lab,anchor=west,text width=2cm]at(4.02,-2.14)
+    {Compare pulse magnitude, not the held reading.};
+\end{tikzpicture}\vspace{-.5em}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Drive the first coil only with brief make/break pulses. Measure the second coil's response at fixed alignment.\item Increase separation in measured steps.\item Repeat at 90-degree orientation.\item Insert the common iron core and repeat the distance series.\end{enumerate}}
-\def\explanation{Mutual induction depends on how much changing flux from the transmitter links the receiver. Separation, orientation, turns, core, and drive-change rate all matter. A weak pulse at poor alignment is a measurement, not failed magic. Energy still comes from the battery; coupling controls how much reaches the second circuit.}
-\def\extension{Create a two-dimensional coupling map by moving the receiver over graph paper while keeping pulse method fixed.}
+
+\def\procedure{\small
+\begin{enumerate}
+  \item Tape both coils coaxial at \(d=0\) cm. Fix the battery, button, meter
+  range, lead routing, and one operator. Mark coil faces and lead polarity.
+  \item Make five brief, equally timed button presses. Record the largest
+  absolute receiver voltage for each make pulse; use their median. Also record
+  the break-pulse sign. Stop if a coil or cell warms.
+  \item Repeat at \(d=1,2,4,8\) cm. Move only the receiver along the common
+  axis. Do not stretch or reroute leads.
+  \item Return to \(d=2\) cm. Repeat at \(\theta=0^\circ,30^\circ,60^\circ,
+  90^\circ\), rotating about the receiver's center.
+  \item Repeat the distance series with the removable iron core linking both
+  coils. Remove it between trials; check that the zero-gap baseline returns.
+\end{enumerate}
+
+\begin{teloscard}{Distance \(\times\) core measurement matrix}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.13\linewidth}}p{.16\linewidth}X@{}}
+\toprule
+\(d\) (cm) & Air: median \(|V|\) & Core: median \(|V|\) & Core/air & What stayed fixed?\\
+\midrule
+0 & & & &\\[1.1em] 1 & & & &\\[1.1em] 2 & & & &\\[1.1em]
+4 & & & &\\[1.1em] 8 & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Orientation matrix at \(d=2\) cm}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.15\linewidth}}XX@{}}
+\toprule
+\(\theta\) & median \(|V|\) & fraction of \(0^\circ\) & projected-area prediction & observed pulse sign\\
+\midrule
+\(0^\circ\) & & \(1.00\) & maximum &\\[1em]
+\(30^\circ\) & & & &\\[1em]
+\(60^\circ\) & & & &\\[1em]
+\(90^\circ\) & & & near minimum &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}}
+
+\def\explanation{\small
+The transmitter's changing current makes changing magnetic flux. The receiver
+responds only to the portion linking its turns:
+\[
+  V_{\mathrm{RX}}\approx -M\,\frac{\Delta I_{\mathrm{TX}}}{\Delta t},
+  \qquad M=k\sqrt{L_{\mathrm{TX}}L_{\mathrm{RX}}}.
+\]
+Geometry and the core change the coupling factor \(k\); the button edge changes
+\(\Delta I/\Delta t\). A steady held current has flux but little change, so the
+receiver pulse falls toward zero. Releasing the button reverses the flux change
+and therefore the pulse polarity. This is induction, not wireless creation of
+energy.
+
+\begin{teloscard}{Interrogate the evidence}
+\footnotesize\begin{multicols}{2}
+\begin{enumerate}[leftmargin=*,itemsep=.22em]
+\item Which single trial is your baseline?
+\item Did five pulses agree closely enough to compare?
+\item What happened when \(d\) doubled?
+\item Is the distance trend linear? What evidence says so?
+\item Why must the coil centers stay on one axis?
+\item At which angle did the response halve?
+\item Was \(90^\circ\) exactly zero? Why might it not be?
+\item Did the core multiply every distance by the same factor?
+\item Which result supports shared flux rather than lead length?
+\item Why is the held reading not the comparison value?
+\item Why do make and break pulses have opposite signs?
+\item Which variable changes \(M\)? Which changes \(\Delta I/\Delta t\)?
+\item What observation would falsify your geometry claim?
+\item Where is measurement resolution limiting the conclusion?
+\end{enumerate}
+\end{multicols}
+\end{teloscard}}
+
+\def\extension{\small
+\begin{minipage}[t]{.48\linewidth}
+\textbf{Graph the relationships.} Plot median \(|V|\) against distance for air
+and core on the same axes. Add a second graph of normalized response
+\(|V_\theta|/|V_0|\) against angle. Plot measured points first; connect only as
+a visual guide. Label units, baseline, meter range, and any below-resolution
+point. Do the curves justify “farther is weaker” and “edge-on is least,” or
+only suggest them?
+
+\medskip
+\begin{tikzpicture}[x=.47cm,y=.42cm]
+  \draw[->](0,0)--(8.5,0)node[right,font=\tiny]{distance \(d\) (cm)};
+  \draw[->](0,0)--(0,5.3)node[above,font=\tiny]{median \(|V|\)};
+  \foreach \x/\v in {0/0,1/1,2/2,4/4,8/8}
+    \draw (\v,0)--++(0,-.10)node[below,font=\tiny]{\x};
+  \foreach \y in {1,...,5}\draw (0,\y)--++(-.10,0);
+  \draw[densely dashed,telosmute](0,4.5)..controls(2.1,3.4)and(4.4,1.9)..(8,1.2);
+  \draw[telosmute](0,2.8)..controls(2.1,1.7)and(4.4,.7)..(8,.25);
+  \node[font=\tiny,anchor=west]at(5.6,1.65){core};
+  \node[font=\tiny,anchor=west]at(5.6,.48){air};
+\end{tikzpicture}
+\end{minipage}\hfill
+\begin{minipage}[t]{.48\linewidth}
+\textbf{Fault isolation.} If the receiver pulse is missing or erratic, change
+one cause at a time.
+\begin{tabularx}{\linewidth}{@{}p{.29\linewidth}X@{}}
+\toprule Symptom & Discriminating check\\\midrule
+No make or break pulse & Short the meter probes together, restore them, then
+verify meter range and receiver continuity.\\
+Pulse only when leads move & Tape leads; press without touching either coil.\\
+Every trial varies & Use one operator and five-pulse median; inspect button.\\
+\(90^\circ\) remains large & Check centers, stray metal, and lead loops.\\
+Core seems weaker & Return to air baseline; inspect whether core actually
+passes through both coil fields.\\
+\bottomrule
+\end{tabularx}
+\end{minipage}
+
+\begin{gate}{Final proof}
+Blind the receiver configuration behind a sheet. A partner chooses two of
+these states: coaxial/near, coaxial/far, orthogonal, or common-core. From five
+pulses per state, predict which geometry is which and justify the identification
+from the distance, orientation, and core graphs. Then swap roles. The claim
+passes only if both identifications are correct, the baseline returns within
+the trial spread, and make/break polarity reverses. Record any failure as
+evidence and isolate it before repeating.
+\end{gate}}
+
+\AtBeginDocument{\renewenvironment{recordbox}{%
+\begin{teloscard}{Proof record}\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}Xp{.17\linewidth}X@{}}
+Prediction & \rule{\linewidth}{.3pt} & Controlled variables & \rule{\linewidth}{.3pt}\\[1em]
+Strongest evidence & \rule{\linewidth}{.3pt} & Uncertainty & \rule{\linewidth}{.3pt}\\[1em]
+Blind state A & \rule{\linewidth}{.3pt} & Blind state B & \rule{\linewidth}{.3pt}\\[1em]
+Claim + because & \multicolumn{3}{l}{\rule{.72\linewidth}{.3pt}}
+\end{tabularx}}{\end{teloscard}}}
 \input{electricity/chatgpt/shared/lesson-template.tex}

@@ -9,10 +9,12 @@
 
 \section{Jacob's ladder}
 \noindent
-\begin{minipage}[t]{0.34\linewidth}
+\begin{minipage}[t]{0.43\linewidth}
 \vspace{0pt}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \draw[telos hair] (-.08,-.20) rectangle (3.48,5.05);
+  \node[partsmall,anchor=west] at (.08,4.82) {\textsc{four frames --- one cycle}};
   \draw[partheavy] (0.55,0.3) .. controls (0.75,2.2) .. (0.15,4.6);
   \draw[partheavy] (1.65,0.3) .. controls (1.45,2.2) .. (2.05,4.6);
   \draw[partheavy,fill=telosfill] (0.2,0) rectangle (2.0,0.3);
@@ -21,12 +23,14 @@
     \draw[telos hair] (1.1-\w,\y) .. controls (1.1-\w/3,\y+0.16) and (1.1+\w/3,\y-0.10) .. (1.1+\w,\y);}
   \draw[telos arrow] (2.5,0.9) -- (2.5,4.2);
   \node[partsmall,anchor=west,align=left] at (2.65,2.5) {the arc\\climbs};
-  \node[partsmall,anchor=south] at (1.1,4.8) {then breaks, and restarts at the bottom};
+  \foreach \y/\lab in {.75/strike,1.7/stretch,2.7/rise,3.7/break}{
+    \draw[telos hair] (2.20,\y)--(2.43,\y);
+    \node[partsmall,anchor=west] at (2.47,\y) {\lab};}
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.63\linewidth}
+\begin{minipage}[t]{0.54\linewidth}
 \vspace{0pt}
 \begin{predict}
 Two wires make a narrow V, closest together at the bottom. An arc strikes across
@@ -43,6 +47,67 @@ be harder to jump. Why does it climb rather than staying where it started?
 \end{minipage}
 
 \section{Lighting a fluorescent tube from your hand}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \draw[telos hair] (-.10,-1.48) rectangle (13.75,2.10);
+  \foreach \x in {4.45,9.05}\draw[telos hair] (\x,-1.48)--(\x,2.10);
+  \node[partsmall,anchor=west,font=\scriptsize\bfseries] at (.10,1.80)
+    {A\quad ORIENTATIONS};
+  \node[partsmall,anchor=west,font=\scriptsize\bfseries] at (4.65,1.80)
+    {B\quad SHIELDING};
+  \node[partsmall,anchor=west,font=\scriptsize\bfseries] at (9.25,1.80)
+    {C\quad PLAN-VIEW FIELD MAP};
+
+  % A: coil, marked radius, tube shown in two controlled orientations.
+  \begin{scope}[shift={(.28,-.15)}]
+    \draw[partheavy] (.18,-.48) rectangle (1.18,.48);
+    \foreach \x in {.28,.40,...,1.08}\draw[telos hair] (\x,-.48)--(\x,.48);
+    \node[partsmall] at (.68,0) {coil};
+    \draw[telos hair,dashed] (1.18,.34)
+      .. controls (1.72,1.10) and (2.55,1.10) .. (3.02,.48);
+    \draw[telos hair,dashed] (1.18,-.34)
+      .. controls (1.72,-1.10) and (2.55,-1.10) .. (3.02,-.48);
+    \draw[telos arrow] (1.30,0)--(2.58,0);
+    \draw[partheavy,fill=telosfill] (2.68,-.16) rectangle (4.00,.16);
+    \node[partsmall,anchor=north] at (3.34,-.25) {radial};
+    \draw[partheavy,fill=telosfill] (3.18,.52) rectangle (3.50,1.46);
+    \node[partsmall,anchor=south] at (3.34,1.52) {tangential};
+    \draw[|<->|,telos hair] (.68,-.88)--(3.34,-.88);
+    \node[partsmall,fill=white,inner sep=1pt] at (2.01,-.88) {same marked distance};
+  \end{scope}
+
+  % B: paired control trials with grounded mesh plate.
+  \begin{scope}[shift={(4.70,-.22)}]
+    \draw[partheavy] (0,-.40) rectangle (.92,.40);
+    \foreach \x in {.10,.22,...,.82}\draw[telos hair] (\x,-.40)--(\x,.40);
+    \draw[partheavy,fill=telosfill] (3.02,-.13) rectangle (4.10,.13);
+    \draw[telos arrow] (1.05,0)--(2.85,0);
+    \node[partsmall,anchor=north] at (2.12,-.18) {unshielded};
+    \foreach \y in {-1.00,-.84,...,-.20}\draw[telos hair] (2.10,\y)--(2.10,\y+.11);
+    \draw[partheavy] (2.04,-1.06) rectangle (2.16,-.16);
+    \draw[telos hair,dashed] (2.10,-1.06)--(2.62,-1.32);
+    \node[partsmall,anchor=west] at (2.66,-1.32) {grounded screen};
+    \draw[partheavy,fill=telosfill] (3.02,-.86) rectangle (4.10,-.60);
+    \draw[telos hair,dashed] (1.05,-.72)--(2.04,-.72);
+    \node[partsmall,anchor=east] at (1.88,-1.18) {shielded control};
+  \end{scope}
+
+  % C: repeatable observation stations on a floor grid.
+  \begin{scope}[shift={(9.30,-1.18)}]
+    \foreach \x in {0,.34,...,4.08}\draw[telos hair] (\x,0)--(\x,2.55);
+    \foreach \y in {0,.34,...,2.38}\draw[telos hair] (0,\y)--(4.20,\y);
+    \draw[partheavy] (1.62,1.04) rectangle (2.56,1.50);
+    \foreach \x in {1.72,1.84,...,2.46}\draw[telos hair] (\x,1.04)--(\x,1.50);
+    \node[partsmall,fill=white,inner sep=.6pt] at (2.09,1.27) {coil};
+    \foreach \x/\y/\n in {.42/1.27/1,1.05/2.08/2,3.16/2.08/3,3.78/1.27/4,3.16/.46/5,1.05/.46/6}{
+      \draw[partheavy,fill=white] (\x,\y) circle (.13);
+      \node[partsmall] at (\x,\y) {\n};}
+    \draw[telos arrow] (2.60,1.27)--(3.44,1.27);
+    \node[partsmall,anchor=south] at (3.02,1.35) {axis};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
 \begin{telosfacts}[0.22]
 \telosfact{What happens}{Stand several feet from a running coil holding an ordinary fluorescent tube, and it lights --- with no wires and nothing connected to it.}
 \telosfact{Why}{The coil floods the room with a strong, rapidly changing electric field. That field drives the free electrons in the tube's low-pressure mercury vapour back and forth, they collide with mercury atoms, the atoms emit ultraviolet, and the phosphor coating converts that to visible light. Exactly the same process as in the ceiling fixture, with the field arriving through the air instead of through a ballast.}
@@ -51,6 +116,112 @@ be harder to jump. Why does it climb rather than staying where it started?
 \telosfact{Not a party trick}{Everyone in the room needs to be beyond the longest streamer you have seen from this coil, plus a wide margin. The tube does not have to be close to work.}
 \end{telosfacts}
 
+\section{Run it as an investigation}
+\begin{gate}{Freeze the geometry before power is applied}
+The adult places the tube at taped floor marks, chooses its orientation, and
+returns behind the operating line. Nobody walks toward a live coil. Switch off,
+discharge, verify, reposition, and only then begin the next short run.
+\end{gate}
+
+\subsection*{Questions to answer before each run}
+\begin{enumerate}
+\item At one distance, will a radial or tangential tube glow more evenly? Draw
+the field direction you expect through the tube before choosing.
+\item If the glow is caused by the field, what should a grounded screen change?
+What result would count against that explanation?
+\item At equal-radius stations around the coil, should brightness depend only on
+distance? Which paired stations test the coil's symmetry?
+\item For the ladder, which visible event marks breakdown, which marks hot-gas
+motion, and which marks loss of conduction?
+\end{enumerate}
+
+\subsection*{Ladder cycle record}
+Time from video recorded outside the operating boundary; do not approach the
+apparatus to read a scale.
+\begin{center}\small
+\begin{tabularx}{.95\linewidth}{@{}c c c c c X@{}}
+\toprule
+\textbf{Run} & \textbf{Strike height} & \textbf{Break height} &
+\textbf{Climb time} & \textbf{Cycles / 10 s} & \textbf{Arc path / sound}\\
+\midrule
+1 & & & & &\\[.65em]
+2 & & & & &\\[.65em]
+3 & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Intermediate check.} If one climb takes twice as long, inspect the video:
+did it strike at the same height and follow the same electrode? Repeat rather
+than silently averaging a different kind of cycle.
+
+\subsection*{Tube field matrix}
+Use an agreed visual scale: 0 dark, 1 barely visible, 2 dim, 3 clear, 4 bright.
+The same observer scores every run from the same place.
+\begin{center}\small
+\begin{tabularx}{.95\linewidth}{@{}c c c c c X@{}}
+\toprule
+\textbf{Station} & \textbf{Distance} & \textbf{Orientation} &
+\textbf{No screen} & \textbf{Screen} & \textbf{Glow pattern / flicker}\\
+\midrule
+1 & & radial & & &\\[.60em]
+1 & & tangential & & &\\[.60em]
+2 & & radial & & &\\[.60em]
+3 & & radial & & &\\[.60em]
+4 & & radial & & &\\[.60em]
+5 & & radial & & &\\[.60em]
+6 & & radial & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Graph it twice.} First graph mean brightness against distance, using
+matched orientation only. Then graph station number around one equal-radius
+ring. Put screened and unscreened results on the same axes. Label subjective
+brightness as an ordinal score, not a physical unit.
+
+\section{Troubleshoot before interpreting}
+\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}L@{}}
+\toprule
+\textbf{Observation} & \textbf{Power-off check}\\
+\midrule
+Tube never glows & Verify the tube in a normal fixture; confirm marked distance
+and orientation; do not move closer during a run.\\
+Brightness will not repeat & Fix observer position and adaptation time; use the
+same tube; check the coil run duration and video for unequal operation.\\
+Screen has no effect & Check that it is the same grounded screen in the same
+place and that the tube is actually behind its projected area.\\
+Opposite stations disagree & Look for metal furniture, wiring, asymmetric
+topload geometry, and unequal station radii. Record the asymmetry.\\
+Ladder strikes above the base & With power isolated and discharged, inspect the
+base gap, contamination, electrode alignment, and unintended sharp points.\\
+Arc leaves the intended electrodes & Stop. The adult inspects enclosure,
+clearance, grounding, and insulation before any further run.\\
+\bottomrule
+\end{tabularx}
+
+\section{Synthesis proof}
+\begin{telospanel}{Claim --- evidence --- mechanism --- limit}
+\textbf{Claim:} both showpieces are consequences of fields and matter, not
+exceptions to the course. \textbf{Evidence:} the ladder repeats a strike--rise--break
+cycle, while tube brightness changes reproducibly with position, orientation,
+and shielding. \textbf{Mechanism:} breakdown makes a conducting hot-gas path;
+buoyancy and electromagnetic forces move it until cooling ends conduction.
+Around the coil, a changing electric field drives charges in the low-pressure
+tube; geometry changes how strongly that field acts, and a grounded conductor
+redirects it. \textbf{Limit:} brightness scores are comparative, the tube is
+nonlinear, and the two forces on the ladder arc have not been separated.
+\end{telospanel}
+
+\begin{telosframe}
+\textbf{Proof check.}
+A defensible conclusion names the fixed source setting, run time, tube, observer,
+station radius, and orientation; shows repeats; preserves an anomalous trial;
+and connects each plotted change to one geometrical change. ``It lit'' is an
+observation. The controlled contrasts are the proof.
+\end{telosframe}
+
+\Needspace{12\baselineskip}
 \begin{teloshazard}{These two are the reward, not the point}
 Both demonstrations use the mains-derived high-voltage supply, and the full
 \textbf{Safety} sheet applies without exception: named adult on the plug,

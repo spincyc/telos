@@ -1,100 +1,323 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{7. Capacitors}{Storing energy in an electric field}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{7. Capacitors}
+  {A measured journey between empty and charged}{2026-07-27}
+
+\newcommand{\tickbox}{\raisebox{.12ex}{\fbox{\rule{0pt}{.72ex}\rule{.72ex}{0pt}}}}
+\newcommand{\writein}[1]{\rule{#1}{.3pt}}
+
 \begin{document}
-\telosmasthead[Build a Leyden jar, then measure a time constant]
-\lessonhead{7}{about 90 minutes}{everyone builds; battery power only}
+\telosmasthead[Follow charge through time, then prove where it went]
+\lessonhead{7}{three measured runs}{isolated 3 V; adult controls energizing}
+\begingroup\footnotesize
 
 \begin{materials}
-\item Capacitors: 100\,$\mu$F, 470\,$\mu$F, 1000\,$\mu$F electrolytic
-\item Resistors: 1\,k$\Omega$, 10\,k$\Omega$, 100\,k$\Omega$
-\item LED, breadboard, 9\,V battery, switch
-\item Multimeter, stopwatch
-\item A plastic film canister or small jar, aluminium foil, tape
-\item The electroscope from Lesson 1
+\item Switched holder with two AA cells
+\item 1000 \(\mu\)F electrolytic capacitor, 10 V or higher
+\item 10 k\(\Omega\) and 22 k\(\Omega\) resistors
+\item Digital multimeter with insulated leads
+\item Stopwatch, graph paper, removable \(+\)/\( - \) labels
 \end{materials}
 
 \begin{predict}
-A 1000\,$\mu$F capacitor is charged from a 9\,V battery through a 10\,k$\Omega$
-resistor. How long until it reaches about two-thirds of 9\,V? Then: you
-disconnect the battery entirely and short the capacitor's legs with a
-screwdriver a minute later. Does anything happen?
+Imagine equal snapshots taken while an empty capacitor charges through a
+resistor. Will its voltage gain be the same in every snapshot, or will the gains
+shrink? Draw the rise. Beside it, draw what you expect after the battery is
+removed and the capacitor is allowed to discharge through the same resistor.
 \end{predict}
 
-\lessonsection{Do it}
+\lessonsection{Four states, one permitted transition at a time}
+
+\begin{center}\vspace{-.7em}\scriptsize
+\fbox{\textbf{A COLD}: source out; \(V_C<0.10\) V}
+\(\longrightarrow\)
+\fbox{\textbf{B CHECKED}: polarity; rating; S open}
+\(\longrightarrow\)
+\fbox{\textbf{C TIMING}: source in; hands away}
+\(\longrightarrow\)
+\fbox{\textbf{D DISCHARGE}: source out; \(R\) across \(C\)}
+\(\longrightarrow\) A
+\vspace{-.7em}
+\end{center}
+
+\vspace{-5pt}
+\begin{teloshazard}{The circuit has only one discharge tool}
+Never bridge capacitor leads with a screwdriver, wire, or probe tip. Remove the
+source, then leave a resistor across the capacitor until the meter reads below
+0.10 V. A small part can still heat, leak, or rupture if reversed. Stop for
+warmth, swelling, odor, liquid, damage, or an unexpected reading.
+\end{teloshazard}
+\vspace{-5pt}
+
+\lessonsection{Identify the real part before trusting the symbol}
+
+\begin{center}\vspace{-.55em}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  edge/.style={line width=.75pt},shade/.style={telosrule,line width=.3pt},
+  lab/.style={font=\scriptsize,align=center}]
+  % Physical electrolytic.
+  \path[fill=telosfill,draw=telosink,line width=.75pt]
+    (-5.95,-.35)..controls(-6.12,-.22)and(-6.12,1.15)..(-5.95,1.30)
+    ..controls(-5.50,1.51)and(-4.57,1.49)..(-4.30,1.28)
+    --(-4.30,-.34)..controls(-4.68,-.57)and(-5.55,-.57)..(-5.95,-.35);
+  \draw[shade] (-5.73,-.15)--(-5.73,1.15) (-5.58,-.17)--(-5.58,1.17);
+  \node[font=\scriptsize\bfseries] at (-5.37,.93){\( - \)};
+  \node[font=\tiny,rotate=90] at (-4.78,.48){1000 \(\mu\)F \quad 10 V};
+  \draw[edge] (-5.43,-.43)--(-5.43,-.88) (-4.72,-.43)--(-4.72,-.88);
+  \node[lab] at (-5.12,-1.12){stripe identifies negative};
+
+  % Charge circuit with meter across C.
+  \draw[edge] (-3.40,-.42)--(-3.40,1.10)--(-2.92,1.10);
+  \draw[edge] (-2.92,.84)--(-2.92,1.36);
+  \draw[edge] (-2.68,.91)--(-2.68,1.29);
+  \node[font=\tiny] at (-2.80,.69){3 V};
+  \draw[edge] (-2.68,1.10)--(-2.08,1.10);
+  \fill (-2.02,1.10) circle (.04); \fill (-1.37,1.10) circle (.04);
+  \draw[edge] (-1.98,1.13)--(-1.49,1.40);
+  \draw[edge] (-1.37,1.10)--(-1.08,1.10);
+  \draw[edge,decorate,decoration={zigzag,segment length=2.2mm,amplitude=1.05mm}]
+    (-1.08,1.10)--(.18,1.10);
+  \node[font=\tiny,above] at (-.45,1.24){10 k\(\Omega\)};
+  \draw[edge] (.18,1.10)--(.67,1.10)--(.67,.68);
+  \draw[edge] (.35,.68)--(.99,.68) (.35,.45)--(.99,.45);
+  \node[font=\scriptsize\bfseries] at (1.12,.69){\( + \)};
+  \node[font=\scriptsize\bfseries] at (1.12,.44){\( - \)};
+  \draw[edge] (.67,.45)--(.67,-.42)--(-3.40,-.42);
+  \draw[<->,line width=.5pt] (.15,-.02)--(1.20,-.02);
+  \node[font=\tiny,fill=white,inner sep=1pt] at (.67,-.02){meter \(V_C\)};
+  \node[lab] at (-1.25,-.78){CHARGE PATH};
+
+  % Discharge circuit, source visibly absent.
+  \draw[edge] (2.28,-.42)--(2.28,1.10);
+  \draw[edge,decorate,decoration={zigzag,segment length=2.2mm,amplitude=1.05mm}]
+    (2.28,1.10)--(3.62,1.10);
+  \draw[edge] (3.62,1.10)--(4.18,1.10)--(4.18,.68);
+  \draw[edge] (3.86,.68)--(4.50,.68) (3.86,.45)--(4.50,.45);
+  \draw[edge] (4.18,.45)--(4.18,-.42)--(2.28,-.42);
+  \node[font=\tiny,above] at (2.95,1.24){10 k\(\Omega\)};
+  \draw[edge] (5.15,.98)--(6.15,-.02);
+  \draw[edge] (5.15,-.02)--(6.15,.98);
+  \node[lab] at (5.65,-.30){source absent};
+  \node[lab] at (3.24,-.78){DISCHARGE PATH};
+\end{tikzpicture}\vspace{-.55em}
+\end{center}
+
+\vspace{-4pt}
+\begin{gate}{Inspection before Run 1}
+\tickbox\ capacitor marked at least 10 V \quad
+\tickbox\ stripe goes to source negative \quad
+\tickbox\ red probe at \(+\) \quad
+\tickbox\ meter set to DC V \quad
+\tickbox\ switch open \quad
+\tickbox\ source not yet installed
+\end{gate}
+\vspace{-5pt}
+
+\lessonsection{Run 0 — learn the endpoints}
+
+\begin{enumerate}
+\item With the capacitor absent, measure the source:
+  \(V_S=\writein{1.2cm}\) V. Remove the holder.
+\item Assemble the charge path. Confirm \(V_C<0.10\) V, then the adult installs
+  the holder. Ask: \emph{what sign should appear, and what would a minus sign
+  tell us?}
+\item Close the switch for 60 s. Record \(V_{\rm high}=\writein{1.2cm}\) V.
+  Open the switch; remove the holder; use the discharge path.
+\item Do not change the circuit until \(V_C=\writein{1.2cm}\) V, below 0.10 V.
+\end{enumerate}
+
+\endgroup
+\newpage
+\telosmasthead[Repeated timing turns a curve into evidence]
+
+\lessonsection{Run 1 — charge, twice}
+
+One learner calls the times, one reads the display, and one records. Keep probe
+clips fixed. At the call of “start,” the adult closes the switch. Record the
+first run, return to State A, then repeat without changing any part.
+
+\begin{center}\small
+\begin{tabular}{@{}r*{9}{c}@{}}
+\toprule
+Time (s) & 0 & 2 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
+\midrule
+Run 1 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+Run 2 \(V_C\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+Mean \(V_C/V_S\) &\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&\writein{.65cm}&
+\writein{.65cm}&\writein{.65cm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{telospanel}{Pause at 5 s, 10 s, and 20 s}
+Which interval added the most voltage? \writein{2cm}\quad
+Did the second run reproduce the first? \writein{2cm}\quad
+If \(V_C\) is closer to \(V_S\), is the voltage remaining across the resistor
+larger or smaller? \writein{2cm}
+\end{telospanel}
+
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\ckbattery{0}{0}{9\,V}
-\draw[wire] (1,0) -- (1.6,0);
-\ckswitch{1.6}{0}{S}
-\draw[wire] (2.6,0) -- (3.4,0);
-\ckresistor{3.4}{0}{$R$}
-\draw[wire] (4.4,0) -- (5.4,0);
-\draw[wire] (5.4,0) -- (5.4,-0.5);
-\ckcap{5.4}{-1.1}{}
-\node[ckt,anchor=west] at (5.7,-1.1) {$C$};
-\draw[wire] (5.4,-1.7) -- (5.4,-2.2) -- (0,-2.2) -- (0,0);
-\draw[wire] (5.4,-1.1) -- (7.2,-1.1);
-\node[telos node] at (7.7,-1.1) {V};
+\begin{tikzpicture}[x=1.08cm,y=.88cm,line cap=round]
+  \draw[->] (0,0)--(6.35,0) node[right,font=\scriptsize]{seconds};
+  \draw[->] (0,0)--(0,3.25) node[above,font=\scriptsize]{\(V_C/V_S\)};
+  \foreach \x/\n in {1/10,2/20,3/30,4/40,5/50,6/60}
+    {\draw[telosrule,line width=.3pt] (\x,0)--(\x,3);
+     \node[font=\tiny,below] at (\x,0){\n};}
+  \foreach \y/\n in {.6/.2,1.2/.4,1.8/.6,2.4/.8,3/1.0}
+    {\draw[telosrule,line width=.3pt] (0,\y)--(6,\y);
+     \node[font=\tiny,left] at (0,\y){\n};}
+  \draw[line width=.85pt] (0,0)..controls(.40,1.03)and(.72,1.65)..(1,1.90)
+    ..controls(1.78,2.63)and(3.22,2.91)..(6,2.99);
+  \draw[densely dashed,line width=.55pt] (1,0)--(1,1.90)--(0,1.90);
+  \node[font=\scriptsize,fill=white,inner sep=1pt] at (1.68,1.55)
+    {one \(\tau\): 63.2\%};
+  \node[font=\scriptsize] at (4.08,.60){plot both runs};
 \end{tikzpicture}
 \end{center}
 
-\begin{enumerate}
-\item \textbf{Charge and watch.} Build the circuit with 1000\,$\mu$F and
-  10\,k$\Omega$. Close the switch and read the voltage every two seconds. It
-  rises fast, then slower, and creeps toward 9\,V without ever quite arriving.
-\item \textbf{Discharge.} Open the switch and connect a resistor across the
-  capacitor. Watch it fall the same way, mirrored.
-\item \textbf{Change one thing.} Repeat with 100\,k$\Omega$, then back to
-  10\,k$\Omega$ but with 100\,$\mu$F. Time how long each takes to reach about
-  two-thirds. Multiply $R$ by $C$ each time and compare.
-\item \textbf{Store enough to see.} Charge 1000\,$\mu$F to 9\,V, disconnect the
-  battery, then connect an LED across it. It glows and fades. The battery is
-  gone --- that light is coming out of the capacitor.
-\item \textbf{Build a Leyden jar.} Wrap the outside of a film canister in foil
-  and line the inside with foil, keeping the two layers from touching. Push a
-  wire through the lid to the inner foil. Charge it from a comb rubbed on wool,
-  many strokes, holding the outer foil. Then bring the wire near the outer foil
-  --- with a \emph{dry stick}, not your fingers --- and watch the spark.
-\item \textbf{Feel the difference.} A 1000\,$\mu$F capacitor at 9\,V is
-  harmless. The Leyden jar holds far less charge at a far higher voltage and it
-  will make a spark and sting. Same energy scale, entirely different behaviour.
+\begin{teloscard}{Calculate the landmark before comparing it with the graph}
+\[
+C=1000\,\mu{\rm F}=0.001\,{\rm F},\qquad
+\tau=RC=(10{,}000\,\Omega)(0.001\,{\rm F})=10\,{\rm s}.
+\]
+For charge, \(V_C=V_S(1-e^{-t/RC})\). Thus at 10 s the prediction is
+\(0.632V_S\). With measured \(V_S=\writein{1cm}\) V, the predicted 10 s reading
+is \writein{1.2cm} V. The two measured readings were \writein{1cm} and
+\writein{1cm} V.
+\end{teloscard}
+
+\lessonsection{Run 2 — remove the source and follow the energy}
+
+Charge for 50 s. Open the switch, remove the holder, and close only the resistor
+discharge path. Keep capacitor polarity and meter leads unchanged.
+
+\begin{center}\small
+\begin{tabular}{@{}r*{8}{c}@{}}
+\toprule
+Time (s) & 0 & 5 & 10 & 15 & 20 & 30 & 40 & 50\\
+\midrule
+\(V_C\) (V)&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
+\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&\writein{.78cm}&
+\writein{.78cm}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=.85cm,y=.34cm,line cap=round]
+  \draw[->] (0,0)--(6.25,0) node[right,font=\scriptsize]{\(t\)};
+  \draw[->] (0,0)--(0,3.18) node[above,font=\scriptsize]{\(V_C\)};
+  \draw[densely dashed,telosrule] (0,3)--(6,3);
+  \draw[line width=.85pt] (0,3)..controls(.48,1.78)and(1.12,.86)..(2,.41)
+    ..controls(3.05,.11)and(4.63,.02)..(6,0);
+  \draw[densely dashed] (1,0)--(1,1.10);
+  \node[font=\scriptsize,anchor=west] at (1.12,1.15)
+    {\(V_C(\tau)=0.368V_0\)};
+  \node[font=\tiny,below] at (1,0){10 s};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\telosmasthead[Change one thing; keep every safety state]
+\begingroup\scriptsize
+\setlength{\parskip}{.25em}
+
+\lessonsection{Run 3 — test whether \(RC\) really sets the clock}
+
+Substitute 22 k\(\Omega\) for 10 k\(\Omega\); change nothing else. Perform two
+charge trials. Use fractional voltage rather than a guessed visual endpoint.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lCCCCCC@{}}
+\toprule
+Run & \(R\) & \(C\) & calculated \(\tau\) & \(0.632V_S\) &
+measured time to target & difference\\
+\midrule
+1 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[.9em]
+2 & 10 k\(\Omega\) & 1000 \(\mu\)F & 10 s &&&\\[.9em]
+3 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\[.9em]
+4 & 22 k\(\Omega\) & 1000 \(\mu\)F & \writein{.8cm} &&&\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{predict}
+\(22/10=2.2\). If \(\tau=RC\), the target time should change by a factor of
+\writein{1cm}. Measured factor: \writein{1cm}. What stayed controlled?
+\writein{5cm}
+\end{predict}
+
+\lessonsection{Stored energy: calculate it, do not dramatize it}
+
+\[
+E=\tfrac12CV^2
+=\tfrac12(0.001\,{\rm F})(3.00\,{\rm V})^2
+=0.0045\,{\rm J}.
+\]
+Doubling voltage would multiply the energy by \(2^2=4\), even though capacitance
+did not change. This experiment deliberately stays at 3 V and never produces a
+spark. The useful observation is the measured voltage history, not spectacle.
+
+\begin{teloscard}{Questions that connect the curves to the circuit}
+\begin{enumerate}[itemsep=.12em,topsep=.12em]
+\item Why is the charge curve steepest at the beginning?
+  \par\writein{.92\linewidth}
+\item Why does opening the source path not make \(V_C\) instantly zero?
+  \par\writein{.92\linewidth}
+\item During discharge, did the voltage sign reverse or keep its sign while its
+  magnitude fell? \writein{3cm}
+\item What evidence distinguishes “the capacitor is empty” from “the source is
+  disconnected”? \writein{5cm}
 \end{enumerate}
+\end{teloscard}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{What a capacitor is}{Two conductors separated by an insulator.
-  Charge piles up on one plate and is repelled from the other, and the energy
-  is stored in the electric field \emph{between} them --- the field you made
-  visible in Lesson 2.}
-\telosfact{Capacitance}{$Q = CV$. Bigger plates and a thinner gap store more
-  charge for the same voltage.}
-\telosfact{The time constant}{$\tau = RC$. In one time constant the capacitor
-  charges to about 63\% of the way, and after five it is essentially there. Your
-  three timings should have scaled exactly with the product $R \times C$.}
-\telosfact{Stored energy}{$E = \tfrac{1}{2}CV^2$. Note the \emph{square}: doubling
-  the voltage quadruples the stored energy. This is the single most important
-  equation in this course, and Lesson 11 is built on it.}
-\telosfact{A capacitor is not a battery}{It stores far less energy, but it can
-  release all of it in microseconds. A battery is a reservoir; a capacitor is a
-  bucket you can tip over instantly. A Tesla coil needs the tipping.}
-\end{telosfacts}
+\lessonsection{Diagnose only in State A}
 
-\begin{teloshazard}{The habit that matters later}
-The Leyden jar holds its charge after you stop rubbing, and a capacitor bank in
-Lesson 11 holds a lethal charge after the power is off. Practise the habit here,
-where the worst case is a sting: \textbf{before you touch a capacitor, short it
-out with something you are holding by an insulated handle.} Then short it again.
-Large capacitors can partially recharge themselves through dielectric absorption
-after being discharged once. This is exactly why the grounding stick exists.
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}LL@{}}
+\toprule
+What the meter shows & De-energized check & Correction before another run\\
+\midrule
+Negative sign & Probe placement and capacitor stripe & Red to labeled \(+\);
+preserve capacitor polarity.\\
+Near 0 V throughout charge & Switch path, clip seating, resistor bands &
+Restore the complete series path; never bypass \(R\).\\
+Starts above 0.10 V & Residual charge & Source out; resistor across \(C\);
+wait and verify.\\
+Curve too fast or slow & Actual \(R\) and printed \(C\) & Recalculate \(RC\)
+from the parts actually fitted.\\
+Trials disagree sharply & Timing call and loose leads & Secure with switch open;
+restart both trials.\\
+Warmth, swelling, odor, leak & No further test & Adult removes the holder and
+retires the capacitor.\\
+\bottomrule
+\end{tabularx}
+
+\begin{teloshazard}{Polarity and discharge check before every change}
+Open the switch. Remove the battery holder. Put the resistor across the
+capacitor. Watch \(V_C\) fall below 0.10 V. Read the meter sign and magnitude;
+never infer zero charge merely because the battery is absent.
 \end{teloshazard}
 
-\begin{telospanel}{The link to the coil}
-The tank capacitor is the shot the coil fires. The transformer charges it over
-several thousandths of a second; the spark gap dumps it in a few millionths.
-$E = \tfrac{1}{2}CV^2$ says how much energy is in that shot, and because power
-is energy divided by time, dumping a modest amount of energy in a very short
-time produces an enormous power --- which is the whole trick.
-\end{telospanel}
-\lowvoltagenote
+\begin{teloscard}{Final proof}
+\begin{enumerate}[itemsep=.08em,topsep=.08em]
+\item \textbf{Repeatability:} the two 10 k\(\Omega\) values at 10 s differed by
+  \writein{1cm} V.
+\item \textbf{Landmark:} mean \(V_C(10\,{\rm s})/V_S=\writein{1cm}\), compared
+  with 0.632.
+\item \textbf{Direction:} charge approached \writein{1cm}; discharge approached
+  \writein{1cm}.
+\item \textbf{Control:} changing only \(R\) multiplied the observed time by
+  \writein{1cm}, so the evidence \tickbox\ supports \quad\tickbox\ challenges
+  \(\tau=RC\).
+\item \textbf{Safe finish:} source removed; resistor fitted;
+  \(V_C=\writein{1cm}\) V \(<0.10\) V. Adult initials: \writein{1cm}.
+\end{enumerate}
+\end{teloscard}
+
+\endgroup
 \end{document}

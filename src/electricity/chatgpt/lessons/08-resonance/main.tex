@@ -1,6 +1,6 @@
 \def\doctitle{Lesson 8: Resonance}\def\docsubtitle{Frequency, exchange, and damping}\def\docstrap{mechanical evidence before electrical analogy}
-\def\materialslist{\item String pendulum \item Small mass \item Ruler \item Phone stopwatch used away from apparatus \item Optional low-voltage signal source operated by adult}
-\def\prediction{Will pushes at any timing build the same amplitude?}
+\def\materialslist{\item String pendulum and small mass \item Stand, ruler, masking-tape index \item Cardstock damping vane \item Stopwatch used away from apparatus \item Lab partner to call cycles}
+\def\prediction{Three equal pushes arrive early, at the same phase, or late. Rank the final amplitudes, sketch the response curve you expect, and state what result would change your mind.}
 \def\diagram{\begin{center}\vspace{-.35em}
 \begin{tikzpicture}[scale=.72,transform shape,x=1.45cm,y=1cm,line cap=round,line join=round,
   note/.style={font=\scriptsize,align=center},
@@ -48,7 +48,7 @@
       ..controls(1.53,.32)and(1.78,.12)..(2.28,.08);
     \node[font=\tiny,anchor=west] at (1.52,1.13){more damping};
   \end{scope}
-  % LC energy-exchange vignette
+  % LC energy-exchange vignette and phase snapshots
   \begin{scope}[shift={(2.55,1.26)}]
     \draw[line width=.55pt](-.15,.12)--(.18,.12);
     \draw[line width=.55pt](.18,-.18)--(.18,.42);
@@ -65,9 +65,108 @@
   \node[note,anchor=west] at (-4.55,1.83){PENDULUM RESONANCE: TIMING, RESPONSE, DAMPING};
 \end{tikzpicture}\vspace{-.65em}
 \end{center}}
-\def\procedure{\small\begin{enumerate}\item Measure ten free oscillations and calculate period.\item Apply equal small pushes once per cycle; count cycles needed to reach a marked amplitude.\item Repeat with pushes deliberately early or late.\item Add gentle damping with a paper vane and repeat.\end{enumerate}}
-\def\explanation{\small Resonance is a large response when drive timing matches a system's natural exchange and losses are modest. In an ideal LC circuit, energy alternates between the capacitor's electric field and inductor's magnetic field. Resistance dissipates energy and broadens/reduces the response. Resonance selects and amplifies response; it does not create energy.}
-\def\extension{\small Make a qualitative response curve: drive timing on the horizontal axis, achieved amplitude on the vertical.}
+\def\procedure{\small
+\begin{enumerate}
+\item \textbf{Find the natural timing.} Pull the mass aside by \(\qty{3}{cm}\); release without pushing. Time ten complete cycles from one same-direction crossing to the eleventh. Repeat three times. Calculate
+\[
+T=\frac{t_{10}}{10},\qquad f_0=\frac{1}{T}.
+\]
+Record all trials rather than choosing the neatest one. If the three periods differ by more than \(5\%\), inspect the pivot, release, and cycle count before continuing.
+
+\item \textbf{Make push size repeatable.} Put a tape index beside the lowest point. A partner gives one light sideways tap only as the mass crosses that index in the chosen direction. Rehearse with the pendulum still: same finger, same travel, no following-through.
+
+\item \textbf{Sweep the drive timing.} Reset to the same \(\qty{3}{cm}\) release before each run. Give ten equal taps at intervals
+\[
+0.70T,\quad 0.85T,\quad 1.00T,\quad 1.15T,\quad 1.30T.
+\]
+After tap 10, read maximum displacement against the ruler. Stop a run if the mass or string approaches the stand.
+\end{enumerate}
+\begin{center}
+\begin{tabular}{@{}c*{5}{>{\centering\arraybackslash}p{.12\linewidth}}@{}}
+\toprule
+tap interval & \(0.70T\) & \(0.85T\) & \(1.00T\) & \(1.15T\) & \(1.30T\)\\
+\midrule
+amplitude (cm) & & & & &\\
+observed phase & & & & &\\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{enumerate}[resume]
+\item \textbf{Measure damping.} At the best interval, remove the taps and count cycles for the amplitude to fall from \(A_0\) to about \(A_0/2\). Attach the cardstock vane and repeat. Then repeat the five timing points with the vane, using the same release and ten taps.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=.8cm,line cap=round,line join=round]
+  \begin{scope}[shift={(-4.45,0)}]
+    \draw[->,telos hair](0,0)--(2.7,0) node[right,font=\tiny]{cycle};
+    \draw[->,telos hair](0,-.1)--(0,1.65) node[above,font=\tiny]{amplitude};
+    \draw[telos line](.05,1.45)..controls(.55,1.17)and(1.30,.70)..(2.55,.28);
+    \draw[densely dashed,telos hair](0,.72)--(1.28,.72);
+    \draw[densely dashed,telos hair](1.28,0)--(1.28,.72);
+    \node[font=\tiny,anchor=north] at (1.28,0){half-amplitude time};
+    \node[font=\scriptsize\bfseries] at (1.30,-.72){FREE DECAY};
+  \end{scope}
+  \begin{scope}[shift={(-.65,0)}]
+    \draw[->,telos hair](0,0)--(3.1,0) node[right,font=\tiny]{tap interval};
+    \draw[->,telos hair](0,-.1)--(0,1.65) node[above,font=\tiny]{amplitude};
+    \draw[telos line](.10,.15)..controls(.82,.20)and(1.18,.48)..(1.52,1.48)
+      ..controls(1.88,.48)and(2.32,.20)..(2.95,.15);
+    \draw[telos line,densely dashed](.10,.12)..controls(.72,.22)and(1.08,.66)..(1.52,1.02)
+      ..controls(1.98,.66)and(2.32,.25)..(2.95,.12);
+    \node[font=\tiny,anchor=west] at (1.92,1.25){bare};
+    \node[font=\tiny,anchor=west] at (1.92,.83){vane};
+    \draw[densely dashed,telos hair](1.52,0)--(1.52,1.48);
+    \node[font=\scriptsize\bfseries] at (1.52,-.72){RESPONSE SWEEP};
+  \end{scope}
+  \begin{scope}[shift={(3.65,.04)}]
+    \draw[telos line](-.10,.10)--(.24,.10);
+    \draw[telos line](.24,-.25)--(.24,.45);
+    \draw[telos line](.52,-.25)--(.52,.45);
+    \draw[telos line](.52,.10)--(.82,.10);
+    \draw[telos line,decorate,decoration={coil,segment length=2.3mm,amplitude=1.7mm}]
+      (.82,.10)--(2.05,.10);
+    \draw[telos line](2.05,.10)--(2.34,.10)--(2.34,-.55)--(-.10,-.55)--(-.10,.10);
+    \draw[telos arrow](.18,.90)--(2.18,.90);
+    \draw[telos arrow](2.18,1.27)--(.18,1.27);
+    \node[font=\tiny] at (1.18,1.52){energy exchange};
+    \node[font=\tiny] at (.38,-.06){\(C\)};
+    \node[font=\tiny] at (1.43,-.10){\(L\)};
+    \node[font=\scriptsize\bfseries] at (1.15,-.72){ELECTRICAL ANALOGY};
+  \end{scope}
+\end{tikzpicture}
+\end{center}}
+\def\explanation{\small
+\textbf{Decide from the curve.} A resonance claim needs more than ``it got large.'' The response must rise toward one drive interval and fall away on both sides, with the peak near the independently measured \(T\). The taps supply energy; phase determines whether each tap adds to or opposes the motion. Resonance selects efficient transfer. It creates no energy.
+
+\medskip
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.22\linewidth}L@{}}
+\toprule
+Pattern & Diagnose before interpreting\\
+\midrule
+All points alike & Tap timing or tap strength was not controlled; widen the timing sweep.\\
+Peak shifted & Recalculate \(T\); check whether the string length or mass position changed.\\
+Jagged left/right points & More trials are needed; the ruler reading or phase call is inconsistent.\\
+Amplitude grows without bound & Stop: geometry changed, the stand is moving, or the safe-motion limit was missed.\\
+Vane peak lower and wider & Expected damping signature: more energy lost each cycle and poorer frequency selectivity.\\
+\bottomrule
+\end{tabularx}
+
+\medskip
+For an ideal electrical resonator,
+\[
+f_0=\frac{1}{2\pi\sqrt{LC}}.
+\]
+Capacitor electric-field energy and inductor magnetic-field energy trade back and forth; resistance dissipates part of that energy on every cycle. This is an analogy supported by the shared timing, response-peak, and damping patterns—not proof that a pendulum contains an electrical circuit.}
+\def\extension{\small
+\textbf{Final proof.} On one graph, plot amplitude against \(t_{\rm tap}/T\) for the bare pendulum and vane. Mark \(1.00\). Then answer:
+\begin{enumerate}
+\item Does each curve have an interior maximum rather than merely increasing from left to right?
+\item Is the bare peak within one tested timing step of \(1.00T\)?
+\item Does the vane shorten the half-amplitude decay time and reduce or broaden the peak?
+\item Which observation rules out ``all repeated pushes work equally well''?
+\item What measurement uncertainty could move your conclusion?
+\end{enumerate}
+Accept the resonance claim only if the independent period, two-sided response peak, and damping change agree. Otherwise report ``not yet demonstrated'' and name the next controlled repeat.}
 \AtBeginDocument{\renewenvironment{recordbox}{\begin{teloscard}{Evidence record}\footnotesize
 \begin{tabularx}{\linewidth}{@{}p{.12\linewidth}Xp{.12\linewidth}X@{}}
 Prediction & \rule{\linewidth}{.3pt} & One change & \rule{\linewidth}{.3pt}\\[.9em]

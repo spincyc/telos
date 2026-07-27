@@ -1,93 +1,271 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{Demo: Kelvin Water Dropper}{Make sparks out of falling water and nothing else}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{Demo: Kelvin Water Dropper}{A no-spark test of electrostatic feedback}{2026-07-27}
 \begin{document}
-\telosmasthead[No battery, no power supply --- and it makes a visible spark]
-\lessonhead{Demo B}{45 minutes to build}{after Lesson 1 --- no external power at all}
+\telosmasthead[Adult-built and adult-operated --- measure the rise, never wait for a spark]
+\lessonhead{Demo B}{verification demonstration}{after Lesson 1 --- gravitational input only}
+
+\begin{teloshazard}{This is not a learner construction}
+A Kelvin dropper can accumulate high electrostatic voltage without a battery.
+The learner predicts, watches from the boundary, and records remote readings.
+An adult builds and operates the apparatus. Stop the water before approaching;
+use only the installed high-resistance discharge path; verify zero before
+touching. A snap, spark, hair movement, or sensation is a failed run, not a
+result.
+\end{teloshazard}
 
 \begin{materials}
-\item Two metal cans, tops and bottoms removed (the rings)
-\item Two more cans as collectors, or two plastic cups lined with foil
-\item A plastic bottle or bucket with two small holes for drippers
-\item Insulating supports: plastic cups, dry wood, foam
-\item Bare wire for the cross-connections
-\item Water, ideally slightly salty
+\item Adult-built two-stream dropper on a rigid insulating frame
+\item Two induction rings and two deep metal collectors
+\item Matched plastic nozzles and a common reservoir
+\item Spill tray wider than the entire apparatus
+\item Electroscope with a fixed millimetre scale, readable at a distance
+\item Stopwatch, two measuring cups, ruler, towels, and run sheet
+\item Permanently arranged high-resistance discharge lead
 \end{materials}
 
+\begin{predict}
+Choose your evidence before the water runs. Would charge separation be better
+shown by one sudden leaf movement, by a steadily increasing deflection, or by a
+spark? Will the apparatus always choose the same polarity? What must be measured
+to rule out ``one side simply received more water''?
+\end{predict}
+
 \noindent
-\begin{minipage}[t]{0.46\linewidth}
+\begin{minipage}[t]{0.64\linewidth}
 \vspace{0pt}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  % reservoir
-  \draw[partheavy,fill=telosfill] (0.9,5.2) rectangle (3.5,6.1);
-  \node[partsmall] at (2.2,5.65) {water};
-  \draw[partheavy] (1.4,5.2) -- (1.4,4.95);
-  \draw[partheavy] (3.0,5.2) -- (3.0,4.95);
-  % inducing rings
-  \draw[partheavy] (0.85,4.3) rectangle (1.95,4.75);
-  \draw[partheavy] (2.45,4.3) rectangle (3.55,4.75);
-  \node[partsmall,anchor=east] at (0.78,4.52) {ring A};
-  \node[partsmall,anchor=west] at (3.62,4.52) {ring B};
-  % drops
-  \foreach \y in {4.15,3.85,3.55,3.25,2.95} {
-    \fill[telosink] (1.4,\y) ellipse (0.055 and 0.08);
-    \fill[telosink] (3.0,\y) ellipse (0.055 and 0.08);}
-  % collectors
-  \draw[partheavy,fill=telospaper] (0.75,2.05) rectangle (2.05,2.75);
-  \draw[partheavy,fill=telospaper] (2.35,2.05) rectangle (3.65,2.75);
-  \node[partsmall] at (1.4,2.4) {can A};
-  \node[partsmall] at (3.0,2.4) {can B};
-  % insulating stands
-  \foreach \x in {1.4,3.0} {
-    \draw[partdetail] (\x-0.35,1.55) rectangle (\x+0.35,2.05);
-    \node[partsmall] at (\x,1.8) {insul.};}
-  % the crossed connections -- this is the whole trick
-  \draw[wirered] (2.05,2.62) .. controls (2.9,3.3) and (3.3,3.9) .. (3.55,4.45);
-  \draw[wireblk] (2.35,2.62) .. controls (1.5,3.3) and (1.1,3.9) .. (0.85,4.45);
-  \node[partsmall,anchor=west,align=left] at (4.0,3.6) {\emph{crossed}:\\A feeds ring B,\\B feeds ring A};
-  % spark gap between the cans
-  \draw[partheavy] (1.4,1.55) -- (1.4,1.1) -- (1.95,1.1);
-  \draw[partheavy] (3.0,1.55) -- (3.0,1.1) -- (2.45,1.1);
-  \fill[telosink] (1.95,1.1) circle (0.07);
-  \fill[telosink] (2.45,1.1) circle (0.07);
-  \draw[telos hair] (2.03,1.16) -- (2.2,1.02) -- (2.37,1.16);
-  \node[partsmall,anchor=north] at (2.2,0.9) {spark gap};
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  dl/.style={font=\fontsize{6.2}{7}\selectfont,align=center},
+  lead/.style={draw=telosmute,line width=.35pt,-{Stealth[length=1.2mm]}}]
+  % Rigid frame and reservoir.
+  \draw[partheavy] (-2.65,-1.72)--(-2.65,2.45);
+  \draw[partheavy] (2.65,-1.72)--(2.65,2.45);
+  \draw[partheavy] (-2.95,-1.72)--(-2.35,-1.72);
+  \draw[partheavy] (2.35,-1.72)--(2.95,-1.72);
+  \draw[partheavy,fill=telosfill,rounded corners=2pt] (-2.45,1.78) rectangle (2.45,2.35);
+  \draw[partdetail] (-2.28,2.04)
+    .. controls (-1.35,2.15) and (-.42,1.96) .. (.25,2.06)
+    .. controls (1.05,2.16) and (1.73,1.98) .. (2.28,2.06);
+  \node[dl] at (0,2.21) {common reservoir};
+  % Nozzles, break regions, rings.
+  \foreach \x in {-1.45,1.45}{
+    \draw[partheavy] (\x-.13,1.78)--(\x-.13,1.44)--(\x-.06,1.31);
+    \draw[partheavy] (\x+.13,1.78)--(\x+.13,1.44)--(\x+.06,1.31);
+    \draw[partdetail] (\x-.06,1.31)--(\x+.06,1.31);
+    \draw[partheavy] (\x,.62) ellipse (.48 and .16);
+    \draw[partdetail] (\x,.62) ellipse (.34 and .10);
+    \draw[partdetail] (\x,1.27)--(\x,.82);
+    \foreach \y/\r in {.70/.037,.48/.042,.24/.046,.00/.050}
+      \fill[telosink] (\x,\y) circle (\r);
+  }
+  % Collectors as open cans.
+  \foreach \x/\mark in {-1.45/A,1.45/B}{
+    \draw[partheavy,fill=telospaper] (\x-.58,-1.30)--(\x-.50,-.18)
+      arc[start angle=180,end angle=360,x radius=.50,y radius=.13]
+      --(\x+.58,-1.30);
+    \draw[partheavy] (\x,-.18) ellipse (.50 and .13);
+    \draw[partheavy] (\x,-1.30) arc[start angle=180,end angle=360,x radius=.58,y radius=.15];
+    \draw[partdetail,dashed] (\x+.58,-1.30) arc[start angle=0,end angle=180,x radius=.58,y radius=.15];
+    \node[dl] at (\x,-.76) {collector \mark};
+  }
+  % Cross-connect behind the streams.
+  \draw[wirethick] (-2.02,-1.02)--(-2.35,-1.02)--(-2.35,1.04)--(.98,1.04)--(.98,.62);
+  \draw[wirethick] (2.02,-1.02)--(2.35,-1.02)--(2.35,1.27)--(-.98,1.27)--(-.98,.62);
+  \foreach \p in {(-2.02,-1.02),(2.02,-1.02),(.98,.62),(-.98,.62)}
+    \fill[telosink] \p circle (.045);
+  % Tray.
+  \draw[partheavy] (-3.05,-1.48)--(-2.82,-1.70)--(2.82,-1.70)--(3.05,-1.48);
+  \draw[partdetail] (-2.82,-1.59)--(2.82,-1.59);
+  % Labels.
+  \draw[lead] (-.92,.62)--(-.40,.30);
+  \node[dl,anchor=west] at (-.36,.30) {induction ring};
+  \node[dl,fill=telospaper,inner sep=1pt] at (0,1.16) {cross-connected};
+  \node[dl,align=center] at (0,-2.02)
+    {A collector biases the opposite ring.\\
+     All water and all conductors remain inside the tray.};
 \end{tikzpicture}
 \end{center}
 \end{minipage}%
 \hfill
-\begin{minipage}[t]{0.51\linewidth}
+\begin{minipage}[t]{0.33\linewidth}
 \vspace{0pt}
-\begin{predict}
-Water is not charged. There is no battery anywhere in this apparatus. So where
-could the energy for a spark possibly come from? Commit to an answer, then look
-at the height the water falls from.
-\end{predict}
 \begin{telosfacts}[0.22]
-\telosfact{The seed}{One side starts with a tiny random charge imbalance --- there is always some.}
-\telosfact{Induction does the rest}{Say can A is slightly negative. It is wired to ring \emph{B}, so ring B is slightly negative, which repels electrons from the drops forming inside it. Those drops fall slightly \textbf{positive} into can B. Can B is wired to ring A, making it positive, so drops through ring A fall \textbf{negative} into can A --- making A more negative than it started.}
-\telosfact{Runaway}{Each side makes the other side stronger. The charge grows exponentially until the air between the cans breaks down. This is positive feedback made visible.}
-\telosfact{Where the energy comes from}{Gravity. Each drop is pulled away from a can that is attracting it, so falling water does work against the electric field. It is a generator whose fuel is height.}
-\telosfact{The voltage}{Thousands of volts, easily --- a visible, audible spark. The current is microscopic, so the shock is a sharp sting at worst.}
+\telosfact{Match}{Equalize water head, flows, ring positions,
+and dry supports. Otherwise geometry can mimic charge.}
+\telosfact{Breakup is critical}{Each jet must separate into drops while it is
+inside its ring. A continuous water path carries charge back toward the
+reservoir.}
+\telosfact{No assigned signs}{A minute initial imbalance selects the polarities.
+The labels A and B identify sides, not positive and negative terminals.}
+\telosfact{The output is a trace}{Electroscope deflection versus time is the
+evidence. Spark distance is neither required nor permitted.}
 \end{telosfacts}
 \end{minipage}
 
-\lessonsection{Making it actually work}
-\begin{telosfacts}[0.22]
-\telosfact{Insulate everything}{This is the whole game. The cans must sit on genuinely dry insulators, and no wire may touch the frame. Charge leaks away faster than it is generated otherwise, and nothing happens.}
-\telosfact{Dry day}{Humid air conducts. On a muggy August afternoon this will not work at all --- which is itself the lesson from Lesson 1.}
-\telosfact{Cross the wires}{Can A to ring B, can B to ring A. Wire them straight across instead and it will never start. Get somebody to check this before you troubleshoot anything else.}
-\telosfact{Drops, not a stream}{The stream must break into separate drops \emph{inside} the ring. A continuous jet conducts the charge straight back and defeats it.}
-\telosfact{Be patient}{It can take thirty seconds to a couple of minutes to build to the first spark. Then it fires repeatedly.}
-\end{telosfacts}
+\needspace{5cm}
+\lessonsection{Three geometry states}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
+  statecap/.style={font=\scriptsize\bfseries,align=center},
+  note/.style={font=\scriptsize,align=center}]
+  \node[statecap] at (-3,1.25) {JET THROUGH\\RING};
+  \node[statecap] at (0,1.25) {BREAK IN\\RING};
+  \node[statecap] at (3,1.25) {BREAK BELOW\\RING};
+  \foreach \x in {-3,0,3}{
+    \draw[partheavy] (\x-.14,.96)--(\x-.14,.72);
+    \draw[partheavy] (\x+.14,.96)--(\x+.14,.72);
+    \draw[partdetail] (\x-.14,.72)--(\x+.14,.72);
+    \draw[partheavy] (\x,0) ellipse (.55 and .17);
+  }
+  \draw[partdetail] (-3,.70)--(-3,-.38);
+  \foreach \y in {-.56,-.78}\fill[telosink] (-3,\y) circle (.045);
+  \draw[partdetail] (0,.70)--(0,.19);
+  \foreach \y in {.04,-.18,-.41,-.66}\fill[telosink] (0,\y) circle (.045);
+  \draw[partdetail] (3,.70)--(3,-.36);
+  \foreach \y in {-.52,-.73}\fill[telosink] (3,\y) circle (.045);
+  \node[note] at (-3,-1.02) {\textbf{REJECT}\\path remains continuous};
+  \node[note] at (0,-1.02) {\textbf{ACCEPT}\\drops isolate in the ring};
+  \node[note] at (3,-1.02) {\textbf{REJECT}\\lower the flow first};
+\end{tikzpicture}
+\end{center}
 
-\begin{telospanel}{Why this is the best demonstration in the course}
-It uses no electricity to make electricity. A jug of water on a shelf produces
-visible sparks, and the only inputs are gravity and one accidental electron.
-Lord Kelvin built this in 1867. It teaches induction, insulation, positive
-feedback and energy conservation in one object --- and it is genuinely startling
-the first time it cracks.
+\lessonsection{Adult preflight: water off}
+\begin{enumerate}
+\item Mark the observation boundary. Confirm the learner can read the
+electroscope and stopwatch without crossing it.
+\item Push gently on the frame, reservoir, rings, and collectors. Nothing may
+rock, slide, or sag. Confirm the tray contains every plausible drip.
+\item Trace the connections with a finger held clear: collector A goes to ring
+B; collector B goes to ring A. No conductor may approach the other side.
+\item Inspect the dry insulators and dry surroundings. Confirm there is no
+nearby flame, solvent vapour, charged apparatus, open mains equipment, or
+thunderstorm activity.
+\item Demonstrate that the electroscope rests at zero and responds to its safe
+check source. Set a conservative stop line well below its scale limit.
+\item Inspect the fixed high-resistance discharge path. State the stop order
+aloud: \textbf{water off; last drop landed; discharge; verify zero; approach.}
+\end{enumerate}
+
+\lessonsection{First prove the water is matched}
+Keep charge from accumulating using the apparatus's designed discharged state.
+Run both streams for exactly 10 seconds into separate measuring cups. Count
+drops and measure volume. Repeat once. Adjust flow only with water stopped.
+Both break points must remain inside their rings and every drop must enter its
+collector.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Control run & A drops/10 s & B drops/10 s & A mL/10 s & B mL/10 s\\
+\midrule
+1 & \rule{1.45cm}{.3pt} & \rule{1.45cm}{.3pt} &
+\rule{1.35cm}{.3pt} & \rule{1.35cm}{.3pt}\\
+2 & \rule{1.45cm}{.3pt} & \rule{1.45cm}{.3pt} &
+\rule{1.35cm}{.3pt} & \rule{1.35cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Ask before continuing: Are the two sides close enough that a
+deflection cannot reasonably be blamed on grossly unequal delivery? Did either
+break point move during the count? What number, rather than an impression,
+supports the answer?
+
+\lessonsection{Measure the feedback}
+With water off, discharge through the installed resistor and confirm zero.
+Park the lead. Start both streams and the stopwatch together. From behind the
+boundary, record leaf separation in millimetres every five seconds. End the run
+at 20 seconds or at the stop line, whichever occurs first. Stop and discharge
+in the stated order. Repeat from zero; never ``continue'' the first run.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Electroscope separation & 0 s & 5 s & 10 s & 15 s & 20 s\\
+\midrule
+run 1, mm & \rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt} &
+\rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt}\\
+run 2, mm & \rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt} &
+\rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt} & \rule{1.1cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\lessonsection{Read the evidence}
+A credible result has a zero baseline, a gradual rise during both isolated
+runs, and a return to zero after each controlled discharge. One twitch is not
+a trend. A large final reading without intermediate measurements is not a
+feedback trace.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
+  st/.style={font=\scriptsize\bfseries},
+  sn/.style={font=\scriptsize,align=center}]
+  \foreach \x/\head/\foot in {-3/{BASELINE}/{water off; zero verified},
+    0/{ACCUMULATING}/{water on; leaves opening},
+    3/{SAFE FINISH}/{water off; zero verified}}{
+    \draw[partheavy,rounded corners=2pt] (\x-.62,-.38) rectangle (\x+.62,.86);
+    \draw[partdetail] (\x,.67)--(\x,.45);
+    \fill[telosink] (\x,.67) circle (.03);
+    \draw[partdetail] (\x-.34,-.18)--(\x+.34,-.18);
+    \node[st] at (\x,1.10) {\head};
+    \node[sn] at (\x,-.66) {\foot};
+  }
+  \draw[partheavy] (-3,.45)--(-3.05,-.06);
+  \draw[partheavy] (-3,.45)--(-2.95,-.06);
+  \draw[partheavy] (0,.45)--(-.27,-.04);
+  \draw[partheavy] (0,.45)--(.27,-.04);
+  \draw[partdetail] (.40,-.12)--(.40,.44);
+  \foreach \y in {-.08,.02,...,.42}\draw[partdetail] (.40,\y)--(.49,\y);
+  \draw[partheavy] (3,.45)--(2.95,-.06);
+  \draw[partheavy] (3,.45)--(3.05,-.06);
+  \draw[telos arrow] (-2.15,.23)--(-.85,.23);
+  \draw[telos arrow] (.85,.23)--(2.15,.23);
+  \node[sn] at (-1.50,.45) {start};
+  \node[sn] at (1.50,.45) {stop, discharge};
+\end{tikzpicture}
+\end{center}
+
+\noindent\textbf{Questions for the record.} Did both traces rise monotonically?
+Did one begin later? Could wet insulation or an off-centre stream explain that
+difference? Why does the return to zero belong in the evidence rather than only
+in the safety procedure? Where did the electrical energy come from?
+
+\lessonsection{One controlled change}
+After a complete zero verification, reduce \emph{both} drip rates while keeping
+both breakup points within their rings. Repeat the same 20-second measurement.
+Compare the change in millimetres per five seconds. Do not compare maximum
+voltage and do not add, narrow, or test a spark gap.
+
+\lessonsection{Troubleshoot only in the safe state}
+\begin{tabularx}{\linewidth}{@{}p{0.29\linewidth}L@{}}
+\toprule
+\textbf{Observation} & \textbf{After water off, discharge, and verified zero}\\
+\midrule
+No repeatable movement & Check the electroscope with its safe test; trace both
+cross-connections; dry the tray and every insulator.\\
+Only one stream forms drops & Match the flow and reposition its breakup point
+inside the ring. Never move a live ring.\\
+Drops touch a ring & Re-centre the nozzle and ring; push-test the frame again.\\
+Fast jump toward stop line & End the run, increase conductor separation, and
+choose a lower stop mark before deciding whether to repeat.\\
+First run works, second is flat & Restore the measured water control; look for
+wet supports, residual charge, and a shifted stream.\\
+Any snap, spark, or sensation & Demonstration failed. Discharge, document the
+event, and do not run again that session.\\
+\bottomrule
+\end{tabularx}
+
+\begin{telospanel}{Final proof --- all conditions required}
+Mark the demonstration \textbf{verified} only when two runs start at indicated
+zero, show several increasing millimetre readings before the conservative stop
+line, keep both breakup points inside their rings, lose no water outside the
+collectors, produce no spark or snap, and finish at indicated zero after the
+installed high-resistance discharge. If any condition is missing, record
+\textbf{not verified}. A spectacular event never repairs missing evidence.
 \end{telospanel}
-\lowvoltagenote
+
 \end{document}

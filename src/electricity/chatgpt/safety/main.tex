@@ -1,7 +1,7 @@
 \def\doctitle{Safety}
 \def\docsubtitle{Roles, boundaries, and the stop-before-touch workflow}
 \def\docstrap{post this at the bench}
-\def\materialslist{\item This guide \item Safety glasses \item Parts tray \item Current-limited battery holder with switch}
+\def\materialslist{\item This guide and a pencil \item Safety glasses \item Nonmetal parts tray \item Current-limited battery holder with switch \item Multimeter with intact insulated leads \item The exact lesson parts---nothing extra}
 \def\prediction{An adult is present. Does that make work on an opened mains appliance acceptable? Write the reason, not just yes or no.}
 \def\diagram{\begin{center}
 \begin{tikzpicture}[x=.82cm,y=.82cm,line cap=round,line join=round]
@@ -66,11 +66,132 @@
 \par\vspace{-0.2em}
 {\footnotesize\itshape Adult supervision controls the battery task; it never grants qualification beyond the stop line.}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Work dry, uncluttered, and away from jewelry, loose metal, drinks, and damaged cells.
-\item Assemble with power disconnected. Adult checks source, polarity, meter jacks, bare conductors, and likely short paths.
-\item Energize only for the stated interval. One hand owns the switch. Disconnect before moving a lead.
-\item Stop immediately for heat, swelling, leakage, odor, smoke, pain, damaged insulation, or behavior not predicted.
-\item Count small magnets before and after; store them inaccessible to children. Never use a lithium cell in a direct-short demonstration.\end{enumerate}}
-\def\explanation{Voltage alone is not a safety verdict. Current path and duration affect shock; available current and stored energy affect heating, arcs, and fire. OSHA's qualified-person distinction is a useful boundary even though this is not a workplace course. The course therefore excludes mains and exposed high voltage rather than teaching a learner to manage them.}
-\def\extension{Run a no-power rehearsal. The learner points to the disconnect, names every stop condition, and demonstrates where each meter lead goes. If the rehearsal is uncertain, do not energize.}
+\def\procedure{\begingroup\small
+\subsection{1. Classify the proposed work}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  case/.style={draw=black,line width=.55pt,rounded corners=2pt,minimum width=3.55cm,
+    minimum height=2.15cm,align=center,font=\scriptsize},
+  verdict/.style={font=\scriptsize\bfseries,align=center}]
+\node[case] (a) at (-4.05,0) {};
+\draw[telos line] (-5.35,-.28) rectangle (-4.55,.42);
+\draw[telos hair] (-5.17,-.14) rectangle (-4.97,.28);
+\draw[telos hair] (-4.91,-.14) rectangle (-4.71,.28);
+\draw[telos line] (-4.55,.06)--(-4.12,.06)--(-3.93,.31);
+\draw[telos line] (-3.93,.31)--(-3.58,.31);
+\node[telos label] at (-4.48,.73) {holder, switch, lesson load};
+\node[verdict] at (-4.05,-.72) {IN BOUNDS\\assemble with power off};
+
+\node[case] (b) at (-.05,0) {};
+\draw[telos line] (-1.22,-.32) rectangle (-.32,.42);
+\node[font=\tiny] at (-.77,.05) {PACK};
+\draw[telos line] (.02,.44)--(.92,-.46);
+\draw[telos line] (.02,-.46)--(.92,.44);
+\node[telos label] at (-.05,.73) {large or unknown battery pack};
+\node[verdict] at (-.05,-.72) {OUT OF BOUNDS\\do not connect or test};
+
+\node[case] (c) at (3.95,0) {};
+\draw[telos line] (2.72,-.38) rectangle (3.72,.42);
+\draw[telos hair] (2.89,-.2) circle (.11);
+\draw[telos hair] (3.18,-.2) rectangle (3.53,.22);
+\draw[telos line] (3.85,.48)--(4.75,-.48);
+\draw[telos line] (3.85,-.48)--(4.75,.48);
+\node[telos label] at (3.95,.73) {opened or mains-powered item};
+\node[verdict] at (3.95,-.72) {OUT OF BOUNDS\\qualified-person work only};
+\end{tikzpicture}
+\end{center}
+\begin{enumerate}
+\item Read the whole lesson. Name the source, maximum voltage, load, expected observation, energizing time, and disconnect.
+\item Confirm the learner task uses only isolated battery power at \(12\) V DC or less. Unknown sources, mains, opened appliances, large packs, charged capacitors, ignition coils, sparks, and exposed high voltage fail this gate.
+\item Ask: \emph{Could an adult's presence change an out-of-bounds source into a learner source? Why?} If the answer is not an immediate ``no,'' stop and review the boundary.
+\end{enumerate}
+
+\subsection{2. Preflight together}
+\begin{teloscard}{Adult reads; learner points}
+\begin{tabularx}{\linewidth}{@{}p{.27\linewidth}L@{}}
+\textbf{Source} & Correct holder and cells; no dents, heat, swelling, corrosion, leakage, mixed cell types, or loose contacts.\\
+\textbf{Work area} & Dry, bright, uncluttered; glasses on; drinks, jewelry, loose metal, and small children away.\\
+\textbf{Conductors} & Insulation intact; only intended ends bare; no strand can bridge battery terminals.\\
+\textbf{Load} & Correct part and rating; LED has its series resistor; coil and resistor are not visibly damaged.\\
+\textbf{Control} & Switch begins open; one named person owns it; disconnect is reachable without crossing the circuit.\\
+\textbf{Timing} & Trial length and cool-down are spoken aloud; a timer is ready for timed trials.\\
+\textbf{Prediction} & Expected sign, direction, range, or motion is written before power is applied.
+\end{tabularx}
+\end{teloscard}
+\textbf{Intermediate question.} A wire strand is close to, but not touching, the other terminal. Is ``probably clear'' sufficient? Explain what must change before the adult can approve the setup.
+
+\subsection{3. Rehearse the meter with no power}
+\begin{enumerate}
+\item Inspect the case and lead insulation. A cracked case, loose probe tip, exposed conductor, or damaged lead means: label it, remove it from the bench, and do not improvise a repair.
+\item Black lead goes to \textsc{com}. Red lead goes to the jack named by the lesson. Select the quantity and a safe range before connecting.
+\item For voltage, point to the two nodes the probes compare. The voltmeter goes \emph{across} those nodes.
+\item For current, point to the single break where the meter becomes part of the path. Never place a current-configured meter directly across a source.
+\item Move the red lead back from the current jack after the measurement. Say aloud: ``jack, mode, range, placement'' before each reading.
+\end{enumerate}
+\begin{telospanel}{Meter rehearsal question}
+The meter display says zero. Name three possibilities that do not justify changing leads while energized: a real zero, an open switch or connection, and the wrong setup. What is the first action? \textbf{Open the switch and disconnect the source.}
+\end{telospanel}
+
+\subsection{4. Energize briefly and observe}
+\begin{enumerate}
+\item Adult gives the final check; the learner keeps hands clear. The switch owner announces ``power on'' and starts the stated interval.
+\item Observe only what the lesson asks for. Do not squeeze, reposition, substitute, or add a component while energized.
+\item Open the switch and disconnect before moving a probe, lead, resistor, coil, core, or magnet. Touch only after the adult has checked for heating.
+\item Record what happened, including a null result. A surprising result is evidence to investigate deenergized, not permission to increase voltage.
+\end{enumerate}
+
+\subsection{5. Stop decisions are one-way}
+\begin{teloshazard}{Stop, disconnect, isolate}
+Stop immediately for unexpected warmth, a hot cell or lead, swelling, leakage, sharp odor, smoke, discoloration, buzzing or sparking, pain or tingling, damaged insulation, a dropped metal object, an unstable reading, or behavior outside the prediction. Do not ``try once more.'' Open the switch if safe, disconnect without touching the suspect part, keep people away, and tell the adult.
+\end{teloshazard}
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}p{.33\linewidth}L@{}}
+\toprule
+\textbf{What happens} & \textbf{Immediate decision} & \textbf{Before any future trial}\\
+\midrule
+Resistor warms unexpectedly & Switch open; disconnect; hands off & Verify value, wiring, source, and time; replace damaged parts\\
+Meter reads overload or jumps & Disconnect before touching probes & Recheck jack, mode, range, placement, and expected value\\
+Nothing happens & Disconnect; preserve the layout & Compare point by point with the drawing; never raise voltage to force a result\\
+Cell dents, leaks, swells, smells, or heats & Clear the area; adult isolates it & Follow cell-maker/local disposal guidance; never reuse or recharge it\\
+Wire strand or tool bridges terminals & Disconnect if safe; do not grab hot metal & Replace damaged source, leads, or switch; rebuild from zero\\
+Magnet, clip, or part is missing & Stop the activity and count again & Find it before anyone leaves; store magnets inaccessible to children\\
+\bottomrule
+\end{tabularx}
+\endgroup
+}
+\def\explanation{
+Voltage alone is not a safety verdict. Current path and duration affect shock; available current and stored energy affect heating, arcs, and fire. A small source can still heat a shorted wire or cell. A source that appears ``off'' may retain stored energy, which is why charged power capacitors remain outside learner work.
+
+Adult supervision and electrical qualification answer different questions. The adult controls the bounded lesson, materials, timing, and stop decision. That role does not authorize mains work, an opened appliance, a large pack, or exposed high voltage. OSHA's qualified-person distinction is a useful boundary even though this is not a workplace course. This course excludes those hazards instead of teaching a learner to manage them.
+
+\begin{teloscard}{Explain each decision before continuing}
+\begin{enumerate}
+\item A \(9\) V battery is below \(12\) V. May it be shorted with a wire because the voltage is in bounds? Explain using available current and heating.
+\item A resistor becomes warmer on each five-second trial. Which variable has changed even if the wiring has not?
+\item An adult offers to hold probes inside an unplugged microwave oven. Which boundary applies, and why does unplugged not make an opened appliance a learner task?
+\item The predicted current is \(20\) mA, but the meter is configured for current and its probes are across the battery. What must happen before power is applied?
+\end{enumerate}
+\end{teloscard}}
+\def\extension{\clearpage
+\subsection{No-power verification drill}
+Use an intentionally deenergized, in-bounds lesson circuit. The learner points and speaks; the adult checks without supplying answers.
+\begin{enumerate}
+\item Point to the source label and state its voltage. Point to the switch, load, and physical disconnect.
+\item Trace the intended current path without touching bare metal. Identify the most likely accidental short path.
+\item Demonstrate voltage-meter placement, then current-meter placement, with the battery holder empty. Restore the red lead to the voltage/resistance jack.
+\item Name five stop signs and show where hands go when ``stop'' is called.
+\item Adult changes one harmless fault while power remains absent: opens a connection, reverses an LED, selects the wrong meter mode, or places the red lead in the wrong jack. Learner must find it by the checklist, not trial power.
+\end{enumerate}
+\begin{gate}{Verification checklist---all boxes required}
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} In-bounds isolated source \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Parts match lesson \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Cells and insulation intact \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Switch open \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Likely shorts removed \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Meter jack/mode/range/placement correct \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Prediction recorded \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Trial time named \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Disconnect reachable \quad
+\fbox{\rule{0pt}{.7ex}\rule{.7ex}{0pt}} Stop signs named
+\end{gate}
+If any box is uncertain, leave the source disconnected. Count small magnets before and after and store them inaccessible to children. Never use a lithium cell in a direct-short demonstration.}
 \input{electricity/chatgpt/shared/lesson-template.tex}

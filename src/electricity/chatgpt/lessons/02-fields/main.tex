@@ -1,60 +1,233 @@
-\def\doctitle{Lesson 2: Fields}\def\docsubtitle{A map of force, not a visible substance}\def\docstrap{infer a field from repeated tests}
-\def\materialslist{\item Tape charge source \item Thread-suspended pith or foil ball \item Ruler \item Graph paper}
-\def\prediction{As separation doubles, should the interaction strengthen, weaken, or remain unchanged?}
-\def\diagram{\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
-  \tikzset{
-    graphite/.style={draw=black!72,line width=.42pt},
-    object/.style={draw=black!78,line width=.72pt},
-    ghost/.style={draw=black!32,line width=.34pt,dash pattern=on 1.2pt off 1.4pt},
-    measure/.style={draw=black!60,line width=.38pt},
-    note/.style={font=\footnotesize,align=center}
-  }
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 2: Fields}
+  {A map of force, built from repeated tests}{2026-07-27}
 
-  \node[font=\bfseries\small] at (-3.42,1.68) {A. Measure a deflection};
-  \draw[object] (-4.92,1.42)--(-2.02,1.42);
-  \draw[object] (-3.47,1.42)--(-3.47,1.18);
-  \draw[ghost] (-3.47,1.18)--(-3.47,-.58);
-  \draw[object] (-3.47,1.18)--(-2.97,-.51);
-  \fill[black!65] (-2.97,-.51) circle (.13);
-  \draw[ghost] (-3.47,-.58) circle (.13);
-  \draw[->,graphite] (-3.38,-.70) arc (-92:-63:.86);
-  \node[font=\scriptsize] at (-3.00,-.98) {deflection};
+\newcommand{\fieldapparatus}{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  graphite/.style={draw=black!72,line width=.42pt},
+  object/.style={draw=black!82,line width=.72pt},
+  ghost/.style={draw=black!34,line width=.34pt,dash pattern=on 1.2pt off 1.4pt},
+  measure/.style={draw=black!60,line width=.38pt},
+  note/.style={font=\scriptsize,align=center}]
+  \node[font=\bfseries\small] at (-3.35,1.78) {1. Establish a repeatable probe};
+  \draw[object] (-4.90,1.48)--(-2.08,1.48);
+  \draw[object] (-3.49,1.48)--(-3.49,1.22);
+  \draw[ghost] (-3.49,1.22)--(-3.49,-.56);
+  \draw[object] (-3.49,1.22)--(-2.96,-.48);
+  \fill[black!68] (-2.96,-.48) circle (.13);
+  \draw[ghost] (-3.49,-.56) circle (.13);
+  \draw[->,graphite] (-3.39,-.72) arc (-92:-62:.90);
+  \node[note] at (-3.02,-1.00) {deflection \(d\)};
+  \draw[object,rounded corners=.08cm] (-1.52,-.83) rectangle (-1.00,.18);
+  \foreach \y in {-.66,-.43,-.20,.03}\draw[object] (-1.00,\y)--(-.68,\y);
+  \node[font=\scriptsize] at (-1.26,-.32) {\(-\)};
+  \draw[<->,measure] (-2.80,.35)--(-1.22,.35);
+  \node[font=\scriptsize,fill=white,inner sep=1pt] at (-2.01,.35) {separation \(r\)};
+  \draw[measure] (-4.76,-1.31)--(-.68,-1.31);
+  \foreach \x/\lab in {-4.54/0,-3.74/1,-2.94/2,-2.14/3,-1.34/4}{
+    \draw[measure] (\x,-1.38)--(\x,-1.24);
+    \node[font=\tiny] at (\x,-1.51) {\lab};}
+  \node[font=\tiny] at (-.88,-1.51) {cm};
 
-  \draw[object,rounded corners=.08cm] (-1.50,-.82) rectangle (-.98,.16);
-  \foreach \y in {-.67,-.45,-.23,-.01}
-    \draw[object] (-.98,\y)--(-.67,\y);
-  \node[font=\scriptsize] at (-1.23,-.33) {$-$};
-  \draw[<->,measure] (-2.82,.30)--(-1.18,.30);
-  \node[font=\scriptsize,fill=white,inner sep=1pt] at (-2.00,.30) {distance $r$};
-  \draw[measure] (-4.80,-1.32)--(-.67,-1.32);
-  \foreach \x/\lab in {-4.55/0,-3.75/1,-2.95/2,-2.15/3,-1.35/4}
-    {\draw[measure] (\x,-1.38)--(\x,-1.25);
-     \node[font=\tiny] at (\x,-1.52) {\lab};}
-  \node[font=\scriptsize] at (-.89,-1.52) {cm};
-
-  \draw[black!28,line width=.35pt] (0,-1.65)--(0,1.76);
-
-  \node[font=\bfseries\small] at (3.20,1.68) {B. Build the map point by point};
-  \draw[step=.48cm,black!18,line width=.25pt] (.48,-1.38) grid (5.92,1.35);
-  \fill[black!78] (3.20,0) circle (.17);
-  \node[font=\scriptsize,white] at (3.20,0) {$+$};
+  \draw[black!28,line width=.35pt] (0,-1.68)--(0,1.84);
+  \node[font=\bfseries\small] at (3.14,1.78) {2. Sample one location at a time};
+  \draw[step=.48cm,black!18,line width=.25pt] (.44,-1.38) grid (5.88,1.40);
+  \fill[black!82] (3.12,0) circle (.18);
+  \node[font=\scriptsize,white] at (3.12,0) {\(+\)};
   \foreach \a in {0,45,...,315}{
-    \draw[->,graphite]
-      ({3.20+.52*cos(\a)},{.52*sin(\a)})
-      --({3.20+1.22*cos(\a)},{1.22*sin(\a)});
-    \fill[black!45]
-      ({3.20+1.45*cos(\a)},{1.45*sin(\a)}) circle (.025);
-  }
-  \draw[->,black!52,line width=.34pt]
-    (4.70,-.95)--(5.44,-1.23);
-  \node[font=\scriptsize,align=left,anchor=west] at (5.48,-1.23)
-    {arrow from\\one test point};
-  \node[note] at (3.20,-1.62)
-    {direction from motion \quad length from response};
+    \fill[black!45] ({3.12+1.37*cos(\a)},{1.37*sin(\a)}) circle (.025);
+    \draw[->,graphite] ({3.12+.50*cos(\a)},{.50*sin(\a)})
+      --({3.12+1.18*cos(\a)},{1.18*sin(\a)});}
+  \draw[->,black!55,line width=.35pt] (4.52,-.75)--(5.25,-1.03);
+  \node[note,anchor=west] at (5.28,-1.03) {one result:\\point + arrow};
+  \node[note] at (3.12,-1.62)
+    {direction from motion \quad length from relative response};
 \end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Suspend the lightweight test object and mark its rest position.\item Place the prepared charge source at measured distances without touching.\item Record deflection direction and magnitude for at least five separations.\item Sketch arrows at each test point: direction from motion, length from relative response.\end{enumerate}}
-\def\explanation{A field is a model assigning an interaction to each location. An electric-field arrow points in the direction a positive test charge would accelerate. Field lines are a drawing convention: they do not begin to exist because ink connects the arrows, and crossings would assign two directions to one point.}
-\def\extension{Draw the map first from prediction, then overlay the observations in a different line style. Circle disagreements and propose a test.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+
+\newcommand{\fieldcomparison}{%
+\begin{center}
+\begin{tikzpicture}[x=.92cm,y=.92cm,line cap=round,
+  arrow/.style={-{Latex[length=1.5mm]},black!72,line width=.42pt},
+  ghost/.style={black!28,line width=.3pt,densely dashed}]
+  \node[font=\bfseries\small] at (-3.58,1.52){A. Raw samples};
+  \draw[step=.44cm,black!15,line width=.22pt](-5.20,-1.24)grid(-1.94,1.23);
+  \fill (-3.57,0)circle(.15);\node[white,font=\tiny]at(-3.57,0){+};
+  \foreach \a/\len in {0/.74,45/.65,90/.70,135/.59,180/.75,225/.62,270/.68,315/.72}{
+    \fill[black!38]({-3.57+1.18*cos(\a)},{1.18*sin(\a)})circle(.025);
+    \draw[arrow]({-3.57+.54*cos(\a)},{.54*sin(\a)})
+      --({-3.57+(\len+0.54)*cos(\a)},{(\len+0.54)*sin(\a)});}
+
+  \draw[black!26](0,-1.40)--(0,1.63);
+  \node[font=\bfseries\small] at (2.10,1.52){B. Connected convention};
+  \fill (2.10,0)circle(.15);\node[white,font=\tiny]at(2.10,0){+};
+  \foreach \a in {0,45,...,315}{
+    \draw[arrow]({2.10+.32*cos(\a)},{.32*sin(\a)})
+      --({2.10+1.26*cos(\a)},{1.26*sin(\a)});
+    \draw[ghost]({2.10+.22*cos(\a)},{.22*sin(\a)})
+      --({2.10+1.43*cos(\a)},{1.43*sin(\a)});}
+  \node[font=\scriptsize,align=center] at (2.10,-1.58)
+    {Lines summarize the arrows;\\they are not tracks or strands.};
+  \node[font=\scriptsize,align=center] at (-3.57,-1.58)
+    {Keep measured variation visible.\\Do not ``repair'' data by eye.};
+\end{tikzpicture}
+\end{center}}
+
+\begin{document}
+\telosmasthead[\editiontag\ --- staged field mapping]
+\rolecard
+
+\begin{materials}
+\item Tape charge source
+\item Thread-suspended pith or foil ball
+\item Ruler and graph paper
+\item Fine pencil, eraser, and timer
+\item Two books or blocks to fix the support
+\end{materials}
+
+\begin{predict}
+As separation doubles, will the interaction strengthen, weaken, or remain
+unchanged? Draw the arrow you expect at three different locations. What
+observation would prove your prediction wrong?
+\end{predict}
+
+\fieldapparatus
+
+\section{What the drawing claims}
+A field map assigns an interaction to each location. At every sampled point,
+the arrow records two claims: its direction shows how a positive test charge
+would initially accelerate, and its length represents relative response under
+the same test conditions. A map is therefore inferred from repeated trials,
+not copied from something directly visible.
+
+\begin{telospanel}{Checkpoint before measuring}
+If the ball, thread length, charge source, or starting position changes between
+trials, arrow lengths can no longer be compared. Name the four controls aloud.
+The adult checks that the source never touches the suspended probe.
+\end{telospanel}
+
+\newpage
+\telosmasthead[\editiontag\ --- collect the evidence]
+\small
+\section{Stage 1: make the probe reproducible}
+\begin{enumerate}
+\item Suspend the light ball. Shield it from drafts and wait until it rests.
+Mark the rest position on graph paper behind it.
+\item Choose one source position and perform three approaches without contact.
+If the resting point drifts, stop: discharge/reset the materials and repeat.
+\item Decide how deflection will be read: horizontal displacement \(d\), not
+the curved travel of the ball. Always read the ruler from the same angle.
+\end{enumerate}
+
+\begin{teloscard}{Intermediate questions}
+\begin{enumerate}
+\item Does the ball move toward or away from the source on the first approach?
+\item Does it return to the same rest mark? If not, which variable changed?
+\item Would a heavier ball give the same deflection? Would it indicate the same
+field direction? Explain the difference.
+\end{enumerate}
+\end{teloscard}
+
+\section{Stage 2: measure distance and response}
+Keep the source orientation, ball, thread length, and approach time fixed.
+Measure \(r\) from the same reference points. Use at least five separations and
+repeat every reading.
+
+\begin{center}\small
+\begin{tabularx}{.94\linewidth}{@{}c c c c c L@{}}
+\toprule
+Trial & \(r\) (cm) & \(d_1\) (mm) & \(d_2\) (mm) & mean \(d\) (mm) & Direction / condition\\
+\midrule
+1 & & & & &\\[.8em]
+2 & & & & &\\[.8em]
+3 & & & & &\\[.8em]
+4 & & & & &\\[.8em]
+5 & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Question at the halfway point}
+Compare the nearest and farthest readings before continuing. Is the sign of
+the direction consistent? Is the size trend larger than the repeat-to-repeat
+variation? If not, collect another repeat instead of forcing a conclusion.
+\end{telospanel}
+
+\section{Stage 3: turn trials into a map}
+\begin{enumerate}
+\item Mark each tested location as a dot on graph paper.
+\item At the dot, draw an arrow in the observed direction. Choose one scale,
+such as \(\qty{1}{cm}\) of arrow per \(\qty{1}{mm}\) of mean deflection.
+\item Repeat around the source. Only after the arrows are plotted may you add
+light guide curves through arrows that already agree.
+\end{enumerate}
+
+\fieldcomparison
+
+\newpage
+\telosmasthead[\editiontag\ --- infer, diagnose, verify]
+\small
+\section{Worked inference}
+Suppose the repeated measurements at \(r=\qty{2}{cm}\) are \(d_1=\qty{8}{mm}\)
+and \(d_2=\qty{10}{mm}\), while at \(r=\qty{4}{cm}\) they are
+\(d_1=\qty{2}{mm}\) and \(d_2=\qty{3}{mm}\).
+
+\begin{teloscard}{From numbers to a defensible claim}
+\[
+\bar d_{2\mathrm{cm}}=(8+10)/2=\qty{9}{mm},\qquad
+\bar d_{4\mathrm{cm}}=(2+3)/2=\qty{2.5}{mm}.
+\]
+Doubling separation reduced the response to \(2.5/9\approx0.28\), roughly one
+quarter. The evidence supports ``the interaction weakened strongly'' for this
+apparatus. It does \emph{not} by itself prove an exact inverse-square law:
+deflection is an indirect response affected by thread geometry, probe mass,
+charge leakage, and reading uncertainty.
+\end{teloscard}
+
+\section{Explain from the evidence}
+An electric-field arrow points in the direction a positive test charge would
+accelerate. Field lines are a drawing convention: they do not appear because
+ink connects arrows. Lines cannot cross, because a crossing would assign two
+directions to the same location. Closer or longer arrows represent a stronger
+relative response only when the probe and scale remain unchanged.
+
+\section{Diagnostics}
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}L L@{}}
+\toprule
+Symptom & Likely cause & Correction\\
+\midrule
+Rest point creeps & charge leakage, draft, twisted thread & reset, shield, wait\\
+Direction reverses after contact & source touched probe; charge transferred & discharge/reset; approach without contact\\
+Repeats disagree widely & ruler parallax or inconsistent timing & fix viewing point; use the same pause\\
+All arrows equal & scale rounded too coarsely & record millimetres; enlarge drawing scale\\
+Guide lines cross & curves were invented between sparse samples & erase curves; add measurements\\
+\bottomrule
+\end{tabularx}
+
+\section{Final verification}
+\begin{enumerate}
+\item Point to one arrow and state the measurement that fixes its direction
+and the calculation that fixes its length.
+\item Find the largest disagreement between repeats. Mark that arrow with an
+uncertainty bracket or collect a third trial.
+\item Cover the source label. Can another reader infer where the source lies
+from the arrows alone? Ask them; record their answer.
+\item Redraw the prediction with a dashed line over the measured map. Circle
+one agreement and one disagreement, then write what new test would distinguish
+two explanations.
+\end{enumerate}
+
+\begin{teloscard}{Evidence record}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.14\linewidth}Xp{.16\linewidth}X@{}}
+Prediction & \rule{\linewidth}{.3pt} &
+Controls & \rule{\linewidth}{.3pt}\\[1em]
+Key observation & \rule{\linewidth}{.3pt} &
+Claim + limitation & \rule{\linewidth}{.3pt}
+\end{tabularx}
+\end{teloscard}
+
+\sourcefoot
+\end{document}

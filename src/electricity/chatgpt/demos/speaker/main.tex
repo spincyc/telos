@@ -1,40 +1,249 @@
-\def\doctitle{Demo: Speaker}\def\docsubtitle{From changing current to motion and sound}\def\docstrap{a paper-cup transducer at low voltage}
-\def\materialslist{\item Paper cup \item 30--32 AWG insulated wire coil \item Ceramic or secured neodymium magnet \item Audio source through approved battery amplifier \item 100 \(\Omega\) series resistor}
-\def\prediction{Will steady DC make a continuous tone? Why should alternating current differ?}
-\def\diagram{\begin{center}\begin{tikzpicture}[scale=.72,transform shape,line cap=round,line join=round,>=Latex]
-% Sectioned paper cup, drawn as a lightly shaded technical plate.
-\fill[black!5](-2.55,-.59)ellipse(2.2 and .15);
-\path[pattern=north east lines,pattern color=black!25](-1.96,2.22)--(-.75,.08)--(.75,.08)--(1.96,2.22)--cycle;
-\fill[white,opacity=.78](-1.38,2.08)--(-.49,.2)--(.1,.2)--(.72,2.08)--cycle;
-\draw[very thick](-1.96,2.22)--(-.75,.08)--(.75,.08)--(1.96,2.22);
-\draw[very thick](-1.96,2.22)arc[start angle=180,end angle=540,x radius=1.96,y radius=.35];
-\draw[thin,black!55](-1.78,2.22)arc[start angle=180,end angle=360,x radius=1.78,y radius=.27];
-\draw[thick](-.75,.08)arc[start angle=180,end angle=360,x radius=.75,y radius=.17];
-% Voice coil attached around the cup base.
-\foreach \y in {.10,.16,.22,.28,.34,.40,.46,.52}{
-  \draw[black!70,line width=.55pt](-.81,\y)arc[start angle=180,end angle=360,x radius=.81,y radius=.16];
-}
-\draw[very thick](-.81,.10)--(-.81,.52);\draw[very thick](.81,.10)--(.81,.52);
-\draw[thin](-.72,.5)..controls(-1.35,.65)and(-2.2,.54)..(-2.72,.84);
-\draw[thin](.72,.5)..controls(1.35,.65)and(2.2,.54)..(2.72,.84);
-% Fixed magnet and support below the moving coil.
-\path[pattern=horizontal lines,pattern color=black!40](-.46,-.66)rectangle(.46,.02);
-\draw[very thick,fill=white](-.46,.02)ellipse(.46 and .13);
-\draw[very thick](-.46,.02)--(-.46,-.66)arc[start angle=180,end angle=360,x radius=.46,y radius=.13]--(.46,.02);
-\node[font=\tiny\bfseries]at(0,-.23){MAGNET};
-\draw[thick](-1.12,-.7)--(1.12,-.7);\draw[thin](-.9,-.7)--(-1.12,-.94);\draw[thin](.9,-.7)--(1.12,-.94);
-% Motion, field, and component labels.
-\draw[<->,line width=.8pt](2.34,1.12)--(2.34,1.92);
-\node[font=\scriptsize,anchor=west,align=left]at(2.48,1.52){cup and coil\\move together};
-\draw[thin](-.88,.35)--(-2.55,.22);\node[font=\scriptsize,anchor=e]at(-2.6,.22){voice coil};
-\draw[thin](-.46,-.32)--(-2.2,-.62);\node[font=\scriptsize,anchor=e,align=right]at(-2.25,-.62){fixed magnet\\on support};
-\node[font=\scriptsize,anchor=west]at(2.82,.84){to resistor + amplifier};
-\draw[->,thin](-.18,-.05)--(-.18,.48);\draw[->,thin](.18,.48)--(.18,-.05);
-\node[font=\tiny,anchor=west]at(.48,-.43){field gap};
-\draw[thin,dashed](-.63,.67)--(.63,.67);
-\node[font=\tiny,fill=white,inner sep=1pt]at(0,.67){coil clearance};
-\end{tikzpicture}\end{center}}
-\def\procedure{\begin{enumerate}\item Wind and secure a light coil to the cup base. Adult secures the magnet so it cannot jump or be ingested.\item Connect only through the resistor and a battery-powered, current-limited amplifier at minimum level.\item Play a low-volume tone and observe cup motion by touching a paper flag, not the moving coil.\item Change frequency, then mass with a small removable paper clip; compare sound.\end{enumerate}}
-\def\explanation{The amplifier supplies changing current. In the permanent magnet's field, coil force reverses with current and moves the cone, which drives pressure variations in air. Steady current gives only a displacement and heating, not a sustained tone. Electrical, mechanical, and acoustic power are linked; losses become heat.}
-\def\extension{Use a phone spectrum display only as an observer. Compare commanded frequency with the strongest measured peak.}
+\def\doctitle{Demo: Speaker}
+\def\docsubtitle{Build, measure, and prove a paper-cup transducer}
+\def\docstrap{changing current becomes motion and sound}
+\def\materialslist{%
+  \item Paper cup, card coil former, low-tack tape, paper flag
+  \item 30--32 AWG insulated copper wire; sandpaper
+  \item Ceramic magnet or adult-secured neodymium magnet
+  \item Battery-powered, current-limited audio amplifier; tone source
+  \item 100 \(\Omega\), 1 W series resistor; digital multimeter
+  \item Ruler and optional phone spectrum display (observer only)}
+\def\prediction{%
+  Sketch what you expect for steady DC and for a slow alternating signal.
+  Which part should move? Will doubling frequency double loudness? What
+  measurement would distinguish ``the coil is open'' from ``the cone is stuck''?}
+
+\def\diagram{%
+\section{Construction plate}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  ink/.style={draw=black,line width=.65pt},
+  light/.style={draw=black!48,line width=.32pt},
+  callout/.style={font=\fontsize{6.4}{7.1}\selectfont,align=center}]
+% Exploded assembly.
+\node[font=\small\bfseries] at (-4.75,2.05) {A. Exploded assembly};
+\draw[ink](-6.25,1.58) arc (180:360:1.5 and .24);
+\draw[ink](-6.25,1.58)--(-5.52,-.05);
+\draw[ink](-3.25,1.58)--(-3.98,-.05);
+\draw[light](-6.12,1.58) arc (180:360:1.37 and .18);
+\draw[ink](-5.52,-.05) arc (180:360:.77 and .15);
+\foreach \y in {-.38,-.30,...,.10}
+  \draw[ink](-5.47,\y) arc (180:360:.72 and .13);
+\draw[ink](-5.47,-.38)--(-5.47,.10) (-4.03,-.38)--(-4.03,.10);
+\draw[->,light](-4.75,-.50)--(-4.75,-.82);
+\draw[ink,fill=white](-5.18,-1.02) ellipse (.43 and .12);
+\draw[ink](-5.18,-1.02)--(-5.18,-1.62)
+  arc (180:360:.43 and .12)--(-4.32,-1.02);
+\draw[light](-5.08,-1.16)--(-4.42,-1.16);
+\draw[ink](-5.72,-1.78)--(-3.78,-1.78);
+\draw[light](-5.52,-1.78)--(-5.72,-1.98)
+  (-3.98,-1.78)--(-3.78,-1.98);
+\draw[light](-5.48,-.13)--(-6.42,-.42);
+\node[callout,anchor=e]at(-6.48,-.42){coil taped\\to cup base};
+\draw[light](-5.16,-1.35)--(-6.24,-1.46);
+\node[callout,anchor=e]at(-6.30,-1.46){fixed magnet\\adult secures};
+\draw[<->,ink](-3.50,-.36)--(-3.50,.26);
+\node[callout,anchor=west]at(-3.36,-.05){moving\\assembly};
+
+% Section through magnetic gap.
+\node[font=\small\bfseries] at (0,2.05) {B. Working cross-section};
+\path[pattern=north east lines,pattern color=black!25]
+  (-1.18,1.56)--(-.60,.32)--(.60,.32)--(1.18,1.56)--cycle;
+\draw[ink](-1.18,1.56)--(-.60,.32)--(.60,.32)--(1.18,1.56);
+\draw[ink](-1.18,1.56) arc (180:360:1.18 and .22);
+\foreach \y in {.20,.30,...,.70}
+  \draw[ink](-.69,\y) arc (180:360:.69 and .12);
+\draw[ink](-.69,.20)--(-.69,.70) (.69,.20)--(.69,.70);
+\path[pattern=horizontal lines,pattern color=black!35]
+  (-.38,-.70) rectangle (.38,.13);
+\draw[ink](-.38,.13) ellipse (.38 and .10);
+\draw[ink](-.38,.13)--(-.38,-.70)
+  arc (180:360:.38 and .10)--(.38,.13);
+\draw[ink](-1.02,-.82)--(1.02,-.82);
+\draw[->,ink](-.18,-.02)--(-.18,.50);
+\draw[->,ink](.18,.50)--(.18,-.02);
+\draw[<->,ink](1.48,.55)--(1.48,1.28);
+\node[callout,anchor=west]at(1.62,.92){force reverses\\with current};
+\draw[light](-.69,.50)--(-1.55,.18);
+\node[callout,anchor=e]at(-1.61,.18){voice coil\\in field gap};
+\node[callout]at(0,-1.18){clearance all around; no rubbing};
+
+% Connection/checking circuit.
+\node[font=\small\bfseries] at (4.74,2.05) {C. Test circuit};
+\draw[ink](3.06,.82)--(3.52,.82);
+\draw[ink](3.52,.54)--(3.52,1.10);
+\draw[ink](3.75,.65)--(3.75,.99);
+\node[callout]at(3.64,.36){battery amplifier};
+\draw[ink](3.75,.82)--(4.24,.82);
+\draw[ink](4.24,.58) rectangle (5.32,1.06);
+\node[font=\scriptsize]at(4.78,.82){100 \(\Omega\)};
+\draw[ink](5.32,.82)--(5.72,.82);
+\foreach \x in {5.78,5.94,6.10,6.26}
+  \draw[ink](\x,.82) ellipse (.09 and .30);
+\draw[ink](6.35,.82)--(6.58,.82)--(6.58,-.06)--(3.06,-.06)--(3.06,.82);
+\node[callout]at(6.08,.34){cup coil};
+\draw[light,dashed](5.54,1.34)--(6.53,1.34);
+\node[callout]at(6.04,1.58){power off: measure\\coil resistance here};
+\draw[<->,light](5.54,1.26)--(6.53,1.26);
+\draw[ink](4.11,-.46) circle (.23);
+\node[font=\scriptsize]at(4.11,-.46){V};
+\draw[light](4.11,-.23)--(4.11,.82);
+\draw[light](4.11,-.69)--(6.58,-.69)--(6.58,-.06);
+\node[callout,anchor=west]at(4.43,-.47){optional AC volts\\across coil};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=.90cm,y=.72cm,line cap=round,line join=round]
+\node[font=\small\bfseries,anchor=west]at(-7.4,1.80){D. Signal, force, and motion};
+\draw[->](-7.4,0)--(7.4,0)node[right,font=\scriptsize]{time};
+\foreach \x in {-6.28,-3.14,0,3.14,6.28}
+  \draw[black!35](\x,-1.38)--(\x,1.38);
+\draw[black!35](-7.4,1)--(7.4,1) (-7.4,-1)--(7.4,-1);
+\draw[very thick,domain=-7.2:7.2,samples=180]
+  plot(\x,{sin(\x r)});
+\draw[thick,dashed,domain=-7.2:7.2,samples=180]
+  plot(\x,{.68*sin(\x r-.28)});
+\node[font=\scriptsize,anchor=west,fill=white,inner sep=1pt]at(-7.2,1.23)
+  {solid: current and force};
+\node[font=\scriptsize,anchor=west,fill=white,inner sep=1pt]at(2.1,-1.18)
+  {dashed: cup motion may lag};
+\draw[->,thick](0,1.05)--(0,1.55)
+  node[above,font=\scriptsize]{outward};
+\draw[->,thick](3.14,-1.05)--(3.14,-1.55)
+  node[below,font=\scriptsize]{inward};
+\end{tikzpicture}
+\end{center}}
+
+\def\procedure{%
+\subsection{Stage 1: prove the coil before assembly}
+\begin{enumerate}
+  \item With all power disconnected, scrape both wire ends bright. Measure
+  resistance directly across the coil. Record \(R_{\rm coil}\). An open display
+  means repair the ends; near zero means look for a bypass or meter-lead error.
+  \item Gently flex each lead while watching the meter. The reading should stay
+  steady. Ask: why can continuity pass while a fragile joint still fails?
+\end{enumerate}
+
+\subsection{Stage 2: assemble and inspect}
+\begin{enumerate}[resume]
+  \item Tape the coil concentrically to the cup base. Adult secures the magnet.
+  Center the coil over the magnet without contact. Move the cup lightly by
+  hand: it must travel freely, silently, and return without scraping.
+  \item Adult checks that the 100 \(\Omega\) series resistor is present, the
+  amplifier is battery powered and at minimum level, and bare conductors
+  cannot touch. Stop for heat, odor, damaged insulation, pain, or a loose
+  magnet.
+\end{enumerate}
+
+\subsection{Stage 3: first motion, then sound}
+\begin{enumerate}[resume]
+  \item Apply a 20--30 Hz tone briefly at minimum level. Watch a paper flag on
+  the cup. Increase only until motion is visible. Does the flag reverse at the
+  same rate as the signal? Do not hold the moving coil.
+  \item Try 100, 250, 500, and 1000 Hz at the same source setting. Record
+  whether sound is clear, faint, or distorted. If your meter reads AC volts
+  reliably at that frequency, measure across the coil; otherwise mark it
+  ``meter bandwidth unknown'' rather than treating the number as truth.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{.94\linewidth}{@{}r r r L@{}}
+\toprule
+\textbf{Frequency} & \(\boldsymbol{V_{\rm coil}}\) & \textbf{Observed level} &
+\textbf{Motion / quality}\\
+\midrule
+20--30 Hz & \rule{1.2cm}{.3pt} & \rule{1.4cm}{.3pt} & \rule{3.7cm}{.3pt}\\
+100 Hz & \rule{1.2cm}{.3pt} & \rule{1.4cm}{.3pt} & \rule{3.7cm}{.3pt}\\
+250 Hz & \rule{1.2cm}{.3pt} & \rule{1.4cm}{.3pt} & \rule{3.7cm}{.3pt}\\
+500 Hz & \rule{1.2cm}{.3pt} & \rule{1.4cm}{.3pt} & \rule{3.7cm}{.3pt}\\
+1000 Hz & \rule{1.2cm}{.3pt} & \rule{1.4cm}{.3pt} & \rule{3.7cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Troubleshoot from evidence}
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}p{.28\linewidth}L@{}}
+\toprule
+\textbf{Evidence} & \textbf{Likely cause} & \textbf{Power-off check}\\
+\midrule
+Open resistance & Broken lead or enamel remains & Scrape ends; flex-test; find
+the discontinuity.\\
+Stable resistance, no motion & No signal or bad connection & Verify amplifier
+on a known safe load; inspect every joint.\\
+Motion but scraping & Coil off-center or magnet loose & Re-center; adult
+re-secures magnet.\\
+Sound only at high level & Large gap, heavy cup, weak coupling & Reduce gap
+without contact; remove excess tape.\\
+Buzz at one frequency & Loose tape or cup resonance & Press tape with power
+off; repeat just above and below that frequency.\\
+Heat, odor, distortion & Excess drive or shorted turns & Disconnect at once;
+inspect and remeasure before deciding whether to retire the coil.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Final proof}
+Reconnect after every power-off check. A successful build must pass all four:
+\begin{enumerate}[label=\(\circ\),leftmargin=1.8em]
+  \item Coil resistance is finite, repeatable, and unchanged by gentle lead flex.
+  \item The unpowered cup moves freely without rubbing.
+  \item A low-frequency signal produces visible alternating motion.
+  \item At least two commanded audio frequencies produce distinguishable,
+  repeatable sound, with no heat, odor, loose magnet, or unexpected contact.
+\end{enumerate}}
+
+\def\explanation{%
+The amplifier supplies changing current. In the permanent magnet's field, the
+coil experiences a force whose direction follows current direction. Because
+the coil is attached to the cup, the cup moves air. Steady DC can make one
+displacement and heating, but not a sustained tone. Loudness need not rise with
+frequency: coil impedance, cup mass and stiffness, magnetic gap, resonances,
+and the ear all shape the response. The measurements separate an electrical
+claim (a continuous coil receives a changing signal) from mechanical evidence
+(free, alternating motion) and acoustic evidence (repeatable sound).}
+
+\def\extension{%
+Add one removable paper clip near the cup rim, then repeat only 100, 250, and
+500 Hz at the unchanged source setting. Predict first. Plot two simple response
+traces---frequency horizontally, observed level vertically---and circle any
+frequency where the added mass changes buzz, level, or motion. A phone spectrum
+display may confirm the strongest frequency, but it does not replace the
+resistance, motion, and stop-line checks.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=.72cm,line cap=round,line join=round]
+\draw[->,thick](0,0)--(10.8,0)node[right,font=\scriptsize]{frequency};
+\draw[->,thick](0,0)--(0,3.15)node[above,font=\scriptsize,align=center]
+  {observed\\level};
+\foreach \x/\lab in {1/100,4.8/250,9.6/500}
+  {\draw[black!35](\x,0)--(\x,2.82);
+   \node[font=\scriptsize,below]at(\x,0){\lab Hz};}
+\draw[very thick]plot[smooth]coordinates
+  {(0.3,.42)(1,.68)(2.2,1.30)(3.2,2.55)(4.3,2.05)(5.5,1.02)(7.2,.70)(9.6,1.18)(10.3,1.02)};
+\draw[thick,dashed]plot[smooth]coordinates
+  {(0.3,.34)(1,.52)(2.2,.82)(3.6,1.32)(4.8,2.38)(6.1,1.46)(7.2,.82)(9.6,.92)(10.3,.80)};
+\node[font=\scriptsize,anchor=west]at(6.25,2.52){solid: original cup};
+\node[font=\scriptsize,anchor=west]at(6.25,2.15){dashed: added mass};
+\draw[thick](5.95,2.52)--(6.18,2.52);
+\draw[thick,dashed](5.95,2.15)--(6.18,2.15);
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.20\linewidth}p{.20\linewidth}L@{}}
+\toprule
+\textbf{Frequency} & \textbf{Original level} & \textbf{With mass} &
+\textbf{What changed?}\\
+\midrule
+100 Hz & \rule{2cm}{.3pt} & \rule{2cm}{.3pt} & \rule{3.4cm}{.3pt}\\[.6em]
+250 Hz & \rule{2cm}{.3pt} & \rule{2cm}{.3pt} & \rule{3.4cm}{.3pt}\\[.6em]
+500 Hz & \rule{2cm}{.3pt} & \rule{2cm}{.3pt} & \rule{3.4cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+
+\smallskip
+\textbf{Questions.} Did added mass move the strongest response higher or
+lower? Which observation supports that claim? Was commanded frequency the same
+as the strongest measured peak? Which conclusion is justified by the evidence,
+and which remains only a plausible explanation?}
+
 \input{electricity/chatgpt/shared/lesson-template.tex}

@@ -1,81 +1,314 @@
-\def\doctitle{Overview}
-\def\docsubtitle{A measured path from charge to coupled fields}
-\def\docstrap{ten investigations, five demonstrations, one firm boundary}
-\def\materialslist{\item This overview \item A bound lab notebook \item The safety guide}
-\def\prediction{Which is more convincing: a named effect, a visible effect, or a measurement that changes predictably? Explain.}
-\def\diagram{\begin{center}
-\begin{tikzpicture}[x=.86cm,y=.86cm,line cap=round,line join=round]
-  % Bench and quiet pencil hatching.
-  \draw[telos heavy] (-5.05,-1.15)--(5.05,-1.15);
-  \foreach \x in {-4.8,-4.45,...,4.8}
-    \draw[telos hair] (\x,-1.15)--++(.18,-.12);
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Overview}{A verification-centered path from charge to coupled fields}{2026-07-27}
 
-  % Bound notebook: predictions enter on the left.
-  \draw[telos line,rounded corners=.6pt] (-4.8,-.72) rectangle (-3.45,.62);
-  \draw[telos hair] (-4.57,-.72)--(-4.57,.62);
-  \foreach \y in {-.43,-.14,.15,.44}
-    \draw[telos hair] (-4.35,\y)--(-3.65,\y);
-  \foreach \y in {-.48,-.08,.32}
-    \draw[draw=telosink,line width=.45pt] (-4.68,\y) circle (.055);
-  \node[telos label,anchor=south] at (-4.13,.72) {predict};
+\newcommand{\stepplate}[3]{%
+  \begin{minipage}[t]{.31\linewidth}
+  \centering #1\par\vspace{.15em}
+  {\small\bfseries #2}\par
+  {\footnotesize #3}
+  \end{minipage}}
+\newcommand{\checkline}{\rule{.97\linewidth}{.3pt}}
 
-  % Current-limited battery holder and open switch.
-  \draw[telos line,rounded corners=1pt] (-3.05,-.55) rectangle (-1.72,.47);
-  \draw[telos hair] (-2.89,-.39) rectangle (-2.43,.31);
-  \draw[telos hair] (-2.36,-.39) rectangle (-1.90,.31);
-  \node[font=\tiny] at (-2.66,-.04) {$+$};
-  \node[font=\tiny] at (-2.13,-.04) {$-$};
-  \draw[telos line] (-1.72,.1)--(-1.30,.1);
-  \fill (-1.25,.1) circle (.045);
-  \fill (-.72,.1) circle (.045);
-  \draw[telos line] (-1.25,.1)--(-.80,.42);
-  \node[telos label,anchor=south] at (-2.38,.58) {controlled source};
+\begin{document}
+\telosmasthead[ChatGPT edition --- ten investigations, one evidence discipline]
 
-  % Coil on a visibly laminated core.
-  \draw[telos hair,fill=telosfill] (-.36,-.48) rectangle (1.35,.43);
-  \foreach \y in {-.34,-.17,0,.17,.34}
-    \draw[telos hair] (-.31,\y)--(1.30,\y);
-  \foreach \x in {-.45,-.18,...,1.44}
-    \draw[telos line] (\x,-.62) .. controls (\x-.16,-.26) and
-      (\x-.16,.28) .. (\x,.62);
-  \draw[telos line] (-.45,-.62)--(-.72,-.62)--(-.72,.1);
-  \draw[telos line] (1.44,.62)--(1.72,.62);
-  \node[telos label,fill=telospaper,anchor=south] at (.28,.82) {current makes a field};
+\begin{teloshazard}{The boundary applies to every page}
+\boundary\ The learner works only with the explicitly pictured, current-limited
+battery investigations. Deenergize before changing a circuit. The adult
+facilitator inspects the setup and controls stop decisions; adult status does
+not imply electrical qualification.
+\end{teloshazard}
 
-  % Field contours, deliberately varied like a technical-pencil plate.
-  \draw[telos arrow] (.45,.72) .. controls (1.05,1.46) and (2.18,1.35) .. (2.58,.60);
-  \draw[telos hair] (.13,.76) .. controls (.86,1.75) and (2.57,1.58) .. (2.91,.40);
-  \draw[telos hair] (.78,-.72) .. controls (1.30,-1.38) and (2.34,-1.24) .. (2.62,-.57);
-  \draw[telos arrow] (1.28,-.72) .. controls (1.72,-1.03) and (2.20,-.95) .. (2.43,-.61);
+\section{What this course is trying to prove}
+The course does not ask a learner to accept a named effect because a diagram
+looks persuasive. Each lesson asks a question, changes one variable, captures
+an observation or measurement, and decides whether the evidence supports the
+prediction. A successful apparatus is evidence only when the record says what
+was held constant and what would count against the claim.
 
-  % Coupled pickup and analog meter.
-  \foreach \x in {2.18,2.38,...,2.98}
-    \draw[telos line] (\x,-.08) ellipse (.12 and .48);
-  \draw[telos line] (3.10,-.08)--(3.42,-.08)--(3.42,.28);
-  \draw[telos line] (2.06,-.08)--(1.86,-.08)--(1.86,-.74)--(3.42,-.74)--(3.42,-.52);
-  \draw[telos line,rounded corners=2pt,fill=telospaper] (3.17,-.52) rectangle (4.75,.70);
-  \draw[telos hair] (3.42,-.31) arc (205:-25:.55 and .45);
-  \foreach \a in {205,230,...,335}
-    \draw[telos hair] ({3.97+.55*cos(\a)},{-.31+.45*sin(\a)})--++({.07*cos(\a)},{.06*sin(\a)});
-  \draw[telos line] (3.97,-.31)--(4.28,.05);
-  \fill (3.97,-.31) circle (.055);
-  \node[font=\tiny] at (3.97,.47) {MEASURE};
-  \node[telos label,fill=telospaper,anchor=south] at (2.62,.62) {coupling};
+\begin{predict}
+\textbf{Opening question.} Which is stronger evidence: ``the coil worked,'' a
+meter reading of \qty{0.42}{V}, or a table showing that the reading changed
+when distance changed? What extra information would make your choice
+repeatable by another learner?
+\end{predict}
 
-  % Reading order and observable evidence.
-  \draw[telos arrow] (-3.38,-.02)--(-3.10,-.02);
-  \draw[telos arrow] (-.64,-.88)--(.05,-.88)
-    node[midway,below,font=\tiny]{energize briefly};
-  \draw[telos arrow] (4.86,.08)--(5.00,.08);
-  \node[telos label,anchor=west,align=left] at (5.02,.08) {record\\evidence};
+\section{The loop used in every investigation}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \tikzset{plate/.style={draw=telosink,line width=.55pt,rounded corners=1pt},
+    fine/.style={draw=telosmute,line width=.3pt},
+    flow/.style={-{Stealth[length=2mm]},line width=.65pt}}
+  \foreach \x/\n/\lab in {-4.8/1/Question,-2.85/2/Predict,-.9/3/Assemble,
+      1.05/4/Measure,3.0/5/Compare,4.95/6/Revise}{
+    \draw[plate] (\x-.62,-.55) rectangle (\x+.62,.55);
+    \fill[telosink] (\x-.46,.37) circle (.13);
+    \node[font=\tiny,text=white] at (\x-.46,.37) {\n};
+    \node[font=\small\bfseries] at (\x,0) {\lab};
+  }
+  \foreach \x in {-4.12,-2.17,-.22,1.73,3.68}
+    \draw[flow] (\x,0)--++(.58,0);
+  \draw[flow] (5.30,-.68) .. controls (5.3,-1.10) and (-4.8,-1.10)
+    .. (-4.8,-.68);
+  \node[font=\footnotesize,fill=white,inner sep=2pt] at (.1,-1.10)
+    {repeat after changing one thing};
 \end{tikzpicture}
-\par\vspace{-0.2em}
-{\footnotesize\itshape One evidence loop: predict, energize briefly, observe a field effect, measure coupling, disconnect.}
-\end{center}}
-\def\procedure{\begin{enumerate}\item Read Safety with the learner and assign roles.
-\item Take Lessons 1--7 in order; they establish charge, field, measurement, induction, ratio, and stored energy.
-\item Lessons 8--10 connect resonance, coupling, and historical discharge apparatus without crossing into learner high voltage.
-\item Use demonstrations after their named prerequisite. Build the low-voltage coupled-coil instrument only after Lessons 1--9.\end{enumerate}}
-\def\explanation{The course treats a model as useful only when it predicts an observation. Each lesson follows the same loop: predict, assemble deenergized, adult inspection, energize briefly, measure, disconnect, explain. The final machine is not the purpose; it is a test of whether the learner can follow energy and fields across several representations.}
-\def\extension{Make a concept map after every lesson. Draw a solid arrow for a measured connection and a dotted arrow for a question. Revisit and revise rather than erase.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\end{center}
+
+\begin{center}
+\stepplate{\begin{tikzpicture}[scale=.58]
+  \draw[telos line] (-1.5,.5)--(1.5,.5);
+  \draw[telos hair] (-1.1,.5)--(-.9,-.8);
+  \draw[telos hair] (1.1,.5)--(.9,-.8);
+  \draw[telos arrow] (-.7,-.3)--(-.2,-.3);
+  \draw[telos arrow] (.7,-.3)--(.2,-.3);
+\end{tikzpicture}}{Ask before touching}{What outcome would distinguish attraction
+from repulsion? Name it before preparing the tape.}
+\hfill
+\stepplate{\begin{tikzpicture}[scale=.58]
+  \draw[telos line] (-1.5,-.55)--(1.5,-.55);
+  \foreach \x in {-1.2,-.6,0,.6,1.2}\draw[telos hair](\x,-.65)--(\x,-.45);
+  \draw[telos line] (0,.7)--(.35,-.15);
+  \fill (.35,-.15) circle (.1);
+  \draw[telos hair] (0,.7)--(0,-.15);
+\end{tikzpicture}}{Capture a quantity}{Record distance, deflection, voltage,
+current, time, turns, or another quantity with its unit.}
+\hfill
+\stepplate{\begin{tikzpicture}[scale=.58]
+  \draw[telos hair] (-1.5,-.55) grid[xstep=.5,ystep=.35] (1.5,.85);
+  \draw[telos line] (-1.5,-.55)--(-1.0,-.35)--(-.5,-.2)--(0,.08)--(.5,.3)--(1,.52)--(1.5,.7);
+  \foreach \x/\y in {-1.5/-.55,-1/-.35,-.5/-.2,0/.08,.5/.3,1/.52,1.5/.7}
+    \fill (\x,\y) circle (.06);
+\end{tikzpicture}}{Look for a pattern}{A trend, repeated null result, or
+disagreement is more informative than one dramatic trial.}
+\end{center}
+
+\begin{gate}{Checkpoint 0 --- ready to begin}
+The learner can state the voltage limit, identify the person who may stop the
+trial, show how power is disconnected, and write a prediction that could be
+wrong. If any part is missing, remain on the Safety sheet.
+\end{gate}
+
+\newpage
+\telosmasthead[ChatGPT edition --- the ten-lesson evidence staircase]
+\section{Course sequence: each claim earns the next question}
+\small
+\begin{longtable}{@{}p{.06\linewidth}p{.15\linewidth}p{.25\linewidth}p{.24\linewidth}p{.21\linewidth}@{}}
+\toprule
+\textbf{Lesson}&\textbf{Question}&\textbf{Evidence to preserve}&\textbf{Diagnostic checkpoint}&\textbf{Record artifact}\\
+\midrule
+1 & Charge & Attraction or repulsion across repeated tape preparations; can
+motion versus approach distance. & Can the learner separate charge transfer
+from polarization? & Sign-comparison matrix.\\
+2 & Fields & Direction and magnitude of test-object deflection at five or more
+locations. & Do arrows describe a positive test charge, rather than visible
+threads in space? & Annotated field map.\\
+3 & Ohm's law & Matched voltage and current pairs with one resistor held
+constant. & Does $V/I$ remain approximately stable within measurement
+resolution? & Data table and graph.\\
+4 & Electromagnet & Pickup or deflection versus current or turn count, changing
+only one. & Can the learner distinguish current, turns, and core material? &
+Controlled-comparison table.\\
+5 & Induction & Meter direction and magnitude while motion direction or speed
+changes. & Is a changing magnetic situation required? & Motion/response
+sequence.\\
+6 & Transformers & Primary and secondary turns with measured voltage ratio. &
+Does the ratio predict direction and approximate size of change? & Ratio
+calculation with uncertainty.\\
+7 & Capacitors & Charge/discharge voltage at fixed time intervals using only
+the bounded low-voltage setup. & Can stored energy be distinguished from a
+source still connected? & Time series and safe-discharge check.\\
+8 & Resonance & Response across a controlled frequency sweep in the supplied
+low-energy arrangement. & Is the peak repeatable and broader than reading
+noise? & Sweep plot with peak band.\\
+9 & Coupling & Received signal versus coil distance or orientation. & Does one
+geometric change predictably alter transfer? & Geometry sketch plus readings.\\
+10 & Spark gap & Explanatory comparison of historical discharge apparatus;
+no learner construction or energization. & Can the learner explain why the
+course boundary excludes exposed high voltage? & Source-based mechanism map.\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\section{Three visual chains to redraw from memory}
+\begin{center}
+\stepplate{\begin{tikzpicture}[scale=.55]
+  \node[draw,circle,minimum size=.4cm] (q) at (-1.3,0) {$+$};
+  \foreach \a in {-35,0,35}\draw[telos arrow] (q)--++({1.1*cos(\a)},{1.1*sin(\a)});
+  \draw[telos line] (.2,-.55) rectangle (.65,.55);
+  \draw[telos arrow] (.85,0)--(1.45,0);
+\end{tikzpicture}}{Charge $\rightarrow$ field $\rightarrow$ force}{Lesson 1
+establishes interaction; Lesson 2 maps how a test object responds by location.}
+\hfill
+\stepplate{\begin{tikzpicture}[scale=.55]
+  \draw[telos line] (-1.45,0)--(-1.1,0);
+  \foreach \x in {-1.1,-.7,...,.5}\draw[telos line](\x,0)ellipse(.2 and .55);
+  \draw[telos arrow] (.85,-.8)--(.85,.8);
+  \foreach \x in {1.1,1.4}\draw[telos line](\x,0)ellipse(.15 and .45);
+\end{tikzpicture}}{Current $\rightarrow$ field $\rightarrow$ induction}{Lessons
+3--5 connect a measured current to a field effect and then to change-driven
+induction.}
+\hfill
+\stepplate{\begin{tikzpicture}[scale=.55]
+  \foreach \x in {-1.4,-1.1,-.8}\draw[telos line](\x,0)ellipse(.14 and .5);
+  \foreach \x in {.2,.5,.8}\draw[telos line](\x,0)ellipse(.14 and .5);
+  \draw[telos hair] (-.6,.75)arc(150:30:1);
+  \draw[telos arrow] (1.1,0)--(1.55,0);
+\end{tikzpicture}}{Ratio $\rightarrow$ resonance $\rightarrow$ coupling}{Lessons
+6--9 test how turns, frequency, separation, and orientation shape transfer.}
+\end{center}
+
+\begin{gate}{Checkpoint A --- after Lesson 3}
+Without looking back, draw a source, a load, meter placements, and conventional
+current. Predict the sign and approximate scale of one reading. Continue only
+after the diagram and physical setup agree.
+\end{gate}
+\begin{gate}{Checkpoint B --- after Lesson 6}
+Given a doubled secondary turn count, predict whether secondary voltage should
+rise or fall, then state two reasons a real reading may miss the ideal ratio.
+\end{gate}
+\begin{gate}{Checkpoint C --- after Lesson 9}
+Explain the complete chain from source energy to a received meter response,
+naming every conversion and one measurement that tests each link.
+\end{gate}
+
+\section{A repeatable evidence workflow}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \tikzset{box/.style={draw=telosink,line width=.55pt,minimum width=2.15cm,
+      minimum height=.72cm,align=center,font=\small\bfseries},
+      go/.style={-{Stealth[length=2mm]},line width=.6pt}}
+  \node[box] (a) at (-4.55,1.25) {1. Name\\the question};
+  \node[box] (b) at (-1.52,1.25) {2. Define\\the variable};
+  \node[box] (c) at (1.52,1.25) {3. Sketch\\deenergized};
+  \node[box] (d) at (4.55,1.25) {4. Adult\\inspection};
+  \node[box] (e) at (4.55,-.25) {5. Energize\\briefly};
+  \node[box] (f) at (1.52,-.25) {6. Read\\with units};
+  \node[box] (g) at (-1.52,-.25) {7. Disconnect\\then change};
+  \node[box] (h) at (-4.55,-.25) {8. Repeat\\and compare};
+  \foreach \u/\v in {a/b,b/c,c/d,d/e,e/f,f/g,g/h}\draw[go](\u)--(\v);
+  \draw[go] (h.south) .. controls (-4.55,-1.05) and (-1.52,-1.05) .. (g.south);
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Before the first trial}
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}L@{}}
+Question & What relationship are we testing?\\
+Prediction & If \rule{.20\linewidth}{.3pt} changes, then
+\rule{.20\linewidth}{.3pt}, because \rule{.25\linewidth}{.3pt}.\\
+Independent variable & The one quantity deliberately changed, with planned values.\\
+Response variable & What will be observed or measured, including unit and range.\\
+Controls & Geometry, parts, timing, meter range, preparation method, and conditions held fixed.\\
+Stop condition & Heat, odor, damage, pain, unstable connection, unexpected behavior, or adult decision.\\
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Trial table --- never separate a number from its conditions}
+\begin{tabularx}{\linewidth}{@{}c p{.17\linewidth}p{.17\linewidth}p{.14\linewidth}L@{}}
+\toprule
+\textbf{Trial}&\textbf{Changed quantity + unit}&\textbf{Response + unit}&
+\textbf{Conditions}&\textbf{Observation / anomaly}\\
+\midrule
+1&&&&\\[1.3em] 2&&&&\\[1.3em] 3&&&&\\[1.3em] 4&&&&\\[1.3em] 5&&&&\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\section{Reading the result}
+\begin{multicols}{2}
+\textbf{Support.} The repeated observations change in the predicted direction,
+and the effect is larger than the reading resolution or ordinary scatter.
+
+\textbf{Refine.} The direction agrees but the size does not. Check idealized
+assumptions, meter loading, resistance, geometry, timing, and uncertainty.
+
+\textbf{Reject for now.} The pattern is absent or reverses. Preserve the result;
+check the setup and prediction without quietly deleting inconvenient trials.
+
+\textbf{Inconclusive.} The effect is comparable to noise, a control changed, or
+the apparatus could not be inspected. Improve the test before making a claim.
+\end{multicols}
+
+\newpage
+\telosmasthead[ChatGPT edition --- build a course record, not loose answers]
+\begin{gate}{Diagnostic pause}
+If two trials disagree, do not add energy or exceed the boundary. Disconnect.
+Check the drawing against the setup; confirm meter mode and range; inspect each
+connection; repeat a known baseline; then alter only the planned variable.
+\end{gate}
+\begin{predict}
+\textbf{Learner questions.} What result would change your mind? Which control is
+most likely to drift? What is the smallest change your instrument can show?
+Could another mechanism produce the same observation? What should a second
+person be able to reproduce from your record alone?
+\end{predict}
+\section{The bound notebook}
+Number every page. Never remove a failed trial. Begin each lesson on a new
+spread and give every sketch, table, and graph a stable identifier such as
+\texttt{L04-F2}. Cross-reference revisions rather than erasing the earlier
+model. Paste or transcribe meter specifications and part values beside the
+first use.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \draw[telos line] (-5.3,-1.75) rectangle (-.15,1.75);
+  \draw[telos line] (.15,-1.75) rectangle (5.3,1.75);
+  \draw[telos hair] (0,-1.75)--(0,1.75);
+  \foreach \y in {-1.4,-1.05,...,1.4}{
+    \draw[telos hair] (-5.05,\y)--(-.40,\y);
+    \draw[telos hair] (.40,\y)--(5.05,\y);}
+  \node[font=\small\bfseries,anchor=west,fill=white] at (-5.0,1.48)
+    {LEFT: plan and apparatus};
+  \node[font=\footnotesize,anchor=west,align=left,fill=white] at (-5.0,.72)
+    {question + prediction\\variable table\\dated circuit or geometry sketch\\adult inspection initials};
+  \node[font=\small\bfseries,anchor=west,fill=white] at (.42,1.48)
+    {RIGHT: evidence and judgment};
+  \node[font=\footnotesize,anchor=west,align=left,fill=white] at (.42,.72)
+    {raw readings with units\\graph or comparison\\anomalies retained\\claim, limitation, next test};
+  \draw[telos arrow] (-2.65,-.68)--(2.65,-.68)
+    node[midway,fill=white,font=\footnotesize]{references tie claim to evidence};
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Required record for each lesson}
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}L@{}}
+Header & Date; lesson; partners; apparatus ID; source voltage; meter and range.\\
+Question & One relationship or mechanism phrased so evidence can answer it.\\
+Prediction & Direction, approximate size when possible, and physical reason.\\
+Plan & Changed quantity, response quantity, controls, sequence, stop condition.\\
+Apparatus record & Deenergized sketch with component values, polarity, meter placement, distances, and orientations.\\
+Raw evidence & Every trial in acquisition order, units in headings, resolution, and anomalies.\\
+Analysis & Calculation or graph; comparison to prediction; uncertainty or scatter.\\
+Claim & One bounded sentence followed by specific evidence: ``because trials \ldots''.\\
+Revision & What changed in the model, what remains unexplained, and the next discriminating test.\\
+Sign-off & Learner check; adult inspection; explicit confirmation that the boundary was maintained.\\
+\end{tabularx}
+\end{teloscard}
+
+\section{Course-level index}
+\begin{tabularx}{\linewidth}{@{}c p{.16\linewidth}p{.18\linewidth}p{.20\linewidth}L@{}}
+\toprule
+\textbf{L.}&\textbf{Record IDs}&\textbf{Main measured pattern}&
+\textbf{Model revision}&\textbf{Open question / next link}\\
+\midrule
+1&&&&\\[.85em]2&&&&\\[.85em]3&&&&\\[.85em]4&&&&\\[.85em]5&&&&\\[.85em]
+6&&&&\\[.85em]7&&&&\\[.85em]8&&&&\\[.85em]9&&&&\\[.85em]10&&&&\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{Course completion check}
+Choose one claim from Lessons 1--3, one from 4--6, and one from 7--9. For each,
+locate the raw observation, reconstruct the apparatus from the drawing, state
+the main uncertainty, and name a result that would have weakened the claim.
+Lesson 10 is complete only when the learner can explain the historical
+mechanism and the reason it remains outside learner construction.
+\end{gate}
+
+\section{Demonstrations and provider independence}
+Use a demonstration only after its named prerequisite and record it as
+observation, not as a substitute for the learner investigation. Finished prose
+and artwork in this edition are independently authored. The shared neutral
+research library supplies authoritative physics and safety claims; full
+citations and scope notes are recorded there. \sourcefoot
+\end{document}

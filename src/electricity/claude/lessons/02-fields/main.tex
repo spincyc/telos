@@ -1,81 +1,333 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{2. Fields}{How a force reaches across empty space}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{2. Fields}
+  {Build a force map from repeated compass tests}{2026-07-27}
+
+\newcommand{\magnetstates}{%
+\begin{center}
+\begin{tikzpicture}[x=.92cm,y=.92cm,line cap=round,line join=round,
+  flux/.style={-{Latex[length=1.5mm]},black!67,line width=.42pt},
+  faint/.style={black!28,line width=.28pt},
+  magnet/.style={draw=black,line width=.7pt},
+  lab/.style={font=\tiny,align=center}]
+  % Single magnet
+  \node[font=\bfseries\scriptsize,align=center] at (-4.45,1.55){STATE A\\one magnet};
+  \draw[magnet,fill=telosfill](-5.22,-.22)rectangle(-3.68,.22);
+  \draw[magnet](-4.45,-.22)--(-4.45,.22);
+  \node[font=\scriptsize]at(-4.85,0){N};
+  \node[font=\scriptsize]at(-4.06,0){S};
+  \draw[flux](-5.22,.08)..controls(-5.86,1.15)and(-3.05,1.15)..(-3.68,.08);
+  \draw[flux](-5.22,-.08)..controls(-5.86,-1.15)and(-3.05,-1.15)..(-3.68,-.08);
+  \draw[flux](-5.22,.15)..controls(-5.72,.66)and(-3.18,.66)..(-3.68,.15);
+  \node[lab]at(-4.45,-1.48){closed family of curves;\\compass tangent at every point};
+
+  \draw[faint](-2.18,-1.65)--(-2.18,1.68);
+  % Attraction
+  \node[font=\bfseries\scriptsize,align=center] at (0,1.55){STATE B\\opposite poles};
+  \draw[magnet,fill=telosfill](-1.60,-.22)rectangle(-.35,.22);
+  \draw[magnet,fill=telosfill](.35,-.22)rectangle(1.60,.22);
+  \node[font=\scriptsize]at(-.62,0){S};
+  \node[font=\scriptsize]at(.62,0){N};
+  \node[font=\scriptsize]at(-1.32,0){N};
+  \node[font=\scriptsize]at(1.31,0){S};
+  \foreach \y in {-.14,0,.14}\draw[flux](.35,\y)--(-.35,\y);
+  \draw[flux](.44,.19)..controls(.08,.72)and(-.08,.72)..(-.44,.19);
+  \draw[flux](.44,-.19)..controls(.08,-.72)and(-.08,-.72)..(-.44,-.19);
+  \node[lab]at(0,-1.48){same-axis needles bridge the gap;\\dense, orderly centre region};
+
+  \draw[faint](2.18,-1.65)--(2.18,1.68);
+  % Repulsion
+  \node[font=\bfseries\scriptsize,align=center] at (4.45,1.55){STATE C\\like poles};
+  \draw[magnet,fill=telosfill](2.85,-.22)rectangle(4.10,.22);
+  \draw[magnet,fill=telosfill](4.80,-.22)rectangle(6.05,.22);
+  \node[font=\scriptsize]at(3.82,0){N};
+  \node[font=\scriptsize]at(5.08,0){N};
+  \node[font=\scriptsize]at(3.12,0){S};
+  \node[font=\scriptsize]at(5.78,0){S};
+  \draw[flux](4.10,.12)..controls(4.35,.28)and(4.22,1.07)..(3.66,1.19);
+  \draw[flux](4.80,.12)..controls(4.55,.28)and(4.68,1.07)..(5.24,1.19);
+  \draw[flux](4.10,-.12)..controls(4.35,-.28)and(4.22,-1.07)..(3.66,-1.19);
+  \draw[flux](4.80,-.12)..controls(4.55,-.28)and(4.68,-1.07)..(5.24,-1.19);
+  \fill (4.45,0)circle(.035);
+  \node[font=\tiny,above]at(4.45,.08){balance point};
+  \node[lab]at(4.45,-1.48){needles turn away on either side;\\weak response at the symmetry point};
+\end{tikzpicture}
+\end{center}}
+
+\newcommand{\compasswalk}{%
+\begin{center}
+\begin{tikzpicture}[x=.72cm,y=.72cm,line cap=round,line join=round,
+  grid/.style={black!18,line width=.25pt},
+  sample/.style={-{Latex[length=1.5mm]},black!78,line width=.52pt},
+  ghost/.style={black!36,line width=.34pt,densely dashed}]
+  \draw[step=.72cm,grid](-5.40,-2.16)grid(5.40,2.16);
+  \draw[line width=.8pt,fill=telosfill](-1.08,-.34)rectangle(1.08,.34);
+  \draw[line width=.6pt](0,-.34)--(0,.34);
+  \node[font=\scriptsize]at(-.55,0){N};
+  \node[font=\scriptsize]at(.55,0){S};
+  \foreach \x/\y/\a in {-4.68/0/0,-3.96/1.44/-18,-2.88/2.16/-42,
+    -1.44/1.44/-70,0/1.44/-90,1.44/1.44/-110,2.88/2.16/-138,
+    3.96/1.44/-162,4.68/0/180,-3.96/-1.44/18,-2.88/-2.16/42,
+    -1.44/-1.44/70,0/-1.44/90,1.44/-1.44/110,2.88/-2.16/138,
+    3.96/-1.44/162}{
+    \draw[black!50,line width=.35pt](\x,\y)circle(.17);
+    \draw[sample]({\x-.24*cos(\a)},{\y-.24*sin(\a)})
+      --({\x+.28*cos(\a)},{\y+.28*sin(\a)});}
+  \draw[ghost](-4.68,0)..controls(-3.8,2.25)and(-1.4,2.70)..(0,1.44)
+    ..controls(1.4,2.70)and(3.8,2.25)..(4.68,0);
+  \draw[ghost](-4.68,0)..controls(-3.8,-2.25)and(-1.4,-2.70)..(0,-1.44)
+    ..controls(1.4,-2.70)and(3.8,-2.25)..(4.68,0);
+  \node[font=\scriptsize,fill=white,inner sep=2pt]at(4.15,-2.40)
+    {curve added only after arrows};
+\end{tikzpicture}
+\end{center}}
+
+\newcommand{\mapstates}{%
+\begin{center}
+\begin{tikzpicture}[x=.92cm,y=.92cm,line cap=round,
+  arr/.style={-{Latex[length=1.5mm]},black!75,line width=.45pt},
+  guide/.style={black!34,line width=.32pt,densely dashed}]
+  \node[font=\bfseries\small]at(-3.66,1.32){MEASURED STATE};
+  \draw[step=.46cm,black!16,line width=.22pt](-5.25,-1.10)grid(-2.07,1.10);
+  \draw[line width=.65pt,fill=telosfill](-4.26,-.18)rectangle(-3.06,.18);
+  \node[font=\tiny]at(-3.94,0){N};\node[font=\tiny]at(-3.38,0){S};
+  \foreach \x/\y/\a in {-4.80/.46/-12,-4.34/.92/-45,-3.66/.92/-90,
+    -2.98/.92/-135,-2.52/.46/-168,-4.80/-.46/12,-4.34/-.92/45,
+    -3.66/-.92/90,-2.98/-.92/135,-2.52/-.46/168}
+    \draw[arr](\x,\y)--++(\a:.38);
+  \node[font=\scriptsize,align=center]at(-3.66,-1.40)
+    {dots + needle bearings\\remain the primary evidence};
+
+  \draw[black!25](0,-1.50)--(0,1.52);
+  \node[font=\bfseries\small]at(2.95,1.32){INFERRED MAP};
+  \draw[line width=.65pt,fill=telosfill](2.35,-.18)rectangle(3.55,.18);
+  \node[font=\tiny]at(2.67,0){N};\node[font=\tiny]at(3.23,0){S};
+  \draw[arr](2.35,.08)..controls(1.65,1.18)and(4.25,1.18)..(3.55,.08);
+  \draw[arr](2.35,-.08)..controls(1.65,-1.18)and(4.25,-1.18)..(3.55,-.08);
+  \draw[guide](2.35,.14)..controls(1.88,.62)and(4.02,.62)..(3.55,.14);
+  \draw[guide](2.35,-.14)..controls(1.88,-.62)and(4.02,-.62)..(3.55,-.14);
+  \node[font=\scriptsize,align=center]at(2.95,-1.40)
+    {smooth curves summarize\\direction between samples};
+\end{tikzpicture}
+\end{center}}
+
 \begin{document}
-\telosmasthead[Make the invisible visible]
-\lessonhead{2}{about 60 minutes}{everyone builds; no electrical hazard}
+\telosmasthead[Observe three field states]
+\lessonhead{2}{two sessions of 45 minutes}{learner maps; adult manages filings}
 
 \begin{materials}
-\item Two bar magnets, one horseshoe magnet
-\item Iron filings in a shaker (or steel wool cut fine)
-\item A sheet of clear acrylic or stiff card
-\item Several small compasses
-\item Castor or mineral oil in a shallow clear dish
-\item Grass seed or fine semolina
-\item The electroscope from Lesson 1, and a charged comb
+\item Two labelled bar magnets
+\item One small compass; a second compass for the proof test
+\item Graph paper, ruler, pencil, and protractor
+\item Clear acrylic or stiff card
+\item Iron filings sealed in a shaker
+\item Tape to mark fixed magnet positions
 \end{materials}
 
 \begin{predict}
-You will lay a card over a bar magnet and sprinkle iron filings on it. Draw,
-before you do it, what you think the pattern will look like. Keep the drawing.
-Then draw what you think happens with \emph{two} magnets, north facing north.
+Draw the compass direction at the centre of each arrangement before testing:
+one magnet; opposite poles facing; like poles facing. For each prediction,
+write one observation that would make you change your mind.
 \end{predict}
 
-\lessonsection{Do it}
+\magnetstates
+
+\begin{telospanel}{Read the states before drawing lines}
+\textbf{A.} Where is the compass turn largest? \quad
+\textbf{B.} Does the centre needle point across or along the gap? \quad
+\textbf{C.} At the balance point, does ``small response'' mean ``no field
+anywhere''? Answer from nearby compass readings, not from filings alone.
+\end{telospanel}
+
+\lessonsection{First pass: reveal, then reset}
+Tape magnet outlines to the bench so each state can be reproduced. The adult
+shakes a sparse layer of filings onto the card; the learner taps the card,
+sketches the pattern, and labels the magnet positions. Return filings to their
+container before changing state. Keep filings away from eyes, electronics, and
+the compass pivot. Filings show alignment and crowding, but they do not supply
+arrow direction; the compass does.
+
+\newpage
+\telosmasthead[Walk one compass; keep every trial]
+\small
+\lessonsection{Build a point-by-point map}
 \begin{enumerate}
-\item \textbf{One magnet.} Lay the card over a bar magnet. Sprinkle filings
-  thinly and tap the card gently. Compare with your drawing.
-\item \textbf{Two magnets, attracting.} North facing south, a few centimetres
-  apart. Sprinkle and tap. The lines run straight from one to the other.
-\item \textbf{Two magnets, repelling.} North facing north. The lines curve away
-  and a region between them stays almost empty.
-\item \textbf{Walk a compass.} Put a single compass on the card and move it
-  slowly around the magnet, drawing an arrow at each position. Twenty arrows
-  later you have drawn the field yourself, one point at a time --- and that is
-  what a field \emph{is}: a direction and a strength at every point in space.
-\item \textbf{The electric field.} Float grass seed on a thin layer of oil in
-  the dish. Bring a well-charged comb near the surface. The seeds line up along
-  the electric field. It is fainter and fussier than the magnetic version ---
-  which is exactly why magnetism was understood first.
+\item Tape one bar magnet on a graph-paper grid. Trace its outline and mark
+which end is north. Do not move it until the table is complete.
+\item Place the compass centre on a grid intersection, wait for the needle to
+settle, and trace the north-pointing direction as an arrow.
+\item Lift the compass completely, replace it at the same point, and repeat.
+Record both bearings. A repeat is evidence about reliability, not busywork.
+\item Continue around the magnet. Use the same compass, reading position,
+settling time, and grid spacing at every point.
+\item Only after all arrows exist, add faint curves tangent to them. Never bend
+a curve merely to make the picture look symmetrical.
 \end{enumerate}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{The problem a field solves}{The magnet moves the compass without
-  touching it. Either the force jumps across the gap instantly --- which turns
-  out to be false --- or the magnet changes the \emph{space around it}, and the
-  compass responds to the space where it sits. The second is true, and the
-  changed space is the field.}
-\telosfact{Reading a field map}{Direction of the line is the direction of the
-  force on a north pole. Where lines crowd together the field is strong; where
-  they spread out it is weak.}
-\telosfact{Lines never cross}{If they did, a compass at the crossing would have
-  to point two ways at once.}
-\telosfact{Closed loops}{Magnetic field lines have no ends --- follow one and it
-  returns through the magnet. Electric field lines do have ends: they start on
-  positive charge and finish on negative.}
-\telosfact{Sharp points concentrate}{Field lines crowd at corners and points.
-  This is why a lightning rod is pointed and why a Tesla coil's topload is a
-  smooth torus --- a smooth shape holds more charge before the air breaks down.}
-\end{telosfacts}
+\compasswalk
 
-\lessonsection{Break it}
-\begin{telosfacts}[0.20]
-\telosfact{Distance}{Move the compass twice as far away. Does the deflection
-  halve, quarter, or something else? You cannot settle this by eye --- notice
-  that, and notice that it will need a measurement.}
-\telosfact{Shielding}{Put a sheet of steel between the magnet and the compass,
-  then aluminium, then cardboard. Only one of them changes anything. Why?}
-\telosfact{Cut it}{Break a cheap magnet in half. Do you get a separate north and
-  a separate south, or two smaller complete magnets? Predict first.}
-\end{telosfacts}
+\begin{teloscard}{Questions while the map is still raw}
+\begin{enumerate}
+\item Which two points should match by symmetry? Do their repeated bearings
+agree within your reading precision?
+\item Near a pole, does the needle settle faster, slower, or no differently?
+Record the observation; do not turn settling speed directly into field strength.
+\item If two nearby arrows disagree sharply, should a smooth curve pass through
+both? What repeat would decide which arrow to trust?
+\end{enumerate}
+\end{teloscard}
+
+\lessonsection{Repeated bearing record}
+Measure bearings clockwise from the top edge of the paper. Use identical grid
+points for all repeats.
+
+\begin{center}\footnotesize
+\begin{tabularx}{.96\linewidth}{@{}c c c c c c L@{}}
+\toprule
+Point & \(x\) (cm) & \(y\) (cm) & bearing 1 & bearing 2 &
+difference & observation\\
+\midrule
+A & & & & & &\\[.75em]
+B & & & & & &\\[.75em]
+C & & & & & &\\[.75em]
+D & & & & & &\\[.75em]
+E & & & & & &\\[.75em]
+F & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Stop and judge the repeats}
+Circle the largest bearing difference. If it exceeds \(10^\circ\), make a third
+reading before drawing any guide curve. Check first for a shifted magnet,
+nearby steel, a tilted compass, or a grid point read from the wrong side.
+\end{telospanel}
+
+\newpage
+\telosmasthead[Turn observations into a model]
+\small
+\mapstates
+
+\lessonsection{Worked inference}
+At the grid point \((x,y)=(0,\qty{3}{cm})\), suppose two north-needle bearings
+are \(88^\circ\) and \(92^\circ\). Their mean is
+\[
+  (88^\circ+92^\circ)/2=90^\circ ,
+\]
+and their spread is \(4^\circ\). The defensible plotted result is an arrow at
+about \(90^\circ\), with the repeat spread noted. It supports a horizontal
+field direction at that point. It does \emph{not} measure field magnitude:
+a freely rotating compass reports direction, while its turn angle relative to
+the paper depends on the combined magnet and Earth's fields.
+
+\begin{teloscard}{A second inference: comparison, not a law}
+Suppose a compass initially points \(0^\circ\) with the magnet absent. On the
+same axis it turns to \(58^\circ\) at \(\qty{2}{cm}\), \(31^\circ\) at
+\(\qty{4}{cm}\), and \(17^\circ\) at \(\qty{6}{cm}\). The response decreases
+with distance. That trend is supported. ``The field halves whenever distance
+doubles'' is not: \(58^\circ\) to \(31^\circ\) is only one comparison, and
+compass angle is not directly proportional to magnetic-field strength.
+\end{teloscard}
+
+\lessonsection{Change one state, preserve the test}
+Repeat four fixed grid points for opposite poles facing and like poles facing.
+Use the same gap and compass.
+
+\begin{center}\footnotesize
+\begin{tabularx}{.96\linewidth}{@{}c c c c c L@{}}
+\toprule
+Point & opposite 1 & opposite 2 & like 1 & like 2 & what changed?\\
+\midrule
+centre & & & & &\\[.85em]
+above centre & & & & &\\[.85em]
+left of gap & & & & &\\[.85em]
+right of gap & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Intermediate claim check}
+For each state, write: ``At point \_\_, the needle pointed \_\_; therefore the
+field direction there was \_\_.'' Then add: ``This does not yet tell me
+\_\_.'' A strong claim says both what the observation establishes and what it
+leaves open.
+\end{telospanel}
+
+\lessonsection{Electric-field analogy}
+The map-making rule transfers: an electric-field arrow gives the force
+direction on a positive test charge at one location. The probes differ.
+A compass samples a magnetic field; it does not sample electric field.
+Electric-field lines begin on positive charge and end on negative charge,
+whereas magnetic-field lines form closed loops. In both cases, drawn lines are
+a model assembled from local evidence, not visible threads in space.
+
+\newpage
+\telosmasthead[Diagnose the map; then make it predict]
+\small
+\lessonsection{Diagnostics}
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}L L@{}}
+\toprule
+Symptom & Likely cause & Correction\\
+\midrule
+All needles point alike & magnet too far away; steel object dominates &
+bring the fixed grid closer; clear the bench\\
+Repeat differs greatly & compass not centred; magnet shifted &
+mark centres; retape outline; take a third reading\\
+Needle sticks & tilted housing or filings at pivot &
+level and clean compass; replace if needed\\
+Curves cross & curves invented between sparse samples &
+erase curves; collect another local arrow\\
+Map looks asymmetric & real placement error or biased reading &
+swap observer side; remeasure mirrored points\\
+Weak centre in like-pole state & symmetry cancellation near that point &
+test immediately above, below, left, and right\\
+\bottomrule
+\end{tabularx}
+
+\lessonsection{Final proof: predict a hidden reading}
+\begin{enumerate}
+\item Choose a blank grid point between four measured points. Without placing
+a compass there, draw the direction your map predicts. Write a tolerance,
+such as ``within \(10^\circ\).''
+\item Give the sheet and a second compass to another person. Hide your
+prediction with a card while they centre the compass and record two bearings.
+\item Reveal the prediction. Compute the smallest angular difference between
+prediction and each reading. A prediction of \(350^\circ\) and reading of
+\(5^\circ\) differ by \(15^\circ\), not \(345^\circ\).
+\item Repeat at a point where the map bends sharply. State whether each result
+falls within tolerance. If not, revise the local curve or collect more points;
+do not revise the recorded bearings.
+\end{enumerate}
+
+\begin{teloscard}{Proof record}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}Xp{.18\linewidth}X@{}}
+Point + prediction & \rule{\linewidth}{.3pt} &
+Tolerance & \rule{\linewidth}{.3pt}\\[1em]
+Hidden readings & \rule{\linewidth}{.3pt} &
+Difference & \rule{\linewidth}{.3pt}\\[1em]
+Pass / revise & \rule{\linewidth}{.3pt} &
+Reason & \rule{\linewidth}{.3pt}
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{What the proof establishes}
+A successful hidden prediction shows that the field map compresses earlier
+measurements well enough to predict a new local direction. It does not prove
+that the drawn curves are physical strands, that the map is exact between all
+points, or that magnetic and electric fields are the same thing.
 
 \begin{telospanel}{The link to the coil}
-Every part of the coil is a field doing work. The primary makes a magnetic
-field; the secondary sits in it and responds to it. The capacitor stores energy
-in an electric field between two plates. The streamer happens when the electric
-field near the topload gets strong enough to rip air apart. Nothing in the
-machine touches anything else --- it is all fields.
+The primary coil creates a magnetic field; the secondary responds to the field
+at its own location. Later lessons change that field with time. This map has
+already established the essential discipline: fix the source, sample defined
+locations, preserve repeats, infer only what the probe can show, then demand a
+new prediction.
 \end{telospanel}
-\lowvoltagenote
+\begin{telosframe}
+\textbf{This lesson uses no electrical power source.} Keep loose filings away
+from eyes, electronics, and the compass pivot. The habits that matter here are
+experimental: fix the source, change one state at a time, preserve every
+reading, and test the finished model against a new observation.
+\end{telosframe}
 \end{document}

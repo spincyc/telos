@@ -1,92 +1,412 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{1. Charge}{Two kinds of it, and it never appears from nowhere}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{1. Charge}
+  {Two kinds of it, and it never appears from nowhere}{2026-07-25}
+
 \begin{document}
-\telosmasthead[Build an electroscope]
-\lessonhead{1}{about 90 minutes}{everyone builds; no electrical hazard}
+\telosmasthead[Build an electroscope, then make it prove the claim]
+\lessonhead{1}{two sessions of about 75 minutes}
+  {everyone builds; no electrical hazard}
 
 \begin{materials}
 \item Sticky tape (regular, not invisible)
-\item Two balloons, string
-\item A glass jar with a plastic or cork lid
+\item Two balloons and string
+\item Glass jar with plastic or cork lid
 \item Stiff copper wire, about 20\,cm
-\item Aluminium foil
-\item A plastic comb or PVC pipe offcut
-\item A wool sweater or a silk scarf
-\item An empty aluminium can
+\item Aluminium foil; ruler; protractor
+\item Plastic comb or PVC offcut
+\item Wool sweater or silk scarf
+\item Empty aluminium can
 \end{materials}
 
 \begin{predict}
-Rub a balloon on your hair and hold it near a thin stream of water from a tap.
-Does the stream bend \emph{toward} the balloon, \emph{away} from it, or not at
-all? Write down which, and one sentence saying why. Do this before you touch the
-tap.
+Commit now. Two tape strips pulled from the same bench will
+\(\bigcirc\) attract \(\bigcirc\) repel \(\bigcirc\) do nothing. A charged
+balloon will pull a neutral can because \rule{.42\linewidth}{.3pt}
 \end{predict}
 
-\lessonsection{Do it}
+\lessonsection{The rules of this test}
+
+Static charge is feeble, leaky and easy to fake with a draught. That is useful:
+it forces good experimental habits.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \tikzset{stagebox/.style={draw,very thick,minimum width=2.0cm,
+    minimum height=.76cm,align=center,font=\small}}
+  \node[stagebox] (z) at (-3.6,0) {zero\\the apparatus};
+  \node[stagebox] (p) at (-1.2,0) {prepare\\one way};
+  \node[stagebox] (m) at (1.2,0) {measure\\first motion};
+  \node[stagebox] (r) at (3.6,0) {reset\\and repeat};
+  \draw[-{Stealth[length=2.4mm]},thick] (z)--(p);
+  \draw[-{Stealth[length=2.4mm]},thick] (p)--(m);
+  \draw[-{Stealth[length=2.4mm]},thick] (m)--(r);
+  \draw[-{Stealth[length=2.4mm]},dashed]
+    (r.south)..controls(2.5,-.9)and(-2.5,-.9)..(z.south);
+\end{tikzpicture}
+\end{center}
+
 \begin{enumerate}
-\item \textbf{Two kinds.} Stick two 15\,cm strips of tape onto the bench, then
-  pull both off quickly and hang them near each other. They push apart. Now
-  stick one strip \emph{on top of} another, pull the pair off together, then
-  peel them apart --- now they pull together. Two strips pulled the same way
-  repel; two pulled apart from each other attract. There are exactly two kinds
-  of charge, and that is an experimental result, not a definition.
-\item \textbf{Test the water.} Run the tap to a thin stream. Charge a balloon on
-  hair or wool and bring it close. Compare with your prediction.
-\item \textbf{Roll the can.} Lay the empty can on its side on a flat table. Bring
-  the charged balloon near without touching. The can follows it.
-\item \textbf{Build the electroscope.} Push the copper wire through the lid.
-  Bend the inside end into a small hook and hang two strips of foil
-  (about $1\times4$\,cm) over it so they hang flat against each other. Crumple a
-  ball of foil onto the outside end. Seal the lid onto the jar.
-\item \textbf{Use it.} Charge the comb on wool and touch it to the foil ball. The
-  leaves fly apart and \emph{stay} apart. Touch the ball with your finger: they
-  collapse.
-\item \textbf{Charge without touching.} Recharge the comb. Bring it \emph{near}
-  the ball without contact --- the leaves separate. Take it away --- they fall.
-  Now bring it near again, and while it is near, touch the ball with a finger
-  from your other hand. Remove your finger first, then the comb. The leaves stay
-  apart, and the electroscope now holds the \emph{opposite} charge to the comb.
+\item Shut the window. Move loose paper away. Record whether the day is dry,
+  average or humid.
+\item For every tape test, use strips \(15\) cm long with a \(2\) cm folded
+  handle. Touch the handle only.
+\item Record the \emph{first} movement. If the tapes touch, discharge both on
+  the bench and start that trial again.
+\item Repeat every claimed effect three times. One theatrical success proves
+  nothing.
 \end{enumerate}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{Two signs}{Charge comes in two kinds, arbitrarily named positive and
-  negative. Like repels like; opposite attracts. Everything else in this course
-  is a consequence.}
-\telosfact{Rubbing moves, it does not create}{Wool gives up electrons and the
-  balloon takes them. The wool is left as positive as the balloon is negative.
-  Nothing was made; something was moved. That is conservation of charge, and it
-  has no known exceptions.}
-\telosfact{Why neutral things are attracted}{The water and the can are neutral,
-  and they still move. A nearby charge pulls their own charges slightly apart
-  --- the near side becomes opposite, the far side like. The near side is closer,
-  so attraction wins. This is \textbf{induction}, and it is why the last step
-  works.}
-\telosfact{The leaves}{Both leaves get the same charge, so they repel. The
-  angle is a crude voltmeter: it measures how much charge is on the ball.}
-\telosfact{Conductor and insulator}{Your finger drained the charge to earth
-  through your body; the glass jar does not. That difference is the whole reason
-  wires and insulation both exist.}
-\end{telosfacts}
+\lessonsection{A. Find the two signs}
 
-\lessonsection{Break it}
-\begin{telosfacts}[0.20]
-\telosfact{Humidity}{Try this on a humid day and again on a dry one. Water in
-  the air conducts, and charge leaks away. If nothing works, that is why --- and
-  it is also why the Tesla coil will perform differently on different days.}
-\telosfact{Longer leaves}{Make one leaf twice as long. Does it move further?
-  Why might that be about weight rather than charge?}
-\telosfact{Reverse it}{Charge the comb with silk instead of wool. Does the
-  electroscope respond the same way? Is the comb's charge the same sign?}
-\end{telosfacts}
+\begin{enumerate}
+\item Hang two unprepared strips from pencils balanced across cups. Set their
+  lower ends \(2\) cm apart. Wait ten seconds. This is the zero trial.
+\item Press two fresh strips separately onto the same clean bench. Smooth each
+  ten times. Pull each off briskly and hang it at once.
+\item Begin \(8\) cm apart. Bring the stands inward \(1\) cm every three
+  seconds. Write the gap at the first repeatable motion and its direction.
+\item Discharge, repeat twice, and swap the stands left-to-right for trial 3.
+  Did the result follow the tape or the side of the room?
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[font=\small\bfseries] at (-3.25,1.12){Zero};
+  \node[font=\small\bfseries] at (0,1.12){Prepared alike};
+  \node[font=\small\bfseries] at (3.25,1.12){First motion};
+  \draw[very thick] (-3.70,.62)--(-3.60,-.64)
+    (-2.80,.62)--(-2.90,-.64)
+    (-.45,.62)--(-.35,-.64) (.45,.62)--(.35,-.64)
+    (2.80,.62)--(2.90,-.64) (3.70,.62)--(3.60,-.64);
+  \draw[black!45] (-3.65,.60)--(-3.55,-.62)
+    (-2.75,.60)--(-2.85,-.62)
+    (-.40,.60)--(-.30,-.62) (.50,.60)--(.40,-.62)
+    (2.85,.60)--(2.95,-.62) (3.75,.60)--(3.65,-.62);
+  \foreach \y in {.28,-.08,-.42}{
+    \node[font=\scriptsize] at (-.72,\y){\(+\)};
+    \node[font=\scriptsize] at (.72,\y){\(+\)};
+  }
+  \draw[-{Stealth[length=2mm]},thick] (2.98,-.04)--(2.48,-.04);
+  \draw[-{Stealth[length=2mm]},thick] (3.52,-.04)--(4.02,-.04);
+  \draw[<->] (-3.52,-.84)--(-2.98,-.84)
+    node[midway,below,font=\scriptsize]{2 cm};
+  \node[font=\scriptsize,align=center] at (0,-1.02)
+    {The \(+\) label is arbitrary.\\The repeated repulsion is not.};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\telosmasthead[Lesson 1 --- separate a pair, then challenge the result]
+\lessonsection{B. Give two tapes opposite histories}
+
+\begin{enumerate}
+\item Put a fresh strip on the bench and mark its handle \(B\), for bottom.
+  Press a second strip on top and mark it \(T\), for top.
+\item Lift the joined pair by \(B\). Before peeling, answer: is the pair as a
+  whole charged, neutral, or not yet known? \rule{.25\linewidth}{.3pt}
+\item Peel \(T\) from \(B\) in one clean pull. Hang both at once. Record their
+  first motion from \(8,7,6,\ldots\) cm.
+\item Make a second pair. Compare \(T_1\) with \(T_2\), then \(B_1\) with
+  \(B_2\), resetting between comparisons.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[font=\small\bfseries] at (-3.45,1.18){1. Joined};
+  \draw[very thick,fill=black!10] (-4.65,.12) rectangle (-2.25,.42);
+  \draw[very thick,fill=white] (-4.65,.42) rectangle (-2.25,.72);
+  \node[font=\scriptsize] at (-3.45,.57){T};
+  \node[font=\scriptsize] at (-3.45,.27){B};
+  \foreach \x in {-4.35,-3.95,...,-2.55}
+    \node[font=\tiny] at (\x,.91){\(\pm\)};
+  \draw[-{Stealth[length=2.5mm]},very thick] (-1.82,.42)--(-.78,.42)
+    node[midway,above,font=\scriptsize]{peel};
+
+  \node[font=\small\bfseries] at (1.05,1.18){2. Separated};
+  \draw[very thick] (.60,.12) rectangle (1.50,.78);
+  \node at (1.05,.45){T};
+  \foreach \y in {.20,.45,.70}
+    \node[font=\scriptsize] at (.38,\y){\(+\)};
+  \draw[very thick] (2.50,.12) rectangle (3.40,.78);
+  \node at (2.95,.45){B};
+  \foreach \y in {.20,.45,.70}
+    \node[font=\scriptsize] at (3.62,\y){\(-\)};
+  \draw[<->,thick] (1.67,.45)--(2.33,.45);
+
+  \node[font=\small\bfseries] at (4.80,1.18){3. Cross-check};
+  \draw[very thick] (4.40,.72)--(4.52,-.55);
+  \draw[very thick] (5.20,.72)--(5.08,-.55);
+  \draw[-{Stealth[length=2mm]}] (4.64,-.06)--(4.88,-.06);
+  \draw[-{Stealth[length=2mm]}] (4.96,-.06)--(4.72,-.06);
+  \node[font=\scriptsize,align=center] at (4.80,-.87)
+    {\(T\)-\(B\) attracts;\\\(T\)-\(T\), \(B\)-\(B\) repel};
+  \node[font=\scriptsize,align=center] at (-.10,-1.12)
+    {Opposite changes stay inside the original pair:\\charge moved; it did not
+    appear from nowhere.};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.12\linewidth}p{.18\linewidth}p{.18\linewidth}L@{}}
+\toprule
+Pair & Trial & First motion & Threshold gap & Anything touched?\\
+\midrule
+same-bench strips & 1 & & cm & \\[1.1em]
+ & 2 & & cm & \\[1.1em]
+ & 3, sides swapped & & cm & \\[1.1em]
+\midrule
+\(T_1\)-\(B_1\) & 1 & & cm & \\[1.1em]
+\(T_1\)-\(T_2\) & 1 & & cm & \\[1.1em]
+\(B_1\)-\(B_2\) & 1 & & cm & \\[1.1em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Stop and argue}
+Attraction cannot, by itself, prove opposite net charges: a charged object can
+attract a neutral one. Which tape result \emph{cannot} be explained by a
+neutral partner? Why is swapping the stands a useful control?
+\end{telospanel}
+
+\newpage
+\telosmasthead[Lesson 1 --- neutral things still move]
+\lessonsection{C. Polarisation: water and aluminium}
+
+\begin{enumerate}
+\item Lay the empty can on a level bench and mark its starting line. With the
+  balloon uncharged and \(2\) cm away, verify that the can stays put.
+\item Rub the balloon on wool exactly ten strokes. Approach the can from
+  \(12\) cm in \(1\) cm steps, pausing three seconds. Never touch it.
+\item Record the first gap that starts the can rolling. Recharge with ten
+  strokes and repeat twice. Then touch the balloon to the bench and repeat as a
+  discharged control.
+\item Run a water stream about \(2\) mm wide. Measure the sideways deflection
+  \(5\) cm below the tap with the charged balloon held \(3\) cm away.
+\item Discharge the balloon and repeat. Do not report ``it bent''; report
+  direction and millimetres.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[font=\small\bfseries] at (-3.20,1.38){Can: charges can travel};
+  \draw[very thick] (-4.95,.25) ellipse (.28 and .70);
+  \draw[very thick] (-4.95,.95)--(-4.05,.95)
+    (-4.95,-.45)--(-4.05,-.45);
+  \draw[very thick] (-4.05,.25) ellipse (.28 and .70);
+  \foreach \y in {-.23,.25,.73}{
+    \node[font=\scriptsize] at (-5.20,\y){\(+\)};
+    \node[font=\scriptsize] at (-3.77,\y){\(-\)};
+  }
+  \draw[very thick,rounded corners] (-2.88,.48) rectangle (-1.72,.88);
+  \foreach \x in {-2.72,-2.45,...,-1.90}
+    \node[font=\scriptsize] at (\x,.68){\(-\)};
+  \draw[-{Stealth[length=2mm]},thick] (-3.56,.25)--(-3.96,.25)
+    node[midway,above,font=\scriptsize]{roll};
+
+  \draw[black!25] (0,-.78)--(0,1.55);
+  \node[font=\small\bfseries] at (3.20,1.38){Water: molecules can turn};
+  \draw[very thick] (3.45,1.00)--(3.45,.48)
+    .. controls (3.45,.05) and (3.15,-.08) .. (3.08,-.62);
+  \draw[very thick,rounded corners] (.90,.38) rectangle (2.10,.80);
+  \foreach \x in {1.06,1.34,...,1.90}
+    \node[font=\scriptsize] at (\x,.59){\(-\)};
+  \draw[<->] (2.38,-.62)--(3.08,-.62)
+    node[midway,below,font=\scriptsize]{mm};
+  \foreach \y in {.05,.30,.55}
+    \node[font=\tiny] at (3.30,\y){\(+\ -\)};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{.88\linewidth}{@{}p{.16\linewidth}p{.24\linewidth}p{.24\linewidth}L@{}}
+\toprule
+Trial & Charged can gap & Discharged gap & Water deflection\\
+\midrule
+1 & cm & cm / none & mm toward / away\\[1.1em]
+2 & cm & cm / none & mm toward / away\\[1.1em]
+3 & cm & cm / none & mm toward / away\\[1.1em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{The question that matters}
+The can began neutral. If it still moved toward the balloon, attraction is not
+proof of opposite net charge. The nearer charges rearranged or turned; the
+farther ones could not cancel the stronger near-side interaction.
+\end{telospanel}
+
+\newpage
+\telosmasthead[Lesson 1 --- build the instrument]
+\lessonsection{D. Build an electroscope}
+
+\begin{enumerate}
+\item Ask the adult to make a close-fitting hole through the lid. Push
+  \(20\) cm of stiff copper wire through it. The wire must not touch a metal lid.
+\item Bend the inner \(3\) cm into a narrow hook. Cut two identical foil leaves,
+  each \(1\times4\) cm. Round their lower corners.
+\item Hang both leaves on the hook so their flat faces touch. Crumple foil
+  tightly around the outer end to make a smooth \(2\) cm ball.
+\item Close the jar. The leaves must hang freely, clear of glass and lid.
+  Tape a paper protractor behind the jar with \(0^\circ\) on the centreline.
+\item Zero test: touch the ball for three seconds. Wait ten seconds. Record the
+  resting separation angle. It should be \(0^\circ\) or close to it.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \draw[very thick] (-2.05,-1.55) arc (190:350:2.05 and .32);
+  \draw[very thick] (-2.05,-1.55)--(-2.05,.80)
+    (2.05,-1.55)--(2.05,.80);
+  \draw[very thick] (-2.05,.80) arc (170:10:2.05 and .32);
+  \draw[very thick,fill=black!8] (-2.28,.72) rectangle (2.28,1.02);
+  \draw[very thick] (0,1.02)--(0,1.70);
+  \shade[ball color=black!12] (0,1.98) circle (.30);
+  \draw[very thick] (0,1.98) circle (.30);
+  \draw[very thick] (0,.72)--(0,.20);
+  \draw[very thick] (0,.20)..controls(-.32,.02)and(-.30,-.15)..(-.22,-.28);
+  \draw[very thick,fill=white] (-.22,-.25)--(-.80,-1.20)--(-.36,-1.30)--cycle;
+  \draw[very thick,fill=white] (.22,-.25)--(.80,-1.20)--(.36,-1.30)--cycle;
+  \draw[dashed] (0,-.18)--(0,-1.42);
+  \draw[<->] (-.38,-.84) arc (240:300:.76);
+  \node[font=\scriptsize] at (0,-.92){leaf angle};
+  \node[font=\scriptsize,anchor=west] at (.42,1.98){smooth foil ball};
+  \node[font=\scriptsize,anchor=west] at (2.38,.87){insulating lid};
+  \node[font=\scriptsize,anchor=east] at (-2.35,-.25)
+    {jar blocks draughts};
+\end{tikzpicture}
+\end{center}
+
+\begin{gate}{Build check}
+The two leaves are identical, the wire is bare where the foil touches it, the
+wire touches no metal lid, and the leaves touch nothing except the hook.
+\end{gate}
+
+\lessonsection{E. Make three distinct states}
+
+\begin{enumerate}
+\item \textbf{Contact charge.} Rub the comb ten strokes. Touch it to the ball
+  for one second; remove it. Record leaf angle at 0, 10, 30 and 60 seconds.
+\item Touch the ball with one finger for three seconds. The leaves should
+  collapse. This is the reset, not an optional flourish.
+\item \textbf{Near, no touch.} Recharge the comb. Hold it \(2\) cm from the ball.
+  Record the leaf angle. Withdraw it. Record the angle again.
+\item \textbf{Charge by induction.} Bring the comb back to \(2\) cm. While it
+  stays there, touch the ball. Remove your finger \emph{first}; remove the comb
+  second. Record the final angle.
+\end{enumerate}
+
+\newpage
+\telosmasthead[Lesson 1 --- read the states, then prove the claims]
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,scale=.94]
+  \foreach \x/\title in {-4.2/{1. Reset},-1.4/{2. Comb near},
+    1.4/{3. Finger first},4.2/{4. Comb leaves}}{
+    \node[font=\small\bfseries] at (\x,1.45){\title};
+    \draw[very thick] (\x-.82,-1.10) rectangle (\x+.82,.74);
+    \draw[very thick,fill=black!8] (\x-.92,.64) rectangle (\x+.92,.84);
+    \draw[very thick] (\x,.84)--(\x,1.03);
+    \filldraw[fill=white,very thick] (\x,1.14) circle (.12);
+  }
+  \draw[very thick] (-4.2,.63)--(-4.2,-.02);
+  \draw[very thick] (-4.2,-.02)--(-4.34,-.82)
+    (-4.2,-.02)--(-4.06,-.82);
+  \draw[very thick] (-1.4,.63)--(-1.4,-.02);
+  \draw[very thick] (-1.4,-.02)--(-1.74,-.78)
+    (-1.4,-.02)--(-1.06,-.78);
+  \foreach \y in {1.00,1.18,1.36}
+    \node[font=\scriptsize] at (-.86,\y){\(-\)};
+  \draw[very thick] (1.4,.63)--(1.4,-.02);
+  \draw[very thick] (1.4,-.02)--(1.50,-.82)
+    (1.4,-.02)--(1.30,-.82);
+  \draw[very thick] (1.55,1.12)..controls(1.95,1.43)and(2.18,1.28)..(2.22,1.04);
+  \node[font=\tiny] at (2.14,1.50){touch};
+  \draw[very thick] (4.2,.63)--(4.2,-.02);
+  \draw[very thick] (4.2,-.02)--(3.88,-.78)
+    (4.2,-.02)--(4.52,-.78);
+  \node[font=\scriptsize,align=center] at (-4.2,-1.42){leaves together};
+  \node[font=\scriptsize,align=center] at (-1.4,-1.42){separate only\\while near};
+  \node[font=\scriptsize,align=center] at (1.4,-1.42){earth path closes\\before
+    field leaves};
+  \node[font=\scriptsize,align=center] at (4.2,-1.42){opposite charge\\remains};
+  \draw[-{Stealth[length=2mm]}] (-3.24,0)--(-2.36,0);
+  \draw[-{Stealth[length=2mm]}] (-.44,0)--(.44,0);
+  \draw[-{Stealth[length=2mm]}] (2.36,0)--(3.24,0);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}p{.13\linewidth}L@{}}
+\toprule
+State & \(0\) s & \(10\) s & \(30\) s & \(60\) s & Returns after removal?\\
+\midrule
+contact charge & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & \\[1.1em]
+comb near, no touch & \(^\circ\) & & & & yes / no\\[1.1em]
+finger then comb removed & \(^\circ\) & \(^\circ\) & \(^\circ\) & \(^\circ\) & yes / no\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{When it refuses to work}
+
+\begin{tabularx}{\linewidth}{@{}p{.23\linewidth}L L@{}}
+\toprule
+Symptom & Find the cause & Change one thing\\
+\midrule
+Leaves never move & Damp foil, dirty insulator, weak charge & Dry jar and lid;
+shorten preparation-to-test delay.\\
+Leaves stick to glass & Hook off-centre or leaves too long & Re-centre wire;
+trim identical leaves.\\
+Leaves move before comb arrives & Draught or charged jar wall & Discharge all
+surfaces; close jar; wait.\\
+Angle falls quickly & Humidity or leakage across lid & Record decay; clean and
+dry lid; repeat.\\
+Induction leaves no charge & Wrong removal order & Say aloud: finger first,
+comb second.\\
+\bottomrule
+\end{tabularx}
+
+\lessonsection{The proof, not the performance}
+
+\begin{enumerate}
+\item \textbf{Two signs.} Like-history pairs repelled in
+  \rule{.8cm}{.3pt}/3 trials. The opposite-history matrix showed
+  \rule{2.2cm}{.3pt}. Repulsion rules out a neutral second object.
+\item \textbf{Conservation.} \(T\) and \(B\) began as one system and acquired
+  opposite behaviours together. State what moved and where the balancing
+  charge remained: \rule{.48\linewidth}{.3pt}
+\item \textbf{Polarisation.} The neutral can began moving at a median gap of
+  \rule{.8cm}{.3pt} cm; the discharged control \rule{1.8cm}{.3pt}. Therefore
+  attraction alone does not identify net sign.
+\item \textbf{Conduction.} Contact left a leaf angle after the comb departed;
+  the near-only state did not. The difference is charge transfer.
+\item \textbf{Induction.} Removing the earth path first trapped a final leaf
+  angle of \rule{.8cm}{.3pt}\(^\circ\). Reversing the removal order should erase
+  it. Do that control once.
+\end{enumerate}
+
+\newpage
+\telosmasthead[Lesson 1 --- conclusions and the link forward]
+\begin{telospanel}{Five questions before you claim victory}
+Which observation proves like signs? Which control separates charge from a
+draught? Why does the neutral can move? Why must finger-before-comb matter?
+Which measured result was least repeatable, and what limits it?
+\end{telospanel}
+
+\lessonsection{What it means}
+
+Charge has two signs. Like signs repel; unlike signs attract. Rubbing and
+peeling transfer electrons between objects, leaving equal and opposite changes
+inside the larger system. Conductors let charge travel; insulators slow that
+travel. A nearby charge can rearrange charge without touching. The electroscope
+makes each of those sentences visible, but only the controls make them evidence.
 
 \begin{telospanel}{The link to the coil}
-The topload of a Tesla coil is a large smooth conductor that holds charge, and
-a streamer is that charge leaving it into the air. The electroscope you just
-built is the same physics at a voltage a thousand times smaller. When the coil
-runs, you are watching your foil leaves fly apart --- violently, sixty times a
-second.
+The topload of a Tesla coil is a smooth conductor that stores charge. A
+streamer is charge escaping into air. Your electroscope shows the same family
+of effects at a vastly smaller energy. Similar physics is not similar risk.
 \end{telospanel}
+
 \lowvoltagenote
 \end{document}

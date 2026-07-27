@@ -64,6 +64,156 @@ it down? Write an answer before you drop anything, and time both falls.
 \item \textbf{The spinning disc.} Balance an aluminium pie dish on a nail point and spin a magnet underneath it, close but not touching. The dish follows the magnet round. This is an induction motor.
 \end{enumerate}
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  apparatus/.style={line width=.7pt},
+  fine/.style={line width=.32pt},
+  move/.style={-{Stealth[length=1.7mm]},line width=.65pt},
+  label/.style={font=\scriptsize,align=center}]
+% Pendulum over plate.
+\begin{scope}
+  \node[label,font=\scriptsize\bfseries] at (1.75,2.63) {A\quad PENDULUM};
+  \draw[apparatus] (1.75,2.34)--(1.25,.85);
+  \draw[apparatus,fill=telosfill] (1.02,.48) rectangle (1.48,.85);
+  \draw[apparatus,fill=gray!12] (.25,.20)--(3.25,.20)--(3.58,.43)--(.58,.43)--cycle;
+  \draw[move] (1.02,1.18) arc[start angle=205,end angle=322,x radius=.95,y radius=.47];
+  \node[label] at (2.70,1.40) {compare\\plate / no plate};
+\end{scope}
+% Ramp with spacer.
+\begin{scope}[shift={(4.10,0)}]
+  \node[label,font=\scriptsize\bfseries] at (1.75,2.63) {B\quad INCLINED PLATE};
+  \draw[apparatus,fill=gray!12] (.20,.35)--(3.45,1.95)--(3.57,1.75)--(.32,.15)--cycle;
+  \draw[apparatus,fill=telosfill,rotate around={26:(1.75,1.15)}]
+    (1.45,.88) rectangle (2.05,1.26);
+  \draw[move] (1.72,1.57)--(.87,1.15);
+  \draw[fine] (1.20,.76)--(2.40,1.35);
+  \node[label] at (2.80,.47) {paper spacer\\changes distance};
+\end{scope}
+% Rotor.
+\begin{scope}[shift={(8.20,0)}]
+  \node[label,font=\scriptsize\bfseries] at (1.75,2.63) {C\quad FREE ROTOR};
+  \draw[apparatus,fill=gray!10] (1.75,1.60) ellipse (1.43 and .42);
+  \draw[apparatus] (1.75,.16)--(1.75,1.60);
+  \draw[apparatus,fill=telosfill] (.72,.38) rectangle (1.38,.76);
+  \node[label,font=\tiny] at (1.05,.57) {N\;S};
+  \draw[move] (.43,.82) arc[start angle=205,end angle=330,x radius=1.30,y radius=.65];
+  \draw[move] (2.50,2.01) arc[start angle=42,end angle=-110,x radius=.82,y radius=.22];
+  \node[label] at (2.73,.70) {magnet leads;\\disc follows};
+\end{scope}
+% Current paths.
+\begin{scope}[shift={(12.30,0)}]
+  \node[label,font=\scriptsize\bfseries] at (1.75,2.63) {D\quad CURRENT PATH};
+  \draw[apparatus,fill=gray!8] (.18,.24) rectangle (1.57,2.15);
+  \foreach \y in {.53,.94,1.35,1.76}
+    \draw[move] (.38,\y) arc[start angle=190,end angle=-145,x radius=.49,y radius=.15];
+  \draw[apparatus,fill=gray!8] (2.02,.24) rectangle (3.41,2.15);
+  \path[fill=white] (2.64,.20) rectangle (2.79,2.20);
+  \draw[apparatus] (2.64,.24)--(2.64,2.15) (2.79,.24)--(2.79,2.15);
+  \foreach \y in {.53,.94,1.35,1.76}{
+    \draw[fine] (2.21,\y) arc[start angle=190,end angle=270,x radius=.38,y radius=.14];
+    \draw[fine] (3.22,\y) arc[start angle=-10,end angle=-90,x radius=.38,y radius=.14];}
+  \node[label] at (.88,-.04) {closed};
+  \node[label] at (2.72,-.04) {slit};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\lessonsection{Time the claim, not the spectacle}
+The adult controls and counts every magnet. Use one magnet, an unobstructed bore,
+and a padded catch box. Mark one release line and one exit line. Release without
+pushing; time first motion to first appearance at the exit. Keep tube length,
+orientation, bore, magnet face, release person, and timer unchanged.
+
+\begin{teloscard}{Four controls · five trials each (seconds)}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.26\linewidth}*{5}{>{\centering\arraybackslash}p{.07\linewidth}}p{.10\linewidth}L@{}}
+\toprule
+Object and guide & 1 & 2 & 3 & 4 & 5 & Median & Disturbance / note\\
+\midrule
+Magnet in conducting tube & & & & & & &\\[1.0em]
+Magnet in cardboard tube & & & & & & &\\[1.0em]
+Nonmagnetic slug in conductor & & & & & & &\\[1.0em]
+Nonmagnetic slug in cardboard & & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+Cross out a pushed, caught, or mis-timed trial and repeat it. To find the
+median, order five valid results and take the middle one.
+
+\begin{telospanel}{Interrogate the controls}
+\begin{enumerate}
+\item Which pair changes only the guide material? Which pair changes only the
+falling object?
+\item If air drag or wall rubbing caused the delay, which control should also
+be slow?
+\item Why can one unusually late button press distort a mean more than a median?
+\item What result would make you stop claiming an eddy-current effect?
+\end{enumerate}
+\end{telospanel}
+
+\lessonsection{Test material, thickness, and broken loops}
+Use adult-supplied, smooth specimens of equal timed length and closely matched
+bore. Never slit pipe during the activity. If a manufactured slit tube is
+available, its edges must be guarded and burr-free. Record measured wall
+thickness rather than judging by weight.
+
+\begin{minipage}{\linewidth}
+\begin{teloscard}{One-variable extension}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.10\linewidth}p{.15\linewidth}p{.12\linewidth}p{.09\linewidth}*{3}{>{\centering\arraybackslash}p{.07\linewidth}}p{.10\linewidth}L@{}}
+\toprule
+ID & Material & Wall / mm & Loop & $t_1$ & $t_2$ & $t_3$ & Median & What stayed fixed\\
+\midrule
+& & & intact & & & & &\\[0.45em]
+& & & intact & & & & &\\[0.45em]
+& & & slit & & & & &\\[0.45em]
+& & & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+\end{minipage}
+
+\noindent
+\begin{minipage}[t]{.57\linewidth}
+\textbf{Graph what was deliberately changed.} Put wall thickness on the
+horizontal axis only for a thickness series. Material and loop condition are
+categories: plot separated points or bars rather than joining them into a
+fictional continuous scale.
+
+\begin{center}
+\begin{tikzpicture}[x=.54cm,y=.42cm]
+\draw[-{Stealth[length=1.5mm]},line width=.6pt] (0,0)--(9.2,0);
+\draw[-{Stealth[length=1.5mm]},line width=.6pt] (0,0)--(0,6.8);
+\foreach \x in {1,...,8}\draw[gray!35,line width=.2pt] (\x,0)--(\x,6.4);
+\foreach \y in {1,...,6}\draw[gray!35,line width=.2pt] (0,\y)--(8.8,\y);
+\node[font=\scriptsize,align=center] at (-.55,6.3) {median\\time / s};
+\node[font=\scriptsize] at (4.4,-.58) {material, loop condition, or wall / mm};
+\end{tikzpicture}
+\end{center}
+\end{minipage}\hfill
+\begin{minipage}[t]{.40\linewidth}
+\textbf{Fault diagnosis}
+\begin{tabularx}{\linewidth}{@{}p{.43\linewidth}L@{}}
+\toprule Symptom & Check\\
+\midrule
+All trials scatter & release cue; vertical tube; timing cue\\
+Magnet alone scatters & turning or bore contact\\
+All four are slow & obstruction; exit cue\\
+Slit equals intact & hidden or bridged slit; wrong label\\
+Thickness trend reverses & bore, length, alloy, or temperature changed\\
+\bottomrule
+\end{tabularx}
+\end{minipage}
+
+\begin{telospanel}{Final proof}
+Write a conclusion that includes both necessary conditions identified by the
+four controls; one median with units; the direction of the material, thickness,
+distance, or slit effect; one measurement limitation; and where the lost
+gravitational energy went. A result is evidence only when its comparison
+changes one relevant thing.
+\end{telospanel}
+
 \lessonsection{Where this is used}
 \begin{telosfacts}[0.22]
 \telosfact{Roller-coaster brakes}{Fins of copper passing between magnets. No contact, no pads, nothing to wear out, and it cannot fail closed.}

@@ -107,8 +107,156 @@
     {mark needle direction at every point};
 \end{scope}
 \end{tikzpicture}
+\vspace{3pt}
+
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  graphite/.style={draw=telosrule,line width=.30pt},
+  object/.style={draw=telosink,line width=.68pt},
+  callout/.style={font=\scriptsize,fill=white,inner sep=1pt}]
+  \draw[graphite] (-.1,-1.27) rectangle (13.65,1.46);
+  \foreach \x in {4.48,9.04}\draw[graphite] (\x,-1.27)--(\x,1.46);
+  \node[anchor=west,font=\scriptsize\bfseries] at (.08,1.20)
+    {C\quad THREE CONTROLLED ORIENTATIONS};
+
+  % Reusable paired-coil glyphs: axes make the geometry explicit.
+  \begin{scope}[shift={(1.05,-.12)}]
+    \foreach \x in {0,.10,...,.70}\draw[object] (\x,-.52) ellipse (.12 and .58);
+    \foreach \x in {1.80,1.90,...,2.50}\draw[object] (\x,-.52) ellipse (.12 and .58);
+    \draw[-{Stealth[length=4pt]},graphite] (-.35,-.52)--(2.88,-.52);
+    \node[font=\tiny,anchor=north] at (1.25,-1.08) {axes parallel: maximum link};
+    \node[font=\scriptsize\bfseries] at (1.25,.70) {0\(^\circ\)};
+  \end{scope}
+  \begin{scope}[shift={(5.48,-.12)}]
+    \foreach \x in {0,.10,...,.70}\draw[object] (\x,-.52) ellipse (.12 and .58);
+    \foreach \y in {-1.02,-.92,...,-.32}\draw[object] (2.18,\y) ellipse (.58 and .12);
+    \draw[-{Stealth[length=4pt]},graphite] (-.35,-.52)--(1.16,-.52);
+    \draw[-{Stealth[length=4pt]},graphite] (2.18,-1.23)--(2.18,.14);
+    \node[font=\tiny,anchor=north] at (1.25,-1.08) {axes crossed: predicted null};
+    \node[font=\scriptsize\bfseries] at (1.25,.70) {90\(^\circ\)};
+  \end{scope}
+  \begin{scope}[shift={(9.72,-.12)}]
+    \foreach \x in {0,.10,...,.70}\draw[object] (\x,-.52) ellipse (.12 and .58);
+    \begin{scope}[shift={(2.15,-.52)},rotate=45]
+      \foreach \x in {-.35,-.25,...,.35}\draw[object] (\x,0) ellipse (.12 and .58);
+      \draw[-{Stealth[length=4pt]},graphite] (-.82,0)--(.88,0);
+    \end{scope}
+    \draw[-{Stealth[length=4pt]},graphite] (-.35,-.52)--(1.05,-.52);
+    \node[font=\tiny,anchor=north] at (1.28,-1.08) {intermediate response};
+    \node[font=\scriptsize\bfseries] at (1.28,.70) {45\(^\circ\)};
+  \end{scope}
+\end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item \textbf{Orientation null:} pulse identically while rotating the receiver in 15-degree steps. Record LED response or meter peak and find the minimum.\item \textbf{Field portrait:} remove the receiver; use the compass to map primary field direction at grid points during brief, consistent current pulses.\item Overlay both maps. Ask whether the weak coupling orientation matches little linked flux.\item Power off and disconnect before every repositioning.\end{enumerate}}
-\def\explanation{These effects are the legitimate finale of the learner course: field direction, changing flux, geometry, and energy transfer all become visible without sparks. An LED is directional and nonlinear, so meter data are better for comparison; the LED supplies immediacy, not precision.}
-\def\extension{Predict and test what a shared core changes. Keep pulse duration, source, and coil geometry fixed and report trial-to-trial spread.}
+\def\procedure{%
+\subsection*{Showpiece 1: find the orientation null}
+\begin{enumerate}
+\item Fix the coil centers at one measured separation. Mark the turntable at
+0, 15, 30, \ldots, 90 degrees. Keep source setting, pulse duration, separation,
+and lead routing unchanged.
+\item At each angle make three identical pulses. Record the meter peak; use the
+LED only as a visible confirmation. Power off before rotating.
+\item Before taking the next row, ask: \emph{Should 45 degrees be nearer the
+maximum or the null? What observation would prove that our axis label is wrong?}
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{.94\linewidth}{@{}c *{3}{>{\centering\arraybackslash}p{.105\linewidth}} >{\centering\arraybackslash}p{.12\linewidth} X@{}}
+\toprule
+\textbf{Angle} & \textbf{Peak 1} & \textbf{Peak 2} & \textbf{Peak 3} &
+\textbf{Mean} & \textbf{LED / notes}\\
+\midrule
+0\(^\circ\)  & & & & &\\[.65em]
+15\(^\circ\) & & & & &\\[.65em]
+30\(^\circ\) & & & & &\\[.65em]
+45\(^\circ\) & & & & &\\[.65em]
+60\(^\circ\) & & & & &\\[.65em]
+75\(^\circ\) & & & & &\\[.65em]
+90\(^\circ\) & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Graph it.} Put receiver angle on the horizontal axis and mean peak on
+the vertical axis. Add a vertical range bar from the smallest to largest trial.
+Circle the minimum. Does the curve fall smoothly, or does one point demand a
+repeat?
+
+\subsection*{Showpiece 2: draw the field portrait}
+\begin{enumerate}
+\item Remove the receiver. Tape graph paper beneath the primary and mark its
+outline, axis, pulse polarity, and a 2\,cm grid.
+\item At each chosen point place the compass, pulse briefly, and draw the needle
+direction as an arrow. Repeat once. A disagreement larger than one compass
+division is a measurement to repeat, not an arrow to average away.
+\item Ask midway: \emph{Where are arrows nearly parallel to the coil axis?
+Where do they curve back? Is the left side the mirror image of the right?}
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{.94\linewidth}{@{}c c c c X@{}}
+\toprule
+\textbf{Grid point} & \textbf{Trial 1 direction} & \textbf{Trial 2 direction}
+& \textbf{Agree?} & \textbf{Nearby iron / anomaly}\\
+\midrule
+(\hspace{1.2em},\hspace{1.2em}) & & & &\\[.7em]
+(\hspace{1.2em},\hspace{1.2em}) & & & &\\[.7em]
+(\hspace{1.2em},\hspace{1.2em}) & & & &\\[.7em]
+(\hspace{1.2em},\hspace{1.2em}) & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection*{Join the two results}
+Place the receiver-axis tracing over the field map at the same center position.
+At maximum and minimum settings, draw the receiver's area vector. Which setting
+has the most field crossing its loop area? Write the claim before reading the
+explanation.
+}
+\def\explanation{%
+\textbf{Claim.} Receiver output depends on changing magnetic flux through the
+receiver, not merely on being close to the powered coil.
+
+\textbf{Evidence.} The source pulse, separation, and receiver are unchanged,
+yet the mean peak changes systematically with angle and reaches a repeatable
+minimum near crossed axes. The compass portrait shows field direction bending
+around the primary. Overlaying the receiver shows many field lines crossing
+its loop area at the strong setting and little net crossing at the null.
+
+\textbf{Reasoning.} The linked flux is
+\(\Phi=\int \mathbf{B}\mathbin{\cdot}d\mathbf{A}\), and the induced voltage
+follows \(-N\,d\Phi/dt\). Rotating the receiver changes the dot product without
+changing the source. Near 90 degrees, contributions through opposite parts of
+the receiver cancel. Thus geometry changes the measured transfer even when the
+field is plainly present. The source supplies electrical energy; the changing
+field transfers a small part to the receiver. Nothing is created at the LED.
+
+\textbf{Proof standard.} The conclusion is earned only if the angle curve is
+repeatable, its minimum agrees with the area-vector overlay, and the field map
+has the expected mirror symmetry. An LED is directional and nonlinear, so it
+supplies immediacy, not quantitative proof.
+}
+\def\extension{%
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}X@{}}
+\toprule
+\textbf{Symptom} & \textbf{Change one thing, then retest}\\
+\midrule
+All angles read zero & Confirm meter range and continuity; reverse receiver
+leads; shorten separation; verify a source pulse independently.\\
+No clear 90-degree null & Re-center the coils, move leads away from the receiver,
+remove nearby steel, and confirm the rotation axis passes through its center.\\
+Peaks wander & Standardize pulse duration, allow equal recovery time, secure
+every lead, and report the full trial spread.\\
+Compass will not settle & Increase distance from steel fasteners and powered
+leads; compare with the source off; shorten the pulse.\\
+One graph point breaks the trend & Repeat that angle blind, then repeat its two
+neighbors. Never delete it without a physical reason.\\
+\bottomrule
+\end{tabularx}
+
+\medskip
+\textbf{Core comparison.} Predict, then test air core versus one shared core.
+Use the same orientation matrix and add a second curve to the same axes. A
+valid synthesis states which quantities were controlled, how much the maximum
+and minimum changed, whether the null angle moved, and how trial spread limits
+the claim.
+}
 \input{electricity/chatgpt/shared/lesson-template.tex}

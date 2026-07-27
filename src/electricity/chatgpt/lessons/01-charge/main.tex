@@ -1,64 +1,338 @@
-\def\doctitle{Lesson 1: Charge}\def\docsubtitle{Conservation, sign, and polarization}\def\docstrap{make an invisible interaction repeatable}
-\def\materialslist{\item Transparent tape \item Balloon or plastic comb \item Wool cloth \item Empty aluminum can}
-\def\prediction{Will two tape strips prepared the same way attract or repel? What result would distinguish two signs of charge?}
-\def\diagram{\begin{center}
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 1: Charge}
+  {Conservation, sign, and polarization}{2026-07-26}
+
+\newcommand{\tapepair}[3]{%
+  \begin{scope}[shift={(#1)}]
+    \draw[very thick] (-.64,.68)--(-.50,-.60);
+    \draw[black!48] (-.58,.67)--(-.44,-.58);
+    \draw[very thick] (.64,.68)--(.50,-.60);
+    \draw[black!48] (.58,.67)--(.44,-.58);
+    \foreach \y in {.30,-.08,-.45}{
+      \node[font=\scriptsize] at (-.34,\y) {#2};
+      \node[font=\scriptsize] at (.34,\y) {#3};
+    }
+  \end{scope}}
+
+\begin{document}
+\telosmasthead[ChatGPT edition --- make an invisible interaction repeatable]
+\rolecard
+
+\begin{materials}
+  \item Transparent tape and a smooth table
+  \item Two pencils and two cups as supports
+  \item Balloon or plastic comb; wool cloth
+  \item Empty, dry aluminum can
+  \item Ruler, scissors, and notebook
+  \item Optional: hygrometer
+\end{materials}
+
+\begin{predict}
+Before touching the materials, choose: two strips prepared alike will
+\(\bigcirc\) attract \(\bigcirc\) repel \(\bigcirc\) do nothing. A charged comb
+will move a neutral can because \rule{.48\linewidth}{.3pt}
+\end{predict}
+
+\small
+\section{The evidence plan}
+
+Static charge is easily lost and easy to imagine. This investigation therefore
+uses a control, repeats each comparison, and changes one thing at a time.
+
+\begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
-  % A restrained double-line treatment gives the objects a hand-drawn,
-  % graphite edge while keeping the instructional geometry exact.
-  \tikzset{
-    graphite/.style={draw=black!72,line width=.42pt},
-    object/.style={draw=black!78,line width=.72pt},
-    grain/.style={draw=black!34,line width=.28pt},
-    charge/.style={font=\scriptsize,inner sep=0pt},
-    note/.style={font=\footnotesize,align=center,text width=3.15cm}
-  }
-
-  \node[font=\bfseries\small] at (-3.35,1.58) {A. Prepared tape strips};
-  \draw[grain] (-4.98,1.30) -- (-1.70,1.30);
-  \foreach \x in {-4.8,-4.55,...,-1.85}
-    \draw[grain] (\x,1.30) -- ++(.08,-.10);
-  \draw[object] (-4.55,1.24) -- (-4.34,-.52)
-    .. controls (-4.29,-.83) and (-4.05,-.91) .. (-3.92,-.65);
-  \draw[graphite] (-4.49,1.22) -- (-4.28,-.51)
-    .. controls (-4.24,-.69) and (-4.11,-.76) .. (-4.00,-.62);
-  \draw[object] (-2.13,1.24) -- (-2.34,-.52)
-    .. controls (-2.39,-.83) and (-2.63,-.91) .. (-2.76,-.65);
-  \draw[graphite] (-2.19,1.22) -- (-2.40,-.51)
-    .. controls (-2.44,-.69) and (-2.57,-.76) .. (-2.68,-.62);
-  \foreach \y in {.78,.28,-.22}
-    {\node[charge] at (-4.12,\y) {$+$};
-     \node[charge] at (-2.56,\y) {$+$};}
-  \draw[->,graphite] (-3.88,.18) -- (-3.42,.18);
-  \draw[->,graphite] (-2.80,.18) -- (-3.26,.18);
-  \node[note] at (-3.35,-1.22)
-    {same preparation\\repulsion is the evidence};
-
-  \draw[black!28,line width=.35pt] (0,-1.55)--(0,1.65);
-
-  \node[font=\bfseries\small] at (3.15,1.58) {B. Charged comb and neutral can};
-  \draw[object,rounded corners=.08cm]
-    (.55,.78) rectangle (2.62,1.17);
-  \foreach \x in {.68,.88,...,2.48}
-    \draw[object] (\x,.78)--(\x,.42);
-  \foreach \x in {.77,1.11,...,2.45}
-    \node[charge] at (\x,1.00) {$-$};
-  \draw[->,graphite] (2.78,.78)--(3.30,.78);
-  \node[font=\scriptsize] at (3.04,1.05) {approach};
-
-  \draw[object] (4.28,.12) ellipse (.34 and .91);
-  \draw[object] (4.28,1.03)--(5.34,1.03);
-  \draw[object] (4.28,-.79)--(5.34,-.79);
-  \draw[object] (5.34,.12) ellipse (.34 and .91);
-  \draw[grain] (4.33,.12) ellipse (.25 and .73);
-  \foreach \y in {.55,.12,-.31}
-    {\node[charge] at (4.05,\y) {$+$};
-     \node[charge] at (5.57,\y) {$-$};}
-  \draw[->,graphite] (4.85,-1.02) arc (105:45:.62);
-  \node[note] at (4.74,-1.38)
-    {charge shifts within the can;\\the nearer response dominates};
+  \tikzset{plate/.style={draw,very thick,minimum width=2.15cm,
+    minimum height=.76cm,align=center,font=\small}}
+  \node[plate] (b) at (-3.75,0) {1. Baseline\\uncharged};
+  \node[plate] (p) at (-1.25,0) {2. Prepare\\the same way};
+  \node[plate] (c) at (1.25,0) {3. Compare\\without touch};
+  \node[plate] (r) at (3.75,0) {4. Reset\\and repeat};
+  \draw[-{Stealth[length=2.5mm]},thick] (b)--(p);
+  \draw[-{Stealth[length=2.5mm]},thick] (p)--(c);
+  \draw[-{Stealth[length=2.5mm]},thick] (c)--(r);
+  \draw[-{Stealth[length=2.5mm]},dashed]
+    (r.south) .. controls (2.8,-.95) and (-2.8,-.95) .. (b.south);
 \end{tikzpicture}
-\end{center}}
-\def\procedure{\begin{enumerate}\item Prepare two equal tape strips the same way; lift and suspend them side by side. Record attraction or repulsion.\item Stack two fresh strips, lift together, then separate. Compare top-to-top, bottom-to-bottom, and top-to-bottom.\item Charge a comb; approach a neutral can without touching and map the distance at which it begins to roll.\item Repeat three times, changing only distance.\end{enumerate}}
-\def\explanation{Like charge signs repel and unlike signs attract. Rubbing and peeling redistribute charge rather than creating net charge. A charged object can attract a neutral object because charges in the neutral material shift slightly; the nearer opposite response can dominate. Humidity can drain charge, so a weak result is evidence to record, not permission to invent a result.}
-\def\extension{Compare dry and humid conditions, or two insulating materials. Keep geometry and preparation count fixed.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\end{center}
+
+\begin{telospanel}{Questions that keep the test honest}
+What is held constant: strip length, preparation, suspension, and separation.
+What changes: only the pair being compared. What counts as evidence: direction
+of first motion, not where the strips finish after touching.
+\end{telospanel}
+
+\section{Part A --- establish a baseline}
+
+\begin{enumerate}
+  \item Cut four tape strips \(15\) cm long. Fold a \(2\) cm handle on each.
+    Label two strips \(S_1,S_2\); leave two for the stacked test.
+  \item Make two suspension stands: bridge a pencil across a cup and hang a
+    strip from its handle. Put the stands \(10\) cm apart.
+  \item Suspend \(S_1\) and \(S_2\) without rubbing or peeling them. Bring the
+    stands together until the strips are \(2\) cm apart. Do they move before
+    air currents settle? \(\bigcirc\) yes \(\bigcirc\) no
+  \item Hold a hand \(10\) cm away, then withdraw it. If the strips swing, wait
+    until they stop. This is the motion floor for later comparisons.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round]
+  \foreach \x in {-2.2,2.2}{
+    \draw[very thick] (\x-1.05,-.82) arc (180:360:1.05 and .24);
+    \draw[very thick] (\x-1.05,-.82)--(\x-1.05,.22)
+      (\x+1.05,-.82)--(\x+1.05,.22);
+    \draw[very thick] (\x-1.20,.35)--(\x+1.20,.35);
+    \draw[black!50] (\x-1.16,.40)--(\x+1.16,.40);
+  }
+  \draw[very thick] (-2.2,.35)--(-2.06,-.72);
+  \draw[very thick] (2.2,.35)--(2.06,-.72);
+  \draw[<->] (-1.72,-.20)--(1.72,-.20)
+    node[midway,fill=white,font=\scriptsize]{set gap with ruler};
+  \node[font=\small] at (0,-1.12)
+    {Baseline: supports isolate the tape from hands and table};
+\end{tikzpicture}
+\end{center}
+
+\vspace{-1em}
+\noindent\textbf{Baseline checkpoint.} Continue only when the unprepared strips
+show no repeatable first motion across two trials. Otherwise discharge both,
+reduce drafts, and repeat.
+
+\newpage
+\normalsize
+\telosmasthead[ChatGPT edition --- Lesson 1 field sheet]
+\section{Part B --- same preparation, then opposite histories}
+
+\subsection{B1. Two strips prepared alike}
+
+\begin{enumerate}
+  \item Press \(S_1\) flat on the same clean table area ten times with a finger.
+    Pull it up briskly by its handle. Touch only the folded handle.
+  \item Repeat exactly with \(S_2\). Suspend both immediately.
+  \item Starting at \(8\) cm, reduce the gap by \(1\) cm every three seconds.
+    At what gap does the first repeatable motion appear? Record its direction.
+  \item Discharge, prepare again, and perform three trials. Reverse the
+    left/right stands on trial 3. Does the direction follow the strips?
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \tapepair{-3.3,0}{$+$}{$+$}
+  \draw[-{Stealth[length=2mm]}] (-3.78,-.14)--(-4.28,-.14);
+  \draw[-{Stealth[length=2mm]}] (-2.82,-.14)--(-2.32,-.14);
+  \node[font=\small\bfseries] at (-3.3,1.15){State 1: like histories};
+  \node[font=\scriptsize,align=center] at (-3.3,-1.02)
+    {repulsion identifies\\like charge signs};
+  \draw[black!25] (0,-1.25)--(0,1.35);
+  \tapepair{3.3,0}{$+$}{$-$}
+  \draw[-{Stealth[length=2mm]}] (2.35,-.14)--(2.78,-.14);
+  \draw[-{Stealth[length=2mm]}] (4.25,-.14)--(3.82,-.14);
+  \node[font=\small\bfseries] at (3.3,1.15){State 2: unlike histories};
+  \node[font=\scriptsize,align=center] at (3.3,-1.02)
+    {attraction is consistent with\\opposite signs, but not proof alone};
+\end{tikzpicture}
+\end{center}
+
+\subsection{B2. Separate a stacked pair}
+
+\begin{enumerate}[resume]
+  \item Put one fresh strip on the table and label its handle \(B\) (bottom).
+    Press a second strip directly on top and label it \(T\) (top).
+  \item Lift the pair together by \(B\). Pause: before separation, predict the
+    sign relationship between \(T\) and \(B\): \rule{.12\linewidth}{.3pt}
+  \item Pull \(T\) and \(B\) apart in one smooth motion. Suspend them without
+    letting them touch your clothes, hair, or each other.
+  \item Compare \(T\) with \(T\) from a repeated pair, \(B\) with \(B\), then
+    \(T\) with \(B\). Reset between comparisons.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[font=\bfseries\small] at (-3.45,1.10){Before separation};
+  \draw[very thick,fill=black!8] (-4.65,.20) rectangle (-2.25,.48);
+  \draw[very thick,fill=white] (-4.65,.48) rectangle (-2.25,.76);
+  \node[font=\scriptsize] at (-3.45,.62){T};
+  \node[font=\scriptsize] at (-3.45,.34){B};
+  \foreach \x in {-4.35,-3.95,...,-2.55}
+    \node[font=\tiny] at (\x,.90){\(\pm\)};
+  \draw[-{Stealth[length=2.5mm]},very thick] (-1.72,.46)--(-.64,.46)
+    node[midway,above,font=\scriptsize]{peel};
+  \node[font=\bfseries\small] at (2.25,1.10){After separation};
+  \draw[very thick] (.75,.25) rectangle (1.38,.86);
+  \draw[very thick] (3.12,.25) rectangle (3.75,.86);
+  \node at (1.06,.55){T};
+  \node at (3.43,.55){B};
+  \foreach \y in {.34,.55,.76}{
+    \node[font=\scriptsize] at (.55,\y){\(+\)};
+    \node[font=\scriptsize] at (3.96,\y){\(-\)};
+  }
+  \draw[<->,thick] (1.55,.55)--(2.95,.55)
+    node[midway,above,font=\scriptsize]{equal transfer};
+  \node[font=\scriptsize,align=center] at (2.25,-.30)
+    {sign labels are conventional;\\the opposite behavior is observable};
+\end{tikzpicture}
+\end{center}
+
+\begin{telospanel}{Intermediate questions}
+Why is attraction alone ambiguous? Could a charged strip attract an uncharged
+one? Which result is stronger evidence for like signs: attraction or repulsion?
+If \(T\) gains charge, where must an equal amount of opposite charge remain?
+\end{telospanel}
+
+\section{Record the tape evidence}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.18\linewidth}p{.13\linewidth}p{.13\linewidth}p{.17\linewidth}L@{}}
+\toprule
+Comparison & Trial & First motion & Threshold gap & Notes: touch, draft, delay\\
+\midrule
+\(S_1\) vs \(S_2\) & 1 & & & \\[1.25em]
+same preparation & 2 & & & \\[1.25em]
+ & 3 reversed & & & \\[1.25em]
+\midrule
+\(T\) vs \(T\) & 1 & & & \\[1.25em]
+\(B\) vs \(B\) & 1 & & & \\[1.25em]
+\(T\) vs \(B\) & 1 & & & \\[1.25em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\telosmasthead[ChatGPT edition --- Lesson 1 can test and evidence record]
+\section{Part C --- a charged object and a neutral can}
+
+\begin{enumerate}
+  \item Lay the empty can on a level table. Mark its starting line. Confirm
+    that it remains still for ten seconds with the comb \(30\) cm away.
+  \item Rub the comb with wool exactly ten strokes. Keep the same hand, stroke
+    length, and comb face for every trial.
+  \item Hold the comb parallel to the can, \(10\) cm from its nearest surface.
+    Do not touch. Move inward in \(1\) cm steps, pausing three seconds.
+  \item Record the first distance at which the can begins rolling toward the
+    comb. Stop the comb; does the can continue? Move it sideways; does the can
+    track it?
+  \item Return the can to its line and repeat three times. Recharge the comb
+    with ten strokes before every trial.
+  \item Control: repeat the distance sequence after touching the comb to your
+    hand and table. A smaller or absent response supports the charge claim.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \node[font=\small\bfseries] at (-3.20,1.58){Far: no resolved motion};
+  \draw[very thick,rounded corners] (-5.05,.56) rectangle (-4.00,.94);
+  \foreach \x in {-4.90,-4.67,...,-4.10}
+    \draw[very thick] (\x,.56)--(\x,.25);
+  \draw[very thick] (-1.77,.15) ellipse (.30 and .72);
+  \draw[very thick] (-1.77,.87)--(-.82,.87)
+    (-1.77,-.57)--(-.82,-.57);
+  \draw[very thick] (-.82,.15) ellipse (.30 and .72);
+  \draw[<->] (-3.92,-.08)--(-2.08,-.08)
+    node[midway,below,font=\scriptsize]{measure nearest gap};
+
+  \draw[black!25] (0,-.80)--(0,1.80);
+  \node[font=\small\bfseries] at (3.15,1.58){Near: polarization};
+  \draw[very thick,rounded corners] (.50,.56) rectangle (1.55,.94);
+  \foreach \x in {.65,.88,...,1.45}
+    \draw[very thick] (\x,.56)--(\x,.25);
+  \foreach \x in {.67,.95,1.23,1.48}
+    \node[font=\scriptsize] at (\x,.78){\(-\)};
+  \draw[very thick] (3.65,.15) ellipse (.30 and .72);
+  \draw[very thick] (3.65,.87)--(4.60,.87)
+    (3.65,-.57)--(4.60,-.57);
+  \draw[very thick] (4.60,.15) ellipse (.30 and .72);
+  \foreach \y in {-.30,.15,.60}{
+    \node[font=\scriptsize] at (3.37,\y){\(+\)};
+    \node[font=\scriptsize] at (4.90,\y){\(-\)};
+  }
+  \draw[-{Stealth[length=2.5mm]},very thick] (3.08,.15)--(2.20,.15)
+    node[midway,above,font=\scriptsize]{rolls};
+  \node[font=\scriptsize,align=center] at (3.15,-1.02)
+    {the nearer opposite charge\\has the stronger interaction};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{.86\linewidth}{@{}p{.16\linewidth}p{.25\linewidth}p{.22\linewidth}L@{}}
+\toprule
+Trial & Charged threshold & Discharged control & Tracks sideways?\\
+\midrule
+1 & cm & cm / none & \\[1.3em]
+2 & cm & cm / none & \\[1.3em]
+3 & cm & cm / none & \\[1.3em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\telosmasthead[ChatGPT edition --- Lesson 1 verification]
+\small
+\section{Troubleshoot without changing the story}
+
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}L L@{}}
+\toprule
+Observation & Likely cause & One controlled response\\
+\midrule
+Nothing moves & Humidity, charge leakage, gap too large & Dry surfaces; shorten
+delay; record humidity; prepare again identically.\\
+Both strips drift together & Draft or moving supports & Close windows; wait;
+swap stands left-to-right.\\
+Strips first attract, then cling & They touched and charge transferred & Use
+only the first motion; discharge and reset.\\
+Can rolls before approach & Sloped or vibrating table & Rotate can, level the
+surface, repeat baseline.\\
+Only one trial works & Preparation or timing changed & Count strokes and use a
+three-second cadence.\\
+\bottomrule
+\end{tabularx}
+
+\section{Build the proof}
+
+\begin{enumerate}
+  \item \textbf{Repulsion test:} Two independently prepared alike strips
+    repelled in \rule{1cm}{.3pt} of three trials. Repulsion rules out a merely
+    neutral partner and is evidence that the strips carried like signs.
+  \item \textbf{Opposite-history test:} \(T\)-\(T\) and \(B\)-\(B\) showed
+    \rule{2.1cm}{.3pt}; \(T\)-\(B\) showed \rule{2.1cm}{.3pt}. The consistent
+    pattern supports two charge signs.
+  \item \textbf{Conservation claim:} Separating the joined system redistributes
+    charge. The evidence does \emph{not} show charge appearing from nothing:
+    opposite changes occur on the two members of the original pair.
+  \item \textbf{Polarization test:} The charged comb moved the neutral can from
+    a median threshold of \rule{1cm}{.3pt} cm, while the discharged control
+    \rule{2.5cm}{.3pt}. Because the can began neutral, attraction alone does not
+    establish opposite net charge; charge shifted within it.
+\end{enumerate}
+
+\begin{telospanel}{Verification questions}
+\begin{enumerate}
+  \item Which single observation best distinguishes like charge from
+    polarization? Why?
+  \item What result followed the object when the supports were swapped?
+  \item Does a smaller threshold distance mean a stronger or weaker observed
+    interaction under this procedure?
+  \item What uncontrolled variable most limits your claim?
+  \item Write one sentence that separates observation from explanation:
+    ``I observed \rule{.28\linewidth}{.3pt}; this supports
+    \rule{.28\linewidth}{.3pt} because \rule{.23\linewidth}{.3pt}.''
+\end{enumerate}
+\end{telospanel}
+
+\section{Explain from the evidence}
+
+Like charge signs repel and unlike signs attract. Peeling and rubbing transfer
+charge between materials; for the combined system, charge is conserved. A
+charged object can attract a neutral conductor because mobile charge in the
+conductor redistributes. The nearer opposite-sign region experiences the
+stronger interaction. Humidity and contaminated surfaces provide leakage paths,
+so null results belong in the record.
+
+\section{Change one thing}
+
+Repeat the can trial at two measured humidity levels, or compare two insulating
+materials. Keep geometry, stroke count, timing, and observer fixed. Plot the
+three threshold distances rather than reporting only the strongest trial.
+
+\sourcefoot
+\end{document}

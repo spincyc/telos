@@ -24,36 +24,105 @@ anything.
 \lessonsection{How to set it up}
 
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \ptCoilTube{0}{0.6}{1.25}{1.5}
-  \ptDiscMagnet{0.62}{3.2}{1.5}
-  \draw[telos arrow] (0.95,3.05) -- (0.95,2.3);
-  \node[partsmall,anchor=west] at (1.15,2.7) {drop it through};
-  \ptMultimeter{4.6}{0.0}{0.85}
-  \draw[wirered] (-0.75,0.68) .. controls (-1.2,-0.6) and (3.2,-0.9) .. (5.04,0.29);
-  \draw[wireblk] (2.4,1.85) .. controls (3.6,2.2) and (5.0,1.8) .. (5.77,0.29);
-  \node[partsmall,anchor=north,align=center] at (1.6,-1.15)
-    {200--400 turns on a kitchen-roll tube, both ends sanded, meter on millivolts DC};
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \ptCoilTube{-3.2}{0.3}{1.25}{1.5}
+  \ptDiscMagnet{-2.58}{2.9}{1.5}
+  \draw[telos arrow] (-2.25,2.75) -- (-2.25,2.05);
+  \node[partsmall,anchor=west] at (-2.02,2.43) {marked vertical guide};
+  \ptMultimeter{1.0}{-.3}{0.85}
+  \draw[wirered] (-3.95,.38) .. controls (-4.15,-.75) and (-.2,-1.05) .. (1.44,-.01);
+  \draw[wireblk] (-.8,1.55) .. controls (.2,1.95) and (1.65,1.50) .. (2.17,-.01);
+  \draw[<->,thin](-3.95,-.75)--(-.8,-.75);
+  \node[partsmall,fill=white,inner sep=1pt]at(-2.38,-.75){fixed coil orientation};
+  \node[partsmall,anchor=north,align=center] at (-1.0,-1.18)
+    {200--400 turns; meter leads, coil face, start height, and travel line stay fixed};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  frame/.style={draw=black!45,rounded corners=2pt},
+  caption/.style={font=\scriptsize,align=center}]
+\foreach \x/\name in {-4.5/N in,-1.5/N held,1.5/N out,4.5/S in}{
+  \draw[frame](\x-1.28,-.88)rectangle(\x+1.28,1.02);
+  \node[caption,font=\scriptsize\bfseries]at(\x,.84){\name};
+  \draw[very thick](\x+.2,-.38)rectangle(\x+.78,.38);
+  \foreach \xx in {.27,.36,...,.72}
+    \draw[thin](\x+\xx,-.45)..controls(\x+\xx-.06,-.15)and(\x+\xx-.06,.15)..(\x+\xx,.45);
+}
+\draw[thick,fill=black!10](-5.2,-.22)rectangle(-4.58,.22);
+\node[caption]at(-5.04,0){S};\node[caption]at(-4.72,0){N};
+\draw[->,very thick](-4.55,.55)--(-3.82,.55);
+\node[caption]at(-4.5,-.66){record sign \(a\)};
+\draw[thick,fill=black!10](-1.83,-.22)rectangle(-1.21,.22);
+\node[caption]at(-1.67,0){S};\node[caption]at(-1.35,0){N};
+\node[caption]at(-1.5,-.66){near zero};
+\draw[thick,fill=black!10](.75,-.22)rectangle(1.37,.22);
+\node[caption]at(.91,0){S};\node[caption]at(1.23,0){N};
+\draw[->,very thick](1.56,.55)--(.82,.55);
+\node[caption]at(1.5,-.66){sign \(-a\)};
+\draw[thick,fill=black!10](3.8,-.22)rectangle(4.42,.22);
+\node[caption]at(3.96,0){N};\node[caption]at(4.28,0){S};
+\draw[->,very thick](4.45,.55)--(5.18,.55);
+\node[caption]at(4.5,-.66){sign \(-a\)};
+\draw[thin,dashed](-5.75,-1.28)--(5.75,-1.28);
+\node[caption,fill=white,inner sep=1pt]at(0,-1.28){reverse motion or pole: reverse sign; reverse both: preserve sign};
+\node[caption]at(0,-1.55)
+  {The letter \(a\) avoids guessing \(+\): your fixed lead convention determines its name.};
 \end{tikzpicture}
 \end{center}
 
 \lessonsection{Do it}
 \begin{enumerate}
-\item \textbf{Wind a sense coil.} Wind 200--400 turns of magnet wire around the
-  cardboard tube. Sand the ends and connect them to the multimeter on its
-  millivolt DC range.
-\item \textbf{Drop the magnet.} Drop it through. The meter jumps and returns to
-  zero.
-\item \textbf{Hold it still.} Rest the magnet inside the coil and leave it
-  there. The reading is \textbf{zero}. A magnetic field alone produces nothing.
-\item \textbf{Change one thing at a time.} Drop it faster; use two magnets stuck
-  together; turn the magnet over. Record the size and the \emph{sign} each time.
-\item \textbf{Light an LED.} Replace the meter with two LEDs wired in opposite
-  directions across the coil ends. Move the magnet in and out briskly. One LED
-  flashes going in, the other coming out.
-\item \textbf{The copper pipe.} Now drop a magnet down the cardboard tube and
-  down the copper pipe, and time them. Compare with your prediction. Try the
-  aluminium tube too.
+\item \textbf{Make the apparatus repeatable.} Wind 200--400 tidy turns, secure
+  them, sand only the two ends, and connect to the voltage jacks on the lowest
+  suitable DC millivolt range. Mark one coil face, the magnet's N end, and
+  start--center--finish positions. Ask: \emph{what must not change if signs are
+  to be comparable?}
+\item \textbf{Establish the quiet reading.} With the magnet far away, watch for
+  ten seconds and record the largest drift from zero. Wiggle each lead without
+  moving the magnet. If that makes a pulse, repair the connection before
+  proceeding. This drift is the experiment's practical zero band.
+\item \textbf{Separate field from change.} Hold N still at start, center, and
+  finish for three seconds each. Record the settled reading. Ask at every
+  stop: \emph{the field differs here, but is the linked flux changing now?}
+\item \textbf{Measure N entering.} Move start to finish on a slow three-count.
+  Record peak magnitude and sign. Return the magnet well outside the coil
+  without recording. Repeat five times along the same line. Report the median,
+  minimum, maximum, and half-range. Ask: \emph{is the spread smaller than the
+  difference you hope to claim later?}
+\item \textbf{Reverse motion.} Pull N from finish to start on the same count,
+  five times. Predict before every pass. Compare signs first, then magnitudes.
+  Ask: \emph{did reversing motion reverse the change in linked flux? Did each
+  stopped state return inside the zero band?}
+\item \textbf{Change rate, not route.} Repeat N-in and N-out on a quick
+  one-count, five times each. Keep endpoints, pole, coil, and meter unchanged.
+  Compare median peaks with the slow sets. Do not call a small difference real
+  if the ranges overlap heavily.
+\item \textbf{Reverse the field.} Turn the magnet end-for-end without swapping
+  leads. Collect five S-in and five S-out trials at the slow count. Ask:
+  \emph{which sign matches N-out? What must happen when both pole and motion
+  reverse?}
+\item \textbf{Final proof.} In the order N-in, N-out, S-in, S-out, perform two
+  slow passes of each. Before moving, write the predicted sign using the first
+  N-in sign as \(a\). The proof passes only if each pair repeats, every stop
+  returns inside the zero band, reversing either pole or motion reverses sign,
+  and reversing both preserves it.
+\item \textbf{Troubleshoot before interpreting.} An erratic or absent result
+  means: check wrong meter jack or range, unsanded enamel, loose clips, broken
+  winding, auto-ranging delay, changed coil face, ambiguous magnet pole,
+  sideways motion, different endpoints or speed, nearby steel, and moving
+  leads. Change one suspected cause, re-establish the zero band, then repeat
+  the entire proof---never select only the favorable trials.
+\item \textbf{Make the effects visible.} Replace the meter with two LEDs
+  back-to-back. Move briskly; one may flash on entry and the other on exit.
+  Failure to see a flash does not overturn the meter data: LED threshold,
+  ambient light, coil resistance, and speed matter.
+\item \textbf{Test magnetic braking.} Time at least five drops through matched
+  cardboard and copper pipes from one marked release height; use median and
+  range. The magnet must fall freely without scraping. Repeat with aluminium if
+  available. Ask: \emph{how can a nonmagnetic conductor oppose motion without
+  touching the magnet?}
 \end{enumerate}
 
 \lessonsection{What it means}
@@ -62,11 +131,15 @@ anything.
   \emph{through} that loop changes. Not when it is strong --- when it
   \emph{changes}. Faster change, bigger voltage; more turns, bigger voltage.}
 \telosfact{Why holding it still gives nothing}{This is the whole lesson. A
-  stationary magnet inside a coil produces exactly zero. Every generator, every
+  stationary magnet inside a coil produces no sustained induced voltage; a real
+  meter may retain a small offset or drift inside the measured zero band. Every generator, every
   transformer and every Tesla coil exists to make something change.}
-\telosfact{Lenz's law}{The two LEDs flash on opposite motions because the
-  induced current always opposes the change that made it. Push a magnet in and
-  the coil pushes back.}
+\telosfact{Sign is relational}{A meter's \(+\) sign depends on which coil end
+  reaches its red lead. Fix that convention, then the physical rule is robust:
+  reverse motion or pole and sign reverses; reverse both and sign is preserved.}
+\telosfact{Lenz's law}{The opposite signs represent an induced effect that
+  opposes the change that made it. Push a magnet toward a closed coil and the
+  coil's field resists the approach; pull away and it resists the departure.}
 \telosfact{The copper pipe}{The falling magnet induces circulating eddy currents
   in the pipe wall. Those currents make their own magnetic field, which by
   Lenz's law opposes the fall. The magnet falls in slow motion. Nothing touches
@@ -78,16 +151,9 @@ anything.
   open. Try it with the LEDs connected and disconnected and feel the difference.}
 \end{telosfacts}
 
-\begin{telospanel}{The link to the coil --- read this one twice}
-A Tesla coil's secondary is a coil sitting inside the primary's magnetic field.
-When the spark gap fires, the primary's current swings from maximum to zero and
-back hundreds of thousands of times a second. That violently changing field
-induces a voltage in the secondary, and because the secondary has roughly a
-thousand times more turns, and because both circuits are tuned to the same
-frequency so the effect builds up over many cycles, the result is hundreds of
-thousands of volts. Lessons 6, 8 and 9 each add one clause to that sentence.
-Every one of them depends on what you just measured: \emph{change}, not
-strength.
-\end{telospanel}
+\telosrubric{Connection forward.} A Tesla coil places its many-turn secondary
+in a rapidly changing primary field; tuning lets successive cycles build.
+Lessons 6, 8 and 9 add turns ratio, oscillation, and coupling, but every clause
+still depends on \emph{change}, not field strength alone.
 \lowvoltagenote
 \end{document}

@@ -1,68 +1,244 @@
-\def\doctitle{Demo: Kelvin Water Dropper}\def\docsubtitle{Electrostatic feedback without a spark}\def\docstrap{observe charge separation; stop before discharge}
-\def\materialslist{\item Adult-built paired drip apparatus \item Two metal cans and two induction rings \item Plastic tubing \item Water tray \item Electroscope \item Grounding lead used only after flow stops}
-\def\prediction{How can initially neutral water and cans separate charge without a battery?}
+\def\doctitle{Demo: Kelvin Water Dropper}
+\def\docsubtitle{Prove electrostatic feedback without making a spark}
+\def\docstrap{adult-built apparatus; measured evidence; stop early}
+\def\materialslist{\item Adult-built paired drip apparatus in a deep spill tray
+\item Two collector cans, two induction rings, and insulated cross-coupling
+\item Two adjustable plastic water lines with matched nozzles
+\item Low-capacitance electroscope with a fixed millimetre scale
+\item Stopwatch, ruler, two measuring cups, paper towels
+\item Designed high-resistance discharge lead, used only after flow stops}
+\def\prediction{Before water starts, choose one: will both electroscope leaves
+remain still, move together, or separate? What visible change would count as
+evidence for charge separation if sparks are forbidden? Predict which matters
+more: the total water delivered, or whether each stream breaks into droplets
+inside its induction ring.}
+
 \def\diagram{%
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
   note/.style={font=\scriptsize,align=left},
-  wire/.style={line width=.7pt},
+  tinylabel/.style={font=\fontsize{5.6}{6.4}\selectfont,align=center},
+  wire/.style={line width=.75pt},
   leader/.style={line width=.35pt,-{Stealth[length=1.3mm]}}]
   % Reservoir and paired nozzles.
-  \path[fill=gray!7,rounded corners=2pt] (-2.65,1.82) rectangle (2.65,2.42);
-  \draw[line width=.8pt,rounded corners=2pt] (-2.65,1.82) rectangle (2.65,2.42);
-  \draw[line width=.3pt] (-2.47,2.08)
-    .. controls (-1.85,2.18) and (-1.15,1.99) .. (-.48,2.09)
-    .. controls (.25,2.19) and (1.20,2.01) .. (2.47,2.10);
-  \node[font=\scriptsize] at (0,2.20) {water reservoir};
+  \path[fill=gray!7,rounded corners=2pt] (-2.70,1.80) rectangle (2.70,2.38);
+  \draw[line width=.8pt,rounded corners=2pt] (-2.70,1.80) rectangle (2.70,2.38);
+  \draw[line width=.3pt] (-2.50,2.06)
+    .. controls (-1.65,2.17) and (-.65,1.98) .. (0,2.08)
+    .. controls (.82,2.18) and (1.55,2.00) .. (2.50,2.08);
+  \node[font=\scriptsize] at (0,2.20) {common reservoir: equal starting head};
   \foreach \x in {-1.62,1.62}{
-    \draw[line width=.75pt] (\x-.16,1.82)--(\x-.16,1.48)--(\x-.08,1.35);
-    \draw[line width=.75pt] (\x+.16,1.82)--(\x+.16,1.48)--(\x+.08,1.35);
-    \draw[line width=.35pt] (\x-.08,1.35)--(\x+.08,1.35);
-    % Induction ring in perspective.
-    \draw[line width=1.05pt] (\x,.86) ellipse (.56 and .19);
-    \draw[line width=.35pt] (\x,.86) ellipse (.40 and .12);
-    \foreach \y/\r in {1.14/.045,.69/.050,.42/.055,.12/.060}
-      \path[fill=gray!28,draw=black,line width=.25pt] (\x,\y) circle (\r);
+    \draw[line width=.75pt] (\x-.15,1.80)--(\x-.15,1.48)--(\x-.07,1.35);
+    \draw[line width=.75pt] (\x+.15,1.80)--(\x+.15,1.48)--(\x+.07,1.35);
+    \draw[line width=.35pt] (\x-.07,1.35)--(\x+.07,1.35);
+    \draw[line width=1.05pt] (\x,.82) ellipse (.57 and .19);
+    \draw[line width=.35pt] (\x,.82) ellipse (.40 and .12);
+    \foreach \y/\r in {1.13/.042,.92/.046,.66/.050,.39/.054,.10/.058}
+      \path[fill=gray!30,draw=black,line width=.24pt] (\x,\y) circle (\r);
   }
   % Collector cans.
   \foreach \x/\sgn in {-1.62/-,1.62/+}{
-    \path[fill=gray!8] (\x-.69,-1.27)--(\x-.57,-.03)
-      arc[start angle=180,end angle=360,x radius=.57,y radius=.15]
-      --(\x+.69,-1.27) arc[start angle=0,end angle=-180,x radius=.69,y radius=.18]--cycle;
-    \draw[line width=.85pt] (\x-.69,-1.27)--(\x-.57,-.03);
-    \draw[line width=.85pt] (\x+.69,-1.27)--(\x+.57,-.03);
-    \draw[line width=.75pt] (\x,-.03) ellipse (.57 and .15);
-    \draw[line width=.75pt] (\x,-1.27) arc[start angle=180,end angle=360,x radius=.69,y radius=.18];
-    \draw[line width=.3pt,dashed] (\x+.69,-1.27) arc[start angle=0,end angle=180,x radius=.69,y radius=.18];
-    \foreach \y in {-1.02,-.77,-.52}
-      \draw[line width=.22pt,gray!65] (\x-.62,\y) arc[start angle=180,end angle=360,x radius=.62,y radius=.14];
-    \node[font=\small\bfseries] at (\x,-.65) {\sgn};
+    \path[fill=gray!8] (\x-.68,-1.25)--(\x-.56,-.05)
+      arc[start angle=180,end angle=360,x radius=.56,y radius=.15]
+      --(\x+.68,-1.25) arc[start angle=0,end angle=-180,x radius=.68,y radius=.18]--cycle;
+    \draw[line width=.85pt] (\x-.68,-1.25)--(\x-.56,-.05);
+    \draw[line width=.85pt] (\x+.68,-1.25)--(\x+.56,-.05);
+    \draw[line width=.75pt] (\x,-.05) ellipse (.56 and .15);
+    \draw[line width=.75pt] (\x,-1.25) arc[start angle=180,end angle=360,x radius=.68,y radius=.18];
+    \draw[line width=.3pt,dashed] (\x+.68,-1.25) arc[start angle=0,end angle=180,x radius=.68,y radius=.18];
+    \node[font=\small\bfseries] at (\x,-.66) {\sgn};
   }
-  % Cross-coupling stays behind the apparatus.
-  \draw[wire] (-2.28,-.92)--(-2.94,-.92)--(-2.94,1.22)--(1.06,1.22)--(1.06,.86);
-  \draw[wire] (2.28,-.92)--(2.94,-.92)--(2.94,1.48)--(-1.06,1.48)--(-1.06,.86);
-  \fill (-2.28,-.92) circle (.055);
-  \fill (2.28,-.92) circle (.055);
-  \fill (1.06,.86) circle (.055);
-  \fill (-1.06,.86) circle (.055);
-  % Spill tray and supports.
-  \draw[line width=.75pt] (-3.15,-1.52)--(-2.93,-1.73)--(2.93,-1.73)--(3.15,-1.52);
-  \draw[line width=.35pt] (-2.93,-1.62)--(2.93,-1.62);
-  \draw[line width=.55pt] (-2.78,2.56)--(-2.78,-1.76);
-  \draw[line width=.55pt] (2.78,2.56)--(2.78,-1.76);
-  \foreach \x in {-2.78,2.78}
-    \draw[line width=.75pt] (\x-.30,-1.76)--(\x+.30,-1.76);
-  % Labels.
-  \draw[leader] (-.95,.87)--(-.25,.58);
-  \node[note,anchor=west] at (-.20,.58) {induction ring};
-  \draw[leader] (.30,-.72)--(.94,-.72);
-  \node[note,anchor=west] at (.99,-.72) {collector can};
-  \node[note,fill=white,inner sep=1.5pt] at (0,1.38) {cross-coupled};
-  \node[note,align=center] at (0,-2.05)
-    {A tiny imbalance reinforces itself: each can biases the opposite falling stream.};
+  % Cross-coupling.
+  \draw[wire] (-2.27,-.92)--(-2.95,-.92)--(-2.95,1.18)--(1.06,1.18)--(1.06,.82);
+  \draw[wire] (2.27,-.92)--(2.95,-.92)--(2.95,1.45)--(-1.06,1.45)--(-1.06,.82);
+  \foreach \p in {(-2.27,-.92),(2.27,-.92),(1.06,.82),(-1.06,.82)}
+    \fill \p circle (.052);
+  \draw[line width=.75pt] (-3.15,-1.50)--(-2.92,-1.70)--(2.92,-1.70)--(3.15,-1.50);
+  \draw[line width=.35pt] (-2.92,-1.60)--(2.92,-1.60);
+  \node[note,fill=white,inner sep=1.5pt] at (0,1.32) {cross-coupled};
+  \draw[leader] (-.98,.82)--(-.32,.52);
+  \node[note,anchor=west] at (-.27,.52) {induction ring};
+  \node[note,align=center] at (0,-1.98)
+    {Symmetry is the control. A tiny random imbalance chooses the signs;\\
+     cross-coupling then reinforces it. No sign is assigned in advance.};
+
+  % Three observable stream states.
+  \begin{scope}[shift={(4.15,.96)}]
+    \node[font=\scriptsize\bfseries] at (0,1.35) {STREAM GEOMETRY};
+    \foreach \yy/\lab in {.75/{too high},-.20/{usable},-1.15/{too low}}{
+      \draw[line width=.65pt] (-.72,\yy+.32)--(-.72,\yy+.06);
+      \draw[line width=.65pt] (-.52,\yy+.32)--(-.52,\yy+.06);
+      \draw[line width=.3pt] (-.72,\yy+.06)--(-.52,\yy+.06);
+      \draw[line width=.8pt] (-.62,\yy-.25) ellipse (.45 and .13);
+      \node[tinylabel,anchor=west] at (-.05,\yy) {\lab};
+    }
+    % Continuous through ring.
+    \draw[line width=.5pt] (-.62,1.00)--(-.62,.52);
+    \foreach \y in {.00,-.20,-.40}
+      \fill[gray!35,draw=black,line width=.2pt] (-.62,\y) circle (.04);
+    % Break point centred in ring.
+    \draw[line width=.5pt] (-.62,.10)--(-.62,-.15);
+    \foreach \y in {-.26,-.44,-.62}
+      \fill[gray!35,draw=black,line width=.2pt] (-.62,\y) circle (.045);
+    % Break below ring.
+    \draw[line width=.5pt] (-.62,-.83)--(-.62,-1.32);
+    \foreach \y in {-1.43,-1.60}
+      \fill[gray!35,draw=black,line width=.2pt] (-.62,\y) circle (.045);
+    \node[tinylabel,anchor=north,align=left] at (-.95,-1.82)
+      {Accept only when each stream\\breaks within its ring and\\all drops land inside its can.};
+  \end{scope}
 \end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Adult checks stable supports, dry floor, spill tray, and generous ring separation. Operate indoors only, never during thunderstorm conditions.\item Start two smooth drips and watch the electroscope connected by the apparatus design.\item Stop flow well before any spark, snapping, hair raising, or painful sensation. Do not approach conductors while operating.\item With water stopped, adult discharges through the intended high-resistance path and verifies zero indication before touch.\end{enumerate}}
-\def\explanation{A tiny initial imbalance polarizes droplets; cross-coupling reinforces charge separation through positive feedback. Gravitational energy of falling water ultimately supplies the electrical energy. This edition uses the device only as an adult-built, no-spark electrostatic demonstration. It is not a learner wiring project.}
-\def\extension{Vary drip rate while keeping geometry fixed and compare time to a conservative electroscope mark; never use spark length as a measurement.}
+
+\def\procedure{%
+\subsection{Adult preflight --- water off}
+The learner observes from the marked boundary and does not touch the apparatus.
+The adult confirms all six items before proceeding:
+\begin{enumerate}
+\item Tray, frame, reservoir, cans, and rings are stable; the floor and nearby
+surfaces are dry. There are no exposed sharp edges.
+\item The two cans are well separated, each ring is centred over its own can,
+and no loose wire can swing toward another conductor.
+\item Each collector is connected only to the \emph{opposite} ring. Trace both
+paths aloud. Same-side coupling is a wiring error.
+\item The electroscope begins at zero and its scale can be read without anyone
+approaching the apparatus.
+\item The intended high-resistance discharge lead is present, intact, and
+parked. It is not a hand-held improvised wire.
+\item Stop immediately for a snap, visible spark, hair movement, tingling,
+unstable support, escaping water, or an electroscope reading above the chosen
+conservative stop mark.
+\end{enumerate}
+
+\subsection{Establish a hydraulic control}
+Ground and discharge the apparatus by its designed method. Run water for
+10 seconds with charge unable to accumulate. Catch each stream separately,
+count its drops from slow-motion video or direct observation, and measure its
+volume. Adjust only the water controls until both streams break inside their
+rings, land centrally, and agree closely. Record the evidence; do not call
+``looks equal'' a measurement.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Run & left drops/10 s & right drops/10 s & left mL/10 s & right mL/10 s\\
+\midrule
+hydraulic control & \rule{1.5cm}{.3pt} & \rule{1.5cm}{.3pt}
+ & \rule{1.4cm}{.3pt} & \rule{1.4cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Observe charge separation without discharge}
+Stop the water. Discharge through the intended high-resistance path, verify
+zero, then park the lead. Start the matched drips and the stopwatch together.
+From the boundary, read electroscope deflection against the fixed scale every
+five seconds. Stop at 20 seconds or at the preselected stop mark, whichever
+comes first. Repeat from a verified zero. A repeatable rise is evidence; one
+twitch is not.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Run & 0 s & 5 s & 10 s & 15 s & 20 s\\
+\midrule
+deflection, mm & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt}
+ & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt}\\
+repeat, mm & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt}
+ & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Return to a proved-safe state}
+Water off first. Wait for every drop to land. Apply the designed discharge
+path without touching either collector, hold it as specified for the apparatus,
+and verify the electroscope returns to zero. Only then may the adult approach.
+Dry the tray and floor before any adjustment.}
+
+\def\explanation{The hydraulic control shows that both sides began with similar
+water flow. During the isolated runs, a growing electroscope deflection shows
+that charge accumulated even though no battery was connected and no spark was
+allowed. A minute accidental imbalance polarizes the falling water. Each
+charged collector biases the opposite stream through its induction ring, so
+the imbalance reinforces itself. The falling water supplies the energy; the
+cross-coupling supplies positive feedback.
+
+\medskip
+\noindent\textbf{Interrogate the evidence.}
+Did both repeated runs rise from zero? Was the direction consistent, or did the
+apparatus choose either sign? Could unequal drip rates explain the result?
+Which observation distinguishes feedback from a single charged object:
+continued growth, reversal after swapping a connection, or one initial jump?}
+
+\def\extension{%
+\textbf{Change only drip rate.} After discharge and a verified zero, make both
+streams slightly slower while preserving their break points inside the rings.
+Repeat the same 20-second table. Compare the slope in millimetres per five
+seconds, not the maximum reading and never spark length.
+
+\medskip
+\noindent\textbf{If the trace stays flat, troubleshoot conservatively.}
+\par\smallskip
+\begin{tabularx}{\linewidth}{@{}p{.28\linewidth}X@{}}
+\toprule
+Observation & Water-off correction after discharge and zero verification\\
+\midrule
+Both traces remain at zero & Trace opposite-side coupling; check that the
+electroscope responds to its approved test; dry insulators and tray.\\
+One stream is continuous & Reduce flow until breakup occurs inside its ring;
+do not move a live ring.\\
+Drops hit a ring or miss a can & Re-centre with water off; confirm supports
+cannot drift before restarting.\\
+One run rises, the repeat does not & Restore the measured hydraulic control,
+dry all surfaces, and repeat from a verified zero.\\
+Reading jumps or nears stop mark & Stop water immediately, discharge by the
+designed path, and increase separation before any further run.\\
+\bottomrule
+\end{tabularx}
+
+\medskip
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
+  state/.style={font=\scriptsize\bfseries},
+  sub/.style={font=\scriptsize,align=center}]
+  \foreach \x/\title/\caption in {0/{1. ZERO}/{water off; discharged},
+    3.2/{2. RISING}/{water on; read remotely},
+    6.4/{3. ZERO AGAIN}/{water off; discharged}}{
+    \draw[line width=.7pt,rounded corners=2pt] (\x-.72,-.48) rectangle (\x+.72,.95);
+    \draw[line width=.55pt] (\x,.72)--(\x,.48);
+    \fill (\x,.72) circle (.035);
+    \draw[line width=.35pt] (\x-.38,-.22)--(\x+.38,-.22);
+    \node[state] at (\x,1.20) {\title};
+    \node[sub] at (\x,-.78) {\caption};
+  }
+  % Closed leaves at both proved-zero states.
+  \draw[line width=.8pt] (0,.48)--(-.06,-.08);
+  \draw[line width=.8pt] (0,.48)--(.06,-.08);
+  \draw[line width=.8pt] (6.4,.48)--(6.34,-.08);
+  \draw[line width=.8pt] (6.4,.48)--(6.46,-.08);
+  % Deflected leaves and a fixed millimetre scale.
+  \draw[line width=.8pt] (3.2,.48)--(2.91,-.04);
+  \draw[line width=.8pt] (3.2,.48)--(3.49,-.04);
+  \draw[line width=.35pt] (3.67,-.12)--(3.67,.46);
+  \foreach \y in {-.08,.02,...,.42} \draw[line width=.25pt] (3.67,\y)--(3.76,\y);
+  \draw[-{Stealth[length=1.4mm]},line width=.55pt] (1.02,.23)--(2.18,.23);
+  \draw[-{Stealth[length=1.4mm]},line width=.55pt] (4.22,.23)--(5.38,.23);
+  \node[sub] at (1.60,.43) {start flow};
+  \node[sub] at (4.80,.43) {stop, then\\discharge};
+\end{tikzpicture}
+\end{center}
+
+\noindent The evidence is a complete state change, not merely a large reading:
+a verified neutral start, gradual deflection while drops fall, and a verified
+neutral finish after the prescribed shutdown.
+
+\medskip
+\noindent\textbf{Final proof.} Accept the demonstration only if two isolated
+runs begin at zero, show a gradual measurable rise before the stop mark, make
+no spark or snap, keep every drop inside the collectors, and end at verified
+zero after high-resistance discharge. Otherwise record ``not demonstrated''
+and stop.}
 \input{electricity/chatgpt/shared/lesson-template.tex}

@@ -1,6 +1,12 @@
 \def\doctitle{Demo: Eddy Currents}\def\docsubtitle{Magnetic braking and energy accounting}\def\docstrap{falling magnets, no electricity supply}
-\def\materialslist{\item Copper or aluminum tube \item Same-size nonconducting tube \item Neodymium magnet \item Same-size nonmagnetic slug \item Timer}
-\def\prediction{Will a magnet fall through a nonmagnetic metal tube at ordinary free-fall speed?}
+\def\materialslist{\item Copper or aluminum tubes of known length; optional
+commercially prepared slit tube \item Same-bore nonconducting tube
+\item One captured or individually controlled neodymium magnet
+\item Same-size nonmagnetic slug \item Padded catch tray, ruler, timer,
+masking-tape labels, and room-temperature thermometer}
+\def\prediction{Rank the transit times for the four pairings:
+magnet/metal, magnet/nonconductor, slug/metal, and slug/nonconductor. Which
+comparison isolates conductivity, and which isolates magnetism?}
 \def\diagram{%
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
@@ -67,7 +73,184 @@
   \end{scope}
 \end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Adult counts the magnet. Drop the nonmagnetic slug through both tubes and time.\item Drop the magnet through the nonconducting tube, then the metal tube. Catch over a padded tray.\item Repeat three times from the same height.\item Compare an intact tube with a lengthwise-slotted conductor if commercially prepared and burr-free.\end{enumerate}}
-\def\explanation{Changing flux drives circulating currents in the conductor. Their magnetic effect opposes the change, slowing the magnet. Gravitational potential energy becomes mainly thermal energy in the tube rather than disappearing. A slit interrupts current loops and weakens braking. The metal need not be ferromagnetic.}
-\def\extension{Graph transit time against tube material or wall thickness; do not substitute loose stacks of ingestible magnets.}
+\def\procedure{%
+\begin{enumerate}
+\item Adult inspects the tubes, counts and controls the single magnet, and
+places the padded tray below the exit. Label tubes without hiding a slit.
+\item Hold each tube vertical with its lower end at the same marked height.
+Release---do not push---the slug or magnet with its lower face level with the
+same start line. One person releases; another times first motion to first exit.
+\item Run the four baseline pairings below in counterbalanced order. Record
+\textbf{five} trials per pairing. If a release or catch is disturbed, mark the
+trial invalid rather than silently replacing its value.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  tube/.style={line width=.7pt}, note/.style={font=\scriptsize,align=center},
+  fall/.style={-{Stealth[length=1.6mm]},line width=.6pt}]
+  \foreach \x/\fill/\head/\body/\mark in
+    {0/gray!10/METAL/magnet/{N\;S},
+     3.45/white/NONCONDUCTOR/magnet/{N\;S},
+     6.90/gray!10/METAL/slug/{slug},
+     10.35/white/NONCONDUCTOR/slug/{slug}}{
+    \path[fill=\fill] (\x,-.95) rectangle ++(1.05,2.35);
+    \draw[tube] (\x,-.95) rectangle ++(1.05,2.35);
+    \draw[line width=.25pt] (\x+.18,-.95)--(\x+.18,1.40)
+      (\x+.87,-.95)--(\x+.87,1.40);
+    \node[note,font=\scriptsize\bfseries] at (\x+.525,1.72) {\head};
+    \draw[fill=gray!24,line width=.6pt] (\x+.29,.65) rectangle ++(.47,.31);
+    \node[note,font=\tiny] at (\x+.525,.805) {\mark};
+    \draw[fall] (\x+.525,.52)--(\x+.525,-.18);
+    \node[note] at (\x+.525,-1.25) {\body};
+    \draw[densely dotted] (\x-.13,1.02)--(\x+1.18,1.02);
+  }
+  \draw[line width=.4pt] (12.86,1.02)--(13.08,1.02)--(13.08,-.95)--(12.86,-.95);
+  \node[note,anchor=west] at (13.16,.02) {same timed\\length $L$};
+  \node[note,anchor=west] at (0,-1.67)
+    {\textbf{FACTORIAL CHECK}\quad Change one factor at a time; keep $L$, bore,
+    release point, orientation, timer, and catch height fixed.};
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Baseline timing record · seconds}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}*{5}{>{\centering\arraybackslash}p{.08\linewidth}}p{.11\linewidth}L@{}}
+\toprule
+Pairing & 1 & 2 & 3 & 4 & 5 & Median & Notes / invalid trial\\
+\midrule
+Magnet + metal & & & & & & &\\[1.0em]
+Magnet + nonconductor & & & & & & &\\[1.0em]
+Slug + metal & & & & & & &\\[1.0em]
+Slug + nonconductor & & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\textbf{Reason before calculating.}\quad
+Which two rows test whether ordinary rubbing or air drag explains the slow
+fall? Which two rows show that a conductor alone is insufficient? Why is the
+median more resistant than the mean to one late button press?
+
+\begin{enumerate}[resume]
+\item Calculate each median by ordering the five valid times and selecting the
+middle value. Repeat a set if fewer than five trials remain valid.
+\item If supplied, compare an intact conductor with a commercially prepared,
+burr-free lengthwise-slit conductor. Never cut or deburr tubing during this
+demo; the adult rejects sharp, crushed, or damaged specimens.
+\end{enumerate}
+}
+\def\explanation{%
+Changing magnetic flux drives circulating currents in the tube wall. By Lenz's
+law their magnetic effect opposes the change that produced them, so the falling
+magnet experiences an upward braking force. Gravity still transfers energy:
+the magnet's lost gravitational potential energy becomes mainly thermal energy
+in the conductor, with smaller sound and motion losses. The metal need not be
+ferromagnetic. A nonmagnetic slug supplies the drag control; a nonconducting
+tube supplies the magnetic control. A lengthwise slit interrupts the broad
+closed current paths and therefore weakens the braking.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+ note/.style={font=\scriptsize,align=center},
+ current/.style={-{Stealth[length=1.4mm]},line width=.55pt}]
+ \begin{scope}
+   \node[note,font=\scriptsize\bfseries] at (1.8,2.05) {INTACT WALL};
+   \draw[line width=.8pt,fill=gray!7] (0,0) rectangle (3.6,1.65);
+   \foreach \y in {.35,.82,1.29}
+     \draw[current] (.45,\y)
+       .. controls (1.05,\y+.28) and (2.55,\y+.28) .. (3.15,\y)
+       .. controls (2.55,\y-.28) and (1.05,\y-.28) .. cycle;
+   \node[note] at (1.8,-.30) {large closed paths $\Rightarrow$ stronger brake};
+ \end{scope}
+ \begin{scope}[shift={(5.00,0)}]
+   \node[note,font=\scriptsize\bfseries] at (1.8,2.05) {LENGTHWISE SLIT};
+   \draw[line width=.8pt,fill=gray!7] (0,0) rectangle (3.6,1.65);
+   \path[fill=white] (1.70,-.03) rectangle (1.90,1.71);
+   \draw[line width=.65pt] (1.70,0)--(1.70,1.65)
+     (1.90,0)--(1.90,1.65);
+   \foreach \y in {.35,.82,1.29}{
+     \draw[current] (.42,\y).. controls (.92,\y+.23) and (1.30,\y+.18)..(1.63,\y);
+     \draw[current] (3.18,\y).. controls (2.68,\y-.23) and (2.30,\y-.18)..(1.97,\y);}
+   \node[note] at (1.8,-.30) {paths interrupted $\Rightarrow$ weaker brake};
+ \end{scope}
+ \begin{scope}[shift={(10.00,0)}]
+   \node[note,font=\scriptsize\bfseries] at (1.75,2.05) {ENERGY ACCOUNT};
+   \node[draw,line width=.6pt,minimum width=1.45cm,minimum height=.62cm,note]
+     (g) at (.65,.82) {gravitational\\energy};
+   \node[draw,line width=.6pt,minimum width=1.45cm,minimum height=.62cm,note]
+     (m) at (2.85,1.20) {tube\\heating};
+   \node[draw,line width=.6pt,minimum width=1.45cm,minimum height=.62cm,note]
+     (o) at (2.85,.35) {motion, sound,\\catch losses};
+   \draw[-{Stealth[length=1.8mm]},line width=.7pt] (g.east)--(m.west);
+   \draw[-{Stealth[length=1.5mm]},line width=.35pt] (g.east)--(o.west);
+ \end{scope}
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Claim check}
+If the magnet is slow because it ``sticks to metal,'' what should happen with
+aluminum or copper? If energy disappears, what observation would violate energy
+conservation? State the evidence that distinguishes each mistaken claim from
+the eddy-current explanation.
+\end{teloscard}
+}
+\def\extension{%
+\textbf{Material and wall test.} Use only adult-supplied, undamaged tubes with
+the same timed length and closely matched bore. Vary one property per series.
+Record actual dimensions; do not infer thickness from apparent weight.
+
+\begin{teloscard}{Controlled extension record}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.12\linewidth}p{.12\linewidth}p{.11\linewidth}*{3}{>{\centering\arraybackslash}p{.075\linewidth}}p{.10\linewidth}L@{}}
+\toprule
+Tube ID & Material & Wall / mm & $t_1$ & $t_2$ & $t_3$ & Median & Fixed / anomaly\\
+\midrule
+& & & & & & &\\[1.0em]
+& & & & & & &\\[1.0em]
+& & & & & & &\\[1.0em]
+& & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{minipage}[t]{.56\linewidth}
+\textbf{Plot the evidence.}\quad Put the deliberately changed variable on the
+horizontal axis and median transit time on the vertical axis. Plot individual
+points; connect them only when the horizontal variable is ordered (for example,
+wall thickness). Material names are categories, so use separated points or
+bars.
+
+\begin{center}
+\begin{tikzpicture}[x=.52cm,y=.38cm]
+ \draw[-{Stealth[length=1.6mm]},line width=.6pt] (0,0)--(9.2,0)
+   node[below left,font=\scriptsize]{changed variable};
+ \draw[-{Stealth[length=1.6mm]},line width=.6pt] (0,0)--(0,7.0)
+   node[above left,font=\scriptsize,align=right]{median\\time / s};
+ \foreach \x in {1,...,8}\draw[gray!35,line width=.2pt] (\x,0)--(\x,6.6);
+ \foreach \y in {1,...,6}\draw[gray!35,line width=.2pt] (0,\y)--(8.8,\y);
+ \node[font=\scriptsize,anchor=north] at (4.4,-.65) {material category or wall thickness / mm};
+\end{tikzpicture}
+\end{center}
+\end{minipage}\hfill
+\begin{minipage}[t]{.41\linewidth}
+\textbf{Diagnose before repeating}
+\begin{tabularx}{\linewidth}{@{}p{.42\linewidth}L@{}}
+\toprule Symptom & Check first\\
+\midrule
+All times vary widely & release line, tube vertical, timer cue\\
+Only magnet/metal varies & magnet turns or touches bore\\
+Every pairing is slow & bore obstruction or catch cue\\
+Slit tube brakes strongly & slit hidden, bridged, or mislabeled\\
+Thicker tube is faster & length/bore changed too; tube warm\\
+\bottomrule
+\end{tabularx}
+\end{minipage}
+
+\textbf{Final proof.}\quad Write one conclusion containing: the comparison
+that identifies both magnetism and conductivity as necessary; a numerical
+median with units; the direction (not merely the existence) of a material,
+thickness, or slit effect; one plausible uncertainty; and the energy
+destination. Do not substitute loose stacks of ingestible magnets.
+}
 \input{electricity/chatgpt/shared/lesson-template.tex}

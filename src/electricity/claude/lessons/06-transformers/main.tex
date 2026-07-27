@@ -1,114 +1,447 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{6. Transformers}{Trading voltage for current}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{6. Transformers}
+  {Commissioning a two-winding magnetic system}{2026-07-27}
+
 \begin{document}
-\telosmasthead[Two coils sharing one field]
-\lessonhead{6}{about 75 minutes}{everyone builds; low-voltage AC only}
+\telosmasthead[Two circuits; one changing magnetic field]
+\lessonhead{6}{two sessions}{learner: isolated battery source, 12 V DC maximum}
+
+\begin{teloshazard}{Boundary}
+Use only the pictured two-cell pulse circuit. No outlet, wall adapter, opened
+appliance, inverter, ignition coil, charged capacitor, or large battery pack.
+An adult checks every unpowered connection and controls stop decisions.
+\end{teloshazard}
 
 \begin{materials}
-\item A laminated iron core --- a salvaged transformer core, or a bundle of iron wire
-\item Magnet wire, two colours if possible
-\item A low-voltage AC supply: a 6--12\,V AC wall adapter (\emph{AC output, not DC})
-\item Multimeter with an AC volts range
-\item A small torch bulb and holder
-\item Tape, sandpaper
+\item Closed laminated core; two intact insulated low-voltage windings
+\item 2 AA cells in holder; momentary normally-open pushbutton
+\item Two digital multimeters; insulated clip leads; tape labels
+\item One \(\qty{220}{\Omega}\), \(\qty{0.25}{W}\) resistor for the final load test
 \end{materials}
 
 \begin{predict}
-You wind 100 turns on one side of a core and 200 on the other, and put 6\,V AC
-into the 100-turn side. What comes out of the 200-turn side? And when you draw
-current from it, where does that energy come from?
+A secondary has three times as many turns as the primary. On a quick press,
+should its pulse be smaller, equal, or larger? While the button remains held,
+what should the secondary meter settle toward?
 \end{predict}
 
-\lessonsection{Do it}
+\lessonsection{Survey the magnetic circuit}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\cktransformer{2.2}{0}{$N_p$}{$N_s$}
-\draw[wire] (2.06,0.68) -- (0.6,0.68) -- (0.6,-0.1);
-\draw[wire] (2.06,0.0) -- (0.6,0.0) -- (0.6,-0.1);
-\node[telos node,anchor=east] at (0.45,0.34) {6\,V\\AC};
-\draw[wire] (2.72,0.68) -- (4.3,0.68);
-\draw[wire] (2.72,0.0) -- (4.3,0.0);
-\draw[wire] (4.3,0.68) -- (4.3,0.5);
-\draw[wire] (4.3,0.0) -- (4.3,0.18);
-\node[telos node] at (4.3,0.34) {V};
-\node[ckt,anchor=north,align=center] at (2.4,-0.55) {laminated iron core};
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  label/.style={font=\scriptsize,align=left},
+  call/.style={line width=.35pt,-{Stealth[length=1.4mm]}}]
+  \path[fill=gray!9] (-2.05,-1.22) rectangle (2.05,1.22);
+  \path[fill=white] (-1.18,-.56) rectangle (1.18,.56);
+  \draw[line width=1pt] (-2.05,-1.22) rectangle (2.05,1.22);
+  \draw[line width=1pt] (-1.18,-.56) rectangle (1.18,.56);
+  \foreach \d in {.09,.18,.27,.36}
+    \draw[gray!50,line width=.22pt] (-2.05+\d,-1.22+\d)--(-1.18+\d,-.56+\d)
+      (2.05-\d,-1.22+\d)--(1.18-\d,-.56+\d);
+  \foreach \y in {-.93,-.61,...,.67}
+    \draw[line width=.78pt] (-2.20,\y)
+      .. controls (-2.58,\y+.04) and (-2.58,\y+.28) .. (-2.20,\y+.32);
+  \foreach \y in {-.96,-.76,...,.84}
+    \draw[line width=.48pt] (2.20,\y)
+      .. controls (2.54,\y+.02) and (2.54,\y+.18) .. (2.20,\y+.20);
+  \draw[dashed,line width=.6pt,-{Stealth[length=1.8mm]}] (-.86,.90)--(.86,.90);
+  \draw[dashed,line width=.6pt,-{Stealth[length=1.8mm]}] (.86,-.90)--(-.86,-.90);
+  \draw[call] (-2.42,.83)--(-3.35,1.40)
+    node[label,anchor=east]{winding A\\thicker wire};
+  \draw[call] (2.42,.74)--(3.38,1.34)
+    node[label,anchor=west]{winding B\\more turns};
+  \draw[call] (.48,-.90)--(1.22,-1.66)
+    node[label,anchor=west]{stacked laminations\\interrupt eddy-current paths};
+  \node[label,fill=white,inner sep=1pt] at (0,1.50) {flux circles the closed core};
+  \begin{scope}[shift={(5.45,.05)}]
+    \draw[line width=.8pt] (-1.45,-1.02) rectangle (1.45,1.02);
+    \draw[line width=.35pt] (-1.18,-.70) rectangle (1.18,.63);
+    \draw[line width=.35pt] (-.86,-.42) arc (205:-25:.82);
+    \draw[line width=.8pt,-{Stealth[length=1.5mm]}] (0,-.02)--(.58,-.35);
+    \node[font=\scriptsize\bfseries] at (0,.31) {V DC};
+    \draw[line width=.6pt] (-1.45,.45)--(-2.05,.45);
+    \draw[line width=.6pt] (-1.45,-.45)--(-2.05,-.45);
+    \node[label,align=center] at (0,-1.35) {begin with the secondary\\open except for this meter};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
+\begin{gate}{Cold inspection}
+Battery holder out. Inspect the winding insulation and core edges. Identify
+each pair of winding leads by continuity, measure its resistance, and verify
+open circuit from every lead to the metal core. A core-contact reading ends
+the investigation.
+\end{gate}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Winding & lead labels & turns & resistance & core isolated? & first inference\\
+\midrule
+A & & & & yes / stop & \\
+B & & & & yes / stop & \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\telosmasthead[Commissioning sequence]
+\lessonhead{6A}{make, hold, break}{change one connection only while unpowered}
+
+\lessonsection{Wire the pulse test}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  wire/.style={line width=.8pt},lab/.style={font=\scriptsize,align=center}]
+  \draw[wire] (-5.65,-.80)--(-5.65,.95)--(-5.10,.95);
+  \draw[line width=1pt] (-5.10,.66)--(-5.10,1.24);
+  \draw[line width=.6pt] (-4.84,.78)--(-4.84,1.12);
+  \draw[wire] (-4.84,.95)--(-4.03,.95);
+  \fill (-4.03,.95) circle (.055); \fill (-3.24,.95) circle (.055);
+  \draw[line width=.8pt] (-3.99,1.00)--(-3.30,1.29);
+  \draw[wire] (-3.24,.95)--(-2.58,.95);
+  \foreach \y in {-.66,-.32,...,.70}
+    \draw[line width=.7pt] (-2.58,\y)
+      .. controls (-2.94,\y+.04) and (-2.94,\y+.25) .. (-2.58,\y+.34);
+  \draw[wire] (-2.58,-.66)--(-5.65,-.80);
+  \node[lab] at (-5.12,-1.08) {2 AA cells};
+  \node[lab] at (-3.64,1.53) {momentary button};
+  \path[fill=gray!9] (-2.42,-1.08) rectangle (1.30,1.08);
+  \path[fill=white] (-1.61,-.47) rectangle (.49,.47);
+  \draw[line width=.9pt] (-2.42,-1.08) rectangle (1.30,1.08);
+  \draw[line width=.9pt] (-1.61,-.47) rectangle (.49,.47);
+  \foreach \y in {-.82,-.60,...,.94}
+    \draw[line width=.47pt] (1.44,\y)
+      .. controls (1.76,\y+.02) and (1.76,\y+.18) .. (1.44,\y+.22);
+  \draw[wire] (1.44,1.16)--(2.18,1.16)--(2.18,.58);
+  \draw[wire] (1.44,-.82)--(2.18,-.82)--(2.18,-.58);
+  \draw[line width=.8pt] (2.18,-.92) rectangle (3.90,.92);
+  \draw[line width=.35pt] (2.44,-.54) rectangle (3.64,.52);
+  \draw[line width=.35pt] (2.61,-.35) arc (205:-25:.42);
+  \draw[line width=.8pt,-{Stealth[length=1.5mm]}] (3.05,-.04)--(3.42,-.28);
+  \node[font=\scriptsize\bfseries] at (3.05,.29) {V};
+  \node[lab] at (3.05,-1.17) {high-impedance meter};
+  \draw[dashed,-{Stealth[length=1.7mm]}] (-1.40,.74)--(.27,.74);
+  \draw[dashed,-{Stealth[length=1.7mm]}] (.27,-.74)--(-1.40,-.74);
+  \node[lab,fill=white,inner sep=1pt] at (-.56,1.43) {shared flux changes\\only during transitions};
 \end{tikzpicture}
 \end{center}
 
 \begin{enumerate}
-\item \textbf{Wind the primary.} 100 turns on one limb of the core, counted
-  carefully. Sand the ends.
-\item \textbf{Wind the secondary.} 200 turns on the other limb. Sand the ends.
-\item \textbf{Step up.} Connect the AC adapter to the primary. Measure the AC
-  voltage at the primary and at the secondary. Take the ratio.
-\item \textbf{Step down.} Swap them --- drive the 200-turn winding and measure
-  the 100-turn one. The ratio inverts.
-\item \textbf{Load it.} Put the torch bulb across the secondary. Measure the
-  secondary voltage again --- it sags. Now measure the \emph{primary} current
-  with and without the bulb connected.
-\item \textbf{Try DC.} Swap the AC adapter for a battery of the same voltage.
-  The output is zero, apart from a flick at the instant you connect or
-  disconnect. Say out loud why, using Lesson 5.
-\item \textbf{Remove the core.} Pull the two coils apart, or take out the iron.
-  The output collapses.
+\item Set the secondary meter to DC volts and its highest suitable range.
+\item Tap the button and note the first deflection: this is \textbf{make}.
+Observe the reading while held very briefly, then release for \textbf{break}.
+\item Repeat three times. Record signs as well as magnitudes.
+\item Reverse only the secondary leads and repeat. Predict before tapping.
+\item With the battery removed, open the core joint slightly; reconnect and
+repeat one cycle. Restore the closed core afterward.
 \end{enumerate}
 
-\lessonsection{How to wind it}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Configuration & make peak & held value & break peak & repeat spread & conclusion\\
+\midrule
+closed core & & & & &\\
+secondary reversed & & & & &\\
+core gap & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
 
+\begin{teloscard}{Interrogate the evidence}
+Why does release reverse the pulse? Which observation proves that a transformer
+responds to changing flux rather than merely to primary current? Did reversing
+the meter leads alter energy transfer, or only the displayed polarity? Why did
+a narrow core gap matter?
+\end{teloscard}
+
+\lessonsection{Sketch the time record}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  % laminated core, drawn as a rectangle of stacked plates
-  \draw[partheavy,fill=telosfill] (0,0) rectangle (4.4,2.6);
-  \draw[partheavy,fill=telospaper] (0.9,0.7) rectangle (3.5,1.9);
-  \foreach \i in {0,...,5} {\draw[partdetail] (0,\i*0.06+0.02) -- (4.4,\i*0.06+0.02);}
-  % primary, left limb
-  \foreach \y in {0.35,0.62,0.89,1.16,1.43,1.70,1.97,2.24} {
-    \draw[partline] (0.02,\y) arc (90:-90:0.13 and 0.135);}
-  % secondary, right limb -- visibly more turns of finer wire
-  \foreach \y in {0.30,0.46,0.62,0.78,0.94,1.10,1.26,1.42,1.58,1.74,1.90,2.06,2.22,2.38} {
-    \draw[partdetail] (4.38,\y) arc (90:270:0.11 and 0.08);}
-  \draw[wirered] (-0.24,2.24) -- (-1.1,2.24);
-  \draw[wireblk] (-0.24,0.35) -- (-1.1,0.35);
-  \draw[wirered] (4.62,2.38) -- (5.5,2.38);
-  \draw[wireblk] (4.62,0.30) -- (5.5,0.30);
-  \node[partsmall,anchor=east,align=right] at (-1.15,1.3) {6\,V AC in\\100 turns};
-  \node[partsmall,anchor=west,align=left] at (5.55,1.3) {out\\200 turns};
-  \node[partsmall,anchor=north] at (2.2,-0.25) {laminated iron core};
-  \node[partsmall,anchor=south,align=center] at (2.2,2.75)
-    {the core carries the magnetic field from one winding to the other};
+\begin{tikzpicture}[x=.82cm,y=.72cm,>=Stealth]
+  \draw[->] (0,0)--(10.1,0) node[right,font=\scriptsize]{time};
+  \draw[->] (.35,-1.35)--(.35,1.45) node[above,font=\scriptsize]{$V_s$};
+  \draw[line width=.8pt] (.35,0)--(1.20,0)--(1.20,1.02)
+    .. controls (1.48,.48) and (1.80,.13) .. (2.32,0)
+    --(7.35,0)--(7.35,-1.02)
+    .. controls (7.65,-.48) and (8.02,-.13) .. (8.55,0)--(9.70,0);
+  \draw[dashed] (1.20,-1.15)--(1.20,1.22);
+  \draw[dashed] (7.35,-1.18)--(7.35,1.20);
+  \node[font=\scriptsize] at (1.20,-1.50) {make};
+  \node[font=\scriptsize] at (4.35,.26) {held: nearly zero};
+  \node[font=\scriptsize] at (7.35,1.48) {break};
 \end{tikzpicture}
 \end{center}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{The turns ratio}{$V_s / V_p = N_s / N_p$. Your measured ratio should
-  be close to 2, and a little low because of losses.}
-\telosfact{Nothing is free}{$V_p I_p \approx V_s I_s$. Double the voltage and you
-  halve the available current. A transformer trades one for the other; it does
-  not create energy. The primary current rose when you loaded the secondary,
-  which is that equation happening in front of you.}
-\telosfact{AC only}{A transformer needs a \emph{changing} field. On DC it does
-  nothing except at the moment of switching --- which is Lesson 5 again, and it
-  is also, exactly, what a spark gap will exploit.}
-\telosfact{The core's job}{The iron carries the field from one coil to the other
-  so nearly all of it is shared. Without it, most of the primary's field misses
-  the secondary. The fraction that is shared is called the \textbf{coupling},
-  and it becomes the central design question in Lesson 9.}
-\telosfact{Laminations}{The core is made of thin sheets, insulated from each
-  other, precisely to break up the eddy currents you saw braking the magnet in
-  Lesson 5. Here those currents are pure loss.}
+\newpage
+\telosmasthead[Turns and loading]
+\lessonhead{6B}{measure ratios}{use consistent, brief switch pulses}
+
+\lessonsection{Map turns to voltage}
+Choose one winding as the primary. If taps or interchangeable coils are
+available, compare at least three secondary turn counts without changing the
+core or primary.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  lab/.style={font=\scriptsize,align=center}]
+  \foreach \x/\np/\ns in {0/30/30,3.65/30/60,7.30/60/30}{
+    \begin{scope}[shift={(\x,0)}]
+      \path[fill=gray!9] (-1.02,-.74) rectangle (1.02,.74);
+      \path[fill=white] (-.48,-.30) rectangle (.48,.30);
+      \draw[line width=.75pt] (-1.02,-.74) rectangle (1.02,.74);
+      \draw[line width=.75pt] (-.48,-.30) rectangle (.48,.30);
+      \foreach \y in {-.58,-.28,.02,.32}
+        \draw[line width=.58pt] (-1.10,\y) arc (270:90:.22 and .15);
+      \foreach \y in {-.60,-.40,...,.60}
+        \draw[line width=.40pt] (1.10,\y) arc (-90:90:.20 and .10);
+      \node[lab] at (0,-1.06) {\(N_p=\np,\ N_s=\ns\)};
+      \node[lab] at (0,-1.36) {\(N_s/N_p=\pgfmathparse{\ns/\np}\pgfmathprintnumber[precision=1]{\pgfmathresult}\)};
+    \end{scope}}
+  \node[lab] at (0,1.12) {one-to-one};
+  \node[lab] at (3.65,1.12) {step-up winding};
+  \node[lab] at (7.30,1.12) {step-down winding};
+\end{tikzpicture}
+\end{center}
+
+\[
+\text{pulse-voltage ratio}\quad
+\frac{\lvert V_s\rvert}{\lvert V_p\rvert}\approx\frac{N_s}{N_p}
+\]
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCCC@{}}
+\toprule
+\(N_p\) & \(N_s\) & turns ratio & primary peak & predicted secondary & measured secondary\\
+\midrule
+30 & 30 & 1.00 & & &\\
+30 & 60 & 2.00 & & &\\
+60 & 30 & 0.50 & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Worked forecast}
+With \(N_p=40\), \(N_s=120\), and a measured primary transition of
+\(\qty{2.2}{V}\), the ideal prediction is
+\[
+\lvert V_s\rvert=\qty{2.2}{V}\left(\frac{120}{40}\right)=\qty{6.6}{V}.
+\]
+If the secondary pulse supplies \(\qty{8}{mA}\), ideal power balance gives
+\(I_p\approx I_s(N_s/N_p)=\qty{24}{mA}\). Voltage can rise only as available
+current falls.
+\end{teloscard}
+
+\newpage
+\telosmasthead[Load characterization]
+\lessonhead{6B.2}{voltage and current}{meter-only test before known resistor}
+\lessonsection{Apply a controlled load}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+ wire/.style={line width=.75pt},lab/.style={font=\scriptsize,align=center}]
+  \cktransformer{0}{0}{$N_p$}{$N_s$}
+  \draw[wire] (.48,.69)--(1.28,.69)--(1.28,.48);
+  \draw[wire] (.48,-.10)--(1.28,-.10)--(1.28,.04);
+  \draw[line width=.7pt] (1.28,-.20) rectangle (2.60,.84);
+  \node[font=\scriptsize\bfseries] at (1.94,.48) {V};
+  \node[lab] at (1.94,.02) {parallel};
+  \draw[wire] (2.60,.60)--(3.26,.60);
+  \draw[wire] (2.60,.04)--(3.26,.04);
+  \draw[line width=.7pt] (3.26,-.20) rectangle (4.58,.84);
+  \node[font=\scriptsize\bfseries] at (3.92,.48) {A};
+  \node[lab] at (3.92,.02) {series};
+  \draw[wire] (4.58,.60)--(5.22,.60);
+  \draw[wire] (4.58,.04)--(5.22,.04);
+  \draw[line width=.7pt] (5.22,-.10) rectangle (6.55,.70);
+  \node[lab] at (5.88,.30) {\(\qty{220}{\Omega}\)};
+  \node[lab] at (3.55,1.20) {load branch: connect only after open-circuit test};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Predict \(I_s=V_s/R_L\), then have the adult verify meter jack positions.
+\item Measure one open-circuit pulse. Remove the battery, add the resistor and
+series ammeter, then repeat the same brief switching motion.
+\item Record loaded \(V_s\), \(I_s\), and \(V_sI_s\). Disconnect immediately.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Test & \(V_s\) & \(I_s\) & output product & change from open circuit & evidence of loss\\
+\midrule
+open & & --- & --- & baseline &\\
+loaded & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\lessonsection{Reconcile voltage, current, and power}
+For the loaded trial, calculate
+\[
+I_{\mathrm{predicted}}=\frac{V_{\mathrm{open}}}{R_L},
+\qquad
+P_s=V_{\mathrm{loaded}}I_s,
+\qquad
+\text{regulation drop}=
+\frac{V_{\mathrm{open}}-V_{\mathrm{loaded}}}{V_{\mathrm{open}}}\times100\%.
+\]
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCL@{}}
+\toprule
+Quantity & prediction & measurement & difference & what could explain it?\\
+\midrule
+secondary current & & & &\\
+secondary power & & & &\\
+voltage drop & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Meter-placement audit}
+\begin{minipage}[c]{.32\linewidth}
+\centering
+\begin{tikzpicture}[x=.72cm,y=.72cm]
+  \draw[wire] (0,1)--(1,1);
+  \draw[wire] (0,0)--(1,0);
+  \draw[wire] (1,1)--(1.35,1);
+  \draw[wire] (1.35,.72) rectangle (2.15,1.28);
+  \node[font=\scriptsize\bfseries] at (1.75,1){A};
+  \draw[wire] (2.15,1)--(2.55,1)--(2.55,.72);
+  \draw[wire] (2.30,.72) rectangle (2.80,.28);
+  \node[font=\scriptsize] at (2.55,.50){\(R\)};
+  \draw[wire] (2.55,.28)--(2.55,0)--(1,0);
+  \node[font=\scriptsize] at (1.40,-.34){correct: A in series};
+\end{tikzpicture}
+\end{minipage}\hfill
+\begin{minipage}[c]{.32\linewidth}
+\centering
+\begin{tikzpicture}[x=.72cm,y=.72cm]
+  \draw[wire] (0,1)--(2.55,1)--(2.55,.72);
+  \draw[wire] (0,0)--(2.55,0)--(2.55,.28);
+  \draw[wire] (2.30,.72) rectangle (2.80,.28);
+  \node[font=\scriptsize] at (2.55,.50){\(R\)};
+  \draw[wire] (1.05,1)--(1.05,.78);
+  \draw[wire] (.68,.22) rectangle (1.42,.78);
+  \node[font=\scriptsize\bfseries] at (1.05,.50){V};
+  \draw[wire] (1.05,.22)--(1.05,0);
+  \node[font=\scriptsize] at (1.40,-.34){correct: V in parallel};
+\end{tikzpicture}
+\end{minipage}\hfill
+\begin{minipage}[c]{.30\linewidth}
+\small
+An ammeter placed across the winding is nearly a short circuit. Remove the
+battery before moving either lead. The adult verifies both meter jacks before
+every energized reading.
+\end{minipage}
+\end{teloscard}
+
+\begin{predict}
+If the resistor value doubles, predict the direction of change for secondary
+current, terminal-voltage sag, and winding heating. Which quantity should stay
+closest to its open-circuit value?
+\end{predict}
+
+\newpage
+\telosmasthead[Loss audit and proof]
+\lessonhead{6C}{explain discrepancies}{all diagnosis begins unpowered}
+\footnotesize
+
+\lessonsection{Account for what the ideal ratio omits}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  lab/.style={font=\scriptsize,align=center},
+  arrow/.style={line width=.45pt,-{Stealth[length=1.5mm]}}]
+  \path[fill=gray!9] (-1.30,-.90) rectangle (1.30,.90);
+  \path[fill=white] (-.61,-.37) rectangle (.61,.37);
+  \draw[line width=.85pt] (-1.30,-.90) rectangle (1.30,.90);
+  \draw[line width=.85pt] (-.61,-.37) rectangle (.61,.37);
+  \foreach \y in {-.67,-.34,-.01,.32}
+    \draw[line width=.62pt] (-1.43,\y) arc (270:90:.23 and .165);
+  \foreach \y in {-.70,-.48,...,.62}
+    \draw[line width=.42pt] (1.43,\y) arc (-90:90:.21 and .11);
+  \draw[arrow] (-1.52,.56)--(-2.76,1.20)
+    node[lab,anchor=east]{copper loss\\\(I^2R\) heat};
+  \draw[arrow] (.10,.76)--(.10,1.55)
+    node[lab,above]{hysteresis};
+  \draw[arrow] (.74,-.66)--(1.55,-1.43)
+    node[lab,anchor=west]{eddy-current loss\\limited by laminations};
+  \draw[dashed,-{Stealth[length=1.5mm]}] (1.05,.76)
+    .. controls (2.20,1.12) and (2.52,.40) .. (2.18,-.20);
+  \node[lab,anchor=west] at (2.28,.42) {leakage flux\\misses secondary};
+  \draw[arrow] (-.16,-.72)--(-.55,-1.49)
+    node[lab,anchor=east]{core gap raises\\magnetic reluctance};
+\end{tikzpicture}
+\end{center}
+
+\begin{telosfacts}[0.22]
+\telosfact{Copper}{Long, fine wire has resistance. Load current produces heat
+and terminal-voltage sag.}
+\telosfact{Core}{Magnetization lags the field; induced currents circulate
+within each lamination. Both consume input energy.}
+\telosfact{Coupling}{Some primary flux does not link every secondary turn.
+A loose joint or physical gap makes this worse.}
+\telosfact{Measurement}{Hand switching is not a calibrated waveform. Compare
+trends and polarity; do not claim precision from short-lived meter peaks.}
 \end{telosfacts}
 
-\begin{telospanel}{The link to the coil}
-The neon-sign transformer is exactly this device, with a huge turns ratio: about
-120\,V in and 9{,}000--15{,}000\,V out, at correspondingly less current. It is
-also, by the same equation, why that supply is dangerous --- the current it can
-deliver is small by industrial standards and still many times what stops a
-heart. The Tesla coil itself is \emph{also} a transformer, but a strange one: no
-iron, loose coupling, and tuned to a single frequency. Lessons 8 and 9 explain
-why those three differences turn it into something a plain transformer can never
-be.
+\lessonsection{Fault tree}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.31\linewidth}L@{}}
+\toprule
+Symptom & Unpowered check first & Distinguish these causes\\
+\midrule
+No secondary pulse & continuity, meter mode/range, lead seating &
+open winding; wrong terminals; failed switch\\
+Weak on every ratio & close and clamp core; inspect joint; repeat motion &
+core gap; loose coupling; inconsistent switching\\
+Correct open, poor loaded & verify resistor; confirm ammeter is series &
+excess load; winding resistance; meter burden\\
+Reading changes when flexed & inspect and gently test each terminal &
+broken strand; incomplete enamel removal\\
+Heat, odor, discoloration & remove battery; stop the lesson &
+shorted turn; held button; wiring error\\
+Continuity to core & do not energize &
+damaged insulation\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gate}{Isolation order}
+Remove cells. Look and smell. Verify winding continuity. Verify isolation to
+core. Check meter leads, jacks, and range. Restore the meter-only test. Add the
+known resistor last. Never diagnose heat by applying power again.
+\end{gate}
+
+\newpage
+\telosmasthead[Evidence hearing]
+\lessonhead{6C.2}{defend each claim}{use measurements, not definitions}
+\footnotesize
+\lessonsection{Final evidence hearing}
+Defend each statement with a measurement, not a definition.
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.31\linewidth}L@{}}
+\toprule
+Statement & Exhibit & Reasoning\\
+\midrule
+Flux must change & \rule{.95\linewidth}{.3pt} & \rule{.95\linewidth}{.3pt}\\[1em]
+Polarity follows change & \rule{.95\linewidth}{.3pt} & \rule{.95\linewidth}{.3pt}\\[1em]
+Turns govern voltage & \rule{.95\linewidth}{.3pt} & \rule{.95\linewidth}{.3pt}\\[1em]
+Load changes input demand & \rule{.95\linewidth}{.3pt} & \rule{.95\linewidth}{.3pt}\\[1em]
+Real devices dissipate & \rule{.95\linewidth}{.3pt} & \rule{.95\linewidth}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Exit questions}
+Why can a 3:1 voltage increase not also give a 3:1 current increase? Which
+single comparison isolates the effect of the core? What meter mistake would
+place nearly a short circuit across a winding? Which loss best explains warm
+wire, and which two belong chiefly to the core?
 \end{telospanel}
-\lowvoltagenote
+
+\lessonsection{Controlled extension}
+Plot \(\lvert V_s\rvert\) against \(N_s\) with primary, core, range, and switch
+motion fixed. Add error bars from three repeated taps. State whether the graph
+supports proportionality and name the largest uncertainty.
+
 \end{document}

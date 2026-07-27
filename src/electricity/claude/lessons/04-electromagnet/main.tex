@@ -2,107 +2,253 @@
 \input{electricity/claude/shared/electricity.tex}
 \telosmeta{Electricity \& Magnetism}{4. Electromagnets}{A current makes a magnetic field}{2026-07-25}
 \begin{document}
-\telosmasthead[Ørsted's accident, repeated]
-\lessonhead{4}{about 75 minutes}{everyone builds; battery power only}
+\telosmasthead[direction is not strength]
+\lessonhead{4}{two 55-minute sessions}{staged build; battery power only}
 
 \begin{materials}
-\item Enamelled magnet wire, 26--30 AWG, about 10\,m
-\item Large iron nail or bolt (100\,mm)
-\item AA cells and holder; a 9\,V battery
-\item Compass
-\item Paper clips
-\item Multimeter
-\item Sandpaper, tape
+\item Enamelled magnet wire, 26--30 AWG, about 4\,m
+\item Iron bolt and a loose-fitting cardboard sleeve
+\item Two AA cells in a fused, switched holder
+\item 12 identical paper clips in one cup
+\item Compass and multimeter
+\item Sandpaper, tape, ruler, timer, index card
 \end{materials}
 
 \begin{predict}
-A compass sits under a straight wire that runs north--south. You connect the
-battery. Which way does the needle turn --- and what happens if you reverse the
-battery? Then: an electromagnet with 50 turns lifts 8 paper clips. How many will
-100 turns lift? Commit to a number.
+A \(30\)-turn coil lifts some paper clips. Predict what will happen when you
+(a) add \(30\) turns, (b) remove the iron core, and (c) reverse the current.
+For each, predict both \emph{strength} and \emph{pole direction}. Do not use
+``stronger'' without naming the observation that would count as stronger.
 \end{predict}
 
-\lessonsection{Do it}
-\begin{enumerate}
-\item \textbf{Ørsted's experiment.} Lay a straight wire over a compass, running
-  the same way the needle points. Touch it briefly across a AA cell. The needle
-  swings across. Reverse the connections --- it swings the other way. In 1820
-  this was the first evidence that electricity and magnetism are one subject.
-  \emph{Only touch it briefly:} a bare wire across a cell is a short circuit and
-  gets hot.
-\item \textbf{Find the direction.} Move the compass above, below and beside the
-  wire. The field circles \emph{around} the wire. Point your right thumb along
-  the current and your fingers curl the way the field goes.
-\item \textbf{Wind a coil.} Wind 50 turns of magnet wire neatly along the nail,
-  all the same direction, counting aloud. Leave 15\,cm tails, sand the enamel
-  off the ends --- enamel is insulation and the circuit will not work through
-  it.
-\item \textbf{Lift things.} Connect to the AA holder and pick up paper clips.
-  Count them. Disconnect: they fall.
-\item \textbf{Double it.} Wind 50 more turns on top, same direction, so you now
-  have 100. Count clips again. Compare with your prediction.
-\item \textbf{Take the iron out.} Slide the nail out and try lifting with the
-  air-cored coil alone. Then put it back.
-\item \textbf{Measure the current.} Put the meter in series and record it for
-  the 50-turn and 100-turn coils. The 100-turn coil has twice the wire, so twice
-  the resistance, so \emph{half} the current --- which complicates your
-  prediction in an interesting way.
-\end{enumerate}
-
-\lessonsection{How to wind it}
-
+\lessonsection{Stage 1: build a coil that can be compared}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \ptWoundNail{0}{2.4}{1.15}{11}
-  \ptCellHolder{0.4}{0.2}{0.9}
-  \draw[wirered] (-0.4,1.68) .. controls (-1.0,1.1) and (-0.4,0.7) .. (0.4,0.83);
-  \draw[wireblk] (2.5,3.1) .. controls (3.6,3.2) and (3.9,1.2) .. (3.06,0.4);
-  \node[partsmall,anchor=west,align=left] at (3.3,2.6)
-    {every turn the\\same direction};
-  \node[partsmall,anchor=north,align=center] at (1.9,-0.35)
-    {sand the enamel off both ends --- it is insulation, and the circuit
-     will not work through it};
-  \draw[telos arrow] (1.3,3.05) arc (200:-20:0.42 and 0.30);
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,
+  panel/.style={draw=telosink,rounded corners=2pt,minimum width=3.05cm,
+    minimum height=2.25cm}]
+  \node[panel] (a) at (-3.4,0) {};
+  \node[panel] (b) at (0,0) {};
+  \node[panel] (c) at (3.4,0) {};
+  \node[anchor=north west,font=\bfseries\scriptsize] at (a.north west)
+    {1 \quad Make the sleeve};
+  \draw[partheavy] (-4.35,-.1)--(-2.45,-.1);
+  \draw[partheavy] (-4.35,-.42)--(-2.45,-.42);
+  \draw[partdetail] (-4.35,-.1) arc (90:270:.16 and .12);
+  \draw[partdetail] (-2.45,-.1) arc (90:-90:.16 and .12);
+  \draw[<->] (-4.35,-.72)--node[below]{\(45\,\mathrm{mm}\)}(-2.45,-.72);
+  \node[anchor=north west,font=\bfseries\scriptsize] at (b.north west)
+    {2 \quad Wind \(30\) turns};
+  \draw[partheavy] (-.95,-.15)--(.95,-.15);
+  \foreach \x in {-.85,-.65,...,.75}
+    \draw[partline] (\x,-.15) arc (180:360:.1 and .4);
+  \draw[wirered] (-.85,-.15)..controls(-1.15,.25)and(-1.15,.45)..(-1.05,.62);
+  \draw[wireblk] (.95,-.15)..controls(1.15,-.45)and(1.1,-.58)..(1.02,-.68);
+  \node[below,align=center,font=\tiny] at (0,-.55)
+    {one layer\\no crossovers};
+  \node[anchor=north west,font=\bfseries\scriptsize] at (c.north west)
+    {3 \quad Prepare the leads};
+  \draw[wirered] (2.42,.15)--(4.35,.15);
+  \draw[wireblk] (2.42,-.28)--(3.65,-.28);
+  \draw[partline] (3.65,-.28)--(4.35,-.28);
+  \foreach \x in {3.68,3.78,...,4.28}
+    \draw[partdetail] (\x,-.35)--(\x+.08,-.21);
+  \node[below,align=center,font=\tiny] at (3.4,-.48)
+    {\(120\,\mathrm{mm}\) tails\\sand \(15\,\mathrm{mm}\) tips};
 \end{tikzpicture}
 \end{center}
 
-\lessonsection{What it means}
+\begin{enumerate}
+\item Roll and tape the cardboard sleeve so it slides over the bolt without
+  wobbling. Mark a \(45\,\mathrm{mm}\) winding zone.
+\item Wind \(30\) adjacent turns in one direction. Tape the first and last
+  turns. Do not wind directly on the bolt: the removable sleeve makes a fair
+  iron-versus-air comparison possible.
+\item With the battery disconnected, the adult checks that only the two lead
+  tips are bare. Measure resistance:
+  \(R_{30}=\rule{18mm}{.4pt}\,\Omega\). An open display means enamel or a broken
+  wire; near zero means a bypass around the winding.
+\end{enumerate}
+
+\begin{telospanel}{Checkpoint}
+Why must the winding zone, wire gauge, bolt, and test pole stay the same when
+turn count changes? Which of those could change resistance as well as geometry?
+\end{telospanel}
+
+\lessonsection{Stage 2: make the lifting test repeatable}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \ptCellHolder{-4.8}{.45}{.72}
+  \ptSwitch{-2.35}{1.02}{.72}
+  \draw[wirered] (-2.7,1.45)..controls(-3.1,1.45)and(-3.1,1.05)..(-2.71,1.05);
+  \draw[wirered] (-1.92,.72)..controls(-1.5,.25)and(-1.0,.3)..(-.72,.65);
+  \ptWoundNail{-.65}{1.02}{.82}{12}
+  \draw[wireblk] (1.55,1.53)..controls(2.15,1.75)and(2.5,1.45)..(2.65,1.05);
+  \draw[wireblk] (2.65,1.05)--(2.65,.25)--(-4.8,.25)--(-4.8,.45);
+  \draw[dashed,telos hair] (1.75,.94)--(1.75,-.3);
+  \draw[<->] (2.03,.92)--node[right]{\(5\,\mathrm{mm}\)}(2.03,.18);
+  \foreach \y in {0,-.24,-.48}
+    \draw[partline,rounded corners=2pt]
+      (1.43,\y)--(2.05,\y)--(2.05,\y-.16)--(1.58,\y-.16);
+  \draw[telos hair] (1.27,-.78) rectangle (2.22,.12);
+  \node[below] at (1.75,-.82) {index-card spacer and clip cup};
+  \node[above,align=center] at (-.1,2.05)
+    {same pole down; lift vertically;\\switch on for \(3.0\,\mathrm{s}\)};
+  \draw[telos arrow] (.55,1.95)--(.95,1.48);
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Put the bolt into the sleeve. Use the index card to reset the lower pole
+  \(5\,\mathrm{mm}\) above the same cup of clips before every run.
+\item Close the switch for \(3.0\,\mathrm{s}\), raise the coil vertically, and
+  count clips still attached. Open the switch immediately. Wait \(30\,\mathrm{s}\)
+  and return all clips before the next run.
+\item Complete four baseline trials. If the spread is more than two clips,
+  improve the method before comparing designs.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}lcccccc@{}}\toprule
+coil & current (A) & trial 1 & trial 2 & trial 3 & trial 4 & range\\\midrule
+30 turns, iron & \rule{14mm}{.4pt} & \rule{8mm}{.4pt} & \rule{8mm}{.4pt} &
+\rule{8mm}{.4pt} & \rule{8mm}{.4pt} & \rule{10mm}{.4pt}\\
+\bottomrule\end{tabular}
+\end{center}
+
+\noindent\textbf{Pause and decide.} What caused the largest uncontrolled
+difference between trials? Would a one-clip improvement be larger than your
+measurement noise?
+
+\lessonsection{Stage 3: separate turns, core, and direction}
+Add \(30\) turns beside the first layer, in the same winding direction and
+inside the same marked zone. Measure
+\(R_{60}=\rule{18mm}{.4pt}\,\Omega\). The adult then places the ammeter in
+series, verifies the current jack and range, and controls the first pulse.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  \node[draw=telosink,rounded corners=2pt,minimum width=3cm,minimum height=2cm] at (-3.4,0) {};
+  \node[draw=telosink,rounded corners=2pt,minimum width=3cm,minimum height=2cm] at (0,0) {};
+  \node[draw=telosink,rounded corners=2pt,minimum width=3cm,minimum height=2cm] at (3.4,0) {};
+  \node[font=\bfseries\scriptsize] at (-3.4,.72) {turn-count test};
+  \draw[partheavy] (-4.48,.04)--(-3.65,.04);
+  \foreach \x in {-4.36,-4.18,...,-3.82}
+    \draw[partline] (\x,.04) arc (180:360:.09 and .25);
+  \draw[telos arrow] (-3.53,.04)--(-3.2,.04);
+  \draw[partheavy] (-3.08,.04)--(-2.25,.04);
+  \foreach \x in {-3.03,-2.91,...,-2.43}
+    \draw[partline] (\x,.04) arc (180:360:.06 and .25);
+  \node[align=center,font=\tiny] at (-3.4,-.55)
+    {\(30\to60\) turns\\same bolt and zone};
+  \node[font=\bfseries\scriptsize] at (0,.72) {core test};
+  \draw[partheavy,fill=telosfill] (-1.02,-.04) rectangle (.95,.1);
+  \foreach \x in {-.82,-.58,...,.62}
+    \draw[partline] (\x,.03) arc (180:360:.12 and .32);
+  \draw[telos arrow] (-.62,-.5)--(.55,-.5);
+  \draw[partheavy,fill=telosfill] (.65,-.57) rectangle (1.35,-.43);
+  \node[align=center,font=\tiny] at (0,-.74)
+    {slide bolt out\\coil and gap stay put};
+  \node[font=\bfseries\scriptsize] at (3.4,.72) {direction test};
+  \ptCompass{2.82}{.02}{.72}{135}
+  \ptCompass{3.98}{.02}{.72}{45}
+  \draw[telos arrow] (3.27,.02)--(3.55,.02);
+  \node[align=center,font=\tiny] at (3.4,-.62)
+    {reverse leads\\record compass direction};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lccccccX@{}}\toprule
+test & turns & core & leads & current & mean lift & range & fixed controls\\\midrule
+A & 30 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
+B & 60 & iron & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, pole\\
+C & 60 & air & normal & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
+D & 60 & iron & reversed & \rule{9mm}{.4pt} & \rule{9mm}{.4pt} &
+\rule{9mm}{.4pt} & pulse, gap, clips, coil\\
+\bottomrule\end{tabularx}
+\end{center}
+
+Run four trials for each row. Between rows, name the one intended change aloud.
+For test D, hold a compass one bolt-length from the upper pole and record its
+direction before and after reversing the leads.
+
+\begin{telospanel}{Three questions before interpreting}
+\begin{enumerate}
+\item Did \(60\) turns also change current? Use measured \(NI\), not turns
+  alone, when comparing the two windings.
+\item Does the iron-core difference exceed the ranges of both repeated sets?
+\item Did reversing current change compass direction, lifting strength, both,
+  or neither?
+\end{enumerate}
+\end{telospanel}
+
+\clearpage
+\lessonsection{When the evidence looks wrong}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}X X@{}}\toprule
+symptom & inspect with power off & correction\\\midrule
+no current, no lift & scraped tips, switch, fuse, continuity & clean only the
+tips; repair the open connection\\
+high current, weak lift & wire bypass, reversed section, loose core & route
+current through every turn; rewind one direction\\
+counts vary widely & gap, pulse time, mixed clips, sideways pickup & reset the
+card spacer, timer, cup, and vertical path\\
+coil or cells warm & pulse duration, pinched enamel, excessive current & stop,
+disconnect, and have the adult inspect\\
+compass result wanders & steel objects, distance, starting direction & clear
+the bench and reset the compass position\\
+\bottomrule\end{tabularx}
+\end{center}
+
+\lessonsection{Final evidence proof}
+Write one conclusion that your measurements, rather than the expected theory,
+force you to accept.
+\[
+\boxed{\text{single planned change}}
+\longrightarrow
+\boxed{\text{difference in repeated data}}
+\longrightarrow
+\boxed{\text{difference exceeds spread}}
+\longrightarrow
+\boxed{\text{limited conclusion}}
+\]
+
+\noindent Planned change: \rule{42mm}{.4pt}\quad
+Measured difference: \rule{48mm}{.4pt}
+
+\noindent Ranges compared: \rule{38mm}{.4pt}\quad
+Conclusion justified: \rule{65mm}{.4pt}
+
+\begin{telospanel}{Disproof test}
+Name a possible next result that would make you withdraw or narrow that
+conclusion. A prediction confirmed once is not proof; a claim that survives a
+fair opportunity to fail is stronger evidence.
+\end{telospanel}
+
+\lessonsection{What the measurements mean}
 \begin{telosfacts}[0.20]
-\telosfact{Current makes field}{Not "moving magnets make fields" --- moving
-  \emph{charge} makes a magnetic field. A bar magnet works because of circulating
-  currents inside its atoms.}
-\telosfact{Turns concentrate it}{Each turn adds its field to the others. The
-  strength depends on the \textbf{ampere-turns}: current multiplied by number of
-  turns. That is why your measurement mattered --- doubling turns while halving
-  current is roughly a wash, and the honest answer to the prediction is "about
-  the same, unless I also change the voltage".}
-\telosfact{Iron multiplies}{An iron core can multiply the field by hundreds. The
-  iron's own atomic magnets line up with yours and add to it. This is why
-  transformers have iron cores --- and why a Tesla coil, which works at radio
-  frequency where iron cannot keep up, has an \emph{air} core.}
-\telosfact{Switching it off}{A permanent magnet is always on. This one is a
-  magnet you can control, which is the entire basis of motors, relays,
-  loudspeakers and transformers.}
+\telosfact{Current makes field}{Moving charge produces a magnetic field. Around
+one straight conductor the field circles the wire; in a coil, the fields of
+successive turns reinforce along the axis.}
+\telosfact{Ampere-turns matter}{The useful comparison is \(NI\): turns
+multiplied by measured current. Added wire also adds resistance, so doubling
+turns does not guarantee double current-times-turns or double lifting force.}
+\telosfact{Iron changes the path}{Iron magnetizes strongly and concentrates
+flux through the bolt and the small air gap. The core test isolates that effect
+only because sleeve, coil, gap, clips, and pulse remain fixed.}
+\telosfact{Direction is not strength}{Reversing current swaps the poles. With
+the same current magnitude and geometry, it need not produce a large strength
+change. The compass and the clip count answer different questions.}
 \end{telosfacts}
 
-\lessonsection{Break it}
-\begin{telosfacts}[0.20]
-\telosfact{Wind it backwards}{Wind the second 50 turns the \emph{opposite} way.
-  Now what happens? Predict before you connect.}
-\telosfact{More voltage}{Try 9\,V instead of 3\,V on the same coil. Measure the
-  current. Feel the coil after twenty seconds --- and think about where that
-  energy is going.}
-\telosfact{Aluminium core}{Try a core of aluminium or copper instead of iron.
-  Nothing happens. Only a few metals are ferromagnetic, which is a fact about
-  atoms and not about metals in general.}
-\end{telosfacts}
-
-\begin{telospanel}{The link to the coil}
-The primary coil of the Tesla coil is exactly this: a few turns of heavy
-conductor making a magnetic field. The secondary is the same idea with about a
-thousand turns of thin wire. Neither has an iron core, because at the coil's
-operating frequency --- hundreds of thousands of cycles per second --- iron
-cannot flip fast enough and would simply heat up.
+\begin{telospanel}{The link to later coils}
+Relays, motors, loudspeakers, and transformers all exploit controllable fields.
+Later high-frequency coils use different geometry and materials, but this
+lesson's habits remain: measure current, control geometry, time energization,
+and distinguish a pole reversal from a strength change.
 \end{telospanel}
 \lowvoltagenote
 \end{document}

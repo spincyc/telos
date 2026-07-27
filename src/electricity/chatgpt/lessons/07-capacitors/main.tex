@@ -1,80 +1,321 @@
-\def\doctitle{Lesson 7: Capacitors}\def\docsubtitle{Charge, voltage, time, and stored energy}\def\docstrap{small components, resistor-limited}
-\def\materialslist{\item 2 AA cells \item 1 k\(\Omega\) resistor \item 1000 \(\mu\)F capacitor rated 10 V or higher \item Multimeter \item Switch}
-\def\prediction{Will capacitor voltage jump instantly to the source value through a resistor?}
-\def\diagram{\begin{center}\vspace{-.35em}
-\begin{tikzpicture}[scale=.72,transform shape,x=1.45cm,y=1cm,line cap=round,line join=round,
-  note/.style={font=\scriptsize,align=center},
-  wire/.style={line width=.75pt},
-  grain/.style={telosmute,line width=.25pt}]
-  % bench and two-cell holder
-  \draw[grain](-4.65,-1.13)..controls(-2.2,-1.05)and(1.8,-1.19)..(4.65,-1.09);
-  \draw[grain](-4.4,-1.20)..controls(-1.4,-1.13)and(2.1,-1.26)..(4.35,-1.17);
-  \draw[line width=.75pt,rounded corners=2pt](-4.25,-.66)rectangle(-2.55,.43);
-  \foreach \x in {-3.82,-3.05}{
-    \draw[line width=.6pt,fill=telosfill](\x-.30,-.51)rectangle(\x+.30,.29);
-    \draw[grain](\x-.23,-.43)--(\x+.18,-.34);
-    \draw[grain](\x-.18,-.15)--(\x+.21,-.06);
-    \draw[grain](\x-.21,.12)--(\x+.15,.20);
-  }
-  \node[note] at (-3.40,-.82){2 AA cells};
-  \node[note] at (-4.45,.17){\( - \)};
-  \node[note] at (-2.36,.17){\( + \)};
-  % switch and resistor
-  \draw[wire](-2.55,.16)--(-1.98,.16);
-  \fill(-1.93,.16)circle(.045);
-  \fill(-1.15,.16)circle(.045);
-  \draw[line width=.9pt](-1.91,.19)--(-1.28,.51);
-  \draw[wire](-1.15,.16)--(-.85,.16);
-  \draw[wire,decorate,decoration={zigzag,segment length=2.5mm,amplitude=1.3mm}]
-    (-.85,.16)--(.45,.16);
-  \node[note,above] at (-1.55,.53){switch};
-  \node[note,above] at (-.20,.47){1 k\(\Omega\)};
-  % electrolytic capacitor, rendered as a physical can
-  \draw[line width=.8pt,fill=telosfill](.83,-.63)
-    ..controls(.68,-.56)and(.68,.61)..(.83,.70)
-    ..controls(1.17,.83)and(1.70,.79)..(1.89,.65)
-    --(1.89,-.60)..controls(1.62,-.75)and(1.10,-.77)..(.83,-.63);
-  \draw[line width=.6pt](.83,.70)..controls(1.15,.56)and(1.63,.57)..(1.89,.65);
-  \draw[grain](1.02,.52)--(1.02,-.52);
-  \draw[grain](1.12,.50)--(1.12,-.53);
-  \node[font=\tiny,rotate=90] at (1.48,-.03){1000 \(\mu\)F \quad 10 V};
-  \node[font=\scriptsize\bfseries] at (1.22,.41){\( + \)};
-  \draw[wire](.45,.16)--(.76,.16);
-  \draw[wire](1.90,.05)--(2.25,.05)--(2.25,-.89)--(-4.25,-.89)--(-4.25,-.43);
-  \node[note] at (1.36,-.96){polarized capacitor};
-  % meter and probes across capacitor
-  \draw[line width=.8pt,rounded corners=2pt,fill=white](2.72,-.43)rectangle(4.25,.86);
-  \draw[line width=.45pt,fill=telosfill](2.95,.27)rectangle(4.02,.67);
-  \node[font=\small] at (3.49,.47){1.84 V};
-  \draw[line width=.55pt](3.23,-.02)circle(.16);
-  \draw[line width=.55pt](3.72,-.02)circle(.16);
-  \node[font=\tiny] at (3.23,-.02){V};
-  \node[font=\tiny] at (3.72,-.02){COM};
-  \node[note] at (3.49,-.63){meter reads across \(C\)};
-  \draw[wire](3.23,-.18)..controls(2.87,-.65)and(2.32,-.50)..(1.92,.48);
-  \draw[wire](3.72,-.18)..controls(3.50,-.83)and(2.53,-.92)..(1.91,-.44);
-  \draw[line width=1.15pt](1.92,.48)--(1.83,.29);
-  \draw[line width=1.15pt](1.91,-.44)--(1.81,-.26);
-  % charge marks and polarity cue
-  \foreach \y in {-.27,.02,.31}\node[font=\scriptsize\bfseries] at (.65,\y){\( + \)};
-  \foreach \y in {-.27,.02,.31}\node[font=\scriptsize\bfseries] at (2.07,\y){\( - \)};
-  % evidence inset
-  \begin{scope}[shift={(3.02,1.18)},x=.72cm,y=.42cm]
-    \draw[->,line width=.45pt](-.12,0)--(2.15,0)node[right,font=\tiny]{time};
-    \draw[->,line width=.45pt](0,-.08)--(0,1.45)node[above,font=\tiny]{\(V_C\)};
-    \draw[densely dashed,telosmute](0,1.18)--(2.03,1.18);
-    \draw[line width=.8pt](0,0)..controls(.34,.72)and(.82,1.09)..(2.02,1.17);
-    \node[font=\tiny,align=center] at (1.24,.48){measured rise\\is gradual};
-  \end{scope}
-  \node[note,anchor=west] at (-4.55,1.62){RESISTOR-LIMITED CHARGE TEST};
-\end{tikzpicture}\vspace{-.65em}
-\end{center}}
-\def\procedure{\small\begin{enumerate}\item Adult confirms capacitance, voltage rating, and polarity. Begin discharged through the resistor.\item Connect battery--resistor--capacitor. Measure voltage across the capacitor every five seconds.\item Disconnect the battery and discharge only through the resistor while recording voltage.\item Repeat with a second resistance; never short the leads with metal.\end{enumerate}}
-\def\explanation{\small Capacitance is \(C=Q/V\). The resistor limits current, so voltage changes over time; larger \(R\) or \(C\) produces a longer time scale. Ideal stored energy is \(E=\tfrac12CV^2\), showing why voltage matters quadratically. This course uses only small low-voltage components, yet treats even them as charged until measured and resistor-discharged.}
-\def\extension{\small Plot voltage against time for two resistors on the same axes. Identify what changed and what did not.}
-\AtBeginDocument{\renewenvironment{recordbox}{\begin{teloscard}{Evidence record}\footnotesize
-\begin{tabularx}{\linewidth}{@{}p{.12\linewidth}Xp{.12\linewidth}X@{}}
-Prediction & \rule{\linewidth}{.3pt} & One change & \rule{\linewidth}{.3pt}\\[.9em]
-Observation & \rule{\linewidth}{.3pt} & Claim + because & \rule{\linewidth}{.3pt}
-\end{tabularx}}{\end{teloscard}}}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 7: Capacitors}
+  {Charge, voltage, time, and stored energy}{2026-07-27}
+
+\newcommand{\checkoff}{\raisebox{.12ex}{\fbox{\rule{0pt}{.72ex}\rule{.72ex}{0pt}}}}
+\newcommand{\blankline}{\rule{.94\linewidth}{.3pt}}
+\newcommand{\capcircuit}[1]{%
+\begin{tikzpicture}[x=.76cm,y=.76cm,line cap=round,line join=round,
+  wire/.style={line width=.8pt},note/.style={font=\scriptsize}]
+  \draw[wire] (0,0)--(0,1.6)--(.42,1.6);
+  \draw[wire] (.42,1.32)--(.42,1.88);
+  \draw[wire] (.66,1.40)--(.66,1.80);
+  \node[note,below] at (.54,1.30){3 V};
+  \draw[wire] (.66,1.6)--(1.28,1.6);
+  \fill (1.32,1.6) circle (.045);
+  \fill (2.08,1.6) circle (.045);
+  \draw[line width=.9pt] (1.35,1.63)--(1.92,1.93);
+  \node[note,above] at (1.69,1.92){S};
+  \draw[wire] (2.08,1.6)--(2.32,1.6);
+  \draw[wire,decorate,decoration={zigzag,segment length=2.1mm,amplitude=1.05mm}]
+    (2.32,1.6)--(3.58,1.6);
+  \node[note,above] at (2.95,1.76){10 k\(\Omega\)};
+  \draw[wire] (3.58,1.6)--(4.08,1.6)--(4.08,1.12);
+  \draw[wire] (3.72,1.12)--(4.44,1.12);
+  \draw[wire] (3.72,.88)--(4.44,.88);
+  \node[note] at (4.57,1.12){\( + \)};
+  \node[note] at (4.57,.88){\( - \)};
+  \node[note,right] at (4.42,.50){1000 \(\mu\)F};
+  \draw[wire] (4.08,.88)--(4.08,0)--(0,0);
+  #1
+\end{tikzpicture}}
+
+\begin{document}
+\telosmasthead[\editiontag\ --- isolated 3 V test]
+\rolecard
+
+\begin{materials}
+\item Switched holder with 2 AA cells
+\item 1000 \(\mu\)F electrolytic capacitor, rated at least 10 V
+\item 10 k\(\Omega\) and 22 k\(\Omega\) resistors
+\item Digital multimeter and insulated leads
+\item Stopwatch, graph paper, removable labels
+\end{materials}
+
+\begin{predict}
+Will capacitor voltage reach the measured source voltage at once? Sketch the
+shape you expect for charge and discharge; mark which part should change
+fastest.
+\end{predict}
+
+\section{Read the apparatus before connecting it}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  edge/.style={line width=.75pt},pencil/.style={telosrule,line width=.32pt},
+  note/.style={font=\scriptsize,align=center}]
+  \node[anchor=west,font=\scriptsize\bfseries] at (-.05,2.12)
+    {POLARITY, RATING, AND METER PLACEMENT};
+  \path[fill=telosfill,draw=telosink,line width=.75pt]
+    (.18,.08)..controls(.02,.18)and(.02,1.54)..(.18,1.65)
+    ..controls(.55,1.82)and(1.34,1.80)..(1.61,1.62)
+    --(1.61,.10)..controls(1.30,-.08)and(.51,-.08)..(.18,.08);
+  \draw[pencil] (.34,.23)--(.34,1.49) (.45,.21)--(.45,1.51);
+  \node[font=\scriptsize\bfseries] at (.63,1.34){\( - \)};
+  \node[font=\tiny,rotate=90] at (1.10,.82){1000 \(\mu\)F \quad 10 V};
+  \draw[edge] (.52,.02)--(.52,-.36) (1.30,.02)--(1.30,-.36);
+  \node[note] at (.91,-.67){stripe marks negative lead};
+  \draw[-{Stealth[length=4pt]},pencil] (.62,-.48)--(.43,.17);
+
+  \draw[edge] (2.55,1.08)--(3.07,1.08);
+  \draw[edge] (3.07,.74)--(3.07,1.42);
+  \draw[edge] (3.37,.80)--(3.37,1.36);
+  \draw[edge] (3.37,1.08)--(3.90,1.08);
+  \node[note] at (3.22,.49){schematic symbol};
+  \node[font=\scriptsize\bfseries] at (2.91,1.40){\( + \)};
+
+  \path[fill=white,draw=telosink,line width=.75pt,rounded corners=2pt]
+    (4.56,.05) rectangle (6.63,1.82);
+  \path[fill=telosfill,draw=telosink,line width=.45pt]
+    (4.83,1.13) rectangle (6.36,1.56);
+  \node[font=\small\ttfamily] at (5.60,1.34){2.63 V};
+  \draw[edge] (5.60,.65) circle (.32);
+  \node[font=\scriptsize] at (5.60,.65){V};
+  \fill (4.99,.25) circle (.06); \fill (6.20,.25) circle (.06);
+  \node[font=\tiny] at (4.99,.06){V};
+  \node[font=\tiny] at (6.20,.06){COM};
+  \node[note] at (5.60,-.34){voltmeter goes across \(C\)};
+
+  \draw[edge] (7.18,.18) rectangle (10.08,1.68);
+  \draw[pencil] (7.18,.92)--(10.08,.92);
+  \node[font=\tiny,anchor=west] at (7.31,1.44){BEFORE POWER};
+  \node[font=\tiny,anchor=west] at (7.31,1.16)
+    {\checkoff\ rating \(>3\) V \quad \checkoff\ \(+\) to \(+\)};
+  \node[font=\tiny,anchor=west] at (7.31,.68){BEFORE TOUCH};
+  \node[font=\tiny,anchor=west] at (7.31,.39)
+    {\checkoff\ source out \quad \checkoff\ \(V_C<0.10\) V};
+  \draw[edge] (10.35,.18) rectangle (13.40,1.68);
+  \node[font=\tiny,anchor=west] at (10.50,1.43){STOP IMMEDIATELY};
+  \node[font=\tiny,anchor=west] at (10.50,1.08){heat, bulging, leakage, odor,};
+  \node[font=\tiny,anchor=west] at (10.50,.75){reversed polarity, or an};
+  \node[font=\tiny,anchor=west] at (10.50,.42){unstable connection};
+\end{tikzpicture}
+\end{center}
+
+\begin{gate}{Adult inspection 1 — no battery installed}
+Read the capacitor body, identify its negative stripe and longer positive lead,
+and label both circuit nodes. Set the meter to DC volts with its black lead in
+COM. The adult checks the 10 k\(\Omega\) resistor and every connection.
+\textbf{Never short a capacitor with metal.} Discharge only through a resistor.
+\end{gate}
+
+\section{Stage 1 — establish endpoints and polarity}
+
+\begin{enumerate}
+\item With the capacitor absent, measure the two-cell source:
+  \(V_S=\rule{1.2cm}{.3pt}\) V. Remove the battery holder.
+\item Build the pictured circuit with the switch open. Red probe goes to the
+  capacitor \(+\) node; black probe goes to its \( - \) node.
+\item Ask before closing: \textit{At \(t=0\), should \(V_C\) be nearer 0 V or
+  \(V_S\)? What should the sign on the meter be?}
+\item Adult installs the holder. Close S for 60 s. Record the final value
+  \(V_C=\rule{1.2cm}{.3pt}\) V. It should be positive and approach \(V_S\).
+\item Open S and remove the holder. Keep the resistor in the path until the
+  meter reads below 0.10 V. Confirm: \checkoff\ discharged.
+\end{enumerate}
+
+\begin{center}
+\capcircuit{%
+  \draw[<->,line width=.55pt] (3.55,.52)--(4.60,.52);
+  \node[font=\tiny,fill=white,inner sep=1pt] at (4.08,.52){measure \(V_C\)};}
+\end{center}
+
+\newpage
+\telosmasthead[\editiontag\ --- timed evidence]
+
+\section{Stage 2 — measure a complete charge curve}
+
+\begin{gate}{Adult inspection 2}
+Capacitor reads below 0.10 V; polarity is unchanged; switch is open; probes are
+secure; source is still isolated 3 V. One person calls time while another reads.
+\end{gate}
+
+\begin{enumerate}
+\item Copy measured \(V_S\) into the table. At “start,” close S and keep it
+  closed. Record \(V_C\) at every listed time; do not reposition clips live.
+\item Between readings ask: \textit{Are equal time intervals producing equal
+  voltage increases? When is the slope steepest?}
+\item At 50 s open S and remove the battery holder. Do not reverse the capacitor.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}r*{8}{c}@{}}
+\toprule
+\(t\) (s) & 0 & 2 & 5 & 10 & 20 & 30 & 40 & 50\\
+\midrule
+\(V_C\) (V) & \rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&
+\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&
+\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}\\
+\(V_C/V_S\) & \rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&
+\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}&
+\rule{.72cm}{.3pt}&\rule{.72cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=1.12cm,y=1.02cm,line cap=round]
+  \draw[->] (0,0)--(6.45,0) node[right,font=\scriptsize]{time \(t\) (s)};
+  \draw[->] (0,0)--(0,3.25) node[above,font=\scriptsize]{\(V_C/V_S\)};
+  \foreach \x/\lab in {1/10,2/20,3/30,4/40,5/50,6/60}
+    {\draw[telosrule] (\x,0)--(\x,3.0);
+     \node[font=\tiny,below] at (\x,0){\lab};}
+  \foreach \y/\lab in {.6/.2,1.2/.4,1.8/.6,2.4/.8,3/1.0}
+    {\draw[telosrule] (0,\y)--(6,\y);
+     \node[font=\tiny,left] at (0,\y){\lab};}
+  \draw[line width=.9pt] (0,0)
+    ..controls(.42,1.12)and(.84,1.76)..(1,1.90)
+    ..controls(1.75,2.62)and(3.28,2.90)..(6,2.99);
+  \draw[densely dashed,line width=.55pt] (1,0)--(1,1.90)--(0,1.90);
+  \node[font=\scriptsize,fill=white,inner sep=1.5pt] at (1.72,1.54)
+    {\(t=\tau:\ 0.632V_S\)};
+  \node[font=\scriptsize,anchor=west] at (3.83,.62)
+    {plot measured points here};
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Worked time constant — calculate before judging the data}
+\[
+\tau=RC=(10{,}000\ \Omega)(0.001\ {\rm F})=10\ {\rm s}.
+\qquad
+V_C(\tau)=V_S(1-e^{-1})\approx0.632V_S.
+\]
+If \(V_S=3.00\) V, the 10 s target is \(1.90\) V. At \(5\tau=50\) s,
+\(V_C\approx0.993V_S\), close to the endpoint but never an instantaneous jump.
+Measured 10 s value: \rule{1.2cm}{.3pt} V. Difference from target:
+\rule{1.2cm}{.3pt} V.
+\end{teloscard}
+
+\section{Stage 3 — discharge through the same resistor}
+
+\begin{enumerate}
+\item Begin near \(V_S\), then remove the battery. Connect the 10 k\(\Omega\)
+  resistor across the capacitor; start time when the discharge path closes.
+\item Record without touching conductors. Ask: \textit{Does polarity reverse,
+  or does the same positive voltage shrink toward zero?}
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}r*{7}{c}@{}}
+\toprule
+\(t\) (s) & 0 & 5 & 10 & 20 & 30 & 40 & 50\\
+\midrule
+\(V_C\) (V) & \rule{.82cm}{.3pt}&\rule{.82cm}{.3pt}&\rule{.82cm}{.3pt}&
+\rule{.82cm}{.3pt}&\rule{.82cm}{.3pt}&\rule{.82cm}{.3pt}&\rule{.82cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=.82cm,y=.46cm,line cap=round]
+  \draw[->] (0,0)--(6.45,0) node[right,font=\scriptsize]{\(t\)};
+  \draw[->] (0,0)--(0,3.2) node[above,font=\scriptsize]{\(V_C\)};
+  \draw[densely dashed,telosrule] (0,3)--(6,3);
+  \draw[line width=.9pt] (0,3)
+    ..controls(.55,1.65)and(1.25,.75)..(2,.40)
+    ..controls(3.2,.08)and(4.7,.02)..(6,0);
+  \draw[densely dashed] (1,0)--(1,1.10);
+  \node[font=\scriptsize,anchor=west] at (1.12,1.12)
+    {\(V_C(\tau)=0.368V_0\)};
+  \node[font=\tiny,below] at (1,0){\(\tau\)};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\telosmasthead[\editiontag\ --- comparison and proof]
+\begingroup\footnotesize
+\setlength{\parskip}{.25em}
+
+\section{Stage 4 — change one thing}
+
+Replace only the 10 k\(\Omega\) resistor with 22 k\(\Omega\). Keep the same
+capacitor, source, polarity, timing method, and voltage checkpoints.
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCCCL@{}}
+\toprule
+Test & \(R\) & calculated \(\tau\) & \(V_S\) & \(V_C(\tau)\) &
+time to \(0.63V_S\) & time to \(0.90V_S\) & result\\
+\midrule
+A & 10 k\(\Omega\) & 10 s & & & & &\\[1.1em]
+B & 22 k\(\Omega\) & \rule{.8cm}{.3pt} & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{predict}
+If resistance is multiplied by 2.2, what should happen to the time required to
+reach the same fraction of \(V_S\)? Prediction: \blankline
+\end{predict}
+
+\section{Diagnose before repeating}
+
+\begin{tabularx}{\linewidth}{@{}p{.26\linewidth}LL@{}}
+\toprule
+Observation & Check with power removed & Likely correction\\
+\midrule
+Meter shows a minus sign & Probe colors and capacitor stripe & Put red on
+the labeled \(+\) node; do not reverse the capacitor to hide a probe error.\\
+Voltage stays near 0 V & Switch continuity, lead seating, resistor value &
+Restore the intended series path; never bypass the resistor.\\
+Voltage begins above 0.10 V & Residual charge & Battery out; discharge through
+10 k\(\Omega\); measure again before touch.\\
+Rise is much too fast or slow & Resistor bands and capacitor marking &
+Use measured \(R\), stated \(C\), and recompute \(RC\).\\
+Readings jump when untouched & Loose clips or changing contact & Open switch,
+remove battery, secure leads, then restart the whole timed run.\\
+Heat, odor, leakage, or bulging & None—stop & Adult isolates the holder and
+retires the capacitor. Do not reuse it.\\
+\bottomrule
+\end{tabularx}
+
+\section{Explain from the evidence}
+
+Capacitance is \(C=Q/V\). During charge, the initially large difference
+\(V_S-V_C\) drives current through \(R\); as \(V_C\) rises, that difference and
+the current shrink. During discharge, \(V_C\) itself drives current through the
+resistor, so the voltage falls exponentially without reversing polarity:
+\[
+V_{\rm charge}=V_S(1-e^{-t/RC}),\qquad
+V_{\rm discharge}=V_0e^{-t/RC}.
+\]
+Ideal stored energy is \(E=\tfrac12CV^2\). For 1000 \(\mu\)F at 3.00 V,
+\(E=0.0045\) J. The small value does not cancel the safe habit: treat every
+capacitor as charged until it is resistor-discharged and measured.
+
+\begin{teloscard}{Final proof — prediction, pattern, control, conclusion}
+\begin{enumerate}[itemsep=.08em,topsep=.08em]
+\item \textbf{Endpoint proof:} \(V_C(0)\approx\) \rule{1cm}{.3pt} V and
+  \(V_C(5\tau)\approx\) \rule{1cm}{.3pt} V, not an instant jump.
+\item \textbf{Shape proof:} equal time steps produced
+  \checkoff\ equal voltage changes \quad \checkoff\ progressively smaller changes.
+\item \textbf{Time-constant proof:} at \(t=RC\), charge was
+  \rule{1cm}{.3pt}\(V_S\) and discharge was \rule{1cm}{.3pt}\(V_0\).
+\item \textbf{Controlled-change proof:} \(22/10=2.2\); the measured time ratio
+  was \rule{1cm}{.3pt}. This \checkoff\ supports \quad \checkoff\ does not support
+  \(\tau\propto R\).
+\item \textbf{Polarity proof:} during discharge the sign
+  \checkoff\ stayed positive \quad \checkoff\ reversed.
+  \par\noindent Conclusion: \rule{.76\linewidth}{.3pt}
+\end{enumerate}
+\end{teloscard}
+
+\begin{gate}{Final zero-energy check}
+Switch open; battery holder removed; resistor remains across the capacitor;
+meter reads \(V_C=\rule{1.2cm}{.3pt}\) V, below 0.10 V. Adult initials:
+\rule{1.2cm}{.3pt}. Only then may the learner change or store components.
+\end{gate}
+
+\endgroup
+\end{document}

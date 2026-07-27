@@ -19,37 +19,129 @@ and hold the other still, then let go. What happens to each over the next
 minute? Draw both, one under the other, against time.
 \end{predict}
 
-\lessonsection{Do it --- the pendulums first}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
+  lab/.style={font=\fontsize{6}{7}\selectfont,align=center}]
+  \node[lab,font=\scriptsize\bfseries]at(-4.4,1.25){A · COAXIAL / NEAR};
+  \draw[line width=.8pt,double distance=1pt](-5.15,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt,double distance=1pt](-3.65,.45)ellipse(.42 and .30);
+  \draw[->,telosmute](-4.72,.45)--(-4.08,.45);
+  \draw[<->](-4.72,-.10)--(-4.08,-.10);
+  \node[lab,below]at(-4.40,-.10){gap \(d\)};
+  \node[lab,font=\scriptsize\bfseries]at(-1.45,1.25){B · COAXIAL / FAR};
+  \draw[line width=.8pt,double distance=1pt](-2.55,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt,double distance=1pt](-.35,.45)ellipse(.42 and .30);
+  \draw[->,telosmute](-2.12,.45)--(-.78,.45);
+  \node[lab,below]at(-1.45,-.10){less shared flux};
+  \node[lab,font=\scriptsize\bfseries]at(1.55,1.25){C · ORTHOGONAL};
+  \draw[line width=.8pt,double distance=1pt](.60,.45)ellipse(.42 and .30);
+  \draw[line width=.8pt](2.10,.05)--(2.10,.85);
+  \draw[line width=.8pt](2.22,.05)--(2.22,.85);
+  \draw[->,telosmute](1.03,.45)--(1.93,.45);
+  \node[lab,below]at(1.42,-.10){receiver edge-on};
+  \node[lab,font=\scriptsize\bfseries]at(4.65,1.25){D · COMMON CORE};
+  \draw[fill=telosfill,line width=.55pt](3.35,.31)rectangle(5.95,.59);
+  \draw[line width=.75pt](3.65,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](3.85,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](5.40,.02)ellipse(.14 and .52);
+  \draw[line width=.75pt](5.60,.02)ellipse(.14 and .52);
+  \node[lab,below]at(4.65,-.32){iron links both coils};
+\end{tikzpicture}
+\end{center}
+
+\lessonsection{Do it --- establish the mechanical model}
 \begin{enumerate}
 \item Hang two identical pendulums from a common horizontal string with some
   slack in it. Start one; leave the other at rest.
-\item Watch for a full minute. The first slows and stops; the second, which
-  nobody touched, is now swinging at full amplitude. Then it reverses, and the
-  energy comes back. It keeps trading, indefinitely, until friction wins.
-\item \textbf{Change the coupling.} Tighten the string. The trade happens faster.
-  Slacken it right off and the second pendulum barely moves at all.
-\item \textbf{Break the match.} Shorten one pendulum so the two no longer share
-  a frequency. Now almost nothing transfers, at any coupling. \emph{Matching
-  matters more than coupling.}
+\item Every five seconds, record both amplitudes. Continue through one complete
+  transfer out and back. Do not merely write “it moved.”
+\item Tighten the support string and repeat. Then slacken it and repeat. Graph
+  the two amplitudes against time. Which setting changes transfer time?
+\item Shorten one pendulum by \(10\%\), restore the middle string tension, and
+  repeat. This separates frequency mismatch from coupling strength.
 \end{enumerate}
 
-\lessonsection{Then the circuits}
+\begin{teloscard}{Pendulum state record}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
+\toprule
+State & \(0\) s & \(5\) s & \(10\) s & \(15\) s & \(20\) s & transfer time\\
+\midrule
+Matched / slack & & & & & &\\[1em]
+Matched / tight & & & & & &\\[1em]
+Detuned / middle & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{Then the coils --- geometry before resonance}
 \begin{enumerate}
-\item Set up two identical LC tanks, tuned to the same $f_0$, with their coils a
-  few centimetres apart and coaxial.
-\item Drive the first at $f_0$ and measure the voltage across the second.
-\item Slide them closer. The transfer rises and the single sharp peak splits
-  into \emph{two} peaks either side of $f_0$ --- an over-coupled pair no longer
-  has one resonance, it has two.
-\item Detune one tank with a different capacitor. Transfer collapses, exactly as
-  with the shortened pendulum.
+\item Disconnect both capacitors. Pulse the transmitter coil from the two AA
+  cells through a pushbutton. Connect only the receiver coil to the meter.
+  Tape the leads so they cannot masquerade as a geometry effect.
+\item At every state, make five equal presses and record the median absolute
+  receiver pulse. Confirm that the break pulse reverses sign. Stop for warmth.
+\item Keep both coil axes coincident and repeat at \(d=0,1,2,4,8\) cm.
+\item Return to \(d=2\) cm. Rotate the receiver about its center through
+  \(0^\circ,30^\circ,60^\circ,90^\circ\).
+\item Repeat the full distance series with a removable iron core linking both
+  coils. Remove it and recover the original baseline before proceeding.
 \end{enumerate}
+
+\begin{teloscard}{Repeated distance \(\times\) core matrix}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.15\linewidth}}p{.14\linewidth}X@{}}
+\toprule
+\(d\) (cm) & air: median \(|V|\) & core: median \(|V|\) & core/air & spread, anomaly, or control note\\
+\midrule
+0 & & & &\\[1em]1 & & & &\\[1em]2 & & & &\\[1em]
+4 & & & &\\[1em]8 & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\begin{teloscard}{Repeated orientation matrix at \(d=2\) cm}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}c*{2}{>{\centering\arraybackslash}p{.16\linewidth}}XX@{}}
+\toprule
+\(\theta\) & median \(|V|\) & fraction of \(0^\circ\) & projected-area prediction & pulse sign\\
+\midrule
+\(0^\circ\) & & \(1.00\) & maximum &\\[1em]
+\(30^\circ\) & & & &\\[1em]
+\(60^\circ\) & & & &\\[1em]
+\(90^\circ\) & & & near minimum &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{Restore the two tuned tanks}
+\begin{enumerate}
+\item Reconnect the identical capacitors and set the coils coaxial at \(d=4\)
+  cm. Sweep across the Lesson 8 resonance in equal frequency steps. Record
+  transmitter and receiver amplitudes.
+\item Repeat at \(d=2\) cm and \(d=1\) cm without changing sweep range or drive.
+  Look for one peak becoming two; do not assume it.
+\item Change only the receiver capacitor. Repeat at \(d=2\) cm. Then restore
+  the capacitor and verify the original curve returns.
+\end{enumerate}
+
+\begin{teloscard}{Frequency-sweep matrix}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.17\linewidth}*{6}{>{\centering\arraybackslash}X}@{}}
+\toprule State & \(f_1\) & \(f_2\) & \(f_3\) & \(f_4\) & \(f_5\) & peak(s)\\
+\midrule
+\(d=4\) cm / matched & & & & & &\\[1em]
+\(d=2\) cm / matched & & & & & &\\[1em]
+\(d=1\) cm / matched & & & & & &\\[1em]
+\(d=2\) cm / detuned & & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
 
 \lessonsection{What it means}
 \begin{telosfacts}[0.20]
 \telosfact{Coupling coefficient}{Written $k$, from 0 (no shared field) to 1 (all
-  of it shared). An iron-cored mains transformer runs at $k \approx 0.95$. A
-  Tesla coil runs deliberately \emph{loose}, around $k = 0.1$ to $0.2$.}
+  of it shared). Here, distance, orientation, and core all change \(k\).}
 \telosfact{Why loose is better here}{Energy takes many cycles to cross a loosely
   coupled pair, and during those cycles the secondary's voltage builds and
   builds. Couple them tightly and the transfer is fast but the secondary never
@@ -66,6 +158,72 @@ minute? Draw both, one under the other, against time.
   energy over many cycles of a shared resonance. That second mechanism is where
   most of the voltage comes from.}
 \end{telosfacts}
+
+\begin{teloscard}{Questions that make the graphs earn their ink}
+\footnotesize\begin{multicols}{2}
+\begin{enumerate}[leftmargin=*,itemsep=.22em]
+\item Which trial is the baseline?
+\item Did all five pulses agree?
+\item What changed when \(d\) doubled?
+\item Is the distance relation linear?
+\item Why keep the axes coincident?
+\item Was \(90^\circ\) exactly zero?
+\item What stray paths explain a nonzero minimum?
+\item Did the core give one constant multiplier?
+\item Which result isolates lead length?
+\item Why compare pulse magnitude, not held voltage?
+\item Why does break polarity reverse?
+\item Which changes \(k\), and which changes tuning?
+\item When did one resonance become two?
+\item Did detuning resemble the short pendulum?
+\item What result would falsify your claim?
+\item Where does meter resolution limit it?
+\end{enumerate}
+\end{multicols}
+\end{teloscard}
+
+\lessonsection{Graph, diagnose, prove}
+\begin{minipage}[t]{\linewidth}
+\textbf{Three required graphs.} Plot air and core pulse magnitude against
+distance on shared axes. Plot normalized pulse against angle. Plot receiver
+amplitude against frequency for every matched spacing and the detuned state.
+Show measured points; connect them only as guides. Mark readings below
+resolution and label both split peaks if they exist.
+
+\medskip
+\begin{tikzpicture}[x=.45cm,y=.38cm]
+\draw[->](0,0)--(8.5,0)node[right,font=\tiny]{distance};
+\draw[->](0,0)--(0,5.2)node[above,font=\tiny]{median \(|V|\)};
+\draw[densely dashed,telosmute](0,4.5)..controls(2,3.5)and(5,1.7)..(8,.9);
+\draw[telosmute](0,2.8)..controls(2,1.7)and(5,.6)..(8,.15);
+\node[font=\tiny]at(6.6,1.55){core};
+\node[font=\tiny]at(6.6,.42){air};
+\end{tikzpicture}
+\end{minipage}\par\medskip
+\begin{minipage}[t]{\linewidth}
+\textbf{Fault isolation}
+\footnotesize
+\begin{tabular}{@{}p{.18\textwidth}p{.67\textwidth}@{}}
+\toprule Symptom & Discriminating check\\\midrule
+No pulse & Verify range, receiver continuity, then transmitter current.\\
+Only lead motion works & Tape leads; press without touching coils.\\
+Trials scatter & One operator; inspect button; use the median.\\
+\(90^\circ\) stays large & Remove metal; shrink lead loops; recenter.\\
+No resonant peak & Verify each tank alone before coupling them.\\
+Core seems weaker & Restore air baseline; ensure core links both coils.\\
+\bottomrule
+\end{tabular}
+\end{minipage}
+
+\begin{gate}{Blind final proof}
+A partner hides two receiver states behind a sheet, choosing from coaxial/near,
+coaxial/far, orthogonal, common-core, or detuned. Take five pulse readings and,
+where needed, a short frequency sweep. Identify both states and justify them
+from all three graphs. Swap roles. The proof passes only when both partners
+identify both states, recover the starting baseline within its measured spread,
+and observe opposite make/break pulse signs. Diagnose before repeating; never
+erase a failed trial.
+\end{gate}
 
 \begin{telospanel}{The whole machine, in one sentence you can now parse}
 The transformer charges the capacitor; the gap dumps it into the primary tank,

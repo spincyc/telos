@@ -1,55 +1,62 @@
 \def\doctitle{Lesson 5: Induction}\def\docsubtitle{Only changing linked flux produces the pulse}\def\docstrap{motion direction becomes voltage direction}
 \def\materialslist{\item Coil of 200+ turns \item Bar magnet \item Sensitive multimeter \item Cardboard guide tube}
-\def\prediction{What will the meter show when a magnet rests motionless inside the coil? What changes when motion reverses?}
+\def\prediction{Predict the meter sign for N-pole in, N-pole out, S-pole in, and S-pole out. Which states should return to zero?}
 \def\diagram{\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
-% Cardboard guide and wound coil, drawn as a small observational plate.
-\fill[pattern=north east lines,pattern color=black!28]
-  (0,-.72) rectangle (3.25,.72);
-\draw[black!65] (0,-.72) rectangle (3.25,.72);
-\draw[black!45] (.12,-.64) rectangle (3.13,.64);
-\foreach \x in {.28,.43,...,2.98}{
-  \draw[line width=.48pt] (\x,-.79) .. controls (\x-.11,-.40) and
-    (\x-.11,.40) .. (\x,.79);
-  \draw[line width=.48pt] (\x,.79) .. controls (\x+.11,.40) and
-    (\x+.11,-.40) .. (\x,-.79);
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  state/.style={font=\scriptsize\bfseries,align=center},
+  note/.style={font=\tiny,align=center}]
+% Four matched frames make direction, state, and meter sign directly comparable.
+\foreach \x/\tag in {-4.5/A,-1.5/B,1.5/C,4.5/D}{
+  \draw[black!35,rounded corners=2pt] (\x-1.33,-1.04) rectangle (\x+1.33,1.12);
+  \node[state,anchor=north west] at (\x-1.22,1.03){\tag};
+  \path[pattern=north east lines,pattern color=black!25]
+    (\x+.20,-.43) rectangle (\x+.92,.43);
+  \draw[thick] (\x+.20,-.43) rectangle (\x+.92,.43);
+  \foreach \xx in {.28,.38,...,.84}
+    \draw[line width=.42pt] (\x+\xx,-.5)..controls(\x+\xx-.07,-.2)
+      and(\x+\xx-.07,.2)..(\x+\xx,.5);
+  \draw[thick] (\x+.12,-.53)--(\x+.12,.53);
+  \draw[thick] (\x+1,-.53)--(\x+1,.53);
+  \draw[thin] (\x+.2,-.47)..controls(\x-.05,-.78)and(\x+.92,-.78)..(\x+.98,-.48);
 }
-\draw[line width=1pt] (0,-.84) -- (0,.84);
-\draw[line width=1pt] (3.25,-.84) -- (3.25,.84);
-\node[font=\scriptsize,align=center] at (1.62,-1.08)
-  {200+ turns on a cardboard guide};
-% Bar magnet in the guide.
-\shade[left color=black!24,right color=white] (-2.18,-.39) rectangle (-.28,.39);
-\draw[very thick] (-2.18,-.39) rectangle (-.28,.39);
-\draw (-1.23,-.39)--(-1.23,.39);
-\node[font=\small\bfseries] at (-1.70,0){S};
-\node[font=\small\bfseries] at (-.76,0){N};
-\draw[-{Stealth[length=3mm]},very thick] (-1.72,.78)--(-.48,.78);
-\node[font=\scriptsize,above] at (-1.10,.79){push in};
-\draw[-{Stealth[length=2.5mm]},thick] (-.48,-.76)--(-1.52,-.76);
-\node[font=\scriptsize,below] at (-1.00,-.77){pull out};
-% Winding leads and analog voltmeter.
-\draw[very thick] (0,-.80) .. controls (-.12,-1.42) and (3.88,-1.33)
-  .. (4.18,-1.82);
-\draw[very thick] (3.25,.80) .. controls (3.42,1.27) and (4.65,1.10)
-  .. (4.68,.72);
-\draw[very thick,fill=white] (4.10,-1.82) rectangle (6.12,.72);
-\draw[line width=.8pt] (4.38,-1.45) rectangle (5.84,.28);
-\draw (4.62,-1.16) arc (205:-25:.50);
-\foreach \a in {205,235,...,335}
-  \draw ($(5.11,-.68)+(\a:.50)$)--($(5.11,-.68)+(\a:.42)$);
-\draw[very thick,-{Stealth[length=2mm]}] (5.11,-.68)--(5.54,-.98);
-\node[font=\tiny\bfseries,align=center] at (5.11,.08){ZERO-CENTER\\mV};
-\fill (4.61,-1.64) circle (.06);
-\fill (5.61,-1.64) circle (.06);
-\node[font=\scriptsize] at (5.11,-2.07){sign reverses with motion};
-% Sparse flux strokes distinguish field linkage from the solid apparatus.
-\foreach \yy in {-.42,0,.42}
-  \draw[black!55,dashed,-{Stealth[length=1.8mm]}]
-    (-.20,\yy) .. controls (.55,\yy+.20) and (2.55,\yy+.20) .. (3.34,\yy);
+% A: N enters; B: held still; C: N leaves; D: pole reversal enters.
+\draw[thick,fill=black!8](-5.32,-.25)rectangle(-4.62,.25);
+\node[state]at(-5.13,0){S};\node[state]at(-4.81,0){N};
+\draw[->,very thick](-4.55,.67)--(-3.92,.67);
+\node[note]at(-4.5,.86){N enters};
+\draw[->,thick](-3.62,-.63)arc(205:335:.27);
+\node[note]at(-3.62,-.83){positive pulse};
+\draw[thick,fill=black!8](-1.87,-.25)rectangle(-1.17,.25);
+\node[state]at(-1.68,0){S};\node[state]at(-1.36,0){N};
+\node[note]at(-1.5,.86){held still};
+\draw[thick](-1.77,-.63)--(-1.23,-.63);
+\node[note]at(-1.5,-.83){returns to zero};
+\draw[thick,fill=black!8](.72,-.25)rectangle(1.42,.25);
+\node[state]at(.91,0){S};\node[state]at(1.23,0){N};
+\draw[->,very thick](1.58,.67)--(.82,.67);
+\node[note]at(1.5,.86){N leaves};
+\draw[->,thick](1.78,-.63)arc(-25:-155:.27);
+\node[note]at(1.5,-.83){negative pulse};
+\draw[thick,fill=black!8](3.68,-.25)rectangle(4.38,.25);
+\node[state]at(3.87,0){N};\node[state]at(4.19,0){S};
+\draw[->,very thick](4.45,.67)--(5.08,.67);
+\node[note]at(4.5,.86){S enters};
+\draw[->,thick](4.78,-.63)arc(-25:-155:.27);
+\node[note]at(4.5,-.83){sign flips};
+\draw[<->,thin](3.35,-1.28)--(5.65,-1.28);
+\node[note,fill=white,inner sep=1pt]at(4.5,-1.28){same path and speed};
+\node[note,anchor=east,align=right]at(-5.86,-1.28){Meter-lead convention fixes which deflection is called \(+\).};
 \end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Connect the unpowered coil to the voltmeter. Hold the magnet still far away, then still inside.\item Move one pole in at slow and fast repeatable speeds; record sign and peak.\item Pull it out along the same path. Flip the magnet and repeat.\item Hold speed approximately fixed and compare one coil with two series coils.\end{enumerate}}
-\def\explanation{Induced emf follows change in magnetic flux linked through the circuit. No change means no sustained induced signal. Faster change and more linked turns generally increase the response. Reversing motion or pole reverses the sign because the induced effect opposes the change that produces it: Lenz's law and energy conservation tell the same story.}
-\def\extension{Drop the magnet through a nonconducting guide so speed and path are reproducible; sketch voltage versus time.}
+\def\procedure{\begin{enumerate}
+\item With nothing powered, connect the coil to the meter's voltage input on its lowest suitable DC range. Fix the lead colors and coil orientation for every trial. Zero the display. \textit{Does touching neither lead produce zero? Does moving the cable alone create a false pulse?}
+\item Mark start, center, and finish positions on the cardboard guide. Hold the N pole still at each mark for three seconds. Record the reading after it settles. \textit{Is location alone sufficient, or must linked flux change?}
+\item Push N from start to finish on a slow three-count. Record peak value and sign. Repeat three times without changing grip or path; report the median and range. \textit{Were the three peaks close enough to compare?}
+\item Repeat the N-in trial on a fast one-count. Then pull N out at the same two speeds, three trials each. \textit{Which variable changed magnitude? Which change reversed sign? Does the meter return to zero after every stop?}
+\item Turn the magnet end-for-end without swapping meter leads. Repeat the matched S-in and S-out trials. Before each movement, state the predicted sign. \textit{Does reversing the pole reproduce the same sign change as reversing motion? What happens if both reverse?}
+\item Final verification: select one speed and perform N-in, N-out, S-in, S-out twice in that order. Accept the result only if each repeated pair agrees in sign and the stationary readings return near zero.
+\item If readings disagree, stop and check loose terminals, wrong meter jack/range, changed coil orientation, side-to-side magnet motion, inconsistent speed, magnetic objects near the guide, or auto-ranging delay. Correct one cause, then repeat the full verification set.
+\end{enumerate}\par\Needspace{12\baselineskip}}
+\def\explanation{The meter responds to induced emf, which follows the rate of change of magnetic flux linked through the coil. A magnet can produce strong flux while held inside yet no sustained emf because the linkage is no longer changing. Faster motion produces a larger rate of change; additional linked turns generally increase the peak. Reversing motion reverses the change, and reversing the pole reverses the flux direction. Reversing either one reverses meter sign; reversing both preserves it. The induced current's field opposes the imposed change---Lenz's law---so mechanical work supplies the measured electrical energy. A sign is meaningful only after meter leads and coil orientation are fixed.}
+\def\extension{Make a four-row table for N-in, N-out, S-in, and S-out with predicted sign, two measured signs, median peak, and stationary final reading. Then drop the magnet through the nonconducting guide from one marked height three times. Sketch the positive and negative pulses in time order, identify entry and exit, and explain any unequal peaks from changing speed rather than claiming a violation of the sign rule.}
 \input{electricity/chatgpt/shared/lesson-template.tex}

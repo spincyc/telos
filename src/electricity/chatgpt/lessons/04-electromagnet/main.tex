@@ -1,6 +1,6 @@
 \def\doctitle{Lesson 4: Electromagnet}\def\docsubtitle{Current, turns, core, and fair tests}\def\docstrap{turn one variable at a time}
-\def\materialslist{\item 2 AA cells in switched holder \item Insulated magnet wire \item Iron bolt \item Paper clips \item Compass}
-\def\prediction{Which should change lifting strength more: doubling turns or reversing battery polarity?}
+\def\materialslist{\item 2 AA cells in fused, switched holder \item 1--2 m insulated magnet wire \item Iron bolt, cardboard tube, and tape \item 12 identical paper clips in a cup \item Compass and multimeter \item Ruler, timer, and data sheet}
+\def\prediction{\textbf{Commit before building.} Which should change lifting strength more: doubling turns or reversing battery polarity? Will replacing iron with air increase, decrease, or preserve the lift? Give a reason for each prediction.}
 \def\diagram{\begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
   pencil/.style={draw=black!68,line width=.34pt},
@@ -58,7 +58,150 @@
 \node[note] at (4.48,.79) {N};
 \end{tikzpicture}
 \end{center}}
-\def\procedure{\begin{enumerate}\item Wind 20 tidy turns on the bolt and secure them. Strip only the lead ends.\item Energize for five seconds; count identical paper clips lifted. Disconnect and check temperature.\item Repeat three times, then make 40 turns with the same wire, core, source, and test.\item Use a compass to map polarity; reverse the source and repeat.\end{enumerate}}
-\def\explanation{Current produces a magnetic field around a conductor. Coil turns reinforce the axial field; an iron core responds strongly and concentrates flux. Reversing current reverses the poles but need not greatly change strength. More current can mean more field and also more \(I^2R\) heating, so brief timed trials matter.}
-\def\extension{Compare air and iron cores while holding turns and current fixed. Report both lifting result and uncertainty.}
+\newcommand{\buildstrip}{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,line cap=round,
+  panel/.style={draw=black,rounded corners=2pt,minimum width=3.05cm,minimum height=2.25cm,inner sep=3pt},
+  pencil/.style={draw=black!65,line width=.35pt}]
+\node[panel] (a) at (-3.4,0) {};
+\node[panel] (b) at (0,0) {};
+\node[panel] (c) at (3.4,0) {};
+\node[anchor=north west,font=\bfseries\scriptsize] at (a.north west) {A \quad Leave two leads};
+\draw[line width=.8pt] (-4.35,-.1)--(-2.45,-.1);
+\foreach \x in {-3.85,-3.55,...,-2.65}
+  \draw[pencil] (\x,-.1) arc (180:360:.15 and .38);
+\draw (-4.35,-.1)..controls(-4.6,.35)and(-4.65,.5)..(-4.8,.55);
+\draw (-2.35,-.1)..controls(-2.2,-.45)and(-2.05,-.5)..(-1.9,-.55);
+\node[below] at (-3.4,-.68) {\(\geq 10\,\mathrm{cm}\) at each end};
+\node[anchor=north west,font=\bfseries\scriptsize] at (b.north west) {B \quad Count tidy turns};
+\draw[line width=.8pt] (-.95,-.1)--(.95,-.1);
+\foreach \x in {-.82,-.62,...,.78}{
+  \draw[pencil] (\x,-.1) arc (180:360:.1 and .38);
+  \draw[line width=.6pt] (\x+.2,-.1) arc (0:180:.1 and .38);}
+\draw[<->] (-.82,-.72)--node[below]{same winding length}(.98,-.72);
+\node[anchor=north west,font=\bfseries\scriptsize] at (c.north west) {C \quad Bare only the tips};
+\draw[line width=1.2pt] (2.4,.2)--(4.4,.2);
+\draw[line width=1.2pt,black!35] (2.4,-.25)--(3.72,-.25);
+\draw[line width=.45pt] (3.72,-.25)--(4.4,-.25);
+\foreach \x in {3.76,3.86,...,4.36}\draw[pencil] (\x,-.32)--(\x+.08,-.18);
+\node[align=center,below] at (3.4,-.43) {remove enamel from only\\\(15\,\mathrm{mm}\) of each tip};
+\end{tikzpicture}
+\end{center}}
+\newcommand{\testjig}{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,line cap=round,
+  pencil/.style={draw=black!65,line width=.35pt}]
+\draw[fill=black!5,rounded corners=2pt] (-4.7,-.65) rectangle (-3.65,.45);
+\foreach \x in {-4.48,-4.18,-3.88}\draw[line width=.65pt](\x,-.42)--(\x,.22);
+\node[below] at (-4.18,-.7) {switched holder};
+\draw (-3.65,.12)--(-3.12,.12);
+\draw (-3.12,.12)--(-2.72,.43);
+\fill (-3.12,.12) circle (.035);\fill (-2.68,.12) circle (.035);
+\node[above] at (-2.9,.46) {open between trials};
+\draw (-2.68,.12)..controls(-2.1,.4)and(-1.9,.5)..(-1.52,.2);
+\draw[line width=.8pt] (-1.5,0)--(1.55,0);
+\foreach \x in {-1.25,-1.02,...,1.28}{
+  \draw[pencil] (\x,0) arc (180:360:.115 and .42);
+  \draw[line width=.55pt] (\x+.23,0) arc (0:180:.115 and .42);}
+\draw (1.55,0)..controls(2,-.6)and(2.45,-.7)..(2.7,-.45);
+\draw[fill=black!4] (3.1,.18) circle (.62);
+\draw[->,line width=.7pt] (3.1,.18)--(3.42,.48);
+\node at (3.1,-.05) {\(\mathrm{A}\)};
+\draw (2.7,-.45)--(2.82,-.2);
+\draw (3.4,-.35)..controls(3.65,-.65)and(4.25,-.5)..(4.35,-.05);
+\draw (4.35,-.05)--(4.35,.7)--(-4.7,.7)--(-4.7,.45);
+\node[above,align=center] at (3.1,.82) {meter in series\\adult checks jacks};
+\draw[dashed] (1.48,-.45)--(1.48,-1.05);
+\foreach \y in {-1.15,-1.38,-1.61}
+  \draw[rounded corners=2pt] (1.14,\y)--(1.78,\y)--(1.78,\y-.2)--(1.3,\y-.2);
+\draw[<->] (2.15,-.45)--node[right]{\(5\,\mathrm{mm}\)}(2.15,-1.16);
+\node[align=left] at (-2.75,-1.45) {Same every trial: \(3.0\,\mathrm{s}\) on,\\same clip cup, same pole, same approach.};
+\end{tikzpicture}
+\end{center}}
+\newcommand{\polaritysketch}{\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,line cap=round]
+\foreach \s/\x/\lab in {1/-2.25/source as drawn,-1/2.25/source reversed}{
+  \draw[line width=.75pt] (\x-1.1,0)--(\x+1.1,0);
+  \foreach \u in {-1,-.78,...,.78}
+    \draw[line width=.48pt] (\x+\u,0) arc (180:360:.11 and .35);
+  \draw (\x,1.05) circle (.48);
+  \draw[->,line width=.8pt] (\x,1.05)--++({90+55*\s}:.36);
+  \node[above] at (\x,1.55) {\lab};
+  \node[below,align=center] at (\x,-.55) {Record compass direction;\\do not infer it from wire color.};
+}
+\draw[->,line width=.7pt] (-.65,.15)--node[above]{reverse leads only}(.65,.15);
+\end{tikzpicture}
+\end{center}}
+\def\procedure{
+\subsection*{Stage 1: make a repeatable coil}
+\buildstrip
+\begin{enumerate}[label=\arabic*.,leftmargin=*]
+\item Wind \(20\) close, single-layer turns around the cardboard tube. Tape the winding so neither the turn count nor winding length can change. Slide the bolt in only after checking that the tube moves freely.
+\item Adult checks continuity and measures coil resistance with the battery disconnected: \(R=\rule{16mm}{.4pt}\,\Omega\). If the meter shows open circuit, diagnose before energizing.
+\item Connect the fused switched holder. Keep the master switch open except during a timed trial.
+\end{enumerate}
+\noindent\textbf{Checkpoint question.} Why would comparing a loose 20-turn coil with a compact 40-turn coil change two variables at once?
+
+\subsection*{Stage 2: establish the test method}
+\testjig
+\begin{enumerate}[label=\arabic*.,leftmargin=*]
+\item Set the lower bolt pole \(5\,\mathrm{mm}\) above a cup of identical clips. Close the switch for exactly \(3.0\,\mathrm{s}\), lift vertically, count the clips still held, then open the switch.
+\item Record current during the pulse. Wait at least \(30\,\mathrm{s}\), touch-check for warmth, return every clip to the cup, and repeat three times.
+\end{enumerate}
+\begin{center}\small
+\begin{tabular}{@{}lcccccc@{}}\toprule
+condition & turns & core & current (A) & lift 1 & lift 2 & lift 3\\\midrule
+baseline & 20 & iron & \rule{12mm}{.4pt} & \rule{8mm}{.4pt} & \rule{8mm}{.4pt} & \rule{8mm}{.4pt}\\
+\bottomrule\end{tabular}
+\end{center}
+\noindent\textbf{Checkpoint questions.} What varied across the three repeats? Is the spread small enough that a one-clip difference would be convincing?
+
+\subsection*{Stage 3: change one variable}
+Run the matrix below. Rewind to \(40\) turns without changing winding length. For the air-core test, slide the bolt out; do not move the coil or clip cup. Reverse only the battery leads for the polarity test.
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lccccX@{}}\toprule
+test & turns & core & polarity & mean lift & variables held fixed\\\midrule
+A & 20 & iron & normal & \rule{12mm}{.4pt} & source, pulse, gap, clips, pole\\
+B & 40 & iron & normal & \rule{12mm}{.4pt} & source, pulse, gap, clips, pole\\
+C & 40 & air & normal & \rule{12mm}{.4pt} & source, pulse, gap, clips, coil\\
+D & 40 & iron & reversed & \rule{12mm}{.4pt} & source, pulse, gap, clips, coil\\
+\bottomrule\end{tabularx}
+\end{center}
+\polaritysketch
+\noindent\textbf{Intermediate claims.} Complete only after measuring:
+\begin{enumerate}[label=\alph*.,leftmargin=*]
+\item Doubling turns changed mean lift from \rule{10mm}{.4pt} to \rule{10mm}{.4pt}; circle: did / did not exceed trial-to-trial spread.
+\item Replacing iron with air changed mean lift by \rule{10mm}{.4pt} clips while all listed controls stayed fixed.
+\item Reversing current changed compass direction from \rule{14mm}{.4pt} to \rule{14mm}{.4pt}, while mean lift changed by \rule{10mm}{.4pt}.
+\end{enumerate}
+
+\subsection*{If the apparatus fails}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}X X@{}}\toprule
+symptom & check while disconnected & likely correction\\\midrule
+no current; no lift & enamel at both tips, switch, fuse, continuity & scrape only the lead tips; repair one open joint\\
+large current; no lift & winding path and accidental bypass around coil & remove the short path; reconnect through every turn\\
+results jump widely & pulse time, gap, clip type, vertical approach & reset jig; use one timer and one clip cup\\
+coil or holder warms & pulse length, shorted turns, current & stop; disconnect; adult inspects before reuse\\
+compass barely moves & distance, nearby steel, compass freedom & move compass closer after deenergizing; clear steel objects\\
+\bottomrule\end{tabularx}
+\end{center}
+
+\subsection*{Stage 4: the evidence proof}
+Choose the strongest supported conclusion and write a four-link proof:
+\[
+\boxed{\text{one deliberate change}}
+\longrightarrow
+\boxed{\text{measured difference}}
+\longrightarrow
+\boxed{\text{repeats and controls}}
+\longrightarrow
+\boxed{\text{bounded claim}}
+\]
+\noindent Changed variable: \rule{35mm}{.4pt}\quad Measured difference: \rule{42mm}{.4pt}
+
+\noindent Repeat spread: \rule{28mm}{.4pt}\quad Therefore the evidence supports: \rule{70mm}{.4pt}
+
+\noindent\textbf{Final challenge.} What result would make you reject your conclusion even if it matched your original prediction?
+}
+\def\explanation{Current in every turn produces a magnetic field. With the turns wound in the same sense, their axial fields reinforce. The iron core magnetizes and offers a strong path for flux, so it can increase the force at the bolt pole. Reversing current reverses north and south; it does not, by itself, predict a large strength change. Turn count is not the only influence: current, geometry, core, gap, pulse time, and heating can all alter the observation. That is why repeats and controlled variables are part of the physical argument, not paperwork after it.}
+\def\extension{Graph mean lift against \(20\), \(30\), and \(40\) turns. Include a vertical uncertainty bar spanning the lowest to highest trial. Before calling the graph a ``turns'' result, inspect whether current changed as added wire increased resistance. State the narrower claim your measurements actually justify.}
 \input{electricity/chatgpt/shared/lesson-template.tex}

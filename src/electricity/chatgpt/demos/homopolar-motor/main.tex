@@ -1,7 +1,7 @@
-\def\doctitle{Demo: Homopolar Motor}\def\docsubtitle{Magnetic force and torque in three parts}\def\docstrap{adult-controlled, five-second AA-cell trials}
-\def\materialslist{\item One fresh AA alkaline cell \item One neodymium disc magnet \item Bare copper wire \item Pliers \item Timer}
-\def\prediction{If the magnet flips, should rotation reverse? What if both cell and magnet flip?}
-\def\diagram{\begin{center}\begin{tikzpicture}[scale=.72,transform shape,line cap=round,line join=round,>=Latex]
+\def\doctitle{Demo: Homopolar Motor}\def\docsubtitle{Contact, force, reversal, and heat from timed evidence}\def\docstrap{adult-controlled, five-second AA-cell trials}
+\def\materialslist{\item One fresh AA alkaline cell \item One neodymium disc magnet \item Bare copper wire \item Pliers \item Timer \item Paper direction flag \item Room-temperature reference cell}
+\def\prediction{First sketch the expected view from above. If the magnet flips, should rotation reverse? If both cell and magnet flip, should it reverse or match the first trial?}
+\def\diagram{\begin{center}\begin{tikzpicture}[scale=.68,transform shape,line cap=round,line join=round,>=Latex]
 % Bench shadow and cylindrical AA cell.
 \fill[black!7](-2.25,-.66)ellipse(2.15 and .18);
 \draw[black!28,thin](-2.1,-.62)..controls(-1.1,-.48)and(.2,-.48)..(1.95,-.63);
@@ -40,7 +40,98 @@
 \node[font=\scriptsize,anchor=west]at(2.58,1.25){rotation};
 \draw[<->,thin](-.98,-.91)--(.98,-.91);\node[font=\tiny,fill=white,inner sep=1pt]at(0,-.91){centered, level geometry};
 \end{tikzpicture}\end{center}}
-\def\procedure{\begin{enumerate}\item Adult counts and mounts the magnet on the negative cell end. Bend balanced wire to touch the positive button and barely brush the magnet edge.\item Clear the area; adult makes contact for no more than five seconds while learner observes direction.\item Disconnect, check wire and cell temperature, and allow cooling.\item Flip the magnet and repeat once. Store the magnet securely.\end{enumerate}}
-\def\explanation{Current crossing the magnet's field experiences force; the geometry turns that force into torque. Reversing either current or field reverses rotation; reversing both preserves it. This is nearly a direct short, so most input can become heat. That is why the trial is brief, adult-controlled, AA alkaline only, and never lithium.}
-\def\extension{Predict four combinations of cell direction and magnet direction before testing only the minimum needed to check the pattern.}
+\def\procedure{%
+\subsection{1. Shape and inspect --- no power}
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,>=Latex,font=\scriptsize]
+\tikzset{p/.style={draw=black!74,line width=.42pt},f/.style={draw=black!30,line width=.25pt}}
+\draw[p](-5.4,-.5)rectangle(-3.7,1.1);\draw[f](-5.25,-.35)rectangle(-3.85,.95);
+\draw[p](-4.55,1.1)--(-4.55,1.36);\draw[p](-4.72,1.36)--(-4.38,1.36);
+\draw[p](-4.98,-.5)arc(180:360:.43 and .12);
+\draw[p](-5.18,1.35)..controls(-5.8,.75)and(-5.73,-.22)..(-5.08,-.48);
+\draw[p](-3.92,1.35)..controls(-3.30,.75)and(-3.37,-.22)..(-4.02,-.48);
+\draw[<->](-5.80,-.80)--(-3.30,-.80)node[midway,below]{equal clearance};
+\node[above]at(-4.55,1.48){A. balanced wire};
+\draw[p](-1.12,-.38)rectangle(.28,1.03);\draw[p](-.82,1.03)--(-.82,1.30);
+\draw[p](-1.35,-.56)arc(180:540:.95 and .22);
+\draw[p](-1.77,1.28)..controls(-2.15,.48)and(-1.88,-.20)..(-1.39,-.48);
+\draw[p](.13,1.28)..controls(.51,.48)and(.24,-.20)..(-.25,-.48);
+\fill(-.82,1.30)circle(.045);\fill(-1.39,-.48)circle(.045);\fill(-.25,-.48)circle(.045);
+\draw[->](-.82,1.68)--(-.82,1.34);
+\node[above,align=center]at(-.82,1.68){pivot touches button};
+\draw[->](-.82,-.82)--(-.25,-.49);
+\node[below]at(-.82,-.82){tips barely brush rim};
+\node[above]at(-.82,1.48){B. three contact points};
+\draw[p](2.56,-.38)rectangle(3.96,1.03);\draw[p](2.86,1.03)--(2.86,1.30);
+\draw[p](2.33,-.56)arc(180:540:.95 and .22);
+\draw[p](1.91,1.28)..controls(1.53,.48)and(1.80,-.20)..(2.29,-.48);
+\draw[p](3.81,1.28)..controls(4.19,.48)and(3.92,-.20)..(3.43,-.48);
+\draw[f,dashed](2.86,1.55)--(2.86,-.72);
+\draw[<->](1.76,-.82)--(3.96,-.82);
+\node[below]at(2.86,-.88){shared axis};
+\node[above]at(2.86,1.48){C. center and level};
+\end{tikzpicture}\end{center}
+\begin{enumerate}
+\item Adult counts one magnet, checks that it is unchipped, and mounts it on the negative end. Learner bends the wire while it is away from the cell. Adult verifies symmetry, clearance, and three light contacts.
+\item Learner answers before power: Which contact completes the circuit? Where can friction steal motion? Which parts may heat first?
+\end{enumerate}
+
+\subsection{2. Time one baseline trial}
+\begin{enumerate}[resume]
+\item Put a paper direction flag behind the apparatus. Adult clears loose metal and starts the timer, then lowers the wire. Call ``contact'' at \(0\) s; learner counts full turns and calls clockwise or counterclockwise from above.
+\item Adult lifts the wire at \(5\) s or sooner for stall, odor, pain, sparking, wobble, or unexpected motion. Record start delay, direction, and turns in five seconds; do not extrapolate a speed from a partial turn.
+\item With power open, adult compares wire, cell, and magnet with the room-temperature reference using the back of a finger. If any is distinctly warm, damaged, or uncomfortable, stop for the day. Otherwise cool at least \(60\) s before another trial.
+\end{enumerate}
+
+\begin{center}\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,>=Latex,line cap=round]
+\draw[black!70,line width=.45pt](0,0)circle(1.05);
+\draw[black!35](0,0)circle(.72);\fill(0,0)circle(.06);
+\draw[->,line width=.8pt](.18,1.25)arc(82:-35:1.27);
+\node[above]at(0,1.38){view from above};
+\node[right,align=left]at(1.66,.54){mark CW or CCW\\never ``left/right''};
+\draw[black!70,line width=.45pt](4.10,-.05)--(7.60,-.05);
+\foreach \x/\t in {4.10/0,4.80/1,5.50/2,6.20/3,6.90/4,7.60/5}
+ {\draw(\x,-.15)--(\x,.05);\node[below]at(\x,-.18){\t};}
+\draw[->,line width=.8pt](4.10,.47)--(7.60,.47);
+\node[above]at(5.85,.52){contact window};
+\node[right]at(7.65,-.05){s};
+\node[align=center]at(5.85,-.70){open immediately at 5 s\\then thermal check};
+\end{tikzpicture}\end{center}
+
+\subsection{3. Test reversals}
+\begin{enumerate}[resume]
+\item Predict every row before testing. Adult tests only rows needed to distinguish the rule, with the same wire geometry, five-second limit, stop line, and cool-down.
+\end{enumerate}
+\begin{center}\small
+\begin{tabular}{@{}clllc@{}}\toprule
+Trial & Cell orientation & Magnet face down & Prediction & Observed\\\midrule
+A & \(+\) at pivot & N & baseline: \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt}\\
+B & \(+\) at pivot & S & reverse / same & \rule{1.0cm}{.3pt}\\
+C & \(-\) at pivot & N & reverse / same & \rule{1.0cm}{.3pt}\\
+D & \(-\) at pivot & S & reverse / same & \rule{1.0cm}{.3pt}\\
+\bottomrule
+\end{tabular}
+\end{center}
+\textbf{Adult setup note:} reversing the cell requires remounting the magnet on
+the opposite terminal and reshaping the wire; never force an unstable stack.
+Skip C and D if the magnet will not sit securely.
+
+\subsection{4. Diagnose without extending contact}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{.19\linewidth}>{\RaggedRight\arraybackslash}p{.31\linewidth}L@{}}
+\toprule
+Symptom & Inspect with circuit open & One correction\\\midrule
+No motion & Missing pivot or rim contact; coating on wire & Clean bare contact points; rebalance\\
+Starts only when pushed & Excess friction; tips pressing inward & Open tips slightly; restore symmetry\\
+Strong wobble & Pivot off-axis; unequal arms; tilted magnet & Recenter and level before retry\\
+Sparks or rapid heat & Contact pressure, damaged cell, short path & Stop; retire damaged parts; no retry\\
+Direction changes mid-trial & Intermittent contact or rocking magnet & Open circuit and rebuild geometry\\
+\bottomrule
+\end{tabularx}
+}
+\def\explanation{Current crossing the magnet's field experiences force; the opposed wire arms turn that force into torque about the cell axis. Reversing current or magnetic field reverses the force and rotation. Reversing both preserves the direction. Contact quality changes whether torque beats friction, but it does not change the reversal rule. This apparatus is nearly a direct short, so much of the input can become heat. That is why every energization is timed, adult-controlled, AA alkaline only, never lithium, and separated by an open-circuit thermal check.}
+\def\extension{\textbf{Final proof:} Use the smallest safe set of trials to support
+the claim ``one reversal reverses motion; two reversals restore it.'' Name the
+two trials compared, report direction from above and turns in five seconds,
+then identify one result that would have falsified the claim. Finish only when
+the adult confirms the circuit is open, all parts are cool and undamaged, the
+single magnet is counted into storage, and no wire remains touching the cell.}
 \input{electricity/chatgpt/shared/lesson-template.tex}

@@ -1,164 +1,305 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
 
-\telosmeta{Electricity \& Magnetism}{11. Build the Coil}
-  {A small spark-gap Tesla coil, and how to tune it}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{11. Build the Coupled-Coil Instrument}
+  {Wind, verify, pulse, and measure a safe magnetic link}{2026-07-27}
+
+\newcommand{\coilstateplate}{%
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize,>=Stealth,x=1cm,y=1cm]
+\tikzset{pencil/.style={draw=black!75,line width=.75pt},
+proof/.style={draw=black!48,fill=black!3,rounded corners=2pt,inner sep=3pt}}
+
+\begin{scope}[shift={(0,3.2)}]
+\node[font=\bfseries,anchor=west] at (0,1.05) {A. Form ready};
+\draw[pencil] (.3,-.55) rectangle (2.55,.55);
+\draw[pencil] (.05,-.8) rectangle (.3,.8);
+\draw[pencil] (2.55,-.8) rectangle (2.8,.8);
+\draw[<->] (.3,-.98)--node[below]{winding width} (2.55,-.98);
+\draw[->] (3.08,.55)--(2.65,.55) node[pos=0,above]{smooth flange};
+\node[proof,align=left,anchor=west] at (3.15,-.12)
+  {Core slides freely\\No sharp or damp edge};
+\end{scope}
+
+\begin{scope}[shift={(0,0)}]
+\node[font=\bfseries,anchor=west] at (0,1.05) {B. Winding secured};
+\draw[pencil] (.3,-.55) rectangle (2.55,.55);
+\draw[pencil] (.05,-.8) rectangle (.3,.8);
+\draw[pencil] (2.55,-.8) rectangle (2.8,.8);
+\foreach \x in {.4,.52,...,2.44}{\draw[black!52] (\x,-.49)--(\x,.49);}
+\draw[pencil] (-.35,.28)--(.3,.28);
+\draw[pencil] (2.55,-.28)--(3.2,-.28);
+\node[above] at (-.05,.3){P1};
+\node[below] at (2.9,-.3){P2};
+\draw[->] (3.25,.52)--(2.35,.47) node[pos=0,above]{tape band};
+\node[proof,align=left,anchor=west] at (3.15,-.3)
+  {Turns counted\\Leads labelled; no loose loop};
+\end{scope}
+
+\begin{scope}[shift={(7.2,3.2)}]
+\node[font=\bfseries,anchor=west] at (0,1.05) {C. Coil proved};
+\draw[pencil] (.55,.1)--(.95,.1);
+\foreach \x in {.95,1.27,...,2.23}{\draw[pencil] (\x,.1) arc (180:0:.16 and .46);}
+\draw[pencil] (2.55,.1)--(2.95,.1);
+\draw[pencil] (.55,.1)--(.2,-.55);
+\draw[pencil] (2.95,.1)--(3.3,-.55);
+\draw[pencil] (.05,-.75) circle (.24);
+\draw[pencil] (3.45,-.75) circle (.24);
+\node at (1.75,-.7){meter: \(\Omega\)};
+\node[proof,align=center] at (1.75,-1.35)
+  {Finite, stable resistance\\Lead-flex test passes};
+\end{scope}
+
+\begin{scope}[shift={(7.2,0)}]
+\node[font=\bfseries,anchor=west] at (0,1.05) {D. Powerless assembly};
+\draw[pencil] (0,-.65) rectangle (4.15,.62);
+\draw[pencil] (.25,-.2) rectangle (1.15,.25);
+\node at (.7,.03){holder};
+\draw[pencil] (1.55,-.4) rectangle (1.95,.35);
+\node[rotate=90] at (1.75,-.02){button};
+\foreach \x in {2.42,2.6,...,3.32}{\draw[pencil] (\x,0) ellipse (.09 and .38);}
+\draw[pencil] (2.3,0)--(2.42,0);
+\draw[pencil] (3.41,0)--(3.75,0);
+\draw[->] (4.3,.45)--(3.68,.34) node[pos=0,above]{strain relief};
+\node[proof,align=center] at (2.05,-1.17)
+  {Battery absent; switch OFF\\No bare crossing; parts restrained};
+\end{scope}
+\end{tikzpicture}
+\end{center}}
+
+\newcommand{\pulseplate}{%
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize,>=Stealth,x=.95cm,y=.95cm]
+\tikzset{pencil/.style={draw=black!78,line width=.8pt},
+note/.style={draw=black!48,fill=black!3,rounded corners=2pt,inner sep=3pt}}
+
+\begin{scope}
+\node[font=\bfseries] at (1.75,2.15){1. Ready};
+\draw[pencil] (0,0)--(0,1.15)--(.4,1.15);
+\draw[pencil] (.4,.9)--(.4,1.4);\draw[pencil] (.63,1)--(.63,1.3);
+\draw[pencil] (.63,1.15)--(1.15,1.15);
+\draw[pencil] (1.15,1.15)--(1.68,1.43);
+\draw[pencil] (1.82,1.15)--(2.2,1.15);
+\foreach \x in {2.2,2.48,...,3.32}{\draw[pencil] (\x,1.15) arc (180:0:.14 and .42);}
+\draw[pencil] (3.6,1.15)--(3.6,0)--(0,0);
+\node[note] at (1.75,.28){master OFF};
+\node at (.52,1.65){2--4 AA};
+\node at (2.88,1.78){primary};
+\end{scope}
+
+\begin{scope}[shift={(4.55,0)}]
+\node[font=\bfseries] at (1.75,2.15){2. Press \(<1\) s};
+\draw[pencil] (0,0)--(0,1.15)--(.4,1.15);
+\draw[pencil] (.4,.9)--(.4,1.4);\draw[pencil] (.63,1)--(.63,1.3);
+\draw[pencil] (.63,1.15)--(1.15,1.15)--(1.82,1.15)--(2.2,1.15);
+\foreach \x in {2.2,2.48,...,3.32}{\draw[pencil] (\x,1.15) arc (180:0:.14 and .42);}
+\draw[pencil] (3.6,1.15)--(3.6,0)--(0,0);
+\draw[->,line width=1pt] (1.02,1.55)--(1.75,1.55)
+  node[midway,above]{current rises};
+\node[note] at (1.75,.28){brief pulse};
+\draw[->] (3.03,1.98) arc (140:35:.55);
+\end{scope}
+
+\begin{scope}[shift={(9.1,0)}]
+\node[font=\bfseries] at (1.75,2.15){3. Release};
+\foreach \x in {.1,.38,...,1.22}{\draw[pencil] (\x,1.15) arc (180:0:.14 and .42);}
+\draw[pencil] (0,1.15)--(0,-.1)--(3.55,-.1)--(3.55,1.15)--(1.5,1.15);
+\draw[pencil] (2.15,.42) circle (.33);\node at (2.15,.42){V};
+\node at (.68,.55){secondary};
+\draw[->,line width=1pt] (1.45,1.7)--(.65,1.7);
+\node[note] at (2.18,-.55){watch the transient};
+\end{scope}
+\end{tikzpicture}
+\end{center}}
+
+\newcommand{\proofmatrix}{%
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.22\linewidth}p{.22\linewidth}L@{}}
+\toprule
+Gate & Measurement & Pass proof & If it fails\\
+\midrule
+Forms & width; core clearance & smooth; dry; free sliding & remake before winding\\
+Primary & turns; \(R_P\); flex & count and stable finite \(R_P\) & clean leads or rewind\\
+Secondary & turns; \(R_S\); flex & count and stable finite \(R_S\) & locate break or rewind\\
+Isolation & P-to-S continuity & OL at all four lead pairs & find contact; do not energize\\
+Power path & holder V; OFF/ON state & expected V; OFF is open & adult corrects wiring\\
+Pulse & press/release peak, 3 trials & repeatable indication & follow diagnostic tree\\
+\bottomrule
+\end{tabularx}
+\end{center}}
 
 \begin{document}
-\telosmasthead[The machine everything else was for]
-\lessonhead{11}{several weekends}{\textbf{adult owns the mains side, permanently}}
+\telosmasthead[The course synthesis, inside the learner boundary]
+\lessonhead{11}{two careful sessions}{learner winds and records; adult inspects and controls power}
 
-\highvoltagenote
+\begin{teloshazard}{Boundary: a coupled-coil instrument, not a Tesla coil}
+Use only 2--4 AA cells in a fused, switched holder: \qty{6}{V} DC maximum.
+No outlet, mains lead, plug-in transformer, charged capacitor, ignition coil,
+spark gap, flyback transformer, large battery pack, exposed high voltage, or
+attempt to make a streamer. The primary receives brief battery pulses. The
+electrically isolated secondary connects only to a voltmeter or a correctly
+resistor-limited antiparallel LED pair. Disconnect the holder for every change.
+\end{teloshazard}
 
-\section{The circuit}
+\section{Read the finished instrument}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\node[telos node,minimum width=1.5cm] (m) at (0,0) {mains\\120\,V};
-\draw[wire] (0.85,0) -- (1.6,0);
-\cktransformer{1.6}{-0.34}{}{}
-\node[cktsmall,anchor=north,align=center] at (1.9,-0.9) {NST\\9--15\,kV};
-\draw[wire] (2.35,0.34) -- (3.6,0.34);
-\draw[wire] (2.35,-0.34) -- (3.6,-0.34) -- (3.6,-1.4) -- (7.4,-1.4);
-% safety gap across the transformer
-\draw[wire] (4.3,0.34) -- (4.3,1.25);
-\ckgap{4.3}{1.55}{safety gap}
-\draw[wire] (5.3,1.55) -- (6.0,1.55) -- (6.0,-1.4);
-% tank capacitor and main gap
-\draw[wire] (3.6,0.34) -- (4.9,0.34);
-\ckcap{4.9}{0.34}{$C$}
-\draw[wire] (5.9,0.34) -- (6.6,0.34);
-\ckgap{6.6}{0.34}{main gap}
-\draw[wire] (7.6,0.34) -- (8.4,0.34);
-% primary
-\draw[wire] (8.4,0.34) -- (8.4,-0.1);
-\ckinductor{8.4}{-0.5}{}
-\node[cktsmall,anchor=north] at (8.9,-0.75) {primary, tapped};
-\draw[wire] (9.4,-0.5) -- (9.4,-1.4);
-\draw[wire] (7.4,-1.4) -- (9.4,-1.4);
-% secondary and topload
-\draw[wire] (10.5,1.9) ellipse (0.75 and 0.22);
-\node[cktsmall,anchor=west] at (11.4,1.9) {topload (torus)};
-\draw[wire] (10.5,1.68) -- (10.5,1.3);
-\ckinductor{10.5}{0.9}{}
-\node[cktsmall,anchor=west,align=left] at (11.4,0.9) {secondary\\$\approx$1000 turns};
-\draw[wire] (10.5,0.9) -- (10.5,-1.0);
-\ckground{10.5}{-1.0}
-\node[cktsmall,anchor=north,align=center] at (10.5,-1.6) {RF ground rod\\\emph{not} mains earth};
-\draw[telos hair,telosmute] (9.55,0.2) -- (10.35,0.2);
-\node[cktsmall,anchor=south,text=telosmute] at (9.95,0.25) {$k\approx0.15$};
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,>=Stealth]
+\node[telos node,minimum width=1.4cm] (b) at (0,0){fused\\2--4 AA};
+\node[telos node,minimum width=1.25cm] (s) at (2,0){master\\switch};
+\node[telos node,minimum width=1.25cm] (p) at (4,0){momentary\\button};
+\node[telos node,minimum width=1.4cm] (c1) at (6.2,0){primary\\P1--P2};
+\node[telos node,minimum width=1.4cm] (c2) at (9.1,0){secondary\\S1--S2};
+\node[telos node,minimum width=1.2cm] (v) at (11.3,0){meter\\V};
+\draw[telos arrow] (b)--(s);\draw[telos arrow] (s)--(p);
+\draw[telos arrow] (p)--(c1);
+\draw[telos arrow] (c1) to[bend left=20] node[above]{changing flux} (c2);
+\draw[telos arrow] (c2)--(v);
+\draw[very thick,black!75] (7.1,-.55) rectangle (8.2,.55);
+\node[below] at (7.65,-.62){removable ferrite or laminated core};
+\draw[<->] (6.85,-1.28)--node[below]{measured gap} (8.45,-1.28);
+\node[draw,rounded corners,align=center,fill=white] at (5.15,-1.18)
+  {electrical circuit 1};
+\node[draw,rounded corners,align=center,fill=white] at (10.15,-1.18)
+  {isolated circuit 2};
 \end{tikzpicture}
 \end{center}
 
-\section{Parts}
-\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}p{0.24\linewidth}L@{}}
-\toprule
-\textbf{Part} & \textbf{Typical for a small coil} & \textbf{Notes}\\
-\midrule
-Transformer & \qty{9}{kV}, \qty{30}{mA} neon-sign transformer &
-  An older non-GFCI unit. A modern electronic sign transformer will not survive
-  this duty. \textbf{This is the lethal component.}\\
-Tank capacitor & \qtyrange{5}{10}{nF} at \qty{20}{kV}+, as a series-parallel
-  string of pulse-rated film capacitors (an ``MMC'') &
-  Never electrolytic, never ordinary film. Each capacitor gets its own
-  \qty{10}{M\Omega} bleeder resistor across it.\\
-Main gap & Two \qtyrange{1}{1.5}{in} copper pipe electrodes, adjustable, or a
-  multi-gap string & Round and smooth, mounted so the spacing can be set
-  repeatably. Fan-cooled if you run it more than briefly.\\
-Safety gap & Fixed, set slightly wider than the main gap & Protects the
-  transformer from reflected spikes. Not optional.\\
-Primary & 10--15 turns of \qty{1/4}{in} copper tube or heavy wire, flat spiral,
-  \emph{tapped} & The tap is the tuning control. Leave it accessible.\\
-Secondary & \qtyrange{900}{1200}{} turns of 24--26 AWG enamelled wire on
-  \qtyrange{3}{4}{in} PVC or acrylic, aspect ratio about 4:1 or 5:1 &
-  Close-wound, no gaps, no overlaps. Sealed with polyurethane afterwards.\\
-Topload & Aluminium dryer duct formed into a torus, or a spun ball &
-  Smooth. Every sharp point is a place the coil will arc from prematurely.\\
-Ground & Its own rod, driven outside & \textbf{Never} the mains earth.\\
-\bottomrule
-\end{tabularx}
+\begin{predict}
+Which change should most increase the receiver indication: aligning the coils,
+adding the core, or holding steady DC? Mark your order before building. What
+evidence would make you change your mind?
+\end{predict}
 
-\section{Build order --- and who does what}
-\begin{telosfacts}[0.20]
-\telosfact{1. Grounding stick}{Build this \emph{first}, before any high-voltage
-  part exists. Hardwood or PVC handle, metal hook, heavy braid to the ground rod.
-  Nothing else gets built until it is finished and hanging on the wall.}
-\telosfact{2. Secondary}{The long job and the best one to share. Wind slowly and
-  evenly, keeping tension constant; a drill on its slowest speed with the form
-  chucked helps. Count in hundreds and mark the form. Two coats of polyurethane
-  when done. \emph{Boys do this.}}
-\telosfact{3. Primary}{Flat spiral on an insulating cross, turns evenly spaced,
-  with a clip lead for the tap. \emph{Boys do this.}}
-\telosfact{4. Topload}{Form the duct into a ring, tape and smooth it, mount it
-  on a plate above the secondary. \emph{Boys do this.}}
-\telosfact{5. Capacitor bank}{Series-parallel string on a board, every capacitor
-  with its bleeder resistor. \emph{Boys can assemble it; adult checks every
-  joint.}}
-\telosfact{6. Gaps, enclosure, wiring}{Main gap, safety gap, interlocked
-  enclosure, switched and fused mains inlet, indicator lamp.
-  \emph{Adult only.}}
-\telosfact{7. Ground rod}{Driven outside, heavy strap back to the secondary base
-  by the shortest route you can manage.}
-\end{telosfacts}
+\section{Gate 0 --- freeze the design}
+Choose two dry cardboard bobbins that accept the same removable core. Plan
+100--200 turns per coil and begin with equal counts, so geometry rather than
+turn ratio is the first variable. Draw and label P1/P2 and S1/S2. Decide where
+the fuse, OFF label, strain relief, and measurement points will be.
 
-\section{Tuning it}
+\begin{predict}
+Where could the enamel scrape? What prevents a loose loop, a pulled lead, or
+two bare terminals touching? Point to a control for each failure before
+touching materials.
+\end{predict}
+
+\coilstateplate
+
+\section{Gate 1 --- wind, count, and prove each coil}
 \begin{enumerate}
-\item \textbf{Calculate first.} Work out the secondary's resonant frequency from
-  its dimensions, and set the primary tap to the turn that gives the primary
-  tank the same $f_0$. Lesson 8 is the whole of this step.
-\item \textbf{Start with the gap narrow} and the tap near your calculated turn.
-\item \textbf{Fire it in short bursts.} Seconds, not minutes. Unplug, short the
-  capacitor with the grounding stick, move the tap one turn, reconnect, fire
-  again. \textbf{Every single adjustment goes through that sequence.}
-\item \textbf{Watch the streamers.} Longer and brighter means closer to tune.
-  Work outward from the calculated turn in both directions and keep a written
-  log of tap position against streamer length --- you will not remember.
-\item \textbf{Then the gap.} Once the tap is right, widen the gap a little at a
-  time. Wider means a higher firing voltage and more energy per shot, up to the
-  point where the transformer can no longer charge the capacitor fast enough and
-  the output falls off again.
-\item \textbf{Stop when it stops improving.} A small coil producing a clean
-  6--12\,in streamer is a complete success and there is nothing to prove by
-  pushing it further.
+\item With no battery holder on the bench, round or tape every bobbin edge.
+Measure the winding width and core clearance.
+\item Leave a \qty{10}{cm} lead and tape it as P1. Wind in one direction with
+neat adjacent turns. Count aloud in tens and put a tally mark on paper for every
+ten. Do not use a powered drill.
+\item Tape the finished layer without hiding either end. Leave \qty{10}{cm}
+for P2. Repeat for S1/S2. Record both turn counts.
+\item The adult removes enamel from only the last \qty{1}{cm} of each lead.
+With the meter on ohms, record \(R_P\) and \(R_S\). Gently flex one lead at a
+time. Each reading must remain finite and stable.
 \end{enumerate}
 
-\section{If it does not work}
-\begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}L@{}}
-\toprule
-\textbf{Symptom} & \textbf{Look at}\\
-\midrule
-No spark at the gap at all & Transformer not energized; interlock open; gap far
-  too wide; capacitor open circuit.\\
-Gap fires but no output & Tuning is a long way off, or the ground connection is
-  poor or missing. Check the ground first --- it is the most common fault.\\
-Weak, thin streamers & Off tune. Move the tap. Also check for a cracked
-  capacitor or a sooty gap.\\
-Safety gap firing constantly & The main gap is set too wide, so voltage is
-  reaching the safety gap first. Narrow the main gap.\\
-Arcs from the secondary to the primary & Coupling too tight, or the topload is
-  too small. Raise the secondary relative to the primary; add a ``strike ring''.\\
-Internal arcing in the secondary & Coupling much too tight, or turns damaged.
-  This ruins a secondary. Stop and inspect.\\
-Transformer getting hot & Running too long. Short bursts only.\\
-\bottomrule
-\end{tabularx}
+\begin{predict}
+If the meter says OL, is the winding continuous? If it reads nearly zero, what
+accidental short path must be ruled out? Why can a turn count not substitute
+for this electrical proof?
+\end{predict}
 
-\begin{teloshazard}{Before every run, read the checklist aloud}
-Grounding stick in reach. Capacitor shorted, hands out. Enclosure closed,
-interlock tested. RF ground connected and tight. Everyone with an implant out of
-the room and all electronics elsewhere. Second person present who knows where the
-plug is. Safety glasses and hearing protection on. Extinguisher in reach, bench
-clear. Everyone beyond arm's length of the longest streamer. The named adult is
-the one closing the switch. The full list, and why each item is on it, is on the
-\textbf{Safety} sheet --- and it belongs on the wall, not in a drawer.
+\section{Gate 2 --- assemble with power absent}
+Fasten the holder, master switch, pushbutton, bobbins, and leads to a cardboard
+base. Add strain relief before joining conductors. Wire
+holder--fuse--master--button--primary--holder. Connect the secondary only to
+the voltmeter. Slide the core through both bobbins and confirm that it cannot
+touch a terminal.
+
+The adult traces both circuits aloud. With cells removed, continuity mode must
+show: master OFF is open; master ON plus button pressed completes only the
+primary; P1/P2 has no continuity to S1/S2 in any of the four pairings.
+
+\begin{predict}
+Why must the two circuits remain electrically isolated even though energy
+passes between them? If one P-to-S pairing beeps, list three possible causes.
+\end{predict}
+
+\proofmatrix
+
+\section{Gate 3 --- verify one controlled pulse}
+\pulseplate
+
+Set the secondary meter to a low DC-voltage range. Start with the bobbins
+coaxial and touching, with the core fully inserted. The adult installs two AA
+cells, reads the holder voltage, and turns the master ON. The learner presses
+for less than one second, releases, and records the largest visible indication
+at both edges. Switch OFF and disconnect the holder. Repeat three times only
+after confirming holder and coil remain at room temperature.
+
+\begin{predict}
+Why can press and release show opposite signs? Why is holding the button down
+not a stronger induction test? Name every observation that means stop now.
+\end{predict}
+
+\section{Gate 4 --- change one thing}
+Choose one variable: core in/out, measured gap, coil angle, or cell count
+within 2--4 AA cells. Hold turn counts, pulse length, meter range, and lead
+orientation fixed. Make three trials at each setting. Before every reposition:
+master OFF, holder disconnected, then check for warmth and insulation damage.
+
+\section{Diagnostic tree --- no repeatable receiver indication}
+\begin{enumerate}
+\item \textbf{No source proof:} disconnect coils. Adult checks holder voltage,
+fuse, master, and button. Do not reconnect until the power path passes.
+\item \textbf{Primary open:} cells out; remeasure P1--P2 while flexing leads.
+OL or a jumping value means clean the ends, repair, or rewind.
+\item \textbf{Receiver open or meter wrong:} remeasure S1--S2; confirm COM/V
+jacks and volts mode, never the amps jack.
+\item \textbf{Isolation failed:} check all P-to-S pairs. Any continuity means
+stop and find the contact or stray strand.
+\item \textbf{Coupling weak:} return to zero gap, aligned bobbins, core fully
+inserted, and one brief pulse.
+\item \textbf{Display missed the transient:} reverse S1/S2 and watch both press
+and release. A slow meter is a measurement limit, never permission to raise
+voltage or make sparks.
+\end{enumerate}
+
+\begin{teloshazard}{Stop line}
+Stop for warmth, odor, damaged enamel, a loose lead, a repeatedly opened fuse,
+or any unexplained result. Do not bypass the fuse. Do not substitute a wall
+supply, capacitor, large battery, ignition coil, flyback, or spark gap.
 \end{teloshazard}
 
-\begin{telospanel}{What you built}
-A transformer charges a capacitor. A gap of air, switching in under a
-microsecond, dumps that capacitor into a tuned coil. That coil rings, and over
-many cycles hands its energy to a second coil tuned to the same note, loosely
-enough that the voltage has time to build. The result leaves the topload as a
-streamer, because the electric field at its surface has grown strong enough to
-tear air apart. Every clause of that is a lesson you did with a battery and a
-meter first --- which is the only reason any of it makes sense now.
+\section{Explain from the evidence}
+A primary current creates a magnetic field. Only a \emph{change} in that
+current changes the linked flux and induces a secondary voltage, so the useful
+events are press and release. Alignment, gap, a shared magnetic core, and turn
+count change how much flux links the windings. This is mutual induction made
+visible without a shock, spark, or uncontrolled energy store.
+
+\section{Signed acceptance proof}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.25\linewidth}L@{}}
+\toprule
+Item & Recorded proof\\
+\midrule
+Primary & turns \rule{1.3cm}{.3pt}\quad \(R_P=\)\rule{1.5cm}{.3pt}\(\Omega\)
+\quad flex stable [\enspace]\\[.8em]
+Secondary & turns \rule{1.3cm}{.3pt}\quad \(R_S=\)\rule{1.5cm}{.3pt}\(\Omega\)
+\quad flex stable [\enspace]\\[.8em]
+Isolation & P1--S1 [\enspace]\ P1--S2 [\enspace]\ P2--S1 [\enspace]\
+P2--S2 [\enspace]\quad all OL\\[.8em]
+Supply / fuse & measured \rule{1.3cm}{.3pt} V\quad fuse \rule{1.5cm}{.3pt}\\[.8em]
+Baseline geometry & core \rule{1.5cm}{.3pt}\quad gap \rule{1.1cm}{.3pt} mm\\[.8em]
+Three press peaks & \rule{.86\linewidth}{.3pt}\\[.8em]
+Three release peaks & \rule{.86\linewidth}{.3pt}\\[.8em]
+Stop checks & no warmth [\enspace]\quad no odor [\enspace]\quad insulation intact [\enspace]\\[.8em]
+Learner claim & \rule{.86\linewidth}{.3pt}\\[1.1em]
+Adult inspection & initials \rule{1.5cm}{.3pt}\quad date \rule{2cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Extension}
+Plot peak receiver indication against 0, 5, 10, 20, and \qty{40}{mm} separation,
+three trials each. Draw a range bar from smallest to largest trial. Then redraw
+the accepted wiring and label battery energy, primary current, changing flux,
+induced voltage, and meter indication.
 \end{telospanel}
 \end{document}

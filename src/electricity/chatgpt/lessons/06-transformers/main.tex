@@ -1,64 +1,344 @@
-\def\doctitle{Lesson 6: Transformers}\def\docsubtitle{Turns ratio under changing flux}\def\docstrap{use a tiny switched pulse, never mains}
-\def\materialslist{\item Two insulated coils on one iron core \item 2 AA cells \item Pushbutton \item Multimeter}
-\def\prediction{Will the second coil show a steady voltage while DC in the first coil is steady?}
-\def\diagram{\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
-% Laminated rectangular core, shown in cutaway.
-\fill[pattern=north east lines,pattern color=black!25]
-  (-1.95,-1.18) rectangle (1.95,1.18);
-\fill[white] (-1.17,-.60) rectangle (1.17,.60);
-\draw[very thick] (-1.95,-1.18) rectangle (1.95,1.18);
-\draw[very thick] (-1.17,-.60) rectangle (1.17,.60);
-\foreach \d in {.10,.20,.30}
-  \draw[black!45] (-1.95+\d,-1.18+\d)--(-1.17+\d,-.60+\d)
-    (1.95-\d,-1.18+\d)--(1.17-\d,-.60+\d);
-\node[font=\scriptsize] at (0,0){laminated iron core};
-% Primary and secondary windings have visibly different turn counts.
-\foreach \y in {-.88,-.56,...,.72}
-  \draw[line width=.9pt] (-2.18,\y)
-    .. controls (-2.52,\y+.05) and (-2.52,\y+.27) .. (-2.18,\y+.32);
-\foreach \y in {-.94,-.72,...,.82}
-  \draw[line width=.65pt] (2.18,\y)
-    .. controls (2.52,\y+.035) and (2.52,\y+.185) .. (2.18,\y+.22);
-\node[font=\scriptsize,anchor=east,align=right] at (-2.54,.08)
-  {primary\\fewer turns};
-\node[font=\scriptsize,align=center] at (2.18,1.43)
-  {secondary: more turns};
-% Primary: cells and a normally-open pushbutton.
-\draw[very thick] (-2.18,-.88) .. controls (-3.05,-1.32) and (-3.72,-1.35)
-  .. (-3.72,-1.70);
-\draw[very thick] (-3.72,-1.70)--(-4.08,-1.70);
-\draw[very thick] (-4.08,-2.02)--(-4.08,-1.38);
-\draw[very thick] (-4.31,-1.88)--(-4.31,-1.52);
-\draw[very thick] (-4.31,-1.70)--(-4.70,-1.70)--(-4.70,1.66)--(-3.88,1.66);
-\fill (-3.88,1.66) circle (.055);
-\fill (-3.18,1.66) circle (.055);
-\draw[line width=1pt] (-3.86,1.70)--(-3.24,1.96);
-\draw[very thick] (-3.18,1.66) .. controls (-2.82,1.62) and (-2.55,1.18)
-  .. (-2.18,.72);
-\node[font=\scriptsize,align=center] at (-4.05,-2.21){2 AA cells};
-\node[font=\scriptsize] at (-3.53,2.16){press / release};
-% Secondary: high-impedance meter, with no load attached.
-\draw[very thick] (2.18,-.94) .. controls (3.05,-1.30) and (3.62,-1.12)
-  .. (3.72,-.70);
-\draw[very thick] (2.18,1.04) .. controls (3.03,1.32) and (3.62,1.12)
-  .. (3.72,.70);
-\draw[very thick,fill=white] (3.72,-.94) rectangle (5.42,.94);
-\draw (.01+4.0,-.56) rectangle (5.14,.55);
-\draw (4.17,-.36) arc (205:-25:.40);
-\draw[very thick,-{Stealth[length=1.8mm]}] (4.57,-.02)--(4.91,-.29);
-\node[font=\scriptsize\bfseries] at (4.57,.30){mV};
-\node[font=\scriptsize,align=center] at (4.57,-1.18){voltmeter only};
-% Flux path and pulse notes.
-\draw[dashed,black!60,-{Stealth[length=2mm]}] (-.76,.88)--(.76,.88);
-\draw[dashed,black!60,-{Stealth[length=2mm]}] (.76,-.88)--(-.76,-.88);
-\node[font=\scriptsize,fill=white,inner sep=1pt] at (0,1.46)
-  {changing shared flux};
-\node[font=\scriptsize,align=center] at (0,-1.64)
-  {a pulse at make; opposite pulse at break};
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 6: Transformers}
+  {Turns, voltage, current, and losses}{2026-07-27}
+
+\newcommand{\coilpair}[2]{%
+\begin{tikzpicture}[baseline=-.6ex,x=.16cm,y=.16cm,line cap=round]
+  \draw[line width=1.8pt] (-1.5,-5) rectangle (8.5,5);
+  \draw[line width=1.8pt] (1,-2.5) rectangle (6,2.5);
+  \foreach \y in {-4,-2,...,4}
+    \draw[line width=.65pt] (-2,\y) arc[start angle=270,end angle=90,x radius=1,y radius=1];
+  \foreach \y in {-4.5,-3,...,4.5}
+    \draw[line width=.65pt] (9,\y) arc[start angle=-90,end angle=90,x radius=1,y radius=.75];
+  \node[font=\tiny] at (-3.6,0) {$N_p=#1$};
+  \node[font=\tiny] at (10.7,0) {$N_s=#2$};
+\end{tikzpicture}}
+
+\begin{document}
+\telosmasthead[\editiontag\ --- isolated battery pulses only]
+\rolecard
+
+\begin{materials}
+\item Closed laminated iron core and two insulated low-voltage windings
+\item 2 AA cells in a holder; momentary pushbutton
+\item Two digital multimeters, insulated leads, tape labels
+\item Optional resistor load, \(\qty{100}{\Omega}\) or greater, rated \(\qty{0.25}{W}\)
+\end{materials}
+
+\begin{predict}
+When the primary current becomes steady, what remains on the secondary meter:
+a steady voltage, zero, or a changing voltage? What happens at release?
+\end{predict}
+
+\section{Read the apparatus before connecting it}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  note/.style={font=\scriptsize,align=left},
+  lead/.style={line width=.35pt,-{Stealth[length=1.4mm]}}]
+  \path[fill=gray!9] (-2.05,-1.18) rectangle (2.05,1.18);
+  \path[fill=white] (-1.20,-.56) rectangle (1.20,.56);
+  \draw[line width=1pt] (-2.05,-1.18) rectangle (2.05,1.18);
+  \draw[line width=1pt] (-1.20,-.56) rectangle (1.20,.56);
+  \foreach \d in {.10,.20,.30}
+    \draw[gray!55,line width=.25pt] (-2.05+\d,-1.18+\d)--(-1.20+\d,-.56+\d)
+      (2.05-\d,-1.18+\d)--(1.20-\d,-.56+\d);
+  \foreach \y in {-.88,-.56,...,.72}
+    \draw[line width=.75pt] (-2.18,\y)
+      .. controls (-2.57,\y+.05) and (-2.57,\y+.27) .. (-2.18,\y+.32);
+  \foreach \y in {-.94,-.72,...,.82}
+    \draw[line width=.55pt] (2.18,\y)
+      .. controls (2.55,\y+.03) and (2.55,\y+.19) .. (2.18,\y+.22);
+  \draw[lead] (-2.48,1.20)--(-3.38,1.62)
+    node[anchor=east,note]{primary winding\\label both ends};
+  \draw[lead] (2.47,1.05)--(3.38,1.56)
+    node[anchor=west,note]{secondary winding\\more turns shown};
+  \draw[lead] (.66,-.85)--(1.30,-1.65)
+    node[anchor=west,note]{laminated core:\\closed magnetic path};
+  \draw[dashed,line width=.55pt,-{Stealth[length=1.8mm]}] (-.83,.88)--(.83,.88);
+  \draw[dashed,line width=.55pt,-{Stealth[length=1.8mm]}] (.83,-.88)--(-.83,-.88);
+  \node[note,fill=white,inner sep=1pt] at (0,1.45) {shared changing flux};
+  \begin{scope}[shift={(5.85,.18)}]
+    \draw[line width=.7pt] (-1.6,-.95) rectangle (1.6,.95);
+    \draw[line width=.4pt] (-1.30,-.68) rectangle (1.30,.60);
+    \draw[line width=.4pt] (-.96,-.38) arc (205:-25:.92);
+    \draw[line width=.8pt,-{Stealth[length=1.6mm]}] (0,-.02)--(.62,-.35);
+    \node[font=\scriptsize\bfseries] at (0,.33) {V DC};
+    \draw[line width=.55pt] (-1.60,.42)--(-2.25,.42);
+    \draw[line width=.55pt] (-1.60,-.42)--(-2.25,-.42);
+    \node[note,align=center] at (0,-1.28) {secondary meter first:\\no load attached};
+  \end{scope}
 \end{tikzpicture}
-\end{center}}
-\def\procedure{\begin{enumerate}\item With power disconnected, put both coils on the core. Connect the secondary only to a voltmeter.\item Briefly press and release the primary pushbutton. Record both voltage pulses and their signs.\item Compare secondaries with different turn counts, keeping primary, core, and switching method unchanged.\item Repeat without the iron core.\end{enumerate}}
-\def\explanation{A transformer requires changing flux. With DC, change occurs mainly at make and break, hence pulses rather than steady secondary voltage. In the ideal sinusoidal model \(V_s/V_p=N_s/N_p\); this crude pulse experiment tests direction and relative magnitude, not precise regulation. Real winding resistance, leakage flux, and core loss matter.}
-\def\extension{Graph secondary peak against turn count. Do not connect any winding to an outlet or wall adapter.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\end{center}
+
+\begin{gate}{De-energized checks}
+With the battery holder disconnected: inspect insulation, identify each winding
+with continuity mode, record its resistance, and verify no continuity from
+either winding to the core. Stop if insulation is cut, a winding is hot, or a
+core-contact reading appears.
+\end{gate}
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Check & \(N_p\) & \(R_p\) & \(N_s\) & \(R_s\) & Result / question\\
+\midrule
+As labeled & \rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt} &
+\rule{1.0cm}{.3pt} & \rule{1.0cm}{.3pt} & Which winding has finer wire?\\
+Core isolation & --- & \multicolumn{3}{c}{meter must show open circuit} &
+\(\circ\) pass \quad \(\circ\) stop\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\telosmasthead[\editiontag\ --- staged verification]
+\section{Stage 1: prove that change matters}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  wire/.style={line width=.8pt},
+  note/.style={font=\scriptsize,align=center}]
+  \node[note,font=\scriptsize\bfseries] at (-4.4,1.68) {PRIMARY};
+  \draw[wire] (-5.8,-.7)--(-5.8,.95)--(-5.15,.95);
+  \draw[wire] (-5.15,.70)--(-5.15,1.20);
+  \draw[wire] (-4.91,.79)--(-4.91,1.11);
+  \draw[wire] (-4.91,.95)--(-4.05,.95);
+  \fill (-4.05,.95) circle (.055); \fill (-3.25,.95) circle (.055);
+  \draw[line width=.8pt] (-4.01,1.00)--(-3.31,1.29);
+  \draw[wire] (-3.25,.95)--(-2.58,.95);
+  \foreach \y in {-.62,-.28,...,.74}
+    \draw[line width=.7pt] (-2.58,\y)
+      .. controls (-2.92,\y+.05) and (-2.92,\y+.23) .. (-2.58,\y+.34);
+  \draw[wire] (-2.58,-.62)--(-5.8,-.7);
+  \node[note] at (-5.03,-1.05) {2 AA cells};
+  \node[note] at (-3.64,1.48) {tap; do not hold};
+  \path[fill=gray!9] (-2.43,-1.05) rectangle (1.18,1.05);
+  \path[fill=white] (-1.68,-.46) rectangle (.43,.46);
+  \draw[line width=.9pt] (-2.43,-1.05) rectangle (1.18,1.05);
+  \draw[line width=.9pt] (-1.68,-.46) rectangle (.43,.46);
+  \foreach \y in {-.75,-.49,...,.81}
+    \draw[line width=.5pt] (1.32,\y)
+      .. controls (1.63,\y+.02) and (1.63,\y+.19) .. (1.32,\y+.26);
+  \draw[wire] (1.32,1.07)--(2.12,1.07)--(2.12,.55);
+  \draw[wire] (1.32,-.75)--(2.12,-.75)--(2.12,-.55);
+  \draw[line width=.8pt] (2.12,-.90) rectangle (3.85,.90);
+  \draw[line width=.35pt] (2.38,-.52) rectangle (3.59,.50);
+  \draw[line width=.35pt] (2.55,-.34) arc (205:-25:.42);
+  \draw[line width=.7pt,-{Stealth[length=1.5mm]}] (2.98,-.04)--(3.34,-.28);
+  \node[font=\scriptsize\bfseries] at (2.98,.28) {V DC};
+  \node[note] at (2.98,-1.15) {high-impedance meter};
+  \draw[dashed,-{Stealth[length=1.8mm]}] (-1.45,.72)--(.18,.72);
+  \node[note,fill=white,inner sep=1pt] at (-.64,1.35) {flux changes only\\at make and break};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Set the secondary meter to a safe DC-voltage range. Leave the secondary unloaded.
+\item Tap the button briefly. Record the peak and sign at \textbf{make}; keep it
+pressed only long enough to see the reading return toward zero.
+\item Release. Record the peak and sign at \textbf{break}. Repeat three times.
+\item Remove the core, change nothing else, and repeat one make/break pair.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCL@{}}
+\toprule
+Trial & make \(V_s\) & held \(V_s\) & break \(V_s\) & core? & Evidence\\
+\midrule
+1 & & & & yes & \\
+2 & & & & yes & \\
+3 & & & & yes & \\
+4 & & & & no & \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Questions before Stage 2}
+Why do make and break have opposite signs? Why does a steady battery current
+not give steady secondary voltage? What did the core change: turns, resistance,
+or magnetic coupling?
+\end{teloscard}
+
+\section{Stage 2: compare turns and voltage}
+Use the same tap duration and primary winding. Test secondaries one at a time.
+\[
+\frac{V_s}{V_p}\approx\frac{N_s}{N_p}
+\qquad
+\coilpair{20}{40}\quad
+\coilpair{20}{20}\quad
+\coilpair{40}{20}
+\]
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCC L@{}}
+\toprule
+\(N_p\) & \(N_s\) & \(N_s/N_p\) & \(V_p\) during tap & peak \(V_s\) &
+Does magnitude follow turns?\\
+\midrule
+20 & 40 & 2.00 & & &\\
+20 & 20 & 1.00 & & &\\
+40 & 20 & 0.50 & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\telosmasthead[\editiontag\ --- ratio, load, and loss]
+\section{Work the ideal ratios first}
+\begin{teloscard}{Example}
+For \(N_p=60\), \(N_s=180\), and a measured primary pulse of
+\(\qty{1.8}{V}\):
+\[
+V_s=V_p\frac{N_s}{N_p}
+=\qty{1.8}{V}\left(\frac{180}{60}\right)=\qty{5.4}{V}.
+\]
+If an ideal secondary supplies \(\qty{12}{mA}\), power balance predicts
+\[
+I_p\approx I_s\frac{N_s}{N_p}
+=\qty{12}{mA}(3)=\qty{36}{mA}.
+\]
+Higher voltage comes with lower available current; a transformer does not
+create power.
+\end{teloscard}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCC@{}}
+\toprule
+\(N_p\) & \(N_s\) & \(V_p\) & predicted \(V_s\) & measured peak \(V_s\)\\
+\midrule
+40 & 120 & \(\qty{2.4}{V}\) & \rule{1.5cm}{.3pt} & \rule{1.5cm}{.3pt}\\
+100 & 50 & \(\qty{3.0}{V}\) & \rule{1.5cm}{.3pt} & \rule{1.5cm}{.3pt}\\
+80 & 80 & \(\qty{1.5}{V}\) & \rule{1.5cm}{.3pt} & \rule{1.5cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Stage 3: add one known load}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+  wire/.style={line width=.75pt},note/.style={font=\scriptsize,align=center}]
+  \path[fill=gray!9] (-1.45,-1) rectangle (1.45,1);
+  \path[fill=white] (-.70,-.42) rectangle (.70,.42);
+  \draw[line width=.9pt] (-1.45,-1) rectangle (1.45,1);
+  \draw[line width=.9pt] (-.70,-.42) rectangle (.70,.42);
+  \foreach \y in {-.78,-.48,...,.72}
+    \draw[line width=.55pt] (-1.58,\y) arc[start angle=270,end angle=90,x radius=.30,y radius=.15];
+  \foreach \y in {-.78,-.60,...,.84}
+    \draw[line width=.45pt] (1.58,\y) arc[start angle=-90,end angle=90,x radius=.30,y radius=.09];
+  \draw[wire] (1.58,.93)--(2.40,.93)--(2.40,.58);
+  \draw[wire] (1.58,-.78)--(2.40,-.78)--(2.40,-.58);
+  \draw[line width=.75pt] (2.40,-.80) rectangle (3.85,.80);
+  \node[font=\scriptsize\bfseries] at (3.13,.27) {V};
+  \node[note] at (3.13,-.25) {across load};
+  \draw[wire] (3.85,.55)--(4.65,.55);
+  \draw[wire] (3.85,-.55)--(4.65,-.55);
+  \draw[line width=.75pt] (4.65,-.82) rectangle (6.15,.82);
+  \node[font=\scriptsize\bfseries] at (5.40,.27) {A};
+  \node[note] at (5.40,-.25) {in series};
+  \draw[wire] (6.15,.55)--(6.78,.55)--(6.78,.25);
+  \draw[wire] (6.15,-.55)--(6.78,-.55)--(6.78,-.25);
+  \draw[line width=.75pt] (6.78,.25)--(6.98,.18)--(6.58,.04)--(6.98,-.10)
+    --(6.58,-.24)--(6.78,-.25);
+  \node[note,anchor=west] at (7.08,0) {\(\geq\qty{100}{\Omega}\)\\resistor};
+  \node[note] at (0,-1.34) {same core and windings};
+  \node[note] at (4.60,1.17) {measure voltage in parallel; current in series};
+\end{tikzpicture}
+\end{center}
+
+\begin{enumerate}
+\item Predict \(I_s=V_s/R_L\). Have the adult check meter jacks and ranges.
+\item Attach the resistor only after the open-circuit voltage test passes.
+\item Use identical brief taps; record loaded voltage and current. Disconnect.
+\item Calculate \(P_s=V_sI_s\). Treat pulse readings as comparisons, not
+precision AC power measurements.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lCCCCC@{}}
+\toprule
+Condition & \(V_s\) & \(I_s\) & \(V_sI_s\) & winding warm? & stop?\\
+\midrule
+Open circuit & & --- & --- & no & \\
+\(\qty{100}{\Omega}\) load & & & & &\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{teloscard}{Where the ideal model loses}
+Loaded voltage falls because copper resistance causes \(I^2R\) heating,
+leakage flux misses the other winding, and the core dissipates energy through
+hysteresis and eddy currents. Shorted turns are faults, not experiments: they
+can draw high current and heat rapidly.
+\end{teloscard}
+
+\newpage
+\telosmasthead[\editiontag\ --- fault isolation and final proof]
+\footnotesize
+\section{Diagnose with power disconnected}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.23\linewidth}p{.26\linewidth}L@{}}
+\toprule
+Observation & Safe check & Likely explanation\\
+\midrule
+No make/break pulse & continuity, meter range, core seated, switch action &
+open lead, wrong meter mode, poor coupling\\
+Pulse only when probing & flex one lead gently; inspect terminals &
+intermittent connection\\
+Much smaller than predicted & recount turns; compare with core removed &
+leakage, incomplete core, switching inconsistency\\
+Loaded voltage collapses & remove load; verify resistor and meter placement &
+load too low, winding resistance, ammeter miswired\\
+Heating, odor, damaged insulation & disconnect battery immediately &
+shorted winding, stalled current, wiring fault\\
+Any winding-to-core continuity & stop; do not energize &
+insulation failure\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gate}{Fault-isolation order}
+Battery out. Inspect. Check winding continuity. Check isolation to the core.
+Verify meter leads and range. Restore only the open-circuit secondary test.
+Add the known load last. Never “see whether it clears” by holding the button.
+\end{gate}
+
+\section{Final proof: make four claims from evidence}
+\begin{enumerate}
+\item \textbf{Changing flux:} show make and break pulses, opposite signs, and
+near-zero held reading.
+\item \textbf{Magnetic coupling:} compare the same winding pair with and
+without the closed core.
+\item \textbf{Turns ratio:} compare measured pulse ratios with \(N_s/N_p\)
+for at least two winding pairs.
+\item \textbf{Non-ideal behavior:} show that a known load reduces secondary
+voltage and account for at least two loss mechanisms.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.18\linewidth}p{.28\linewidth}L@{}}
+\toprule
+Claim & Best measurement & Because\\
+\midrule
+Flux must change & \rule{.95\linewidth}{.3pt} & \rule{.96\linewidth}{.3pt}\\[1.1em]
+Core couples coils & \rule{.95\linewidth}{.3pt} & \rule{.96\linewidth}{.3pt}\\[1.1em]
+Turns set ratio & \rule{.95\linewidth}{.3pt} & \rule{.96\linewidth}{.3pt}\\[1.1em]
+Losses are real & \rule{.95\linewidth}{.3pt} & \rule{.96\linewidth}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{telospanel}{Exit questions}
+If \(N_s/N_p=4\), what happens ideally to voltage and available current?
+Why is a DC battery useful here only when switched? Which single measurement
+best distinguishes an open secondary from poor core coupling? Why must an
+ammeter never be placed directly across a winding?
+\end{telospanel}
+
+\section{Change one thing}
+Graph peak secondary voltage against turns while keeping primary, core,
+meter, and tap method fixed. Then choose one controlled comparison—core gap,
+load resistance, or winding orientation—and explain the result.
+
+\sourcefoot
+\end{document}

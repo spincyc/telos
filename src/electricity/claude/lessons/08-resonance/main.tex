@@ -1,93 +1,349 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{8. Resonance}{Every circuit with an L and a C has one note it likes}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{8. Resonance}{Prove the preferred rhythm, then test its electrical counterpart}{2026-07-27}
 \begin{document}
-\telosmasthead[Swings, wine glasses and the LC tank]
-\lessonhead{8}{about 90 minutes}{everyone builds; battery power only}
+\telosmasthead[Measure the peak; do not merely hunt for one]
+\lessonhead{8}{two sessions}{learner: pendulum; adult: low-voltage electrical sweep}
 
 \begin{materials}
-\item String and a weight, for a pendulum
-\item An inductor: the 100-turn coil from Lesson 4, or a 1\,mH choke
-\item Capacitors: 0.01\,$\mu$F, 0.1\,$\mu$F, 1\,$\mu$F (film, not electrolytic)
-\item A signal generator, or a phone app with a tone generator and an amplifier
-\item An oscilloscope if you have one; otherwise a multimeter on AC volts
-\item A wine glass and water
+\item Stand, string, small mass, ruler, tape flag
+\item Stopwatch and partner to call crossings
+\item Two identical cardstock damping fins
+\item Adult-controlled, isolated signal generator
+\item \(1\,\unitof{k\Omega}\) current-limiting resistor
+\item Known film capacitor and inductor; AC meter or oscilloscope
 \end{materials}
 
 \begin{predict}
-You push a child on a swing. Why does pushing at exactly the right moment work
-so much better than pushing hard at random moments? Write the answer in your own
-words. Then: an LC circuit rings at one frequency. If you \emph{quadruple} the
-capacitance, does the frequency double, halve, quarter, or something else?
+Equal taps are delivered slower than, at, and faster than a pendulum's own
+rhythm. Sketch amplitude versus tap rate. Where is its maximum? Now add a
+cardstock fin: predict what changes about the maximum's height and width.
+Finally predict how doubling \(C\) changes an LC circuit's preferred frequency.
 \end{predict}
 
-\lessonsection{Do it}
+\lessonsection{A mechanical standard of proof}
+
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-\draw[wire] (0,0) -- (0,1.1);
-\ckinductor{0}{1.1}{$L$}
-\draw[wire] (1,1.1) -- (2.2,1.1) -- (2.2,0);
-\ckcap{2.2}{0}{}
-\node[ckt,anchor=west] at (2.55,0) {$C$};
-\draw[wire] (2.2,-0.6) -- (2.2,-1.2) -- (0,-1.2) -- (0,0);
-\node[ckt,anchor=north,align=center] at (1.1,-1.4)
-  {an LC tank: energy sloshes between the coil's\\magnetic field and the capacitor's electric field};
-\draw[telos arrow] (3.4,0.6) arc (-60:60:0.9);
-\draw[telos arrow] (4.9,-0.5) arc (120:240:0.9);
-\node[ckt,anchor=west] at (5.3,0.05) {$f_0 = \dfrac{1}{2\pi\sqrt{LC}}$};
+\begin{tikzpicture}[x=.92cm,y=.92cm,line cap=round,line join=round]
+  % support and pendulum
+  \draw[telos heavy](-5.25,-1.25)--(-.62,-1.25);
+  \foreach \x in {-5.05,-4.72,...,-.75}\draw[telos hair](\x,-1.25)--++(.16,-.10);
+  \draw[telos line,fill=telosfill](-4.90,-1.18)rectangle(-3.68,-1.02);
+  \draw[telos heavy](-4.29,-1.02)--(-4.29,1.70);
+  \draw[telos heavy](-4.29,1.57)--(-1.43,1.57);
+  \draw[telos hair](-4.20,1.46)--(-1.50,1.46);
+  \draw[telos line,fill=telosfill](-1.69,1.35)rectangle(-1.33,1.70);
+  \coordinate(p) at (-1.51,1.34);
+  \draw[telos line](p)--(-1.51,-.70);
+  \draw[telos line,fill=telosdeep](-1.51,-.87)circle(.18);
+  \draw[densely dashed,telos hair](p)--(-2.78,-.35);
+  \draw[densely dashed,telos hair](p)--(-.24,-.35);
+  \draw[telos hair](-2.78,-.35)circle(.17);
+  \draw[telos hair](-.24,-.35)circle(.17);
+  \draw[<->,telos hair](-2.62,-.22)arc(221:319:1.48);
+  \node[telos label] at (-1.51,-1.10){same release mark};
+
+  % repeatable tap and ruler witness
+  \draw[telos line,fill=telosfill](-.05,-.49)
+    ..controls(-.30,-.60)and(-.50,-.61)..(-.72,-.58)
+    --(-.87,-.38)..controls(-.53,-.33)and(-.32,-.20)..(-.10,-.06)
+    ..controls(.11,.05)and(.20,-.32)..(-.05,-.49);
+  \draw[telos arrow](-.70,-.15)--(-1.22,-.52);
+  \node[telos label,align=center] at (-.10,.33){one equal tap\\at a called crossing};
+  \draw[telos line](.12,-1.03)rectangle(1.52,-.84);
+  \foreach \x in {.20,.34,...,1.42}\draw[telos hair](\x,-.84)--(\x,-.94);
+  \node[telos label] at (.82,-.68){amplitude witness};
+
+  % phase strip
+  \begin{scope}[shift={(2.10,.80)}]
+    \draw[telos hair](0,0)--(3.20,0);
+    \foreach \x/\lab in {.20/early,1.60/in phase,3.00/late}{
+      \draw[telos line](\x,0)--++(0,.55);
+      \fill (\x,.55) circle (.055);
+      \node[font=\tiny,anchor=north] at (\x,-.08){\lab};
+    }
+    \draw[telos arrow](.20,.78)--(1.60,.78);
+    \draw[telos arrow](3.00,.78)--(1.60,.78);
+    \node[font=\tiny] at (1.60,1.02){compare equal timing errors};
+  \end{scope}
+
+  % response curve
+  \begin{scope}[shift={(2.15,-1.18)},x=1.05cm,y=.65cm]
+    \draw[->,telos hair](0,0)--(3.15,0)node[right,font=\tiny]{tap interval};
+    \draw[->,telos hair](0,0)--(0,2.10)node[above,font=\tiny]{amplitude};
+    \draw[telos line](.08,.12)..controls(.77,.18)and(1.14,.65)..(1.58,1.92)
+      ..controls(1.98,.63)and(2.38,.18)..(3.02,.12);
+    \draw[telos line,densely dashed](.08,.10)..controls(.66,.18)and(1.10,.78)..(1.58,1.30)
+      ..controls(2.02,.78)and(2.45,.20)..(3.02,.10);
+    \draw[densely dashed,telos hair](1.58,0)--(1.58,1.92);
+    \node[font=\tiny,anchor=west] at (1.92,1.55){bare};
+    \node[font=\tiny,anchor=west] at (1.92,1.05){with fin};
+  \end{scope}
+  \node[font=\scriptsize\bfseries] at (0,1.96){PENDULUM: TIMING, RESPONSE, LOSS};
 \end{tikzpicture}
 \end{center}
 
 \begin{enumerate}
-\item \textbf{The pendulum.} Hang a weight on a string. Push it at random ---
-  it goes nowhere. Push it once each time it swings back to you --- it climbs
-  quickly. Now shorten the string by half and find the new rhythm. Every
-  oscillator has one frequency at which small, well-timed pushes accumulate.
-\item \textbf{The wine glass.} Wet a finger and run it round the rim until it
-  sings. Add water and do it again --- the note drops. You changed the effective
-  mass of the oscillator, and the frequency followed.
-\item \textbf{Build the tank.} Connect your coil and a 0.1\,$\mu$F capacitor in
-  parallel. Drive it from the signal generator through a 1\,k$\Omega$ resistor
-  and measure the AC voltage across the tank.
-\item \textbf{Sweep it.} Step the frequency up in stages, recording the voltage
-  each time. Plot voltage against frequency. There is one frequency where the
-  reading peaks sharply --- that is $f_0$.
-\item \textbf{Change one thing.} Swap to 0.01\,$\mu$F and find the peak again.
-  Then 1\,$\mu$F. Compare with your prediction: a hundred-fold change in $C$
-  should move $f_0$ by a factor of ten, because the formula has a square root
-  in it.
-\item \textbf{Check the formula.} Compute $1/(2\pi\sqrt{LC})$ for each and
-  compare with what you measured.
+\item \textbf{Measure the free rhythm.} Release from the same small tape mark,
+without a push. Time 12 complete cycles from a same-direction centre crossing.
+Repeat four times. For each trial calculate
+\[
+T_i=\frac{t_{12,i}}{12},\qquad
+\bar T=\frac{T_1+T_2+T_3+T_4}{4},\qquad f_{\rm mech}=\frac{1}{\bar T}.
+\]
+The four \(T_i\) values must span no more than \(5\%\) of \(\bar T\). If they do,
+repeat after checking the pivot, release mark, and cycle call.
+
+\item \textbf{Calibrate one tap.} A partner calls the same-direction centre
+crossing. Practise a short sideways finger tap with identical travel each time.
+Do not chase the mass with the finger. Reset from the tape mark for every run.
+
+\item \textbf{Sweep both sides.} Apply eight taps, separated by
+\[
+0.70\bar T,\quad0.85\bar T,\quad1.00\bar T,\quad1.15\bar T,\quad1.30\bar T.
+\]
+Measure the largest displacement after tap eight. Randomize the order of the
+five settings; repeat the whole set three times. Random order helps expose
+practice, fatigue, and a drifting tap size.
 \end{enumerate}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{Energy sloshes}{Charge the capacitor and let it go: it drives current
-  through the coil, which builds a magnetic field. When the capacitor is empty
-  the field collapses, and by Lesson 5 that collapse drives current onward,
-  recharging the capacitor the other way round. Back and forth --- the exact
-  electrical analogue of the pendulum.}
-\telosfact{The resonant frequency}{$f_0 = 1/(2\pi\sqrt{LC})$. It depends only on
-  the coil and the capacitor, not on how hard you hit it.}
-\telosfact{Why the peak is sharp}{At $f_0$ small pushes arrive in step and add
-  up, so the voltage in the tank climbs far above the driving voltage. Off
-  resonance they arrive out of step and cancel.}
-\telosfact{Q}{How sharp that peak is, is called the Q of the circuit. Low
-  resistance means high Q, means a taller and narrower peak, means more energy
-  accumulated before losses eat it. A Tesla coil secondary wants the highest Q
-  you can build.}
-\telosfact{Damping}{Add a resistor in series and sweep again. The peak flattens.
-  Resistance is what stops the swing.}
-\end{telosfacts}
+\begin{center}\small
+\begin{tabular}{@{}c*{5}{>{\centering\arraybackslash}p{.12\linewidth}}@{}}
+\toprule
+interval & \(0.70\bar T\) & \(0.85\bar T\) & \(1.00\bar T\) & \(1.15\bar T\) & \(1.30\bar T\)\\
+\midrule
+amplitude run 1 (cm) & & & & &\\
+amplitude run 2 (cm) & & & & &\\
+amplitude run 3 (cm) & & & & &\\
+mean amplitude (cm) & & & & &\\
+\bottomrule
+\end{tabular}
+\end{center}
 
-\begin{telospanel}{The link to the coil}
-Both halves of a Tesla coil are LC tanks. The primary is a few turns of heavy
-conductor plus the tank capacitor. The secondary is a thousand turns of fine
-wire, and its capacitance is not a component at all --- it is the topload and
-the coil's own self-capacitance against the surrounding air. \textbf{Tuning a
-Tesla coil means adjusting one tank until its $f_0$ matches the other's}, and
-you do it by moving the primary's tap, which changes $L$. Every hour you will
-later spend tuning the coil is this lesson.
+\newpage
+\lessonsection{Loss is evidence, not an inconvenience}
+
+\begin{enumerate}[resume]
+\item \textbf{Measure free decay.} With no taps, release from amplitude \(A_0\).
+Count cycles until the amplitude first falls below \(A_0/2\); call that
+\(N_{1/2}\). Repeat three times. Attach one fin and repeat, then two fins.
+\item \textbf{Sweep with damping.} Repeat the five timing settings with one
+fin. Use the same release, number of taps, and randomized order. Plot bare and
+damped mean amplitudes on the same axes.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=.82cm,line cap=round,line join=round]
+  \begin{scope}[shift={(-4.55,0)}]
+    \draw[->,telos hair](0,0)--(3.25,0)node[right,font=\tiny]{cycle};
+    \draw[->,telos hair](0,0)--(0,2.18)node[above,font=\tiny]{amplitude};
+    \draw[telos line](.05,1.92)..controls(.76,1.51)and(1.60,.86)..(3.02,.27);
+    \draw[telos line,densely dashed](.05,1.92)..controls(.52,1.22)and(1.13,.46)..(2.45,.10);
+    \draw[telos hair,densely dashed](0,.96)--(1.42,.96);
+    \node[font=\tiny,anchor=west] at (1.93,1.07){bare};
+    \node[font=\tiny,anchor=west] at (1.20,.40){fin};
+    \node[font=\scriptsize\bfseries] at (1.55,-.52){FREE-DECAY CHECK};
+  \end{scope}
+  \begin{scope}[shift={(-.25,0)}]
+    \draw[->,telos hair](0,0)--(3.25,0)node[right,font=\tiny]{interval/\(\bar T\)};
+    \draw[->,telos hair](0,0)--(0,2.18)node[above,font=\tiny]{mean amplitude};
+    \draw[telos line](.10,.15)..controls(.78,.23)and(1.16,.67)..(1.60,1.96)
+      ..controls(2.02,.67)and(2.42,.23)..(3.08,.15);
+    \draw[telos line,densely dashed](.10,.12)..controls(.67,.22)and(1.10,.72)..(1.60,1.36)
+      ..controls(2.10,.72)and(2.48,.25)..(3.08,.12);
+    \draw[telos hair,densely dashed](1.60,0)--(1.60,1.96);
+    \node[font=\tiny] at (1.60,-.15){1.00};
+    \node[font=\scriptsize\bfseries] at (1.60,-.52){TWO-SIDED PEAK};
+  \end{scope}
+  \begin{scope}[shift={(4.02,.02)}]
+    \draw[->,telos hair](0,0)--(3.00,0)node[right,font=\tiny]{frequency};
+    \draw[->,telos hair](0,0)--(0,2.16)node[above,font=\tiny]{response};
+    \draw[telos line](.10,.13)..controls(.88,.15)and(1.18,.55)..(1.50,2.00)
+      ..controls(1.82,.55)and(2.18,.15)..(2.90,.13);
+    \draw[telos hair,<->](1.19,.74)--(1.81,.74);
+    \node[font=\tiny,fill=telospaper] at (1.50,.74){bandwidth};
+    \node[font=\scriptsize\bfseries] at (1.50,-.52){HEIGHT AND WIDTH};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
+\begin{teloscard}{Questions before the electrical analogy}
+\begin{enumerate}
+\item Which timing produced the greatest \emph{mean} response? Did response
+fall on both sides, or did you merely stop searching at the largest point?
+\item Did the best interval agree with \(\bar T\) within one tested step?
+\item Were early and late settings equally far from \(1.00\bar T\) similar?
+If not, what uncontrolled asymmetry could explain it?
+\item Did fins reduce \(N_{1/2}\)? Did they lower and broaden the driven peak?
+\item Which conclusion is supported: ``resonance makes energy,'' or
+``phase controls how efficiently repeated taps transfer supplied energy''?
+\end{enumerate}
+\end{teloscard}
+
+\begin{teloscard}{Mechanical diagnostics}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.25\linewidth}L@{}}
+\toprule
+Observation & Check, then repeat\\
+\midrule
+No preferred interval & Tap cadence, tap travel, pivot friction, and sweep range.\\
+Maximum at an endpoint & Extend the sweep; an endpoint cannot establish a peak.\\
+Runs climb in order & Operator learning or release drift; randomize the next set.\\
+Peak moves after adding fin & Fin changed length or mass position, not only drag.\\
+Large left/right mismatch & Crossing call, ruler parallax, or unequal phase error.\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{Translate the test to an LC circuit}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  % isolated source and limiter
+  \draw[telos line,rounded corners=1pt](-5.00,-.62)rectangle(-3.88,.62);
+  \draw[telos hair](-4.82,-.32)sin(-4.54,.30)cos(-4.26,-.32)sin(-3.98,.30);
+  \node[font=\tiny] at (-4.44,-.84){isolated generator};
+  \draw[wire](-3.88,0)--(-3.53,0);
+  \ckresistor{-3.53}{0}{\(1\,\unitof{k\Omega}\)}
+  \draw[wire](-2.53,0)--(-1.82,0);
+
+  % parallel tank: both branches join the same two nodes
+  \draw[wire](-1.82,0)--(-1.82,.75);
+  \ckinductor{-1.82}{.75}{\(L\)}
+  \draw[wire](-.82,.75)--(1.82,.75)--(1.82,-1.08);
+  \draw[wire](-1.82,0)--(-.70,0);
+  \ckcap{-.70}{0}{\(C\)}
+  \draw[wire](.30,0)--(1.82,0);
+  \draw[wire](-4.44,-.62)--(-4.44,-1.08)--(1.82,-1.08);
+
+  % meter
+  \draw[telos line,rounded corners=2pt](2.32,-.68)rectangle(3.62,.68);
+  \draw[telos hair](2.53,-.32)arc(205:-25:.45 and .38);
+  \draw[telos line](2.98,-.32)--(3.22,.02);
+  \fill (2.98,-.32)circle(.045);
+  \node[font=\tiny] at (2.98,.42){AC V};
+  \draw[wire](-1.82,.75)--(-1.82,1.08)--(2.98,1.08)--(2.98,.68);
+  \draw[wire](1.82,-1.08)--(2.98,-1.08)--(2.98,-.68);
+
+  % field-energy snapshots
+  \draw[telos arrow](4.10,.85)--(5.50,.85);
+  \draw[telos arrow](5.50,1.20)--(4.10,1.20);
+  \node[font=\tiny,align=center] at (4.80,.30)
+    {capacitor electric field\\\(\leftrightarrow\)\\coil magnetic field};
+  \node[font=\scriptsize\bfseries] at (0,1.58){ADULT-CONTROLLED, CURRENT-LIMITED RESPONSE SWEEP};
+\end{tikzpicture}
+\end{center}
+
+\newpage
+\lessonsection{Predict, calculate, sweep, repeat}
+
+\begin{enumerate}
+\item Record the component values and tolerances. Calculate
+\[
+f_{\rm calc}=\frac{1}{2\pi\sqrt{LC}}.
+\]
+Calculate a starting sweep from \(0.50f_{\rm calc}\) to
+\(1.50f_{\rm calc}\). Use at least nine points and place more points near the
+predicted maximum.
+
+\item With power off, the adult builds the pictured parallel LC network behind
+the \(1\,\unitof{k\Omega}\) limiting resistor and checks the meter range. Keep
+generator amplitude fixed and low. The learner records; the adult alone
+operates and changes the energized circuit.
+
+\item Sweep upward through all frequencies, then downward. At each point wait
+the same settling time and record tank voltage. A real peak must survive sweep
+direction. If the two readings differ materially, repeat after checking
+generator amplitude, connection motion, meter bandwidth, and settling time.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}c*{9}{>{\centering\arraybackslash}p{.078\linewidth}}@{}}
+\toprule
+\(f/f_{\rm calc}\) & .50 & .70 & .85 & .95 & 1.00 & 1.05 & 1.15 & 1.30 & 1.50\\
+\midrule
+\(V\) upward & & & & & & & & &\\
+\(V\) downward & & & & & & & & &\\
+mean \(V\) & & & & & & & & &\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{enumerate}[resume]
+\item Let \(f_{\rm meas}\) be the frequency of the largest mean voltage. Report
+the fractional disagreement:
+\[
+\text{difference}(\%)=
+100\frac{\left|f_{\rm meas}-f_{\rm calc}\right|}{f_{\rm calc}}.
+\]
+Do not call the formula wrong until component tolerance, coil resistance,
+stray capacitance, meter loading, generator output, and frequency resolution
+have been considered.
+
+\item Add a known series resistor to the inductor branch and repeat the
+up/down sweep. The expected damping signature is a lower, wider peak. If
+\(f_1\) and \(f_2\) are the half-power frequencies from an oscilloscope-quality
+measurement, estimate
+\[
+Q\approx\frac{f_{\rm meas}}{f_2-f_1}.
+\]
+With a simple AC multimeter, describe width qualitatively; do not claim a
+precision \(Q\) its bandwidth and sampling cannot support.
+
+\item Change \(C\) by a known factor and repeat. Before measuring, predict the
+ratio
+\[
+\frac{f_{\rm new}}{f_{\rm old}}
+=\sqrt{\frac{C_{\rm old}}{C_{\rm new}}}.
+\]
+For example, four times the capacitance predicts half the frequency.
+\end{enumerate}
+
+\begin{teloscard}{Electrical diagnostics}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.25\linewidth}L@{}}
+\toprule
+Pattern & Interpretation to test\\
+\midrule
+No maximum in range & Arithmetic, units, inductor value, or too-narrow sweep.\\
+Up/down curves disagree & Drift, insufficient settling, loose lead, or source variation.\\
+Maximum shifts with meter & Meter loading is part of the circuit. Record the setup.\\
+Added resistance sharpens peak & Connection or scale changed; this contradicts the intended one-variable test.\\
+Measured \(f_0\) consistently low & Total capacitance or inductance exceeds nominal, often through stray effects.\\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{Final proof}
+
+\begin{gate}{Accept the resonance claim only when all six agree}
+\begin{enumerate}
+\item Four free-period trials agree and define a mechanical prediction.
+\item The mechanical response has an interior maximum and falls on both sides.
+\item Added drag shortens free decay and lowers or broadens the driven response.
+\item The electrical up/down sweeps reproduce an interior maximum.
+\item \(f_{\rm meas}\) is compared numerically with \(1/(2\pi\sqrt{LC})\), with
+component and measurement limits stated.
+\item Changing \(C\) moves the maximum in the square-root direction and by a
+defensible amount.
+\end{enumerate}
+If any item fails, write \emph{not yet demonstrated}, identify the failed
+control, and specify the next repeat. A tall reading by itself is not proof.
+\end{gate}
+
+\begin{telospanel}{What the analogy earns}
+The pendulum and LC circuit share three measured signatures: a natural rate, a
+two-sided driven-response maximum, and loss-dependent decay and peak width.
+That supports a common oscillator model. It does not mean charge is a hanging
+mass or that resonance supplies energy. The driver supplies energy; timing
+governs accumulation; loss drains it.
 \end{telospanel}
-\lowvoltagenote
+
+\begin{teloshazard}{Boundary}
+The learner investigation ends with the pendulum. The electrical sweep uses
+only an isolated, current-limited, low-voltage generator and is assembled
+deenergized. The adult controls power and connections. No mains, opened
+appliances, charged power capacitors, ignition coils, sparks, or exposed high
+voltage belong in this lesson. Adult status does not imply electrical
+qualification.
+\end{teloshazard}
+
 \end{document}

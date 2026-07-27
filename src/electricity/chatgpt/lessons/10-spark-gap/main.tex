@@ -1,14 +1,312 @@
-\def\doctitle{Lesson 10: Spark Gaps}\def\docsubtitle{Gas breakdown as historical physics, not a learner build}\def\docstrap{read and model only; produce no sparks}
-\def\materialslist{\item This reading \item Printed Paschen-curve sketch \item Pencil \item No energized apparatus}
-\def\prediction{Why is ``air is an insulator'' incomplete rather than simply false?}
-\def\diagram{\begin{center}
-\includegraphics[width=.94\linewidth,height=2.35in,keepaspectratio]{%
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 10: Spark Gaps}
+  {Gas breakdown as historical physics, not a learner build}{2026-07-26}
+
+\tikzset{
+  graphite/.style={draw=telosink,line cap=round,line join=round},
+  pencil/.style={graphite,line width=.55pt},
+  pencil heavy/.style={graphite,line width=.95pt},
+  faint pencil/.style={draw=telosmute,line width=.3pt},
+  pencil arrow/.style={-{Stealth[length=1.8mm]},graphite,line width=.65pt},
+  sketch label/.style={font=\fontsize{6.4}{7.3}\selectfont,align=center},
+}
+
+\begin{document}
+\telosmasthead[\editiontag\ --- read, model, and verify only; produce no sparks]
+
+\begin{telospanel}{Stop line: this is an interpretation lesson}
+\boundary\par\smallskip
+There is no learner apparatus in this chapter. Do not improvise a gap, charge a
+capacitor, use a piezoelectric igniter, open a lighter, approach an overhead
+line, or connect any historical device. Photographs, printed graphs, and the
+drawings here are the evidence. A museum barrier is part of the apparatus.
+\end{telospanel}
+
+\begin{materials}
+\item This reading and a pencil
+\item The printed graph and historical-apparatus plates in this chapter
+\item No energized apparatus, loose electrodes, capacitors, or ignition parts
+\end{materials}
+
+\begin{predict}
+Air is often called an insulator. What observation would show that this is a
+useful approximation rather than an unconditional property?
+\end{predict}
+
+\section{Read the event without making one}
+
+\begin{center}
+\includegraphics[width=.92\linewidth,height=2.45in,keepaspectratio]{%
   electricity/chatgpt/lessons/10-spark-gap/assets/gas-breakdown-pencil.png}
-\par\footnotesize\emph{Conceptual cutaway, not construction guidance:
-collisions multiply charge carriers until a conductive channel forms. The
-inset minimum belongs to a pressure--gap curve, not to gap alone.}
-\end{center}}
-\def\procedure{\begin{enumerate}\item Trace the historical sequence: charge separation, increasing field, ionization, conductive channel, rapid energy transfer, recovery.\item On the curve, mark why breakdown is not determined by gap alone.\item Identify hazards omitted by a pretty spark photograph: shock path, burns, fire, ultraviolet light, sound, ozone, and radio interference.\item Compare this mechanism with the low-voltage switch pulses in Lessons 6 and 9.\end{enumerate}}
-\def\explanation{A gas can become conductive when the field and collision conditions sustain ionization. Breakdown depends on gas, pressure, geometry, and separation. A spark gap is a nonlinear switch, historically useful in oscillators but noisy and hazardous. Nothing in this lesson authorizes construction: exposed high voltage remains qualified-person-only.}
-\def\extension{Write a museum-label explanation of a historical spark transmitter that includes both energy flow and why it is unsuitable for learner replication.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\par\footnotesize\emph{Conceptual graphite cutaway. It identifies stages, not
+dimensions, parts, or a construction method.}
+\end{center}
+
+Before breakdown, a few mobile charges already exist through background
+ionization. An electric field accelerates them. If a collision transfers enough
+energy to free another electron, the number of charge carriers can grow. Losses
+to walls, attachment, and recombination compete with that growth. A self-
+sustaining avalanche creates a conducting channel; stored energy can then move
+through it rapidly. The channel heats, glows, expands, and eventually recovers
+as charge density and temperature fall.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[faint pencil] (-.1,-1.45) rectangle (15.4,1.55);
+  \foreach \x/\title in {0.15/seed,3.25/accelerate,6.35/multiply,9.45/channel,12.55/recover}{
+    \draw[pencil heavy,fill=telospaper] (\x,-.85) rectangle ++(2.55,1.7);
+    \node[font=\small\bfseries] at (\x+1.275,.58) {\title};
+  }
+  \fill[telosink] (1.05,-.10) circle (.045);
+  \node[sketch label] at (1.43,-.10) {one mobile\\charge};
+  \draw[pencil arrow] (3.70,-.20) -- (5.15,-.20);
+  \draw[faint pencil] (3.70,.02) -- (5.15,.02);
+  \foreach \p in {(6.85,-.20),(7.35,.05),(7.72,-.38),(8.22,.18)}
+    \fill[telosink] \p circle (.045);
+  \foreach \y in {-.42,-.14,.14}
+    \draw[pencil] (9.92,\y) .. controls (10.45,\y+.16) and
+      (10.98,\y-.13) .. (11.52,\y+.04);
+  \draw[pencil heavy] (12.98,-.36) .. controls (13.55,-.10) and
+    (14.12,-.10) .. (14.67,-.36);
+  \foreach \x in {13.18,13.62,14.06,14.50}
+    \fill[telosmute] (\x,.10) circle (.025);
+  \foreach \x in {2.70,5.80,8.90,12.00}
+    \draw[pencil arrow] (\x+0.05,0) -- (\x+.45,0);
+  \node[sketch label] at (1.43,-1.12) {background ionization};
+  \node[sketch label] at (4.53,-1.12) {field transfers energy};
+  \node[sketch label] at (7.63,-1.12) {gain exceeds loss};
+  \node[sketch label] at (10.73,-1.12) {stored energy moves};
+  \node[sketch label] at (13.83,-1.12) {cool + recombine};
+\end{tikzpicture}
+\par\footnotesize\emph{A causal sequence, not a recipe. Time and distance are
+not to scale.}
+\end{center}
+
+\begin{telosfacts}[.25]
+\telosfact{Necessary}{An electric field, seed charge carriers, and collision
+conditions that permit net multiplication.}
+\telosfact{Not sufficient}{A visible gap by itself. Gas, pressure, electrode
+shape, contamination, polarity, and history also matter.}
+\telosfact{What light proves}{Excited atoms and molecules released photons. It
+does not by itself reveal voltage, current, or delivered energy.}
+\telosfact{What sound proves}{The gas changed pressure rapidly. Loudness is not
+a safe proxy for electrical energy.}
+\end{telosfacts}
+
+\section{Read a breakdown curve}
+
+For a fixed gas and electrode system, a Paschen-style graph relates breakdown
+voltage to the product of pressure \(p\) and separation \(d\). The axes below
+are deliberately dimensionless and the values are invented for graph-reading
+practice. They are not design data.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil arrow] (.8,.55) -- (.8,5.05)
+    node[above,sketch label]{breakdown voltage};
+  \draw[pencil arrow] (.8,.55) -- (13.9,.55)
+    node[right,sketch label]{$p d$ product};
+  \foreach \y/\lab in {1.1/100,2.0/200,2.9/300,3.8/400,4.7/500}{
+    \draw[faint pencil] (.8,\y)--(13.55,\y);
+    \node[sketch label,anchor=east] at (.68,\y) {\lab};
+  }
+  \foreach \x/\lab in {1.5/0.2,3.4/0.5,5.7/1,8.2/2,10.7/5,13.1/10}{
+    \draw[faint pencil] (\x,.55)--(\x,4.88);
+    \node[sketch label,anchor=north] at (\x,.43) {\lab};
+  }
+  \draw[pencil heavy] (1.15,4.72)
+    .. controls (1.8,2.2) and (2.7,1.05) .. (4.25,.92)
+    .. controls (6.2,.76) and (8.0,1.45) .. (9.45,2.20)
+    .. controls (11.0,3.02) and (12.4,3.86) .. (13.45,4.66);
+  \fill[telospaper] (4.25,.92) circle (.10);
+  \draw[pencil heavy] (4.25,.92) circle (.10);
+  \draw[pencil arrow] (4.30,1.12)--(5.05,1.68);
+  \node[sketch label,anchor=west] at (5.10,1.72) {minimum: competing\\
+    gains and losses balance best};
+  \node[sketch label,rotate=90] at (.08,2.75) {invented units};
+  \node[sketch label] at (2.05,3.65) {too few useful\\collisions};
+  \node[sketch label] at (11.30,3.15) {many collisions, but\\little energy per flight};
+\end{tikzpicture}
+\par\footnotesize\emph{Practice curve only. Never use it to choose a voltage,
+gap, gas, or pressure.}
+\end{center}
+
+\subsection{Worked reading 1: same distance, different pressure}
+Two sealed historical tubes have the same separation. Tube A is plotted at
+\(pd=0.5\); tube B at \(pd=5\). Reading vertically from the practice curve gives
+about 130 invented voltage units for A and about 320 for B. The separation did
+not change, yet the breakdown condition did. Therefore ``gap alone sets the
+voltage'' is falsified by this pair.
+
+\subsection{Worked reading 2: two products, one approximate voltage}
+A horizontal line at 200 invented units crosses the curve on both sides of the
+minimum. One reading has relatively few effective collisions; the other has
+frequent collisions but shorter energy-gaining flights. A single observed
+breakdown voltage therefore need not identify a unique \(pd\) product.
+
+\Needspace{14\baselineskip}
+\begin{teloscard}{Graph-reading questions}
+\begin{enumerate}[leftmargin=*,itemsep=.35em]
+\item At the marked minimum, would moving either left or right lower the
+breakdown value? \emph{No. Both directions raise it on this model.}
+\item If pressure doubles and distance halves, what happens to \(pd\)?
+\emph{It stays constant; this curve predicts the same point, within its scope.}
+\item Does the curve predict all electrode shapes and gas mixtures?
+\emph{No. Those conditions define which curve is relevant.}
+\item A datum lies far from the curve. Is ``bad measurement'' the only
+explanation? \emph{No: wrong gas, pressure error, surface condition, geometry,
+or an inadequate model are competing explanations.}
+\end{enumerate}
+\end{teloscard}
+
+\section{Trace energy through historical apparatus}
+
+The plate below abstracts a museum spark transmitter. It omits values,
+connections, dimensions, adjustment methods, and operating procedure. Its
+purpose is to keep energy accounting separate from spectacle.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[faint pencil] (0,-1.55) rectangle (15.45,1.72);
+  \foreach \x/\w/\name in {0.3/2.25/source,3.2/2.25/field store,6.1/2.25/gap switch,9.0/2.25/oscillator,11.9/3.0/field + losses}{
+    \fill[pattern=north east lines,pattern color=telosmute]
+      (\x+.09,-.74) rectangle ++(\w,1.70);
+    \draw[pencil heavy,fill=telospaper] (\x,-.65) rectangle ++(\w,1.70);
+    \node[font=\small\bfseries] at (\x+\w/2,.70) {\name};
+  }
+  \draw[pencil] (.72,-.05)--(2.08,-.05);
+  \draw[pencil] (1.12,-.28)--(1.12,.18);
+  \draw[pencil] (1.37,-.20)--(1.37,.10);
+  \draw[pencil] (3.68,-.24)--(5.00,-.24);
+  \draw[pencil] (4.20,-.52)--(4.20,.05);
+  \draw[pencil] (4.45,-.52)--(4.45,.05);
+  \draw[pencil] (6.65,-.10)--(7.13,-.10);
+  \draw[pencil] (7.32,-.10)--(7.80,-.10);
+  \draw[pencil] (7.13,-.10)--(7.26,.06)--(7.32,-.10);
+  \foreach \x in {9.48,9.75,...,10.55}
+    \draw[pencil] (\x,-.12) ellipse (.14 and .44);
+  \foreach \a in {-50,-25,0,25,50}
+    \draw[pencil arrow] (13.45,.05)--++({1.0*cos(\a)},{1.0*sin(\a)});
+  \foreach \x in {2.55,5.45,8.35,11.25}
+    \draw[pencil arrow] (\x+.08,.18)--(\x+.52,.18);
+  \node[sketch label] at (1.42,-.98) {external input};
+  \node[sketch label] at (4.32,-.98) {electric-field energy};
+  \node[sketch label] at (7.22,-.98) {nonlinear transfer};
+  \node[sketch label] at (10.12,-.98) {changing current};
+  \node[sketch label] at (13.40,-.98) {radiation, heat, sound, chemistry};
+\end{tikzpicture}
+\par\footnotesize\emph{Energy-accounting plate. The boxes are functions, not
+an assembly diagram.}
+\end{center}
+
+The gap supplies no energy. It changes state and permits previously stored field
+energy to move into a rapidly changing current. Some energy enters the intended
+electromagnetic oscillation; some becomes electrode heating, hot gas, light,
+sound, chemical products, and unintended radio emission. Historical utility
+does not imply present safety or spectrum compatibility.
+
+\begin{teloscard}{Worked energy account}
+Suppose a museum placard says that 10 abstract energy units were stored before
+an event. A calorimetric reconstruction attributes 4 units to heating, 1 to
+light and sound, and 3 to the intended oscillation. The missing 2 units are not
+``destroyed.'' They set a measurement question: unmeasured radio emission,
+apparatus heating, residual stored energy, or uncertainty. A defensible claim
+is \emph{accounted energy is 8 units}; it is not \emph{efficiency is exactly
+30\%} until the system boundary and uncertainties are stated.
+\end{teloscard}
+
+\section{Claims that evidence can defeat}
+
+\begin{tabularx}{\linewidth}{@{}p{.27\linewidth}p{.34\linewidth}L@{}}
+\toprule
+\textbf{Claim} & \textbf{Discriminating observation} & \textbf{Conclusion}\\
+\midrule
+Gap alone determines breakdown & Same separation and gas, controlled pressure
+changed; breakdown value changed & Gap-only model is false.\\
+The spark creates energy & Stored energy is reduced while heat, light, sound,
+and field energy appear & The gap redirects stored energy.\\
+Brighter means more voltage & Brightness changes with current duration or
+camera exposure at comparable voltage & Brightness is not a voltmeter.\\
+One curve fits every gas & A second gas produces a reproducibly shifted curve
+under matched geometry & Gas identity belongs in the model.\\
+Every failed event proves insulation & Independent field and pressure checks
+show conditions were below the model's threshold & Only that tested condition
+is supported.\\
+\bottomrule
+\end{tabularx}
+
+\begin{gate}{A safe falsification boundary}
+Learners falsify claims by comparing supplied records, reading graphs, checking
+units, and identifying alternative explanations. They do not ``test the
+threshold,'' shorten a gap, increase a supply, charge a store, or defeat a
+museum enclosure. A result that requires exposure to electrical danger is not
+a learner result.
+\end{gate}
+
+\Needspace{30\baselineskip}
+\section{Verify a reported result}
+
+Use this sequence on a paper dataset:
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Scope.} Record gas, pressure measure, separation measure,
+electrode description, polarity, temperature, and stated uncertainty.
+\item \textbf{Axes.} Check whether the horizontal coordinate is \(p\), \(d\),
+or their product, and whether either axis is logarithmic.
+\item \textbf{Replicates.} Look for spread, conditioning, and order effects;
+one event is not a curve.
+\item \textbf{Competing accounts.} Ask what contamination, surface changes,
+pressure drift, or instrument limits would predict.
+\item \textbf{Residual.} Plot observed minus modeled values. Random scatter and
+a systematic bend tell different stories.
+\item \textbf{Claim.} State only what the measured range supports.
+\end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[pencil arrow] (.8,.6)--(.8,3.65) node[above,sketch label]{residual};
+  \draw[pencil arrow] (.8,2.05)--(14.2,2.05) node[right,sketch label]{run order};
+  \draw[faint pencil,dash pattern=on 2pt off 2pt] (.8,1.35)--(14,1.35);
+  \draw[faint pencil,dash pattern=on 2pt off 2pt] (.8,2.75)--(14,2.75);
+  \foreach \x/\y in {1.4/2.11,2.1/1.91,2.8/2.22,3.5/1.84,4.2/2.06,4.9/1.95,
+    6.2/1.62,6.9/1.70,7.6/1.78,8.3/1.92,9.0/2.08,9.7/2.27,10.4/2.48,
+    11.1/2.68,11.8/2.93,12.5/3.14,13.2/3.38}
+    \draw[pencil heavy,fill=telospaper] (\x,\y) circle (.065);
+  \draw[pencil] (5.55,.72)--(5.55,3.45);
+  \node[sketch label,align=left,anchor=west] at (1.25,.93)
+    {random-looking scatter:\\model plausible in this range};
+  \node[sketch label,align=left,anchor=west] at (6.05,.93)
+    {systematic bend:\\model, instrument, or conditions drift};
+\end{tikzpicture}
+\par\footnotesize\emph{Residual patterns test the model more clearly than a
+smooth curve drawn through every point.}
+\end{center}
+
+\begin{teloscard}{Worked verification question}
+A report gives ten breakdown values but omits pressure and electrode geometry.
+Can the Paschen-style model be verified? \emph{No.} The values may be real, but
+the report lacks variables needed to locate the observations on the model and
+to decide whether the same curve applies. The correct next step is to request
+metadata, not to reproduce the event.
+\end{teloscard}
+
+\section{Change one thing --- on paper}
+Choose one supplied curve point. Predict how its plotted position changes if
+pressure doubles while separation is halved. Then write:
+\begin{enumerate}[leftmargin=*]
+\item the quantity held constant;
+\item one assumption the graph requires;
+\item one observation that would falsify your prediction; and
+\item one reason the observation must come from a qualified laboratory or
+published dataset rather than a learner-built apparatus.
+\end{enumerate}
+
+\begin{teloscard}{Evidence record}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.18\linewidth}L@{}}
+Prediction + reason & \rule{.95\linewidth}{.3pt}\\[.65em]
+Falsifier + boundary & \rule{.95\linewidth}{.3pt}
+\end{tabularx}
+\end{teloscard}
+\sourcefoot
+\end{document}

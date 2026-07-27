@@ -1,59 +1,370 @@
-\def\doctitle{Lesson 3: Ohm's Law}\def\docsubtitle{Measure path, current, voltage, and power}\def\docstrap{a graph is stronger than a slogan}
-\def\materialslist{\item 2--4 AA-cell switched holder \item 100, 220, and 470 \(\Omega\) resistors \item LED with series resistor \item Digital multimeter}
-\def\prediction{For the same source, which resistor should permit the greatest current?}
-\def\diagram{\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
-  pencil/.style={draw=black!72,line width=.38pt},
-  edge/.style={draw=black,line width=.78pt},
-  wire/.style={draw=black,line width=1.05pt},
-  note/.style={font=\scriptsize,align=center}]
-% Soft graphite ground shadow and the battery holder.
-\fill[black!7] (-4.15,-1.02) ellipse (1.28 and .15);
-\path[fill=black!10,draw=black!65,line width=.35pt,rounded corners=2pt]
-  (-4.18,-.78) rectangle (-2.18,.58);
-\draw[edge,rounded corners=2pt] (-4.1,-.7) rectangle (-2.26,.5);
-\foreach \y in {-.39,.04}{
-  \draw[pencil] (-3.92,\y) rectangle (-2.46,\y+.31);
-  \draw[pencil] (-3.78,\y+.05) -- (-3.78,\y+.26);
-  \draw[pencil] (-2.62,\y+.09) -- (-2.53,\y+.09);
-  \draw[pencil] (-2.575,\y+.045) -- (-2.575,\y+.135);}
-\node[note] at (-3.18,-.91) {switched AA holder};
-% Resistor, with a second faint graphite contour.
-\draw[wire] (-2.18,-.08) .. controls (-1.78,-.08) and (-1.7,.46) .. (-1.2,.46);
-\draw[wire] (-1.2,.46)--(-.86,.46);
-\path[fill=black!4,draw=black,line width=.8pt,rounded corners=1.2pt]
-  (-.86,.23) rectangle (.86,.69);
-\draw[pencil] (-.79,.29) rectangle (.79,.63);
-\foreach \x/\w in {-.55/75,-.2/42,.2/75,.52/42}
-  {\fill[black!\w] (\x-.055,.24) rectangle (\x+.055,.68);}
-\draw[wire] (.86,.46)--(1.38,.46);
-\node[note,above] at (0,.76) {test resistor};
-% Meter body, display, dial, and jack detail.
-\fill[black!7] (2.16,-1.08) ellipse (1.25 and .14);
-\path[fill=black!8,draw=black,line width=.85pt,rounded corners=3pt]
-  (1.42,-.88) rectangle (3.52,1.05);
-\draw[pencil,rounded corners=2pt] (1.5,-.79) rectangle (3.44,.97);
-\path[fill=white,draw=black,line width=.58pt] (1.69,.43) rectangle (3.25,.82);
-\node[font=\small\ttfamily] at (2.47,.625) {2.20 V};
-\draw[edge] (2.47,-.08) circle (.39);
-\foreach \a in {20,55,...,335}\draw[pencil]
-  ($(2.47,-.08)+({.31*cos(\a)},{.31*sin(\a)})$)--
-  ($(2.47,-.08)+({.37*cos(\a)},{.37*sin(\a)})$);
-\draw[edge] (2.47,-.08)--(2.68,.13);
-\fill (1.86,-.63) circle (.075); \fill (3.06,-.63) circle (.075);
-\node[note,above] at (2.47,1.08) {digital voltmeter};
-% Two probe leads visibly bridge the resistor terminals.
-\draw[wire] (1.86,-.63) .. controls (1.12,-1.22) and (-1.23,-1.18) .. (-1.11,.31);
-\draw[wire] (3.06,-.63) .. controls (3.7,-1.38) and (1.25,-1.42) .. (1.07,.31);
-\draw[edge] (-1.18,.17)--(-1.05,.49); \draw[edge] (1.14,.17)--(1.01,.49);
-\fill (-1.05,.49) circle (.045); \fill (1.01,.49) circle (.045);
-% The return lead closes the current path.
-\draw[wire] (1.38,.46) .. controls (1.48,1.35) and (-3.25,1.43) .. (-3.92,.5);
-\draw[-{Stealth[length=2.2mm]},line width=.65pt] (-2.05,1.24)--(-1.15,1.24);
-\node[note,above] at (-1.6,1.25) {current path};
+\input{common/preamble.tex}
+\input{electricity/chatgpt/shared/edition.tex}
+\telosmeta{Electricity \& Magnetism}{Lesson 3: Ohm's Law}
+  {Meter discipline, circuit evidence, and acceptance proof}{2026-07-27}
+
+\newcommand{\blank}[1]{\rule{#1}{.35pt}}
+\newcommand{\meter}[3]{%
+  \node[draw,very thick,rounded corners=2pt,minimum width=1.05cm,
+    minimum height=.72cm,align=center,font=\scriptsize] (#1) at #2 {#3};}
+\newcommand{\battery}[1]{%
+  \draw[very thick] (#1,0)--++(.35,0);
+  \draw[very thick] ($(#1,0)+(.35,-.32)$)--++(0,.64);
+  \draw[very thick] ($(#1,0)+(.55,-.18)$)--++(0,.36);
+  \draw[very thick] ($(#1,0)+(.55,0)$)--++(.35,0);}
+\newcommand{\resistor}[1]{%
+  \draw[very thick] (#1,0)--++(.22,0)
+    --++(.12,.2)--++(.2,-.4)--++(.2,.4)--++(.2,-.4)
+    --++(.12,.2)--++(.22,0);}
+\newcommand{\switchoff}[1]{%
+  \draw[very thick] (#1,0)--++(.25,0);
+  \fill ($(#1,0)+(.25,0)$) circle (.045);
+  \fill ($(#1,0)+(.75,0)$) circle (.045);
+  \draw[very thick] ($(#1,0)+(.25,0)$)--++(.42,.26);
+  \draw[very thick] ($(#1,0)+(.75,0)$)--++(.25,0);}
+\newcommand{\switchon}[1]{%
+  \draw[very thick] (#1,0)--++(.25,0);
+  \fill ($(#1,0)+(.25,0)$) circle (.045);
+  \fill ($(#1,0)+(.75,0)$) circle (.045);
+  \draw[very thick] ($(#1,0)+(.25,0)$)--++(.5,0);
+  \draw[very thick] ($(#1,0)+(.75,0)$)--++(.25,0);}
+\newcommand{\statecaption}[1]{\par\smallskip\footnotesize #1}
+
+\begin{document}
+\telosmasthead[ChatGPT edition --- prove the circuit]
+\rolecard
+
+\begin{materials}
+\item Switched holder for 2 AA cells
+\item 100, 220, and 470 \(\Omega\) resistors
+\item Digital multimeter with fused current input
+\item Four insulated clip leads
+\item Graph paper and pencil
+\item Optional second meter for simultaneous readings
+\end{materials}
+
+\begin{predict}
+For the same source, rank the three resistors from greatest to least current.
+Then predict whether \(V/I\) will agree with the marked resistance within the
+combined tolerances.
+\end{predict}
+
+\begin{teloshazard}{Meter state is part of the circuit}
+An ammeter is a low-resistance path. Never place it directly across a cell or
+battery holder. Move the red lead back to the voltage/resistance jack
+immediately after every current measurement. Change connections only with the
+holder switched off and disconnected. If a meter, lead, cell, or resistor
+warms, disconnect at once; do not repeat until the cause is found.
+\end{teloshazard}
+
+\section{Questions before touching a lead}
+
+\begin{multicols}{2}
+\begin{enumerate}
+\item Which meter jack is fused?
+\item What is the fuse rating printed on the meter?
+\item Does the selected current range exceed the predicted current?
+\item Which measurements require an energized circuit?
+\item Which require an isolated, unpowered component?
+\item Why does resistance mode supply its own small test current?
+\item Where must a voltmeter connect: in series or in parallel?
+\item Where must an ammeter connect?
+\item What reading would ``OL'' mean on each selected function?
+\item What single action ends every abnormal test?
+\end{enumerate}
+\end{multicols}
+
+\section{Six connection states}
+
+\subsection{State 0 --- inspect, de-energized}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\battery{-3.7} \switchoff{-2.45} \resistor{-.85}
+\draw[very thick](-3.7,0)--(-3.7,-1)--(1.4,-1)--(1.4,0);
+\draw[very thick](.25,0)--(1.4,0);
+\node[above,font=\small] at(-1.95,.42){OPEN};
+\node[below,font=\scriptsize,align=center] at(-1.15,-1.08)
+  {red lead parked in V/\(\Omega\) jack; range and insulation inspected};
 \end{tikzpicture}
-\end{center}}
-\def\procedure{\begin{enumerate}\item With power off, build source--resistor--switch in one closed path. Adult checks meter jack and range.\item Place the ammeter in the path; record current. Disconnect.\item Put the voltmeter across the resistor; reconnect briefly and record voltage.\item Repeat with three resistors. Calculate \(R=V/I\) and \(P=VI\); graph \(V\) against \(I\).\end{enumerate}}
-\def\explanation{Current is charge per time; voltage describes energy transfer per charge. For an ohmic part at stable temperature, \(V=IR\). A voltmeter compares two points and an ammeter joins the current path. Putting an ammeter directly across a source makes a short circuit. Power \(P=VI\) tracks energy transfer rate, not a substance consumed by the first component.}
-\def\extension{Add a second resistor in series, then in parallel. Predict equivalent resistance before measuring.}
-\input{electricity/chatgpt/shared/lesson-template.tex}
+\statecaption{Cells installed, switch open. Confirm resistor identity, sound
+insulation, firm clips, correct jacks, and a current estimate below the meter
+fuse and selected range.}
+\end{center}
+
+\subsection{State 1 --- resistance, component isolated}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\resistor{-1.05}
+\meter{m}{(0,-1.15)}{\(\Omega\)\\POWER OFF}
+\draw[very thick](-.83,0)..controls(-1,-.65)and(-.65,-.9)..(-.35,-1.15);
+\draw[very thick](.21,0)..controls(.8,-.55)and(.65,-.9)..(.35,-1.15);
+\node[above,font=\scriptsize] at(-.3,.32){one resistor, disconnected};
+\end{tikzpicture}
+\statecaption{Resistance mode only on an isolated component. Touch the probes
+together first and record lead/contact resistance. Never use \(\Omega\) or
+continuity mode on an energized circuit.}
+\end{center}
+
+\subsection{State 2 --- voltage, meter in parallel}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\battery{-3.4} \switchon{-2.15} \resistor{-.55}
+\draw[very thick](-3.4,0)--(-3.4,-1.2)--(1.65,-1.2)--(1.65,0);
+\draw[very thick](.55,0)--(1.65,0);
+\meter{v}{(0,1.25)}{V DC\\red in V/\(\Omega\)}
+\draw[very thick](-.33,0)--(-.33,.82);
+\draw[very thick](.55,0)--(.55,.82);
+\node[font=\scriptsize,above] at(-1.65,.38){CLOSED briefly};
+\node[font=\scriptsize,below] at(-.1,-1.25){one current path};
+\end{tikzpicture}
+\statecaption{The voltmeter compares the two resistor terminals. Start on a
+range above the source voltage. Open the switch immediately after the reading.}
+\end{center}
+
+\subsection{State 3 --- current, meter inserted in series}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\battery{-3.5} \switchon{-2.25}
+\meter{a}{(0,0)}{A DC\\fused jack}
+\resistor{1.1}
+\draw[very thick](-1.25,0)--(-.55,0);
+\draw[very thick](.55,0)--(1.1,0);
+\draw[very thick](2.2,0)--(2.55,0)--(2.55,-1.1)--(-3.5,-1.1)--(-3.5,0);
+\node[font=\scriptsize,below] at(0,-.48){start on highest current range};
+\end{tikzpicture}
+\statecaption{Open the original path and insert the meter so all current passes
+through it. Power only long enough for a stable reading. Switch off, disconnect,
+then park the red lead back in the V/\(\Omega\) jack.}
+\end{center}
+
+\subsection{State 4 --- forbidden short-circuit state}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\battery{-2.9}
+\meter{x}{(0,.85)}{A DC}
+\draw[very thick](-2.55,.32)--(-2.55,.85)--(-.55,.85);
+\draw[very thick](.55,.85)--(-2.35,-.18);
+\draw[line width=2pt](-3.2,-.65)--(.9,1.45);
+\draw[line width=2pt](-3.2,1.45)--(.9,-.65);
+\node[font=\bfseries\small] at(1.85,.45){DO NOT MAKE};
+\node[font=\scriptsize,align=left] at(2.35,-.05)
+  {ammeter across source\\bypasses the load};
+\end{tikzpicture}
+\statecaption{Do not ``see what happens.'' This state can blow the meter fuse,
+heat leads or cells, and erase the evidence needed to diagnose the mistake.}
+\end{center}
+
+\subsection{State 5 --- fault isolation, power off first}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+\battery{-3.5} \switchoff{-2.25} \resistor{.15}
+\draw[very thick](-1.25,0)--(.15,0);
+\draw[very thick](1.25,0)--(2.25,0)--(2.25,-1)--(-3.5,-1)--(-3.5,0);
+\foreach \x/\lab in {-3.5/A,-1.25/B,.15/C,1.25/D,2.25/E}{
+  \fill(\x,0)circle(.06);\node[above,font=\scriptsize]at(\x,.08){\lab};}
+\meter{c}{(0,-1.75)}{continuity\\POWER OFF}
+\draw[very thick](-.35,-1.4)--(-1.25,0);
+\draw[very thick](.35,-1.4)--(.15,0);
+\end{tikzpicture}
+\statecaption{With cells removed, test one segment at a time. A continuity tone
+answers ``low enough for this meter,'' not ``zero ohms'' and not ``safe under
+load.''}
+\end{center}
+
+\section{Prediction sheet}
+
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Marked \(R\) & tolerance & predicted \(I=V_s/R\) & predicted \(V_R\) &
+predicted \(P=V_s^2/R\) & What could make the result differ?\\
+\midrule
+100 \(\Omega\) & \blank{.55in} & \blank{.8in} & \blank{.68in} &
+\blank{.78in} & \blank{1.1in}\\[1.5em]
+220 \(\Omega\) & \blank{.55in} & \blank{.8in} & \blank{.68in} &
+\blank{.78in} & \blank{1.1in}\\[1.5em]
+470 \(\Omega\) & \blank{.55in} & \blank{.8in} & \blank{.68in} &
+\blank{.78in} & \blank{1.1in}\\
+\bottomrule
+\end{tabularx}
+
+\section{Controlled verification}
+
+\begin{enumerate}
+\item Measure the open-circuit source voltage \(V_s\). Record meter function,
+range, jacks, resolution, and reading.
+\item For each resistor, perform State 1 and record \(R_\text{meter}\).
+\item Build State 2. Close briefly; record loaded \(V_R\). Open and disconnect.
+\item Reconfigure to State 3. Close briefly; record \(I\). Open and disconnect.
+\item Repeat each energized reading once after rebuilding the connection.
+Do not average away a disagreement; investigate it.
+\item Calculate \(R_\text{calc}=V_R/I\) and \(P=V_RI\).
+\item Plot \(V_R\) vertically against \(I\) horizontally. A fitted slope is an
+estimate of resistance; do not force the line through zero without justification.
+\end{enumerate}
+
+\section{Evidence table}
+
+\small
+\begin{tabularx}{\linewidth}{@{}c c c c c c c L@{}}
+\toprule
+Marked \(R\) & \(R_\text{meter}\) & \(V_R\) run 1/2 & \(I\) run 1/2 &
+\(R_\text{calc}\) & \(P\) & warm? & Meter function, range, jacks, resolution\\
+\midrule
+100 \(\Omega\) & & & & & & & \\[2em]
+220 \(\Omega\) & & & & & & & \\[2em]
+470 \(\Omega\) & & & & & & & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\begin{teloscard}{Source behavior}
+\begin{tabularx}{\linewidth}{@{}L L L L@{}}
+Open-circuit \(V_s\) & Loaded \(V_s\), 100 \(\Omega\) &
+Loaded \(V_s\), 220 \(\Omega\) & Loaded \(V_s\), 470 \(\Omega\)\\[1.8em]
+\end{tabularx}
+If loaded source voltage changes with current, explain why treating \(V_s\) as
+one exact constant would distort the prediction.
+\end{teloscard}
+
+\section{Worked calculation}
+
+Suppose \(V_R=2.91\ \mathrm{V}\) and \(I=13.1\ \mathrm{mA}
+=0.0131\ \mathrm{A}\):
+\[
+R_\text{calc}=\frac{V_R}{I}
+=\frac{2.91\ \mathrm{V}}{0.0131\ \mathrm{A}}
+=222\ \Omega ,
+\qquad
+P=V_RI=(2.91)(0.0131)=0.0381\ \mathrm{W}.
+\]
+For a 220 \(\Omega\), 5\% resistor, the marked interval is
+\(220(1\pm0.05)=209\) to \(231\ \Omega\). The calculated value lies inside it,
+but that agreement is not yet proof: meter uncertainty and repeatability also
+belong in the comparison.
+
+\section{Uncertainty without false precision}
+
+Use the accuracy statement from the meter manual. If it says
+\(\pm(a\%\text{ of reading}+b\text{ digits})\), then
+\[
+u_x=(a/100)|x|+b(\text{least significant digit}).
+\]
+Example: on a display reading \(2.91\ \mathrm{V}\), with accuracy
+\(\pm(0.5\%+2\text{ digits})\) and resolution \(0.01\ \mathrm{V}\),
+\[
+u_V=0.005(2.91)+2(0.01)=0.0346\ \mathrm{V},
+\quad V=2.91\pm0.035\ \mathrm{V}.
+\]
+A conservative bound for division is
+\[
+\frac{u_R}{R}\leq\frac{u_V}{|V|}+\frac{u_I}{|I|}.
+\]
+Record the bound as an interval. Round the reported result to the same decimal
+place as its uncertainty.
+
+\begin{teloscard}{Uncertainty record}
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Part & \(u_V\) & \(u_I\) & \(R_\text{calc}\pm u_R\) &
+marked interval & Do the intervals overlap?\\
+\midrule
+100 \(\Omega\) & & & & & \\[1.7em]
+220 \(\Omega\) & & & & & \\[1.7em]
+470 \(\Omega\) & & & & & \\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\section{Fault isolation: preserve the evidence}
+
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.22\linewidth} L L@{}}
+\toprule
+Observation & Power-off checks first & Then, if checks pass\\
+\midrule
+No current; no voltage across resistor &
+Open switch, loose clip, depleted/reversed cell, broken lead &
+Measure source voltage; trace voltage from A to E\\
+Voltage across resistor; zero current indication &
+Wrong function/range/jack, blown current fuse, open meter lead &
+Verify meter on a known bounded test path\\
+Full source voltage across one connection &
+Open circuit immediately downstream &
+Power off; continuity-test that segment only\\
+Near-zero resistor voltage; unexpected current &
+Wrong resistor, bypass lead, solder/clip bridge &
+Remove cells; inspect and measure isolated resistance\\
+Reading changes when leads move &
+Loose/oxidized contact or damaged lead &
+Replace one lead, rebuild, repeat both runs\\
+Resistor, cells, lead, or meter warms &
+Stop; disconnect; do not retest warm hardware &
+Adult finds overcurrent or wrong connection before reuse\\
+\bottomrule
+\end{tabularx}
+
+\section{Challenge questions}
+
+\begin{multicols}{2}
+\begin{enumerate}
+\item Why is \(V/I\) a stronger test than current alone?
+\item Why measure loaded source voltage?
+\item What does the slope of the \(V\)-versus-\(I\) graph mean?
+\item Which axis assignment makes the slope equal \(R\)?
+\item Does a straight line prove the resistor is ohmic at every temperature?
+\item How can lead resistance matter most for the smallest resistor?
+\item Why might resistance mode and \(V/I\) disagree slightly?
+\item How does ammeter burden voltage alter the circuit?
+\item Why can a continuity tone coexist with a bad loaded connection?
+\item When is ``OL'' evidence of an open path, and when is it only over-range?
+\item Which digits in your calculation are not supported by the meters?
+\item What observation would make you reject rather than average a run?
+\item Does overlap of intervals prove the marked value is correct?
+\item What additional independent check would strengthen the claim?
+\end{enumerate}
+\end{multicols}
+
+\section{Acceptance proof}
+
+\begin{gate}{Accept only if every claim has evidence}
+\begin{tabularx}{\linewidth}{@{}p{.34\linewidth} c L@{}}
+\toprule
+Criterion & pass? & Evidence location or value\\
+\midrule
+All work stayed at isolated 2-AA power & \(\bigcirc\) & \\
+Meter jacks/functions/ranges recorded & \(\bigcirc\) & \\
+No heating, odor, damage, or blown fuse & \(\bigcirc\) & \\
+Two runs agree within stated resolution & \(\bigcirc\) & \\
+Current ranking matches prediction or is explained & \(\bigcirc\) & \\
+\(R_\text{calc}\) and marked intervals compared & \(\bigcirc\) & \\
+Graph axes, units, points, and slope are present & \(\bigcirc\) & \\
+One fault scenario was reasoned through power-off & \(\bigcirc\) & \\
+Red lead is parked in V/\(\Omega\) jack & \(\bigcirc\) & \\
+Cells are removed for storage & \(\bigcirc\) & \\
+\bottomrule
+\end{tabularx}
+\end{gate}
+
+\textbf{Claim:} Within the stated conditions and uncertainty, the evidence
+\(\bigcirc\) supports \(\bigcirc\) does not support \(V=IR\) for these resistors.
+
+\medskip
+Learner initials \blank{1.05in}\quad
+Adult inspection \blank{1.05in}\quad
+Date \blank{.8in}
+
+\section{Controlled extension}
+
+Add a second resistor in series, then in parallel. Before connecting, predict
+equivalent resistance and maximum current. Accept the new circuit only after
+repeating States 0--3, the uncertainty comparison, and the acceptance proof.
+An LED is not the acceptance standard for Ohm's law: it is nonlinear and
+polarity-sensitive.
+
+\sourcefoot
+\end{document}

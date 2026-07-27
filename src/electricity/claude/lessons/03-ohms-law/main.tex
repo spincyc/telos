@@ -1,119 +1,369 @@
 \input{common/preamble.tex}
 \input{electricity/claude/shared/electricity.tex}
-\telosmeta{Electricity \& Magnetism}{3. Ohm's Law}{Voltage, current, resistance --- and a meter in your hand}{2026-07-25}
+\telosmeta{Electricity \& Magnetism}{3. Ohm's Law}
+  {A meter-and-circuit verification chapter}{2026-07-27}
+
+\newcommand{\writein}[1]{\rule{#1}{.35pt}}
+\newcommand{\dmm}[3]{%
+  \node[draw,very thick,rounded corners=2pt,minimum width=1.18cm,
+    minimum height=.72cm,align=center,font=\scriptsize] (#1) at #2 {#3};}
+\newcommand{\closed}[3]{%
+  \draw[wire] (#1,#2)--(#1+.25,#2);
+  \fill (#1+.25,#2) circle (.04);
+  \draw[wirethick] (#1+.25,#2)--(#1+.75,#2);
+  \fill (#1+.75,#2) circle (.04);
+  \draw[wire] (#1+.75,#2)--(#1+1,#2);
+  \node[ckt,above]at(#1+.5,#2+.1){#3};}
+\newcommand{\metercaption}[1]{\par\smallskip\footnotesize #1}
+
 \begin{document}
-\telosmasthead[The first lesson with numbers]
-\lessonhead{3}{about 90 minutes}{everyone builds; battery power only}
+\telosmasthead[The first lesson with an acceptance record]
+\lessonhead{3}{two sessions}{learner work: isolated two-AA source only}
 
 \begin{materials}
-\item A digital multimeter (each, if possible)
-\item Solderless breadboard and jumper wires
-\item 9\,V battery and clip; two AA cells and a holder
-\item Resistors: 100\,$\Omega$, 220\,$\Omega$, 470\,$\Omega$, 1\,k$\Omega$, 10\,k$\Omega$
-\item Several LEDs
-\item A small torch bulb and holder
-\item A toggle or push switch
+\item Digital multimeter with intact leads and fused current input
+\item Switched holder and two AA cells
+\item 100, 220, 470 \(\Omega\), 1 k\(\Omega\), and 10 k\(\Omega\) resistors
+\item Solderless breadboard and insulated jumpers
+\item Graph paper, pencil, and the meter manual
 \end{materials}
 
 \begin{predict}
-An LED is connected to a 9\,V battery through a 470\,$\Omega$ resistor. You then
-swap it for a 220\,$\Omega$ resistor. Does the LED get brighter, dimmer, or stay
-the same --- and roughly by how much? Write a number, not a word.
+At the same loaded source voltage, rank the five resistors by current. Predict
+the current for each using \(I=V/R\), then mark which prediction is most
+sensitive to meter resolution.
 \end{predict}
 
-\lessonsection{Wire it up}
+\begin{teloshazard}{The dial, jacks, and leads form one instrument}
+Current mode presents a low-resistance path. Never connect an ammeter across a
+cell or battery holder. Rewire only with the switch open and the holder
+disconnected. After every current reading, remove power and return the red lead
+to the V/\(\Omega\) jack. Stop immediately for warmth, odor, damaged insulation,
+an unstable display, or an unexpected reading.
+\end{teloshazard}
 
-Build the picture on the left. The drawing on the right is the same circuit
-written in the shorthand engineers use --- every symbol on it is one of the
-objects in the picture. From this lesson on, both are given.
-
-\twoways{%
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \ptBreadboard{0}{0}{1.0}{16}
-  \ptNineVolt{-1.9}{0.4}{0.75}
-  \ptSwitch{1.3}{1.85}{1.0}
-  \ptResistor{2.6}{1.6}{1.0}
-  \ptLED{4.0}{1.5}{1.0}
-  \draw[wirered] (-1.05,1.68) .. controls (-0.6,2.3) and (0.0,2.5) .. (0.42,1.60);
-  \draw[wireblk] (-1.24,1.68) .. controls (-1.5,0.4) and (-0.6,-0.3) .. (0.42,0.18);
-  \draw[wirered] (1.12,1.43) -- (1.12,1.16);
-  \draw[wirered] (1.48,1.43) -- (1.98,1.16);
-  \draw[wirered] (3.22,1.60) -- (3.22,1.16);
-  \draw[wirered] (4.5,0.88) .. controls (4.9,0.4) .. (4.5,0.18);
-  \node[partsmall,anchor=north,align=center] at (2.4,-0.42)
-    {one loop: battery $\to$ switch $\to$ resistor $\to$ LED $\to$ back};
-\end{tikzpicture}}{%
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \ckbattery{0}{0}{9\,V}
-  \draw[wire] (1,0) -- (1.5,0);
-  \ckswitch{1.5}{0}{S}
-  \draw[wire] (2.5,0) -- (2.5,-1.0);
-  \ckresistor{1.5}{-1.0}{$R$}
-  \draw[wire] (1.5,-1.0) -- (1.0,-1.0);
-  \ckled{0}{-1.0}{}
-  \draw[wire] (0,-1.0) -- (0,0);
-\end{tikzpicture}}
-
-\lessonsection{Do it}
+\lessonsection{The questions the circuit must answer}
+\begin{multicols}{2}
 \begin{enumerate}
-\item \textbf{Build the loop.} Battery, switch, resistor, LED, back to the
-  battery. The LED only works one way round --- if nothing lights, turn it
-  around before you assume anything is broken.
-\item \textbf{Measure voltage.} Voltage is measured \emph{across} a component,
-  so the meter goes in parallel: red probe one side, black the other, without
-  disturbing the circuit. Measure across the battery, across the resistor, and
-  across the LED. Add the last two together and compare with the first.
-\item \textbf{Measure current.} Current is measured \emph{through} the circuit,
-  so the meter must become part of the loop: break the circuit and put the meter
-  in the gap. Record it in milliamps.
-\item \textbf{Swap resistors.} Repeat for 100, 220, 470, 1\,k and
-  10\,k$\Omega$. Fill in the table: $R$, measured $V$ across the resistor, and
-  measured $I$. Then compute $V/I$ for each row.
-\item \textbf{Series and parallel.} Two 470\,$\Omega$ resistors in a row, then
-  side by side. Measure the total resistance of each arrangement before you
-  reason about it.
+\item Does the isolated resistor agree with its marked value?
+\item Does a voltmeter placed across it report the loaded voltage?
+\item Does an ammeter inserted in the only path report the path current?
+\item Does \(V_R/I\) agree with resistance mode?
+\item Are two independently rebuilt runs repeatable?
+\item Does the \(V_R\)-against-\(I\) graph have the expected slope?
+\item Is any disagreement larger than the combined uncertainty?
+\item Can a fault be localized without random rewiring?
+\end{enumerate}
+\end{multicols}
+
+\lessonsection{Connection atlas: copy the state, not merely the shape}
+
+\subsection{0. Safe starting state: open, disconnected, inspected}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-3}{0}{2 AA}
+  \draw[wire](-2,0)--(-1.55,0);
+  \ckswitch{-1.55}{0}{OPEN}
+  \draw[wire](-.55,0)--(-.15,0);
+  \ckresistor{-.15}{0}{test resistor}
+  \draw[wire](.85,0)--(1.35,0)--(1.35,-.75)--(-3,-.75)--(-3,0);
+  \node[cktsmall,below]at(-.8,-.82)
+    {red lead parked in V/\(\Omega\); holder disconnected};
+\end{tikzpicture}
+\metercaption{Read the resistor bands, inspect the leads, identify the fused
+current jack, and calculate maximum expected current before connecting cells.}
+\end{center}
+
+\subsection{1. Resistance: isolated part, no external power}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckresistor{-.5}{0}{\(R_\Omega\)}
+  \dmm{ohm}{(0,-1.05)}{\(\Omega\)\\POWER OFF}
+  \draw[wirethick](-.35,0)..controls(-.65,-.45)..(-.35,-.7);
+  \draw[wirethick](.35,0)..controls(.7,-.45)..(.35,-.7);
+  \node[cktsmall,above]at(0,.32){removed from circuit};
+\end{tikzpicture}
+\metercaption{Short the probes together first and record their reading. A
+resistor still connected to other paths is not an isolated resistance test.}
+\end{center}
+
+\subsection{2. Source voltage: voltmeter across the source}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-2.1}{0}{2 AA}
+  \dmm{vs}{(.2,0)}{V DC\\V/\(\Omega\) jack}
+  \draw[wirethick](-1.7,.22)..controls(-1.3,.75)..(-.35,.35);
+  \draw[wirethick](-1.58,-.22)..controls(-1.2,-.75)..(-.35,-.35);
+  \node[cktsmall,right]at(.85,0){open-circuit \(V_s\)};
+\end{tikzpicture}
+\metercaption{A voltmeter compares two nodes. Begin on a range above the source.
+Reverse probes if a negative sign appears; do not discard the sign silently.}
+\end{center}
+
+\subsection{3. Loaded voltage: voltmeter in parallel}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-3.1}{0}{2 AA}
+  \draw[wire](-2.1,0)--(-1.8,0);
+  \closed{-1.8}{0}{ON briefly}
+  \draw[wire](-.8,0)--(-.3,0);
+  \ckresistor{-.3}{0}{\(R\)}
+  \draw[wire](.7,0)--(1.25,0)--(1.25,-1)--(-3.1,-1)--(-3.1,0);
+  \dmm{vr}{(.2,1.05)}{V DC\\V/\(\Omega\) jack}
+  \draw[wirethick](-.15,.68)--(-.15,0);
+  \draw[wirethick](.55,.68)--(.55,0);
+\end{tikzpicture}
+\metercaption{The resistor remains in the one current path; the voltmeter
+bridges only its two terminals. Record the source voltage under this load too.}
+\end{center}
+
+\subsection{4. Current: ammeter inserted in series}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-3.25}{0}{2 AA}
+  \draw[wire](-2.25,0)--(-1.95,0);
+  \closed{-1.95}{0}{ON briefly}
+  \draw[wire](-.95,0)--(-.7,0);
+  \dmm{amp}{(0,0)}{A DC\\FUSED jack}
+  \draw[wire](.7,0)--(1,0);
+  \ckresistor{1}{0}{\(R\)}
+  \draw[wire](2,0)--(2.35,0)--(2.35,-1)--(-3.25,-1)--(-3.25,0);
+  \node[cktsmall,below]at(0,-.52){highest suitable range first};
+\end{tikzpicture}
+\metercaption{Break the loop and put the meter in the gap. All path current
+passes through it. Open, disconnect, and park the lead after the display settles.}
+\end{center}
+
+\subsection{5. Forbidden state: current input across the source}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-2.4}{0}{2 AA}
+  \dmm{bad}{(0,.8)}{A DC}
+  \draw[wirethick](-2,.22)--(-.55,.8);
+  \draw[wirethick](-1.88,-.22)--(.55,.8);
+  \draw[line width=2pt](-2.75,-.75)--(.8,1.35);
+  \draw[line width=2pt](-2.75,1.35)--(.8,-.75);
+  \node[font=\bfseries]at(2,.5){NEVER CONNECT};
+  \node[cktsmall,align=left]at(2,-.05){load bypassed; meter fuse,\\leads,
+  or cells can heat};
+\end{tikzpicture}
+\metercaption{This is not a trial state. If it was approached or made, remove
+the holder and have the adult inspect the meter fuse and leads before reuse.}
+\end{center}
+
+\subsection{6. Continuity: cells removed, one segment at a time}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \ckbattery{-3}{0}{CELLS OUT}
+  \draw[wire](-2,0)--(-1.6,0);
+  \ckswitch{-1.6}{0}{OPEN}
+  \draw[wire](-.6,0)--(-.2,0);
+  \ckresistor{-.2}{0}{\(R\)}
+  \draw[wire](.8,0)--(1.3,0)--(1.3,-.8)--(-3,-.8)--(-3,0);
+  \foreach\x/\lab in {-3/A,-.6/B,-.2/C,.8/D,1.3/E}
+    {\fill(\x,0)circle(.045);\node[cktsmall,above]at(\x,.08){\lab};}
+  \dmm{cont}{(0,-1.55)}{continuity\\POWER OFF}
+  \draw[wirethick](-.35,-1.2)--(-.6,0);
+  \draw[wirethick](.35,-1.2)--(-.2,0);
+\end{tikzpicture}
+\metercaption{A tone means only ``below this meter's threshold.'' Record the
+actual resistance when contact quality matters.}
+\end{center}
+
+\lessonsection{Preflight record}
+\begin{tabularx}{\linewidth}{@{}L L L L@{}}
+\toprule
+Check & Observed & Required state & Adult initials\\
+\midrule
+Lead insulation and probe guards & & intact & \\[1.4em]
+Current input marking and fuse rating & & documented & \\[1.4em]
+Probe-short resistance & & recorded & \\[1.4em]
+Open-circuit source voltage & & below 3.4 V & \\[1.4em]
+Largest predicted current & & below chosen range/fuse & \\
+\bottomrule
+\end{tabularx}
+
+\lessonsection{Predict before measuring}
+\small
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Marked \(R\) & tolerance & assumed loaded \(V_s\) &
+predicted \(I=V_s/R\) & predicted \(P=V_s^2/R\) & ranking/reason\\
+\midrule
+100 \(\Omega\) & & & & & \\[1.4em]
+220 \(\Omega\) & & & & & \\[1.4em]
+470 \(\Omega\) & & & & & \\[1.4em]
+1 k\(\Omega\) & & & & & \\[1.4em]
+10 k\(\Omega\) & & & & & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\lessonsection{Run the verification}
+\begin{enumerate}
+\item Execute State 0. Do not proceed until maximum predicted current and
+meter range are compatible.
+\item Execute State 1 for every resistor. Record function, range, resolution,
+and reading.
+\item Build State 3 for the 10 k\(\Omega\) resistor first. Record \(V_R\) and
+loaded \(V_s\). Open and disconnect.
+\item Rebuild as State 4. Record \(I\). Open, disconnect, park the red lead.
+\item Remove the resistor and rebuild the entire circuit for run 2. Repetition
+without rebuilding tests display stability; rebuilding also tests connection
+repeatability.
+\item Continue toward smaller resistance only while the predicted current
+remains comfortably within the selected fused range.
+\item Compute \(R_{VI}=V_R/I\), \(P=V_RI\), and percent difference from
+resistance mode. Plot \(V_R\) vertically against \(I\) horizontally.
 \end{enumerate}
 
-\lessonsection{What it means}
-\begin{telosfacts}[0.20]
-\telosfact{The three quantities}{\textbf{Voltage} is the push, measured between
-  two points. \textbf{Current} is the flow, measured through one point.
-  \textbf{Resistance} is how hard the path fights the flow.}
-\telosfact{Ohm's law}{$V = I R$. Your $V/I$ column should have come out close to
-  the marked resistance every time. You did not assume the law --- you measured
-  it into existence, which is the correct order.}
-\telosfact{Voltages add around a loop}{Your resistor and LED voltages summed to
-  the battery voltage. Every volt the battery supplies is spent somewhere before
-  the current gets back.}
-\telosfact{Current is the same all the way round}{A series loop has one current.
-  Nothing is used up; charge that leaves comes back.}
-\telosfact{Why the LED needs the resistor}{An LED is not a resistor --- above
-  its turn-on voltage its current rises almost without limit. The resistor sets
-  the current. Without it the LED passes as much as the battery can give and
-  destroys itself. Try it once, deliberately, with a spare.}
-\telosfact{Series and parallel}{In series, resistances add. In parallel the
-  total is \emph{smaller} than either --- two paths carry more than one.}
-\end{telosfacts}
+\lessonsection{Raw evidence --- never erase an anomalous run}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}c c c c c c c c L@{}}
+\toprule
+\(R\) marked & \(R_\Omega\) & \(V_s\) loaded & \(V_R\) run 1/2 &
+\(I\) run 1/2 & \(R_{VI}\) & \(P\) & warm? & function/range/jack/resolution\\
+\midrule
+100 \(\Omega\) & & & & & & & & \\[1.8em]
+220 \(\Omega\) & & & & & & & & \\[1.8em]
+470 \(\Omega\) & & & & & & & & \\[1.8em]
+1 k\(\Omega\) & & & & & & & & \\[1.8em]
+10 k\(\Omega\) & & & & & & & & \\
+\bottomrule
+\end{tabularx}
+\normalsize
 
-\lessonsection{Habits to build now}
-\begin{telosfacts}[0.20]
-\telosfact{One hand}{Start now, at 9\,V where it does not matter. Meter probe in
-  one hand, other hand off the bench. By Lesson 11 you will not have to think
-  about it.}
-\telosfact{Meter mode first}{Look at the dial before every measurement. A meter
-  left in current mode and then put across a battery is a short circuit through
-  a fuse, and on a big supply it is an explosion.}
-\telosfact{Power off to rewire}{Disconnect the battery before changing the
-  circuit, every time, even though nothing here can hurt you.}
-\end{telosfacts}
+\lessonsection{Worked result: arithmetic with units}
+For \(V_R=2.86\ \mathrm{V}\) and \(I=12.9\ \mathrm{mA}
+=0.0129\ \mathrm{A}\),
+\[
+R_{VI}=\frac{2.86\ \mathrm{V}}{0.0129\ \mathrm{A}}
+=222\ \Omega,\qquad
+P=(2.86\ \mathrm{V})(0.0129\ \mathrm{A})=0.0369\ \mathrm{W}.
+\]
+For a 220 \(\Omega\), 5\% part, the marked interval is
+\(220(1\pm0.05)=209\) to \(231\ \Omega\). The result is consistent with the
+marking, subject to meter uncertainty and run-to-run variation.
 
-\begin{telospanel}{The link to the coil}
-Everything you will build later is measured with this meter and reasoned about
-with this law. The bleeder resistors that drain the capacitor bank, the current
-limit of the transformer, the safety of a discharge --- all of it is $V = IR$
-with big numbers. \qty{10}{mA} through a person is roughly what kills them;
-work out for yourself what resistance across \qty{9}{kV} that implies, and
-whether dry skin will save you.
-\end{telospanel}
-\lowvoltagenote
+\lessonsection{Uncertainty: say what the meter can support}
+Copy each relevant accuracy specification from the meter manual. For a
+specification \(\pm(a\%\text{ reading}+b\text{ counts})\),
+\[
+u_x=\frac{a}{100}|x|+bq,
+\]
+where \(q\) is the displayed resolution. If \(V=2.86\ \mathrm{V}\), \(q_V=0.01\
+\mathrm{V}\), and accuracy is \(\pm(0.5\%+2\text{ counts})\), then
+\[
+u_V=0.005(2.86)+2(0.01)=0.0343\ \mathrm{V}.
+\]
+For a conservative resistance bound,
+\[
+\frac{u_R}{R}\leq\frac{u_V}{|V|}+\frac{u_I}{|I|}.
+\]
+Add half the absolute difference between the two rebuilt runs if it is larger
+than the resolution contribution. Report no decimal place finer than \(u_R\).
+
+\begin{teloscard}{Uncertainty and agreement}
+\begin{tabularx}{\linewidth}{@{}c c c c c L@{}}
+\toprule
+Part & \(u_V\) & \(u_I\) & \(R_{VI}\pm u_R\) &
+marked interval & overlap and conclusion\\
+\midrule
+100 \(\Omega\) & & & & & \\[1.4em]
+220 \(\Omega\) & & & & & \\[1.4em]
+470 \(\Omega\) & & & & & \\[1.4em]
+1 k\(\Omega\) & & & & & \\[1.4em]
+10 k\(\Omega\) & & & & & \\
+\bottomrule
+\end{tabularx}
+\end{teloscard}
+
+\lessonsection{Questions from the graph and the circuit}
+\begin{multicols}{2}
+\begin{enumerate}
+\item Which axis choice makes slope equal resistance?
+\item Why record loaded rather than only open-circuit source voltage?
+\item Why is \(V_R/I\) a stronger check than current alone?
+\item Should a best-fit line be forced through zero? What evidence decides?
+\item What would curvature suggest about temperature or non-ohmic behavior?
+\item Why might resistance mode and \(V_R/I\) differ?
+\item For which part does lead resistance matter most?
+\item For which current is meter resolution most important?
+\item How can ammeter burden voltage change the circuit?
+\item Why is a continuity tone not proof of a sound loaded connection?
+\item When does ``OL'' mean open, and when only over-range?
+\item Which anomalous result must stop the whole series?
+\item Does interval overlap prove the law? What does it actually show?
+\item What independent observation would strengthen your conclusion?
+\end{enumerate}
+\end{multicols}
+
+\lessonsection{Diagnose from evidence, not guesswork}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{.23\linewidth} L L@{}}
+\toprule
+Observation & De-energized checks & Bounded next measurement\\
+\midrule
+No \(V_R\), no \(I\) &
+open switch, empty/depleted holder, broken lead, loose row &
+verify \(V_s\), then compare adjacent nodes A--E\\
+\(V_R\) present, \(I\) reads zero &
+wrong jack/function/range, open meter lead, blown meter fuse &
+adult verifies meter on a known bounded path\\
+Nearly full \(V_s\) across one jumper &
+open immediately downstream &
+remove cells; continuity-test only that segment\\
+Near-zero \(V_R\), unexpectedly high \(I\) &
+wrong resistor or bypass around it &
+remove cells; inspect and measure isolated \(R\)\\
+Reading changes when a lead moves &
+loose/oxidized clip, damaged conductor, breadboard contact &
+replace one lead; rebuild both runs\\
+Anything warms or smells &
+disconnect; quarantine warm/damaged hardware &
+no energized retest until cause is identified\\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\newpage
+\lessonsection{Acceptance proof}
+\begin{gate}{No acceptance by impression}
+\begin{tabularx}{\linewidth}{@{}p{.42\linewidth} c L@{}}
+\toprule
+Criterion & pass? & Evidence\\
+\midrule
+Only the isolated two-AA source was used & \(\bigcirc\) & \\
+Every energized rewire began disconnected & \(\bigcirc\) & \\
+Jacks, functions, ranges, and resolutions are recorded & \(\bigcirc\) & \\
+Two rebuilt runs agree within the stated bound & \(\bigcirc\) & \\
+\(R_\Omega\), \(R_{VI}\), and marked intervals are compared & \(\bigcirc\) & \\
+Graph has axes, units, points, fit, and slope & \(\bigcirc\) & \\
+One fault path was reasoned through with cells removed & \(\bigcirc\) & \\
+No heat, odor, damage, or unexplained anomaly remains & \(\bigcirc\) & \\
+Red lead is parked in V/\(\Omega\); cells are removed & \(\bigcirc\) & \\
+\bottomrule
+\end{tabularx}
+\end{gate}
+
+\textbf{Decision:} The measurements \(\bigcirc\) support
+\(\bigcirc\) do not support \(V=IR\) for these parts over the tested range.
+
+\medskip
+Learner \writein{1.1in}\qquad Adult inspection \writein{1.1in}\qquad
+Date \writein{.8in}
+
+\lessonsection{Extension: change topology, repeat the proof}
+Predict the equivalent resistance and maximum current for two 470 \(\Omega\)
+resistors first in series, then in parallel. Verify each network using the same
+connection atlas, two rebuilt runs, uncertainty bound, and acceptance gate.
+Do not use an LED as the Ohm's-law test article: it is nonlinear and
+polarity-sensitive.
+
+\begin{telosframe}
+\textbf{Boundary retained.} This chapter authorizes only the isolated two-AA
+holder shown here. It does not authorize mains, opened appliances, large
+battery packs, power capacitors, ignition coils, sparks, or exposed high
+voltage. Adult supervision does not make a person electrically qualified.
+\end{telosframe}
 \end{document}
