@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Import an official Windows 11 ISO, or print the exact acquisition step."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+import windows_media  # noqa: E402
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path)
+    parser.add_argument(
+        "--expected-sha256",
+        help="SHA-256 published by Microsoft for the selected ISO",
+    )
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+
+    if args.source is None:
+        print(windows_media.continuation(args.output), file=sys.stderr)
+        return 2
+    if args.expected_sha256 is None:
+        parser.error("--expected-sha256 is required with --source")
+    try:
+        record = windows_media.import_iso(
+            args.source, args.output, args.expected_sha256
+        )
+    except windows_media.MediaError as error:
+        print(error, file=sys.stderr)
+        return 2
+    print(f"imported {args.output}")
+    print(f"sha256 {record['sha256']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

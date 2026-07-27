@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "wimboot",
+  "version": "2.9.0",
+  "source": "https://github.com/ipxe/wimboot",
+  "release": "https://github.com/ipxe/wimboot/releases/tag/v2.9.0",
+  "url": "https://github.com/ipxe/wimboot/releases/download/v2.9.0/wimboot",
+  "size": 76064,
+  "sha256": "5f067ccdc4d084d5bf77b6c853bd0f8402dfc2b4cd1b103d358993ae97fae8e3"
+}

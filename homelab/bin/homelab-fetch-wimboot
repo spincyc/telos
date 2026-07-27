@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Fetch the pinned official wimboot release and verify every byte."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import tempfile
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlparse
+
+CHUNK = 1024 * 1024
+REPOSITORY = "https://github.com/ipxe/wimboot"
+DEFAULT_METADATA = Path(__file__).resolve().parents[1] / "media" / "wimboot.json"
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "var" / "media" / "wimboot"
+
+
+def load_metadata(path: Path) -> dict:
+    record = json.loads(path.read_text(encoding="utf-8"))
+    required = {"schema", "name", "version", "source", "release", "url", "size", "sha256"}
+    if set(record) != required or record["schema"] != 1 or record["name"] != "wimboot":
+        raise ValueError("invalid wimboot metadata")
+    if record["source"] != REPOSITORY:
+        raise ValueError("wimboot source must be the official iPXE repository")
+    parsed = urlparse(record["url"])
+    expected_path = f"/ipxe/wimboot/releases/download/v{record['version']}/wimboot"
+    if parsed.scheme != "https" or parsed.netloc != "github.com" or parsed.path != expected_path:
+        raise ValueError("wimboot URL is not the pinned official release asset")
+    if not isinstance(record["size"], int) or record["size"] <= 0:
+        raise ValueError("invalid wimboot size")
+    digest = record["sha256"]
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise ValueError("invalid wimboot SHA-256")
+    int(digest, 16)
+    return record
+
+
+def fetch(metadata: Path, output: Path) -> None:
+    record = load_metadata(metadata)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = urllib.request.Request(
+        record["url"], headers={"User-Agent": "telos-homelab-media/1"})
+    temporary_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".wimboot-", dir=output.parent, delete=False
+        ) as temporary:
+            temporary_name = temporary.name
+            digest = hashlib.sha256()
+            size = 0
+            with urllib.request.urlopen(descriptor) as response:
+                final = urlparse(response.geturl())
+                if final.scheme != "https" or final.netloc not in {
+                    "github.com", "release-assets.githubusercontent.com"
+                }:
+                    raise RuntimeError("wimboot download redirected outside GitHub")
+                while chunk := response.read(CHUNK):
+                    temporary.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        if size != record["size"]:
+            raise RuntimeError(f"wimboot size mismatch: expected {record['size']}, got {size}")
+        if digest.hexdigest() != record["sha256"]:
+            raise RuntimeError("wimboot SHA-256 mismatch")
+        os.chmod(temporary_name, 0o755)
+        os.replace(temporary_name, output)
+        temporary_name = None
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
+    print(f"verified wimboot {record['version']}: {output}")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    arguments = parser.parse_args(argv)
+    fetch(arguments.metadata.resolve(), arguments.output.resolve())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

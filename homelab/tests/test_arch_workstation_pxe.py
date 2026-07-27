@@ -1,6 +1,7 @@
 """Tests for the offline Arch workstation PXE release builder."""
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,6 +44,77 @@ class TestMediaValidation(unittest.TestCase):
                 target.stage(source=fake_media(root / "media"),
                              releases=root / "releases", version="latest",
                              base_url="http://boot.example.test/pxe/releases")
+
+
+class TestIsoExtraction(unittest.TestCase):
+    def test_extracts_mount_free_into_digest_addressed_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"iso bytes")
+            calls = []
+
+            def runner(command, **options):
+                calls.append((command, options))
+                fake_media(Path(command[-1]))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            extracted = target.extract_iso(image, root / "cache", runner)
+            self.assertEqual(extracted.parent.name, target.sha256(image))
+            self.assertEqual(calls[0][0][0:3], ("xorriso", "-osirrox", "on"))
+            self.assertNotIn("mount", calls[0][0])
+            self.assertEqual(
+                json.loads((extracted.parent / "receipt.json").read_text())[
+                    "image_sha256"
+                ],
+                target.sha256(image),
+            )
+
+    def test_reuses_only_an_untouched_extraction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"iso bytes")
+            calls = 0
+
+            def runner(command, **_options):
+                nonlocal calls
+                calls += 1
+                fake_media(Path(command[-1]))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            first = target.extract_iso(image, root / "cache", runner)
+            second = target.extract_iso(image, root / "cache", runner)
+            self.assertEqual(first, second)
+            self.assertEqual(calls, 1)
+
+    def test_refuses_a_tampered_cache_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"iso bytes")
+
+            def runner(command, **_options):
+                fake_media(Path(command[-1]))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            extracted = target.extract_iso(image, root / "cache", runner)
+            (extracted / "arch/x86_64/airootfs.sfs").write_bytes(b"tampered")
+            with self.assertRaisesRegex(target.TargetError, "invalid.*cache"):
+                target.extract_iso(image, root / "cache", runner)
+
+    def test_failed_extraction_leaves_no_cache_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "arch.iso"
+            image.write_bytes(b"iso bytes")
+
+            def runner(command, **_options):
+                raise subprocess.CalledProcessError(5, command, stderr="bad ISO")
+
+            with self.assertRaisesRegex(target.TargetError, "bad ISO"):
+                target.extract_iso(image, root / "cache", runner)
+            self.assertEqual(list((root / "cache").iterdir()), [])
 
 
 class TestRelease(unittest.TestCase):

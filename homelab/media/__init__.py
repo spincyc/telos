@@ -1,0 +1,1 @@
+"""Verified upstream media acquisition."""

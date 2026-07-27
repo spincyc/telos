@@ -5,6 +5,23 @@ WinPE boot. It does not download, commit, publish, or license Microsoft media.
 The operator is responsible for obtaining a genuine Windows 11 ISO and for
 licensing every installed workstation.
 
+Microsoft's supported consumer flow creates an expiring link after interactive
+product and language selection. The repository acquisition target downloads
+everything with a stable official source and stops here with an exact
+continuation. After downloading the ISO from Microsoft's page, import it with:
+
+```sh
+homelab/bin/homelab-fetch-windows \
+  --source ~/Downloads/Win11_English_x64.iso \
+  --expected-sha256 <SHA-256-published-by-Microsoft> \
+  --output homelab/var/downloads/windows-11.iso
+```
+
+Copy the digest Microsoft displays for the selected download. The importer
+refuses a mismatch; the ISO and its verification receipt stay under ignored
+`homelab/var/`. PXE staging independently confirms that the image advertises
+Windows 11 Pro.
+
 ## Inputs
 
 - a local Windows 11 x86-64 ISO;

@@ -11,8 +11,10 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 
 TARGET_ID = "arch-workstation"
@@ -53,14 +55,111 @@ def _refuse_links(root: Path) -> None:
         raise TargetError("symlinks are not valid PXE payloads: " + ", ".join(links))
 
 
+def _refuse_special_files(root: Path) -> None:
+    special = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if not path.is_symlink() and not path.is_dir() and not path.is_file()
+    )
+    if special:
+        raise TargetError(
+            "special files are not valid PXE payloads: " + ", ".join(special)
+        )
+
+
 def validate_source(source: Path) -> None:
     source = Path(source)
     if not source.is_dir():
         raise TargetError(f"Arch media root is not a directory: {source}")
     _refuse_links(source)
+    _refuse_special_files(source)
     missing = [str(name) for name in REQUIRED_MEDIA if not (source / name).is_file()]
     if missing:
         raise TargetError("Arch media is incomplete; missing: " + ", ".join(missing))
+
+
+def _extraction_receipt(root: Path, image_digest: str) -> dict:
+    return {
+        "schema": 1,
+        "image_sha256": image_digest,
+        "files": {
+            path.relative_to(root).as_posix(): {
+                "sha256": sha256(path),
+                "size": path.stat().st_size,
+            }
+            for path in _files(root)
+        },
+    }
+
+
+def _valid_extraction(directory: Path, image_digest: str) -> bool:
+    root = directory / "root"
+    receipt_path = directory / "receipt.json"
+    if not root.is_dir() or not receipt_path.is_file():
+        return False
+    try:
+        validate_source(root)
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (TargetError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return False
+    return receipt == _extraction_receipt(root, image_digest)
+
+
+def extract_iso(
+    image: Path,
+    cache: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> Path:
+    """Extract an Arch ISO without mounting it, caching only verified output."""
+    image = Path(image)
+    if not image.is_file():
+        raise TargetError(f"Arch ISO is not a regular file: {image}")
+    image_digest = sha256(image)
+    destination = Path(cache) / image_digest
+    if _valid_extraction(destination, image_digest):
+        return destination / "root"
+
+    Path(cache).mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{image_digest}.", dir=cache))
+    root = temporary / "root"
+    root.mkdir()
+    try:
+        try:
+            runner(
+                (
+                    "xorriso",
+                    "-osirrox", "on",
+                    "-indev", str(image.resolve()),
+                    "-extract", "/", str(root.resolve()),
+                ),
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        except FileNotFoundError as error:
+            raise TargetError(
+                "xorriso is required for mount-free Arch ISO extraction"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise TargetError(f"xorriso could not extract {image.name}{suffix}") from error
+        validate_source(root)
+        (temporary / "receipt.json").write_text(
+            json.dumps(
+                _extraction_receipt(root, image_digest), indent=2, sort_keys=True
+            ) + "\n",
+            encoding="utf-8",
+        )
+        if destination.exists():
+            if _valid_extraction(destination, image_digest):
+                return destination / "root"
+            raise TargetError(f"invalid Arch extraction cache entry: {destination}")
+        temporary.rename(destination)
+        return destination / "root"
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
 
 
 def render_ipxe(*, release_url: str) -> str:

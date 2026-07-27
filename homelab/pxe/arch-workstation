@@ -18,7 +18,11 @@ def main(argv=None) -> int:
 
     stage = commands.add_parser("stage", help="stage locally supplied Arch media")
     stage.add_argument("--source", required=True, type=Path,
-                       help="mounted or extracted Arch ISO root")
+                       help="Arch ISO file, mounted ISO, or extracted ISO root")
+    stage.add_argument(
+        "--extraction-cache", type=Path,
+        default=Path("homelab/var/media/arch/extracted"),
+        help="ignored cache for mount-free ISO extraction")
     stage.add_argument("--releases", required=True, type=Path)
     stage.add_argument("--version", required=True)
     stage.add_argument("--base-url", required=True,
@@ -30,8 +34,12 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "stage":
+            source = args.source
+            if source.is_file():
+                source = arch_workstation.extract_iso(
+                    source, args.extraction_cache)
             output = arch_workstation.stage(
-                source=args.source, releases=args.releases,
+                source=source, releases=args.releases,
                 version=args.version, base_url=args.base_url)
             print(f"staged {arch_workstation.TARGET_ID} {args.version}: {output}")
             print("verified manifest: pass")
