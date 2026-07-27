@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "73e77cf3-f91d-47ae-ae5f-f0d80aea879a"
 title: "Complete sealed media and immutable PXE releases"
-status: "active"
+status: "blocked"
 priority: "high"
 priority_reason: "First incomplete executable factory gates"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
 superseded_by: null
 created_at: "2026-07-27T21:51:51Z"
-updated_at: "2026-07-27T22:39:26Z"
+updated_at: "2026-07-27T22:47:12Z"
 ---
 
 # Goal
@@ -53,3 +53,22 @@ The sealed Arch ISO now derives a mount-free, digest-addressed 96-file source
 cache. The next slice must build the missing purpose-built Controller
 mkarchiso netboot output and then build the first set. The `TELOS_SEED` data
 disc is not a valid substitute.
+
+Controller source intake now rejects links, special files, and empty required
+payloads; target metadata binds the complete copied source inventory. The
+unsupported `cms_verify=y` claim was removed pending a defined signing-key
+contract.
+
+## Blocker
+
+The audited profile is staged at `/tmp/homelab-image/profile`, but `mkarchiso`
+requires root and this host's sudo policy requires an interactive password.
+The rootless user-namespace path also fails at `newuidmap`. No valid prebuilt
+Controller output exists.
+
+## Resume
+
+An operator must run the exact staged `sudo mkarchiso` command recorded in the
+latest event and place its verified netboot output at
+`homelab/var/media/controller/netboot`. Then build and verify the first
+transactional release set.

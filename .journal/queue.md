@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-generated_at: "2026-07-27T22:40:52Z"
+generated_at: "2026-07-27T22:47:43Z"
 task_count: 10
 ---
 
@@ -10,7 +10,7 @@ This file is a rebuildable view. Task `state.md` files are authoritative.
 
 ## Active
 
-- `73e77cf3-f91d-47ae-ae5f-f0d80aea879a` — Complete sealed media and immutable PXE releases [active, high] (depends on ebd2daed-fc26-4851-b1e7-cbd86dba96c0, 97541f7d-8649-4520-af30-9bd8deba2b00)
+None.
 
 ## Queued
 
@@ -24,7 +24,7 @@ This file is a rebuildable view. Task `state.md` files are authoritative.
 
 ## Blocked
 
-None.
+- `73e77cf3-f91d-47ae-ae5f-f0d80aea879a` — Complete sealed media and immutable PXE releases [blocked, high] (depends on ebd2daed-fc26-4851-b1e7-cbd86dba96c0, 97541f7d-8649-4520-af30-9bd8deba2b00)
 
 ## Terminal
 

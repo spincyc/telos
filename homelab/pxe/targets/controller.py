@@ -47,12 +47,53 @@ def _files(root: Path) -> list[Path]:
     )
 
 
-def _refuse_links(root: Path) -> None:
+def _validate_tree(root: Path) -> None:
     links = sorted(path.relative_to(root).as_posix()
                    for path in root.rglob("*") if path.is_symlink())
     if links:
         raise TargetError("symlinks are not valid PXE payloads: "
                           + ", ".join(links))
+    special = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if not path.is_symlink() and not path.is_dir() and not path.is_file()
+    )
+    if special:
+        raise TargetError("special files are not valid PXE payloads: "
+                          + ", ".join(special))
+
+
+def _inventory(root: Path) -> dict[str, dict[str, object]]:
+    return {
+        path.relative_to(root).as_posix(): {
+            "sha256": sha256(path),
+            "size": path.stat().st_size,
+        }
+        for path in _files(root)
+    }
+
+
+def _arch_inventory(root: Path) -> dict[str, dict[str, object]]:
+    """Inventory the ``arch/`` subtree using mkarchiso-relative names."""
+    return {
+        f"arch/{name}": record
+        for name, record in _inventory(Path(root) / "arch").items()
+    }
+
+
+def validate_source(source: Path) -> dict[str, dict[str, object]]:
+    """Validate and inventory one completed mkarchiso netboot output."""
+    source = Path(source)
+    if not source.is_dir() or source.is_symlink():
+        raise TargetError(f"mkarchiso netboot output is missing: {source}")
+    _validate_tree(source)
+    for relative in REQUIRED_PAYLOADS:
+        payload = source / relative
+        if not payload.is_file() or payload.is_symlink():
+            raise TargetError(f"required netboot payload is missing: {relative}")
+        if payload.stat().st_size == 0:
+            raise TargetError(f"required netboot payload is empty: {relative}")
+    return _arch_inventory(source)
 
 
 def render_ipxe(base_url: str) -> str:
@@ -67,7 +108,6 @@ echo Loading versioned Controller installer from ${{base}}
 kernel ${{base}}/payload/arch/boot/x86_64/vmlinuz-linux \\
     archisobasedir=arch \\
     archiso_http_srv=${{base}}/payload/ \\
-    cms_verify=y \\
     console=ttyS0,115200 console=tty0 \\
     initrd=initramfs-linux.img
 initrd ${{base}}/payload/arch/boot/x86_64/initramfs-linux.img
@@ -95,16 +135,14 @@ def _manifest(release: Path, version: str) -> dict:
 
 
 def stage(source: Path, releases: Path, version: str, base_url: str) -> Path:
+    source = Path(source)
+    if source.is_symlink():
+        raise TargetError("mkarchiso netboot output must not be a symlink")
     source = source.resolve()
     releases = releases.resolve()
     if not VERSION_PATTERN.fullmatch(version):
         raise TargetError("version must have form YYYYMMDD.NNN")
-    if not source.is_dir():
-        raise TargetError(f"mkarchiso netboot output is missing: {source}")
-    _refuse_links(source)
-    for relative in REQUIRED_PAYLOADS:
-        if not (source / relative).is_file():
-            raise TargetError(f"required netboot payload is missing: {relative}")
+    source_inventory = validate_source(source)
 
     destination = releases / TARGET_ID / version
     if destination.exists():
@@ -123,6 +161,10 @@ def stage(source: Path, releases: Path, version: str, base_url: str) -> Path:
             "kind": KIND,
             "version": version,
             "entrypoints": ["boot.ipxe"],
+            "source": {
+                "kind": "mkarchiso-netboot",
+                "artifacts": source_inventory,
+            },
         }
         (temporary / "target.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
@@ -147,7 +189,7 @@ def verify(release: Path, *, expected_version: str | None = None) -> list[str]:
     if not release.is_dir():
         return [f"release is missing: {release}"]
     try:
-        _refuse_links(release)
+        _validate_tree(release)
     except TargetError as error:
         problems.append(str(error))
 
@@ -165,6 +207,10 @@ def verify(release: Path, *, expected_version: str | None = None) -> list[str]:
         "kind": KIND,
         "version": directory_version,
         "entrypoints": ["boot.ipxe"],
+        "source": {
+            "kind": "mkarchiso-netboot",
+            "artifacts": _arch_inventory(release / "payload"),
+        },
     }
     if metadata != expected_metadata:
         problems.append("target.json does not match the Controller target contract")
