@@ -166,11 +166,45 @@ class TestPlaybooks(unittest.TestCase):
         text = (ANSIBLE / "roles/identity_client/tasks/main.yml").read_text()
         self.assertNotIn("-U ", text.replace("net ads join -U <directory-administrator>", ""))
 
-    def test_identity_client_sets_an_explicit_offline_lifetime(self):
-        # ADR 0055 requires this to be chosen, not inherited.
+    def test_identity_client_uses_only_official_arch_join_packages(self):
+        tasks = self.load("roles/identity_client/tasks/main.yml")
+        package_task = next(
+            task for task in tasks
+            if task.get("name") == "Install the directory client"
+        )
+        packages = package_task["ansible.builtin.package"]["name"]
+        self.assertEqual(packages, ["sssd", "samba", "krb5"])
+        self.assertNotIn("adcli", packages)
+        self.assertNotIn("oddjob-mkhomedir", packages)
+
+    def test_identity_client_tests_the_samba_join_and_uses_pam_homes(self):
+        tasks = self.load("roles/identity_client/tasks/main.yml")
+        commands = [
+            task["ansible.builtin.command"]
+            for task in tasks if "ansible.builtin.command" in task
+        ]
+        self.assertIn("/usr/bin/net ads testjoin", commands)
+        text = (ANSIBLE / "roles/identity_client/tasks/main.yml").read_text()
+        self.assertIn("pam_mkhomedir.so", text)
+        samba = (
+            ANSIBLE / "roles/identity_client/templates/smb.conf.j2"
+        ).read_text()
+        self.assertIn("security = ADS", samba)
+        self.assertIn("homelab_identity_netbios_domain", samba)
+
+    def test_identity_client_sets_indefinite_offline_lifetime(self):
+        # ADR 0071: SSSD defines zero as no expiration.
         defaults = self.load("roles/identity_client/defaults/main.yml")
-        self.assertGreaterEqual(
-            defaults["homelab_identity_offline_credentials_days"], 14)
+        self.assertEqual(
+            defaults["homelab_identity_offline_credentials_expiration_days"], 0)
+        template = (
+            ANSIBLE / "roles/identity_client/templates/sssd.conf.j2"
+        ).read_text()
+        self.assertIn(
+            "offline_credentials_expiration = "
+            "{{ homelab_identity_offline_credentials_expiration_days }}",
+            template,
+        )
 
     def test_controller_network_does_not_enable_the_network_services(self):
         # ADR 0009: dnsmasq and nginx start only after first-boot activation has

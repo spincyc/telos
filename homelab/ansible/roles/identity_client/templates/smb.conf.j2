@@ -1,0 +1,6 @@
+# Managed by Ansible (roles/identity_client). Edits are overwritten.
+[global]
+    security = ADS
+    realm = {{ homelab_identity_realm | upper }}
+    workgroup = {{ homelab_identity_netbios_domain | upper }}
+    kerberos method = secrets and keytab

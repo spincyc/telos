@@ -27,3 +27,4 @@ homelab_services: []
 homelab_identity_enabled: false
 homelab_identity_domain: <domain>.home.arpa
 homelab_identity_realm: <DOMAIN>.HOME.ARPA
+homelab_identity_netbios_domain: <DOMAIN>

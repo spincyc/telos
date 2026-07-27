@@ -7,11 +7,12 @@
 # is how a working machine stops being able to log in.
 homelab_identity_domain: ""
 homelab_identity_realm: ""
+homelab_identity_netbios_domain: ""
 
-# Longer than a normal trip. ADR 0055 requires this to be set explicitly rather
-# than inherited from a default nobody chose: a laptop that runs out of cached
-# credentials in an airport cannot log in at all.
-homelab_identity_offline_credentials_days: 30
+# ADR 0071 permits indefinite cached logon for machines away at college.
+# SSSD defines zero as no expiration; keep the value explicit so a package
+# default cannot silently shorten the offline lifetime.
+homelab_identity_offline_credentials_expiration_days: 0
 
 # The directory owns UID and GID. Enumeration is off because it makes every
 # `ls -l` a directory query.

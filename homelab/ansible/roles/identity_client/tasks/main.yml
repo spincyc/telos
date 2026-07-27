@@ -4,9 +4,10 @@
     that:
       - homelab_identity_domain | length > 0
       - homelab_identity_realm | length > 0
+      - homelab_identity_netbios_domain | length > 0
     fail_msg: >-
-      identity_client was enabled without a domain or realm. Enable it only
-      once the directory exists and answers.
+      identity_client was enabled without a DNS domain, Kerberos realm, or
+      NetBIOS domain. Enable it only once the directory exists and answers.
 
 - name: Refuse to join a machine with no local way back in
   # The directory is a bootstrap dependency (ADR 0055). While it is down, only
@@ -24,11 +25,8 @@
   ansible.builtin.package:
     name:
       - sssd
-      - sssd-tools
-      - adcli
       - samba          # net ads join
       - krb5
-      - oddjob-mkhomedir
     state: present
 
 - name: Configure Kerberos
@@ -48,8 +46,16 @@
     mode: "0600"
   notify: restart sssd
 
+- name: Configure Samba AD client
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Check whether this machine is already joined
-  ansible.builtin.command: /usr/sbin/adcli testjoin --domain={{ homelab_identity_domain }}
+  ansible.builtin.command: /usr/bin/net ads testjoin
   register: homelab_identity_joined
   changed_when: false
   failed_when: false

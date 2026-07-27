@@ -26,6 +26,10 @@ and remote check-in are phase-two or phase-three work.
 This amends only ADR 0055's finite offline credential lifetime. Its other
 identity decisions remain accepted.
 
+On Arch, set SSSD's `offline_credentials_expiration` to `0`, its documented
+no-expiration value. Do not omit the setting or substitute a large finite
+number.
+
 ## Consequences
 
 - Long trips do not strand users.

@@ -9,12 +9,12 @@ id_provider = ad
 access_provider = ad
 ad_domain = {{ homelab_identity_domain }}
 krb5_realm = {{ homelab_identity_realm | upper }}
-realmd_tags = manages-system joined-with-adcli
+realmd_tags = manages-system joined-with-samba
 cache_credentials = True
-# ADR 0055: an explicit lifetime, longer than a normal trip. The default is
-# short enough that a laptop away for two weeks stops being able to log in.
+# ADR 0071: SSSD defines zero as no expiration. A disconnected machine cannot
+# learn that an AD account was disabled; phase 2 owns stronger revocation.
 krb5_store_password_if_offline = True
-offline_credentials_expiration = {{ homelab_identity_offline_credentials_days }}
+offline_credentials_expiration = {{ homelab_identity_offline_credentials_expiration_days }}
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
 fallback_homedir = /home/%u

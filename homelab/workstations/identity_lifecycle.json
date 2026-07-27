@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "network_policy": {
+    "mode": "local-only",
+    "external_access": "forbidden"
+  },
+  "principals": {
+    "standard_user": {
+      "name": "student",
+      "domain_role": "user",
+      "workstation_role": "standard"
+    },
+    "daily_administrator": {
+      "name": "operator",
+      "domain_role": "user",
+      "workstation_role": "administrator"
+    },
+    "domain_administrator": {
+      "name": "directory-admin",
+      "domain_role": "administrator",
+      "workstation_role": "administrator"
+    },
+    "local_rescue": {
+      "name": "local-rescue",
+      "domain_role": "none",
+      "workstation_role": "administrator"
+    }
+  },
+  "required_checks": [
+    "controller-ready",
+    "windows-joined",
+    "arch-joined",
+    "windows-standard-online",
+    "arch-standard-online",
+    "windows-daily-admin",
+    "arch-daily-admin",
+    "domain-admin-separate",
+    "controller-offline",
+    "windows-cached-login",
+    "arch-cached-login",
+    "windows-uncached-denied",
+    "arch-uncached-denied",
+    "windows-local-rescue",
+    "arch-local-rescue",
+    "controller-restored",
+    "windows-secure-channel-restored",
+    "arch-identity-restored"
+  ],
+  "deferred_checks": [
+    {
+      "id": "disable-reenable",
+      "phase": 2,
+      "reason": "Cached offline credentials cannot provide immediate revocation. Phase 2 must test online disable, cached-offline behavior, re-enable, and credential rotation explicitly."
+    }
+  ]
+}
