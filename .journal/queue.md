@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-generated_at: "2026-07-27T21:53:28Z"
+generated_at: "2026-07-27T21:55:07Z"
 task_count: 10
 ---
 
@@ -14,7 +14,6 @@ None.
 
 ## Queued
 
-- `ebd2daed-fc26-4851-b1e7-cbd86dba96c0` — Restore repository verification gate [queued, high]
 - `97541f7d-8649-4520-af30-9bd8deba2b00` — Reconcile factory durable state and local inputs [queued, high]
 - `73e77cf3-f91d-47ae-ae5f-f0d80aea879a` — Complete sealed media and immutable PXE releases [queued, high] (depends on ebd2daed-fc26-4851-b1e7-cbd86dba96c0, 97541f7d-8649-4520-af30-9bd8deba2b00)
 - `c9c5d25a-3d94-4eaa-95b8-2cadbd44633c` — Prove integrated isolated PXE handoff [queued, high] (depends on 73e77cf3-f91d-47ae-ae5f-f0d80aea879a)
@@ -31,4 +30,4 @@ None.
 
 ## Terminal
 
-None.
+- `ebd2daed-fc26-4851-b1e7-cbd86dba96c0` — Restore repository verification gate [done, high]
