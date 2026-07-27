@@ -123,6 +123,13 @@
       "description": "Attach the bootstrap Controller to a restricted UniFi network and verify every boundary."
     },
     {
+      "source": "site/pages/homelab/controller-network-simulation.md",
+      "output": "projects/homelab/controller-network-simulation/index.html",
+      "title": "Controller Network Simulation",
+      "layout": "default",
+      "description": "Rehearse controller networking in a disposable loopback-only QEMU lab without changing UniFi."
+    },
+    {
       "source": "site/pages/homelab/workstation-owner-guide.md",
       "output": "projects/homelab/workstation-owner-guide/index.html",
       "title": "Workstation Owner Guide",
