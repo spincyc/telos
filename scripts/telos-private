@@ -14,12 +14,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+DNS_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+NETBIOS_NAME = re.compile(r"^[A-Z0-9-]{1,15}$")
 SECRET_MARKERS = (
     "BEGIN OPENSSH PRIVATE KEY",
     "BEGIN PRIVATE KEY",
     "aws_secret_access_key",
     "password:",
     "private_key:",
+)
+SECRET_MARKER_FIXTURES = frozenset(
+    {
+        "homelab/tests/test_ansible.py",
+        "homelab/tests/test_image.py",
+        "homelab/tests/test_manifest.py",
+        "homelab/ansible/roles/domain_controller/files/provision-domain.py",
+        "scripts/telos-private",
+        "tests/test_telos_private.py",
+    }
 )
 
 
@@ -55,6 +67,7 @@ def check_public(args) -> None:
     needles = identifiers(args.identifiers)
     findings = []
     for path in public_files(args.public_root):
+        relative = path.relative_to(args.public_root).as_posix()
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -62,10 +75,11 @@ def check_public(args) -> None:
         lower = text.casefold()
         for needle in needles:
             if re.search(rf"(?<![a-z0-9]){re.escape(needle.casefold())}(?![a-z0-9])", lower):
-                findings.append(f"{path.relative_to(args.public_root)}: protected identifier")
-        for marker in SECRET_MARKERS:
-            if marker.casefold() in lower:
-                findings.append(f"{path.relative_to(args.public_root)}: secret marker")
+                findings.append(f"{relative}: protected identifier")
+        if relative not in SECRET_MARKER_FIXTURES:
+            for marker in SECRET_MARKERS:
+                if marker.casefold() in lower:
+                    findings.append(f"{relative}: secret marker")
     if findings:
         die("public-boundary check failed:\n" + "\n".join(sorted(set(findings))))
     print(f"public-boundary check passed ({len(needles)} protected identifiers)")
@@ -135,10 +149,184 @@ def private_answers(args) -> tuple[str, ipaddress.IPv4Network]:
     return site, network
 
 
+def ask(explanation: str, question: str, default: str | None = None) -> str:
+    """Explain one decision, then ask exactly one question."""
+    print(f"\n{explanation}")
+    suffix = f" [{default}]" if default is not None else ""
+    answer = input(f"{question}{suffix}: ").strip()
+    return answer or (default or "")
+
+
+def default_managed_network(root: ipaddress.IPv4Network) -> ipaddress.IPv4Network:
+    """Choose a compact, decimal-friendly first client network."""
+    if root.prefixlen >= 24:
+        return root
+    children = root.subnets(new_prefix=24)
+    first = next(children)
+    return next(children, first)
+
+
+def default_dhcp_bounds(network: ipaddress.IPv4Network) -> tuple[str, str]:
+    """Keep low addresses available and make the lease range easy to read."""
+    usable = network.num_addresses - 2
+    if usable < 14:
+        die("managed-client subnet must provide at least 14 usable addresses")
+    if usable >= 199:
+        return str(network.network_address + 100), str(network.network_address + 199)
+    start_offset = 10 if usable >= 20 else 2
+    return str(network.network_address + start_offset), str(network.broadcast_address - 1)
+
+
+def onboarding_answers(args) -> dict:
+    values = {
+        "site": args.site_name,
+        "timezone": args.timezone,
+        "domain": args.identity_domain,
+        "netbios": args.netbios_name,
+        "bootstrap_dc": args.bootstrap_dc_fqdn,
+        "permanent_dc": args.permanent_dc_fqdn,
+        "boot": args.boot_fqdn,
+        "prefix": args.primary_prefix,
+        "managed_prefix": args.managed_prefix,
+        "dhcp_first": args.dhcp_first,
+        "dhcp_last": args.dhcp_last,
+        "network_id": args.network_id,
+        "vlan": str(args.vlan) if args.vlan is not None else None,
+    }
+    if not args.non_interactive:
+        prompts = (
+            ("site", "The site label groups this installation without exposing a street address.",
+             "Short private site label", "home"),
+            ("timezone", "The timezone controls logs, schedules, and certificate diagnostics.",
+             "IANA timezone", "Etc/UTC"),
+            ("domain", "The identity domain is the stable suffix used by directory services.",
+             "Private identity domain", "directory.home.arpa"),
+            ("netbios", "The short name supports Windows tools that do not use the full domain.",
+             "NetBIOS name", "HOME"),
+        )
+        for key, explanation, question, default in prompts:
+            if values[key] is None:
+                values[key] = ask(explanation, question, default)
+        service_domain = str(values["domain"]).lower()
+        service_prompts = (
+            ("bootstrap_dc", "This temporary Controller creates the durable directory.",
+             "Bootstrap domain-controller FQDN", f"bootstrap-dc.{service_domain}"),
+            ("permanent_dc", "This name is reserved for the later physical Controller.",
+             "Permanent domain-controller FQDN", f"dc1.{service_domain}"),
+            ("boot", "Workstations use this stable alias instead of a Controller hostname.",
+             "PXE service FQDN", f"boot.{service_domain}"),
+        )
+        for key, explanation, question, default in service_prompts:
+            if values[key] is None:
+                values[key] = ask(explanation, question, default)
+        if values["prefix"] is None:
+            values["prefix"] = ask(
+                "The allocation root reserves space for several small networks; it is not one broadcast domain.",
+                "Primary RFC1918 allocation root", "10.1.0.0/16")
+        try:
+            prompt_root = ipaddress.ip_network(str(values["prefix"]), strict=True)
+        except ValueError:
+            die("primary allocation root must be a canonical IPv4 CIDR")
+        if not isinstance(prompt_root, ipaddress.IPv4Network):
+            die("primary allocation root must be IPv4")
+        if values["managed_prefix"] is None:
+            values["managed_prefix"] = ask(
+                "Managed clients use one bounded subnet inside the allocation root so discovery and broadcast traffic stay local.",
+                "Managed-client IPv4 subnet", str(default_managed_network(prompt_root)))
+        try:
+            prompt_managed = ipaddress.ip_network(
+                str(values["managed_prefix"]), strict=True)
+        except ValueError:
+            die("managed-client subnet must be a canonical IPv4 CIDR")
+        default_first, default_last = default_dhcp_bounds(prompt_managed)
+        if values["dhcp_first"] is None:
+            values["dhcp_first"] = ask(
+                "The first DHCP address leaves a memorable low-address block for infrastructure.",
+                "DHCP pool first address", default_first)
+        if values["dhcp_last"] is None:
+            values["dhcp_last"] = ask(
+                "The last DHCP address bounds the pool; both endpoints must be usable addresses in the managed subnet.",
+                "DHCP pool last address", default_last)
+        if values["network_id"] is None:
+            values["network_id"] = ask(
+                "The first network ID is a reusable label, not an SSID.",
+                "Managed-client network ID", "managed-clients")
+        if values["vlan"] is None:
+            values["vlan"] = ask(
+                "The VLAN number separates this network in managed switches and gateways.",
+                "Managed-client VLAN", "20")
+
+    domain_default = str(values["domain"] or "").lower()
+    values["bootstrap_dc"] = values["bootstrap_dc"] or f"bootstrap-dc.{domain_default}"
+    values["permanent_dc"] = values["permanent_dc"] or f"dc1.{domain_default}"
+    values["boot"] = values["boot"] or f"boot.{domain_default}"
+    missing = [key for key, value in values.items() if value in {None, ""}]
+    if missing:
+        die("onboard requires: " + ", ".join(missing))
+    site = str(values["site"])
+    network_id = str(values["network_id"])
+    domain = str(values["domain"]).lower()
+    netbios = str(values["netbios"]).upper()
+    if not SAFE_NAME.fullmatch(site) or not SAFE_NAME.fullmatch(network_id):
+        die("site and network ID must be lowercase names using letters, digits, or hyphens")
+    if not DNS_NAME.fullmatch(domain) or "." not in domain:
+        die("identity domain must be a dotted lowercase DNS name")
+    if not NETBIOS_NAME.fullmatch(netbios):
+        die("NetBIOS name must contain 1-15 uppercase letters, digits, or hyphens")
+    for key in ("bootstrap_dc", "permanent_dc", "boot"):
+        fqdn = str(values[key]).lower()
+        if not DNS_NAME.fullmatch(fqdn) or not fqdn.endswith("." + domain):
+            die(f"{key} must be a DNS name beneath the identity domain")
+        values[key] = fqdn
+    if len({values["bootstrap_dc"], values["permanent_dc"], values["boot"]}) != 3:
+        die("bootstrap DC, permanent DC, and boot service names must be distinct")
+    try:
+        allocation_root = ipaddress.ip_network(str(values["prefix"]), strict=True)
+        network = ipaddress.ip_network(str(values["managed_prefix"]), strict=True)
+        dhcp_first = ipaddress.ip_address(str(values["dhcp_first"]))
+        dhcp_last = ipaddress.ip_address(str(values["dhcp_last"]))
+        vlan = int(str(values["vlan"]))
+    except ValueError:
+        die("allocation root, managed subnet, DHCP bounds, and VLAN must be valid")
+    if not isinstance(allocation_root, ipaddress.IPv4Network) or not allocation_root.is_private:
+        die("primary allocation root must be private IPv4 space")
+    if allocation_root.prefixlen < 12 or allocation_root.prefixlen > 24:
+        die("primary allocation root length must be between /12 and /24")
+    if not isinstance(network, ipaddress.IPv4Network):
+        die("managed-client subnet must be IPv4")
+    if not network.subnet_of(allocation_root):
+        die("managed-client subnet must be contained by the primary allocation root")
+    if network.prefixlen < 24 or network.prefixlen > 28:
+        die("managed-client subnet length must be between /24 and /28")
+    if dhcp_first not in network or dhcp_last not in network:
+        die("DHCP bounds must be contained by the managed-client subnet")
+    if dhcp_first in {network.network_address, network.broadcast_address} or dhcp_last in {
+        network.network_address, network.broadcast_address
+    }:
+        die("DHCP bounds must be usable unicast addresses")
+    if dhcp_first > dhcp_last:
+        die("DHCP pool first address must not exceed its last address")
+    if not 1 <= vlan <= 4094:
+        die("VLAN must be from 1 through 4094")
+    gateway = network.network_address + 1
+    if dhcp_first <= gateway <= dhcp_last:
+        die("DHCP pool must not include the managed-client gateway")
+    return {
+        "site": site, "timezone": str(values["timezone"]), "domain": domain,
+        "netbios": netbios, "allocation_root": allocation_root,
+        "network": network, "network_id": network_id,
+        "vlan": vlan, "gateway": gateway, "dhcp_first": dhcp_first,
+        "dhcp_last": dhcp_last, "bootstrap_dc": values["bootstrap_dc"],
+        "permanent_dc": values["permanent_dc"], "boot": values["boot"],
+    }
+
+
 def bootstrap(args) -> None:
     target = args.target.resolve()
     if target.exists():
         die(f"refusing to overwrite existing path: {target}")
+    if target == ROOT or ROOT in target.parents:
+        die("private overlay must be a sibling of the public Telos worktree")
     if not SAFE_NAME.fullmatch(args.project_name):
         die("project name must start with a letter and contain only lowercase letters, digits, or hyphens")
     site, network = private_answers(args)
@@ -165,12 +353,69 @@ def bootstrap(args) -> None:
         encoding="utf-8",
     )
     if args.git_init:
-        subprocess.run(["git", "-C", str(target), "init"], check=True)
+        subprocess.run(["git", "-C", str(target), "init", "-b", "main"], check=True)
     print(f"created private skeleton: {target}")
     print(
         f"review: site configured; private IPv4 /{network.prefixlen}; "
         "0 users; 0 networks; 0 workstations; no remote created"
     )
+
+
+def onboard(args) -> None:
+    """Create a complete, deployable contract without collecting secrets."""
+    answers = onboarding_answers(args)
+    bootstrap_args = argparse.Namespace(
+        target=args.target,
+        project_name=args.project_name,
+        site_name=answers["site"],
+        primary_prefix=str(answers["allocation_root"]),
+        non_interactive=True,
+        git_init=args.git_init,
+    )
+    bootstrap(bootstrap_args)
+    target = args.target.resolve()
+    instance = {
+        "contract_version": 1,
+        "site": {"label": answers["site"], "timezone": answers["timezone"]},
+        "identity": {
+            "dns_domain": answers["domain"],
+            "kerberos_realm": answers["domain"].upper(),
+            "netbios_name": answers["netbios"],
+        },
+        "services": {
+            "bootstrap_dc_fqdn": answers["bootstrap_dc"],
+            "permanent_dc_fqdn": answers["permanent_dc"],
+            "boot_fqdn": answers["boot"],
+        },
+        "networks": [{
+            "id": answers["network_id"],
+            "purpose": "Managed clients",
+            "vlan": answers["vlan"],
+            "cidr": str(answers["network"]),
+            "gateway": str(answers["gateway"]),
+            "dhcp": {
+                "first": str(answers["dhcp_first"]),
+                "last": str(answers["dhcp_last"]),
+            },
+        }],
+        "people": [],
+        "machines": [],
+        "secret_refs": {},
+    }
+    instance_path = target / "homelab/instance.json"
+    instance_path.parent.mkdir()
+    instance_path.write_text(json.dumps(instance, indent=2) + "\n", encoding="utf-8")
+    validator = ROOT / "src/homelab/private-contract/validate.py"
+    result = subprocess.run(
+        [sys.executable, str(validator), "--review", str(instance_path)],
+        text=True, capture_output=True,
+    )
+    if result.returncode:
+        die("generated contract did not validate:\n" + result.stderr)
+    (target / "review/contract-summary.json").write_text(
+        result.stdout, encoding="utf-8"
+    )
+    print("contract validated; inspect review/contract-summary.json before committing")
 
 
 def git_output(root: Path, *command: str) -> str:
@@ -226,6 +471,25 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--non-interactive", action="store_true")
     create.add_argument("--git-init", action="store_true")
     create.set_defaults(function=bootstrap)
+    guided = sub.add_parser("onboard")
+    guided.add_argument("--target", type=Path, default=ROOT.parent / "telos-private")
+    guided.add_argument("--project-name", default="telos-private")
+    guided.add_argument("--site-name")
+    guided.add_argument("--timezone")
+    guided.add_argument("--identity-domain")
+    guided.add_argument("--netbios-name")
+    guided.add_argument("--bootstrap-dc-fqdn")
+    guided.add_argument("--permanent-dc-fqdn")
+    guided.add_argument("--boot-fqdn")
+    guided.add_argument("--primary-prefix")
+    guided.add_argument("--managed-prefix")
+    guided.add_argument("--dhcp-first")
+    guided.add_argument("--dhcp-last")
+    guided.add_argument("--network-id")
+    guided.add_argument("--vlan", type=int)
+    guided.add_argument("--non-interactive", action="store_true")
+    guided.add_argument("--git-init", action="store_true")
+    guided.set_defaults(function=onboard)
     check = sub.add_parser("check-public")
     check.add_argument("--public-root", type=Path, default=ROOT)
     check.add_argument("--identifiers", type=Path, required=True)

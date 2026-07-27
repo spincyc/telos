@@ -41,11 +41,26 @@ def validate(data: object) -> list[str]:
                 scan_keys(child, f"{path}[{index}]")
 
     scan_keys(data)
-    required = {"contract_version", "site", "identity", "networks", "people",
-                "machines", "secret_refs"}
+    required = {"contract_version", "site", "identity", "services", "networks",
+                "people", "machines", "secret_refs"}
     require(required <= data.keys(), f"missing keys: {sorted(required - data.keys())}", errors)
     require(data.get("contract_version") == CONTRACT_VERSION,
             f"contract_version must be {CONTRACT_VERSION}", errors)
+
+    domain = data.get("identity", {}).get("dns_domain")
+    services = data.get("services", {})
+    require(isinstance(services, dict), "services must be an object", errors)
+    service_names: list[str] = []
+    if isinstance(services, dict):
+        for key in ("bootstrap_dc_fqdn", "permanent_dc_fqdn", "boot_fqdn"):
+            value = services.get(key)
+            require(isinstance(value, str) and isinstance(domain, str) and
+                    value.endswith("." + domain),
+                    f"services.{key}: must be beneath the identity domain", errors)
+            if isinstance(value, str):
+                service_names.append(value)
+        require(len(service_names) == len(set(service_names)),
+                "service FQDNs must be distinct", errors)
 
     networks = data.get("networks", [])
     require(isinstance(networks, list) and bool(networks),
@@ -140,12 +155,16 @@ def redacted_review(data: dict) -> dict:
             "netbios_name": "<configured>"
             if data.get("identity", {}).get("netbios_name") else None,
         },
+        "services": {
+            key: "<configured>" if value else None
+            for key, value in data.get("services", {}).items()
+        },
         "networks": [
             {
                 "id": item.get("id"),
                 "purpose": item.get("purpose"),
                 "vlan": item.get("vlan"),
-                "cidr": item.get("cidr"),
+                "cidr": "<configured>" if item.get("cidr") else None,
                 "ssid": "<redacted>" if item.get("ssid") else None,
                 "wifi_secret_ref": "<configured>" if item.get("wifi_secret_ref") else None,
             }

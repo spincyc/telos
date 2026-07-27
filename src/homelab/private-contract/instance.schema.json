@@ -8,6 +8,7 @@
     "contract_version",
     "site",
     "identity",
+    "services",
     "networks",
     "people",
     "machines",
@@ -32,6 +33,16 @@
         "dns_domain": { "$ref": "#/$defs/dnsName" },
         "kerberos_realm": { "type": "string", "pattern": "^[A-Z0-9.-]+$" },
         "netbios_name": { "type": "string", "pattern": "^[A-Z0-9-]{1,15}$" }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrap_dc_fqdn", "permanent_dc_fqdn", "boot_fqdn"],
+      "properties": {
+        "bootstrap_dc_fqdn": { "$ref": "#/$defs/dnsName" },
+        "permanent_dc_fqdn": { "$ref": "#/$defs/dnsName" },
+        "boot_fqdn": { "$ref": "#/$defs/dnsName" }
       }
     },
     "networks": {
