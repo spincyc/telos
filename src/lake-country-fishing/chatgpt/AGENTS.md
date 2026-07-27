@@ -54,13 +54,15 @@ instructional diagrams, including distinct structures such as pike Y-bones.
   hierarchy, warnings, maps, keys, or diagrams.
 - Use original monochrome line diagrams rather than photographs for
   instructional sequences.
-- Every named fish needs its own anatomically credible identification plate.
-  Do not reuse a generic silhouette with cosmetic parameter changes. Body
-  proportions, jaw reach, operculum, fin plan, tail, and diagnostic markings
-  must distinguish the species and its likely confusion pairs without color.
-- Reuse that species plate in cleaning and bone-map views so anatomy cannot
-  change between the field and kitchen sheets. Procedural overlays and labels
-  must sit outside important anatomy and remain fully visible.
+- Every named fish needs its own realistic fine-graphite natural-history
+  portrait. Do not use a generic silhouette, cosmetic parameter changes,
+  cartoons, or code-drawn icons for the identification plate. Body proportions,
+  jaw reach, operculum, fin plan, tail, and diagnostic markings must distinguish
+  the species and its likely confusion pairs without color.
+- Keep aesthetic graphite portraits separate from controlled cleaning and
+  bone-map diagrams. Procedural views remain original monochrome vectors with
+  consistent species anatomy, explicit cut/bone overlays, and fully visible
+  labels; never use a painterly portrait as the cutting instruction.
 - US Letter is the default paper size. A one-page claim is binding only when a
   document explicitly makes it; cooking guides are expected to span pages.
 - Check all plates and every cooking diagram in actual grayscale raster

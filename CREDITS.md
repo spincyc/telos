@@ -5,6 +5,15 @@ where, and on what basis — so that the boundary between project-created conten
 (licensed CC BY 4.0) and incorporated material (not licensed by Telos at all)
 is checkable rather than asserted.
 
+## ChatGPT graphite portraits
+
+The ChatGPT fishing edition uses eleven original, AI-assisted graphite
+portraits generated with OpenAI image generation on 2026-07-27. They were
+prompted and editorially reviewed species by species, converted to grayscale,
+and are project-created content under the repository's CC BY 4.0 terms. Prompt
+requirements, morphology criteria, processing, and file hashes are recorded in
+`research/lake-country-fishing/portrait-provenance.md`.
+
 ## Fish plates
 
 Every species plate in the fishing guide is a chromolithograph published in the
