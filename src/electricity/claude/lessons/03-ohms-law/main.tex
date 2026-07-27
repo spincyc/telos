@@ -170,15 +170,25 @@ the holder and have the adult inspect the meter fuse and leads before reuse.}
 actual resistance when contact quality matters.}
 \end{center}
 
+\begin{teloscard}{State-transition check}
+\begin{tabularx}{\linewidth}{@{}C C C C@{}}
+\(\bigcirc\) switch open &
+\(\bigcirc\) holder disconnected &
+\(\bigcirc\) function/jacks checked &
+\(\bigcirc\) expected range stated
+\end{tabularx}
+\end{teloscard}
+
+\Needspace{10\baselineskip}
 \lessonsection{Preflight record}
 \begin{tabularx}{\linewidth}{@{}L L L L@{}}
 \toprule
 Check & Observed & Required state & Adult initials\\
 \midrule
-Lead insulation and probe guards & & intact & \\[1.4em]
-Current input marking and fuse rating & & documented & \\[1.4em]
-Probe-short resistance & & recorded & \\[1.4em]
-Open-circuit source voltage & & below 3.4 V & \\[1.4em]
+Lead insulation and probe guards & & intact & \\[.8em]
+Current input marking and fuse rating & & documented & \\[.8em]
+Probe-short resistance & & recorded & \\[.8em]
+Open-circuit source voltage & & below 3.4 V & \\[.8em]
 Largest predicted current & & below chosen range/fuse & \\
 \bottomrule
 \end{tabularx}
@@ -190,10 +200,10 @@ Largest predicted current & & below chosen range/fuse & \\
 Marked \(R\) & tolerance & assumed loaded \(V_s\) &
 predicted \(I=V_s/R\) & predicted \(P=V_s^2/R\) & ranking/reason\\
 \midrule
-100 \(\Omega\) & & & & & \\[1.4em]
-220 \(\Omega\) & & & & & \\[1.4em]
-470 \(\Omega\) & & & & & \\[1.4em]
-1 k\(\Omega\) & & & & & \\[1.4em]
+100 \(\Omega\) & & & & & \\[1em]
+220 \(\Omega\) & & & & & \\[1em]
+470 \(\Omega\) & & & & & \\[1em]
+1 k\(\Omega\) & & & & & \\[1em]
 10 k\(\Omega\) & & & & & \\
 \bottomrule
 \end{tabularx}
@@ -326,6 +336,31 @@ no energized retest until cause is identified\\
 \end{tabularx}
 \normalsize
 
+\lessonsection{Plot and test the model}
+\begin{center}
+\begin{tikzpicture}[x=.7cm,y=.55cm]
+  \draw[step=1,black!18,very thin](0,0)grid(9,5);
+  \draw[-{Stealth[length=2mm]},very thick](0,0)--(9.35,0)
+    node[right,font=\small]{\(I\)};
+  \draw[-{Stealth[length=2mm]},very thick](0,0)--(0,5.35)
+    node[above,font=\small]{\(V_R\)};
+  \foreach\x in {1,...,9}\draw(\x,.08)--(\x,-.08);
+  \foreach\y in {1,...,5}\draw(.08,\y)--(-.08,\y);
+  \node[font=\scriptsize,anchor=north]at(4.5,-.38)
+    {horizontal scale and unit: \writein{1.25in}};
+  \node[font=\scriptsize,rotate=90,anchor=south]at(-.48,2.5)
+    {vertical scale and unit: \writein{1.25in}};
+\end{tikzpicture}
+\end{center}
+\begin{tabularx}{\linewidth}{@{}L L L@{}}
+Best-fit slope \(=\) \writein{.8in} &
+Intercept \(=\) \writein{.8in} &
+Largest residual \(=\) \writein{.8in}\\[1.1em]
+\end{tabularx}
+Circle the point with the largest residual. Is its deviation explained by
+resolution, repeatability, source sag, contact resistance, or none of these?
+\writein{2.1in}
+
 \newpage
 \lessonsection{Acceptance proof}
 \begin{gate}{No acceptance by impression}
@@ -348,6 +383,16 @@ Red lead is parked in V/\(\Omega\); cells are removed & \(\bigcirc\) & \\
 
 \textbf{Decision:} The measurements \(\bigcirc\) support
 \(\bigcirc\) do not support \(V=IR\) for these parts over the tested range.
+
+\begin{teloscard}{Claim defense}
+\begin{tabularx}{\linewidth}{@{}p{.31\linewidth} L@{}}
+Current ranking evidence & \writein{3.4in}\\[1.35em]
+Resistance agreement evidence & \writein{3.4in}\\[1.35em]
+Graph evidence & \writein{3.4in}\\[1.35em]
+Largest anomaly and disposition & \writein{3.4in}\\[1.35em]
+One limitation of this proof & \writein{3.4in}
+\end{tabularx}
+\end{teloscard}
 
 \medskip
 Learner \writein{1.1in}\qquad Adult inspection \writein{1.1in}\qquad

@@ -182,6 +182,20 @@ two bare terminals touching? Point to a control for each failure before
 touching materials.
 \end{predict}
 
+\begin{telospanel}{Gate 0 planning record}
+\small
+\begin{tabularx}{\linewidth}{@{}p{.24\linewidth}L@{}}
+Bobbin / core & winding width \rule{1.3cm}{.3pt} mm\quad clearance
+\rule{1.3cm}{.3pt} mm\quad edges protected [\enspace]\\[.65em]
+Winding plan & primary \rule{1.1cm}{.3pt} turns\quad secondary
+\rule{1.1cm}{.3pt} turns\quad countkeeper \rule{2.6cm}{.3pt}\\[.65em]
+Lead plan & P1 color \rule{1.2cm}{.3pt}\quad P2 \rule{1.2cm}{.3pt}\quad
+S1 \rule{1.2cm}{.3pt}\quad S2 \rule{1.2cm}{.3pt}\\[.65em]
+Stop controls & fuse \rule{1.5cm}{.3pt}\quad master OFF label [\enspace]\quad
+strain relief [\enspace]\quad battery-removal point [\enspace]
+\end{tabularx}
+\end{telospanel}
+
 \coilstateplate
 
 \section{Gate 1 --- wind, count, and prove each coil}
@@ -296,10 +310,36 @@ Adult inspection & initials \rule{1.5cm}{.3pt}\quad date \rule{2cm}{.3pt}\\
 \end{tabularx}
 \end{center}
 
+\subsection{Trial evidence}
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.20\linewidth}
+p{.14\linewidth}p{.14\linewidth}p{.14\linewidth}L@{}}
+\toprule
+Setting & One changed variable & Trial 1 & Trial 2 & Trial 3 & Range / note\\
+\midrule
+Baseline & \rule{2cm}{.3pt} & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} &
+\rule{1cm}{.3pt} & \rule{1.3cm}{.3pt}\\[.8em]
+A & \rule{2cm}{.3pt} & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} &
+\rule{1cm}{.3pt} & \rule{1.3cm}{.3pt}\\[.8em]
+B & \rule{2cm}{.3pt} & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} &
+\rule{1cm}{.3pt} & \rule{1.3cm}{.3pt}\\[.8em]
+C & \rule{2cm}{.3pt} & \rule{1cm}{.3pt} & \rule{1cm}{.3pt} &
+\rule{1cm}{.3pt} & \rule{1.3cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
 \begin{telospanel}{Extension}
 Plot peak receiver indication against 0, 5, 10, 20, and \qty{40}{mm} separation,
 three trials each. Draw a range bar from smallest to largest trial. Then redraw
 the accepted wiring and label battery energy, primary current, changing flux,
 induced voltage, and meter indication.
+\end{telospanel}
+
+\begin{telospanel}{As-built trace}
+\small Draw the wiring exactly as accepted, including the fuse, switch,
+button, P1/P2, S1/S2, meter jacks, core, and strain relief. Use a solid line for
+electrical connection and a dashed arrow for magnetic coupling.
+\par\vspace{2.4cm}
 \end{telospanel}
 \end{document}

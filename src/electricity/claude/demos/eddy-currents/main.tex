@@ -65,7 +65,7 @@ it down? Write an answer before you drop anything, and time both falls.
 \end{enumerate}
 
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round,
+\begin{tikzpicture}[x=1cm,y=.50cm,line cap=round,line join=round,
   apparatus/.style={line width=.7pt},
   fine/.style={line width=.32pt},
   move/.style={-{Stealth[length=1.7mm]},line width=.65pt},
@@ -174,6 +174,13 @@ ID & Material & Wall / mm & Loop & $t_1$ & $t_2$ & $t_3$ & Median & What stayed 
 \end{teloscard}
 \end{minipage}
 
+\begin{telospanel}{Measurement audit before graphing}
+Circle the variable deliberately changed. Confirm the other columns match.
+Flag contact with the bore, a tilted tube, a late release, a hidden slit, or a
+changed magnet face. Keep anomalies visible; never erase a result merely
+because it weakens the expected pattern.
+\end{telospanel}
+
 \noindent
 \begin{minipage}[t]{.57\linewidth}
 \textbf{Graph what was deliberately changed.} Put wall thickness on the
@@ -194,7 +201,7 @@ fictional continuous scale.
 \end{minipage}\hfill
 \begin{minipage}[t]{.40\linewidth}
 \textbf{Fault diagnosis}
-\begin{tabularx}{\linewidth}{@{}p{.43\linewidth}L@{}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{.43\linewidth}>{\RaggedRight\arraybackslash}X@{}}
 \toprule Symptom & Check\\
 \midrule
 All trials scatter & release cue; vertical tube; timing cue\\
@@ -213,6 +220,15 @@ distance, or slit effect; one measurement limitation; and where the lost
 gravitational energy went. A result is evidence only when its comparison
 changes one relevant thing.
 \end{telospanel}
+
+\begin{teloscard}{Energy account · complete from evidence}
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}L@{}}
+Before release & gravitational store: \rule{.67\linewidth}{.3pt}\\[0.75em]
+During the fall & motion plus induced currents: \rule{.49\linewidth}{.3pt}\\[0.75em]
+After the catch & mostly thermal energy in: \rule{.55\linewidth}{.3pt}\\[0.75em]
+Evidence against ``lost'' & \rule{.66\linewidth}{.3pt}
+\end{tabularx}
+\end{teloscard}
 
 \lessonsection{Where this is used}
 \begin{telosfacts}[0.22]

@@ -22,13 +22,13 @@ minute? Draw both, one under the other, against time.
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,
   lab/.style={font=\fontsize{6}{7}\selectfont,align=center}]
-  \node[lab,font=\scriptsize\bfseries]at(-4.4,1.25){A · COAXIAL / NEAR};
+  \node[lab,font=\scriptsize\bfseries]at(-4.5,1.25){A · COAXIAL};
   \draw[line width=.8pt,double distance=1pt](-5.15,.45)ellipse(.42 and .30);
   \draw[line width=.8pt,double distance=1pt](-3.65,.45)ellipse(.42 and .30);
   \draw[->,telosmute](-4.72,.45)--(-4.08,.45);
   \draw[<->](-4.72,-.10)--(-4.08,-.10);
   \node[lab,below]at(-4.40,-.10){gap \(d\)};
-  \node[lab,font=\scriptsize\bfseries]at(-1.45,1.25){B · COAXIAL / FAR};
+  \node[lab,font=\scriptsize\bfseries]at(-1.35,1.25){B · INCREASE \(d\)};
   \draw[line width=.8pt,double distance=1pt](-2.55,.45)ellipse(.42 and .30);
   \draw[line width=.8pt,double distance=1pt](-.35,.45)ellipse(.42 and .30);
   \draw[->,telosmute](-2.12,.45)--(-.78,.45);
@@ -139,6 +139,12 @@ Detuned / middle & & & & & &\\
 \end{teloscard}
 
 \lessonsection{What it means}
+The pulse trials isolate mutual inductance before resonance complicates the
+picture. The sweep trials then show what two matched energy stores do with that
+shared field. Read the distance, angle, and core graphs as evidence about
+\(k\); read peak position and splitting as evidence about tuning and exchange
+rate. Neither graph alone supports both claims.
+
 \begin{telosfacts}[0.20]
 \telosfact{Coupling coefficient}{Written $k$, from 0 (no shared field) to 1 (all
   of it shared). Here, distance, orientation, and core all change \(k\).}
@@ -163,21 +169,17 @@ Detuned / middle & & & & & &\\
 \footnotesize\begin{multicols}{2}
 \begin{enumerate}[leftmargin=*,itemsep=.22em]
 \item Which trial is the baseline?
-\item Did all five pulses agree?
 \item What changed when \(d\) doubled?
 \item Is the distance relation linear?
 \item Why keep the axes coincident?
 \item Was \(90^\circ\) exactly zero?
 \item What stray paths explain a nonzero minimum?
 \item Did the core give one constant multiplier?
-\item Which result isolates lead length?
 \item Why compare pulse magnitude, not held voltage?
 \item Why does break polarity reverse?
 \item Which changes \(k\), and which changes tuning?
 \item When did one resonance become two?
 \item Did detuning resemble the short pendulum?
-\item What result would falsify your claim?
-\item Where does meter resolution limit it?
 \end{enumerate}
 \end{multicols}
 \end{teloscard}
@@ -225,13 +227,4 @@ and observe opposite make/break pulse signs. Diagnose before repeating; never
 erase a failed trial.
 \end{gate}
 
-\begin{telospanel}{The whole machine, in one sentence you can now parse}
-The transformer charges the capacitor; the gap dumps it into the primary tank,
-which rings at $f_0$; the secondary is tuned to the same $f_0$ and loosely
-coupled, so over many cycles it takes that energy and rings up to a voltage far
-higher than the transformer alone could make; and the gap quenches at the right
-moment so the energy does not slosh back. Lessons 6, 7, 8 and 9 are those four
-clauses.
-\end{telospanel}
-\lowvoltagenote
 \end{document}

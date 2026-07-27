@@ -228,13 +228,64 @@ Tape one paper clip near the rim. Predict, then repeat 100, 200, 400, and
 \bottomrule
 \end{tabularx}
 
-\begin{teloscard}{Evidence record}
-\small
-\textbf{Answer from your data.} Which frequency was strongest before and
-after? Did mass move the response as predicted? Which result was repeatable?
-If a spectrum app disagreed with the commanded tone, what would you verify
-before trusting either? State one conclusion and one uncertainty.
-\end{teloscard}
+\smallskip
+\textbf{Read your data.} Which frequency was strongest before and after? Did
+mass move the response as predicted? State one conclusion and one uncertainty.
 
-\lowvoltagenote
+\lessonsection{Reverse the chain: cup motion to voltage}
+Disconnect the amplifier and resistor. On the meter's lowest AC-voltage range,
+measure directly across the coil while speaking near the cup, then gently
+tapping the table beside it. Do not strike the magnet or cup. Motion now moves
+the coil through the field and develops a voltage.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=.84cm,line cap=round,line join=round,
+  solid/.style={draw=black,line width=.65pt},
+  fine/.style={draw=black!50,line width=.3pt},
+  note/.style={font=\scriptsize,align=center}]
+\foreach \r in {.30,.55,.80}
+  \draw[fine](-5.45,1.00) arc(135:225:\r);
+\draw[->,solid](-4.45,1.00)--(-3.42,1.00);
+\node[note,anchor=south]at(-4.00,1.08){air-pressure variation};
+\draw[solid](-3.18,1.70)--(-2.62,.56)--(-1.58,.56)--(-1.02,1.70);
+\draw[solid](-3.18,1.70)arc(180:360:1.08 and .18);
+\foreach \y in {.42,.50,.58,.66}
+  \draw[solid](-2.68,\y)arc(180:360:.58 and .10);
+\path[pattern=horizontal lines,pattern color=black!30]
+  (-2.36,-.30)rectangle(-1.84,.34);
+\draw[solid](-2.36,.34)ellipse(.26 and .08);
+\draw[solid](-2.36,.34)--(-2.36,-.30)
+  arc(180:360:.26 and .08)--(-1.84,.34);
+\draw[<->,solid](-1.22,.76)--(-1.22,1.38);
+\node[note,anchor=west]at(-1.10,1.07){motion};
+\draw[solid](-2.68,.55)..controls(-1.10,.10)and(.20,.20)..(.82,.70);
+\draw[solid](-1.52,.55)..controls(-.72,-.34)and(.20,-.24)..(.82,.18);
+\draw[solid](1.52,.44)circle(.70);
+\node[font=\normalsize]at(1.52,.44){mV};
+\draw[solid](.82,.70)--(.86,.70) (.82,.18)--(.86,.18);
+\draw[->,fine](2.44,.44)--(3.30,.44);
+\draw[->,fine](3.42,.44)--(6.20,.44)node[right,note]{time};
+\draw[solid]plot[smooth]coordinates
+ {(3.50,.44)(3.72,.44)(3.86,.88)(4.03,-.05)(4.20,.74)(4.38,.28)
+  (4.58,.44)(4.88,.44)(5.03,.63)(5.18,.20)(5.34,.56)(5.52,.44)(6.05,.44)};
+\node[note]at(4.72,1.22){changing motion gives\\alternating voltage};
+\end{tikzpicture}
+\end{center}
+
+\begin{tabularx}{\linewidth}{@{}p{.22\linewidth}p{.18\linewidth}p{.22\linewidth}L@{}}
+\toprule
+\textbf{Input} & \textbf{Peak AC mV} & \textbf{Repeatable?} &
+\textbf{What moved the cup?}\\
+\midrule
+Quiet room & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\[.25em]
+Voice near cup & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\[.25em]
+Tap beside base & \rule{1.3cm}{.3pt} & \rule{1.6cm}{.3pt} & \rule{3.0cm}{.3pt}\\
+\bottomrule
+\end{tabularx}
+
+\smallskip
+\textbf{Close the argument.} Reverse the electrical, mechanical, and acoustic
+labels for microphone mode. What shows reciprocity? Why can near-zero fail to
+prove that no voltage exists?
+
 \end{document}

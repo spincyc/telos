@@ -84,6 +84,11 @@ B & & & & yes / stop & \\
 \end{tabularx}
 \end{center}
 
+\textbf{Inspection inference.}\enspace Resistance can help distinguish the
+windings, but it does not directly reveal turns because wire gauge and length
+both matter. Which observation supports your label choice?
+\rule{.30\linewidth}{.3pt}
+
 \newpage
 \telosmasthead[Commissioning sequence]
 \lessonhead{6A}{make, hold, break}{change one connection only while unpowered}
@@ -230,6 +235,25 @@ If the secondary pulse supplies \(\qty{8}{mA}\), ideal power balance gives
 \(I_p\approx I_s(N_s/N_p)=\qty{24}{mA}\). Voltage can rise only as available
 current falls.
 \end{teloscard}
+
+\lessonsection{Ratio drill before measuring}
+Complete the ideal prediction, then circle whether the winding is being used
+as a step-up, one-to-one, or step-down pair.
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}CCCCCL@{}}
+\toprule
+\(N_p\) & \(N_s\) & \(V_p\) & ideal \(V_s\) & ideal \(I_p/I_s\) & classification\\
+\midrule
+50 & 150 & \(\qty{1.6}{V}\) & & & up / same / down\\
+120 & 60 & \(\qty{2.4}{V}\) & & & up / same / down\\
+80 & 80 & \(\qty{2.0}{V}\) & & & up / same / down\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Model check.}\enspace Doubling \(N_s\) should double pulse magnitude.\par
+Support: \rule{.38\linewidth}{.3pt}\hfill
+Challenge: \rule{.35\linewidth}{.3pt}
 
 \newpage
 \telosmasthead[Load characterization]
@@ -443,5 +467,35 @@ wire, and which two belong chiefly to the core?
 Plot \(\lvert V_s\rvert\) against \(N_s\) with primary, core, range, and switch
 motion fixed. Add error bars from three repeated taps. State whether the graph
 supports proportionality and name the largest uncertainty.
+
+\begin{center}
+\begin{tikzpicture}[x=.72cm,y=.62cm,>=Stealth]
+  \draw[step=1cm,gray!28,line width=.22pt] (0,0) grid (10,5);
+  \draw[->,line width=.7pt] (0,0)--(10.35,0)
+    node[right,font=\scriptsize] {\(N_s\)};
+  \draw[->,line width=.7pt] (0,0)--(0,5.35)
+    node[above,font=\scriptsize] {\(\lvert V_s\rvert\)};
+  \foreach \x in {1,...,10} \draw (\x,.08)--(\x,-.08);
+  \foreach \y in {1,...,5} \draw (.08,\y)--(-.08,\y);
+  \node[font=\scriptsize,anchor=north west,align=left] at (.22,4.78)
+    {Plot the mean of three taps.\\Draw a vertical range bar from lowest to highest.};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}lLL@{}}
+\toprule
+Graph decision & Evidence in the pattern & Largest uncertainty\\
+\midrule
+proportional / not proportional & &\\[1.4em]
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gate}{Final release}
+Before storing the apparatus: remove the cells, detach the load, return both
+meters to their voltage jacks, and inspect the windings for warmth or damage.
+Adult initials: \rule{1.6cm}{.3pt}\qquad Date: \rule{1.8cm}{.3pt}
+\end{gate}
 
 \end{document}

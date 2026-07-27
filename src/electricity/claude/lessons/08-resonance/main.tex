@@ -346,4 +346,50 @@ voltage belong in this lesson. Adult status does not imply electrical
 qualification.
 \end{teloshazard}
 
+\lessonsection{Evidence ledger}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{.20\linewidth}LL@{}}
+\toprule
+Quantity & Mechanical oscillator & Electrical oscillator\\
+\midrule
+Predicted natural rate & \(\bar T=\rule{2.0cm}{.3pt}\), \(f=\rule{1.6cm}{.3pt}\)
+  & \(L=\rule{1.2cm}{.3pt}\), \(C=\rule{1.2cm}{.3pt}\),
+    \(f_{\rm calc}=\rule{1.6cm}{.3pt}\)\\[.7em]
+Measured maximum & interval \(=\rule{2.0cm}{.3pt}\)
+  & \(f_{\rm meas}=\rule{2.0cm}{.3pt}\)\\[.7em]
+Repeatability & period span \(=\rule{1.4cm}{.3pt}\%\)
+  & largest up/down difference \(=\rule{1.4cm}{.3pt}\)\\[.7em]
+Added-loss result & \(N_{1/2}\): bare \(\rule{.8cm}{.3pt}\), fin \(\rule{.8cm}{.3pt}\)
+  & peak: original \(\rule{.8cm}{.3pt}\), resistor \(\rule{.8cm}{.3pt}\)\\[.7em]
+Decision & \multicolumn{2}{l}{[\ \ ] demonstrated \quad
+  [\ \ ] not yet demonstrated; next controlled repeat:
+  \rule{4.1cm}{.3pt}}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
+  \begin{scope}[shift={(-4.35,0)}]
+    \draw[->,telos hair](0,0)--(3.75,0)node[right,font=\tiny]{tap interval/\(\bar T\)};
+    \draw[->,telos hair](0,0)--(0,1.72)node[above,font=\tiny]{mean amplitude};
+    \foreach \x in {.70,1.00,1.30,1.60,1.90,2.20,2.50,2.80,3.10,3.40}
+      \draw[telos hair](\x,-.04)--(\x,.04);
+    \foreach \y in {.30,.60,.90,1.20,1.50}
+      \draw[telos hair](-.04,\y)--(.04,\y);
+    \node[font=\scriptsize\bfseries] at (1.85,2.02){BARE + FIN};
+  \end{scope}
+  \begin{scope}[shift={(1.05,0)}]
+    \draw[->,telos hair](0,0)--(3.75,0)node[right,font=\tiny]{frequency};
+    \draw[->,telos hair](0,0)--(0,1.72)node[above,font=\tiny]{mean tank voltage};
+    \foreach \x in {.40,.80,1.20,1.60,2.00,2.40,2.80,3.20,3.60}
+      \draw[telos hair](\x,-.04)--(\x,.04);
+    \foreach \y in {.30,.60,.90,1.20,1.50}
+      \draw[telos hair](-.04,\y)--(.04,\y);
+    \node[font=\scriptsize\bfseries] at (1.85,2.02){UP + DOWN};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
 \end{document}
