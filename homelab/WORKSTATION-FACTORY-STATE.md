@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260727.006`
+Document version: `20260727.007`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-27T15:12:00-05:00
+Last evidence/workstream review: 2026-07-27T16:55:44-05:00
 
-Repository baseline reviewed: `fe772ca`
+Repository baseline reviewed: `feae4b3`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -253,22 +253,23 @@ it already passed and should be repeated only after a material change to the
 manual console path or immediately before separately authorized physical
 attachment.
 
-The next implementation action is to keep the now-accepted configured
-Controller alive on the isolated fabric, publish immutable Arch and Windows
-PXE releases to its HTTP/TFTP roots, and boot a disposable workstation through
-gateway-supplied options 66/67. First prove an actual UEFI iPXE request and
-Arch installer handoff. Then exercise WinPE, Windows 11 Pro installation,
-synthetic-domain join and login; Windows remains first in the eventual
-dual-boot sequence. Retain packet/service evidence and prove the Controller
-emits no DHCP or ProxyDHCP frames. Do not add an aggregate target that reports
-success until the real PXE and installer paths pass. Follow
+The next implementation action is to complete sealed media intake and immutable
+Arch, Windows, and controller PXE releases, then keep the accepted configured
+Controller alive on the isolated fabric and boot a disposable workstation
+through gateway-supplied options 66/67. First prove an actual x86-64 UEFI iPXE
+request and Arch installer handoff. Then exercise WinPE, Windows 11 Pro
+installation, synthetic-domain join and login; Windows remains first in the
+eventual dual-boot sequence. Retain packet/service evidence and prove the
+Controller emits no DHCP or ProxyDHCP frames. Do not add an aggregate target
+that reports success until the real PXE and installer paths pass. Follow
 [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md); planning or verification
 remains the default, while destructive disposable-disk actions require
 `APPLY=1` and exact disk identity confirmation.
 
-Literal next commands for the integration owner:
+Read-only checks before changing the release or integration paths:
 
 ```sh
+make check
 PYTHONPATH=. python -m unittest \
   homelab.tests.test_windows_media \
   homelab.tests.test_simulated_switch \
@@ -276,54 +277,20 @@ PYTHONPATH=. python -m unittest \
   homelab.tests.test_controller_factory \
   homelab.tests.test_arch_second \
   homelab.tests.test_dualboot_disk_acceptance
-python homelab/vm/controller_factory.py \
-  --output homelab/var/factory/controller-factory.iso
 ```
 
-The first command is read-only. The second writes only an ignored, disposable
-factory bundle. After it succeeds, the missing next command is intentionally
-the real concurrent runner being implemented; do not substitute the old
-single-controller simulation and report a lifecycle pass.
+Both commands are read-only. Build and runtime commands must come from the
+currently active journal task and the Make contract; do not infer them from an
+old handoff or revive the already-completed agent assignments that produced
+the evidence above.
 
-## Active workstream snapshot
+## Work coordination
 
-Snapshot time: 2026-07-27T14:17:22-05:00. This is a coordination record, not
-acceptance evidence. Replace it after integrations or agent reassignments.
-
-| Workstream | Status | Responsibility or latest result |
-|---|---|---|
-| `arch_fetch_impl` | running | Arch media acquisition and verification |
-| `arch_pxe_lifecycle` | running | Arch PXE/install lifecycle |
-| `automation_docs_draft` | running | Human and operator automation guides |
-| `controller_converge_audit` | running | Audit real controller convergence |
-| `controller_factory_impl` | running | Integrate/test controller factory bundle |
-| `ethernet_switch_impl` | running | Integrate/test isolated multi-peer switch |
-| `evidence_privacy_fix` | running | Evidence redaction and private-data boundary |
-| `factory_architecture` | running | Coordinate lifecycle architecture |
-| `factory_architecture/factory_contract_review` | complete | Delivered lifecycle-gate corrections |
-| `factory_architecture/network_fabric_review` | complete | Specified framed loopback switch and strict MAC/DHCP policy |
-| `factory_architecture/windows_flow_review` | complete | Found Windows 11 Pro index 6 and identified WinPE/install/join blockers |
-| `factory_ledger` | running | Maintain this restart ledger |
-| `factory_make_targets` | running | Maintain reserved Make contract without false-success placeholders |
-| `factory_runtime_feasibility` | running | Exercise full local runtime feasibility |
-| `identity_lifecycle_tests` | running | Identity, cached login, revocation, and storage-failure contracts |
-| `offline_controller_install` | running | Offline controller installation |
-| `sim_cli_make` | running | Simulation CLI/Make integration |
-| `sim_firewall_tests` | running | Isolated firewall contracts |
-| `sim_gateway_impl` | running | Simulated gateway behavior |
-| `sim_runtime_feasibility` | running | Runtime feasibility checks |
-| `sim_security` | running | Simulation boundary and abuse review |
-| `sim_topology_impl` | running | Local topology integration |
-| `vm_install_audit` | running | Audit executable VM/install paths |
-| `vm_install_audit/safe_exec` | complete | Classified isolated VM create/boot as safe; retained physical/host-update gates |
-| `wimboot_fetch` | running | `wimboot` acquisition and verification |
-| `windows_iso_inspect` | running | Windows ISO catalog and contents |
-| `windows_media_harden` | running | Windows import/provenance hardening |
-| `windows_pxe_audit` | running | Windows PXE/WinPE gap audit |
-| `ws_samba/role_impl` | complete | Implemented guarded Samba AD role |
-| `ws_samba/role_tests` | complete | Added Samba role contract tests |
-| `ws_vm/nettests` | complete | Added loopback-only QEMU network safeguards |
-| `potato_notebook/build_main` | complete, unrelated | Separate Telos project; no factory dependency |
+`.journal/` is the authoritative task queue, lease, event, and decision record.
+Agent names and statuses are intentionally absent here because they become
+stale independently of acceptance evidence. Re-read the journal at scheduling
+and recovery boundaries. This ledger records only durable factory results,
+gates, blockers, and the safe restart path.
 
 After every material result, update this ledger's version, the gate table, the
 latest evidence pointer, blockers, and the literal next command. Commit code,
