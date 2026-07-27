@@ -25,23 +25,77 @@ image and a recorded set of inputs.
 
 \section{Roles and boundaries}
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \draw[boundary] (-0.55,-2.5) rectangle (5.6,3.0);
-  \node[hlabel,anchor=north west] at (-0.5,2.95) {Controller host (Arch, ADR 0015)};
-  \node[role] (net) at (1.2,2.1) {dnsmasq\\DHCP · DNS · PXE};
-  \node[role] (http) at (4.2,2.1) {nginx\\artifacts};
-  \node[role] (boot) at (1.2,0.7) {systemd-boot\\3 signed UKIs};
-  \node[role] (store) at (4.2,0.7) {LUKS2 + Btrfs\\checkpoints};
-  \node[roleoff] (svc) at (1.2,-0.9) {Services role\\(optional, off)};
-  \node[roleoff] (dir) at (4.2,-0.9) {Samba AD DC\\(VM)};
-  \node[hlabel,anchor=north,align=center] at (2.7,-1.55)
-    {dashed = optional, disabled by default,\\relocatable to another host without redesign};
-  \node[role,minimum width=2.2cm] (ws) at (8.4,1.4) {Workstation};
-  \node[role,minimum width=2.2cm] (cli) at (8.4,-0.3) {Client};
-  \draw[flow] (net) -- node[hlabel,above,pos=0.55] {boot chain} (ws.west);
-  \draw[flow] (net) -- node[hlabel,below,pos=0.6] {lease · DNS} (cli.west);
-  \node[hlabel,anchor=west,align=left,text=telosmute] at (6.6,-2.1)
-    {no default route\\advertised (ADR 0011)};
+\begin{tikzpicture}[
+  x=1cm,y=1cm,scale=1.12,every node/.append style={transform shape},
+  graphite/.style={draw=telosink,line width=0.55pt,
+    preaction={draw=telosmute,line width=1.15pt,opacity=.16}},
+  graphite heavy/.style={draw=telosink,line width=0.9pt,
+    preaction={draw=telosmute,line width=1.65pt,opacity=.18}},
+  hatch/.style={draw=telosmute,line width=0.25pt,opacity=.62},
+  card/.style={draw=telosink,line width=0.5pt,fill=telospaper,
+    rounded corners=.4pt,align=left,inner xsep=5pt,inner ysep=4pt,
+    font=\fontsize{6.4}{7.3}\selectfont},
+  wire/.style={-{Stealth[length=1.6mm]},draw=telosink,line width=0.55pt},
+  note/.style={font=\fontsize{5.8}{6.7}\selectfont,align=left},
+]
+  % The slight doubled strokes and hand hatching survive ordinary office printing.
+  \draw[graphite heavy,rounded corners=2pt] (-.25,-2.88) rectangle (6.15,2.68);
+  \draw[hatch] (-.12,2.46) -- (.12,2.60) (.18,2.46) -- (.42,2.60)
+    (.48,2.46) -- (.72,2.60) (.78,2.46) -- (1.02,2.60);
+  \node[anchor=west,font=\fontsize{7}{8}\selectfont\bfseries] at (.05,2.27)
+    {CONTROLLER \textnormal{· Arch host · ADR 0015}};
+
+  % Front-panel hardware cues anchor the service map in one physical failure domain.
+  \draw[graphite] (.08,-2.61) rectangle (.34,-2.35);
+  \fill[telosink] (.21,-2.48) circle (.035);
+  \draw[graphite] (.48,-2.56) rectangle (.83,-2.40);
+  \foreach \y in {-2.33,-2.42,-2.51,-2.60}
+    \foreach \x in {5.25,5.43,5.61,5.79}
+      \draw[hatch] (\x,\y) -- ++(.11,.06);
+
+  \node[card,text width=2.15cm] (net) at (1.43,1.20)
+    {\textbf{dnsmasq}\\DHCP · \texttt{home.arpa} DNS\\PXE selection · TFTP};
+  \node[card,text width=2.15cm] (http) at (4.72,1.20)
+    {\textbf{nginx}\\signed install artifacts\\manifest and checksums};
+  \node[card,text width=2.15cm] (boot) at (1.43,-.28)
+    {\textbf{systemd-boot}\\three signed UKIs\\one complete rescue image};
+  \node[card,text width=2.15cm] (store) at (4.72,-.28)
+    {\textbf{LUKS2 + Btrfs}\\system checkpoint\\separate mutable state};
+  \node[card,dashed,text width=2.15cm,text=telosmute] (svc) at (1.43,-1.72)
+    {\textbf{Services role}\\Podman quadlets\\optional · stopped};
+  \node[card,dashed,text width=2.15cm,text=telosmute] (dir) at (4.72,-1.72)
+    {\textbf{Samba AD DC}\\separate VM boundary\\optional · stopped};
+
+  \draw[wire] (boot.east) -- (store.west);
+  \node[note,anchor=south] at (3.08,-.22) {encrypted root};
+  \draw[wire] (net.east) -- (http.west);
+  \node[note,anchor=south] at (3.08,1.26) {artifacts};
+  \draw[wire,dashed,telosmute] (svc.east) -- (dir.west);
+
+  % One and only one physical network jack leaves the chassis.
+  \draw[graphite heavy] (6.15,.58) -- (6.54,.58);
+  \draw[graphite] (6.28,.45) rectangle (6.54,.71);
+  \node[note,anchor=south] at (6.4,.76) {\texttt{lan0}};
+  \draw[wire] (6.54,.58) -- (7.28,.58);
+  \draw[graphite] (7.28,.19) -- (7.28,.97) -- (8.12,.58) -- cycle;
+  \foreach \y in {.36,.58,.80}
+    \draw[graphite] (7.48,\y) -- (7.72,\y);
+  \node[note,anchor=south] at (7.68,1.03) {isolated switch};
+
+  \draw[wire] (8.12,.58) -- (8.72,1.45);
+  \draw[wire] (8.12,.58) -- (8.72,-.28);
+  \draw[graphite heavy] (8.72,1.15) rectangle (10.08,1.92);
+  \draw[graphite] (9.24,1.03) -- (9.56,1.03) (9.4,1.03) -- (9.4,.91);
+  \node[note,anchor=south] at (9.4,1.31) {Workstation};
+  \draw[graphite heavy,rounded corners=1pt] (8.83,-.72) rectangle (9.97,.12);
+  \draw[graphite] (9.09,-.57) rectangle (9.71,-.44);
+  \node[note,anchor=south] at (9.4,-.30) {Client};
+
+  \node[note,anchor=north west,text width=3.3cm] at (6.63,-1.12)
+    {\textbf{Deliberate absence}\\No router, NAT, perimeter firewall, or advertised default route.};
+  \draw[graphite] (6.67,-2.08) -- (9.83,-2.08);
+  \node[note,anchor=north west,text width=3.3cm,text=telosmute] at (6.63,-2.16)
+    {Dashed cards are relocatable roles; both are disabled by default.};
 \end{tikzpicture}
 \end{center}
 

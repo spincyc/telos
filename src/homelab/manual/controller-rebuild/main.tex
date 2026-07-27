@@ -4,6 +4,14 @@
 \telosmeta{Homelab}{Controller Rebuild}
   {Bare metal to serving DHCP, assuming nothing else works}{2026-07-25}
 
+\tikzset{
+  rebuild pencil/.style={draw=black!76,line width=.42pt,line cap=round,line join=round},
+  rebuild faint/.style={draw=black!32,line width=.25pt,line cap=round,line join=round},
+  rebuild hatch/.style={pattern=north east lines,pattern color=black!24},
+  rebuild arrow/.style={-{Stealth[length=1.8mm]},draw=black!72,line width=.48pt}
+}
+\newcommand{\rebuildcaption}[1]{\par\smallskip{\centering\footnotesize\itshape #1\par}}
+
 \begin{document}
 \telosmasthead[Standalone reconstruction manual]
 
@@ -55,6 +63,52 @@ layer-2 network is forbidden at every stage, including this one.
 \governedby{ADR 0008}
 \end{gate}
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  % Workstation, drawn as a three-quarter technical pencil study.
+  \fill[black!3] (-5.55,-.48) -- (-3.30,-.48) -- (-3.05,-.27) -- (-5.31,-.27) -- cycle;
+  \draw[rebuild pencil,rounded corners=1pt] (-5.65,.05) rectangle (-3.20,1.67);
+  \draw[rebuild faint] (-5.54,.17) rectangle (-3.31,1.56);
+  \draw[rebuild pencil] (-4.43,.05)--(-4.43,-.27);
+  \draw[rebuild pencil] (-5.05,-.42)--(-3.81,-.42)--(-3.55,-.27)--(-5.29,-.27)--cycle;
+  \foreach \y in {.40,.54,.68,.82,.96,1.10,1.24}
+    \draw[rebuild faint] (-5.33,\y)--(-4.22,\y);
+  \node[align=center] at (-4.43,1.08) {\textsc{bootstrap}\\workstation};
+  % Switch with ports, feet, and faceplate detail.
+  \fill[black!4] (-1.72,-.17) rectangle (1.48,.61);
+  \draw[rebuild pencil] (-1.82,-.07) rectangle (1.38,.71);
+  \draw[rebuild faint] (-1.70,.04) rectangle (1.26,.60);
+  \foreach \x in {-1.48,-1.03,-.58,-.13,.32,.77}
+    {\draw[rebuild pencil] (\x,.15) rectangle +( .31,.24);
+     \draw[rebuild faint] (\x+.06,.15)--(\x+.06,.39);}
+  \fill[black!55] (1.06,.25) circle (.035);
+  \node[above] at (-.22,.76) {isolated switch};
+  % Target tower with louvers, NIC and removable drive bay.
+  \fill[black!3] (3.16,-.52) -- (5.45,-.52) -- (5.24,-.32) -- (3.16,-.32) -- cycle;
+  \draw[rebuild pencil,rounded corners=1pt] (3.08,-.39) rectangle (5.18,1.83);
+  \draw[rebuild faint] (3.21,-.25) rectangle (5.05,1.68);
+  \draw[rebuild pencil] (3.42,1.24) rectangle (4.84,1.54);
+  \draw[rebuild faint] (3.52,1.33)--(4.42,1.33);
+  \foreach \y in {.03,.19,.35,.51,.67,.83}
+    \draw[rebuild faint] (3.48,\y)--(4.72,\y);
+  \draw[rebuild pencil] (4.46,-.18) rectangle (4.90,-.02);
+  \fill[black!58] (3.38,-.10) circle (.045);
+  \node[align=center] at (4.13,1.02) {\textsc{target}\\UEFI PXE};
+  % Cable paths and small graphite shadows.
+  \draw[rebuild pencil,double=black!18,double distance=.65pt]
+    (-3.20,.46) .. controls (-2.65,.46) and (-2.43,.30) .. (-1.82,.30);
+  \draw[rebuild pencil,double=black!18,double distance=.65pt]
+    (1.38,.30) .. controls (2.11,.30) and (2.30,-.10) .. (3.08,-.10);
+  \draw[rebuild arrow] (-2.68,.93)--(-1.92,.93)
+    node[midway,above,align=center]{boot image\\DHCP/PXE};
+  \draw[rebuild arrow] (1.54,.93)--(2.65,.93)
+    node[midway,above]{network boot};
+  \node[below,align=center] at (-.22,-.30)
+    {one layer-2 segment\\no second address authority};
+\end{tikzpicture}
+\rebuildcaption{Bootstrap bench: verify the segment before the target requests a lease.}
+\end{center}
+
 \section{Stage 1 --- Network boot the target}
 Set the target's firmware to UEFI network boot. The installer refuses a target
 booted in legacy BIOS or CSM mode and stops before offering any destructive
@@ -94,6 +148,44 @@ this confirmation \emph{is} the authorization model --- there is no second
 approval anywhere. Selecting a profile has authorized nothing.
 \end{gate}
 
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  % Physical 3.5-inch drive, including mounting holes and connector block.
+  \fill[black!4] (-5.55,-1.03) -- (-1.45,-1.03) -- (-1.17,-.77) --
+    (-1.17,1.30) -- (-5.26,1.30) -- (-5.55,1.03) -- cycle;
+  \draw[rebuild pencil] (-5.55,-1.03) -- (-1.45,-1.03) -- (-1.17,-.77) --
+    (-1.17,1.30) -- (-5.26,1.30) -- (-5.55,1.03) -- cycle;
+  \draw[rebuild faint] (-5.38,-.85) rectangle (-1.43,1.08);
+  \foreach \p in {(-5.16,-.65),(-1.72,-.65),(-5.16,.84),(-1.72,.84)}
+    {\draw[rebuild pencil] \p circle (.11);\draw[rebuild faint] \p circle (.055);}
+  \draw[rebuild pencil] (-4.73,-.46) rectangle (-2.03,.68);
+  \draw[rebuild faint] (-4.60,-.31)--(-2.18,-.31);
+  \node[anchor=west] at (-4.54,.43) {\bfseries MODEL\quad AX4000};
+  \node[anchor=west] at (-4.54,.13) {S/N\quad \ttfamily 7K3A-19F2};
+  \node[anchor=west] at (-4.54,-.16) {4000 GB};
+  \foreach \x in {-4.49,-4.39,...,-2.44}
+    \draw[rebuild faint] (\x,-.39)--(\x,-.25);
+  \node[below] at (-3.36,-1.10) {label on the physical drive};
+  % Installer summary sheet.
+  \fill[black!2] (.32,-1.03) rectangle (5.40,1.31);
+  \draw[rebuild pencil] (.32,-1.03) rectangle (5.40,1.31);
+  \draw[rebuild faint] (.50,-.84) rectangle (5.21,1.12);
+  \node[anchor=west,font=\scriptsize\bfseries] at (.68,.86) {DESTRUCTIVE INSTALL SUMMARY};
+  \draw[rebuild faint] (.68,.70)--(4.94,.70);
+  \node[anchor=west] at (.68,.43) {model};
+  \node[anchor=west,font=\ttfamily] at (2.05,.43) {AX4000};
+  \node[anchor=west] at (.68,.12) {serial};
+  \node[anchor=west,font=\ttfamily\bfseries] at (2.05,.12) {7K3A-19F2};
+  \node[anchor=west] at (.68,-.19) {size};
+  \node[anchor=west,font=\ttfamily] at (2.05,-.19) {4000 GB};
+  \draw[rebuild pencil] (.69,-.70) rectangle (.89,-.50);
+  \node[anchor=west] at (1.02,-.60) {I verified model, serial, and size};
+  \draw[rebuild arrow,<->] (-.91,.11)--(.04,.11);
+  \node[above,align=center] at (-.43,.20) {read aloud\\match exactly};
+\end{tikzpicture}
+\rebuildcaption{Authorization is a physical comparison, never a device-name guess.}
+\end{center}
+
 \section{Stage 3 --- Install}
 After confirmation the installer partitions, encrypts, creates filesystems,
 installs the base system with both kernels, writes systemd-boot and the UKIs,
@@ -109,6 +201,47 @@ it can start DHCP.}
 Move the powered-off Controller to the isolated switch and power it on. Being
 powered off during the move is the primary DHCP-conflict safety boundary; it is
 physical, not a configuration flag.
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+  % Source bench, separation boundary, and destination segment.
+  \draw[rebuild faint,dashed] (0,-1.08)--(0,1.55);
+  \node[above] at (-3.72,1.48) {provisioning bench};
+  \node[above] at (3.52,1.48) {isolated managed segment};
+  \draw[rebuild pencil] (-5.45,-.50) rectangle (-3.65,.94);
+  \draw[rebuild faint] (-5.31,-.36) rectangle (-3.80,.80);
+  \foreach \y in {-.10,.08,.26,.44}\draw[rebuild faint](-5.07,\y)--(-4.10,\y);
+  \node at (-4.55,.65) {Controller};
+  % Prominent physical power state.
+  \draw[rebuild pencil] (-3.23,.49) circle (.23);
+  \draw[rebuild pencil] (-3.23,.79)--(-3.23,.48);
+  \node[below,align=center] at (-3.23,.14) {\bfseries POWER OFF\\cables removed};
+  \draw[rebuild arrow] (-2.55,-.32) .. controls (-1.68,-.76) and
+    (1.27,-.76) .. (2.10,-.31);
+  \node[below] at (0,-.74) {carry only while dark};
+  % Destination switch, target, and clients.
+  \draw[rebuild pencil] (2.22,-.49) rectangle (4.31,.13);
+  \foreach \x in {2.43,2.79,3.15,3.51,3.87}
+    \draw[rebuild pencil] (\x,-.30) rectangle +( .22,.17);
+  \node[above] at (3.27,.17) {isolated switch};
+  \draw[rebuild pencil] (4.77,-.63) rectangle (5.69,.92);
+  \draw[rebuild faint] (4.90,-.50) rectangle (5.56,.78);
+  \node[rotate=90] at (5.23,.13) {first boot};
+  \draw[rebuild pencil,double=black!18,double distance=.6pt]
+    (4.31,-.20)--(4.77,-.20);
+  \draw[rebuild pencil] (2.25,.74) rectangle (3.15,1.22);
+  \draw[rebuild pencil] (3.50,.74) rectangle (4.40,1.22);
+  \draw[rebuild pencil] (2.70,.74)--(2.70,.55)--(2.78,.55);
+  \draw[rebuild pencil] (3.95,.74)--(3.95,.55)--(3.87,.55);
+  \draw[rebuild pencil,double=black!18,double distance=.6pt]
+    (2.78,.55)--(2.78,.13);
+  \draw[rebuild pencil,double=black!18,double distance=.6pt]
+    (3.87,.55)--(3.87,.13);
+  \node[above] at (3.33,1.24) {test clients};
+  \node[align=center] at (0,.61) {\bfseries DHCP SAFETY\\BOUNDARY};
+\end{tikzpicture}
+\rebuildcaption{Relocation sequence: off, disconnect, move, connect, then boot.}
+\end{center}
 
 Under \texttt{development-proof} mode you will be asked for the LUKS2
 passphrase at every boot. That is expected --- Milestone A enrolls no TPM token.

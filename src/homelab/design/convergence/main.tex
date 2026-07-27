@@ -35,18 +35,92 @@ Directory membership & Enabled only once the directory exists and answers. \gove
 Convergence never tells a machine what it is. It asks.
 
 \begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \node[role,minimum width=3.0cm] (repo) at (0,0) {repository\\playbooks + roles};
-  \node[role,minimum width=3.0cm] (inv)  at (0,-1.7) {instance overlay\\gitignored};
-  \node[telos emphasis,minimum width=3.0cm] (ans) at (4.2,-0.85) {ansible-playbook};
-  \node[role,minimum width=3.0cm] (host) at (8.6,-0.85) {machine};
-  \node[role,minimum width=3.0cm] (man)  at (13.0,-0.85) {manifest.json\\what it \emph{is}};
-  \draw[flow] (repo) -- (ans);
-  \draw[flow] (inv)  -- (ans);
-  \draw[flow] (ans)  -- (host);
-  \draw[flow] (host) -- (man);
-  \draw[flow] (man.north) -- ++(0,0.8) -| (ans.north);
-  \node[hlabel,anchor=south,align=center] at (8.6,0.55) {profile read back before anything is changed};
+\begin{tikzpicture}[x=1cm,y=1cm,
+  graphite/.style={draw=telosink,line cap=round,line join=round},
+  pencil/.style={graphite,line width=0.55pt},
+  pencil heavy/.style={graphite,line width=0.95pt},
+  ghost/.style={draw=telosmute,line width=0.3pt},
+  signal/.style={-{Stealth[length=1.8mm,width=1.25mm]},graphite,line width=0.7pt},
+  tiny note/.style={font=\fontsize{5.8}{6.6}\selectfont,align=center,text=telosink}]
+  % Faint construction lines make the plate read like an engineering sketch.
+  \foreach \y in {-2.45,-1.85,...,1.75}
+    \draw[ghost,dash pattern=on 0.5pt off 2.2pt] (-0.15,\y) -- (15.45,\y);
+  \draw[ghost] (-0.05,-2.62) rectangle (15.35,1.98);
+  \draw[pencil] (0.08,1.82) -- (0.08,1.52) -- (0.38,1.52);
+  \draw[pencil] (15.22,-2.46) -- (15.22,-2.16) -- (14.92,-2.16);
+
+  % Repository: a graphite-shaded stack of tracked leaves.
+  \fill[pattern=north east lines,pattern color=telosmute]
+    (0.35,-0.40) rectangle (2.75,1.02);
+  \draw[pencil] (0.35,-0.40) rectangle (2.75,1.02);
+  \draw[pencil] (0.25,-0.30) rectangle (2.65,1.12);
+  \draw[pencil heavy,fill=telospaper] (0.15,-0.20) rectangle (2.55,1.22);
+  \draw[pencil] (0.42,0.89) -- (2.22,0.89);
+  \draw[pencil] (0.42,0.72) -- (1.82,0.72);
+  \draw[pencil] (0.42,0.55) -- (2.05,0.55);
+  \node[font=\small\bfseries,align=center] at (1.35,0.12)
+    {repository};
+  \node[tiny note] at (1.35,-0.12) {playbooks + roles};
+
+  % Private overlay: a clipped page with handwritten field marks.
+  \draw[pencil heavy,fill=telospaper]
+    (0.45,-2.22) -- (2.55,-2.22) -- (2.55,-0.92) --
+    (2.24,-0.61) -- (0.45,-0.61) -- cycle;
+  \draw[pencil] (2.24,-0.61) -- (2.24,-0.92) -- (2.55,-0.92);
+  \foreach \y in {-0.95,-1.14,-1.33}
+    \draw[pencil] (0.72,\y) -- (2.16,\y);
+  \node[font=\small\bfseries,align=center] at (1.50,-1.68)
+    {instance overlay};
+  \node[tiny note] at (1.50,-1.94) {gitignored};
+
+  % Runner: terminal face, guarded execution, and status lamps.
+  \fill[pattern=crosshatch dots,pattern color=telosmute]
+    (4.08,-1.64) rectangle (7.18,0.66);
+  \draw[pencil heavy,fill=telospaper] (3.96,-1.52) rectangle (7.06,0.78);
+  \draw[pencil] (4.18,-1.20) rectangle (6.84,0.42);
+  \fill[telosink] (4.38,0.14) circle (0.045);
+  \fill[telosink] (4.55,0.14) circle (0.045);
+  \draw[pencil] (4.40,-0.18) -- (4.65,-0.38) -- (4.40,-0.58);
+  \draw[pencil] (4.82,-0.58) -- (5.62,-0.58);
+  \node[font=\small\bfseries] at (5.51,-0.86) {ansible-playbook};
+  \node[tiny note] at (5.51,-1.12) {profile guard};
+
+  % Machine: rack ears, vent field, drive bays, and manifest socket.
+  \fill[pattern=north west lines,pattern color=telosmute]
+    (8.52,-1.40) rectangle (11.50,0.50);
+  \draw[pencil heavy,fill=telospaper] (8.38,-1.28) rectangle (11.36,0.62);
+  \draw[pencil] (8.22,-1.12) rectangle (8.38,0.46);
+  \draw[pencil] (11.36,-1.12) rectangle (11.52,0.46);
+  \foreach \y in {-0.94,-0.64,-0.34,-0.04,0.26}
+    \foreach \x in {8.67,8.83,8.99}
+      \fill[telosink] (\x,\y) circle (0.022);
+  \draw[pencil] (9.35,-0.96) rectangle (10.92,-0.52);
+  \draw[pencil] (9.49,-0.85) -- (10.48,-0.85);
+  \fill[telosink] (10.72,-0.74) circle (0.05);
+  \node[font=\small\bfseries] at (10.12,0.20) {machine};
+  \node[tiny note] at (10.12,-0.18) {managed host};
+
+  % Manifest: punched clipboard and a short JSON specimen.
+  \fill[pattern=crosshatch,pattern color=telosmute]
+    (12.93,-1.57) rectangle (15.08,0.70);
+  \draw[pencil heavy,fill=telospaper] (12.82,-1.46) rectangle (14.97,0.81);
+  \draw[pencil,fill=telospaper] (13.43,0.65) rectangle (14.36,0.96);
+  \draw[pencil] (13.12,0.40) -- (14.67,0.40);
+  \node[font=\ttfamily\fontsize{5.5}{6.4}\selectfont,anchor=west,align=left]
+    at (13.12,0.12) {\{\\[-2pt]\quad"profile":\\[-2pt]\quad"controller"\\[-2pt]\}};
+  \node[font=\small\bfseries] at (13.90,-0.83) {manifest.json};
+  \node[tiny note] at (13.90,-1.10) {what it \emph{is}};
+
+  % Data motion and the non-negotiable read-back path.
+  \draw[signal] (2.70,0.50) -- (3.96,0.10);
+  \draw[signal] (2.70,-1.43) -- (3.96,-0.78);
+  \draw[signal] (7.06,-0.37) -- node[tiny note,above] {converge} (8.22,-0.37);
+  \draw[signal] (11.52,-0.37) -- node[tiny note,above] {records} (12.82,-0.37);
+  \draw[signal] (13.90,0.96) -- (13.90,1.48) -- (5.51,1.48) -- (5.51,0.78);
+  \node[tiny note,fill=telospaper,inner sep=2pt] at (9.70,1.48)
+    {read profile back before any change};
+  \node[tiny note,anchor=west] at (0.22,-2.43)
+    {authority path / convergence plate};
 \end{tikzpicture}
 \end{center}
 
