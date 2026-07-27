@@ -16,8 +16,8 @@ workstation-factory acceptance test.
   second, on one UEFI/GPT disk.
 - Windows is the default boot choice. Both systems retain independently
   bootable native UEFI entries.
-- The default usable-space split is 75 percent Windows and 25 percent Arch,
-  subject to a 160 GiB Windows minimum and 64 GiB Arch minimum.
+- After reserving fixed partitions and the 160 GiB Windows and 64 GiB Arch
+  minima, surplus usable space is split 75 percent Windows and 25 percent Arch.
 - Phase-one workstations use no BitLocker, LUKS, custom Secure Boot trust, or
   TPM enrollment. These omissions are explicit pilot limits.
 - The public rehearsal uses generated names, accounts, addresses, and
@@ -61,7 +61,12 @@ for attachment safety but is not this fabric. The factory fabric must:
 The simulated gateway is the only DHCP authority. It supplies an address,
 gateway, AD DNS address, NTP address, and architecture-correct PXE next-server
 and boot filename. It does not forward packets. The Controller is statically
-addressed and must never answer DHCP.
+addressed and must never answer DHCP. DHCP broadcasts still reach the
+Controller so its silence is measured rather than assumed.
+
+Guests inherit no host resolver, proxy environment, shared folder, clipboard,
+guest agent, metadata service, or credential channel. Denied external
+connection attempts are retained as evidence.
 
 ## Immutable inputs
 
@@ -99,6 +104,9 @@ it exists.
 
 Pass: rebuilding from the same inputs requires no external read and produces
 equivalent manifests. Removing any declared dependency fails before boot.
+Installed Windows, disk, and OVMF images are not expected to be
+bit-reproducible; their declared semantic state is compared while
+nondeterministic identifiers are recorded.
 
 ### Gate 2 — bootstrap Controller convergence
 
@@ -113,6 +121,10 @@ Pass:
 - `samba-tool dbcheck` succeeds;
 - LDAP/Kerberos DNS SRV records resolve through the Controller;
 - generated standard and administrative users can obtain Kerberos tickets;
+- clients use only AD DNS; no public or simulated external DNS is configured as
+  a secondary resolver;
+- the Controller is the isolated realm's authoritative time source, Kerberos
+  fails at injected excessive skew, and recovers after time correction;
 - PXE and HTTP manifests verify byte-for-byte;
 - no forbidden listener, forwarding flag, route, or DHCP response exists; and
 - stopping storage or the simulated gateway does not damage AD.
@@ -122,10 +134,15 @@ Pass:
 PXE-boot a blank candidate Controller from the bootstrap Controller and install
 it to a serial-authorized disposable disk using only local artifacts. Do not
 activate it as a second authority on the workstation fabric yet.
+The candidate has a unique host name, address, and inert role; it is never a
+clone of a running DC and never reuses the bootstrap DC identity.
 
 Pass:
 
 - firmware visibly selects network boot;
+- DHCP option 93 selects the approved x86-64 UEFI first-stage loader, iPXE
+  chains exactly once to HTTP, and BIOS or unsupported architectures fail
+  closed;
 - DHCP provenance names only the simulated gateway;
 - the first-stage loader and every HTTP artifact match the selected release;
 - wrong disk serial, missing receipt, altered artifact, and repeated release
@@ -145,7 +162,10 @@ claiming the same DC identity.
 Create one sparse workstation disk large enough to exercise the production
 minimums and give it a fixed serial. PXE-boot WinPE, verify the selected release
 inside WinPE, require that exact disk serial, partition only the declared
-Windows allocation, and install Windows 11 Pro with US defaults.
+Windows allocation, and install Windows 11 Pro with US defaults. Partition
+numbers are not normative: physical extents, GPT types, identities, and
+boundaries are. Windows may create its recovery partition after its OS
+partition; Arch must not renumber or move it.
 
 The unattended answer and setup scripts are rendered per run into private
 temporary storage. They may contain a short-lived join secret only while
@@ -164,7 +184,11 @@ Pass:
 - the workstation joins the generated domain and its secure channel verifies;
 - the standard domain user is not local administrator;
 - the administrative test user has only the declared workstation rights;
-- automatic Windows update policy points at the isolated test update source;
+- signed, locally staged MSU/CAB updates install automatically from the isolated
+  source; this proves the pilot offline update job, not Microsoft Update or
+  WSUS;
+- hibernation and Fast Startup are disabled and NTFS reports a clean shutdown
+  and no dirty bit before Arch is installed;
 - cold reboot and connected domain login succeed; and
 - exact disk layout, boot state, event evidence, and release hashes are saved.
 
@@ -177,13 +201,19 @@ planned remaining space, and install its own native systemd-boot entry.
 Pass:
 
 - before/after partition evidence proves Windows boundaries did not move;
+- Arch never mounts a hibernated or dirty Windows filesystem;
 - Windows Boot Manager remains directly firmware-bootable;
 - the five-second menu defaults to Windows and can boot Arch;
 - Arch joins the same domain using SSSD/Kerberos;
+- the same AD SIDs map to the same numeric UID/GID values after reboot and a
+  client remint;
 - the standard user has no `sudo`; the declared administrative user does;
 - the local rescue account works with AD unavailable;
 - automatic Arch updates use the staged gate-and-reboot policy; and
-- two cold boots reproduce Windows-default and explicit-Arch behavior.
+- two cold boots reproduce Windows-default and explicit-Arch behavior;
+- Secure Boot and TPM state are explicitly recorded as off for phase one; and
+- boot order survives Windows servicing, with firmware variables backed up and
+  restore-tested.
 
 ### Gate 6 — identity, mobility, and storage failures
 
@@ -204,6 +234,12 @@ Pass on both operating systems:
 - no optional storage failure delays logon beyond the declared bound;
 - storage does not replace the local home/profile;
 - connected disablement blocks new connected authentication;
+- disablement is tested while AD/DNS are healthy and reachable, after any
+  required replication or cache invalidation;
+- Windows cached-logon policy and SSSD
+  `offline_credentials_expiration = 0` are asserted, including stale-cache
+  behavior after an online password change; finite testing cannot prove the
+  literal passage of unlimited time;
 - the evidence explicitly notes that disconnected cached credentials cannot be
   revoked in phase one; and
 - service restoration recovers without rejoining or rebuilding.
@@ -218,8 +254,10 @@ Pass:
 
 - an interrupted publish never becomes `current`;
 - the previous release remains bootable;
-- Controller reconstruction uses the public repo plus generated private
-  instance data and secret references;
+- Controller reconstruction of the same realm uses a tested encrypted Samba AD
+  backup that preserves the domain SID, object identities, machine trust, DNS,
+  and Kerberos secrets; absent that backup, recovery is explicitly a new realm
+  requiring every workstation to rejoin;
 - workstation destruction and a complete Windows-first/Arch-second remint
   require no manual disk surgery;
 - no canonical disk, source artifact, or firmware template changed;
@@ -245,6 +283,12 @@ Acceptance must fail when any of these are injected:
 - canonical media, Controller disk, or OVMF template changes; or
 - teardown leaves a process, listener, overlay, secret, or private transcript
   with permissive mode.
+
+The optional-storage login bound is 30 seconds in the VM acceptance harness
+unless a stricter production measurement is recorded. Physical promotion also
+requires a separately verified ThinkPad X13 Gen 6 Intel driver set for storage,
+wired networking, Wi-Fi, and firmware; success with generic QEMU hardware does
+not satisfy that gate.
 
 ## Required command surface
 
@@ -301,8 +345,10 @@ gaps remain before the contract can pass:
 4. deploy and exercise actual PXE/HTTP/install-share services in that guest;
 5. automate blank candidate-Controller PXE install and cold-boot acceptance;
 6. extend Windows staging beyond WinPE: include the locally served install
-   image, serial-gated disk/setup scripts, private answer rendering, driver
-   injection where needed, and redacted setup evidence;
+   image without loading it through `wimboot`; customize WinPE image index 2;
+   add the UEFI iPXE first stage, serial-gated disk/setup scripts, private
+   answer and one-machine offline-domain-join rendering, driver injection where
+   needed, WinRE/BCD construction, and redacted setup evidence;
 7. implement same-disk Windows-first then Arch-second installation;
 8. implement Windows domain join, login, secure-channel, privilege, cached
    login, update-policy, and recovery probes;
@@ -313,6 +359,14 @@ gaps remain before the contract can pass:
     diagnostics; and
 12. expose the complete lifecycle through dry-run-default Make targets and one
     final aggregate acceptance target.
+
+For the VM path, prefer Q35/OVMF with an emulated device set supported by stock
+WinPE (for example AHCI/NVMe storage and an e1000e NIC), and separately verify
+that its firmware really exposes UEFI network boot. Virtio storage or
+networking requires signed drivers injected into WinPE and the installed image.
+The actual supplied media currently advertises Windows 11 Pro at image index 6;
+code must still discover and receipt the edition rather than hard-code that
+index.
 
 Until these gaps close, wording must distinguish “network-attachment
 simulation passed” from “offline workstation factory passed.”
