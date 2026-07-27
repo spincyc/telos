@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Convergence Design}
-  {What day two looks like, and why installation is deliberately small}{2026-07-26}
+  {What day two looks like, and why installation is deliberately small}{20260726.001}
 
 \begin{document}
 \telosmasthead[High-level design]
@@ -202,23 +202,30 @@ second check run & recap with changed count & Zero changed and zero failed.\\
 reviewed diff correspond to the reviewed commit? Which external observation
 will prove each restarted network service is safe and reachable?}
 
-\section{Failure branches are designed states}
-\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}p{0.30\linewidth}L@{}}
+\section{Transition and failure routing}
+No transition is granted by elapsed time, a retry, or an Ansible task merely
+reporting \texttt{ok}. The named observation closes the current state; a failed
+observation routes to a state in which the unsafe service is absent.
+
+\begin{tabularx}{\linewidth}{@{}p{0.20\linewidth}p{0.31\linewidth}L@{}}
 \toprule
-\textbf{Observed failure} & \textbf{Immediate state} & \textbf{Next evidence}\\
+\textbf{Transition} & \textbf{Evidence that permits it} &
+\textbf{Failure route}\\
 \midrule
-Profile mismatch & No changes; play ends failed & Capture manifest and
-inventory target; correct identity, not the guard.\\
-Generator refusal & Existing installed file remains & Save rejected inputs and
-generator diagnostic; correct the network plan.\\
-Config syntax failure & Service not restarted & Preserve candidate and syntax
-output; fix generation or role logic.\\
-Activation invariant fails & DHCP and HTTP both stopped & Read
-first-boot journal; identify interface, address or competing DHCP authority.\\
-Second run changes & Not accepted & Name the changing task and before/after
-value; repair idempotence before another mutation.\\
-Directory unavailable & Local break-glass path remains & Prove local key login
-at console/LAN before attempting join or auth changes.\\
+identify $\rightarrow$ plan & Manifest profile and disposable flag read from
+the target & Stop before facts drive any role; reconcile target and inventory.\\
+plan $\rightarrow$ apply & Check-mode diff tied to the reviewed commit and
+overlay & Revise declared state; rerun check mode, not the mutating play.\\
+apply $\rightarrow$ measure & Applying recap has zero failed; handlers have
+settled & Preserve recap and candidate files; repair from check mode.\\
+measure $\rightarrow$ repeat & Syntax, units, sockets, digests and client
+behavior all satisfy their invariants & Keep or restore network services
+stopped; diagnose the first failed invariant.\\
+repeat $\rightarrow$ accept & Second check: zero changed, zero failed & Name
+the non-idempotent task and return to plan.\\
+directory join & Local break-glass key login already proved & Leave directory
+membership unchanged; restore directory reachability or run the printed join
+command at a console.\\
 \bottomrule
 \end{tabularx}
 
@@ -261,23 +268,6 @@ converge & pending & Ansible converges the installed Controller, and a second ru
 \bottomrule
 \end{tabularx}
 
-\section{Acceptance measurements}
-\proofpair{sha256sum <generated-file>}{Matches the digest computed from the
-reviewed generator output for this commit and overlay.}
-\proofpair{systemctl is-active dnsmasq nginx}{Both active only after activation
-preflight; partial activation is failure.}
-\proofpair{ss -lntup}{Listeners match the intended managed address and ports;
-no wildcard exposure appears unexpectedly.}
-\proofpair{ip route show default}{On an isolated client, no output; the
-Controller did not advertise a nonexistent router.}
-\proofpair{ansible-playbook ... -{}-check}{Recap reports zero changed and zero
-failed after the applying run.}
-
-\noindent The retained record is small: date/time, operator, reviewed commit,
-target manifest digest, generated-file digests, both recaps, client lease and
-route observations, and any explicitly pending matrix stage. Secrets and
-private-overlay contents are referenced by identifier, never copied into it.
-
 \begin{gate}{Pending is reported, never skipped}
 A stage that cannot run yet prints what it is waiting for and the matrix does
 not call itself green. A harness that silently skips what it cannot do converts
@@ -294,4 +284,21 @@ it was found is that the fixtures describe hardware \emph{shapes} rather than on
 captured machine: NVMe, SATA and eMMC partition naming, absent serials,
 removable media, wireless-only. A snapshot of one box would have missed it.
 \end{telospanel}
+
+\section{Acceptance measurements}
+\proofpair{sha256sum <generated-file>}{Matches the digest computed from the
+reviewed generator output for this commit and overlay.}
+\proofpair{systemctl is-active dnsmasq nginx}{Both active only after activation
+preflight; partial activation is failure.}
+\proofpair{ss -lntup}{Listeners match the intended managed address and ports;
+no wildcard exposure appears unexpectedly.}
+\proofpair{ip route show default}{On an isolated client, no output; the
+Controller did not advertise a nonexistent router.}
+\proofpair{ansible-playbook ... -{}-check}{Recap reports zero changed and zero
+failed after the applying run.}
+
+\noindent The retained record is small: date/time, operator, reviewed commit,
+target manifest digest, generated-file digests, both recaps, client lease and
+route observations, and any explicitly pending matrix stage. Secrets and
+private-overlay contents are referenced by identifier, never copied into it.
 \end{document}

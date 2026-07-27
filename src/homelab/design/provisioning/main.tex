@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Provisioning Design}
-  {Network boot, the authorization boundary, and how it is tested}{2026-07-26}
+  {Network boot, the authorization boundary, and how it is tested}{20260726.001}
 
 \begin{document}
 \telosmasthead[High-level design]
@@ -157,6 +157,19 @@ first write. No answer gathered earlier is authorization. After execution
 starts, the program never loops back into questioning and never attempts an
 invented rollback.
 
+\subsection*{Transition contracts}
+{\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.17\linewidth}p{.20\linewidth}p{.20\linewidth}L@{}}
+\toprule
+\textbf{Precondition} & \textbf{Action} & \textbf{Observable} & \textbf{Pass} & \textbf{Fail next}\\
+\midrule
+Read-only facts collected; no driver write calls & Apply eligibility rules and ask only profile-relevant questions & Rejected devices carry reasons; prompt registry records every question & One unambiguous disk and one whole valid plan reach the frozen summary & Refuse without writes; correct hardware/input; restart discovery\\
+Frozen summary digest displayed; disk identity unchanged & Operator types the complete target serial & Typed value compared with frozen serial immediately before first write & Exact match and repeated device facts still equal the summary & Cancel without writes; any identity change requires a new run\\
+Serial gate passed once; ordered plan frozen & Execute one driver step at a time; append result before advancing & Ordered ledger shows command, status and timestamps; later calls absent after an error & Every planned step succeeds in order & Stop at first error; preserve target and ledger; inspect read-only; reinstall\\
+All steps succeeded; target still mounted & Write and read back manifest, sync, unmount and request poweroff & Console/on-disk digests agree; mounts disappear; no reboot occurs & Powered-off target and proof bundle are ready for separate acceptance & Do not relocate; power off and investigate from rescue media\\
+\bottomrule
+\end{tabularx}}
+
 \section{Operator dialogue}
 \begin{tabularx}{\linewidth}{@{}p{.19\linewidth}p{.36\linewidth}L@{}}
 \toprule
@@ -255,21 +268,6 @@ a remembered one, so later tooling can refuse to treat such a machine as
 production. \governedby{ADR 0043, ADR 0060}
 \end{gate}
 
-\section{Handoff to acceptance}
-Before leaving the installer test phase, the operator records four answers:
-\begin{enumerate}
-\item Which frozen source revision and artifact-manifest digest produced the
-candidate?
-\item Which negative transcript proves that refusal and cancellation made zero
-writes?
-\item Which injected failure proves that execution stopped before every later
-driver step?
-\item Which fresh-OVMF boot and read-back prove that the installed manifest,
-disk layout and boot artifacts match the authorized summary?
-\end{enumerate}
-If any answer points only to a screenshot, remembered command or reused
-firmware state, the candidate does not enter the acceptance matrix.
-
 \section{Acceptance matrix}
 \begin{tabularx}{\linewidth}{@{}p{.20\linewidth}p{.33\linewidth}L@{}}
 \toprule
@@ -315,5 +313,26 @@ explained differences. A successful screenshot or a booting machine alone is
 not evidence that the erase boundary, isolation boundary or stop-on-error rule
 worked.
 \end{gate}
+
+\section{Acceptance handoff worksheet}
+\begin{tabularx}{\linewidth}{@{}p{.40\linewidth}L@{}}
+\toprule
+\textbf{Operator must answer} & \textbf{Evidence reference or disposition}\\
+\midrule
+Which frozen source revision and artifact-manifest digest produced the candidate? & Revision, manifest digest and build record:\\[2.6em]
+Which negative transcript proves that refusal and cancellation made zero writes? & Transcript and zero-call assertion:\\[2.6em]
+Which injected failure proves that execution stopped before every later driver step? & Fault case and ordered driver ledger:\\[2.6em]
+Which fresh-OVMF boot and read-back prove that the installed manifest, disk layout and boot artifacts match the authorized summary? & Run ID, manifest comparison and boot transcript:\\[2.6em]
+\bottomrule
+\end{tabularx}
+
+If any answer points only to a screenshot, remembered command or reused
+firmware state, the candidate does not pass acceptance.
+
+\textbf{Disposition:}\quad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} accept \qquad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} reject \qquad
+\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} repeat named proof
+\hfill Reviewer / date:\ \rule{3.1cm}{.4pt}
 
 \end{document}

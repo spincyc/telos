@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Controller Rebuild}
-  {Bare metal to serving DHCP, assuming nothing else works}{2026-07-25}
+  {Bare metal to serving DHCP, assuming nothing else works}{20260725.001}
 
 \tikzset{
   rebuild pencil/.style={draw=black!76,line width=.42pt,line cap=round,line join=round},
@@ -376,6 +376,52 @@ or failed, correct its declared state, then restart with check mode.}
 or service-restarting task be tied to the reviewed commit? Is the break-glass
 public key present while its private half remains off the Controller?}
 
+\section{Transition routing}
+Use this table when the narrative and the machine disagree. A failed row does
+not authorize trying the next stage to see whether it works.
+
+\begin{tabularx}{\linewidth}{@{}p{0.17\linewidth}p{0.35\linewidth}L@{}}
+\toprule
+\textbf{Leave state} & \textbf{Only when this is observed} &
+\textbf{Otherwise route to}\\
+\midrule
+Prepared & Tests pass, image digest matches, and DHCP mode is evidenced &
+Stage 0: isolate or select ProxyDHCP; replace an unexplained artifact.\\
+Booted & UEFI is proved and live inventory is captured with no disk write &
+Stage 1 diagnostics; keep the target in firmware/live media.\\
+Answered & Physical label, live disk tuple, summary, MAC and network plan all
+agree & Stage 2 input collection; do not confirm destruction.\\
+Installing & Final sync completes and the chassis is visibly powered off &
+Stage 3 log capture; leave the target off and treat the disk as incomplete.\\
+Relocated & Cabling is isolated; activation preflight passes; both units become
+active together & Stage 4 with both units stopped; capture the first-boot
+journal and competing DHCP MAC.\\
+Proved & Lease, route absence, DNS, boot-artifact digest and PXE all pass from
+separate clients & Stage 5 evidence collection; do not converge around a
+network failure.\\
+Converged & Applying run succeeds and the final check reports zero changes &
+Stage 6 check mode; repair the named role before another mutation.\\
+\bottomrule
+\end{tabularx}
+
+\section{Recovering instead of rebuilding}
+\begin{telosfacts}[0.24]
+\telosfact{Bad update}{Boot the recovery UKI, restore the operating-system checkpoint and its matching ESP artifact set, reboot. The checkpoint is taken before the transaction, not after. \governedby{ADR 0028}}
+\telosfact{Boot broken}{The recovery UKI is self-contained and boots without the installed root. It starts non-destructive and requires an explicit action before mounting anything writable. \governedby{ADR 0024}}
+\telosfact{TPM unlock fails}{Milestone B only. Early boot falls back to the recovery key, which is held off-host. Test that path \emph{before} enabling TPM unlock, never after. \governedby{ADR 0029}}
+\telosfact{Disk dead}{Rebuild from this manual. Application data restores from its own backup, on its own schedule --- it is not in the operating-system checkpoint. \governedby{ADR 0027, ADR 0054}}
+\telosfact{Recovery key lost}{The data is gone. This is the intended behaviour of encryption at rest, and it is why custody is a decision with its own ADRs rather than an afterthought.}
+\end{telosfacts}
+
+\begin{telospanel}{Test this manual by using it}
+The QEMU acceptance matrix runs this entire sequence unattended against virtual
+hardware and asserts every expectation above. Any change to the installer, the
+profile or these instructions must pass it before touching real metal.
+A reconstruction manual nobody has followed end to end is a hypothesis.
+\governedby{ADR 0056}
+\end{telospanel}
+
+\newpage
 \section{Acceptance record}
 Do not call the Controller rebuilt until this record is complete. Attach command
 output rather than transcribing favorable fragments.
@@ -400,11 +446,6 @@ proved; off-host material located without exposing it.\\
 \bottomrule
 \end{tabularx}
 
-\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}Xp{0.12\linewidth}X@{}}
-Operator: & \hrulefill & Date/time: & \hrulefill\\[1.4em]
-Witness/reviewer: & \hrulefill & Record ID: & \hrulefill
-\end{tabularx}
-
 \smallskip
 \noindent\textbf{Attachments retained with this record}\par\smallskip
 \begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}Xp{0.25\linewidth}@{}}
@@ -419,20 +460,26 @@ Apply recap and final check recap & &\\
 \bottomrule
 \end{tabularx}
 
-\section{Recovering instead of rebuilding}
-\begin{telosfacts}[0.24]
-\telosfact{Bad update}{Boot the recovery UKI, restore the operating-system checkpoint and its matching ESP artifact set, reboot. The checkpoint is taken before the transaction, not after. \governedby{ADR 0028}}
-\telosfact{Boot broken}{The recovery UKI is self-contained and boots without the installed root. It starts non-destructive and requires an explicit action before mounting anything writable. \governedby{ADR 0024}}
-\telosfact{TPM unlock fails}{Milestone B only. Early boot falls back to the recovery key, which is held off-host. Test that path \emph{before} enabling TPM unlock, never after. \governedby{ADR 0029}}
-\telosfact{Disk dead}{Rebuild from this manual. Application data restores from its own backup, on its own schedule --- it is not in the operating-system checkpoint. \governedby{ADR 0027, ADR 0054}}
-\telosfact{Recovery key lost}{The data is gone. This is the intended behaviour of encryption at rest, and it is why custody is a decision with its own ADRs rather than an afterthought.}
-\end{telosfacts}
+\medskip
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}Xp{0.12\linewidth}X@{}}
+Operator: & \hrulefill & Date/time: & \hrulefill\\[1.4em]
+Witness/reviewer: & \hrulefill & Record ID: & \hrulefill
+\end{tabularx}
 
-\begin{telospanel}{Test this manual by using it}
-The QEMU acceptance matrix runs this entire sequence unattended against virtual
-hardware and asserts every expectation above. Any change to the installer, the
-profile or these instructions must pass it before touching real metal.
-A reconstruction manual nobody has followed end to end is a hypothesis.
-\governedby{ADR 0056}
-\end{telospanel}
+\medskip
+\noindent\textbf{Exceptions and closure}\par\smallskip
+Record every failed or deferred check. ``None'' is an entry; a blank field is
+not. Acceptance remains open until each item names its evidence and disposition.
+
+\begin{tabularx}{\linewidth}{@{}p{0.08\linewidth}Xp{0.23\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Failure, deviation, or pending evidence} &
+\textbf{Owner / closure reference}\\
+\midrule
+1 & &\\[1.8em]
+2 & &\\[1.8em]
+3 & &\\[1.8em]
+4 & &\\
+\bottomrule
+\end{tabularx}
 \end{document}

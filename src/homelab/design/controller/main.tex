@@ -2,7 +2,7 @@
 \input{homelab/shared/homelab.tex}
 
 \telosmeta{Homelab}{Controller Design}
-  {What the Controller is, what it owns, and what it deliberately does not}{2026-07-25}
+  {What the Controller is, what it owns, and what it deliberately does not}{20260725.001}
 
 \begin{document}
 \telosmasthead[High-level design]
@@ -182,6 +182,19 @@ that changes often lives where changes are cheap and reversible.
 
 Every arrow has an evidence requirement. ``Command returned zero'' is never
 enough: the observation must establish the property named on the arrow.
+
+\subsection*{Transition contracts}
+{\footnotesize
+\begin{tabularx}{\linewidth}{@{}p{.16\linewidth}p{.17\linewidth}p{.20\linewidth}p{.20\linewidth}L@{}}
+\toprule
+\textbf{Precondition} & \textbf{Action} & \textbf{Observable} & \textbf{Pass} & \textbf{Fail next}\\
+\midrule
+Installed; powered off; manifest read back & Cable only \texttt{lan0} to the named isolated-switch port & Port identity, no uplink, no foreign offer during recorded listen window & Physical and observed segment match the plan & Power off; correct cable/switch ownership; repeat from placement\\
+Placed; services stopped; carrier and MAC match & Run preflight, then start the bundled dnsmasq/nginx unit & One client lease, forward/reverse DNS, manifest fetch and PXE request & All four probes pass; no router option or foreign offer & Stop both units; retain capture/logs; return to preflight\\
+Healthy authority; named checkpoint exists & Apply candidate update and cold boot without editing configuration & Booted checkpoint, package state and repeated DHCP/DNS/PXE probes & Same authority returns on two probe passes; mutable roles healthy & Stop optional roles; boot known-good checkpoint; enter rollback proof\\
+Failed candidate retained; known-good booted & Verify excluded subvolumes, then repeat activation probes & System checkpoint restored; mutable state generation unchanged; client probes pass & Incident links failure and restored evidence & Keep authority stopped; rescue/rebuild rather than improvising forward\\
+\bottomrule
+\end{tabularx}}
 
 \begin{tabularx}{\linewidth}{@{}p{.18\linewidth}p{.24\linewidth}L@{}}
 \toprule
