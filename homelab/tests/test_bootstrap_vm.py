@@ -44,7 +44,10 @@ class BootstrapVmTests(unittest.TestCase):
         joined = " ".join(command)
         self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
                       joined)
-        self.assertIn("ide-cd,drive=installmedia,bootindex=1", joined)
+        self.assertIn(
+            "scsi-cd,bus=mediabus.0,drive=installmedia,bootindex=1",
+            joined,
+        )
 
     def test_seed_iso_is_read_only_and_cannot_preempt_installer(self):
         with mock.patch.object(
@@ -61,10 +64,16 @@ class BootstrapVmTests(unittest.TestCase):
             "file=/media/telos-seed.iso",
             joined,
         )
-        self.assertIn("ide-cd,drive=installmedia,bootindex=1", joined)
+        self.assertIn(
+            "scsi-cd,bus=mediabus.0,drive=installmedia,bootindex=1",
+            joined,
+        )
         self.assertIn("drive=osdisk,serial=TELOS-BOOTSTRAP-DC-001,bootindex=2",
                       joined)
-        self.assertIn("ide-cd,drive=seedmedia,bootindex=3", joined)
+        self.assertIn(
+            "scsi-cd,bus=mediabus.0,drive=seedmedia,bootindex=3",
+            joined,
+        )
 
     def test_create_defaults_to_dry_run(self):
         with tempfile.TemporaryDirectory() as temp:

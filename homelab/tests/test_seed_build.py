@@ -29,7 +29,7 @@ class SeedBuildTests(unittest.TestCase):
         commands = seed.command_plan(
             ["base", "samba"], Path("/tmp/stage"), Path("/tmp/seed.iso")
         )
-        self.assertEqual(commands[0][0:2], ["sudo", "pacman"])
+        self.assertEqual(commands[0][0:2], ["fakeroot", "pacman"])
         self.assertIn("--config", commands[0])
         self.assertIn("-Syw", commands[0])
         self.assertIn("--dbpath", commands[0])

@@ -112,17 +112,21 @@ def qemu_command(
         role="listen", mac="52:54:00:11:11:11")
     if iso:
         command += [
+            "-device", "virtio-scsi-pci,id=mediabus",
             "-drive",
             f"if=none,id=installmedia,media=cdrom,readonly=on,"
             f"file={iso.resolve()}",
-            "-device", "ide-cd,drive=installmedia,bootindex=1",
+            "-device",
+            "scsi-cd,bus=mediabus.0,drive=installmedia,bootindex=1",
         ]
     if seed_iso:
+        if not iso:
+            command += ["-device", "virtio-scsi-pci,id=mediabus"]
         command += [
             "-drive",
             f"if=none,id=seedmedia,media=cdrom,readonly=on,"
             f"file={seed_iso.resolve()}",
-            "-device", "ide-cd,drive=seedmedia,bootindex=3",
+            "-device", "scsi-cd,bus=mediabus.0,drive=seedmedia,bootindex=3",
         ]
     return command
 

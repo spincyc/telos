@@ -84,7 +84,10 @@ class SeedManifestTests(unittest.TestCase):
 class SeedSignatureTests(unittest.TestCase):
     def test_build_and_install_require_package_signatures(self) -> None:
         config = seed.PACMAN_CONFIG.read_text(encoding="utf-8")
-        self.assertRegex(config, r"(?m)^SigLevel\s*=\s*Required\s*$")
+        self.assertRegex(
+            config,
+            r"(?m)^SigLevel\s*=\s*Required\s+DatabaseOptional\s*$",
+        )
         self.assertRegex(config, r"(?m)^LocalFileSigLevel\s*=\s*Required\s*$")
 
         plan = seed.command_plan(
