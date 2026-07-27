@@ -17,6 +17,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PACKAGES = Path(__file__).with_name("packages.txt")
 PACMAN_CONFIG = Path(__file__).with_name("pacman.conf")
+NETWORK_ATTACH_PREFLIGHT = ROOT / "homelab/bin/homelab-network-attach-preflight"
 DEFAULT_OUTPUT = ROOT / "homelab/var/seed/telos-controller-seed.iso"
 FORBIDDEN_SOURCE_PARTS = {
     "private", "secret", "secrets", ".env", "id_rsa", "id_ed25519",
@@ -179,6 +180,7 @@ def build(output: Path, package_file: Path) -> None:
         shutil.copy2(Path(__file__).with_name("install-controller-deps"), stage)
         shutil.copy2(Path(__file__).with_name("install-controller"), stage)
         shutil.copy2(Path(__file__).with_name("verify-seed"), stage)
+        shutil.copy2(NETWORK_ATTACH_PREFLIGHT, stage)
         shutil.copy2(package_file, stage / "packages.txt")
         shutil.copy2(PACMAN_CONFIG, stage / "pacman.conf")
 

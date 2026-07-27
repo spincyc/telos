@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+failures=0
+
+pass() { printf 'PASS  %s\n' "$1"; }
+fail() { printf 'FAIL  %s\n' "$1"; failures=$((failures + 1)); }
+
+check_root() {
+    local state
+    state=$(passwd -S root 2>/dev/null | awk '{print $2}')
+    if [ "$state" = L ]; then
+        pass "root account is locked"
+    else
+        fail "root account is not locked"
+    fi
+}
+
+check_forwarding() {
+    local key value
+    for key in net.ipv4.ip_forward net.ipv6.conf.all.forwarding; do
+        value=$(sysctl -n "$key" 2>/dev/null || printf unknown)
+        if [ "$value" = 0 ]; then
+            pass "$key is off"
+        else
+            fail "$key is $value; expected 0"
+        fi
+    done
+}
+
+check_ssh() {
+    local policy
+    if ! policy=$(sshd -T 2>/dev/null); then
+        fail "sshd effective policy could not be read"
+        return
+    fi
+    if grep -qx 'permitrootlogin no' <<<"$policy"; then
+        pass "SSH root login is disabled"
+    else
+        fail "SSH root login is not disabled"
+    fi
+    if grep -qx 'passwordauthentication no' <<<"$policy" &&
+       grep -qx 'kbdinteractiveauthentication no' <<<"$policy"; then
+        pass "SSH password authentication is disabled"
+    else
+        fail "SSH password or keyboard-interactive authentication is enabled"
+    fi
+}
+
+check_units() {
+    local unit load enabled active
+    local units=(
+        dnsmasq.service dnsmasq-homelab.service
+        dhcpd.service dhcpd4.service kea-dhcp4.service
+        tftpd.service tftp.service
+        named.service samba.service smb.service nmb.service winbind.service
+        ntpd.service
+        nginx.service nginx-homelab.service
+    )
+    for unit in "${units[@]}"; do
+        if ! load=$(systemctl show --property=LoadState --value "$unit" 2>/dev/null); then
+            fail "$unit load state could not be read"
+            continue
+        fi
+        if [ "$load" = not-found ]; then
+            pass "$unit is not installed"
+            continue
+        fi
+        if [ "$load" != loaded ]; then
+            fail "$unit load state is $load; expected loaded or not-found"
+            continue
+        fi
+
+        enabled=$(systemctl is-enabled "$unit" 2>/dev/null)
+        case "$enabled" in
+            masked) pass "$unit is masked" ;;
+            *) fail "$unit enablement is ${enabled:-unknown}; expected masked" ;;
+        esac
+
+        active=$(systemctl is-active "$unit" 2>/dev/null)
+        case "$active" in
+            inactive) pass "$unit is inactive" ;;
+            *) fail "$unit active state is ${active:-unknown}; expected inactive" ;;
+        esac
+    done
+}
+
+check_listeners() {
+    local sockets found
+    # Authority and provisioning ports. SSH (22) is intentionally allowed.
+    if ! sockets=$(ss -H -lntu 2>/dev/null); then
+        fail "listening sockets could not be read"
+        return
+    fi
+    found=$(awk '
+        {
+            endpoint=$5
+            sub(/^.*]:/, "", endpoint)
+            sub(/^.*:/, "", endpoint)
+            if (endpoint ~ /^(53|67|69|80|88|123|389|443|445|464|636|3268|3269|4011)$/)
+                print endpoint
+        }' <<<"$sockets" | sort -nu | paste -sd, -)
+    if [ -z "$found" ]; then
+        pass "no authority or provisioning ports are listening"
+    else
+        fail "dangerous listening ports found: $found"
+    fi
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+    printf 'FAIL  run this preflight as root\n'
+    exit 2
+fi
+
+printf '%s\n' "Controller network-attachment preflight"
+check_root
+check_forwarding
+check_ssh
+check_units
+check_listeners
+
+if [ "$failures" -eq 0 ]; then
+    printf 'RESULT PASS: safe to proceed to the separately authorized attachment step\n'
+    exit 0
+fi
+printf 'RESULT FAIL: %d condition(s) must be corrected before attachment\n' "$failures"
+exit 1

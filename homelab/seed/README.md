@@ -26,8 +26,10 @@ sudo /path/to/seed/install-controller-deps /path/to/seed
 ```
 
 The seed deliberately contains no inventory, credentials, domain name, host
-name, address plan, or other instance value. Apply the separately held private
-overlay only after the public bootstrap completes.
+name, address plan, or other instance value. It installs the public, fail-closed
+network-attachment check as
+`/usr/local/sbin/homelab-network-attach-preflight`. Apply the separately held
+private overlay only after the public bootstrap completes.
 
 ## Temporary VM operator sequence
 
@@ -102,3 +104,40 @@ systemctl --failed
 Record only pass/fail results. Do not record the password. Keep the VM
 loopback-isolated until permanent key-based administration replaces the
 temporary password and the separate network-attachment gate is approved.
+
+## Existing isolated Controller VM
+
+An already-installed VM does not need rebuilding. Keep it powered off while
+building a fresh seed from the commit that contains the preflight:
+
+```sh
+make homelab-bootstrap-seed
+```
+
+Then start the still-isolated VM with that seed attached, log in locally, and
+copy only the receipt-covered executable:
+
+```sh
+python homelab/vm/bootstrap_dc.py run \
+  --seed-iso homelab/var/seed/telos-controller-seed.iso --apply
+```
+
+At the local Controller console:
+
+```sh
+sudo mkdir -p /run/telos-seed
+sudo mount -L TELOS_SEED /run/telos-seed
+sudo /run/telos-seed/verify-seed /run/telos-seed
+sudo install -Dm0755 \
+  /run/telos-seed/homelab-network-attach-preflight \
+  /usr/local/sbin/homelab-network-attach-preflight
+for unit in dnsmasq.service dnsmasq-homelab.service dhcpd.service \
+  dhcpd4.service kea-dhcp4.service tftpd.service tftp.service named.service \
+  samba.service smb.service nmb.service winbind.service ntpd.service \
+  nginx.service nginx-homelab.service; do sudo systemctl mask --now "$unit"; done
+sudo /usr/local/sbin/homelab-network-attach-preflight
+```
+
+Do not attach the VM to a LAN merely to transfer this file. A passing preflight
+authorizes only the separately documented attachment step; it does not perform
+that step or enable controller authority services.

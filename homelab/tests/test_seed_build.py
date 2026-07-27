@@ -14,6 +14,13 @@ SPEC.loader.exec_module(seed)
 
 
 class SeedBuildTests(unittest.TestCase):
+    def test_network_attachment_preflight_is_public_seed_input(self):
+        self.assertEqual(
+            seed.NETWORK_ATTACH_PREFLIGHT,
+            seed.ROOT / "homelab/bin/homelab-network-attach-preflight",
+        )
+        self.assertTrue(seed.NETWORK_ATTACH_PREFLIGHT.is_file())
+
     def test_public_package_list_is_unique_and_has_controller_services(self):
         names = seed.package_names(seed.DEFAULT_PACKAGES)
         self.assertEqual(len(names), len(set(names)))

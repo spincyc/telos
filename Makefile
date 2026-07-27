@@ -98,6 +98,11 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
 	homelab-bootstrap-vm-boot homelab-bootstrap-vm-destroy \
+	homelab-bootstrap-network-preflight homelab-bootstrap-network-plan \
+	homelab-bootstrap-network-host-plan homelab-bootstrap-network-host-prepare \
+	homelab-bootstrap-network-receipt homelab-bootstrap-network-authorize \
+	homelab-bootstrap-network-run homelab-bootstrap-network-check \
+	homelab-bootstrap-network-teardown \
 	homelab-bootstrap-controller \
 	homelab-pxe-controller homelab-pxe-arch homelab-pxe-windows \
 	homelab-pxe-all homelab-pxe-test homelab-pxe-verify \
@@ -249,6 +254,107 @@ homelab-bootstrap-vm-destroy:
 		exit 2; \
 	fi
 	@$(PYTHON) homelab/vm/bootstrap_dc.py destroy --confirm '$(CONFIRM)'
+
+# Physical attachment is a separate gate from VM creation and service
+# convergence. NETWORK_CONFIG stays in the private overlay and must describe a
+# tap and bridge that the operator created before running these targets.
+homelab-bootstrap-network-preflight:
+	@if [ -z '$(NETWORK_CONFIG)' ]; then \
+		echo 'require NETWORK_CONFIG=<private 0600 attachment JSON>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py run \
+		--network-config '$(abspath $(NETWORK_CONFIG))'
+	@printf '%s\n' \
+		'Guest preflight, at the isolated serial console:' \
+		'  sudo /usr/local/sbin/homelab-network-attach-preflight' \
+		'  cat /proc/sys/kernel/random/boot_id' \
+		"  sed -n 's/.*\"commit\": \"\\([0-9a-f]*\\)\".*/\\1/p' /opt/telos-source/seed-receipt.json" \
+		'Do not attach unless it reports RESULT PASS; then power off.'
+
+homelab-bootstrap-network-plan: homelab-bootstrap-network-preflight
+	@printf '%s\n' \
+		'Plan only: UniFi remains DHCP, DNS, and routing authority.' \
+		'Time uses only the explicitly allowed external NTP path.' \
+		'Record the fixed MAC from NETWORK_CONFIG in the UniFi reservation.' \
+		'Confirm the selected switch port is an access port on the validation VLAN.' \
+		'No DHCP options 66/67 and no controller authority services.' \
+		'Next: make homelab-bootstrap-network-host-plan'
+
+homelab-bootstrap-network-host-plan: homelab-bootstrap-network-preflight
+	@sudo env TAP_OWNER="$$(id -un)" homelab/bin/homelab-host-network prepare
+
+homelab-bootstrap-network-host-prepare: homelab-bootstrap-network-preflight
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1, then type the helper confirmation'; \
+		sudo env TAP_OWNER="$$(id -un)" \
+			homelab/bin/homelab-host-network prepare; \
+	else \
+		sudo env TAP_OWNER="$$(id -un)" APPLY=1 \
+			homelab/bin/homelab-host-network prepare; \
+	fi
+
+homelab-bootstrap-network-receipt:
+	@if [ -z '$(NETWORK_RECEIPT)' ] || [ -z '$(GUEST_BOOT_ID)' ] || \
+	    [ -z '$(GUEST_SOURCE_COMMIT)' ]; then \
+		echo 'require NETWORK_RECEIPT=<private path> GUEST_BOOT_ID=<UUID> GUEST_SOURCE_COMMIT=<full SHA>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/preflight_receipt.py record \
+		--output '$(abspath $(NETWORK_RECEIPT))' \
+		--disk '$(abspath build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2)' \
+		--serial TELOS-BOOTSTRAP-DC1 \
+		--guest-boot-id '$(GUEST_BOOT_ID)' \
+		--guest-source-commit '$(GUEST_SOURCE_COMMIT)' \
+		--host-tool-commit "$$(git rev-parse HEAD)"
+
+homelab-bootstrap-network-authorize:
+	@if [ -z '$(NETWORK_RECEIPT)' ] || [ -z '$(CONFIRM)' ]; then \
+		echo "require NETWORK_RECEIPT=<private path> CONFIRM='ATTACH <token>'" >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/preflight_receipt.py authorize \
+		--receipt '$(abspath $(NETWORK_RECEIPT))' --confirm '$(CONFIRM)'
+
+homelab-bootstrap-network-run:
+	@if [ -z '$(NETWORK_CONFIG)' ]; then \
+		echo 'require NETWORK_CONFIG=<private 0600 attachment JSON>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: an applied launch also requires NETWORK_RECEIPT=<fresh authorized receipt>'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run \
+			--network-config '$(abspath $(NETWORK_CONFIG))'; \
+	else \
+		if [ -z '$(NETWORK_RECEIPT)' ]; then \
+			echo 'require NETWORK_RECEIPT=<fresh private 0600 receipt>' >&2; exit 2; \
+		fi; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py run \
+			--network-config '$(abspath $(NETWORK_CONFIG))' \
+			--network-receipt '$(abspath $(NETWORK_RECEIPT))' \
+			--confirm '$(CONFIRM)' --apply; \
+	fi
+
+homelab-bootstrap-network-check:
+	@if [ -z '$(NETWORK_CONFIG)' ]; then \
+		echo 'require NETWORK_CONFIG=<private 0600 attachment JSON>' >&2; exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py run \
+		--network-config '$(abspath $(NETWORK_CONFIG))'
+	@printf '%s\n' \
+		'Verify in the guest:' \
+		'  ip -brief address; ip route; resolvectl status; timedatectl' \
+		'  sudo /usr/local/sbin/homelab-network-attach-preflight' \
+		'Verify in UniFi: reserved MAC/IP, one DHCP authority, no options 66/67.' \
+		'Then power off the controller and prove an ordinary client is unaffected.'
+
+homelab-bootstrap-network-teardown:
+	@if [ '$(APPLY)' != 1 ]; then \
+		printf '%s\n' \
+			'dry run: power off bootstrap-dc before detaching its tap' \
+			'repeat with APPLY=1, then type the helper confirmation'; \
+		sudo homelab/bin/homelab-host-network teardown; \
+	else \
+		sudo env APPLY=1 homelab/bin/homelab-host-network teardown; \
+	fi
 
 # Converge only the temporary Controller role. The private inventory supplies
 # every identity value and the opt-in provisioning secret path. Check mode is
@@ -431,6 +537,8 @@ help:
 		'make homelab-media        Fresh-fetch official disposable media' \
 		'make homelab-bootstrap-seed  Build the isolated Controller seed ISO' \
 		'make homelab-bootstrap-vm-boot  Boot the installed Controller disk' \
+		'make homelab-bootstrap-network-plan NETWORK_CONFIG=<private JSON>' \
+		'                         Plan the controlled physical attachment' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

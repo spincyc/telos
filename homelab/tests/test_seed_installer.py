@@ -90,6 +90,33 @@ class SeedInstallerContractTests(unittest.TestCase):
             r'(?:copy2|install)[^\n]*install-controller',
         )
 
+    def test_installs_network_attachment_preflight(self) -> None:
+        builder = BUILDER.read_text(encoding="utf-8")
+        self.assertIn("NETWORK_ATTACH_PREFLIGHT", builder)
+        self.assertIn(
+            '"$seed_root/homelab-network-attach-preflight"',
+            self.source,
+        )
+        self.assertIn(
+            '"$target/usr/local/sbin/homelab-network-attach-preflight"',
+            self.source,
+        )
+        self.assertRegex(
+            self.source,
+            r'install\s+-Dm0755\s+"\$seed_root/homelab-network-attach-preflight"',
+        )
+
+    def test_masks_authority_services_before_first_boot(self) -> None:
+        for unit in (
+            "dnsmasq.service", "dhcpd.service", "tftpd.service",
+            "named.service", "samba.service", "ntpd.service", "nginx.service",
+        ):
+            self.assertIn(unit, self.source)
+        self.assertRegex(
+            self.source,
+            r'arch-chroot\s+"\$target"\s+systemctl\s+mask\s+"\$unit"',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

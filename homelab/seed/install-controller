@@ -24,6 +24,8 @@ trap cleanup EXIT HUP INT TERM
 [ -f "$seed_root/source/telos.tar.gz" ] || fail "source archive is missing"
 [ -f "$seed_root/receipt.json" ] || fail "seed receipt is missing"
 [ -f "$seed_root/pacman.conf" ] || fail "pacman configuration is missing"
+[ -f "$seed_root/homelab-network-attach-preflight" ] ||
+    fail "network-attachment preflight is missing"
 command -v pacstrap >/dev/null || fail "pacstrap is unavailable"
 command -v genfstab >/dev/null || fail "genfstab is unavailable"
 command -v python >/dev/null || fail "python is unavailable"
@@ -151,12 +153,23 @@ EOF
 arch-chroot "$target" systemctl enable serial-getty@ttyS0.service
 arch-chroot "$target" systemctl enable NetworkManager.service
 arch-chroot "$target" systemctl enable sshd.service
+for unit in \
+    dnsmasq.service dnsmasq-homelab.service \
+    dhcpd.service dhcpd4.service kea-dhcp4.service \
+    tftpd.service tftp.service \
+    named.service samba.service smb.service nmb.service winbind.service \
+    ntpd.service nginx.service nginx-homelab.service
+do
+    arch-chroot "$target" systemctl mask "$unit"
+done
 
 install -d -m 0755 "$target/opt/telos-source"
 install -m 0644 "$seed_root/source/telos.tar.gz" \
     "$target/opt/telos-source/telos.tar.gz"
 install -m 0644 "$seed_root/receipt.json" \
     "$target/opt/telos-source/seed-receipt.json"
+install -Dm0755 "$seed_root/homelab-network-attach-preflight" \
+    "$target/usr/local/sbin/homelab-network-attach-preflight"
 
 sync
 umount -R "$target"

@@ -35,6 +35,458 @@ class BootstrapVmTests(unittest.TestCase):
         self.assertNotIn("tap", joined)
         self.assertNotIn("user,id=", joined)
 
+    def test_explicit_tap_config_replaces_isolated_backend(self):
+        config = {
+            "mode": "precreated-tap",
+            "tap": "tap-dc",
+            "bridge": "br-lab",
+            "uplink": "enp9s0",
+            "mac": "52:54:00:11:11:19",
+        }
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))):
+            command = bootstrap_dc.qemu_command(
+                Path("/state"), None, network_config=config)
+        joined = " ".join(command)
+        self.assertIn(
+            "tap,id=bootstrap,ifname=tap-dc,script=no,downscript=no", joined)
+        self.assertNotIn("socket,id=bootstrap", joined)
+
+    def test_network_config_must_be_private_and_exact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "network.json"
+            path.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            path.chmod(0o600)
+            config = bootstrap_dc.load_network_config(path)
+            self.assertEqual(config["tap"], "tap-dc")
+            path.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "no broader than 0600"):
+                bootstrap_dc.load_network_config(path)
+
+    def test_network_config_rejects_extra_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "network.json"
+            path.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+                "script": "/tmp/run-me",
+            }))
+            path.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, "requires only"):
+                bootstrap_dc.load_network_config(path)
+
+    def test_network_config_rejects_symlink_and_malformed_json(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "actual.json"
+            target.write_text("{}")
+            target.chmod(0o600)
+            link = root / "network.json"
+            link.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                bootstrap_dc.load_network_config(link)
+
+            broken = root / "broken.json"
+            broken.write_text("{")
+            broken.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, "cannot read"):
+                bootstrap_dc.load_network_config(broken)
+
+    def test_network_config_rejects_wrong_schema_or_mode(self):
+        base = {
+            "schema": 2,
+            "mode": "precreated-tap",
+            "tap": "tap-dc",
+            "bridge": "br-lab",
+            "uplink": "enp9s0",
+            "mac": "52:54:00:11:11:19",
+        }
+        for field, value in (("schema", 1), ("mode", "user"),
+                             ("mode", "bridge-helper")):
+            with self.subTest(field=field, value=value), \
+                    tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "network.json"
+                path.write_text(json.dumps({**base, field: value}))
+                path.chmod(0o600)
+                with self.assertRaisesRegex(ValueError, "schema 2 precreated-tap"):
+                    bootstrap_dc.load_network_config(path)
+
+    def test_network_config_rejects_unsafe_interface_names_and_macs(self):
+        base = {
+            "schema": 2,
+            "mode": "precreated-tap",
+            "tap": "tap-dc",
+            "bridge": "br-lab",
+            "uplink": "enp9s0",
+            "mac": "52:54:00:11:11:19",
+        }
+        cases = (
+            ("tap", "tap;run-me", "invalid tap"),
+            ("bridge", "bridge-name-is-too-long", "invalid bridge"),
+            ("mac", "00:11:22:33:44:55", "synthetic"),
+            ("mac", "52:54:00:11:11:zz", "synthetic"),
+        )
+        for field, value, message in cases:
+            with self.subTest(field=field, value=value), \
+                    tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "network.json"
+                path.write_text(json.dumps({**base, field: value}))
+                path.chmod(0o600)
+                with self.assertRaisesRegex(ValueError, message):
+                    bootstrap_dc.load_network_config(path)
+
+    def test_apply_requires_precreated_tap_on_named_linux_bridge(self):
+        config = {
+            "mode": "precreated-tap",
+            "tap": "tap-dc",
+            "bridge": "br-lab",
+            "uplink": "enp9s0",
+            "mac": "52:54:00:11:11:19",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            sys_net = Path(temp)
+            tap = sys_net / "tap-dc"
+            bridge = sys_net / "br-lab"
+            uplink = sys_net / "enp9s0"
+            tap.mkdir()
+            bridge.mkdir()
+            uplink.mkdir()
+            (bridge / "bridge").mkdir()
+            (uplink / "device").mkdir()
+            (tap / "tun_flags").write_text("0x1002\n")
+            (tap / "owner").write_text(f"{bootstrap_dc.os.getuid()}\n")
+            for path in (tap, bridge, uplink):
+                (path / "flags").write_text("0x1003\n")
+            (tap / "master").symlink_to(bridge)
+            (uplink / "master").symlink_to(bridge)
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net):
+                args = bootstrap_dc.tap_network_args(config, verify_host=True)
+            self.assertIn(
+                "tap,id=bootstrap,ifname=tap-dc,script=no,downscript=no",
+                args,
+            )
+
+            (tap / "master").unlink()
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "not attached"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+            (tap / "master").symlink_to(bridge)
+
+            (tap / "tun_flags").write_text("0x1001\n")
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "not a TAP"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+            (tap / "tun_flags").write_text("0x1002\n")
+
+            (tap / "owner").write_text(
+                f"{bootstrap_dc.os.getuid() + 1}\n")
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "does not match"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+            (tap / "owner").write_text(f"{bootstrap_dc.os.getuid()}\n")
+
+            (tap / "flags").write_text("0x1002\n")
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "not UP"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+            (tap / "flags").write_text("0x1003\n")
+
+            (uplink / "device").rmdir()
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "physical interface"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+
+    def test_apply_rejects_missing_tap_or_non_bridge(self):
+        config = {
+            "mode": "precreated-tap",
+            "tap": "tap-dc",
+            "bridge": "br-lab",
+            "uplink": "enp9s0",
+            "mac": "52:54:00:11:11:19",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            sys_net = Path(temp)
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "must already exist"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+
+            (sys_net / "tap-dc").mkdir()
+            (sys_net / "br-lab").mkdir()
+            (sys_net / "enp9s0").mkdir()
+            with mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", sys_net), \
+                    self.assertRaisesRegex(ValueError, "not a Linux bridge"):
+                bootstrap_dc.tap_network_args(config, verify_host=True)
+
+    def test_dry_run_with_explicit_config_never_starts_qemu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            output = io.StringIO()
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(
+                        bootstrap_dc, "ovmf_pair",
+                        return_value=(Path("/code"), Path("/vars"))), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run") as run_qemu, \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, None, False, network_config_path=config),
+                    0,
+                )
+            run_qemu.assert_not_called()
+            self.assertIn("dry run; repeat with --apply", output.getvalue())
+            self.assertIn("ifname=tap-dc", output.getvalue())
+            self.assertIn("fresh authorized preflight receipt", output.getvalue())
+
+    def test_attachment_apply_requires_network_receipt_before_qemu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            errors = io.StringIO()
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(bootstrap_dc.os, "geteuid",
+                                      return_value=1000), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run") as run_qemu, \
+                    contextlib.redirect_stderr(errors):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, None, True, network_config_path=config,
+                        confirm="attach-bootstrap-dc"),
+                    2,
+                )
+            run_qemu.assert_not_called()
+            self.assertIn("requires a fresh --network-receipt",
+                          errors.getvalue())
+
+    def test_cli_passes_network_receipt_to_physical_run(self):
+        with mock.patch.object(bootstrap_dc, "run", return_value=0) as run:
+            self.assertEqual(bootstrap_dc.main([
+                "--state-dir", "/state", "run",
+                "--network-config", "/private/network.json",
+                "--network-receipt", "/private/receipt.json",
+                "--confirm", "attach-bootstrap-dc", "--apply",
+            ]), 0)
+        run.assert_called_once_with(
+            Path("/state"), None, True, None,
+            Path("/private/network.json"), Path("/private/receipt.json"),
+            "attach-bootstrap-dc",
+        )
+
+    def test_invalid_receipt_fails_before_host_network_or_qemu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            receipt = root / "receipt.json"
+            receipt.write_text("{}")
+            receipt.chmod(0o600)
+            git_result = subprocess.CompletedProcess(
+                ["git"], 0, stdout="a" * 40 + "\n")
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(bootstrap_dc.os, "geteuid",
+                                      return_value=1000), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run",
+                        return_value=git_result) as process, \
+                    mock.patch.object(
+                        bootstrap_dc, "verify_preflight_receipt",
+                        side_effect=ValueError("stale")) as verify, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(bootstrap_dc.run(
+                    state, None, True, network_config_path=config,
+                    network_receipt_path=receipt,
+                    confirm="attach-bootstrap-dc"), 2)
+            verify.assert_called_once_with(
+                receipt, state / "bootstrap-dc.qcow2",
+                bootstrap_dc.DISK_SERIAL, "a" * 40)
+            process.assert_called_once()
+
+    def test_apply_fails_closed_before_qemu_if_host_network_is_unverified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(bootstrap_dc, "SYS_CLASS_NET", root / "sys"), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run") as run_qemu, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, None, True, network_config_path=config),
+                    2,
+                )
+            run_qemu.assert_not_called()
+
+    def test_attachment_apply_refuses_root_or_missing_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            common = (
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"),
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run"),
+            )
+            with common[0], common[1] as run_qemu, \
+                    mock.patch.object(bootstrap_dc.os, "geteuid",
+                                      return_value=0), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, None, True, network_config_path=config,
+                        confirm="attach-bootstrap-dc"),
+                    2,
+                )
+            run_qemu.assert_not_called()
+
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(bootstrap_dc.os, "geteuid",
+                                      return_value=1000), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run") as run_qemu, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, None, True, network_config_path=config),
+                    2,
+                )
+            run_qemu.assert_not_called()
+
+    def test_attachment_forbids_installer_media(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            for name in ("bootstrap-dc.qcow2", "OVMF_VARS.fd", "manifest.json"):
+                path = state / name
+                path.write_text("x")
+                path.chmod(0o600)
+            iso = root / "install.iso"
+            iso.write_text("x")
+            config = root / "network.json"
+            config.write_text(json.dumps({
+                "schema": 2,
+                "mode": "precreated-tap",
+                "tap": "tap-dc",
+                "bridge": "br-lab",
+                "uplink": "enp9s0",
+                "mac": "52:54:00:11:11:19",
+            }))
+            config.chmod(0o600)
+            with mock.patch.object(
+                    bootstrap_dc.shutil, "which",
+                    return_value="/usr/bin/qemu-system-x86_64"), \
+                    mock.patch.object(bootstrap_dc.os, "geteuid",
+                                      return_value=1000), \
+                    mock.patch.object(
+                        bootstrap_dc.subprocess, "run") as run_qemu, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    bootstrap_dc.run(
+                        state, iso, False, network_config_path=config),
+                    2,
+                )
+            run_qemu.assert_not_called()
+
     def test_command_attaches_requested_iso_read_only(self):
         with mock.patch.object(
                 bootstrap_dc, "ovmf_pair",

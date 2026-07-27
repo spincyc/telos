@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+physical=eno2
+bridge=br-dc
+tap=tap-dc
+state_dir=/run/telos-controller-network
+state_file=$state_dir/state
+confirm_prepare="ATTACH $physical $bridge $tap"
+confirm_teardown="DETACH $physical $bridge $tap"
+
+die() { printf 'error: %s\n' "$*" >&2; exit 2; }
+run() { printf '  '; printf '%q ' "$@"; printf '\n'; "$@"; }
+exists() { [ -d "/sys/class/net/$1" ]; }
+master_is() {
+    [ -L "/sys/class/net/$1/master" ] &&
+        [ "$(basename "$(readlink -f "/sys/class/net/$1/master")")" = "$2" ]
+}
+
+require_root() {
+    [ "$(id -u)" -eq 0 ] || die "run as root (normally through sudo)"
+}
+
+require_tools() {
+    local tool
+    for tool in ip getent install readlink stat; do
+        command -v "$tool" >/dev/null || die "required command is missing: $tool"
+    done
+}
+
+validate_owner() {
+    owner=${TAP_OWNER:-${SUDO_USER:-}}
+    [[ "$owner" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] ||
+        die "set TAP_OWNER to the unprivileged QEMU user"
+    [ "$owner" != root ] || die "the tap owner cannot be root"
+    owner_uid=$(getent passwd "$owner" | awk -F: 'NR == 1 { print $3 }')
+    [[ "$owner_uid" =~ ^[0-9]+$ ]] || die "tap owner does not exist: $owner"
+    [ "$owner_uid" -ge 1000 ] && [ "$owner_uid" -le 60000 ] ||
+        die "tap owner UID must be between 1000 and 60000"
+}
+
+validate_physical() {
+    exists "$physical" || die "$physical does not exist"
+    [ ! -d "/sys/class/net/$physical/bridge" ] ||
+        die "$physical is itself a bridge"
+    [ ! -e "/sys/class/net/$physical/tun_flags" ] ||
+        die "$physical is a tap/tun interface"
+    [ ! -d "/sys/class/net/$physical/wireless" ] ||
+        die "$physical is wireless; a dedicated wired access port is required"
+    [ ! -L "/sys/class/net/$physical/master" ] ||
+        die "$physical already has a master"
+    [ -z "$(ip -o address show dev "$physical")" ] ||
+        die "$physical has an IP address; remove it before attachment"
+    [ -z "$(ip -o route show dev "$physical")" ] ||
+        die "$physical has an IPv4 route; remove it before attachment"
+    [ -z "$(ip -o -6 route show dev "$physical")" ] ||
+        die "$physical has an IPv6 route; remove it before attachment"
+    exists "$bridge" && die "$bridge already exists"
+    exists "$tap" && die "$tap already exists"
+    return 0
+}
+
+link_up_state() {
+    grep -qw UP "/sys/class/net/$1/flags" 2>/dev/null && printf 1 || {
+        local flags
+        flags=$(cat "/sys/class/net/$1/flags")
+        (( (flags) & 1 )) && printf 1 || printf 0
+    }
+}
+
+nm_state() {
+    command -v nmcli >/dev/null || { printf absent; return; }
+    local value
+    value=$(nmcli -g GENERAL.NM-MANAGED device show "$physical" 2>/dev/null || true)
+    case "$value" in
+        yes) printf yes ;;
+        no) printf no ;;
+        *) die "could not determine NetworkManager ownership of $physical" ;;
+    esac
+}
+
+write_state() {
+    [ ! -e "$state_dir" ] && [ ! -L "$state_dir" ] ||
+        die "state already exists at $state_dir"
+    install -d -m 0700 -o root -g root "$state_dir"
+    umask 077
+    {
+        printf 'schema=1\n'
+        printf 'physical=%s\nbridge=%s\ntap=%s\n' "$physical" "$bridge" "$tap"
+        printf 'owner=%s\nowner_uid=%s\n' "$owner" "$owner_uid"
+        printf 'physical_was_up=%s\nnm_managed=%s\n' "$physical_was_up" "$nm_managed"
+    } >"$state_file"
+    chmod 0600 "$state_file"
+}
+
+read_state() {
+    [ -d "$state_dir" ] && [ ! -L "$state_dir" ] ||
+        die "trusted state directory is missing"
+    [ "$(stat -c '%u:%a' "$state_dir")" = 0:700 ] ||
+        die "state directory must be root-owned mode 0700"
+    [ -f "$state_file" ] && [ ! -L "$state_file" ] ||
+        die "trusted state is missing: $state_file"
+    [ "$(stat -c '%u:%a' "$state_file")" = 0:600 ] ||
+        die "state must be root-owned mode 0600"
+    local key value seen=
+    while IFS='=' read -r key value; do
+        case "$key" in
+            schema) [ "$value" = 1 ] || die "unsupported state schema"; seen+=s ;;
+            physical) [ "$value" = "$physical" ] || die "state physical mismatch"; seen+=p ;;
+            bridge) [ "$value" = "$bridge" ] || die "state bridge mismatch"; seen+=b ;;
+            tap) [ "$value" = "$tap" ] || die "state tap mismatch"; seen+=t ;;
+            owner) [[ "$value" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "invalid state owner"; owner=$value; seen+=o ;;
+            owner_uid) [[ "$value" =~ ^[0-9]+$ ]] || die "invalid state UID"; owner_uid=$value; seen+=u ;;
+            physical_was_up) [[ "$value" =~ ^[01]$ ]] || die "invalid saved link state"; physical_was_up=$value; seen+=l ;;
+            nm_managed) [[ "$value" =~ ^(yes|no|absent)$ ]] || die "invalid saved NetworkManager state"; nm_managed=$value; seen+=n ;;
+            *) die "unexpected state key: $key" ;;
+        esac
+    done <"$state_file"
+    [ "$seen" = spbtouln ] || die "state is incomplete or reordered"
+}
+
+restore_network_manager() {
+    [ "${nm_managed:-absent}" != yes ] || run nmcli device set "$physical" managed yes
+}
+
+rollback_partial() {
+    trap - ERR INT TERM
+    set +e
+    exists "$tap" && ip link delete "$tap"
+    master_is "$physical" "$bridge" && ip link set "$physical" nomaster
+    exists "$bridge" && ip link delete "$bridge"
+    [ "${physical_was_up:-0}" = 1 ] &&
+        ip link set "$physical" up || ip link set "$physical" down
+    restore_network_manager
+    if ! exists "$tap" && ! exists "$bridge" &&
+       ! [ -L "/sys/class/net/$physical/master" ]; then
+        rm -f -- "$state_file"
+        rmdir -- "$state_dir" 2>/dev/null
+    else
+        printf 'error: automatic rollback incomplete; retain %s\n' \
+            "$state_file" >&2
+    fi
+    exit 1
+}
+
+prepare() {
+    validate_owner
+    validate_physical
+    physical_was_up=$(link_up_state "$physical")
+    nm_managed=$(nm_state)
+    printf 'Prepare dedicated controller path:\n'
+    printf '  physical: %s (no host address or route)\n' "$physical"
+    printf '  bridge:   %s\n  tap:      %s (owner %s, UID %s)\n' \
+        "$bridge" "$tap" "$owner" "$owner_uid"
+    printf '  rollback: %s teardown\n' "$0"
+    [ "${APPLY:-0}" = 1 ] || {
+        printf 'DRY RUN: set APPLY=1 and type %s when prompted.\n' "$confirm_prepare"
+        return
+    }
+    read -r -p "Type $confirm_prepare to continue: " answer
+    [ "$answer" = "$confirm_prepare" ] || die "confirmation did not match"
+    write_state
+    trap rollback_partial ERR INT TERM
+    [ "$nm_managed" != yes ] || run nmcli device set "$physical" managed no
+    run ip link add name "$bridge" type bridge
+    run ip link set "$physical" master "$bridge"
+    run ip tuntap add dev "$tap" mode tap user "$owner"
+    run ip link set "$tap" master "$bridge"
+    run ip link set "$physical" up
+    run ip link set "$tap" up
+    run ip link set "$bridge" up
+    trap - ERR INT TERM
+    printf 'READY: %s and %s are attached only through %s.\n' "$physical" "$tap" "$bridge"
+    printf 'No host IP, route, DHCP, DNS, NAT, or firewall rule was created.\n'
+}
+
+teardown() {
+    read_state
+    exists "$physical" || die "$physical disappeared; trusted state retained"
+    if exists "$bridge"; then
+        [ -d "/sys/class/net/$bridge/bridge" ] ||
+            die "$bridge exists but is not a Linux bridge"
+    fi
+    if exists "$tap"; then
+        [ -e "/sys/class/net/$tap/tun_flags" ] ||
+            die "$tap exists but is not a tap/tun interface"
+        master_is "$tap" "$bridge" ||
+            die "$tap exists outside the expected bridge"
+    fi
+    if [ -L "/sys/class/net/$physical/master" ]; then
+        master_is "$physical" "$bridge" ||
+            die "$physical has an unexpected master"
+    fi
+    if ! exists "$bridge"; then
+        ! exists "$tap" ||
+            die "$tap remains but the expected bridge is absent"
+        [ ! -L "/sys/class/net/$physical/master" ] ||
+            die "$physical remains enslaved but the expected bridge is absent"
+    fi
+    printf 'Teardown dedicated controller path %s + %s via %s.\n' \
+        "$physical" "$tap" "$bridge"
+    [ "${APPLY:-0}" = 1 ] || {
+        printf 'DRY RUN: set APPLY=1 and type %s when prompted.\n' "$confirm_teardown"
+        return
+    }
+    read -r -p "Type $confirm_teardown to continue: " answer
+    [ "$answer" = "$confirm_teardown" ] || die "confirmation did not match"
+    exists "$tap" && run ip link delete "$tap"
+    master_is "$physical" "$bridge" &&
+        run ip link set "$physical" nomaster
+    exists "$bridge" && run ip link delete "$bridge"
+    if [ "$physical_was_up" = 1 ]; then
+        run ip link set "$physical" up
+    else
+        run ip link set "$physical" down
+    fi
+    restore_network_manager
+    ! exists "$tap" || die "$tap remains; trusted state retained"
+    ! exists "$bridge" || die "$bridge remains; trusted state retained"
+    [ ! -L "/sys/class/net/$physical/master" ] ||
+        die "$physical remains enslaved; trusted state retained"
+    [ "$(link_up_state "$physical")" = "$physical_was_up" ] ||
+        die "$physical link state was not restored; trusted state retained"
+    if [ "$nm_managed" != absent ]; then
+        [ "$(nm_state)" = "$nm_managed" ] ||
+            die "NetworkManager state was not restored; trusted state retained"
+    fi
+    rm -f -- "$state_file"
+    rmdir -- "$state_dir"
+    printf 'DETACHED: original %s link and NetworkManager state restored.\n' "$physical"
+}
+
+require_root
+require_tools
+case "${1:-}" in
+    prepare) prepare ;;
+    teardown) teardown ;;
+    *) die "usage: $0 prepare|teardown" ;;
+esac
