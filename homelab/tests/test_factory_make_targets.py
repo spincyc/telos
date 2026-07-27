@@ -43,17 +43,34 @@ class FactoryMakeTargetTests(unittest.TestCase):
         declaration = re.search(
             r"^homelab-factory-offline-check:(.*)$", MAKEFILE, re.MULTILINE)
         self.assertIsNotNone(declaration)
-        self.assertIn("homelab-factory-cache-seal", declaration.group(1))
+        self.assertNotIn("homelab-factory-cache-seal", declaration.group(1))
         text = recipe("homelab-factory-offline-check")
-        for forbidden in ("homelab-media", "fetch-", "curl", "wget", "git "):
+        self.assertIn("homelab-media-seal verify", text)
+        self.assertNotIn("homelab-media-seal create", text)
+        for forbidden in (
+            "homelab-media-arch",
+            "homelab-media-windows",
+            "homelab-media-wimboot",
+            "fetch-",
+            "curl",
+            "wget",
+            "git ",
+        ):
             self.assertNotIn(forbidden, text)
 
-    def test_cache_seal_verifies_all_three_media_inputs(self):
+    def test_cache_seal_verifies_and_binds_all_media_inputs(self):
         text = recipe("homelab-factory-cache-seal")
+        self.assertIn("homelab-media-seal create", text)
         self.assertIn("ARCH_ISO", text)
-        self.assertIn("homelab-verify-windows", text)
+        self.assertIn("ARCH_ISO).receipt.json", text)
+        self.assertIn("WINDOWS_ISO_CACHE", text)
+        self.assertIn("WINDOWS_ISO_CACHE).provenance.json", text)
+        self.assertIn("WINDOWS_ISO_CACHE).verification.json", text)
+        self.assertIn("WINDOWS_INSTALL_SOURCE", text)
         self.assertIn("WIMBOOT", text)
-        self.assertIn("sha256sum", text)
+        self.assertIn("wimboot.json", text)
+        for forbidden in ("fetch-", "curl", "wget"):
+            self.assertNotIn(forbidden, text)
 
     def test_controller_bundle_is_dry_run_by_default(self):
         text = recipe("homelab-factory-controller-bundle")
