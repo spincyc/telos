@@ -2,7 +2,7 @@
 \input{potato-launcher/claude/shared/launcher.tex}
 
 \telosmeta{Potato Launcher}{Craft 4: Solvent Weld}
-  {It is not glue. Nothing about it behaves like glue.}{2026-07-25}
+  {It is not glue. Nothing about it behaves like glue.}{20260725.001}
 
 \begin{document}
 \telosmasthead[Shop skill --- the one that decides whether the chamber holds]
@@ -79,52 +79,32 @@ to fix it afterwards --- you cut it out and start again.
 
 \section{Method}
 \begin{enumerate}
-\item \textbf{Dry-fit first, and mark it.} Push the pipe in without cement. It should go in most of the way by hand and need real effort for the last part. Draw a \textbf{witness mark} --- a single line across the joint, from pipe onto fitting --- and a rotation alignment mark if the fitting's orientation matters.
-\item \textbf{Check the temperature.} Below about \qty{5}{^\circ C} the solvent barely works and cure times lengthen enormously. Above about \qty{35}{^\circ C} it flashes off before you can assemble. Work in the middle.
-\item \textbf{Clean and dry both surfaces.} Wipe off swarf, dirt and any moisture.
-\item \textbf{Primer on both}, socket first then pipe, covering the full insertion depth. It should look wet and slightly dulled.
-\item \textbf{Cement on both}, while the primer is still wet. A full even coat on the pipe, a lighter one in the socket --- too much in the socket pools at the shoulder and can hydraulic-lock the joint short of bottom.
-\item \textbf{Insert with a quarter turn.} Push straight in, twisting a quarter turn as you go, until it bottoms. The twist distributes the cement; the push is what makes the weld. Stop turning once it is bottomed.
-\item \textbf{Hold for 30 seconds.} A solvent joint actively pushes itself back out while the softened plastic relaxes. If you let go early it will creep out a few millimetres and you will never know how far.
-\item \textbf{Wipe the excess}, check the bead all the way round, and \textbf{write the date on the part}.
+\item \textbf{Dry-fit.} Push the pipe to its natural stop without cement.
+\item \textbf{Measure.} Record the insertion depth. If it is visibly cocked or
+will not enter most of the socket by hand, stop and remake the prepared end.
+\item \textbf{Mark.} Draw the depth line and one continuous alignment witness
+across pipe and fitting.
+\item \textbf{Check the temperature.} Work only between about
+\qty{5}{^\circ C} and \qty{35}{^\circ C}; outside that range, stop.
+\item \textbf{Clean.} Remove swarf, dirt and moisture from both mating surfaces.
+\item \textbf{Inspect.} Both surfaces must be clean, dry and unscratched. If
+either is contaminated or damaged, stop and prepare new parts.
+\item \textbf{Prime the socket.} Cover its full insertion depth.
+\item \textbf{Prime the pipe.} Cover to the depth line; the surface should look
+wet and slightly dulled.
+\item \textbf{Cement the pipe.} Apply one full, even coat.
+\item \textbf{Cement the socket.} Apply one lighter, even coat; a pool at the
+shoulder means stop and remake with clean parts.
+\item \textbf{Insert.} Push straight to the shoulder while making one quarter
+turn, then stop turning.
+\item \textbf{Hold.} Keep inward pressure for 30 seconds.
+\item \textbf{Release.} Watch the depth line for movement. Any retreat means
+reject the joint.
+\item \textbf{Wipe.} Remove only the loose excess at the socket mouth.
+\item \textbf{Inspect.} Trace the bead through a full turn and check the depth
+line and witness mark. Any gap or displacement means reject the joint.
+\item \textbf{Date.} Write the cure start date and time on the part.
 \end{enumerate}
-
-\section{One-way sequence --- stop if evidence fails}
-\begin{center}
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \foreach \x/\n/\lab in {0/1/dry fit,2.15/2/mark depth,4.3/3/prime + cement,6.45/4/push + hold,8.6/5/inspect + date}{
-    \draw[craftline] (\x,.05) rectangle (\x+1.55,.78);
-    \node[cflabel,anchor=south,align=center] at (\x+.775,.86) {\n.\ \lab};
-  }
-  \draw[craftheavy] (.10,.28) rectangle (1.02,.55);
-  \draw[craftline] (.88,.20) rectangle (1.45,.63);
-  \draw[craftheavy] (2.28,.18)--(2.28,.65);
-  \draw[craftline] (2.78,.18)--(2.78,.65);
-  \craftdim{2.28}{.12}{2.78}{.12}{depth}
-  \foreach \y in {.20,.30,...,.60}{\draw[craftpencil] (4.42,\y)--(5.70,\y);}
-  \draw[->,craftheavy] (6.58,.42)--(7.75,.42);
-  \node[cflabel] at (7.22,.18) {30 s};
-  \draw[craftheavy] (8.72,.20)--(8.72,.64);
-  \draw[craftpencil] (9.12,.18)--(9.12,.66);
-  \craftyes{9.82}{.42}
-  \foreach \x in {1.68,3.83,5.98,8.13}{\draw[->,craftline] (\x,.42)--(\x+.35,.42);}
-\end{tikzpicture}
-\end{center}
-
-\noindent Before opening primer, measure and record the dry insertion depth:
-\rule{1.4cm}{.3pt}\,mm. Transfer that distance to the pipe as a depth line.
-After the 30-second hold, measure the remaining distance from socket mouth to
-that line: \rule{1.4cm}{.3pt}\,mm. It must match the dry-fit relationship, and
-the alignment witness must remain continuous.
-
-\begin{gate}{Inspection decision while the evidence is visible}
-Ask: Is the pipe at the recorded depth? Is the witness line aligned? Is the
-squeeze-out bead continuous through a full turn? Is the cure date legible?
-\textbf{Accept} only four yes answers. A smear may be wiped, but a depth error,
-opened witness line, dry gap, contaminated surface, or missed assembly window
-cannot be repaired with more cement. Mark the joint rejected, cut it out when
-safe to handle, and remake it with new fitting and pipe ends.
-\end{gate}
 
 \expectcraft{A continuous ring of cement squeezed out at the socket mouth, all
 the way round with no gaps, and your witness mark aligned. If the mark has moved
@@ -150,7 +130,6 @@ Writing the date on the part in marker is how you stop a confident guess from
 substituting for a fact --- and it takes three seconds.
 \end{gate}
 
-\newpage
 \section{Failure modes, and how each one looks}
 \begin{tabularx}{\linewidth}{@{}p{0.26\linewidth}L@{}}
 \toprule
@@ -172,6 +151,67 @@ mark is still aligned, then find the date you wrote and count forward
 forty-eight hours. Three checks, ten seconds, and they are the only evidence you
 will ever get about the inside of that joint.}
 
+\begin{telospanel}{Practise on offcuts first}
+Weld three or four scrap joints before touching a real part, and then cut two of
+them in half lengthways with a saw. You will see immediately whether your
+technique produced a continuous fused zone or a patchy one. Keep the best
+section on the bench as your reference for what good looks like.
+\end{telospanel}
+
+\section{One-way sequence --- stop if evidence fails}
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \foreach \x/\n/\lab in {0/1/dry fit,2.15/2/mark depth,4.3/3/coat both,6.45/4/insert,8.6/5/inspect}{
+    \draw[craftline] (\x,.05) rectangle (\x+1.55,.78);
+    \node[cflabel,anchor=south,align=center] at (\x+.775,.86) {\n.\ \lab};
+  }
+  \draw[craftheavy] (.10,.28) rectangle (1.02,.55);
+  \draw[craftline] (.88,.20) rectangle (1.45,.63);
+  \draw[craftheavy] (2.28,.18)--(2.28,.65);
+  \draw[craftline] (2.78,.18)--(2.78,.65);
+  \craftdim{2.28}{.12}{2.78}{.12}{depth}
+  \foreach \y in {.20,.30,...,.60}{\draw[craftpencil] (4.42,\y)--(5.70,\y);}
+  \draw[->,craftheavy] (6.58,.42)--(7.75,.42);
+  \node[cflabel] at (7.22,.18) {to shoulder};
+  \draw[craftheavy] (8.72,.20)--(8.72,.64);
+  \draw[craftpencil] (9.12,.18)--(9.12,.66);
+  \craftyes{9.82}{.42}
+  \foreach \x in {1.68,3.83,5.98,8.13}{\draw[->,craftline] (\x,.42)--(\x+.35,.42);}
+\end{tikzpicture}
+\end{center}
+
+\noindent Before opening primer, measure and record the dry insertion depth:
+\rule{1.4cm}{.3pt}\,mm. Transfer that distance to the pipe as a depth line.
+After the 30-second hold, measure the remaining distance from socket mouth to
+that line: \rule{1.4cm}{.3pt}\,mm. It must match the dry-fit relationship, and
+the alignment witness must remain continuous.
+
+\begin{gate}{Inspection decision while the evidence is visible}
+Ask: Is the pipe at the recorded depth? Is the witness line aligned? Is the
+squeeze-out bead continuous through a full turn? Is the cure date legible?
+\textbf{Accept} only four yes answers. A smear may be wiped, but a depth error,
+opened witness line, dry gap, contaminated surface, or missed assembly window
+cannot be repaired with more cement. Mark the joint rejected, cut it out when
+safe to handle, and remake it with new fitting and pipe ends.
+\end{gate}
+
+\section{Joint record}
+\begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}p{0.18\linewidth}p{0.18\linewidth}L@{}}
+\toprule
+\textbf{Joint ID} & \textbf{Dry depth} & \textbf{After hold} &
+\textbf{Bead / witness}\\
+\midrule
+\rule{0pt}{1.8em} & & & \\
+\rule{0pt}{1.8em} & & & \\
+\rule{0pt}{1.8em} & & & \\
+\rule{0pt}{1.8em} & & & \\
+\bottomrule
+\end{tabularx}
+
+\noindent Cure start: \rule{2.8cm}{.3pt}\quad
+48-hour point: \rule{2.8cm}{.3pt}\quad
+checker: \rule{2cm}{.3pt}
+
 \expectcraft{\textbf{Final proof before any use:} cure date
 \rule{1.8cm}{.3pt}; earliest permitted inspection date/time
 \rule{2.4cm}{.3pt}. After the full cure, a second person verifies the depth
@@ -179,11 +219,4 @@ line, witness alignment, complete bead, and elapsed time. Maker
 \rule{1.1cm}{.3pt}\quad checker \rule{1.1cm}{.3pt}. This is an inspection
 record, not permission to shorten the stated cure.}
 
-\begin{telospanel}{Practise on offcuts first}
-Weld three or four scrap joints before touching a real part, and then cut two of
-them in half lengthways with a saw. You will see immediately whether your
-technique produced a continuous fused zone or a patchy one --- and you will never
-again wonder what is happening inside a joint you cannot see. Keep the best
-section on the bench as your reference for what good looks like.
-\end{telospanel}
 \end{document}

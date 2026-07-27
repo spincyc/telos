@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{5. Build and Verify}{Measure, inspect, remake, prove}{2026-07-27}
+\telosmeta{Potato Launcher}{5. Build and Verify}{Measure, inspect, remake, prove}{20260727.001}
 \begin{document}
 \telosmasthead[A weekend to build, 48 hours to cure]
 \launchernote
@@ -12,7 +12,7 @@ adult's final decision. A doubtful pressure part is not repaired or ``good
 enough'': mark it \textsc{reject}, make it unusable, and replace it.
 \end{telospanel}
 
-\section{Parts and acceptance}
+\section{Procedure: parts and acceptance}
 \begin{tabularx}{\linewidth}{@{}p{0.19\linewidth}p{0.25\linewidth}L@{}}
 \toprule
 \textbf{Part} & \textbf{Required evidence} & \textbf{Reject if}\\
@@ -49,7 +49,7 @@ Place: \rule{0.8in}{0.4pt} & Start time: \rule{0.65in}{0.4pt}\\
 \end{tabularx}
 
 \clearpage
-\section{1. Lay out and measure}
+\section{Procedure 1: lay out and measure}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \draw[pencil light] (-.3,-.25)--(12.4,-.25);
@@ -72,15 +72,17 @@ Place: \rule{0.8in}{0.4pt} & Start time: \rule{0.65in}{0.4pt}\\
 \end{center}
 
 \begin{enumerate}
-\item Place every dry, uncemented part in order. Match the printed ratings to
-the parts list. Photograph or sketch the rating marks before they disappear
-under fittings.
-\item Measure the depth of each socket with a rule. Mark insertion depth on
-each pipe end, then draw an alignment line across each future joint.
-\item Measure the pipe twice at points 90 degrees apart. If the readings
-differ, stop: the end is out of round.
-\item Dry-fit without forcing. Every pipe must reach its depth mark. Never
-``fix'' a loose fit with extra cement.
+\item Place every dry, uncemented part in assembly order.
+\item Match each printed rating to the parts list. If any mark is absent or
+does not match, label that part \textsc{hold} and replace it.
+\item Photograph or sketch every rating mark before a fitting can cover it.
+\item Measure each socket depth with a rule.
+\item Transfer that depth to its pipe end as an insertion mark.
+\item Draw one alignment line across each dry-fitted joint.
+\item Measure each pipe diameter at two points 90 degrees apart. If the
+readings differ, label the pipe \textsc{hold} and replace it.
+\item Dry-fit one joint without forcing. The pipe must reach its insertion
+mark and remain snug; otherwise separate it and replace the mismatched part.
 \end{enumerate}
 
 \begin{teloscard}{Layout record}
@@ -115,7 +117,7 @@ Reducer and cleanout & \rule{0pt}{1.7em} & \\
 \end{teloscard}
 
 \clearpage
-\section{2. Cut, deburr, and inspect}
+\section{Procedure 2: cut, deburr, and inspect}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \node[lnlabel,font=\bfseries] at (1.5,2.4) {A. guide the cut};
@@ -144,13 +146,18 @@ Reducer and cleanout & \rule{0pt}{1.7em} & \\
 \end{center}
 
 \begin{enumerate}
-\item Clamp the pipe without crushing it. Cut at the waste side of the mark,
-using a mitre box or pipe cutter. Do not hurry the final stroke.
-\item Deburr the full circumference inside and out. Make only a small chamfer;
-the pressure wall must remain full thickness.
-\item Hold a square at four positions around the end. Shine a light behind it.
-Record the largest visible gap with a feeler gauge or rule.
-\item Wipe the end clean with a dry white cloth. Inspect under raking light.
+\item Clamp the pipe firmly without changing its round shape. If the wall
+flattens, release the clamp and reset it.
+\item Cut once on the waste side of the mark with the square guide shown in A.
+\item Remove the inner burr around the full circumference.
+\item Remove the outer burr around the full circumference.
+\item Add only a small chamfer. If the wall is visibly thinned, reject the end.
+\item Hold a square at each of four quarter-turn positions as shown in C.
+\item Shine light behind the square and record the largest visible gap. If any
+position is visibly slanted, mark the end \textsc{hold} and correct or replace it.
+\item Wipe the end with a dry white cloth.
+\item Inspect the clean end under raking light. Any chip, crack, deep score, or
+heat damage sends the part to the remake decision below.
 \end{enumerate}
 
 \begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}p{0.13\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
@@ -183,7 +190,7 @@ Barrel ends & \rule{0pt}{1.7em} & \\
 \end{teloscard}
 
 \clearpage
-\section{3. Drill and prove the ignition assembly}
+\section{Procedure 3: drill and prove the ignition assembly}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \node[lnlabel,font=\bfseries] at (1.65,2.35) {A. mark opposite holes};
@@ -214,15 +221,21 @@ Barrel ends & \rule{0pt}{1.7em} & \\
 \end{center}
 
 \begin{enumerate}
-\item Mark hole centers on the agreed chamber location. Confirm that hardware
-will clear the cleanout, reducer, and hands.
-\item Support the inside of the pipe. Drill small pilot holes, then only to the
-diameter required by the fasteners. Deburr without enlarging them.
-\item Install washers and nuts. Set the internal electrode gap to 3--5\,mm.
-Seal only as specified on the craft sheet; sealant does not compensate for a
-loose or oversized hole.
-\item With the cleanout open, chamber empty, and no fuel present, have the
-adult operate the piezo. Observe from the open end, never over the chamber.
+\item Mark two opposite hole centers at the approved chamber location shown in A.
+\item Dry-position the hardware outside the wall. If it conflicts with the
+cleanout, reducer, or hand clearance, erase the marks and return to the drawing.
+\item Support the inside wall as shown in B.
+\item Drill one small pilot hole at each center.
+\item Enlarge each hole only to the fastener diameter.
+\item Deburr each hole without enlarging it. Any crack, craze, or oversize hole
+requires replacement of the chamber.
+\item Install the washers and nuts.
+\item Measure the closest electrode spacing shown in C. Adjust it to 3--5\,mm;
+if the hardware will not stay immobile, replace the faulty hardware or chamber.
+\item Apply only the seal specified on Craft 05.
+\item Open the cleanout and verify that the chamber is empty and unfuelled.
+\item Have the adult click the piezo ten times while viewing from the open end.
+Fewer than ten visible sparks is a failed check; stop and correct the assembly.
 \end{enumerate}
 
 \begin{teloscard}{Ignition inspection}
@@ -256,7 +269,7 @@ What defect would make replacement safer than adding more sealant?
 \end{teloscard}
 
 \clearpage
-\section{4. Dry-fit, solvent-weld, and witness}
+\section{Procedure 4: dry-fit, solvent-weld, and witness}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \node[lnlabel,font=\bfseries] at (1.4,2.35) {A. dry fit};
@@ -285,15 +298,22 @@ What defect would make replacement safer than adding more sealant?
 \end{center}
 
 \begin{enumerate}
-\item Rehearse the complete movement dry: orient, insert fully, quarter-turn,
-hold. Assign one adult to read time and one to witness the marks.
-\item Work one joint at a time in ventilation specified by the product labels.
-Prime both mating surfaces, then cement both; follow the manufacturer's
-application and temperature instructions.
-\item Push to the socket-depth mark, turn a quarter turn, restore the alignment
-mark, and hold for 30 seconds. Do not disturb the joint.
-\item Wipe only the exterior excess. Never scrape, heat, pressure-test, or
-``exercise'' a fresh joint.
+\item Rehearse one joint dry: orient, insert to the depth mark, quarter-turn,
+restore alignment, and hold.
+\item Assign one adult to call time.
+\item Assign one adult to watch the depth and alignment marks.
+\item Confirm that ventilation and conditions meet both product labels. If
+they do not, stop and move the work or postpone it.
+\item Prime both mating surfaces of one joint as shown in B.
+\item Cement both mating surfaces according to the label.
+\item Push the pipe to its depth mark.
+\item Turn it one quarter-turn.
+\item Restore the alignment marks.
+\item Hold it still for 30 seconds. If it backs out or either mark misses,
+reject the joint and remake the affected assembly.
+\item Wipe only loose exterior excess without moving the joint.
+\item Record the fresh bead through a full rotation. A gap, dry area, or
+uncertainty is a rejection, not a patch instruction.
 \end{enumerate}
 
 \begin{longtable}{@{}p{0.18\linewidth}p{0.16\linewidth}p{0.14\linewidth}p{0.15\linewidth}p{0.19\linewidth}@{}}
@@ -327,7 +347,7 @@ Reducer--barrel & \rule{0pt}{1.55em} & \\
 \end{teloscard}
 
 \clearpage
-\section{5. Cure and inspect}
+\section{Procedure 5: cure and inspect}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \launchersection{.3}{.35}{.62}{4}{7.3}
@@ -347,15 +367,17 @@ Reducer--barrel & \rule{0pt}{1.55em} & \\
 \end{center}
 
 \begin{enumerate}
-\item Write assembly date and time on the chamber. Place it horizontally on
-two broad supports where nobody will lift, twist, load, or test it.
-\item Leave it at least 48 hours, and longer if the cement label requires it
-for the actual pipe size, temperature, or humidity. The label governs.
-\item After cure, inspect every joint in bright raking light. Turn the assembly
-slowly. Look for a continuous seated shoulder, alignment, cracks, whitening,
-bulges, gaps, and disturbed witness marks.
-\item Inspect the cleanout threads dry. The plug must run fully home by hand
-without cross-threading. Never glue, tape over, or force damaged threads.
+\item Write the latest joint date and time on the chamber.
+\item Calculate the later of 48 hours or the label-required cure.
+\item Write that earliest inspection time on the chamber.
+\item Place the assembly horizontally on the two broad supports shown.
+\item Leave it untouched until the written time. Any movement or uncertain
+cure history resets the hold pending the adult's label-based decision.
+\item After cure, rotate each joint once under bright raking light.
+\item Record shoulder seating, mark alignment, and bead continuity. Any gap,
+crack, whitening, bulge, or disturbed mark rejects the affected assembly.
+\item Turn the cleanout plug fully home by hand on dry threads. Binding,
+rocking, or cross-threading rejects the cleanout; never force or glue the plug.
 \end{enumerate}
 
 \begin{teloscard}{Cure record}
@@ -404,7 +426,10 @@ Joints and wall & \rule{0pt}{1.5em} & \\
 \end{teloscard}
 
 \clearpage
-\section{6. Final proof: permission to proceed}
+\section{Record packet: final proof and release}
+The procedure is complete only when the earlier bench records and every gate
+below are complete. Consolidate the detached craft sheets and the build log
+behind this page; this final record is their index and release decision.
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \node[draw=telosink,line width=.7pt,minimum width=2.1cm,minimum height=.8cm,

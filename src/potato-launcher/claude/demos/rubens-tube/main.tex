@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Demo: Rubens' Tube}{See, measure, and verify a standing wave safely}{2026-07-27}
+\telosmeta{Potato Launcher}{Demo: Rubens' Tube}{See, measure, and verify a standing wave safely}{20260727.001}
 \begin{document}
 \telosmasthead[An observation notebook for a professionally assembled flame demonstration]
 \lessonhead{Demo}{one supervised session}{\textbf{adult demonstrator owns every flame and gas control}}
@@ -84,6 +84,7 @@ safe aim is a modest, stable pattern; flame size is never a score.
 \newpage
 \telosmasthead[Observe in order --- do not change two things at once]
 \lessonhead{Sequence}{predict, control, observe, repeat}{\textbf{operator calls every hold point}}
+\small
 
 \section{A controlled observation sequence}
 \begin{center}
@@ -110,21 +111,21 @@ safe aim is a modest, stable pattern; flame size is never a score.
 \end{center}
 
 \begin{enumerate}
-\item \textbf{Cold hold point.} Operator verifies the written apparatus checklist,
-clear outdoor area, stable supports, intact barrier, weather, extinguisher, and
-shutoff access. Students remain behind the marked line.
-\item \textbf{Silent control.} With no speaker drive, observe only from the
-assigned position. Record whether the row is acceptably stable; do not diagnose
-or correct apparatus faults while it is operating.
-\item \textbf{One steady tone.} The operator selects a documented, permitted
-setting. Wait for a stable pattern; observers mark short-region centres without
-approaching the tube.
-\item \textbf{Repeat.} Shut down as the apparatus instructions require. After the
-operator authorizes another observation, repeat the same setting. Agreement is
-the test; do not chase a prettier pattern.
-\item \textbf{Final shutdown.} Operator closes the fuel supply, follows the
-manufacturer's shutdown procedure, maintains the exclusion zone through
-cool-down, and records completion.
+\item \textbf{Inspect.} The operator completes the maker's cold checklist.
+\emph{Check:} apparatus, supports, barrier, weather, extinguisher, and shutoff
+all pass. \emph{Fail:} tag out; no fuel is admitted.
+\item \textbf{Observe the silent control.} Students watch from the assigned
+position. \emph{Check:} the operator calls the row stable and the recorder logs
+its appearance. \emph{Fail:} operator shuts down; reject the run.
+\item \textbf{Apply one steady tone.} The operator uses one documented permitted
+setting. \emph{Check:} the pattern settles and observers mark centres from the
+fixed scale. \emph{Fail:} operator shuts down; record no spacing.
+\item \textbf{Repeat the same setting.} The operator alone restarts according to
+the maker's instructions. \emph{Check:} centres recur within the stated reading
+uncertainty. \emph{Fail:} retain both records and reject the claim.
+\item \textbf{Shut down.} The operator follows the maker's shutdown procedure.
+\emph{Check:} fuel is isolated and the apparatus is cool before the area is
+released. \emph{Fail:} keep the boundary closed and follow the emergency plan.
 \end{enumerate}
 
 \begin{telospanel}{Fault gate --- stop means stop}
@@ -137,45 +138,34 @@ professionally repaired. Never patch, tighten, drill, or adjust a fueled or hot
 apparatus. A failed run produces no measurement.
 \end{telospanel}
 
-\section{Observation record}
-\renewcommand{\arraystretch}{1.45}
-\begin{tabularx}{\linewidth}{|p{.095\linewidth}|p{.13\linewidth}|X|p{.14\linewidth}|p{.12\linewidth}|}
-\hline
-\textbf{Run} & \textbf{Tone / ID} & \textbf{Short-region positions from fixed scale} & \textbf{Stable?} & \textbf{Keep / reject}\\ \hline
-control & silent & & & \\ \hline
-1A & & & & \\ \hline
-1B repeat & & & & \\ \hline
-2A & & & & \\ \hline
-2B repeat & & & & \\ \hline
-\end{tabularx}
-
-\newpage
-\telosmasthead[Measure the record, not the flame]
-\lessonhead{Measurement}{fixed scale and repeated marks}{\textbf{rejected runs stay out of the arithmetic}}
-
 \section{Measure node spacing from a safe distance}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \draw[pencil] (.4,.3) rectangle (13.6,.92);
+  \node[lnsmall,anchor=south west] at (.45,.97) {sealed metal tube};
   \foreach \x in {.75,1.1,...,13.3}\draw[pencil] (\x,.92)--(\x,1.12);
   \foreach \x in {2.2,4.35,6.5,8.65,10.8,12.95}{
     \draw[pencil light,dashed] (\x,.3)--(\x,2);
     \fill[telosink] (\x,.13) circle (.045);}
   \draw[pencil] (.4,.13)--(13.6,.13);
   \foreach \x in {.4,1.4,...,13.4}\draw[pencil] (\x,.03)--(\x,.23);
+  \node[lnsmall,anchor=east] at (.25,.13) {fixed scale};
   \draw[|<->|,pencil] (4.35,2.14)--(10.8,2.14);
   \node[lnsmall,fill=telospaper,inner sep=1pt] at (7.58,2.14)
     {span \(L\) across three intervals};
+  \draw[pencil light,dashed] (.2,-.48)--(13.8,-.48);
+  \node[lnsmall,fill=telospaper,inner sep=1pt] at (12.55,-.48)
+    {exclusion boundary};
   \node[lnsmall,anchor=north,align=center] at (7,-.18)
-    {fixed scale read by camera or distant observer --- nobody measures over the apparatus};
+    {fixed camera reads scale --- nobody measures over the apparatus};
 \end{tikzpicture}
 \end{center}
 
 \noindent
 \begin{minipage}[t]{0.48\linewidth}
 \begin{teloscard}{Calculation}
-Choose several consecutive, clearly repeated short regions. Measure the span
-\(L\) from the first centre to the last and count the number \(N\) of
+Choose several consecutive repeated short regions. Mark their centres on the
+retained image. Measure \(L\) from first to last. Count the \(N\)
 \emph{intervals}, not marks:
 \[
   d=\frac{L}{N},\qquad \lambda\approx2d,\qquad v=f\lambda .
@@ -195,6 +185,23 @@ date, and uncertainty; do not report it as a universal constant.
 \end{enumerate}
 \end{teloscard}
 \end{minipage}
+\normalsize
+
+\newpage
+\telosmasthead[Record observations before doing arithmetic]
+\lessonhead{Worksheets}{controls, repeats, and traceable marks}{\textbf{retain rejected runs as evidence}}
+
+\section{Observation record}
+\renewcommand{\arraystretch}{1.45}
+\begin{tabularx}{\linewidth}{|p{.095\linewidth}|p{.13\linewidth}|X|p{.14\linewidth}|p{.12\linewidth}|}
+\hline
+\textbf{Run} & \textbf{Tone / ID} & \textbf{Short-region positions from fixed scale} & \textbf{Stable?} & \textbf{Keep / reject}\\ \hline
+control & silent & & & \\ \hline
+1A & & & & \\ \hline
+1B repeat & & & & \\ \hline
+2A & & & & \\ \hline
+2B repeat & & & & \\ \hline
+\end{tabularx}
 
 \section{Measurement record}
 \renewcommand{\arraystretch}{1.55}

@@ -2,7 +2,7 @@
 \input{potato-launcher/claude/shared/launcher.tex}
 
 \telosmeta{Potato Launcher}{Build Log}
-  {Print it, fill it in with a pen, keep it with the launcher}{2026-07-25}
+  {Print it, fill it in with a pen, keep it with the launcher}{20260725.001}
 
 \begin{document}
 \telosmasthead[One sheet, one build --- the evidence that it is sound]
@@ -10,6 +10,14 @@
 This is the difference between a launcher you hope is fine and one you know is
 fine. Fill it in as you go, not afterwards from memory. Every blank on this page
 exists because somebody, somewhere, guessed instead of checking.
+
+\begin{telospanel}{How to use this log}
+Read the governing build procedure and craft sheets before work. Then keep the
+following record packet together and complete each table at the named hold
+point. Do not reconstruct entries later. A blank, uncertainty, or failed check
+is a hold; the adult in charge decides whether the affected part is remade or
+retired.
+\end{telospanel}
 
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm,line cap=round,line join=round]
@@ -33,6 +41,34 @@ exists because somebody, somewhere, guessed instead of checking.
   \craftcall{5.60}{.70}{6.72}{.62}{west}{date, result, initials}
 \end{tikzpicture}
 \end{center}
+
+\begin{telospanel}{Record sequence}
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.25em]
+\item Identify the governing drawing.
+\item Name the adult with stop authority.
+\item Copy every pressure-part rating before measuring; an absent or
+nonmatching rating places that part on \textsc{hold}.
+\item Record each cut and edge inspection before joining.
+\item Record each joint while it is fresh; any blank or failed observation
+places the affected assembly on \textsc{hold}.
+\item Calculate the cure gate from the latest weld.
+\item Close every fault by accept, remake, or retire.
+\item Complete final visual proof only after cure.
+\item Complete the session sheet before each later use.
+\end{enumerate}
+\end{telospanel}
+
+\begin{teloshazard}{Records never overrule a defect}
+Good paperwork cannot make a cracked, crazed, distorted, misaligned, unknown,
+or incompletely cured pressure part acceptable. Stop, mark the fault, isolate
+the part, and follow the remake record. Firing is never an inspection method.
+\end{teloshazard}
+
+\clearpage
+\section{Consolidated build record}
+The explanatory procedure belongs in the build guide. The pages that follow
+are the bench record: identity, measurements, joint evidence, faults, release,
+and session custody, in that order.
 
 \begin{telosfacts}[0.22]
 \telosfact{Builder}{\rule{0.72\linewidth}{0.4pt}}
@@ -69,8 +105,8 @@ Cleanout & \rule{0.8\linewidth}{0.4pt} & \rule{0.8\linewidth}{0.4pt} & \rule{0.9
 Every pressure-bearing part must read \textbf{Schedule 40} with an
 \textbf{NSF-PW} rating and a pressure figure. If a part says DWV, cellular core,
 foam core, or carries no pressure rating at all, it does not go in this build.
-That pipe fails by shattering rather than splitting, and no amount of care
-elsewhere compensates.
+Mark it \textsc{reject}, isolate it from accepted stock, and obtain a traceable
+replacement before continuing.
 \end{gate}
 
 \section{Cut list --- measured twice, from one reference end}
@@ -152,9 +188,10 @@ Reducer to barrel & & & \\
 
 \begin{telosframe}
 \textbf{Intermediate question.} Is the bead truly continuous, or merely hidden
-from view? Rotate the whole assembly under good light. Record any gap, movement,
-misalignment, contamination, or uncertainty as a fault. Do not fill a suspect
-gap or ``touch up'' a cured joint; reject and remake the affected assembly.
+from view? Rotate the whole assembly once under good light. Record any gap,
+movement, misalignment, contamination, or uncertainty as a fault. Any such
+observation places the assembly on \textsc{hold}; reject and remake it rather
+than filling or ``touching up'' the joint.
 \end{telosframe}
 
 \vspace{0.4em}

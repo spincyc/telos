@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Craft 2: Cut Square}{A joint can never be better than the cut that went into it}{2026-07-25}
+\telosmeta{Potato Launcher}{Craft 2: Cut Square}{A joint can never be better than the cut that went into it}{20260725.001}
 \begin{document}
 \telosmasthead[Shop skill --- transferable to anything you ever build]
 
@@ -64,19 +64,30 @@ to see once you know to look.
 
 \section{Method}
 \begin{enumerate}
-\item Mark all the way round. A cut is only as square as its mark.
-\item Set the pipe in the mitre box with the mark aligned to the slot, and hold it against the fence so it cannot roll.
-\item Start the cut with the saw pulled backwards a couple of times to make a kerf. Do not start on the push.
-\item Saw with long strokes and light pressure, letting the guide keep the
-angle. If thick pipe must be turned, stop, remove the saw, rotate the pipe, and
-secure it again before restarting. Never turn stock against a moving blade.
-\item Support the offcut so it does not snap free.
+\item Align the full-circumference mark with the mitre-box slot. \textbf{Check:}
+the line meets the slot on both visible sides. If it does not, return to Craft 1.
+\item Clamp or hold the pipe against the fence. \textbf{Check:} try to roll it
+with the saw clear; any movement means the support must be reset.
+\item Support the offcut. \textbf{Check:} it stays level when pressed lightly.
+If it drops, add support before the saw touches the pipe.
+\item Pull the saw backward twice to establish the kerf. \textbf{Check:} the
+kerf lies on the waste side and the pencil line survives. If the kerf crosses
+the kept side, stop and remake the part from a new mark.
+\item Saw with long strokes and light pressure. \textbf{Check:} the blade stays
+in the guide and the pipe stays against the fence. If either moves, stop the
+saw completely and reset the work.
+\item For pipe that must be turned, remove the stopped saw before rotating the
+pipe. \textbf{Check:} the existing kerf realigns with the guide. If it does not,
+restore the previous orientation and support rather than starting a second kerf.
+\item Finish with light strokes while holding the offcut level. \textbf{Check:}
+the last material severs without tearing. A torn edge must be re-cut from a new
+full-circumference mark.
 \end{enumerate}
 
 \section{Checking, and what to do if it is off}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \foreach \x/\n/\lab in {0/1/deburr,3.0/2/check four ways,6.0/3/test for rock,9.0/4/pass or remake} {
+  \foreach \x/\n/\lab in {0/1/remove loose burr,3.0/2/square four ways,6.0/3/test for rock,9.0/4/record decision} {
     \draw[craftline,rounded corners=2pt] (\x,0) rectangle ++(2.45,1.55);
     \node[cfsmall,anchor=north west] at (\x+0.12,1.43) {\textbf{\n}};
     \node[cflabel,anchor=south] at (\x+1.22,-0.34) {\lab};
@@ -116,6 +127,13 @@ fitting shoulder gap change as the dry fit turns?}
 Do not sand the face square: it removes an unknown amount and can round the
 edge. If re-cutting would make the part undersize, \textbf{remake the part} from
 new stock. Keep the rejected piece only as a clearly marked practice coupon.
+\end{telospanel}
+
+\begin{telospanel}{The habit worth taking away}
+Every trade has a version of this: use a guide rather than your eye, and then
+check against a known-good reference rather than against your own judgement of
+how it looks. A try square is a piece of steel that is more perpendicular than
+you are. That is not an insult, it is the entire reason it exists.
 \end{telospanel}
 
 \begin{telospanel}{Final proof record}
@@ -162,10 +180,4 @@ If not passed, record the failed test and the new cut mark or remake:
 Only a recorded \textbf{PASS} proceeds to a joint.
 \end{telospanel}
 
-\begin{telospanel}{The habit worth taking away}
-Every trade has a version of this: use a guide rather than your eye, and then
-check against a known-good reference rather than against your own judgement of
-how it looks. A try square is a piece of steel that is more perpendicular than
-you are. That is not an insult, it is the entire reason it exists.
-\end{telospanel}
 \end{document}

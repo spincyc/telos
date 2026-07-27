@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Craft 3: Deburr \& Chamfer}{Two minutes that decide whether the joint is real}{2026-07-25}
+\telosmeta{Potato Launcher}{Craft 3: Deburr \& Chamfer}{Two minutes that decide whether the joint is real}{20260725.001}
 \begin{document}
 \telosmasthead[Shop skill --- transferable to anything you ever build]
 
@@ -68,17 +68,28 @@ directions and you should feel the chamfer as a gentle ramp, not a sharp step.
 
 \section{Method}
 \begin{enumerate}
-\item \textbf{Inside first.} Run a knife blade or a rolled piece of sandpaper around the inner edge at a shallow angle. You are removing the raised lip, not cutting a bevel.
-\item \textbf{Outside chamfer.} Hold a file or knife at about 15 degrees to the pipe surface and work all the way round, rotating the pipe rather than moving the tool in an arc. Rotating the work is what makes it even.
-\item \textbf{Keep it small.} 1 to 2\,mm. A large chamfer removes material the joint needs and can stop the pipe bottoming properly.
-\item \textbf{Check by feel, then by eye.} Fingertip round the end, then hold it up and sight along it looking for a bright unchamfered patch.
-\item \textbf{Wipe the swarf off.} Loose plastic shavings inside a chamber are exactly the debris you do not want near an igniter.
+\item Remove the raised inside lip with a shallow tool angle. \textbf{Check:}
+a fingertip moving out of the bore does not catch. If it catches, make one more
+light pass and retest; do not cut an inside bevel.
+\item Set the file at about 15 degrees to the outside surface. \textbf{Check:}
+the tool touches only the sharp corner. If it lies across the cut face, reduce
+the angle before removing material.
+\item Rotate the pipe through one full turn while holding the tool angle steady.
+\textbf{Check:} a continuous narrow graphite-like highlight appears around the
+edge. If a bright square patch remains, work only that patch.
+\item Measure the chamfer at its narrowest and widest points. \textbf{Check:}
+both are 1--2\,mm. If either is under 1\,mm, correct locally; if either exceeds
+2\,mm, remake the end.
+\item Feel the inside and outside edges in both directions. \textbf{Check:} no
+burr catches. If one catches, correct it and repeat Steps 4--5.
+\item Wipe away all swarf. \textbf{Check:} a clean white cloth returns without
+loose plastic. If debris remains, wipe again before recording acceptance.
 \end{enumerate}
 
 \section{Make the evidence in order}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \foreach \x/\n/\lab in {0/1/inside lip,2.8/2/outside ramp,5.6/3/even ring,8.4/4/final proof}{
+  \foreach \x/\n/\lab in {0/1/remove lip,2.8/2/form ramp,5.6/3/verify full ring,8.4/4/record proof}{
     \node[cflabel,anchor=south] at (\x+.75,.92) {\n.\ \lab};
     \draw[craftline] (\x,.05) rectangle (\x+1.5,.70);
   }
@@ -134,21 +145,30 @@ fingertip check; point to the narrowest and widest measurements above. Both
 people initial here only after all three agree: maker \rule{1.2cm}{.3pt}\quad
 checker \rule{1.2cm}{.3pt}.}
 
+\begin{telospanel}{The habit worth taking away}
+The defects that matter most are usually the ones that become invisible the
+moment you finish the next step. Once a pipe is in a socket you will never see
+that burr again --- so the check has to happen \emph{before} assembly, every
+time, on every end. Build the sequence so that inspection comes before the step
+that hides the thing being inspected.
+\end{telospanel}
+
 \section{Inspection record}
+\small
 \noindent
 \begin{tabularx}{\linewidth}{@{}p{0.17\linewidth}*{4}{>{\centering\arraybackslash}X}@{}}
 \toprule
 \textbf{Pipe end} & \textbf{Inside lip gone} & \textbf{Ramp 1--2\,mm} &
 \textbf{Even full turn} & \textbf{Clean / dry}\\
 \midrule
-End A & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
-End B & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
-End C & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.55em]
+End A & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.25em]
+End B & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.25em]
+End C & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\[0.25em]
 End D & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \rule{1.0cm}{.3pt}\,mm & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} & \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}}\\
 \bottomrule
 \end{tabularx}
 
-\medskip
+\smallskip
 \noindent
 \begin{minipage}[t]{0.48\linewidth}
 \begin{telospanel}{Read the evidence}
@@ -173,23 +193,17 @@ For each corrected end, record what changed:
 
 \noindent Defect: \rule{4.6cm}{.3pt}
 
-\vspace{0.75em}
+\vspace{0.35em}
 \noindent Correction: \rule{4.25cm}{.3pt}
 
-\vspace{0.75em}
+\vspace{0.35em}
 \noindent Retest result: \rule{4.15cm}{.3pt}
 
-\vspace{0.75em}
+\vspace{0.35em}
 \noindent\fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} accept\qquad
 \fbox{\rule{0pt}{.8ex}\rule{.8ex}{0pt}} remake
 \end{telospanel}
 \end{minipage}
 
-\begin{telospanel}{The habit worth taking away}
-The defects that matter most are usually the ones that become invisible the
-moment you finish the next step. Once a pipe is in a socket you will never see
-that burr again --- so the check has to happen \emph{before} assembly, every
-time, on every end. Build the sequence so that inspection comes before the step
-that hides the thing being inspected.
-\end{telospanel}
+\normalsize
 \end{document}

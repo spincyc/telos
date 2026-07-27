@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Craft 1: Measure \& Mark}{Everything downstream inherits the error you make here}{2026-07-25}
+\telosmeta{Potato Launcher}{Craft 1: Measure \& Mark}{Everything downstream inherits the error you make here}{20260725.001}
 \begin{document}
 \telosmasthead[Shop skill --- transferable to anything you ever build]
 
@@ -77,8 +77,8 @@ is not square --- start again rather than splitting the difference.}
 \section{Proof before the tool starts}
 \begin{center}
 \begin{tikzpicture}[x=1cm,y=1cm]
-  % A compact evidence sequence: establish, repeat, wrap, inspect.
-  \foreach \x/\n/\lab in {0/1/reference,3.0/2/measure twice,6.0/3/wrap + mark,9.0/4/inspect} {
+  % Each plate corresponds to one observable action below.
+  \foreach \x/\n/\lab in {0/1/seat reference,3.0/2/read twice,6.0/3/draw one line,9.0/4/verify closure} {
     \draw[craftline,rounded corners=2pt] (\x,0) rectangle ++(2.45,1.55);
     \node[cfsmall,anchor=north west] at (\x+0.12,1.43) {\textbf{\n}};
     \node[cflabel,anchor=south] at (\x+1.22,-0.34) {\lab};
@@ -101,14 +101,23 @@ is not square --- start again rather than splitting the difference.}
 \end{center}
 
 \begin{enumerate}
-\item Choose one clean reference end. Ask: \emph{Is the hook seated, the tape
-straight, and my eye directly above the graduation?}
-\item Measure, put the tape down, pause, and measure again from that same end.
-Write both readings. They must agree within 1\,mm.
-\item Wrap the paper with its edge exactly meeting itself. Draw one thin line
-around the pipe and put an X on the waste side.
-\item Remove the paper. Ask: \emph{Does the line meet itself? Is the X on the
-side I intend to discard? Does a final measurement still match the cut list?}
+\item Seat the tape at one clean reference end. \textbf{Check:} the hook touches,
+the blade lies straight, and your eye is above the graduation. If any condition
+fails, reseat the tape before reading it.
+\item Read the length twice from that same end, putting the tape down between
+readings. \textbf{Check:} the readings agree within 1\,mm. If not, take a third
+reading; use the two that agree or inspect the tape and reference end.
+\item Wrap the paper until its edge meets itself, then draw one thin line along
+that edge. \textbf{Check:} the paper edge has no step at the overlap. If it has
+a step, erase the line and rewrap.
+\item Remove the paper and inspect the line closure. \textbf{Check:} the ends
+meet within 1\,mm. If not, erase the line and repeat Step 3.
+\item Put one X on the waste side. \textbf{Check:} point to the kept piece and
+say ``the blade removes the X.'' If that statement is wrong, move the X before
+cutting.
+\item Measure once more from the reference end to the surviving side of the
+line. \textbf{Check:} it matches the cut list within 1\,mm. If not, erase the
+mark and restart at Step 1.
 \end{enumerate}
 
 \begin{telospanel}{Pass, correct, or remake}
@@ -133,12 +142,19 @@ Parallax --- eye off to one side & under 1 mm & Look straight down at the mark.\
 \bottomrule
 \end{tabularx}
 
+\begin{telospanel}{Why this sheet is first}
+Every later skill is downstream of this one. A cut cannot be squarer than its
+mark; a joint cannot be tighter than its cut; a chamber cannot be stronger than
+its joint. Accuracy is not a talent you have or lack --- it is a set of small
+habits, and they are all on this page.
+\end{telospanel}
+
 \section{Measurement and closure record}
 \noindent Use one row for each intended cut. Keep the tape seated at the same
 reference end for all three readings. Measure the closure gap where the two
 ends of the wrapped line meet; write \(0\) if they meet exactly.
 
-\renewcommand{\arraystretch}{1.55}
+\renewcommand{\arraystretch}{1.32}
 \begin{tabularx}{\linewidth}{@{}p{0.10\linewidth}p{0.14\linewidth}
 p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
 \toprule
@@ -155,6 +171,7 @@ p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
 \renewcommand{\arraystretch}{1}
 
 \begin{center}
+\vspace{-0.35em}
 \begin{tikzpicture}[x=1cm,y=1cm]
   \draw[craftheavy] (0,0.55) -- (11.4,0.55);
   \draw[craftpencil] (5.68,0.03) -- (5.68,1.12);
@@ -167,16 +184,11 @@ p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}L@{}}
 \end{tikzpicture}
 \end{center}
 
+\vspace{-0.5em}
 \checkyourself{Record the proof: first reading \rule{12mm}{0.2pt}\,mm; second
 reading \rule{12mm}{0.2pt}\,mm; final reading \rule{12mm}{0.2pt}\,mm. Roll the
 pipe slowly: does the line stay at one height? \rule{9mm}{0.2pt}. Does the line
 close within 1\,mm? \rule{9mm}{0.2pt}. Is the waste X visible?
 \rule{9mm}{0.2pt}. All answers must pass before cutting.}
 
-\begin{telospanel}{Why this sheet is first}
-Every later skill is downstream of this one. A cut cannot be squarer than its
-mark; a joint cannot be tighter than its cut; a chamber cannot be stronger than
-its joint. Accuracy is not a talent you have or lack --- it is a set of small
-habits, and they are all on this page.
-\end{telospanel}
 \end{document}

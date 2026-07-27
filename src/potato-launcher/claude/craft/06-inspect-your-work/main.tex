@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Craft 6: Inspect Your Own Work}{Confidence comes from evidence, not from hoping}{2026-07-25}
+\telosmeta{Potato Launcher}{Craft 6: Inspect Your Own Work}{Confidence comes from evidence, not from hoping}{20260725.001}
 \begin{document}
 \telosmasthead[Shop skill --- the one that makes the other five worth having]
 
@@ -72,6 +72,23 @@ virtuous than people who do not --- they have a list.
 \telosfact{Sign it}{Putting your initials against a check is a small thing that changes how carefully the check gets done. That is not a trick; it is just true.}
 \end{telosfacts}
 
+\section{Judging your own work honestly}
+\begin{telosfacts}[0.22]
+\telosfact{Measure, do not eyeball}{``That looks square'' is not a check. The try square is a check.}
+\telosfact{Compare to a reference}{Keep the sectioned practice weld from Craft 4 on the bench. Comparing against a known-good example is far more reliable than comparing against your memory of one.}
+\telosfact{Separate effort from quality}{A joint you worked hard on is not thereby a good joint. The two are unrelated, and confusing them is the most common reason a defect gets argued away.}
+\telosfact{Expect to remake things}{Everyone who builds well remakes parts. It is evidence the inspection is working, not evidence that you are bad at this. A build with no remade parts usually means nobody looked properly.}
+\telosfact{Do it when you are fresh}{Inspection at the end of a long session finds less. If you are tired, write the log and inspect tomorrow.}
+\end{telosfacts}
+
+\begin{telospanel}{What you are really learning}
+Not how to make a potato launcher. How to know whether a thing you made is
+sound, and to be able to say why, and to be willing to cut a part up and do it
+again when it is not. That transfers to every workshop, every bike repair, every
+piece of code and every piece of furniture either of you ever makes. The
+launcher is a pretext.
+\end{telospanel}
+
 \section{The inspection, in order}
 Run this before the assembly is accepted and again whenever it has been
 handled, stored or altered. Inspection is visual and dimensional only: do not
@@ -107,6 +124,11 @@ Is any evidence ambiguous? & If yes, quarantine and remake. Uncertainty is not a
 \bottomrule
 \end{tabularx}
 
+\noindent\textbf{Route every row immediately:} pass moves to the next row;
+fail or uncertain stops the inspection, marks the part \textsc{quarantined},
+and sends a new part back to row 1. Never continue down the list intending to
+decide later.
+
 \begin{gate}{Any single failure stops the session}
 There is no partial pass and no ``we will watch it''. A chamber is a pressure
 vessel a few feet from your face; the whole value of an inspection list is that
@@ -114,16 +136,6 @@ it decides in advance, calmly, what you will do when you find something --- so
 that you are not making that call while three people stand around waiting to
 shoot.
 \end{gate}
-
-\newpage
-\section{Judging your own work honestly}
-\begin{telosfacts}[0.22]
-\telosfact{Measure, do not eyeball}{``That looks square'' is not a check. The try square is a check.}
-\telosfact{Compare to a reference}{Keep the sectioned practice weld from Craft 4 on the bench. Comparing against a known-good example is far more reliable than comparing against your memory of one.}
-\telosfact{Separate effort from quality}{A joint you worked hard on is not thereby a good joint. The two are unrelated, and confusing them is the most common reason a defect gets argued away.}
-\telosfact{Expect to remake things}{Everyone who builds well remakes parts. It is evidence the inspection is working, not evidence that you are bad at this. A build with no remade parts usually means nobody looked properly.}
-\telosfact{Do it when you are fresh}{Inspection at the end of a long session finds less. If you are tired, write the log and inspect tomorrow.}
-\end{telosfacts}
 
 \begin{telospanel}{The acceptance packet}
 Final proof is a completed ten-row checklist, the actual measurements with
@@ -140,11 +152,4 @@ ask them to run all ten checks without your help. Anything they find that you
 did not is worth more than anything you found yourself --- it tells you which of
 your own checks you are performing loosely.}
 
-\begin{telospanel}{What you are really learning}
-Not how to make a potato launcher. How to know whether a thing you made is
-sound, and to be able to say why, and to be willing to cut a part up and do it
-again when it is not. That transfers to every workshop, every bike repair, every
-piece of code and every piece of furniture either of you ever makes. The
-launcher is a pretext.
-\end{telospanel}
 \end{document}

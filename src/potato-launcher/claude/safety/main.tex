@@ -1,6 +1,6 @@
 \input{common/preamble.tex}
 \input{potato-launcher/claude/shared/launcher.tex}
-\telosmeta{Potato Launcher}{Safety}{Read this completely before you build. Post it where you fire.}{2026-07-25}
+\telosmeta{Potato Launcher}{Safety}{Read this completely before you build. Post it where you fire.}{20260725.001}
 \begin{document}
 \telosmasthead[The rules that do not bend]
 
@@ -105,6 +105,13 @@ muzzle line. A second anomaly ends the session.
 \end{teloshazard}
 
 \section{Spoken states}
+\begin{telosframe}
+\textbf{No silent transitions.} The adult names the current state, checks its
+condition, and calls the next state aloud. A command authorizes only that
+transition. Silence, elapsed time, a prior clear, or another person's movement
+never advances the cycle. After an interruption, return to COLD and re-run the
+gates.
+\end{telosframe}
 \begin{tabularx}{\linewidth}{@{}p{0.14\linewidth}p{0.30\linewidth}L@{}}
 \toprule
 \textbf{Call} & \textbf{Required condition} & \textbf{No-go finding}\\
@@ -119,18 +126,6 @@ FIRE & watcher says clear after a fresh scan & any change in people, animals,
 vehicles, aircraft, wind, or fire condition\\
 CEASE FIRE & repeat the call; hands off; hold position & discussion before the
 adult has returned the system to a safe state\\
-\bottomrule
-\end{tabularx}
-
-\section{Anomaly log}
-\begin{tabularx}{\linewidth}{@{}p{0.11\linewidth}p{0.14\linewidth}p{0.20\linewidth}p{0.20\linewidth}L@{}}
-\toprule
-\textbf{Time} & \textbf{State} & \textbf{Observation} &
-\textbf{Immediate action} & \textbf{Disposition}\\
-\midrule
-& & \rule{0pt}{3.2ex} & &\\
-& & \rule{0pt}{3.2ex} & &\\
-& & \rule{0pt}{3.2ex} & &\\
 \bottomrule
 \end{tabularx}
 
@@ -149,4 +144,16 @@ the next failure will be worse. Cut it up so it cannot be reused, and build a
 new one --- which is cheap, and is the reason the design is made of plumbing
 parts in the first place.
 \end{teloshazard}
+
+\section{Anomaly log}
+\begin{tabularx}{\linewidth}{@{}p{0.11\linewidth}p{0.14\linewidth}p{0.20\linewidth}p{0.20\linewidth}L@{}}
+\toprule
+\textbf{Time} & \textbf{State} & \textbf{Observation} &
+\textbf{Immediate action} & \textbf{Disposition}\\
+\midrule
+& & \rule{0pt}{3.2ex} & &\\
+& & \rule{0pt}{3.2ex} & &\\
+& & \rule{0pt}{3.2ex} & &\\
+\bottomrule
+\end{tabularx}
 \end{document}
