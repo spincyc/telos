@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Feed the first AD password to samba-tool without placing it in argv."""
+"""Provision AD through Samba's API without placing its password in argv."""
 
 import argparse
+import logging
+import os
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -10,6 +12,7 @@ parser.add_argument("--realm", required=True)
 parser.add_argument("--domain", required=True)
 parser.add_argument("--server-role", required=True)
 parser.add_argument("--dns-backend", required=True)
+parser.add_argument("--diagnostic-file", required=True)
 rfc2307 = parser.add_mutually_exclusive_group(required=True)
 rfc2307.add_argument("--use-rfc2307", action="store_true")
 rfc2307.add_argument("--without-rfc2307", action="store_true")
@@ -23,22 +26,36 @@ password = first_line.strip()
 if not password:
     parser.error("--password-file must have a nonempty first line")
 
-import pexpect  # Imported only after rejecting malformed secret input.
-command = [
-    "/usr/bin/samba-tool", "domain", "provision",
-    f"--realm={args.realm}",
-    f"--domain={args.domain}",
-    f"--server-role={args.server_role}",
-    f"--dns-backend={args.dns_backend}",
-]
-if args.use_rfc2307:
-    command.append("--use-rfc2307")
+status = ""
+returncode = 1
+try:
+    # Samba 4.24 no longer promises interactive password prompts.  Use its
+    # supported in-process provisioning API so the credential is never in
+    # argv, the environment, a prompt transcript, or generated randomly.
+    from samba.auth import system_session
+    from samba.provision import provision
 
-child = pexpect.spawn(command[0], command[1:], encoding="utf-8", timeout=300)
-child.expect(r"(?i)administrator password:")
-child.sendline(password)
-child.expect(r"(?i)retype password:")
-child.sendline(password)
-child.expect(pexpect.EOF)
-child.close()
-raise SystemExit(child.exitstatus if child.exitstatus is not None else 1)
+    provision(
+        logging.getLogger("homelab-provision-domain"),
+        system_session(),
+        realm=args.realm,
+        domain=args.domain,
+        serverrole=args.server_role,
+        dns_backend=args.dns_backend,
+        adminpass=password,
+        use_rfc2307=args.use_rfc2307,
+    )
+    returncode = 0
+    status = "exit=0\n"
+except Exception as error:
+    status = f"error={type(error).__name__}: {error}\n"
+finally:
+    status = status.replace(password, "[REDACTED]")
+    diagnostic = Path(args.diagnostic_file)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(diagnostic, flags, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(status[-16384:])
+raise SystemExit(returncode)

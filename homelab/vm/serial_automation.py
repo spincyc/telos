@@ -14,7 +14,8 @@ PASS_LINE = (
     "RESULT PASS: safe to proceed to the separately authorized attachment step"
 )
 ANSI = re.compile(
-    rb"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\))"
+    rb"(?:\x1b\[[0-?]*[ -/]*[@-~]|"
+    rb"\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\))"
 )
 
 

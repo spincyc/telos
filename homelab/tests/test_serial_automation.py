@@ -21,6 +21,14 @@ class NormalizationTests(unittest.TestCase):
     def test_ansi_expression_does_not_consume_plain_output(self):
         self.assertEqual(ANSI.sub(b"", b"RESULT PASS"), b"RESULT PASS")
 
+    def test_adjacent_osc_records_do_not_consume_plain_output_between_them(self):
+        value = (
+            b"\x1b]3008;start=x\x1b\\"
+            b"__TELOS_FACTORY_RC_token=1\r\n"
+            b"\x1b]3008;end=x\x1b\\")
+        self.assertIn(
+            b"__TELOS_FACTORY_RC_token=1", ANSI.sub(b"", value))
+
 
 class ConstructionTests(unittest.TestCase):
     def test_rejects_blank_and_multiline_credentials(self):

@@ -175,6 +175,59 @@ class DisposableFactoryController:
         self.close()
 
 
+class RedactedSerialCapture:
+    """Bounded diagnostic reader that never writes unredacted bytes."""
+
+    def __init__(
+        self,
+        source: BinaryIO,
+        path: Path,
+        secrets_: tuple[bytes, ...],
+        *,
+        limit: int = 1024 * 1024,
+    ) -> None:
+        self.source = source
+        self.path = Path(path)
+        self.secrets = tuple(value for value in secrets_ if value)
+        if not self.secrets or any(b"\n" in value for value in self.secrets):
+            raise ValueError("diagnostic redaction requires non-line secrets")
+        if limit < max(map(len, self.secrets)) * 2:
+            raise ValueError("diagnostic limit is too small for safe redaction")
+        if self.path.is_symlink():
+            raise ValueError("diagnostic path must not be a symlink")
+        self.limit = limit
+        self.raw = b""
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path.parent.chmod(0o700)
+        self._write()
+
+    def _write(self) -> None:
+        safe = self.raw
+        for value in self.secrets:
+            safe = safe.replace(value, b"[REDACTED]")
+        safe = safe[-self.limit:]
+        with self.path.open("wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(safe)
+
+    def read1(self, size: int = -1) -> bytes:
+        read = getattr(self.source, "read1", self.source.read)
+        chunk = read(size)
+        if chunk:
+            # Keep enough history to redact a value split across reads.  The
+            # raw bytes exist only in memory and are never written.
+            self.raw = (self.raw + chunk)[-(self.limit + max(
+                map(len, self.secrets))):]
+            self._write()
+        return chunk
+
+    def read(self, size: int = -1) -> bytes:
+        return self.read1(size)
+
+    def fileno(self) -> int:
+        return self.source.fileno()
+
+
 @dataclass(frozen=True)
 class FactoryInstallResult:
     installed: bool
@@ -201,6 +254,7 @@ class FactoryConvergenceSerial:
         *,
         timeout: float = 1800,
         clock: Callable[[], float] = time.monotonic,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         if not password or b"\n" in password or b"\r" in password:
             raise ValueError("factory password must be one non-empty line")
@@ -208,6 +262,7 @@ class FactoryConvergenceSerial:
             raise ValueError("authorization nonce must be 64 lowercase hex digits")
         self.password = password
         self.authorization_nonce = authorization_nonce
+        self.progress = progress or (lambda _stage: None)
         self.console = SerialAutomation(
             reader, writer, None, timeout=timeout, clock=clock)
 
@@ -229,11 +284,28 @@ class FactoryConvergenceSerial:
             + payload + b"'; rc=$?; printf '\\n" + result
             + b"%s\\n' \"$rc\"")
         console._send(command, "factory-command-sent")
-        console._wait(re.escape(prompt), "sudo-password-prompt")
-        console._send(self.password, "sudo-password-sent")
+        # The serial TTY echoes the command, including the value supplied to
+        # sudo -p.  Match only the standalone prompt at the end of a line so
+        # the credential cannot be sent early and consumed by the login shell.
         console._wait(
-            rb"(?:^|\n)TELOS FACTORY CONTROLLER PASS\s*(?:\n|$)",
-            "factory-pass-observed")
+            rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
+            "sudo-password-prompt")
+        console._send(self.password, "sudo-password-sent")
+        while True:
+            outcome = console._wait(
+                rb"(?:^|\n)(?:TELOS FACTORY STEP ([a-z-]+)|"
+                rb"TELOS FACTORY CONTROLLER PASS|"
+                + re.escape(result) + rb"([0-9]+))\s*\n",
+                "factory-progress-observed")
+            if outcome.group(1) is None:
+                break
+            stage = outcome.group(1).decode()
+            console.events.append("factory-step-" + stage)
+            self.progress(stage)
+        if outcome.group(2) is not None:
+            raise RuntimeError(
+                f"factory convergence returned {int(outcome.group(2))}")
+        console.events.append("factory-pass-observed")
         match = console._wait(
             rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
             "factory-return-code-observed")
@@ -331,6 +403,8 @@ def _run_qemu(
     protocol: FactoryInstallSerial | FactoryConvergenceSerial,
     *,
     timeout: float,
+    diagnostic_path: Path | None = None,
+    diagnostic_secrets: tuple[bytes, ...] = (),
 ) -> FactoryInstallResult | FactoryConvergenceResult:
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -338,9 +412,13 @@ def _run_qemu(
     try:
         if process.stdin is None or process.stdout is None:
             raise RuntimeError("QEMU serial pipes were not created")
-        protocol.reader = process.stdout
+        reader: BinaryIO = process.stdout
+        if diagnostic_path is not None:
+            reader = RedactedSerialCapture(
+                process.stdout, diagnostic_path, diagnostic_secrets)
+        protocol.reader = reader
         protocol.writer = process.stdin
-        protocol.console.reader = process.stdout
+        protocol.console.reader = reader
         protocol.console.writer = process.stdin
         result = protocol.run()
         returncode = process.wait(timeout=timeout)
@@ -380,12 +458,18 @@ def run_convergence(
     authorization_nonce: str,
     *,
     timeout: float = 2400,
+    progress: Callable[[str], None] | None = None,
+    diagnostic_path: Path | None = None,
+    diagnostic_redactions: tuple[bytes, ...] = (),
 ) -> FactoryConvergenceResult:
     protocol = FactoryConvergenceSerial(
         subprocess.DEVNULL, subprocess.DEVNULL, password,
-        authorization_nonce, timeout=timeout)  # type: ignore[arg-type]
+        authorization_nonce, timeout=timeout,
+        progress=progress)  # type: ignore[arg-type]
     result = _run_qemu(
         state.convergence_command(factory_iso, gateway_port),
-        protocol, timeout=timeout)
+        protocol, timeout=timeout, diagnostic_path=diagnostic_path,
+        diagnostic_secrets=(
+            password, authorization_nonce.encode(), *diagnostic_redactions))
     assert isinstance(result, FactoryConvergenceResult)
     return result

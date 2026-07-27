@@ -27,6 +27,7 @@ LEASE_IP = ipaddress.IPv4Address("10.1.31.11")
 CONTROLLER_IP = ipaddress.IPv4Address("10.1.31.2")
 NETMASK = ipaddress.IPv4Address("255.255.255.240")
 GATEWAY_MAC = bytes.fromhex("525400311101")
+CONTROLLER_MAC = bytes.fromhex("525400111112")
 DNS_NAME = "updates.sim.test"
 CONTROLLER_NAME = "bootstrap-dc.lab.home.arpa"
 DNS_SUFFIX = "lab.home.arpa"
@@ -118,6 +119,16 @@ class Gateway:
         self.lease_mac: bytes | None = None
         self.clock = clock
 
+    def _valid_source(
+        self, source_mac: bytes, source_ip: ipaddress.IPv4Address,
+    ) -> bool:
+        if source_mac == CONTROLLER_MAC and source_ip == CONTROLLER_IP:
+            return True
+        return (
+            self.lease_mac is None
+            or (source_mac == self.lease_mac and source_ip == LEASE_IP)
+        )
+
     def handle(self, frame: bytes) -> list[bytes]:
         if len(frame) < 14:
             return []
@@ -146,8 +157,7 @@ class Gateway:
         protocol = payload[9]
         body = payload[ihl:]
         if protocol == 1 and target == GATEWAY_IP:
-            if self.lease_mac is not None and (
-                    src != self.lease_mac or source_ip != LEASE_IP):
+            if not self._valid_source(src, source_ip):
                 return []
             return self._icmp(src, payload, body)
         if protocol != 17 or len(body) < 8:
@@ -158,8 +168,7 @@ class Gateway:
         request = body[8:length]
         if src_port == 68 and dst_port == 67:
             return self._dhcp(src, request)
-        if self.lease_mac is not None and (
-                src != self.lease_mac or source_ip != LEASE_IP):
+        if not self._valid_source(src, source_ip):
             return []
         if dst_port == 53 and target == GATEWAY_IP:
             return self._dns(src, payload[12:16], src_port, request)

@@ -40,8 +40,17 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertTrue((stage / "ansible/playbooks/bootstrap-controller.yml").is_file())
             self.assertTrue((stage / "converge-controller").is_file())
             variables = (stage / "factory-vars.json").read_text()
-            self.assertIn('"homelab_ad_ntp_upstreams": ["10.1.31.1"]',
+            factory_ansible = (stage / "factory-ansible.cfg").read_text()
+            self.assertIn(
+                "stdout_callback = ansible.builtin.default", factory_ansible)
+            self.assertIn(
+                "callback_result_format = yaml", factory_ansible)
+            self.assertIn('"homelab_ad_ntp_upstreams": ["198.51.100.10"]',
                           variables)
+            self.assertIn(
+                '"homelab_ad_development_clock_receipt_file": '
+                '"/run/telos-factory-state/clock.receipt"', variables)
+            self.assertIn('"homelab_ad_manage_packages": false', variables)
             self.assertEqual(0o600, (stage / "secret/ad-admin").stat().st_mode & 0o777)
             for path in stage.rglob("*"):
                 if path.is_file() and path != stage / "secret/ad-admin":
@@ -53,6 +62,20 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             script = (stage / "converge-controller").read_text()
             self.assertIn('/etc/homelab/manifest.json', script)
             self.assertIn("authorization nonce mismatch", script)
+            self.assertIn(
+                "server 198.51.100.10 iburst", script)
+            self.assertNotIn("restrict default ignore", script)
+            self.assertIn(
+                "timeout 30 ntpd -n -gq -c "
+                "/run/telos-factory-state/ntp-measure.conf", script)
+            self.assertNotIn("ntpd -n -gq -p ", script)
+            self.assertIn(
+                "pacman -Q samba krb5 ntp python-cryptography", script)
+            self.assertIn(
+                "/usr/share/ipxe/x86_64/ipxe.efi", script)
+            self.assertLess(
+                script.index("timeout 30 ntpd"),
+                script.index("clock.receipt"))
 
     def test_verifier_covers_ad_dns_pxe_http_and_authority_split(self):
         checks = "\n".join(controller_factory.verification_commands(

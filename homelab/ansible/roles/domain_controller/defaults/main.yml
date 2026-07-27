@@ -21,6 +21,8 @@ homelab_ad_enable_rfc2307: true
 homelab_ad_ntp_upstreams:
   - 0.arch.pool.ntp.org
   - 1.arch.pool.ntp.org
+homelab_ad_development_clock_receipt_file: ""
+homelab_ad_manage_packages: true
 
 # Documentation/input for the surrounding firewall role. This role does not
 # guess which firewall owns the host or network policy.

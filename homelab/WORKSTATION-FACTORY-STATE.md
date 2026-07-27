@@ -1,10 +1,10 @@
 # Local workstation factory state
 
-Document version: `20260727.004`
+Document version: `20260727.005`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-27T14:25:02-05:00
+Last evidence/workstream review: 2026-07-27T15:12:00-05:00
 
 Repository baseline reviewed: `fe772ca`
 
@@ -90,7 +90,7 @@ online-acquisition/offline-execution split are in
 | Windows media authenticity and content | Commit `451f086`; the imported ISO matches the Microsoft-published SHA-256 and local inspection finds `/sources/install.wim`, the UEFI boot chain, and Windows 11 Pro index 6. | pass |
 | Simultaneous isolated fabric | Commits through `1afd894` add a loopback-only learning switch and architecture-aware simulated PXE gateway with focused tests. | implemented; lifecycle integration pending |
 | Concurrent fabric smoke | `python homelab/vm/factory_runner.py --apply --duration 40 --workstation-iso homelab/var/media/arch/archlinux-x86_64.iso` ran the controller and workstation QEMUs concurrently on loopback-only links. The simulated gateway was the sole DHCP responder; bounded teardown removed both QEMUs, the switch, and listeners; the canonical controller remained unchanged. Host-private, non-publishable evidence: `/tmp/telos-concurrent-switch-evidence.jsonl`, SHA-256 `022b076590cd330a6cf79bf3186301308e8a817f1989c67e8ebcbc79596d96eb`. | smoke pass; not PXE/install acceptance |
-| Disposable Controller convergence | Commit `0dcdd55` adds the local Controller factory bundle and contract tests. | implemented; live convergence pending |
+| Disposable Controller convergence | Host-private result `homelab/var/factory/evidence/20260727T201057Z-controller.json` (mode 0600) records a fresh no-network Arch/seed installation followed by loopback-only convergence. Gates passed in order: static controller network identity, bounded synthetic NTP measurement, Samba AD/DNS/Kerberos convergence, domain identity, `testparm`, `dbcheck`, LDAP SRV discovery, signed domain time, dedicated TFTP, nginx HTTP, and no DHCP/ProxyDHCP listener. Install, convergence, and cleanup all report `pass`. | pass |
 | Guarded Arch-second path | Commit `9dcd148` adds Windows-preserving Arch planning and dual-boot disk acceptance tests. | implemented; full guest install pending |
 | Windows media intake | Commit `451f086` pins the Microsoft metadata, verifies the imported ISO, and records the Windows 11 Pro image. | pass; WinPE boot pending |
 | Offline identity contracts | Commit `771da6b` adds cached identity and optional-storage policy checks. | implemented; live AD join/login pending |
@@ -99,6 +99,15 @@ online-acquisition/offline-execution split are in
 The evidence directory is local, ignored state and is not a substitute for a
 portable release receipt. Preserve the referenced run until its salient
 results are copied into the eventual factory acceptance record.
+
+The Controller acceptance evidence and its adjacent bounded redacted serial
+diagnostic are host-private and non-publishable. Both are mode 0600 under the
+ignored `homelab/var/factory/evidence/` tree. They contain synthetic lab
+identity and operational detail, are not release inputs, and must not be added
+to Git or the public site. The accepted run retained no console password,
+Administrator password, authorization nonce, secret ISO, guest disk, firmware
+copy, kernel, or initramfs. Cleanup deleted every disposable runtime artifact;
+post-run inspection found no QEMU or simulated-gateway process.
 
 The prior rehearsal is only a controller network-safety proof. It does **not**
 prove a configured PXE server, Samba AD, either workstation installer, a domain
@@ -155,7 +164,7 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 |---:|---|---|---|
 | 1 | Media intake | Verify Windows digest and receipt; inspect the image catalog for Windows 11 Pro; verify Arch signature/digest and `wimboot` pin; prove no media is tracked. | Windows digest and Windows 11 Pro index 6 verified; aggregate sealed-cache receipt pending |
 | 2 | Immutable PXE releases | Build and verify versioned Windows, Arch, and controller targets; manifests bind every byte to `YYYYMMDD.NNN`; rejected input and rollback tests pass. | partial: existing Windows stage reaches WinPE; install-image/custom-WinPE path is active work |
-| 3 | Controller convergence | From an accepted base controller overlay, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, release selection, logging, backup, and restore without external access. | bundle implemented; live convergence pending |
+| 3 | Controller convergence | From a fresh offline-installed disposable controller, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, and verify the authority boundary without external access. | pass: `20260727T201057Z-controller.json`; release selection, backup, and restore remain lifecycle gates |
 | 4 | PXE authority boundary | Simulated gateway remains sole DHCP authority; controller supplies only the approved boot and identity services; packet evidence proves no rogue offer, forwarding, or external connection. | simultaneous fabric and PXE gateway implemented; integrated proof pending |
 | 5 | Windows-first install | OVMF workstation PXE-boots WinPE, selects the disk by stable serial, installs Windows 11 Pro to the approved layout, and reboots without ISO attachment. Destructive authorization is scoped to the disposable disk. | pending |
 | 6 | Windows join and login | Join the synthetic domain; prove secure channel, DNS SRV, time, named user login, named administrator elevation, `local-rescue`, reboot, cached offline login, update policy, and recovery path. | pending |
@@ -172,8 +181,9 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 
 - The actual Windows ISO is available and Windows 11 Pro was found at index 6.
   An OVMF WinPE boot and real Windows install are still required.
-- The controller bundle and Samba role exist, but a disposable controller has
-  not yet been converged and accepted as a real PXE/Samba AD server.
+- The disposable controller is accepted for Samba AD, DNS, signed time,
+  TFTP, and HTTP service behavior. It has not yet served a real workstation
+  PXE boot or exercised release rollback, backup, or restoration.
 - Existing PXE staging proves payload construction, not unattended Windows
   installation. An answer file, WinPE startup workflow, disk-serial gate,
   installation-image delivery, secret injection, and post-install acceptance
@@ -243,14 +253,18 @@ it already passed and should be repeated only after a material change to the
 manual console path or immediately before separately authorized physical
 attachment.
 
-The next implementation action is to integrate the loopback switch, PXE
-gateway, controller factory bundle, and disposable controller overlay into one
-real concurrent QEMU rehearsal. Retain packet and service evidence, then boot a
-workstation to its first PXE payload. Do not add an aggregate target that
-reports success until this real path passes. Follow the target names and split
-in [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md). Planning or verification
-should be the default; destructive disposable-disk actions require `APPLY=1`
-and an exact disk identity confirmation.
+The next implementation action is to keep the now-accepted configured
+Controller alive on the isolated fabric, publish immutable Arch and Windows
+PXE releases to its HTTP/TFTP roots, and boot a disposable workstation through
+gateway-supplied options 66/67. First prove an actual UEFI iPXE request and
+Arch installer handoff. Then exercise WinPE, Windows 11 Pro installation,
+synthetic-domain join and login; Windows remains first in the eventual
+dual-boot sequence. Retain packet/service evidence and prove the Controller
+emits no DHCP or ProxyDHCP frames. Do not add an aggregate target that reports
+success until the real PXE and installer paths pass. Follow
+[FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md); planning or verification
+remains the default, while destructive disposable-disk actions require
+`APPLY=1` and exact disk identity confirmation.
 
 Literal next commands for the integration owner:
 

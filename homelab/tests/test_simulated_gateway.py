@@ -16,6 +16,13 @@ def request_ip(protocol, payload, target=sim.GATEWAY_IP):
     )
 
 
+def controller_ip(protocol, payload, target=sim.GATEWAY_IP):
+    return sim.ethernet(
+        sim.GATEWAY_MAC, sim.CONTROLLER_MAC, 0x0800,
+        sim.ipv4(sim.CONTROLLER_IP, target, protocol, payload),
+    )
+
+
 class SimulatedGatewayTests(unittest.TestCase):
     def setUp(self):
         self.gateway = sim.Gateway()
@@ -90,6 +97,24 @@ class SimulatedGatewayTests(unittest.TestCase):
         self.assertEqual(ntp[0], 0x24)
         self.assertEqual(ntp[1], 2)
         self.assertEqual(ntp[24:32], b"request!")
+
+    def test_exact_static_controller_identity_survives_earlier_dhcp_lease(self):
+        self.gateway.lease_mac = sim.CONTROLLER_MAC
+        query = bytearray(48)
+        query[0] = 0x23
+        query[40:48] = b"request!"
+        replies = self.gateway.handle(controller_ip(
+            17, sim.udp(43210, 123, bytes(query)), sim.NTP_IP))
+        self.assertEqual(1, len(replies))
+
+    def test_controller_mac_with_wrong_static_address_is_rejected(self):
+        self.gateway.lease_mac = sim.CONTROLLER_MAC
+        wrong = sim.ethernet(
+            sim.GATEWAY_MAC, sim.CONTROLLER_MAC, 0x0800,
+            sim.ipv4(
+                ipaddress.IPv4Address("10.1.31.3"), sim.NTP_IP, 17,
+                sim.udp(43210, 123, b"\x23" + bytes(47))))
+        self.assertEqual([], self.gateway.handle(wrong))
 
     def test_malformed_ntp_requests_fail_closed(self):
         for query in (b"", bytes(48), b"\x24" + bytes(47),

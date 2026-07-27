@@ -40,14 +40,31 @@
   changed_when: false
   check_mode: false
 
+- name: Inspect an optional external clock-verification receipt
+  ansible.builtin.stat:
+    path: "{{ homelab_ad_development_clock_receipt_file }}"
+  register: homelab_ad_clock_receipt
+  when: homelab_ad_development_clock_receipt_file | length > 0
+
 - name: Require working name resolution and synchronized time
   ansible.builtin.assert:
     that:
       - homelab_ad_name_resolution.stdout | trim | length > 0
-      - homelab_ad_clock_sync.stdout | trim == 'yes'
+      - >-
+        (homelab_ad_clock_sync.stdout | trim == 'yes') or
+        (
+          homelab_manifest.development_proof | default(false) | bool and
+          homelab_ad_development_clock_receipt_file | length > 0 and
+          homelab_ad_clock_receipt.stat.exists and
+          homelab_ad_clock_receipt.stat.isreg and
+          homelab_ad_clock_receipt.stat.uid == 0 and
+          homelab_ad_clock_receipt.stat.mode == '0600' and
+          homelab_ad_clock_receipt.stat.size > 0
+        )
     fail_msg: >-
       Refusing AD convergence before mutation. The permanent Controller FQDN
-      must resolve on this host and timedatectl must report NTPSynchronized=yes.
+      must resolve on this host and time must be synchronized or carry a
+      root-owned 0600 verification receipt from a bounded external check.
 
 - name: Report a successful non-mutating Controller preflight
   ansible.builtin.debug:
@@ -122,10 +139,10 @@
       - python-cryptography
       - python-dnspython
       - python-markdown
-      - python-pexpect
       - openresolv
       - bind
     state: present
+  when: homelab_ad_manage_packages | bool
 
 - name: Stop incompatible Samba member services
   ansible.builtin.systemd:
@@ -141,6 +158,14 @@
 - name: Provision with an ephemeral credential feeder
   when: not homelab_ad_database.stat.exists
   block:
+    - name: Create the local helper directory
+      ansible.builtin.file:
+        path: /usr/local/libexec
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Install the one-time provisioning driver
       ansible.builtin.copy:
         src: provision-domain.py
@@ -165,6 +190,8 @@
           - "{{ homelab_ad_server_role }}"
           - --dns-backend
           - "{{ homelab_ad_dns_backend }}"
+          - --diagnostic-file
+          - /run/homelab-provision-domain.status
           - "{{ '--use-rfc2307' if homelab_ad_enable_rfc2307 else '--without-rfc2307' }}"
       no_log: true
       notify: restart samba ad dc
@@ -257,11 +284,14 @@
   ansible.builtin.assert:
     that:
       - >-
-        ('Realm' ~ ':' ~ ' ' ~ homelab_ad_realm)
-        in homelab_ad_domain_info.stdout
+        homelab_ad_domain_info.stdout is search(
+          '(?m)^Forest\\s*:\\s*' ~ homelab_ad_dns_domain ~ '$')
       - >-
-        ('Domain' ~ ':' ~ ' ' ~ homelab_ad_netbios_domain)
-        in homelab_ad_domain_info.stdout
+        homelab_ad_domain_info.stdout is search(
+          '(?m)^Domain\\s*:\\s*' ~ homelab_ad_dns_domain ~ '$')
+      - >-
+        homelab_ad_domain_info.stdout is search(
+          '(?m)^Netbios domain\\s*:\\s*' ~ homelab_ad_netbios_domain ~ '$')
     fail_msg: >-
       The existing Samba database does not describe
       {{ homelab_ad_netbios_domain }} / {{ homelab_ad_realm }}. Ansible will

@@ -32,6 +32,7 @@ class FactorySpec:
     address: str = "10.1.31.2"
     prefix: int = 28
     gateway: str = "10.1.31.1"
+    ntp_upstream: str = "198.51.100.10"
     network: str = "10.1.31.0"
     mask: str = "255.255.255.240"
 
@@ -93,6 +94,7 @@ actual=$(sha256sum /run/telos-factory-authorized | cut -d' ' -f1)
 [[ "$actual" == "$expected" ]] || {{
   echo "disposable-guest authorization nonce mismatch" >&2; exit 2;
 }}
+echo 'TELOS FACTORY STEP network'
 iface=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\\n' |
   grep -Ev '^(lo|docker|virbr|br-|tap|veth)' | head -1)
 [[ -n "$iface" ]] || {{ echo "no isolated guest NIC" >&2; exit 2; }}
@@ -105,18 +107,21 @@ ip link set sim0 up
 ip route replace default via {spec.gateway} dev sim0
 hostnamectl hostname {spec.hostname}
 printf '127.0.0.1 localhost\\n{spec.address} {spec.fqdn} {spec.hostname}\\n' >/etc/hosts
-install -d -m 0755 /etc/systemd/timesyncd.conf.d
-printf '[Time]\\nNTP={spec.gateway}\\nFallbackNTP=\\n' \
-  >/etc/systemd/timesyncd.conf.d/90-factory.conf
-systemctl unmask systemd-timesyncd.service
-systemctl enable --now systemd-timesyncd.service
-for attempt in $(seq 1 30); do
-  [[ $(timedatectl show -p NTPSynchronized --value) == yes ]] && break
-  sleep 1
-done
-[[ $(timedatectl show -p NTPSynchronized --value) == yes ]] || {{
-  echo "simulated-gateway time did not synchronize" >&2; exit 1;
+echo 'TELOS FACTORY STEP time-sync'
+install -d -m 0700 /run/telos-factory-state
+cat >/run/telos-factory-state/ntp-measure.conf <<'EOF'
+driftfile /run/telos-factory-state/ntp-measure.drift
+restrict default kod limited nomodify nopeer noquery
+restrict 127.0.0.1
+restrict {spec.ntp_upstream} nomodify nopeer noquery
+server {spec.ntp_upstream} iburst
+EOF
+chmod 0600 /run/telos-factory-state/ntp-measure.conf
+timeout 30 ntpd -n -gq -c /run/telos-factory-state/ntp-measure.conf || {{
+  echo "simulated-gateway NTP measurement failed" >&2; exit 1;
 }}
+printf 'ntpd measurement passed\\n' >/run/telos-factory-state/clock.receipt
+chmod 0600 /run/telos-factory-state/clock.receipt
 install -d -m 0700 /run/secrets
 install -m 0600 "$root/secret/ad-admin" /run/secrets/factory-ad-admin
 trap 'shred -u /run/secrets/factory-ad-admin 2>/dev/null || rm -f /run/secrets/factory-ad-admin' EXIT
@@ -128,20 +133,30 @@ printf '%s\\n' \
   >/etc/homelab/manifest.json
 chmod 0644 /etc/homelab/manifest.json
 systemctl unmask samba.service ntpd.service nginx.service
-ANSIBLE_CONFIG=/opt/telos-factory/ansible/ansible.cfg \
+pacman -Q samba krb5 ntp python-cryptography python-dnspython \
+  python-markdown openresolv bind >/dev/null
+echo 'TELOS FACTORY STEP ansible'
+if ! ANSIBLE_CONFIG="$root/factory-ansible.cfg" \
   ansible-playbook -i "$root/inventory.ini" \
   -e @"$root/factory-vars.json" \
-  /opt/telos-factory/ansible/playbooks/bootstrap-controller.yml
+  /opt/telos-factory/ansible/playbooks/bootstrap-controller.yml; then
+  if [[ -f /run/homelab-provision-domain.status ]]; then
+    echo 'TELOS FACTORY PROVISION DIAGNOSTIC'
+    cat /run/homelab-provision-domain.status
+  fi
+  exit 2
+fi
 install -d -m 0755 /etc/homelab /srv/tftp /srv/http/homelab
 install -m 0644 "$root/telos-factory-tftp.service" /etc/systemd/system/telos-factory-tftp.service
 install -m 0644 "$root/factory-nginx.conf" /etc/homelab/factory-nginx.conf
 install -m 0644 "$root/boot.ipxe" /srv/http/homelab/boot.ipxe
-install -m 0644 /usr/share/ipxe/ipxe.efi /srv/tftp/ipxe.efi
+install -m 0644 /usr/share/ipxe/x86_64/ipxe.efi /srv/tftp/ipxe.efi
+echo 'TELOS FACTORY STEP services'
 systemctl daemon-reload
-systemctl disable --now systemd-timesyncd.service
 systemctl restart samba.service ntpd.service
 systemctl restart telos-factory-tftp.service
 nginx -c /etc/homelab/factory-nginx.conf
+echo 'TELOS FACTORY STEP verify'
 check() {{
   printf 'VERIFY %s\\n' "$1"
   /usr/bin/bash -o pipefail -c "$1"
@@ -220,12 +235,23 @@ class FactoryBundle:
             "homelab_ad_expected_hostname": self.spec.hostname,
             "homelab_ad_provision_enabled": True,
             "homelab_ad_admin_password_file": "/run/secrets/factory-ad-admin",
-            "homelab_ad_ntp_upstreams": [self.spec.gateway],
+            "homelab_ad_ntp_upstreams": [self.spec.ntp_upstream],
+            "homelab_ad_development_clock_receipt_file":
+                "/run/telos-factory-state/clock.receipt",
+            "homelab_ad_manage_packages": False,
         }
         (destination / "factory-vars.json").write_text(
             json.dumps(variables, sort_keys=True) + "\n", encoding="utf-8")
         (destination / "inventory.ini").write_text(
             "[bootstrap_controllers]\nlocalhost ansible_connection=local\n",
+            encoding="utf-8")
+        (destination / "factory-ansible.cfg").write_text(
+            "[defaults]\n"
+            "roles_path = /opt/telos-factory/ansible/roles\n"
+            "stdout_callback = ansible.builtin.default\n"
+            "callback_result_format = yaml\n"
+            "retry_files_enabled = false\n"
+            "interpreter_python = /usr/bin/python3\n",
             encoding="utf-8")
         (destination / "authorization.sha256").write_text(
             hashlib.sha256(self.authorization_nonce.encode()).hexdigest() + "\n",

@@ -135,7 +135,8 @@ class TestDomainControllerRole(unittest.TestCase):
 
     def test_password_feeder_rejects_a_blank_first_line(self):
         driver = ROLE / "files/provision-domain.py"
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as secret:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as secret, \
+                tempfile.TemporaryDirectory() as directory:
             secret.write("\nnot-the-first-line\n")
             secret.flush()
             result = subprocess.run(
@@ -146,6 +147,8 @@ class TestDomainControllerRole(unittest.TestCase):
                     "--domain", "EXAMPLE",
                     "--server-role", "dc",
                     "--dns-backend", "SAMBA_INTERNAL",
+                    "--diagnostic-file",
+                    str(Path(directory) / "status"),
                     "--use-rfc2307",
                 ],
                 capture_output=True,
@@ -153,6 +156,24 @@ class TestDomainControllerRole(unittest.TestCase):
             )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("nonempty first line", result.stderr)
+
+    def test_provision_diagnostic_is_bounded_private_and_redacted(self):
+        driver = (ROLE / "files/provision-domain.py").read_text()
+        self.assertIn("status.replace(password, \"[REDACTED]\")", driver)
+        self.assertIn("status[-16384:]", driver)
+        self.assertIn("os.O_NOFOLLOW", driver)
+        self.assertIn("0o600", driver)
+        self.assertNotRegex(
+            driver, r"(?:print|write)\\s*\\(\\s*password\\s*\\)")
+
+    def test_provisioning_password_uses_in_process_samba_api_only(self):
+        driver = (ROLE / "files/provision-domain.py").read_text()
+        self.assertIn("from samba.provision import provision", driver)
+        self.assertIn("adminpass=password", driver)
+        self.assertNotIn("pexpect", driver)
+        self.assertNotIn("subprocess", driver)
+        self.assertNotIn("samba-tool", driver)
+        self.assertNotIn("report_logger", driver)
 
     def test_rfc2307_switches_are_mutually_exclusive_and_required(self):
         driver = (ROLE / "files/provision-domain.py").read_text()

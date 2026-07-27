@@ -15,6 +15,7 @@ from controller_factory_install import (  # noqa: E402
     FactoryConvergenceSerial,
     FactoryInstallSerial,
     FactoryInstallResult,
+    RedactedSerialCapture,
     run_convergence,
     run_install,
 )
@@ -34,6 +35,21 @@ class ConstructionTests(unittest.TestCase):
         self.assertEqual(
             ("installed", "powered_off", "events"),
             tuple(FactoryInstallResult.__dataclass_fields__))
+
+    def test_diagnostic_capture_is_private_bounded_and_redacts_split_secrets(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "serial.log"
+            source = io.BytesIO(b"before secr" b"et after nonce tail")
+            capture = RedactedSerialCapture(
+                source, path, (b"secret", b"nonce"), limit=24)
+            while capture.read1(4):
+                pass
+            content = path.read_bytes()
+            self.assertNotIn(b"secret", content)
+            self.assertNotIn(b"nonce", content)
+            self.assertLessEqual(len(content), 24)
+            self.assertEqual(0o600, path.stat().st_mode & 0o777)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -107,6 +123,12 @@ class ProtocolTests(unittest.TestCase):
                 b"__TELOS_FACTORY_SUDO_", 1)[1].split(b"__", 1)[0]
             result = commands[-1].split(
                 b"__TELOS_FACTORY_RC_", 1)[1].split(b"=", 1)[0]
+            # Echoing the command exposes the prompt token in the middle of a
+            # line.  The driver must not send the password until the real,
+            # standalone sudo prompt follows.
+            sock.sendall(commands[-1].rstrip() + b"\r\n")
+            with self.assertRaises(BlockingIOError):
+                sock.recv(1, socket.MSG_DONTWAIT)
             sock.sendall(b"__TELOS_FACTORY_SUDO_" + prompt + b"__")
             commands.append(stream.readline())
             sock.sendall(
