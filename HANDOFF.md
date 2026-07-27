@@ -1,9 +1,17 @@
-# Handoff
+# Historical handoff
 
-Written 2026-07-26 at commit `b7f3bbe`. For an agent picking this up cold.
+> **Historical record, not the current restart procedure.**
+>
+> This handoff was written 2026-07-26 at commit `b7f3bbe`. It preserves useful
+> design rationale and implementation history, but its test counts, acceptance
+> matrix, immediate next step, and open questions describe that older baseline.
+> For current factory state, gates, blockers, and the literal restart sequence,
+> read `homelab/WORKSTATION-FACTORY-STATE.md`. Durable task coordination lives
+> in `.journal/`; do not reconstruct an active-agent snapshot from this file.
 
-Read this, then `homelab/decisions/` for anything you are about to change in the
-homelab. The decisions are the contract; the code is an implementation of them.
+Read the current factory ledger, then `homelab/decisions/` for anything you are
+about to change in the homelab. The decisions are the contract; the code is an
+implementation of them.
 
 ## Ground rules the owner has set
 
@@ -42,7 +50,7 @@ remains provider-neutral.
     make            build every PDF into build/
     make install    promote reviewed builds into the tracked doc/ tree
     make site       regenerate site/ from site/pages/*.md and doc/
-    make check      site/research checks, package-closure guard, 299 tests
+    make check      site/research checks, package-closure guard, and tests
     make list       every document id
 
 A document is any directory under `src/` containing `main.tex`. `src/common/`
@@ -113,8 +121,8 @@ convergence from this repository (ADR 0053).
     homelab/archiso/     the provisioning image profile
     homelab/ansible/     common, controller_network, services, identity_client
     homelab/qemu/        lab.py, pty_driver.py, matrix.py
-    homelab/tests/       297 tests, all passing, no skips
-    homelab/decisions/   63 ADRs
+    homelab/tests/       automated contract and integration tests
+    homelab/decisions/   architectural decision records
 
 Key properties, each of which has a test:
 
@@ -133,10 +141,11 @@ Key properties, each of which has a test:
 - `scripts/arch-packages --check` fails if the declared package closure would
   make pacman stop and ask which provider to use.
 
-### Acceptance matrix
+### Historical acceptance matrix
 
-`make homelab-matrix`. Five stages; a stage that cannot run reports what it is
-waiting for and the matrix does not call itself green.
+At the `b7f3bbe` baseline, `make homelab-matrix` had the following state. This
+table is retained only to explain the older implementation; it must not be used
+to assess current acceptance.
 
 | Stage | State |
 |---|---|
@@ -146,31 +155,18 @@ waiting for and the matrix does not call itself green.
 | `activation` | pending — needs a built image |
 | `converge` | pending — needs a built image |
 
-## The immediate next step
+## Historical next step
 
-**Build the provisioning image.** Everything is staged and audited; the build
-needs root and has not been run.
+At the `b7f3bbe` baseline, the next proposed step was to build the original
+provisioning image and implement matrix stages 2–5. That recommendation has
+been superseded by the isolated workstation-factory lifecycle. In particular,
+the controller seed has since been built and installed, disposable controller
+convergence has passed, Windows and Arch media have been verified, and the
+Windows-first/Arch-second dual-boot policy has been decided.
 
-    make homelab-image      # stages into /tmp/homelab-image, audits, prints:
-    sudo mkarchiso -v -w /tmp/homelab-image/work \
-        -o /tmp/homelab-image/out /tmp/homelab-image/profile
-
-Roughly 1–2 GiB of package downloads, 10–20 minutes. **Ask the owner before
-running it** — they had not answered when this was written.
-
-Optionally first: put an SSH **public** key at `homelab/instance/authorized_keys`
-so the image runs sshd and an installation can be watched from another machine.
-Without it the image is console-only, which is fine for the matrix, since the
-matrix drives the serial console anyway. `bin/homelab-image` enables sshd only
-when a key is present and refuses to stage a private key or an empty file.
-
-Then implement matrix stages 2–5 in `homelab/qemu/matrix.py`. The scaffolding,
-the pending-state reporting and the artifact detection are already there; each
-stage needs its body written against `lab.Lab`, `matrix.boot_and_listen` and
-`pty_driver.drive`.
-
-`matrix.ARTIFACT_ROOT` defaults to `/tmp/homelab-image/out` and honours
-`HOMELAB_ARTIFACT_ROOT`.
+Do not run an image build, privileged command, or old matrix stage merely
+because it appears in this historical record. Use the current gate and resume
+instructions in `homelab/WORKSTATION-FACTORY-STATE.md`.
 
 ## Questions the owner has answered
 
@@ -184,20 +180,17 @@ stage needs its body written against `lab.Lab`, `matrix.boot_and_listen` and
   the owner. Nothing in this repository handles the private half. Recorded as
   ADR 0063.
 
-## Questions still open
+## Historically open questions
 
-Ask **one at a time**, recommended option first.
+The image-build and Windows dual-boot questions listed at this baseline are
+closed: the seed was built, and the current factory contract installs Windows
+11 Pro first and Arch second while preserving independent UEFI recovery paths.
+A physical Controller hostname remains private-overlay input for later,
+separately authorized external integration; it does not block local factory
+work. Consult the current ledger and journal before treating any historical
+question as open.
 
-1. **The image build** — see above. This is the blocking one.
-2. **The spare Controller machine's hostname.** Needed for the first real
-   installation, not for the matrix.
-3. **Windows dual-boot in the Workstation profile.** ADR 0055 has Windows Pro
-   clients domain-joining and Windows Home keeping local accounts, but no
-   decision records whether the Workstation *profile* installs alongside
-   Windows or replaces it. Affects the disk layout in `lib/disks.py`, which
-   currently claims the whole disk.
-
-## Known gaps
+## Gaps known at the historical baseline
 
 - **No migration story for the existing Controller host.** There is no ADR
   covering how the current machine's data and services move onto a
@@ -206,7 +199,8 @@ Ask **one at a time**, recommended option first.
 - **PXE build-and-install manual.** The design document exists; the procedural
   manual does not. `src/homelab/manual/controller-rebuild/` is the model to
   follow — commands paired with the observable evidence each one worked.
-- **Matrix stages 2–5** are scaffolding only.
+- **Matrix stages 2–5** were scaffolding only at this baseline. Current
+  acceptance is tracked as factory lifecycle gates instead.
 - **No second domain controller.** ADR 0055 requires one on separate physical
   hardware before the directory is production, deferred until the first works.
 

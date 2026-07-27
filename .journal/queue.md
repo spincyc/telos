@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-generated_at: "2026-07-27T21:55:44Z"
+generated_at: "2026-07-27T21:58:20Z"
 task_count: 10
 ---
 
@@ -10,7 +10,7 @@ This file is a rebuildable view. Task `state.md` files are authoritative.
 
 ## Active
 
-- `97541f7d-8649-4520-af30-9bd8deba2b00` — Reconcile factory durable state and local inputs [active, high]
+None.
 
 ## Queued
 
@@ -30,3 +30,4 @@ None.
 ## Terminal
 
 - `ebd2daed-fc26-4851-b1e7-cbd86dba96c0` — Restore repository verification gate [done, high]
+- `97541f7d-8649-4520-af30-9bd8deba2b00` — Reconcile factory durable state and local inputs [done, high]
