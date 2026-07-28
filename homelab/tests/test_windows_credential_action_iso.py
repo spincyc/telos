@@ -113,6 +113,9 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "$loginClock = [Diagnostics.Stopwatch]::StartNew()", script)
         self.assertIn(
             "$loginClock.Elapsed.TotalSeconds, 3", script)
+        self.assertGreater(
+            script.rindex("$loginClock.Stop()"),
+            script.index("$childResult = Get-Content"))
         self.assertIn(
             "Test-Path -LiteralPath $env:USERPROFILE -PathType Container",
             script)

@@ -189,11 +189,11 @@ $record | ConvertTo-Json -Compress |
     $created = [TelosCredentialLogon]::CreateProcessWithLogonW(
         $username, $domain, $password, 1, $null, $commandLine, 0,
         [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process)
-    $loginClock.Stop()
-    $loginElapsedSeconds = [Math]::Round(
-        $loginClock.Elapsed.TotalSeconds, 3)
     $password = $null
     if (-not $created) {
+        $loginClock.Stop()
+        $loginElapsedSeconds = [Math]::Round(
+            $loginClock.Elapsed.TotalSeconds, 3)
         $logonError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         if ($action -eq 'uncached-domain-user-denied' -and
                 -not $controllerReachable -and $logonError -eq 1326) {
@@ -244,6 +244,9 @@ $record | ConvertTo-Json -Compress |
     }
     $childResult = Get-Content -LiteralPath $resultPath -Raw |
         ConvertFrom-Json
+    $loginClock.Stop()
+    $loginElapsedSeconds = [Math]::Round(
+        $loginClock.Elapsed.TotalSeconds, 3)
     Remove-Item -LiteralPath $resultPath -Force
     if ($domain -eq '.') {
         $authenticationSemantics = 'local-account'
