@@ -242,7 +242,10 @@ def run_client_bounded(
         raise failure[0]
 
 
-def audit_qemu_argv(role: str, argv: list[str]) -> None:
+def audit_qemu_argv(
+    role: str, argv: list[str], *,
+    allowed_nic_models: tuple[str, ...] = ("virtio-net-pci",),
+) -> None:
     """Fail closed unless argv describes the intended guest-only NICs."""
     if role not in NIC_COUNTS:
         raise ValueError(f"unknown simulation role: {role}")
@@ -288,7 +291,8 @@ def audit_qemu_argv(role: str, argv: list[str]) -> None:
                 f"{role}: every NIC must use a loopback socket")
         ids.append(match.group(1))
     nic_devices = [
-        value for value in devices if value.startswith("virtio-net-pci,")
+        value for value in devices
+        if any(value.startswith(model + ",") for model in allowed_nic_models)
     ]
     network_models = (
         "virtio-net", "e1000", "e1000e", "rtl8139", "vmxnet3",
@@ -299,7 +303,7 @@ def audit_qemu_argv(role: str, argv: list[str]) -> None:
         raise ValueError(f"{role}: unapproved NIC device")
     if any("netdev=" in value and value not in nic_devices
            for value in devices):
-        raise ValueError(f"{role}: only virtio-net-pci NICs are allowed")
+        raise ValueError(f"{role}: NIC model is not allowed")
     if len(nic_devices) != expected:
         raise ValueError(f"{role}: expected exactly {expected} NIC device(s)")
     for netdev_id in ids:
