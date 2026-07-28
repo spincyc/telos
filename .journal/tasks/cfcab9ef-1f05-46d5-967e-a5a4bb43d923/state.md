@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:37:41Z"
+updated_at: "2026-07-28T00:40:13Z"
 ---
 
 # Goal
@@ -66,3 +66,10 @@ known-secret evidence rejection, and success/failure teardown.
 The user authorized pushing checkpoints and directed continuous progress.
 `origin/main` now includes `dafb18a`; continue with private WinPE input
 rendering and Windows-first partition application.
+
+Private DiskPart, startup, and answer-file renderers are implemented. Recovery
+uses an explicit absolute offset after an untouched Arch gap. Setup is pinned
+to Pro, en-US, and the precreated Windows partition. The disk-count and
+capacity boundary is checked twice before the sole destructive call. Next,
+construct and verify the private WinPE overlay and complete install-source
+publication.

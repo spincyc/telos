@@ -10,13 +10,31 @@ from unittest import mock
 from homelab.vm.windows_install_contract import (
     Authorization,
     PrivateRun,
+    SyntheticIdentity,
     WindowsInstallContractError,
     audit_qemu_disk_boundary,
     inspect_qcow2,
+    render_diskpart,
+    render_startup,
+    render_unattend,
 )
 
 
 class WindowsInstallContractTests(unittest.TestCase):
+    @staticmethod
+    def authorization() -> Authorization:
+        roles = (
+            ("esp", 1024), ("msr", 16), ("basic-data", 180000),
+            ("linux-root", 78000), ("windows-recovery", 2048),
+        )
+        return Authorization(
+            1, "20260727.005", "a" * 64,
+            {"path": "/private/disk", "virtual_size": 256 * 1024**3},
+            "TELOS-WIN-0001",
+            {"layout": {"partitions": [
+                {"type": role, "size_mib": size} for role, size in roles]}},
+            "b" * 64)
+
     def test_qemu_requires_one_exact_serial_bound_writable_disk(self):
         disk = Path("/run/private/windows.qcow2")
         command = [
@@ -87,10 +105,7 @@ class WindowsInstallContractTests(unittest.TestCase):
             self.assertFalse(private_path.exists())
 
     def test_receipt_has_only_generated_digests_and_rejects_secret_evidence(self):
-        authorization = Authorization(
-            1, "20260727.005", "a" * 64,
-            {"path": "/private/disk", "virtual_size": 256 * 1024**3},
-            "TELOS-WIN-0001", {"layout": "approved"}, "b" * 64)
+        authorization = self.authorization()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with PrivateRun(root / "runs") as run:
@@ -108,6 +123,45 @@ class WindowsInstallContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                         WindowsInstallContractError, "known secret"):
                     run.assert_secret_free(evidence)
+
+    def test_diskpart_reserves_arch_gap_and_never_selects_another_disk(self):
+        script = render_diskpart(self.authorization())
+        self.assertEqual(1, script.count("select disk"))
+        self.assertIn("select disk 0", script)
+        self.assertIn("create partition efi size=1024", script)
+        self.assertIn("create partition msr size=16", script)
+        recovery_start_kib = (1 + 1024 + 16 + 180000 + 78000) * 1024
+        self.assertIn(
+            f"create partition primary offset={recovery_start_kib} size=2048",
+            script)
+        self.assertNotIn("create partition primary size=78000", script)
+        self.assertNotIn("delete partition", script)
+
+    def test_startup_rechecks_one_disk_and_capacity_before_mutation(self):
+        script = render_startup(
+            self.authorization(),
+            install_source_unc=r"\\controller\windows-20260727.005",
+            install_user=r"TELOS\pxe-install")
+        self.assertEqual(2, script.count("disk_count=0"))
+        self.assertEqual(2, script.count('"1" exit /b 20'))
+        self.assertEqual(2, script.count('"256 GB" exit /b 22'))
+        self.assertNotIn("password", script.casefold())
+        self.assertIn('net use W: "\\\\controller\\windows-20260727.005" *',
+                      script)
+        self.assertLess(
+            script.rindex('"256 GB" exit /b 22'),
+            script.index("diskpart /s X:\\windows-layout.txt"))
+
+    def test_unattend_is_explicit_pro_us_partition_three_and_has_no_product_key(self):
+        identity = SyntheticIdentity(
+            "TELOS-WIN-01", "telosadmin", "SynthPass-123",
+            r"TELOS\pxe-install", "InstallPass-123")
+        answer = render_unattend(identity)
+        self.assertIn("<Value>Windows 11 Pro</Value>", answer)
+        self.assertIn("<UILanguage>en-US</UILanguage>", answer)
+        self.assertIn("<DiskID>0</DiskID><PartitionID>3</PartitionID>", answer)
+        self.assertNotIn("ProductKey", answer)
+        self.assertNotIn(identity.install_password, answer)
 
 
 if __name__ == "__main__":
