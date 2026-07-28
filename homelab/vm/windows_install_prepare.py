@@ -95,11 +95,11 @@ def prepare(args: argparse.Namespace) -> Path:
         )
         with PrivateRun(run / "inputs") as private, \
                 tempfile.TemporaryDirectory(
-                    prefix="publication-", dir=run) as publication_name:
+                    prefix="publication-parent-", dir=run) as publication_name:
             generated = private.render_windows_inputs(
                 authorization, identity,
                 install_source_unc=r"\\controller\windows-release")
-            publication = Path(publication_name)
+            publication = Path(publication_name) / "publication"
             receipt = stage_publication(
                 args.releases, publication, seed_iso=args.seed,
                 target="windows", private_windows_inputs=private.path,
