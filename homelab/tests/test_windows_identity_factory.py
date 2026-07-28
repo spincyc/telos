@@ -86,6 +86,10 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.callbacks.launch_guest.__self__.
                 command_plan.run_dialog.state_kind,
             )
+            self.assertEqual(
+                ("down", "down", "down", "ret"),
+                configuration.rotation_plan.change_password_keys,
+            )
             runtime = boundary.attempt / "runtime"
             (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
             for relative in (
