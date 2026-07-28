@@ -4,9 +4,9 @@ repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
 head_observed: "5ca4150db11c6a7343551215379da04827b8641f"
-working_tree_state: "arch-pxe-handoff-accepted"
-active_tasks: ["c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"]
-updated_at: "2026-07-28T00:19:18Z"
+working_tree_state: "windows-pxe-handoff-accepted"
+active_tasks: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
+updated_at: "2026-07-28T00:27:49Z"
 ---
 
 # Repository recovery state

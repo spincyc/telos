@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "c9c5d25a-3d94-4eaa-95b8-2cadbd44633c"
 title: "Prove integrated isolated PXE handoff"
-status: "active"
+status: "done"
 priority: "high"
 priority_reason: "Required integration proof before destructive guest installation"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-28T00:19:18Z"
+updated_at: "2026-07-28T00:27:49Z"
 ---
 
 # Goal
@@ -63,3 +63,8 @@ Release `.005` completed real Arch UEFI PXE acceptance through root-image
 retrieval, mount, and `archiso login:` on the loopback-only fabric. Retained
 success evidence records gateway-only DHCP and every handoff phase. Continue
 with the separate real WinPE handoff before completing this task.
+
+A target-specific repeat completed the real WinPE handoff through all selected
+payload downloads, wimboot execution, WIM discovery, and BCD patching. Both
+Arch and Windows handoffs now have retained private evidence; this gate is
+complete.

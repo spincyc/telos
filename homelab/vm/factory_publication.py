@@ -137,7 +137,7 @@ def extract_tftp_repair(seed_iso: Path, destination: Path) -> dict:
 
 def stage(
     releases: Path, destination: Path, *, seed_iso: Path,
-    ipxe_binary: Path | None = None,
+    ipxe_binary: Path | None = None, target: str = "arch-workstation",
 ) -> dict:
     """Copy only manifest-verified selected bytes into a private staging tree."""
     releases = Path(releases).resolve()
@@ -162,6 +162,8 @@ def stage(
     if destination.exists():
         raise PublicationError(f"publication destination already exists: {destination}")
     ipxe = _ipxe_binary(ipxe_binary)
+    if target not in ("arch-workstation", "windows"):
+        raise PublicationError(f"unsupported PXE publication target: {target}")
 
     www = destination / "www"
     try:
@@ -178,17 +180,17 @@ def stage(
         shutil.copy2(ipxe, tftp / "ipxe.efi")
         repair = extract_tftp_repair(seed_iso, destination / "repair")
         shutil.copy2(aggregate, destination / pxe_release_set.MANIFEST)
-        for target in pxe_release_set.TARGETS:
-            source = release_set / "targets" / target / version
-            shutil.copytree(source, www / target / version)
+        for release_target in pxe_release_set.TARGETS:
+            source = release_set / "targets" / release_target / version
+            shutil.copytree(source, www / release_target / version)
         bootstrap = www / "boot" / "boot.ipxe"
         bootstrap.parent.mkdir()
         bootstrap.write_text(
             "#!ipxe\n"
-            f"chain http://10.1.31.2/arch-workstation/{version}/boot.ipxe"
+            f"chain http://10.1.31.2/{target}/{version}/boot.ipxe"
             " || goto failed\n"
             ":failed\n"
-            "echo Selected Arch workstation release failed to load.\n"
+            f"echo Selected {target} release failed to load.\n"
             "shell\n",
             encoding="utf-8",
         )
@@ -277,14 +279,14 @@ def stage(
             "  if systemctl is-active --quiet telos-factory-http.service && "
             "systemctl is-active --quiet telos-factory-tftp.service && "
             "ip -4 address show | grep -q '10.1.31.2/28'; then\n"
-            f"    selected=/srv/http/homelab/arch-workstation/{version}/boot.ipxe\n"
-            f"    source=/run/telos-pxe-release/www/arch-workstation/{version}/boot.ipxe\n"
+            f"    selected=/srv/http/homelab/{target}/{version}/boot.ipxe\n"
+            f"    source=/run/telos-pxe-release/www/{target}/{version}/boot.ipxe\n"
             "    test -s \"$selected\" && cmp -s \"$source\" \"$selected\" || "
             "{ sleep 1; continue; }\n"
             f"    python -c \"import pathlib,urllib.request; "
             f"expected=pathlib.Path('$selected').read_bytes(); "
             f"actual=urllib.request.urlopen("
-            f"'http://10.1.31.2/arch-workstation/{version}/boot.ipxe',"
+            f"'http://10.1.31.2/{target}/{version}/boot.ipxe',"
             f"timeout=2).read(); "
             f"assert actual == expected\" || {{ sleep 1; continue; }}\n"
             "    if ss -H -lun | grep -Eq ':(67|4011)[[:space:]]'; then\n"
@@ -297,9 +299,9 @@ def stage(
             "{ echo 'TELOS PXE READINESS FAIL timeout'; "
             "systemctl --no-pager --full status telos-factory-http.service "
             "telos-factory-tftp.service; ip -4 address show; ss -H -lntup; "
-            f"ls -ld /srv/http/homelab/arch-workstation "
-            f"/srv/http/homelab/arch-workstation/{version} "
-            f"/srv/http/homelab/arch-workstation/{version}/boot.ipxe; "
+            f"ls -ld /srv/http/homelab/{target} "
+            f"/srv/http/homelab/{target}/{version} "
+            f"/srv/http/homelab/{target}/{version}/boot.ipxe; "
             "tail -50 /var/log/nginx/factory-error.log 2>/dev/null || true; "
             "} >/dev/ttyS0 2>&1\nexit 1\nEOF\n"
             "chmod 0755 /usr/local/sbin/telos-pxe-ready\n"
@@ -334,6 +336,7 @@ def stage(
         receipt = {
             "schema": 1,
             "version": version,
+            "target": target,
             "selected_manifest_sha256": selected["manifest_sha256"],
             "bootstrap": "www/boot/boot.ipxe",
             "offline_repair": repair,

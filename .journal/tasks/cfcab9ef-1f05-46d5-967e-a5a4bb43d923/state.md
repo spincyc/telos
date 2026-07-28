@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "cfcab9ef-1f05-46d5-967e-a5a4bb43d923"
 title: "Implement Windows-first installation"
-status: "queued"
+status: "active"
 priority: "normal"
 priority_reason: "Next factory gate after isolated PXE proof"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-27T21:51:53Z"
+updated_at: "2026-07-28T00:27:49Z"
 ---
 
 # Goal
@@ -32,3 +32,10 @@ secret teardown.
 
 Owns Windows installation workflow and disposable workstation disk. Serialize
 all destructive guest-disk and shared factory-environment operations.
+
+## Activation plan
+
+Audit the existing answer-file, disk-authorization, and QEMU lifecycle
+surfaces against the acceptance criteria. Implement the smallest missing
+fail-closed controls, then perform an unattended install only on a freshly
+created disposable disk with an exact pinned serial.
