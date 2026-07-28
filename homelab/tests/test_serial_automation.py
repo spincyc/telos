@@ -198,16 +198,16 @@ class ControllerSeedProtocolTests(unittest.TestCase):
                 b"__TELOS_SEED_IMPORT_", 1)[1].split(b"__", 1)[0]
             released = commands[0].split(
                 b"__TELOS_SEED_RELEASED_", 1)[1].split(b"=", 1)[0]
-            sock.sendall(b"__TELOS_SEED_SUDO_" + prompt + b"__")
+            sock.sendall(b"\r__TELOS_SEED_SUDO_" + prompt + b"__")
             self.assertEqual(
                 stream.readline(), b"ephemeral-password\n")
             sock.sendall(
-                b"__TELOS_SEED_VERIFIED_" + verified + b"__\n"
-                b"__TELOS_SEED_INSTALLED_" + installed + b"__\n"
-                b"__TELOS_SEED_PACKAGES_" + packages + b"__\n"
-                b"__TELOS_SEED_IMPORT_" + imported + b"__\n"
-                b"__TELOS_SEED_RELEASED_" + released + b"=0\n"
-                b"__TELOS_SEED_RC_" + result + b"=0\n")
+                b"__TELOS_SEED_VERIFIED_" + verified + b"__\r\n"
+                b"__TELOS_SEED_INSTALLED_" + installed + b"__\r\n"
+                b"__TELOS_SEED_PACKAGES_" + packages + b"__\r\n"
+                b"__TELOS_SEED_IMPORT_" + imported + b"__\r\n"
+                b"__TELOS_SEED_RELEASED_" + released + b"=0\r\n"
+                b"__TELOS_SEED_RC_" + result + b"=0\r\n")
             self.assertEqual(stream.readline(), b"\n")
             sock.sendall(b"\n[local-rescue@bootstrap-dc ~]$ ")
 
@@ -241,12 +241,12 @@ class ControllerSeedProtocolTests(unittest.TestCase):
             stream.readline()
             for marker in markers:
                 token = command.split(marker, 1)[1].split(b"__", 1)[0]
-                sock.sendall(marker + token + b"__\n")
+                sock.sendall(marker + token + b"__\r\n")
             sock.sendall(
                 b"__TELOS_SEED_RELEASED_" + released + b"="
-                + release_code + b"\n")
+                + release_code + b"\r\n")
             final = (
-                b"__TELOS_SEED_RC_" + result + b"=" + returncode + b"\n")
+                b"__TELOS_SEED_RC_" + result + b"=" + returncode + b"\r\n")
             if split_returncode:
                 sock.sendall(final[:-1])
                 sock.sendall(final[-1:])

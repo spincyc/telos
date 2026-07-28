@@ -286,7 +286,7 @@ class SerialAutomation:
                 "controller-seed-install-command-sent",
             )
             self._wait(
-                rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
+                re.escape(sudo_prompt) + rb"\s*$",
                 "controller-seed-sudo-prompt",
             )
             self._send(
@@ -301,7 +301,7 @@ class SerialAutomation:
                 + re.escape(packages) + rb"()|"
                 + re.escape(imported) + rb"()|"
                 + re.escape(released) + rb"([0-9]+)|"
-                + re.escape(result) + rb"([0-9]+))\n"
+                + re.escape(result) + rb"([0-9]+))\s*\n"
             )
             while returncode is None:
                 match = self._wait(
