@@ -322,6 +322,7 @@ def assert_isolated(plans: dict[str, list[str]]) -> None:
 def audit_live_process(
     pid: int, role: str, proc_root: Path = Path("/proc"),
     *,
+    allowed_nic_models: tuple[str, ...] = ("virtio-net-pci",),
     disposable_disk: Path | None = None,
     disposable_vars: Path | None = None,
     forbidden_paths: tuple[Path, ...] = (),
@@ -350,7 +351,8 @@ def audit_live_process(
     if executable not in {"qemu-system-x86_64", "qemu-kvm"}:
         raise RuntimeError(
             f"{role}: live process is not approved QEMU: {executable}")
-    audit_qemu_argv(role, argv)
+    audit_qemu_argv(
+        role, argv, allowed_nic_models=allowed_nic_models)
     if disposable_disk is not None or disposable_vars is not None:
         if disposable_disk is None or disposable_vars is None:
             raise RuntimeError(
