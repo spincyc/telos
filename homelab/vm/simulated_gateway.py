@@ -126,12 +126,14 @@ def dhcp_options(data: bytes) -> dict[int, bytes]:
 class Gateway:
     def __init__(
         self, clock=time.time, *, controller_mac: bytes = CONTROLLER_MAC,
+        identity_mode: bool = False,
     ) -> None:
         if len(controller_mac) != 6 or controller_mac[0] & 1:
             raise ValueError("Controller MAC must be a unicast Ethernet address")
         self.lease_mac: bytes | None = None
         self.clock = clock
         self.controller_mac = controller_mac
+        self.identity_mode = identity_mode
 
     def _valid_source(
         self, source_mac: bytes, source_ip: ipaddress.IPv4Address,
@@ -246,6 +248,8 @@ class Gateway:
         boot_file = PXE_BOOT_FILES.get(architecture)
         if 175 in options or options.get(77, b"").lower() == b"ipxe":
             boot_file = IPXE_SCRIPT
+        if self.identity_mode and not controller_bootstrap:
+            boot_file = None
         # Retain the gateway identity for ordinary DHCP acceptance checks;
         # PXE leases deliberately name the separate boot controller.
         fixed[20:24] = (
@@ -529,10 +533,12 @@ def serve(
 
 def connect_peer(
     host: str, port: int, *, controller_mac: bytes = CONTROLLER_MAC,
+    identity_mode: bool = False,
 ) -> None:
     if host != "127.0.0.1":
         raise RuntimeError("gateway peer must connect only to 127.0.0.1")
-    gateway = Gateway(controller_mac=controller_mac)
+    gateway = Gateway(
+        controller_mac=controller_mac, identity_mode=identity_mode)
     with socket.create_connection((host, port)) as connection:
         announcement = identity_announcement(GATEWAY_MAC, "gateway")
         connection.sendall(struct.pack("!I", len(announcement)) + announcement)
@@ -558,6 +564,7 @@ def main() -> int:
     parser.add_argument("--audit-first", type=Path)
     parser.add_argument("--connect", action="store_true")
     parser.add_argument("--controller-mac", default=CONTROLLER_MAC.hex(":"))
+    parser.add_argument("--identity-mode", action="store_true")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be an unprivileged TCP port")
@@ -571,7 +578,8 @@ def main() -> int:
         except ValueError:
             parser.error("--controller-mac must be six hexadecimal octets")
         connect_peer(
-            "127.0.0.1", args.port, controller_mac=controller_mac)
+            "127.0.0.1", args.port, controller_mac=controller_mac,
+            identity_mode=args.identity_mode)
     else:
         serve(args.port, args.connections, args.listener_fd, args.audit_first)
     return 0

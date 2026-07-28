@@ -20,10 +20,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from .simulated_gateway import HubPolicy
+    from .simulated_gateway import Gateway, HubPolicy
     from .simulation_evidence import append_json_event
 except ImportError:
-    from simulated_gateway import HubPolicy
+    from simulated_gateway import Gateway, HubPolicy
     from simulation_evidence import append_json_event
 
 
@@ -115,6 +115,7 @@ class ConcurrentSwitch:
         ready_fd: int | None = None,
         accept_timeout: float = 30.0,
         idle_timeout: float = 120.0,
+        identity_mode: bool = False,
     ) -> None:
         if not ports or len({port.number for port in ports}) != len(ports):
             raise ValueError("ports must have unique numbers")
@@ -135,6 +136,7 @@ class ConcurrentSwitch:
         if len(gateway_ports) > 1:
             raise ValueError("at most one pinned gateway port is allowed")
         self.policy = HubPolicy(
+            gateway=Gateway(identity_mode=identity_mode),
             gateway_peer=gateway_ports[0] if gateway_ports else None)
         self.evidence = Evidence(evidence_path)
         self.incoming: queue.Queue[tuple[int, bytes] | None] = queue.Queue(
@@ -432,6 +434,7 @@ def main() -> int:
     parser.add_argument("--ready-fd", type=int)
     parser.add_argument("--accept-timeout", type=float, default=30.0)
     parser.add_argument("--idle-timeout", type=float, default=120.0)
+    parser.add_argument("--identity-mode", action="store_true")
     args = parser.parse_args()
     if not 1 <= len(args.port) <= 8:
         parser.error("between 1 and 8 --port values are required")
@@ -443,6 +446,7 @@ def main() -> int:
         ready_fd=args.ready_fd,
         accept_timeout=args.accept_timeout,
         idle_timeout=args.idle_timeout,
+        identity_mode=args.identity_mode,
     ).run()
     return 0
 

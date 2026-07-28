@@ -22,9 +22,12 @@ class WindowsIdentityContractTests(unittest.TestCase):
                 serial_socket=root / "windows.serial",
                 control_iso=control)
             joined = " ".join(command)
-            self.assertIn("order=c,menu=off", joined)
+            self.assertIn("order=c,menu=off,strict=on", joined)
             self.assertNotIn("once=n", joined)
             self.assertNotIn("bootindex=", joined)
+            self.assertIn("-boot order=c,menu=off,strict=on", joined)
+            self.assertIn("e1000e,netdev=factory", joined)
+            self.assertIn(",romfile=", joined)
             self.assertIn(f"file={disk.resolve()}", joined)
             self.assertIn(f"file={control.resolve()}", joined)
             self.assertIn("media=cdrom,readonly=on", joined)

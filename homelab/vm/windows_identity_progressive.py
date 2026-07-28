@@ -37,6 +37,75 @@ from .windows_identity_run import (
 )
 
 
+@dataclass(frozen=True)
+class ProgressiveGuiFailureDiagnostic:
+    """Allowlisted GUI coordinates that cannot retain backend details."""
+
+    stage: str
+    operation: str
+    error_type: str
+
+    _COORDINATES = frozenset({
+        ("initial-sign-in", "wake"),
+        ("initial-sign-in", "observe"),
+        ("old-sign-in", "submit"),
+        ("initial-desktop", "observe"),
+        ("security-options", "request"),
+        ("security-options", "observe"),
+        ("change-password", "navigate"),
+        ("change-password", "observe"),
+        ("credential-rotation", "submit"),
+        ("change-password-confirmation", "observe-departure"),
+        ("change-password-confirmation", "acknowledge"),
+        ("post-rotation-desktop", "observe"),
+        ("replacement-sign-in", "lock"),
+        ("replacement-sign-in", "wake"),
+        ("replacement-sign-in", "observe"),
+        ("replacement-sign-in", "submit"),
+        ("final-desktop", "observe"),
+    })
+    _ERROR_TYPES = frozenset({
+        "OSError",
+        "TimeoutError",
+        "WindowsGuiError",
+        "WindowsIdentityGuiError",
+    })
+
+    @classmethod
+    def gui(
+        cls,
+        stage: str,
+        operation: str,
+        error: BaseException,
+    ) -> "ProgressiveGuiFailureDiagnostic":
+        if (stage, operation) not in cls._COORDINATES:
+            stage = "unknown-stage"
+            operation = "unknown-operation"
+        error_type = type(error).__name__
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(stage, operation, error_type)
+
+    def __post_init__(self) -> None:
+        if (
+            (self.stage, self.operation) not in self._COORDINATES
+            and (self.stage, self.operation)
+            != ("unknown-stage", "unknown-operation")
+        ):
+            raise ValueError("progressive GUI failure coordinates are invalid")
+        if (
+            self.error_type not in self._ERROR_TYPES
+            and self.error_type != "UnexpectedError"
+        ):
+            raise ValueError("progressive GUI failure type is invalid")
+
+    def render(self) -> str:
+        return (
+            f"stage={self.stage}; operation={self.operation}; "
+            f"error={self.error_type}"
+        )
+
+
 class WindowsIdentityProgressiveError(RuntimeError):
     """The bounded rotation could not be completed and proved."""
 
@@ -44,10 +113,44 @@ class WindowsIdentityProgressiveError(RuntimeError):
         self,
         message: str,
         *,
-        diagnostic: IdentityFailureDiagnostic | None = None,
+        diagnostic: (
+            IdentityFailureDiagnostic
+            | ProgressiveGuiFailureDiagnostic
+            | None
+        ) = None,
     ) -> None:
         super().__init__(message)
         self.diagnostic = diagnostic
+
+
+class _ProgressiveGuiOperationError(RuntimeError):
+    """Internal carrier whose payload is already fixed and secret-free."""
+
+    def __init__(self, diagnostic: ProgressiveGuiFailureDiagnostic) -> None:
+        super().__init__("progressive GUI operation failed")
+        self.diagnostic = diagnostic
+
+
+class _ProgressiveDeadlineError(RuntimeError):
+    """Internal marker raised only by the coordinator-owned deadline check."""
+
+
+def _run_gui_operation(
+    stage: str,
+    operation: str,
+    callback: Callable[[], object],
+) -> None:
+    """Run one GUI boundary and emit only fixed failure coordinates."""
+    failure: ProgressiveGuiFailureDiagnostic | None = None
+    try:
+        callback()
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except Exception as error:
+        failure = ProgressiveGuiFailureDiagnostic.gui(
+            stage, operation, error)
+    if failure is not None:
+        raise _ProgressiveGuiOperationError(failure) from None
 
 
 class RecoverableCredential(AbstractContextManager[str], Protocol):
@@ -293,8 +396,7 @@ def execute_progressive_rotation(
     def remaining() -> float:
         value = min(plan.checkpoint_timeout, deadline - clock())
         if value <= 0:
-            raise WindowsIdentityProgressiveError(
-                "progressive rotation deadline expired")
+            raise _ProgressiveDeadlineError
         return value
 
     try:
@@ -310,18 +412,50 @@ def execute_progressive_rotation(
                 if plan.initial_sign_in_delay:
                     pause(plan.initial_sign_in_delay)
                 for key in plan.initial_sign_in_keys:
-                    gui.key(key)
-                gui.observe(sign_in, remaining())
-                gui.type_secret(old_credential)
-                gui.key("ret")
-                gui.observe(desktop, remaining())
+                    _run_gui_operation(
+                        "initial-sign-in", "wake",
+                        lambda key=key: gui.key(key),
+                    )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "initial-sign-in", "observe",
+                    lambda: gui.observe(sign_in, checkpoint_timeout),
+                )
+                _run_gui_operation(
+                    "old-sign-in", "submit",
+                    lambda: (
+                        gui.type_secret(old_credential),
+                        gui.key("ret"),
+                    ),
+                )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "initial-desktop", "observe",
+                    lambda: gui.observe(desktop, checkpoint_timeout),
+                )
                 phases.append("old-credential-sign-in-proved")
 
-                gui.chord("ctrl", "alt", "delete")
-                gui.observe(security_options, remaining())
+                _run_gui_operation(
+                    "security-options", "request",
+                    lambda: gui.chord("ctrl", "alt", "delete"),
+                )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "security-options", "observe",
+                    lambda: gui.observe(
+                        security_options, checkpoint_timeout),
+                )
                 for key in plan.change_password_keys:
-                    gui.key(key)
-                gui.observe(change_password, remaining())
+                    _run_gui_operation(
+                        "change-password", "navigate",
+                        lambda key=key: gui.key(key),
+                    )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "change-password", "observe",
+                    lambda: gui.observe(
+                        change_password, checkpoint_timeout),
+                )
                 # Generate the replacement only at the first operation that
                 # needs it. It must not survive initial login or public
                 # navigation merely because those phases precede rotation.
@@ -331,28 +465,64 @@ def execute_progressive_rotation(
                 if old_credential == new_credential:
                     raise WindowsIdentityProgressiveError(
                         "replacement credential must be distinct")
-                gui.type_secret(old_credential)
-                gui.key("tab")
-                gui.type_secret(new_credential)
-                gui.key("tab")
-                gui.type_secret(new_credential)
-                gui.key("ret")
+                _run_gui_operation(
+                    "credential-rotation", "submit",
+                    lambda: (
+                        gui.type_secret(old_credential),
+                        gui.key("tab"),
+                        gui.type_secret(new_credential),
+                        gui.key("tab"),
+                        gui.type_secret(new_credential),
+                        gui.key("ret"),
+                    ),
+                )
 
                 # Windows displays a public success confirmation. Prove that
                 # the change form departed before acknowledging it.
-                gui.observe_departure(change_password, remaining())
-                gui.key("ret")
-                gui.observe(desktop, remaining())
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "change-password-confirmation", "observe-departure",
+                    lambda: gui.observe_departure(
+                        change_password, checkpoint_timeout),
+                )
+                _run_gui_operation(
+                    "change-password-confirmation", "acknowledge",
+                    lambda: gui.key("ret"),
+                )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "post-rotation-desktop", "observe",
+                    lambda: gui.observe(desktop, checkpoint_timeout),
+                )
 
-                gui.chord("meta_l", "l")
+                _run_gui_operation(
+                    "replacement-sign-in", "lock",
+                    lambda: gui.chord("meta_l", "l"),
+                )
                 if plan.lock_settle_delay:
                     pause(plan.lock_settle_delay)
                 for key in plan.wake_after_lock_keys:
-                    gui.key(key)
-                gui.observe(sign_in, remaining())
-                gui.type_secret(new_credential)
-                gui.key("ret")
-                gui.observe(desktop, remaining())
+                    _run_gui_operation(
+                        "replacement-sign-in", "wake",
+                        lambda key=key: gui.key(key),
+                    )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "replacement-sign-in", "observe",
+                    lambda: gui.observe(sign_in, checkpoint_timeout),
+                )
+                _run_gui_operation(
+                    "replacement-sign-in", "submit",
+                    lambda: (
+                        gui.type_secret(new_credential),
+                        gui.key("ret"),
+                    ),
+                )
+                checkpoint_timeout = remaining()
+                _run_gui_operation(
+                    "final-desktop", "observe",
+                    lambda: gui.observe(desktop, checkpoint_timeout),
+                )
                 # A fresh login is the first conclusive password-change proof.
                 phases.append("replacement-credential-sign-in-proved")
                 # Keep the replacement credential inside the guarded
@@ -365,8 +535,14 @@ def execute_progressive_rotation(
                 phases.append("post-rotation-acceptance-complete")
                 recovery.destroy_publication()
                 phases.append("private-publication-destroyed")
-    except WindowsIdentityProgressiveError:
-        raise
+    except _ProgressiveGuiOperationError as error:
+        sanitized_failure = WindowsIdentityProgressiveError(
+            "progressive GUI phase failed; " + error.diagnostic.render(),
+            diagnostic=error.diagnostic,
+        )
+    except _ProgressiveDeadlineError:
+        sanitized_failure = WindowsIdentityProgressiveError(
+            "progressive rotation deadline expired")
     except (KeyboardInterrupt, SystemExit, RunInterrupted):
         raise
     except Exception as error:

@@ -397,7 +397,8 @@ class NativeProcessBoundary:
             self.port = int(listener.getsockname()[1])
             command = switch_command(
                 listener.fileno(), self.runtime / "switch.jsonl",
-                accept_timeout=1200, idle_timeout=3600)
+                accept_timeout=1200, idle_timeout=3600,
+                identity_mode=True)
             for role, spec in DEPENDENCIES.items():
                 command.extend([
                     "--port",
@@ -421,6 +422,7 @@ class NativeProcessBoundary:
                 gateway_command(
                     self.port,
                     controller_mac=IDENTITY_CONTROLLER_MAC.hex(":"),
+                    identity_mode=True,
                 ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

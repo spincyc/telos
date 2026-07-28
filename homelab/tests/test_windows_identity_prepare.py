@@ -97,8 +97,9 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             self.assertNotIn("password", json.dumps(plan).lower())
             command = json.loads(
                 (attempt / "qemu-command.json").read_text())["argv"]
-            self.assertIn("order=c,menu=off", " ".join(command))
+            self.assertIn("order=c,menu=off,strict=on", " ".join(command))
             self.assertNotIn("once=n", " ".join(command))
+            self.assertIn(",romfile=", " ".join(command))
             self.assertIn("readonly=on", " ".join(command))
             self.assertIn(
                 f"file={(attempt / 'control.iso').resolve()}",

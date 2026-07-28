@@ -96,10 +96,10 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     side_effect=lambda: _Socket(events)),
                 mock.patch.object(
                     windows_identity_run, "switch_command",
-                    return_value=["switch"]),
+                    return_value=["switch"]) as switch_command,
                 mock.patch.object(
                     windows_identity_run, "gateway_command",
-                    return_value=["gateway"]),
+                    return_value=["gateway"]) as gateway_command,
                 mock.patch.object(
                     windows_identity_run, "controller_command",
                     return_value=["controller"]) as controller_command,
@@ -142,6 +142,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
 
             automation.return_value.establish_disposable_controller_session\
                 .assert_called_once_with()
+            self.assertTrue(switch_command.call_args.kwargs["identity_mode"])
+            self.assertTrue(gateway_command.call_args.kwargs["identity_mode"])
             automation.return_value.install_offline_controller_dependencies\
                 .assert_called_once_with()
             automation.return_value.converge_disposable_controller\

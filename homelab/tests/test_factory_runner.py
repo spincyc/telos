@@ -196,11 +196,20 @@ class FactoryRunnerTests(unittest.TestCase):
         self.assertIn("31415", command)
         self.assertNotIn("0.0.0.0", " ".join(command))
         identity_command = factory_runner.gateway_command(
-            31415, controller_mac=factory_runner.MACS["controller"])
+            31415, controller_mac=factory_runner.MACS["controller"],
+            identity_mode=True)
         self.assertEqual(
-            identity_command[-2:],
-            ["--controller-mac", "52:54:00:31:11:12"],
+            identity_command[-3:],
+            ["--controller-mac", "52:54:00:31:11:12", "--identity-mode"],
         )
+        identity_switch = factory_runner.switch_command(
+            9, Path("/run/evidence"), identity_mode=True)
+        self.assertEqual(identity_switch[-1], "--identity-mode")
+        self.assertNotIn(
+            "--identity-mode",
+            factory_runner.switch_command(9, Path("/run/evidence")))
+        self.assertNotIn(
+            "--identity-mode", factory_runner.gateway_command(31415))
 
     def test_handoff_requires_dhcp_bootstrap_and_installer_markers(self):
         with tempfile.TemporaryDirectory() as temp_name:

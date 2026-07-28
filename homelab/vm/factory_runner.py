@@ -230,8 +230,9 @@ def qemu_commands(
 def switch_command(
     listener_fd: int, evidence: Path, *, accept_timeout: float = 20,
     idle_timeout: float = 120,
+    identity_mode: bool = False,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(Path(__file__).with_name("simulated_switch.py")),
         "--listener-fd", str(listener_fd),
@@ -242,10 +243,14 @@ def switch_command(
         "--accept-timeout", f"{accept_timeout:g}",
         "--idle-timeout", f"{idle_timeout:g}",
     ]
+    if identity_mode:
+        command.append("--identity-mode")
+    return command
 
 
 def gateway_command(
     port: int, *, controller_mac: str | None = None,
+    identity_mode: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -254,6 +259,8 @@ def gateway_command(
     ]
     if controller_mac is not None:
         command.extend(["--controller-mac", controller_mac])
+    if identity_mode:
+        command.append("--identity-mode")
     return command
 
 

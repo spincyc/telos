@@ -31,7 +31,7 @@ def qemu_identity_command(
     command = _base("windows-identity", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [
-        "-boot", "order=c,menu=off",
+        "-boot", "order=c,menu=off,strict=on",
         "-monitor", "none",
         "-qmp", f"unix:{qmp_socket.resolve()},server=on,wait=off",
         "-device", "VGA",
@@ -61,12 +61,21 @@ def qemu_identity_command(
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device",
-        f"e1000e,netdev=factory,mac={MACS['client']}",
+        f"e1000e,netdev=factory,mac={MACS['client']},romfile=",
     ]
     audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
     audit_qemu_disk_boundary(command, disk=disk, serial=DISK_SERIAL)
     joined = " ".join(command)
-    if "once=n" in joined or "bootindex=" in joined:
+    if (
+        "once=n" in joined
+        or "bootindex=" in joined
+        or command[command.index("-boot") + 1]
+        != "order=c,menu=off,strict=on"
+        or not any(
+            value.startswith("e1000e,") and value.endswith(",romfile=")
+            for value in command
+        )
+    ):
         raise ValueError("identity command must not select PXE")
     # The generic topology audit intentionally rejects all host character
     # devices. Add only the separately audited, fixed-purpose serial socket

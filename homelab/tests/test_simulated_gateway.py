@@ -286,6 +286,103 @@ class SimulatedGatewayTests(unittest.TestCase):
         )
         self.assertEqual(self.gateway.handle(spoofed_controller_ip), [])
 
+    def test_identity_mode_preserves_controller_pxe_but_suppresses_windows_pxe(
+        self,
+    ):
+        identity_gateway = sim.Gateway(identity_mode=True)
+
+        def request(
+            mac, *, message=1, requested=None, architecture=None,
+            option_175=False, user_class=None, client_mac=None,
+        ):
+            fixed = bytearray(236)
+            fixed[0:4] = b"\x01\x01\x06\x00"
+            fixed[4:8] = b"boot"
+            fixed[28:34] = client_mac or mac
+            options = b"\x63\x82\x53\x63" + bytes((53, 1, message))
+            if requested is not None:
+                options += bytes((50, 4)) + requested.packed
+                options += bytes((54, 4)) + sim.GATEWAY_IP.packed
+            if architecture is not None:
+                options += b"\x5d\x02" + struct.pack("!H", architecture)
+            if option_175:
+                options += bytes((175, 0))
+            if user_class is not None:
+                encoded = user_class.encode("ascii")
+                options += bytes((77, len(encoded))) + encoded
+            options += b"\xff"
+            return sim.ethernet(
+                b"\xff" * 6, mac, 0x0800,
+                sim.ipv4(
+                    ipaddress.IPv4Address("0.0.0.0"),
+                    ipaddress.IPv4Address("255.255.255.255"),
+                    17, sim.udp(68, 67, bytes(fixed) + options),
+                ),
+            )
+
+        firmware = identity_gateway.handle(request(
+            sim.CONTROLLER_MAC, architecture=7))[0]
+        firmware_bootp = firmware[14 + 20 + 8:]
+        firmware_options = sim.dhcp_options(firmware_bootp)
+        self.assertEqual(firmware_options[67], b"ipxe.efi")
+        self.assertEqual(firmware_bootp[20:24], sim.CONTROLLER_IP.packed)
+
+        ipxe = identity_gateway.handle(request(
+            sim.CONTROLLER_MAC, user_class="iPXE"))[0]
+        ipxe_bootp = ipxe[14 + 20 + 8:]
+        self.assertEqual(
+            sim.dhcp_options(ipxe_bootp)[67], sim.IPXE_SCRIPT.encode("ascii"))
+
+        controller_ack = identity_gateway.handle(request(
+            sim.CONTROLLER_MAC, message=3, requested=sim.CONTROLLER_IP,
+            architecture=7))[0]
+        self.assertEqual(
+            sim.dhcp_options(controller_ack[14 + 20 + 8:])[67], b"ipxe.efi")
+
+        cases = (
+            {"architecture": 7},
+            {"option_175": True},
+            {"user_class": "iPXE"},
+            {"architecture": 16, "user_class": "iPXE"},
+        )
+        for signals in cases:
+            with self.subTest(signals=signals):
+                gateway = sim.Gateway(identity_mode=True)
+                for message in (1, 3):
+                    response = gateway.handle(request(
+                        CLIENT_MAC, message=message,
+                        requested=sim.LEASE_IP if message == 3 else None,
+                        **signals,
+                    ))
+                    self.assertEqual(len(response), 1)
+                    bootp = response[0][14 + 20 + 8:]
+                    options = sim.dhcp_options(bootp)
+                    self.assertNotIn(66, options)
+                    self.assertNotIn(67, options)
+                    self.assertEqual(bootp[20:24], sim.GATEWAY_IP.packed)
+                    self.assertEqual(options[6], sim.GATEWAY_IP.packed)
+
+        wrong_mac = bytes.fromhex("525400311199")
+        wrong_discover = sim.Gateway(identity_mode=True).handle(request(
+            wrong_mac, architecture=7))[0]
+        wrong_bootp = wrong_discover[14 + 20 + 8:]
+        self.assertEqual(wrong_bootp[16:20], sim.LEASE_IP.packed)
+        self.assertEqual(wrong_bootp[20:24], sim.GATEWAY_IP.packed)
+        self.assertNotIn(66, sim.dhcp_options(wrong_bootp))
+        self.assertNotIn(67, sim.dhcp_options(wrong_bootp))
+        self.assertEqual(identity_gateway.handle(request(
+            wrong_mac, message=3, requested=sim.CONTROLLER_IP,
+            architecture=7)), [])
+        self.assertEqual(identity_gateway.handle(request(
+            CLIENT_MAC, architecture=7,
+            client_mac=sim.CONTROLLER_MAC)), [])
+
+        factory_gateway = sim.Gateway()
+        factory_windows = factory_gateway.handle(request(
+            CLIENT_MAC, architecture=7))[0]
+        factory_options = sim.dhcp_options(factory_windows[14 + 20 + 8:])
+        self.assertEqual(factory_options[67], b"ipxe.efi")
+
     def test_arp_rejects_mismatched_payload_mac(self):
         other = bytes.fromhex("525400311199")
         arp = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1)

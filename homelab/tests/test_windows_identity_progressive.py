@@ -8,6 +8,7 @@ from homelab.vm import windows_identity_orchestrator
 from homelab.vm.windows_identity_adapter import WindowsIdentityAdapterError
 from homelab.vm.windows_identity_progressive import (
     NativeBoundaryRotationSession,
+    ProgressiveGuiFailureDiagnostic,
     ProgressiveRotationPlan,
     WindowsIdentityProgressiveError,
     execute_progressive_rotation,
@@ -243,7 +244,9 @@ class ProgressiveRotationTests(unittest.TestCase):
 
     def test_failure_before_outcome_preserves_publication_and_tears_down(self):
         with self.assertRaisesRegex(
-            WindowsIdentityProgressiveError, "RuntimeError"
+            WindowsIdentityProgressiveError,
+            "stage=change-password; operation=observe; "
+            "error=UnexpectedError",
         ) as caught:
             self.execute(fail="change-password")
         events = self.events
@@ -278,6 +281,125 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertNotIn("destroy", events)
         self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
         self.assertNotIn("New-private-83!", str(caught.exception))
+
+    def test_gui_phase_failures_have_only_allowlisted_coordinates(self):
+        cases = (
+            ("key", 1, "initial-sign-in", "wake"),
+            ("observe", 1, "initial-sign-in", "observe"),
+            ("type-secret", 1, "old-sign-in", "submit"),
+            ("observe", 2, "initial-desktop", "observe"),
+            ("chord", 1, "security-options", "request"),
+            ("observe", 3, "security-options", "observe"),
+            ("key", 3, "change-password", "navigate"),
+            ("observe", 4, "change-password", "observe"),
+            ("type-secret", 2, "credential-rotation", "submit"),
+            ("observe-departure", 1, "change-password-confirmation",
+             "observe-departure"),
+            ("key", 8, "change-password-confirmation", "acknowledge"),
+            ("observe", 5, "post-rotation-desktop", "observe"),
+            ("chord", 2, "replacement-sign-in", "lock"),
+            ("key", 9, "replacement-sign-in", "wake"),
+            ("observe", 6, "replacement-sign-in", "observe"),
+            ("type-secret", 5, "replacement-sign-in", "submit"),
+            ("observe", 7, "final-desktop", "observe"),
+        )
+        self.assertEqual(
+            {(stage, operation)
+             for _, _, stage, operation in cases},
+            ProgressiveGuiFailureDiagnostic._COORDINATES,
+        )
+        for method, occurrence, expected_stage, expected_operation in cases:
+            with self.subTest(
+                stage=expected_stage, operation=expected_operation,
+            ):
+                events = []
+                counts = {}
+                secret = (
+                    f"private-backend-{expected_stage}-"
+                    f"{expected_operation}-47!")
+
+                class FailingPhaseInteraction(Interaction):
+                    def _fail(self, selected):
+                        counts[selected] = counts.get(selected, 0) + 1
+                        if (
+                            selected == method
+                            and counts[selected] == occurrence
+                        ):
+                            try:
+                                raise RuntimeError(secret)
+                            except RuntimeError:
+                                raise WindowsIdentityProgressiveError(secret)
+
+                    def observe(self, value, timeout):
+                        self._fail("observe")
+                        super().observe(value, timeout)
+
+                    def observe_departure(self, value, timeout):
+                        self._fail("observe-departure")
+                        super().observe_departure(value, timeout)
+
+                    def type_secret(self, value):
+                        self._fail("type-secret")
+                        super().type_secret(value)
+
+                    def key(self, value):
+                        self._fail("key")
+                        super().key(value)
+
+                    def chord(self, *values):
+                        self._fail("chord")
+                        super().chord(*values)
+
+                references = [
+                    reference(kind) for kind in (
+                        "sign-in", "desktop", "security-options",
+                        "change-password")]
+                with mock.patch(
+                    "homelab.vm.windows_identity_progressive."
+                    "load_identity_reference",
+                    side_effect=references,
+                ):
+                    with self.assertRaises(
+                        WindowsIdentityProgressiveError,
+                    ) as caught:
+                        execute_progressive_rotation(
+                            plan=self.plan(),
+                            session=Context(
+                                object(), events, "session"),
+                            recovery=Recovery(
+                                "Old-private-47!", events, "recovery"),
+                            generate_credential=lambda: "New-private-83!",
+                            after_rotation=lambda _replacement: None,
+                            pause=lambda _: None,
+                            interaction_factory=lambda _qmp, _root:
+                                FailingPhaseInteraction(events),
+                        )
+                diagnostic = caught.exception.diagnostic
+                self.assertIsInstance(
+                    diagnostic, ProgressiveGuiFailureDiagnostic)
+                self.assertEqual(expected_stage, diagnostic.stage)
+                self.assertEqual(expected_operation, diagnostic.operation)
+                self.assertEqual("UnexpectedError", diagnostic.error_type)
+                self.assertIn(
+                    f"stage={expected_stage}", str(caught.exception))
+                self.assertNotIn(
+                    "WindowsIdentityProgressiveError",
+                    str(caught.exception),
+                )
+                self.assertNotIn(secret, str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+                self.assertNotIn("destroy", events)
+                self.assertEqual(
+                    ["session:exit", "recovery:exit"], events[-2:])
+
+    def test_gui_diagnostic_constructor_rejects_unlisted_values(self):
+        with self.assertRaisesRegex(ValueError, "coordinates"):
+            ProgressiveGuiFailureDiagnostic(
+                "initial-sign-in", "type-secret", "UnexpectedError")
+        with self.assertRaisesRegex(ValueError, "type"):
+            ProgressiveGuiFailureDiagnostic(
+                "initial-sign-in", "observe", "PrivateBackendError")
 
     def test_global_deadline_is_enforced_before_next_operation(self):
         times = iter((0, 1, 2, 101))
