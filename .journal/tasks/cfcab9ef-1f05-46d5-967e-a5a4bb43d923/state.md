@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T10:57:21Z"
+updated_at: "2026-07-28T11:42:05Z"
 ---
 
 # Goal
@@ -271,4 +271,14 @@ marker, clean workstation exit, complete private-overlay evidence, and exactly
 one firmware PXE boot. Continue monitoring the current install through its
 first disk-first reboot; then use its exact boundary to decide whether a fresh
 native-assertion bundle is required.
+
+The persistent run proved the corrected disk-first path: after about 16 GB of
+first-phase allocation, firmware started Windows Boot Manager from the NVMe
+ESP, native installation completed, and a second Windows Boot Manager start
+reached the country/region OOBE page. Serial contains exactly one PXE start.
+The runner was stopped at that stable prompt and cleanup completed. The en-US
+values alone do not suppress OOBE, so the private answer now explicitly skips
+machine and user OOBE before its one-time native assertion logon. The installed
+evidence disk will not be reused. Prepare and execute a fresh bundle to prove
+the native marker and clean shutdown.
 evidence disk will not be reused; a fresh long run is next.
