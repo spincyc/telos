@@ -191,6 +191,41 @@ class WindowsIdentityGuiTests(unittest.TestCase):
         self.assertEqual(4, len([
             action for action in qmp.actions if action[0] == "screenshot"]))
 
+    def test_accepts_a_pre_cropped_checkpoint_reference(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = root / "reference.ppm"
+            pattern = (
+                bytes([20, 40, 60, 180, 200, 220])
+                * (320 * 200 // 2)
+            )
+            reference.write_bytes(b"P6\n320 200\n255\n" + pattern)
+            rows = []
+            for row in range(400):
+                if row < 200:
+                    rows.append(
+                        pattern[row * 320 * 3:(row + 1) * 320 * 3]
+                        + bytes([1, 2, 3]) * 320)
+                else:
+                    rows.append(bytes([1, 2, 3]) * 640)
+            frame = b"P6\n640 400\n255\n" + b"".join(rows)
+            qmp = FakeQmp()
+
+            def screenshot(path):
+                qmp.actions.append(("screenshot", path.name))
+                path.write_bytes(frame)
+
+            qmp.screenshot = screenshot
+            ticks = iter(range(10))
+            driver = WindowsCredentialRotationDriver(
+                qmp, root, interval=0, clock=lambda: next(ticks),
+                pause=lambda _: None)
+            driver._observe(Checkpoint(
+                "sign-in", reference, (), timeout=6, threshold=0,
+                crop=(0, 0, 320, 200)))
+        self.assertEqual(2, len([
+            action for action in qmp.actions if action[0] == "screenshot"]))
+
 
 if __name__ == "__main__":
     unittest.main()

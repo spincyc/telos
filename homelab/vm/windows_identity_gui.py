@@ -78,8 +78,15 @@ class WindowsCredentialRotationDriver:
     def _observe(self, checkpoint: Checkpoint) -> None:
         # One matching transitional frame is not enough authority to type a
         # credential. The reference must depict the already-focused field.
-        reference = crop_image(
-            read_ppm(checkpoint.reference), checkpoint.crop)
+        reference_image = read_ppm(checkpoint.reference)
+        if (
+            checkpoint.crop is not None
+            and (reference_image.width, reference_image.height)
+            == (checkpoint.crop[2], checkpoint.crop[3])
+        ):
+            reference = reference_image
+        else:
+            reference = crop_image(reference_image, checkpoint.crop)
         deadline = self.clock() + checkpoint.timeout
         consecutive = 0
         best = float("inf")
