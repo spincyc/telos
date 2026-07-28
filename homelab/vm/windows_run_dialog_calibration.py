@@ -50,6 +50,7 @@ class RunDialogCalibrationPlan:
     sign_in_keys: tuple[str, ...] = ("spc",)
     sign_in_delay: float = 60.0
     threshold: float = 6.0
+    minimum_run_departure: float = 6.0
     max_desktop_frames: int = 30
     max_run_frames: int = 90
     interval: float = 1.0
@@ -129,6 +130,7 @@ def _stable_run_frames(
     root: Path,
     plan: RunDialogCalibrationPlan,
     geometry: tuple[int, int],
+    baseline: Image,
     pause: Callable[[float], None],
 ) -> tuple[tuple[Path, ...], Image]:
     stable: list[tuple[bytes, Path]] = []
@@ -147,6 +149,11 @@ def _stable_run_frames(
             raise WindowsRunDialogCalibrationError(
                 "Run-dialog crop is outside the prepared display") from error
         if not useful_frame(selected):
+            stable.clear()
+            path.unlink(missing_ok=True)
+            pause(plan.interval)
+            continue
+        if image_distance(selected, baseline) < plan.minimum_run_departure:
             stable.clear()
             path.unlink(missing_ok=True)
             pause(plan.interval)
@@ -170,6 +177,8 @@ def _write_candidate(
     reference,
     attempt: Path,
     source_bundle: str,
+    baseline_path: Path,
+    baseline: Image,
     crop: tuple[int, int, int, int],
 ) -> tuple[Path, Path]:
     candidate = root / "run-dialog-candidate.ppm"
@@ -196,6 +205,13 @@ def _write_candidate(
             "crop": list(crop),
             "source_frames": [path.name for path in frames],
             "source_frame_sha256": source_hashes,
+            "pre_run_baseline": {
+                "file": baseline_path.name,
+                "source_frame_sha256": hashlib.sha256(
+                    baseline_path.read_bytes()).hexdigest(),
+                "crop_pixel_sha256": hashlib.sha256(
+                    baseline.pixels).hexdigest(),
+            },
             "stable_crop_pixel_sha256": [crop_hash] * len(frames),
         },
         "candidate": {
@@ -229,6 +245,9 @@ def capture_run_dialog(
         or type(plan.threshold) not in (int, float)
         or not math.isfinite(plan.threshold)
         or not 0 <= plan.threshold <= 32
+        or type(plan.minimum_run_departure) not in (int, float)
+        or not math.isfinite(plan.minimum_run_departure)
+        or not 0 < plan.minimum_run_departure <= 64
         or type(plan.interval) not in (int, float)
         or not math.isfinite(plan.interval)
         or not 0 < plan.interval <= 10
@@ -316,9 +335,22 @@ def capture_run_dialog(
             boundary, root, desktop, "desktop", plan, pause)
         if boundary.qmp is None:
             raise WindowsRunDialogCalibrationError("QMP is unavailable")
+        baseline_path = root / "pre-run-baseline.ppm"
+        baseline_full = _capture(boundary, baseline_path)
+        if (baseline_full.width, baseline_full.height) != desktop.geometry:
+            raise WindowsRunDialogCalibrationError(
+                "pre-Run baseline geometry does not match the prepared guest")
+        try:
+            baseline = crop_image(baseline_full, plan.crop)
+        except WindowsGuiError as error:
+            raise WindowsRunDialogCalibrationError(
+                "Run-dialog crop is outside the prepared display") from error
+        if not useful_frame(baseline):
+            raise WindowsRunDialogCalibrationError(
+                "pre-Run baseline crop is not useful")
         boundary.qmp.chord("meta_l", "r")
         result = _stable_run_frames(
-            boundary, root, plan, desktop.geometry, pause)
+            boundary, root, plan, desktop.geometry, baseline, pause)
     except BaseException as error:
         primary = error
     finally:
@@ -363,6 +395,7 @@ def capture_run_dialog(
             "private publication changed during calibration")
     frames, image = result
     candidate, manifest = _write_candidate(
-        root, frames, image, desktop, boundary.attempt, source_bundle, plan.crop)
+        root, frames, image, desktop, boundary.attempt, source_bundle,
+        baseline_path, baseline, plan.crop)
     return RunDialogCalibrationReceipt(
         candidate, manifest, frames, True, True, 2, True)

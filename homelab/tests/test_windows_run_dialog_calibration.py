@@ -135,7 +135,8 @@ class RunDialogCalibrationTests(unittest.TestCase):
             run = ppm((40, 70, 90))
             frames = [
                 reference_full("sign-in"), reference_full("sign-in"),
-                desktop_full(), desktop_full(), run, run, run,
+                desktop_full(), desktop_full(), desktop_full(),
+                run, run, run,
             ]
             receipt, boundary, qmp, secret, publication = self.run_capture(
                 root, frames)
@@ -163,7 +164,7 @@ class RunDialogCalibrationTests(unittest.TestCase):
             root = Path(name)
             frames = [
                 reference_full("sign-in"), reference_full("sign-in"),
-                desktop_full(), desktop_full(),
+                desktop_full(), desktop_full(), desktop_full(),
             ]
             frames.extend(ppm((i, i + 1, i + 2)) for i in range(1, 8))
             with self.assertRaisesRegex(
@@ -218,6 +219,19 @@ class RunDialogCalibrationTests(unittest.TestCase):
                 for path in (root / "evidence").glob("*")
                 if path.is_file())
             self.assertNotIn(secret.encode(), retained)
+
+    def test_unchanged_stable_wallpaper_is_not_a_run_candidate(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            unchanged = desktop_full()
+            frames = [
+                reference_full("sign-in"), reference_full("sign-in"),
+                desktop_full(), desktop_full(),
+                unchanged, unchanged, unchanged, unchanged,
+            ]
+            with self.assertRaisesRegex(
+                    WindowsRunDialogCalibrationError, "calibration failed"):
+                self.run_capture(root, frames)
 
     def test_guest_mismatch_fails_before_start(self):
         with tempfile.TemporaryDirectory() as name:
