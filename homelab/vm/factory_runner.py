@@ -49,12 +49,13 @@ def _redact(value: bytes) -> bytes:
         rb"\1\2[REDACTED]", value)
 
 
-def retain_failure_evidence(
-    runtime: Path, evidence_root: Path, error: BaseException,
+def retain_evidence(
+    runtime: Path, evidence_root: Path, *, status: str,
+    error: BaseException | None = None,
 ) -> Path:
     evidence_root = Path(evidence_root)
     if evidence_root.is_symlink():
-        raise RuntimeError("failure evidence root must not be a symlink")
+        raise RuntimeError("evidence root must not be a symlink")
     evidence_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     evidence_root.chmod(0o700)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -75,12 +76,20 @@ def retain_failure_evidence(
     result = destination / "result.json"
     result.write_text(json.dumps({
         "schema": 1,
-        "status": "fail",
-        "error": _redact(str(error).encode()).decode("utf-8", "replace"),
+        "status": status,
+        **({"error": _redact(str(error).encode()).decode(
+            "utf-8", "replace")} if error is not None else {}),
         "retained": retained,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     result.chmod(0o600)
     return destination
+
+
+def retain_failure_evidence(
+    runtime: Path, evidence_root: Path, error: BaseException,
+) -> Path:
+    return retain_evidence(
+        runtime, evidence_root, status="fail", error=error)
 
 
 def publication_bootstrap_command() -> bytes:
@@ -488,6 +497,9 @@ def run(
                     raise RuntimeError(
                         "PXE handoff acceptance failed:\n- "
                         + "\n- ".join(problems))
+                evidence = retain_evidence(
+                    runtime, evidence_root, status="pass")
+                print(f"PXE handoff evidence retained at {evidence}")
             return 0
         except BaseException as error:
             evidence = retain_failure_evidence(runtime, evidence_root, error)

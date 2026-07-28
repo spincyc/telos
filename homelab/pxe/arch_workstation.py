@@ -185,7 +185,7 @@ kernel ${{base}}/arch/boot/x86_64/vmlinuz-linux \\
     archisobasedir=arch \\
     archiso_http_srv=${{base}}/ \\
     BOOTIF=01-${{net0/mac:hexhyp}} \\
-    ip=:::::eth0:dhcp \\
+    ip=dhcp \\
     net.ifnames=0 \\
     copytoram=n \\
     earlycon=uart8250,io,0x3f8,115200n8 \\
