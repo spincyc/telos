@@ -8,6 +8,10 @@ add scope-specific requirements.
 - Commit coherent, independently verifiable units. Keep implementation
   commits free of `.journal/` changes and generated or ignored runtime state;
   record attributable journal checkpoints in adjacent journal-only commits.
+- Before every terminal response or handoff, run
+  `python3 .journal/bin/journal.py yield-check`. If it reports an active or
+  runnable task, continue that work; status answers, progress reports,
+  checkpoints, commits, and pushes are non-terminal.
 - Do not push without user authority. Before every authorized push, run
   `make verify-site` against the exact commit that will be pushed.
 - After every push, find the `Publish GitHub Pages` workflow run whose

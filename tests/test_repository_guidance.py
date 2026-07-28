@@ -9,6 +9,18 @@ PAGES = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
 
 
 class RepositoryGuidanceTests(unittest.TestCase):
+    def test_terminal_response_requires_fail_closed_yield_check(self):
+        self.assertIn(
+            "Before every terminal response or handoff, run "
+            "`python3 .journal/bin/journal.py yield-check`",
+            GUIDANCE,
+        )
+        self.assertIn(
+            "status answers, progress reports, checkpoints, commits, and "
+            "pushes are non-terminal",
+            GUIDANCE,
+        )
+
     def test_every_push_requires_exact_sha_pages_workflow_proof(self):
         self.assertIn(
             "After every push, find the `Publish GitHub Pages` workflow run "
