@@ -16,6 +16,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from homelab.workstations.layout import GIB, build_record
+from homelab.vm.simulated_topology import MACS, _base, audit_qemu_argv
 
 
 MIN_DISK_BYTES = 256 * GIB
@@ -99,6 +100,52 @@ def audit_qemu_disk_boundary(
     if f"serial={serial}" not in joined:
         raise WindowsInstallContractError(
             "QEMU disk does not expose the authorized synthetic serial")
+
+
+def qemu_install_command(
+    *,
+    disk: Path,
+    variables: Path,
+    publication_iso: Path,
+    qmp_socket: Path,
+    switch_port: int,
+    serial: str,
+) -> list[str]:
+    """Build the persistent UEFI/NVMe/e1000e Windows installation command."""
+    if not 1 <= switch_port <= 65535:
+        raise WindowsInstallContractError("switch port is invalid")
+    for path, label in (
+        (variables, "OVMF variables"),
+        (publication_iso, "publication ISO"),
+    ):
+        if Path(path).is_symlink():
+            raise WindowsInstallContractError(f"{label} must not be a symlink")
+    command = _base("windows-install", variables, 8192)
+    command[command.index("-serial") + 1] = "stdio"
+    command += [
+        "-monitor", "none",
+        "-qmp", f"unix:{Path(qmp_socket).resolve()},server=on,wait=off",
+        "-drive",
+        (
+            "if=none,id=osdisk,format=qcow2,cache=none,"
+            f"file={Path(disk).resolve()}"
+        ),
+        "-device", f"nvme,drive=osdisk,serial={serial},bootindex=2",
+        "-device", "virtio-scsi-pci,id=publicationbus",
+        "-drive",
+        (
+            "if=none,id=publicationmedia,media=cdrom,readonly=on,"
+            f"file={Path(publication_iso).resolve()}"
+        ),
+        "-device", "scsi-cd,bus=publicationbus.0,drive=publicationmedia",
+        "-netdev",
+        f"socket,id=factory,connect=127.0.0.1:{switch_port}",
+        "-device",
+        f"e1000e,netdev=factory,mac={MACS['client']},bootindex=1",
+    ]
+    audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
+    audit_qemu_disk_boundary(command, disk=disk, serial=serial)
+    return command
 
 
 @dataclass(frozen=True)

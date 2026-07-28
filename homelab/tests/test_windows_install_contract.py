@@ -14,6 +14,7 @@ from homelab.vm.windows_install_contract import (
     WindowsInstallContractError,
     audit_qemu_disk_boundary,
     inspect_qcow2,
+    qemu_install_command,
     render_diskpart,
     render_ipxe_overlay,
     render_startup,
@@ -57,6 +58,30 @@ class WindowsInstallContractTests(unittest.TestCase):
                 WindowsInstallContractError, "authorized synthetic serial"):
             audit_qemu_disk_boundary(
                 command, disk=disk, serial="TELOS-WIN-9999")
+
+    @mock.patch(
+        "homelab.vm.simulated_topology.ovmf_pair",
+        return_value=(Path("/firmware/code.fd"), Path("/firmware/vars.fd")))
+    def test_install_command_is_persistent_nvme_e1000e_qmp_and_no_windows_iso(
+        self, _pair,
+    ):
+        command = qemu_install_command(
+            disk=Path("/run/private/windows.qcow2"),
+            variables=Path("/run/private/OVMF_VARS.fd"),
+            publication_iso=Path("/run/private/publication.iso"),
+            qmp_socket=Path("/run/private/windows.qmp"),
+            switch_port=31415,
+            serial="TELOS-WIN-0001")
+        text = " ".join(command)
+        self.assertIn(
+            "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=2", text)
+        self.assertIn("e1000e,netdev=factory", text)
+        self.assertIn("connect=127.0.0.1:31415", text)
+        self.assertIn("windows.qmp,server=on,wait=off", text)
+        self.assertIn("publication.iso", text)
+        self.assertNotIn("snapshot=on", text)
+        self.assertNotIn("virtio-blk", text)
+        self.assertNotIn("Win11", text)
 
     def test_qcow2_must_be_standalone_and_large_enough(self):
         with tempfile.TemporaryDirectory() as temporary:

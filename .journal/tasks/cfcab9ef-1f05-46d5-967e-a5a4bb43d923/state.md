@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:45:56Z"
+updated_at: "2026-07-28T00:48:15Z"
 ---
 
 # Goal
@@ -80,3 +80,9 @@ overlay and sealed Windows tree, serves the overlay only on the isolated HTTP
 endpoint, and exports the source through authenticated read-only SMB.
 Readiness now includes SMB. Next, integrate this material with a persistent
 NVMe Windows install lifecycle and native-boot evidence.
+
+The persistent workstation QEMU boundary is implemented with fixed-serial
+NVMe, 8 GiB RAM, PXE-first e1000e, copied OVMF state, private publication
+media, and QMP. Existing topology callers remain virtio-only. Next, execute a
+real private publication build, then integrate the bounded install and
+native-disk reboot phases.
