@@ -1,7 +1,11 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 from homelab.vm.windows_identity_run import (
     IdentityOperations,
+    NativeProcessBoundary,
     WindowsIdentityRunError,
     run_lifecycle,
 )
@@ -32,6 +36,51 @@ class Recorder:
 
 
 class WindowsIdentityRunTests(unittest.TestCase):
+    def native_boundary(self, root):
+        attempt = root / "attempt"
+        state = root / "controller"
+        attempt.mkdir(mode=0o700)
+        state.mkdir(mode=0o700)
+        for path in (
+                attempt / "windows.qcow2",
+                attempt / "OVMF_VARS.fd",
+                state / "bootstrap-dc.qcow2",
+                state / "OVMF_VARS.fd",
+        ):
+            path.write_bytes(path.name.encode())
+            path.chmod(0o600)
+        authorization = {
+            "status": "prepared",
+            "external_access": False,
+            "installation_media_attached": False,
+            "pxe_boot_enabled": False,
+        }
+        (attempt / "authorization.json").write_text(
+            json.dumps(authorization), encoding="utf-8")
+        (attempt / "authorization.json").chmod(0o600)
+        return NativeProcessBoundary(attempt, state)
+
+    def test_native_boundary_requires_private_prepared_isolation(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            boundary = self.native_boundary(root)
+            boundary._validate()
+            authorization = boundary.attempt / "authorization.json"
+            value = json.loads(authorization.read_text(encoding="utf-8"))
+            value["pxe_boot_enabled"] = True
+            authorization.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "native isolation"):
+                boundary._validate()
+
+    def test_native_boundary_rejects_nonprivate_attempt(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.native_boundary(Path(name))
+            boundary.attempt.chmod(0o755)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "private real directory"):
+                boundary._validate()
+
     def test_secret_and_destruction_boundaries_have_one_order(self):
         recorder = Recorder()
         receipt = run_lifecycle(recorder.operations())

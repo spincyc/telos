@@ -4,7 +4,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import socket
+import subprocess
 from typing import Callable
+from pathlib import Path
+
+from .automated_controller import DisposableBootDisk
+from .bootstrap_dc import paths
+from .factory_runner import (
+    gateway_command,
+    switch_command,
+    wait_for_switch_port,
+)
+from .signal_cleanup import terminate_children
+from .simulated_topology import audit_live_process, controller_command
+from .windows_gui import QmpClient
+from .windows_identity_contract import qemu_identity_command
 
 
 class WindowsIdentityRunError(RuntimeError):
@@ -39,6 +55,160 @@ class IdentityReceipt:
     controller_principals_staged: bool = False
     controller_principals_destroyed: bool = False
     teardown_complete: bool = False
+
+
+class NativeProcessBoundary:
+    """Own the isolated switch, disposable Controller, Windows VM, and QMP."""
+
+    def __init__(self, attempt: Path, controller_state: Path) -> None:
+        self.attempt = Path(attempt).resolve()
+        self.controller_state = Path(controller_state).resolve()
+        self.runtime = self.attempt / "runtime"
+        self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        self.controller_overlay: DisposableBootDisk | None = None
+        self.qmp: QmpClient | None = None
+        self.port: int | None = None
+
+    def _validate(self) -> None:
+        if (self.attempt.is_symlink() or not self.attempt.is_dir()
+                or self.attempt.stat().st_mode & 0o077):
+            raise WindowsIdentityRunError(
+                "identity attempt must be a private real directory")
+        for name in ("windows.qcow2", "OVMF_VARS.fd", "authorization.json"):
+            item = self.attempt / name
+            if item.is_symlink() or not item.is_file():
+                raise WindowsIdentityRunError(
+                    f"identity attempt lacks regular {name}")
+            if item.stat().st_mode & 0o077:
+                raise WindowsIdentityRunError(f"{name} must be mode 0600")
+        try:
+            authorization = json.loads(
+                (self.attempt / "authorization.json").read_text(
+                    encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise WindowsIdentityRunError(
+                "identity authorization is unreadable") from error
+        expected = {
+            "status": "prepared",
+            "external_access": False,
+            "installation_media_attached": False,
+            "pxe_boot_enabled": False,
+        }
+        if any(authorization.get(key) != value
+               for key, value in expected.items()):
+            raise WindowsIdentityRunError(
+                "identity authorization does not preserve native isolation")
+        controller = paths(self.controller_state)
+        for key in ("disk", "vars"):
+            item = controller[key]
+            if item.is_symlink() or not item.is_file():
+                raise WindowsIdentityRunError(
+                    f"Controller {key} must be a regular file")
+
+    def start_switch(self) -> None:
+        self._validate()
+        if self.runtime.exists():
+            raise WindowsIdentityRunError(
+                "identity runtime already exists")
+        self.runtime.mkdir(mode=0o700)
+        listener = socket.socket()
+        try:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(3)
+            self.port = int(listener.getsockname()[1])
+            self.processes["switch"] = subprocess.Popen(
+                switch_command(
+                    listener.fileno(), self.runtime / "switch.jsonl",
+                    idle_timeout=3600),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                pass_fds=(listener.fileno(),),
+            )
+        finally:
+            listener.close()
+        assert self.port is not None
+        self.processes["gateway"] = subprocess.Popen(
+            gateway_command(self.port),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        wait_for_switch_port(self.runtime / "switch.jsonl", "gateway")
+
+    def start_controller(self) -> None:
+        if self.port is None:
+            raise WindowsIdentityRunError("switch must start before Controller")
+        canonical = paths(self.controller_state)
+        self.controller_overlay = DisposableBootDisk(
+            canonical["disk"], canonical["vars"],
+            run_root=self.runtime / "controller").prepare()
+        command = controller_command(
+            self.controller_state,
+            self.controller_overlay.disk,
+            self.controller_overlay.vars,
+            self.port,
+            disk_format="raw",
+        )
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT)
+        self.processes["controller"] = process
+        audit_live_process(
+            process.pid, "controller",
+            disposable_disk=self.controller_overlay.disk,
+            disposable_vars=self.controller_overlay.vars,
+            forbidden_paths=(canonical["disk"], canonical["vars"]),
+        )
+        wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
+
+    def start_windows(self) -> None:
+        if self.port is None:
+            raise WindowsIdentityRunError("switch must start before Windows")
+        qmp_socket = self.runtime / "windows.qmp"
+        command = qemu_identity_command(
+            disk=self.attempt / "windows.qcow2",
+            variables=self.attempt / "OVMF_VARS.fd",
+            qmp_socket=qmp_socket,
+            switch_port=self.port,
+        )
+        process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT)
+        self.processes["windows"] = process
+        audit_live_process(
+            process.pid, "client", allowed_nic_models=("e1000e",))
+        wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
+
+    def authenticate_qmp(self) -> None:
+        if "windows" not in self.processes:
+            raise WindowsIdentityRunError("Windows must start before QMP")
+        self.qmp = QmpClient.connect(self.runtime / "windows.qmp", timeout=30)
+
+    def _stop(self, *roles: str) -> None:
+        selected = [
+            self.processes.pop(role) for role in roles
+            if role in self.processes
+        ]
+        failures = terminate_children(selected)
+        if failures:
+            raise WindowsIdentityRunError("; ".join(failures))
+
+    def stop_windows(self) -> None:
+        if self.qmp is not None:
+            self.qmp.close()
+            self.qmp = None
+        self._stop("windows")
+
+    def stop_controller(self) -> None:
+        self._stop("controller")
+        if self.controller_overlay is not None:
+            self.controller_overlay.close()
+            self.controller_overlay = None
+
+    def stop_switch(self) -> None:
+        self._stop("gateway", "switch")
 
 
 def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
