@@ -21,7 +21,7 @@ try:
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
     from .simulated_topology import audit_live_process
-    from .windows_gui import QmpClient
+    from .windows_gui import QmpClient, WindowsGuiError
     from .windows_install_contract import (
         audit_qemu_disk_boundary, inspect_qcow2)
 except ImportError:
@@ -33,7 +33,7 @@ except ImportError:
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
     from simulated_topology import audit_live_process
-    from windows_gui import QmpClient
+    from windows_gui import QmpClient, WindowsGuiError
     from windows_install_contract import audit_qemu_disk_boundary, inspect_qcow2
 
 
@@ -72,6 +72,18 @@ def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
     except FileNotFoundError:
         return
     private_file(path, redact(data[-maximum:]))
+
+
+def _connect_qmp(path: Path, *, timeout: float = 10) -> QmpClient:
+    deadline = time.monotonic() + timeout
+    last_error: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            return QmpClient.connect(path, timeout=1)
+        except (OSError, WindowsGuiError) as error:
+            last_error = error
+            time.sleep(0.05)
+    raise RuntimeError("Windows QMP socket did not become ready") from last_error
 
 
 def run(
@@ -141,7 +153,7 @@ def run(
                 processes["workstation"], evidence / "workstation-serial.log")
             screens = evidence / "screens"
             screens.mkdir(mode=0o700)
-            qmp = QmpClient.connect(bundle / "windows.qmp", timeout=5)
+            qmp = _connect_qmp(bundle / "windows.qmp")
             result["phase"] = "windows-setup"
             deadline = time.monotonic() + duration
             next_screen = time.monotonic()

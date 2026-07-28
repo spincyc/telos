@@ -91,6 +91,18 @@ class WindowsInstallRunTests(unittest.TestCase):
             self.assertNotIn(b"should-not-survive", log.read_bytes())
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
+    def test_qmp_connection_waits_for_socket_readiness(self):
+        client = object()
+        with mock.patch.object(
+                windows_install_run.QmpClient, "connect",
+                side_effect=[FileNotFoundError(), client]) as connect, \
+                mock.patch.object(windows_install_run.time, "sleep"):
+            self.assertIs(
+                windows_install_run._connect_qmp(
+                    Path("/private/windows.qmp"), timeout=1),
+                client)
+        self.assertEqual(connect.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
