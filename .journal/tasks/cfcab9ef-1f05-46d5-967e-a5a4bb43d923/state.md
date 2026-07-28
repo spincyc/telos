@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:26:18Z"
+updated_at: "2026-07-28T01:28:19Z"
 ---
 
 # Goal
@@ -149,3 +149,9 @@ addition to its existing QMP Unix socket. During the bounded observation the
 runner captures a private mode-0600 PPM every ten seconds, enabling diagnosis
 without host display or input integration. The next fresh bundle will use this
 evidence to identify the WinPE reboot.
+
+The first screenshot attempt stopped before guest boot because QEMU had not
+created its Unix socket when the runner tried one immediate connection. QMP
+attachment now retries only local readiness errors within a ten-second bound.
+The evidence-once contract still requires a fresh bundle for the diagnostic
+retry.
