@@ -104,6 +104,12 @@ def publication_bootstrap_command() -> bytes:
     )
 
 
+def _at_root_prompt(transcript: bytes | bytearray) -> bool:
+    """Match a root shell prompt, never package-manager progress hashes."""
+    return re.search(
+        rb"\[root@[^]\r\n]+ [^]\r\n]*\]#[ \t]*$", transcript) is not None
+
+
 def activate_publication(
     process: subprocess.Popen[bytes], capture: Path, *, timeout: float = 90.0,
 ) -> None:
@@ -132,7 +138,7 @@ def activate_publication(
             del transcript[:-1024 * 1024]
         capture.write_bytes(transcript)
         capture.chmod(0o600)
-        if not command_sent and transcript.rstrip().endswith(b"#"):
+        if not command_sent and _at_root_prompt(transcript):
             process.stdin.write(publication_bootstrap_command())
             process.stdin.flush()
             command_sent = True
@@ -154,7 +160,7 @@ def activate_publication(
             return
         if (
             command_sent and not command_sent_now
-            and transcript.rstrip().endswith(b"#")
+            and _at_root_prompt(transcript)
         ):
             raise RuntimeError(
                 "Controller returned to its shell before services were ready")
