@@ -353,6 +353,12 @@ class NativeProcessBoundary:
         for role in roles:
             if role not in self.suspended_processes:
                 continue
+            process = self.processes.get(role)
+            if process is not None and process.poll() is not None:
+                # A dead child cannot remain suspended. Drop only the stale
+                # availability state and continue through normal reap/removal.
+                self.suspended_processes.remove(role)
+                continue
             try:
                 self._set_process_available(role, True)
             except BaseException as error:

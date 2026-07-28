@@ -144,6 +144,24 @@ class WindowsIdentityRuntimeFaultTests(unittest.TestCase):
         self.assertIn("controller", boundary.processes)
         self.assertIn("controller", boundary.suspended_processes)
 
+    @mock.patch("homelab.vm.windows_identity_run.terminate_children")
+    @mock.patch("homelab.vm.windows_identity_run.os.kill")
+    def test_dead_suspended_process_is_reconciled_and_reaped(
+        self, kill, terminate,
+    ):
+        process = Process(returncode=9)
+        boundary = self.boundary()
+        boundary.processes["controller"] = process
+        boundary.suspended_processes.add("controller")
+        terminate.return_value = []
+
+        boundary._stop("controller")
+
+        kill.assert_not_called()
+        terminate.assert_called_once_with([process])
+        self.assertNotIn("controller", boundary.processes)
+        self.assertNotIn("controller", boundary.suspended_processes)
+
 
 if __name__ == "__main__":
     unittest.main()
