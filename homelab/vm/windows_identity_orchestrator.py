@@ -63,6 +63,7 @@ class AcceptanceCallbacks:
     launch_guest: Callable[[str], None]
     await_device_deleted: Callable[[str], None]
     open_join_serial: Callable[[], DuplexJoinSerial]
+    reauthenticate_local: Callable[[str], None]
     static_probe: Callable[[str], Mapping[str, object]]
     credential_action: Callable[
         [str, str, str], Mapping[str, object]
@@ -259,6 +260,7 @@ def _execute_join(
     *,
     realm: str,
     private_root: Path,
+    local_credential: str,
     callbacks: AcceptanceCallbacks,
     stage_join_principal: Callable[[str], ControllerJoinResult],
     destroy_join_principal: Callable[[], ControllerJoinResult],
@@ -282,13 +284,24 @@ def _execute_join(
         })
         channel = JoinMediaChannel(callbacks.qmp(), iso, nonce)
         serial = callbacks.open_join_serial()
+        reauthenticated = False
+
+        def probe_after_reboot() -> Mapping[str, object]:
+            nonlocal reauthenticated
+            if reauthenticated:
+                raise WindowsIdentityOrchestratorError(
+                    "post-reboot local session was already authenticated")
+            callbacks.reauthenticate_local(local_credential)
+            reauthenticated = True
+            return _post_reboot_proof(callbacks)
+
         try:
             return execute_join_and_prove(
                 channel=channel,
                 serial=serial,
                 launch_guest=callbacks.launch_guest,
                 await_device_deleted=callbacks.await_device_deleted,
-                probe_after_reboot=lambda: _post_reboot_proof(callbacks),
+                probe_after_reboot=probe_after_reboot,
                 expected_domain=realm,
             )
         except BaseException as primary:
@@ -332,6 +345,7 @@ def _run_acceptance_checks(
     join_proof, join_destroyed = _execute_join(
         realm=realm,
         private_root=private_root,
+        local_credential=local_credential,
         callbacks=callbacks,
         stage_join_principal=stage_join_principal,
         destroy_join_principal=destroy_join_principal,

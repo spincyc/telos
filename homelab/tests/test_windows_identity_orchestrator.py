@@ -45,6 +45,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             launch_guest=mock.Mock(),
             await_device_deleted=mock.Mock(),
             open_join_serial=mock.Mock(),
+            reauthenticate_local=mock.Mock(),
             static_probe=lambda action: {
                 "schema_version": 1,
                 "action": action,
@@ -278,6 +279,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             proof, destroyed_flag = subject._execute_join(
                 realm="FACTORY.TEST",
                 private_root=root,
+                local_credential="Local-Secret-47!",
                 callbacks=callbacks,
                 stage_join_principal=mock.Mock(return_value=staged),
                 destroy_join_principal=mock.Mock(return_value=destroyed),
@@ -297,6 +299,12 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "operator": "operator@FACTORY.TEST",
             "operator_local_administrator": True,
         }, execute.call_args.kwargs["probe_after_reboot"]())
+        callbacks.reauthenticate_local.assert_called_once_with(
+            "Local-Secret-47!")
+        with self.assertRaisesRegex(
+                subject.WindowsIdentityOrchestratorError,
+                "already authenticated"):
+            execute.call_args.kwargs["probe_after_reboot"]()
 
         integer_boolean = {
             **callbacks.__dict__,
