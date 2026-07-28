@@ -273,7 +273,7 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn('stream.ReadLine', helper)
         self.assertNotIn("InstallPass-123", helper)
 
-    def test_unattend_is_explicit_pro_us_partition_three_and_has_no_product_key(self):
+    def test_unattend_is_explicit_pro_us_partition_three_and_install_key(self):
         identity = SyntheticIdentity(
             "TELOS-WIN-01", "telosadmin", "SynthPass-123",
             r"TELOS\pxe-install", "InstallPass-123")
@@ -281,7 +281,9 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("<Value>Windows 11 Pro</Value>", answer)
         self.assertIn("<UILanguage>en-US</UILanguage>", answer)
         self.assertIn("<DiskID>0</DiskID><PartitionID>3</PartitionID>", answer)
-        self.assertNotIn("ProductKey", answer)
+        self.assertIn(
+            "<Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>", answer)
+        self.assertIn("<WillShowUI>Never</WillShowUI>", answer)
         self.assertNotIn(identity.install_password, answer)
 
     def test_private_ipxe_overlay_injects_inputs_without_altering_release(self):
