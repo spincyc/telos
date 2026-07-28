@@ -442,7 +442,8 @@ class NativeProcessBoundary:
                         raise WindowsIdentityRunError(
                             "Controller QMP authentication failed")
                     time.sleep(0.1)
-            seed_iso = DEFAULT_SEED_ISO.resolve()
+            seed_iso = (
+                Path(__file__).resolve().parents[2] / DEFAULT_SEED_ISO)
             if (
                 seed_iso.is_symlink()
                 or not seed_iso.is_file()
@@ -454,6 +455,12 @@ class NativeProcessBoundary:
                 seed_iso, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
             try:
                 seed_stat = os.fstat(seed_fd)
+                if (
+                    not stat.S_ISREG(seed_stat.st_mode)
+                    or seed_stat.st_mode & 0o022
+                ):
+                    raise WindowsIdentityRunError(
+                        "opened Controller seed media is unsafe")
                 assert self.controller_qmp is not None
                 self.controller_qmp.execute("blockdev-add", {
                     "node-name": "identityseedfile",
@@ -466,6 +473,13 @@ class NativeProcessBoundary:
                     "read-only": True,
                     "file": "identityseedfile",
                 })
+                if not self._process_holds_inode(
+                    process.pid,
+                    device=seed_stat.st_dev,
+                    inode=seed_stat.st_ino,
+                ):
+                    raise WindowsIdentityRunError(
+                        "Controller seed media identity differs from audit")
                 self.controller_qmp.execute("device_add", {
                     "driver": "scsi-cd",
                     "id": "identityseedcd",
@@ -508,6 +522,13 @@ class NativeProcessBoundary:
                     "read-only": True,
                     "file": "identityfactoryfile",
             })
+            if not self._process_holds_inode(
+                process.pid,
+                device=media_stat.st_dev,
+                inode=media_stat.st_ino,
+            ):
+                raise WindowsIdentityRunError(
+                    "Controller convergence media identity differs from audit")
             self.controller_qmp.execute("device_add", {
                     "driver": "scsi-cd",
                     "id": "identityfactorycd",

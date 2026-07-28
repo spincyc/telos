@@ -162,7 +162,7 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                         "homelab.vm.windows_identity_run.QmpClient.connect"), \
                     mock.patch.object(
                         boundary, "_process_holds_inode",
-                        return_value=False), \
+                        side_effect=(True, False, True, False)), \
                     mock.patch(
                         "homelab.vm.windows_identity_run.DisposableBootDisk"
                     ) as boot_disk:

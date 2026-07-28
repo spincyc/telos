@@ -115,7 +115,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 mock.patch.object(
                     windows_identity_run.QmpClient, "connect") as qmp_connect,
                 mock.patch.object(
-                    boundary, "_process_holds_inode", return_value=False),
+                    boundary, "_process_holds_inode",
+                    side_effect=(True, False, True, False)),
                 mock.patch.object(
                     windows_identity_run, "SerialAutomation") as automation,
                 mock.patch.object(
