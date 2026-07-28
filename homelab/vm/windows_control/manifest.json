@@ -13,6 +13,7 @@
     "domain-state",
     "managed-identity-state",
     "cached-logon-policy",
+    "gateway-reachability",
     "dependency-reachability",
     "service-reachability",
     "update-policy"

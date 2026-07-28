@@ -66,6 +66,9 @@ _OBSERVATION_KEYS = {
         "configured": bool,
         "cached_logon_count": (int, type(None)),
     },
+    "gateway-reachability": {
+        "gateway_reachable": bool,
+    },
     "dependency-reachability": {
         "update_source_reachable": bool,
         "optional_storage_reachable": bool,

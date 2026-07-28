@@ -8,6 +8,7 @@ param(
         'domain-state',
         'managed-identity-state',
         'cached-logon-policy',
+        'gateway-reachability',
         'dependency-reachability',
         'service-reachability',
         'update-policy'
@@ -329,6 +330,13 @@ function Get-Probe {
                 } else {
                     [int]$value
                 }
+            }
+        }
+        'gateway-reachability' {
+            return [ordered]@{
+                gateway_reachable = Test-UdpRole `
+                    ([System.Net.IPAddress]::Parse('10.1.31.1')) 31337 `
+                    'sim-ok:health'
             }
         }
         'dependency-reachability' {

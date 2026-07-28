@@ -55,6 +55,9 @@ def record(action="domain-state"):
             "configured": True,
             "cached_logon_count": 2,
         },
+        "gateway-reachability": {
+            "gateway_reachable": False,
+        },
         "dependency-reachability": {
             "update_source_reachable": False,
             "optional_storage_reachable": True,
@@ -153,6 +156,7 @@ class WindowsControlSerialTests(unittest.TestCase):
             "current-session-state",
             "controller-readiness",
             "managed-identity-state",
+            "gateway-reachability",
         ):
             candidate = record(action)
             parsed = parse_probe_record(
@@ -163,6 +167,22 @@ class WindowsControlSerialTests(unittest.TestCase):
                     WindowsControlSerialError, "schema"):
                 parse_probe_record(
                     json.dumps(candidate).encode() + b"\n", action)
+
+    def test_gateway_probe_has_one_strict_guest_visible_fact(self):
+        candidate = record("gateway-reachability")
+        parsed = parse_probe_record(
+            json.dumps(candidate).encode() + b"\n",
+            "gateway-reachability")
+        self.assertEqual(
+            {"gateway_reachable": False}, parsed["observation"])
+        for invalid in (0, "false", None):
+            candidate = record("gateway-reachability")
+            candidate["observation"]["gateway_reachable"] = invalid
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "schema"):
+                parse_probe_record(
+                    json.dumps(candidate).encode() + b"\n",
+                    "gateway-reachability")
 
     def test_dependency_probe_maps_only_reachability_fault_fields(self):
         encoded = json.dumps(
