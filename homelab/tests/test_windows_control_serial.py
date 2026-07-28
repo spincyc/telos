@@ -25,6 +25,32 @@ def record(action="domain-state"):
             "operator": "operator@FACTORY.TEST",
             "operator_local_administrator": True,
         },
+        "current-session-state": {
+            "authenticated": True,
+            "identity_resolved": True,
+            "profile_loaded": True,
+            "local_profile": True,
+            "local_administrator": False,
+            "domain_administrator": False,
+        },
+        "controller-readiness": {
+            "samba_ad": True,
+            "dns": True,
+            "kerberos": True,
+            "time": True,
+            "synthetic_directory": True,
+        },
+        "managed-identity-state": {
+            "standard_identity_resolved": True,
+            "standard_profile_present": True,
+            "operator_identity_resolved": True,
+            "operator_profile_present": True,
+            "operator_local_administrator": True,
+            "operator_domain_administrator": False,
+            "directory_admin_identity_resolved": True,
+            "directory_admin_domain_administrator": True,
+            "operator_is_directory_admin": False,
+        },
         "cached-logon-policy": {
             "configured": True,
             "cached_logon_count": 2,
@@ -121,6 +147,22 @@ class WindowsControlSerialTests(unittest.TestCase):
         for invalid in (encoded, encoded + b"\n{}\n", encoded + b"\r\n"):
             with self.assertRaises(WindowsControlSerialError):
                 parse_probe_record(invalid, "domain-state")
+
+    def test_identity_probe_records_have_exact_secret_free_schemas(self):
+        for action in (
+            "current-session-state",
+            "controller-readiness",
+            "managed-identity-state",
+        ):
+            candidate = record(action)
+            parsed = parse_probe_record(
+                json.dumps(candidate).encode() + b"\n", action)
+            self.assertEqual(candidate["observation"], parsed["observation"])
+            candidate["observation"]["principal"] = "FACTORY\\student"
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "schema"):
+                parse_probe_record(
+                    json.dumps(candidate).encode() + b"\n", action)
 
     def test_dependency_probe_maps_only_reachability_fault_fields(self):
         encoded = json.dumps(
