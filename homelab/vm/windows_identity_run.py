@@ -9,7 +9,9 @@ import json
 import re
 import secrets
 import socket
+import stat
 import subprocess
+import tempfile
 import time
 from typing import Callable
 from pathlib import Path
@@ -76,6 +78,7 @@ class NativeProcessBoundary:
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
         self.controller_overlay: DisposableBootDisk | None = None
         self.qmp: QmpClient | None = None
+        self.qmp_root: Path | None = None
         self.port: int | None = None
         self.authorized_command: list[str] | None = None
 
@@ -251,24 +254,38 @@ class NativeProcessBoundary:
     def start_windows(self) -> None:
         if self.port is None:
             raise WindowsIdentityRunError("switch must start before Windows")
-        qmp_socket = self.runtime / "windows.qmp"
-        command = qemu_identity_command(
-            disk=self.attempt / "windows.qcow2",
-            variables=self.attempt / "OVMF_VARS.fd",
-            qmp_socket=qmp_socket,
-            switch_port=self.port,
-        )
+        if self.qmp_root is not None:
+            raise WindowsIdentityRunError(
+                "Windows QMP runtime is already allocated")
+        self.qmp_root = Path(tempfile.mkdtemp(
+            prefix="telos-win-id-qmp-"))
+        self.qmp_root.chmod(0o700)
+        qmp_socket = self.qmp_root / "windows.qmp"
+        try:
+            command = qemu_identity_command(
+                disk=self.attempt / "windows.qcow2",
+                variables=self.attempt / "OVMF_VARS.fd",
+                qmp_socket=qmp_socket,
+                switch_port=self.port,
+            )
+        except BaseException:
+            self._cleanup_qmp_root()
+            raise
         if (
             self.authorized_command is None
             or self._normalized_command(command)
             != self._normalized_command(self.authorized_command)
         ):
+            self._cleanup_qmp_root()
             raise WindowsIdentityRunError(
                 "runtime QEMU command differs from the authorized template")
         try:
-            process = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT)
+            qemu_log = self.runtime / "windows-qemu.log"
+            with qemu_log.open("xb") as output:
+                qemu_log.chmod(0o600)
+                process = subprocess.Popen(
+                    command, stdin=subprocess.DEVNULL, stdout=output,
+                    stderr=subprocess.STDOUT)
             self.processes["windows"] = process
             audit_live_process(
                 process.pid, "client", allowed_nic_models=("e1000e",))
@@ -287,8 +304,11 @@ class NativeProcessBoundary:
                 raise WindowsIdentityRunError(
                     "Windows exited before QMP authentication")
             try:
+                if self.qmp_root is None:
+                    raise WindowsIdentityRunError(
+                        "Windows QMP runtime is unavailable")
                 self.qmp = QmpClient.connect(
-                    self.runtime / "windows.qmp", timeout=2)
+                    self.qmp_root / "windows.qmp", timeout=2)
                 return
             except OSError as caught:
                 error = caught
@@ -311,6 +331,24 @@ class NativeProcessBoundary:
                     f"{role} process remained live after teardown")
             self.processes.pop(role, None)
 
+    def _cleanup_qmp_root(self) -> None:
+        if self.qmp_root is None:
+            return
+        if (self.qmp_root.is_symlink() or not self.qmp_root.is_dir()
+                or self.qmp_root.stat().st_mode & 0o077):
+            raise WindowsIdentityRunError(
+                "private QMP runtime identity changed")
+        entries = list(self.qmp_root.iterdir())
+        for entry in entries:
+            metadata = entry.lstat()
+            if entry.name != "windows.qmp" or not stat.S_ISSOCK(
+                    metadata.st_mode):
+                raise WindowsIdentityRunError(
+                    "private QMP runtime contains an unexpected entry")
+            entry.unlink()
+        self.qmp_root.rmdir()
+        self.qmp_root = None
+
     def stop_windows(self) -> None:
         failures = []
         if self.qmp is not None:
@@ -324,6 +362,11 @@ class NativeProcessBoundary:
             self._stop("windows")
         except BaseException as error:
             failures.append(f"Windows process: {type(error).__name__}")
+        if self.qmp is None and "windows" not in self.processes:
+            try:
+                self._cleanup_qmp_root()
+            except BaseException as error:
+                failures.append(f"QMP runtime: {type(error).__name__}")
         if failures:
             raise WindowsIdentityRunError("; ".join(failures))
 

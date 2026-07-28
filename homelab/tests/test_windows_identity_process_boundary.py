@@ -143,7 +143,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             windows_command.assert_called_once_with(
                 disk=boundary.attempt / "windows.qcow2",
                 variables=boundary.attempt / "OVMF_VARS.fd",
-                qmp_socket=boundary.runtime / "windows.qmp",
+                qmp_socket=boundary.qmp_root / "windows.qmp",
                 switch_port=43119,
             )
 
@@ -187,6 +187,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
             boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
             authorized = [
                 "qemu-system-x86_64",
                 "-qmp", "unix:/private/attempt/windows.qmp,server=on,wait=off",
@@ -218,6 +219,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             popen.assert_called_once()
 
             boundary.processes.clear()
+            boundary._cleanup_qmp_root()
             boundary.authorized_command = authorized
             tampered = list(runtime)
             tampered[3] = "file=/different/windows.qcow2"
@@ -237,6 +239,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
             boundary.runtime.mkdir()
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
             process = _Process(104)
             boundary.processes["windows"] = process
             client = mock.Mock()
@@ -279,6 +283,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_qmp_retry_has_a_bounded_timeout(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
             boundary.processes["windows"] = _Process(104)
             with (
                 mock.patch.object(
@@ -294,7 +300,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                         "timed out authenticating Windows QMP"):
                     boundary.authenticate_qmp()
             connect.assert_called_once_with(
-                boundary.runtime / "windows.qmp", timeout=2)
+                boundary.qmp_root / "windows.qmp", timeout=2)
 
     def test_cleanup_closes_qmp_and_overlay_and_reaps_every_process(self):
         with tempfile.TemporaryDirectory() as name:
