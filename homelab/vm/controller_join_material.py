@@ -29,12 +29,13 @@ class ControllerJoinResult:
     events: tuple[str, ...]
 
 
-_PRINCIPAL = "workstation-join"
+_PRINCIPAL_PREFIX = "tj-"
 _SAFE_REALM = re.compile(
     r"(?=.{1,253}\Z)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?")
 
 _STAGE_PROGRAM = r"""
 import json
+import re
 import sys
 
 from samba.auth import system_session
@@ -42,24 +43,41 @@ from samba.param import LoadParm
 from samba.samdb import SamDB
 
 values = json.load(sys.stdin)
-if set(values) != {"principal", "credential"}:
+if set(values) != {"principal", "credential", "ownership_token"}:
     raise ValueError("unexpected join-material payload")
-if values["principal"] != "workstation-join":
+if not re.fullmatch(r"tj-[0-9a-f]{16}", values["principal"]):
     raise ValueError("unexpected join principal")
+if not re.fullmatch(r"[0-9a-f]{64}", values["ownership_token"]):
+    raise ValueError("unexpected ownership token")
+marker = "telos-join-owner:" + values["ownership_token"]
 lp = LoadParm()
 lp.load_default()
 samdb = SamDB(session_info=system_session(), lp=lp)
+expression = "(sAMAccountName=" + values["principal"] + ")"
+results = samdb.search(expression=expression, attrs=["description"])
+if results:
+    descriptions = [str(value) for value in results[0].get("description", [])]
+    if descriptions != [marker]:
+        raise RuntimeError("join principal ownership mismatch")
 created = False
 try:
-    samdb.newuser(
-        values["principal"],
-        values["credential"],
-        force_password_change_at_next_login_req=False,
-    )
-    created = True
+    if not results:
+        samdb.newuser(
+            values["principal"],
+            values["credential"],
+            force_password_change_at_next_login_req=False,
+            description=marker,
+        )
+        created = True
     samdb.add_remove_group_members(
         "Domain Admins", [values["principal"]], add_members_operation=True,
     )
+    results = samdb.search(expression=expression, attrs=["description"])
+    if len(results) != 1:
+        raise RuntimeError("join principal was not stored")
+    descriptions = [str(value) for value in results[0].get("description", [])]
+    if descriptions != [marker]:
+        raise RuntimeError("join principal ownership was not stored")
 except BaseException:
     if created:
         try:
@@ -71,23 +89,36 @@ except BaseException:
 
 _DESTROY_PROGRAM = r"""
 import json
+import re
 import sys
 
 from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
 
-principal = json.load(sys.stdin)
-if principal != "workstation-join":
+values = json.load(sys.stdin)
+if set(values) != {"principal", "ownership_token"}:
+    raise ValueError("unexpected join-material payload")
+if not re.fullmatch(r"tj-[0-9a-f]{16}", values["principal"]):
     raise ValueError("unexpected join principal")
+if not re.fullmatch(r"[0-9a-f]{64}", values["ownership_token"]):
+    raise ValueError("unexpected ownership token")
+marker = "telos-join-owner:" + values["ownership_token"]
 lp = LoadParm()
 lp.load_default()
 samdb = SamDB(session_info=system_session(), lp=lp)
-samdb.deleteuser(principal)
+expression = "(sAMAccountName=" + values["principal"] + ")"
 results = samdb.search(
-    expression="(sAMAccountName=workstation-join)",
-    attrs=["sAMAccountName"],
+    expression=expression,
+    attrs=["description"],
 )
+if not results:
+    sys.exit(0)
+descriptions = [str(value) for value in results[0].get("description", [])]
+if descriptions != [marker]:
+    raise RuntimeError("join principal ownership mismatch")
+samdb.deleteuser(values["principal"])
+results = samdb.search(expression=expression, attrs=["sAMAccountName"])
 if results:
     raise RuntimeError("join principal remains after destruction")
 """
@@ -98,7 +129,7 @@ def _encoded_program(source: str) -> bytes:
 
 
 class ControllerJoinSerial:
-    """Stage and prove destruction of the fixed disposable join principal."""
+    """Stage and destroy one attempt-unique, ownership-bound join principal."""
 
     def __init__(
         self,
@@ -109,6 +140,8 @@ class ControllerJoinSerial:
     ) -> None:
         self.console = SerialAutomation(
             reader, writer, None, timeout=timeout)
+        self._principal = _PRINCIPAL_PREFIX + secrets.token_hex(8)
+        self._ownership_token = secrets.token_hex(32)
 
     @staticmethod
     def _credential(value: str) -> str:
@@ -160,23 +193,30 @@ class ControllerJoinSerial:
                 f"Controller join {operation} returned {returncode}")
         return ControllerJoinResult(
             operation=operation,
-            principal=_PRINCIPAL,
+            principal=self._principal,
             destruction_proved=operation == "destroy",
             events=tuple(self.console.events),
         )
 
     def stage(self, credential: str) -> ControllerJoinResult:
-        """Create the fixed one-use principal without putting its secret in argv."""
+        """Create or reconcile this attempt's principal without argv secrets."""
         checked = self._credential(credential)
         return self._run(
             "stage",
-            {"principal": _PRINCIPAL, "credential": checked},
+            {
+                "principal": self._principal,
+                "credential": checked,
+                "ownership_token": self._ownership_token,
+            },
             _STAGE_PROGRAM,
         )
 
     def destroy(self) -> ControllerJoinResult:
-        """Delete the fixed principal and return only after absence is proved."""
-        return self._run("destroy", _PRINCIPAL, _DESTROY_PROGRAM)
+        """Delete only this attempt's token-matching principal."""
+        return self._run("destroy", {
+            "principal": self._principal,
+            "ownership_token": self._ownership_token,
+        }, _DESTROY_PROGRAM)
 
 
 _T = TypeVar("_T")
@@ -198,6 +238,7 @@ class OneUseDomainJoinMaterial:
         self._stage = stage
         self._destroy = destroy
         self._credential_value: str | None = None
+        self._principal: str | None = None
         self._consumed = False
         self._destruction_pending = False
 
@@ -225,18 +266,22 @@ class OneUseDomainJoinMaterial:
             primary: BaseException | None = None
             value: _T | None = None
             try:
+                # The destroy callback is ownership-bound. Mark cleanup pending
+                # before staging so a lost stage acknowledgement is reconciled
+                # by a safe, idempotent destruction attempt.
+                self._destruction_pending = True
                 staged = self._stage(self._credential_value)
                 if (
                     staged.operation != "stage"
-                    or staged.principal != _PRINCIPAL
+                    or not staged.principal.startswith(_PRINCIPAL_PREFIX)
                     or staged.destruction_proved
                 ):
                     raise ControllerJoinMaterialError(
                         "Controller did not prove join-principal ownership")
-                self._destruction_pending = True
+                self._principal = staged.principal
                 material = MappingProxyType({
                     "realm": self.realm,
-                    "principal": _PRINCIPAL,
+                    "principal": staged.principal,
                     "credential": self._credential_value,
                 })
                 value = consumer(material)
@@ -247,10 +292,17 @@ class OneUseDomainJoinMaterial:
             if self._destruction_pending:
                 try:
                     proof = self._destroy()
-                    if not proof.destruction_proved:
+                    if (
+                        not proof.destruction_proved
+                        or (
+                            self._principal is not None
+                            and proof.principal != self._principal
+                        )
+                    ):
                         raise ControllerJoinMaterialError(
                             "Controller did not prove join-principal destruction")
                     self._destruction_pending = False
+                    self._principal = None
                 except BaseException as error:
                     cleanup = error
             if primary is not None or cleanup is not None:
@@ -274,8 +326,15 @@ class OneUseDomainJoinMaterial:
             raise ControllerJoinMaterialError(
                 "domain join destruction is not pending")
         proof = self._destroy()
-        if not proof.destruction_proved:
+        if (
+            not proof.destruction_proved
+            or (
+                self._principal is not None
+                and proof.principal != self._principal
+            )
+        ):
             raise ControllerJoinMaterialError(
                 "Controller did not prove join-principal destruction")
         self._destruction_pending = False
+        self._principal = None
         return proof

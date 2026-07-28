@@ -4,6 +4,7 @@ import threading
 import unittest
 from unittest import mock
 
+from homelab.vm import controller_join_material
 from homelab.vm.controller_join_material import (
     ControllerJoinMaterialError,
     ControllerJoinResult,
@@ -60,10 +61,10 @@ class ControllerJoinSerialTests(unittest.TestCase):
         self.assertIn(b"stty -echo || exit 91", observed[0])
         self.assertIn(b"sudo -n python3", observed[0])
         self.assertNotIn(SECRET.encode(), observed[0])
-        self.assertEqual({
-            "principal": "workstation-join",
-            "credential": SECRET,
-        }, __import__("json").loads(base64.b64decode(observed[1])))
+        payload = __import__("json").loads(base64.b64decode(observed[1]))
+        self.assertEqual(SECRET, payload.pop("credential"))
+        self.assertRegex(payload["principal"], r"^tj-[0-9a-f]{16}$")
+        self.assertRegex(payload["ownership_token"], r"^[0-9a-f]{64}$")
         self.assertNotIn(SECRET, repr(result))
 
     def test_destroy_program_requires_verified_absence(self):
@@ -74,6 +75,27 @@ class ControllerJoinSerialTests(unittest.TestCase):
             observed[0].split(
                 b"exec(base64.b64decode('", 1)[1].split(b"'))", 1)[0]))
         self.assertNotIn(SECRET.encode(), b"".join(observed))
+        payload = __import__("json").loads(base64.b64decode(observed[1]))
+        self.assertEqual(result.principal, payload["principal"])
+        self.assertRegex(payload["ownership_token"], r"^[0-9a-f]{64}$")
+
+    def test_stage_and_destroy_share_unique_ownership_identity(self):
+        left = __import__("io").BytesIO()
+        serial_a = ControllerJoinSerial(left, __import__("io").BytesIO())
+        serial_b = ControllerJoinSerial(left, __import__("io").BytesIO())
+        self.assertNotEqual(serial_a._principal, serial_b._principal)
+        self.assertNotEqual(
+            serial_a._ownership_token, serial_b._ownership_token)
+
+    def test_programs_reconcile_stage_and_require_token_before_destroy(self):
+        stage = controller_join_material._STAGE_PROGRAM
+        destroy = controller_join_material._DESTROY_PROGRAM
+        self.assertIn("if results:", stage)
+        self.assertIn("descriptions != [marker]", stage)
+        self.assertIn("description=marker", stage)
+        self.assertLess(
+            destroy.index("descriptions != [marker]"),
+            destroy.index("samdb.deleteuser"))
 
     def test_guest_failure_is_secret_free_and_fail_closed(self):
         with self.assertRaisesRegex(
@@ -86,7 +108,7 @@ class ControllerJoinSerialTests(unittest.TestCase):
 class OneUseDomainJoinMaterialTests(unittest.TestCase):
     def result(self, operation, destroyed=False):
         return ControllerJoinResult(
-            operation, "workstation-join", destroyed, ())
+            operation, "tj-0123456789abcdef", destroyed, ())
 
     def test_material_is_available_once_and_destroyed_after_consumption(self):
         observed = []
@@ -128,7 +150,7 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
                 material.use(fail)
         self.assertNotIn(SECRET, str(caught.exception))
 
-    def test_failed_stage_never_deletes_an_unowned_fixed_principal(self):
+    def test_lost_stage_acknowledgement_attempts_ownership_bound_cleanup(self):
         destroy = mock.Mock(return_value=self.result("destroy", True))
         material = OneUseDomainJoinMaterial(
             "synthetic.test",
@@ -138,7 +160,7 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 ControllerJoinMaterialError, "stage/consumer"):
             material.use(lambda _values: None)
-        destroy.assert_not_called()
+        destroy.assert_called_once_with()
         self.assertNotIn("cleanup-pending", repr(material))
 
     def test_destruction_failure_does_not_claim_proof(self):
