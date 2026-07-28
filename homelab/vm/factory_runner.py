@@ -210,7 +210,9 @@ def qemu_commands(
     return {"controller": controller, "workstation": workstation}
 
 
-def switch_command(listener_fd: int, evidence: Path) -> list[str]:
+def switch_command(
+    listener_fd: int, evidence: Path, *, idle_timeout: float = 120,
+) -> list[str]:
     return [
         sys.executable,
         str(Path(__file__).with_name("simulated_switch.py")),
@@ -220,7 +222,7 @@ def switch_command(listener_fd: int, evidence: Path) -> list[str]:
         "--port", f"workstation={MACS['client']}",
         "--evidence", str(evidence),
         "--accept-timeout", "20",
-        "--idle-timeout", "120",
+        "--idle-timeout", f"{idle_timeout:g}",
     ]
 
 

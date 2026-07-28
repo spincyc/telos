@@ -134,6 +134,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-controller-bundle homelab-factory-pxe \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
+	homelab-windows-install-run \
 	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
@@ -541,6 +542,18 @@ homelab-windows-install-prepare:
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
 	else \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare --apply; \
+	fi
+
+homelab-windows-install-run:
+	@if [ -z '$(WINDOWS_RUN)' ]; then \
+		echo 'require WINDOWS_RUN=<prepared private bundle>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-windows-install-run \
+			--bundle '$(WINDOWS_RUN)' --duration '$(FACTORY_DURATION)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-windows-install-run \
+			--bundle '$(WINDOWS_RUN)' --duration '$(FACTORY_DURATION)' --apply; \
 	fi
 
 # Converge only the temporary Controller role. The private inventory supplies

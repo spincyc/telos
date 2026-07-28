@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:50:11Z"
+updated_at: "2026-07-28T00:58:25Z"
 ---
 
 # Goal
@@ -91,3 +91,11 @@ The guarded preparation command is implemented and dry-run verified. Apply
 creates only new ignored private state and removes incomplete bundles on any
 failure. The next boundary is a real preparation from the sealed source,
 followed by the bounded Controller/workstation install lifecycle.
+
+One complete private bundle has been prepared from the sealed source. The
+bounded lifecycle launcher now validates the bundle and exact disk boundary,
+boots the disposable Controller with the private publication attached, boots
+the persistent workstation without installation media, re-audits both live
+QEMU processes, captures secret-free evidence, and guarantees child teardown.
+Focused tests and the real-bundle dry run pass. The next operation is the first
+bounded loopback-only WinPE overlay observation.
