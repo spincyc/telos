@@ -138,7 +138,7 @@ def _call_static_probe(
         probe_action = getattr(error, "probe_action", None)
         probe_phase = getattr(error, "probe_phase", None)
         if probe_action == action and probe_phase in {
-            "connect", "launch", "receive", "parse",
+            "connect", "launch", "receive", "guest", "parse",
         }:
             diagnostic = IdentityFailureDiagnostic.static_probe(
                 check, action, error, phase=probe_phase)

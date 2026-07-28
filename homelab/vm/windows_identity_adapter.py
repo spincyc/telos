@@ -19,6 +19,7 @@ from .controller_principals import (
 from .serial_automation import SerialAutomation
 from .windows_control_serial import (
     MAX_RECORD_BYTES,
+    WindowsGuestProbeError,
     control_probe,
     parse_probe_record,
 )
@@ -334,7 +335,11 @@ class NativeWindowsAcceptanceAdapter:
             failure = error
         if failure is not None:
             self._raise_static_probe_failure(
-                request.action, "parse", failure)
+                request.action,
+                "guest" if isinstance(failure, WindowsGuestProbeError)
+                else "parse",
+                failure,
+            )
         raise AssertionError("static probe parser returned no result")
 
     @staticmethod

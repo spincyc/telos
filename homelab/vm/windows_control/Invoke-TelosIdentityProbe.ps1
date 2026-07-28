@@ -22,6 +22,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$ControllerDomain = 'ad.factory.test'
+$ControllerFqdn = 'bootstrap-dc.ad.factory.test'
+
 function Test-TcpPort {
     param([string]$HostName, [int]$Port)
     if ([string]::IsNullOrWhiteSpace($HostName)) {
@@ -197,41 +200,29 @@ function Get-Probe {
             }
         }
         'controller-readiness' {
-            $computer = Get-CimInstance Win32_ComputerSystem
-            $domain = if ($computer.PartOfDomain) {
-                [string]$computer.Domain
-            } else {
-                ''
-            }
-            $dns = $false
-            if ($domain) {
-                $dns = $null -ne (Resolve-DnsName -Type SRV `
-                    "_ldap._tcp.dc._msdcs.$domain" `
-                    -ErrorAction SilentlyContinue)
-            }
-            $time = $false
-            if ($domain) {
-                & w32tm.exe /stripchart /computer:$domain /samples:1 `
-                    /dataonly | Out-Null
-                $time = $LASTEXITCODE -eq 0
-            }
-            $synthetic = $false
-            if ($domain) {
-                $synthetic = @(
-                    'student', 'operator', 'directory-admin' |
-                        ForEach-Object {
-                            $null -ne (Resolve-AccountSid ($domain + '\' + $_))
-                        }
-                ) -notcontains $false
-            }
+            $dns = $null -ne (Resolve-DnsName -Type SRV `
+                "_ldap._tcp.dc._msdcs.$ControllerDomain" `
+                -ErrorAction SilentlyContinue)
+            & w32tm.exe /stripchart /computer:$ControllerFqdn /samples:1 `
+                /dataonly | Out-Null
+            $time = $LASTEXITCODE -eq 0
+            $synthetic = @(
+                'student', 'operator', 'directory-admin' |
+                    ForEach-Object {
+                        $null -ne (
+                            Resolve-AccountSid (
+                                $ControllerDomain + '\' + $_
+                            )
+                        )
+                    }
+            ) -notcontains $false
             return [ordered]@{
                 samba_ad = (
-                    $computer.PartOfDomain -and
-                    (Test-TcpPort $domain 389) -and
-                    (Test-TcpPort $domain 445)
+                    (Test-TcpPort $ControllerFqdn 389) -and
+                    (Test-TcpPort $ControllerFqdn 445)
                 )
                 dns = [bool]$dns
-                kerberos = Test-TcpPort $domain 88
+                kerberos = Test-TcpPort $ControllerFqdn 88
                 time = [bool]$time
                 synthetic_directory = [bool]$synthetic
             }
@@ -386,20 +377,37 @@ function Get-Probe {
     }
 }
 
-$record = [ordered]@{
-    schema_version = 1
-    action = $Action
-    result = 'pass'
-    observed_at = [DateTime]::UtcNow.ToString(
-        'yyyy-MM-ddTHH:mm:ssZ',
-        [Globalization.CultureInfo]::InvariantCulture)
-    observation = Get-Probe $Action
-}
-$line = $record | ConvertTo-Json -Compress -Depth 5
 $serial = [System.IO.Ports.SerialPort]::new(
     $SerialPort, 115200, 'None', 8, 'One')
 try {
     $serial.Open()
+    try {
+        $record = [ordered]@{
+            schema_version = 1
+            action = $Action
+            result = 'pass'
+            observed_at = [DateTime]::UtcNow.ToString(
+                'yyyy-MM-ddTHH:mm:ssZ',
+                [Globalization.CultureInfo]::InvariantCulture)
+            observation = Get-Probe $Action
+        }
+    }
+    catch {
+        # Never serialize the exception: it may contain private guest state.
+        $record = [ordered]@{
+            schema_version = 1
+            action = $Action
+            result = 'fail'
+            observed_at = [DateTime]::UtcNow.ToString(
+                'yyyy-MM-ddTHH:mm:ssZ',
+                [Globalization.CultureInfo]::InvariantCulture)
+            failure = [ordered]@{
+                phase = 'observation'
+                code = 'guest-probe-error'
+            }
+        }
+    }
+    $line = $record | ConvertTo-Json -Compress -Depth 5
     $serial.WriteLine($line)
 }
 finally {

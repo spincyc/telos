@@ -135,6 +135,44 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
 
+    def test_fixed_guest_probe_failure_is_distinct_from_malformed_record(self):
+        secret = "private-guest-detail"
+        failure = (
+            b'{"schema_version":1,"action":"controller-readiness",'
+            b'"result":"fail","observed_at":"2026-07-28T15:00:00Z",'
+            b'"failure":{"phase":"observation",'
+            b'"code":"guest-probe-error"}}\n'
+        )
+        for payload, expected_phase, expected_error in (
+            (failure, "guest", "WindowsGuestProbeError"),
+            (secret.encode() + b"\n", "parse", "WindowsControlSerialError"),
+        ):
+            with self.subTest(
+                phase=expected_phase,
+            ), tempfile.TemporaryDirectory() as name:
+                adapter = self.adapter(Path(name))
+                adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+                adapter.launch_guest = mock.Mock()
+                stream = mock.MagicMock()
+                stream.__enter__.return_value = stream
+                stream.recv.return_value = payload
+                with mock.patch.object(
+                    subject.socket, "socket", return_value=stream,
+                ), self.assertRaises(
+                    subject.WindowsIdentityAdapterError,
+                ) as caught:
+                    adapter.static_probe("controller-readiness")
+                error = caught.exception
+                self.assertEqual(
+                    "static-probe.controller-readiness." + expected_phase,
+                    error.diagnostic.operation,
+                )
+                self.assertEqual(
+                    expected_error, error.diagnostic.error_type)
+                self.assertNotIn(secret, str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
     def test_post_reboot_reauthentication_fails_without_calibrated_plan(self):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))

@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from homelab.vm.controller_factory import FactorySpec
 from homelab.vm.windows_control_iso import (
     ASSET_ROOT,
     MAX_PROBE_LAUNCH_CHARS,
@@ -40,8 +41,42 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("'operator@'", script)
         self.assertIn("'S-1-5-32-544'", script)
         self.assertIn("Get-LocalGroupMember", script)
+        spec = FactorySpec()
+        self.assertIn(
+            f"$ControllerDomain = '{spec.domain}'", script)
+        self.assertIn(
+            f"$ControllerFqdn = '{spec.fqdn}'", script)
+        readiness = script[
+            script.index("'controller-readiness' {"):
+            script.index("'domain-state' {")
+        ]
+        self.assertNotIn("PartOfDomain", readiness)
+        self.assertIn("$ControllerDomain", readiness)
+        self.assertIn("$ControllerFqdn", readiness)
+        self.assertIn("Test-TcpPort $ControllerFqdn 88", readiness)
+        self.assertIn("Test-TcpPort $ControllerFqdn 389", readiness)
+        self.assertIn("Test-TcpPort $ControllerFqdn 445", readiness)
         self.assertNotIn("Password", script)
         self.assertNotIn("Credential", script)
+
+    def test_serial_opens_before_probe_and_failure_record_is_fixed(self):
+        script = (
+            ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
+        ).read_text(encoding="utf-8")
+        open_at = script.index("$serial.Open()")
+        probe_at = script.index(
+            "observation = Get-Probe $Action", open_at)
+        self.assertLess(open_at, probe_at)
+        failure = script[
+            script.index("catch {", probe_at):
+            script.index("$line = $record", probe_at)
+        ]
+        self.assertIn("result = 'fail'", failure)
+        self.assertIn("phase = 'observation'", failure)
+        self.assertIn("code = 'guest-probe-error'", failure)
+        self.assertNotIn("$_.", failure)
+        self.assertNotIn("Exception", failure)
+        self.assertNotIn("Message", failure)
 
     def test_builder_stages_only_static_payload_and_public_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:

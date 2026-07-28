@@ -17,10 +17,23 @@ class WindowsControlSerialError(RuntimeError):
     """A control probe did not produce an admissible public observation."""
 
 
+class WindowsGuestProbeError(WindowsControlSerialError):
+    """The guest reported one fixed, secret-free probe failure."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__("guest probe reported a fixed observation failure")
+        self.action = action
+        self.phase = "observation"
+        self.code = "guest-probe-error"
+
+
 MAX_RECORD_BYTES = 16 * 1024
 CHARDEV_ID = "telosidentity"
-_TOP_LEVEL_KEYS = {
+_PASS_KEYS = {
     "schema_version", "action", "result", "observed_at", "observation",
+}
+_FAILURE_KEYS = {
+    "schema_version", "action", "result", "observed_at", "failure",
 }
 _OBSERVATION_KEYS = {
     "current-principal": {
@@ -170,11 +183,27 @@ def parse_probe_record(line: bytes, expected_action: str) -> dict[str, object]:
         record = json.loads(line.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise WindowsControlSerialError("probe response is invalid JSON") from error
-    if not isinstance(record, dict) or set(record) != _TOP_LEVEL_KEYS:
+    if not isinstance(record, dict):
         raise WindowsControlSerialError("probe response schema is invalid")
-    if (record["schema_version"] != 1 or record["result"] != "pass"
-            or record["action"] != expected_action):
+    if (
+        record.get("schema_version") != 1
+        or record.get("action") != expected_action
+    ):
         raise WindowsControlSerialError("probe response identity is invalid")
+    if record.get("result") == "fail":
+        if (
+            set(record) != _FAILURE_KEYS
+            or record.get("failure") != {
+                "phase": "observation",
+                "code": "guest-probe-error",
+            }
+        ):
+            raise WindowsControlSerialError(
+                "probe failure schema is invalid")
+        _validate_timestamp(record["observed_at"])
+        raise WindowsGuestProbeError(expected_action)
+    if set(record) != _PASS_KEYS or record.get("result") != "pass":
+        raise WindowsControlSerialError("probe response schema is invalid")
     _validate_timestamp(record["observed_at"])
     schema = _OBSERVATION_KEYS.get(expected_action)
     observation = record["observation"]
@@ -203,7 +232,7 @@ def fault_reachability_fields(
     probes, and refuses record-shaped input that did not pass the strict
     parser.
     """
-    if (set(record) != _TOP_LEVEL_KEYS
+    if (set(record) != _PASS_KEYS
             or record.get("schema_version") != 1
             or record.get("action") != "dependency-reachability"
             or record.get("result") != "pass"):

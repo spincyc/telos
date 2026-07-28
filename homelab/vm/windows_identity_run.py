@@ -75,12 +75,15 @@ class IdentityFailureDiagnostic:
     _STATIC_PROBES = frozenset(
         (check, f"static-probe.{action}{suffix}")
         for check, action in _STATIC_PROBE_PAIRS
-        for suffix in ("", ".connect", ".launch", ".receive", ".parse")
+        for suffix in (
+            "", ".connect", ".launch", ".receive", ".guest", ".parse",
+        )
     )
     _ERROR_TYPES = frozenset({
         "OSError",
         "TimeoutError",
         "WindowsControlSerialError",
+        "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
         "WindowsPublicCommandError",
     })

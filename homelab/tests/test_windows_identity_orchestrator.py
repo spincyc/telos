@@ -328,7 +328,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
     def test_post_reboot_probe_rebinds_receive_and_parse_failures(self):
         secret = "post-reboot-private-message"
-        for phase in ("receive", "parse"):
+        for phase in ("receive", "guest", "parse"):
             with self.subTest(phase=phase):
                 failure = subject.WindowsIdentityRunError(secret)
                 failure.probe_action = "domain-state"

@@ -8,6 +8,7 @@ import unittest
 from homelab.vm.windows_control_serial import (
     MAX_RECORD_BYTES,
     WindowsControlSerialError,
+    WindowsGuestProbeError,
     attach_qemu_serial,
     control_probe,
     fault_reachability_fields,
@@ -138,6 +139,46 @@ class WindowsControlSerialTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 WindowsControlSerialError, "size limit"):
             parse_probe_record(b" " * MAX_RECORD_BYTES + b"\n", "domain-state")
+
+    def test_parser_maps_only_exact_fixed_guest_failure(self):
+        failure = {
+            "schema_version": 1,
+            "action": "controller-readiness",
+            "result": "fail",
+            "observed_at": "2026-07-28T15:00:00Z",
+            "failure": {
+                "phase": "observation",
+                "code": "guest-probe-error",
+            },
+        }
+        encoded = lambda value: (
+            json.dumps(value, separators=(",", ":")).encode() + b"\n"
+        )
+        with self.assertRaises(WindowsGuestProbeError) as caught:
+            parse_probe_record(
+                encoded(failure), "controller-readiness")
+        self.assertEqual("controller-readiness", caught.exception.action)
+        self.assertEqual("observation", caught.exception.phase)
+        self.assertEqual("guest-probe-error", caught.exception.code)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+        mutations = (
+            lambda value: value.update(detail="private"),
+            lambda value: value["failure"].update(detail="private"),
+            lambda value: value["failure"].update(phase="launch"),
+            lambda value: value["failure"].update(code="private"),
+            lambda value: value.update(result="error"),
+            lambda value: value.update(action="domain-state"),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                candidate = json.loads(json.dumps(failure))
+                mutation(candidate)
+                with self.assertRaises(WindowsControlSerialError) as error:
+                    parse_probe_record(
+                        encoded(candidate), "controller-readiness")
+                self.assertNotIn("private", str(error.exception))
 
     def test_parser_rejects_multiline_trailing_and_bool_as_integer(self):
         candidate = record("cached-logon-policy")
