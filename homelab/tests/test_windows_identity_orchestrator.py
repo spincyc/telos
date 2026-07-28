@@ -229,7 +229,23 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         callbacks = self.callbacks([])
         qmp = mock.Mock()
         callbacks = subject.AcceptanceCallbacks(
-            **{**callbacks.__dict__, "qmp": lambda: qmp}
+            **{
+                **callbacks.__dict__,
+                "qmp": lambda: qmp,
+                "static_probe": lambda action: {
+                    "schema_version": 1,
+                    "action": action,
+                    "result": "pass",
+                    "observed_at": "2026-07-28T15:00:00Z",
+                    "observation": {
+                        "part_of_domain": True,
+                        "domain": "FACTORY.TEST",
+                        "secure_channel": True,
+                        "operator": "operator@FACTORY.TEST",
+                        "operator_local_administrator": True,
+                    },
+                },
+            }
         )
         staged = ControllerJoinResult(
             "stage", "tj-0123456789abcdef", False, ())
@@ -267,6 +283,14 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "launch_guest"])
         self.assertIs(callbacks.await_device_deleted, execute.call_args.kwargs[
             "await_device_deleted"])
+        self.assertEqual({
+            "schema_version": 2,
+            "boot_completed": True,
+            "domain_joined": True,
+            "domain": "FACTORY.TEST",
+            "operator": "operator@FACTORY.TEST",
+            "operator_local_administrator": True,
+        }, execute.call_args.kwargs["probe_after_reboot"]())
 
 
 if __name__ == "__main__":

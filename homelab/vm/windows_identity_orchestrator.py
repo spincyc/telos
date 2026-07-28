@@ -231,6 +231,36 @@ def _execute_join(
         destroy=destroy_join_principal,
     )
 
+    def post_reboot_proof() -> Mapping[str, object]:
+        record = dict(callbacks.static_probe("domain-state"))
+        observation = record.get("observation")
+        if (
+            record.get("schema_version") != 1
+            or record.get("action") != "domain-state"
+            or record.get("result") != "pass"
+            or not isinstance(observation, dict)
+            or set(observation) != {
+                "part_of_domain", "domain", "secure_channel", "operator",
+                "operator_local_administrator",
+            }
+        ):
+            raise WindowsIdentityOrchestratorError(
+                "post-reboot domain-state probe is invalid")
+        return {
+            "schema_version": 2,
+            # Receiving the static guest probe after Restart-Computer is the
+            # boot-completion observation; this is not caller-supplied data.
+            "boot_completed": True,
+            "domain_joined": (
+                observation["part_of_domain"]
+                and observation["secure_channel"]
+            ),
+            "domain": observation["domain"],
+            "operator": observation["operator"],
+            "operator_local_administrator":
+                observation["operator_local_administrator"],
+        }
+
     def consume(material: Mapping[str, str]) -> Mapping[str, object]:
         nonce = uuid.uuid4().hex
         iso = private_root / f"windows-join-{nonce}.iso"
@@ -250,8 +280,7 @@ def _execute_join(
                 serial=serial,
                 launch_guest=callbacks.launch_guest,
                 await_device_deleted=callbacks.await_device_deleted,
-                probe_after_reboot=lambda: callbacks.static_probe(
-                    "domain-state"),
+                probe_after_reboot=post_reboot_proof,
                 expected_domain=realm,
             )
         except BaseException as primary:
