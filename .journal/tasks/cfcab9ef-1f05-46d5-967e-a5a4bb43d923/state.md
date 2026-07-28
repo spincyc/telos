@@ -241,3 +241,9 @@ The private answer now supplies Microsoft's public generic Windows 11 Pro
 installation key with key UI disabled. It selects Pro but provides no
 activation entitlement. The prompt-observation disk will not be reused; a
 fresh run is next.
+
+The Pro-key retry passed that prompt and stopped because the disposable QEMU
+platform has neither TPM 2.0 nor Secure Boot. Private QEMU startup now sets
+only the two corresponding Windows Setup lab bypasses. Physical installation
+still requires real Windows 11 hardware compliance. The requirements-screen
+disk will not be reused; a fresh run is next.

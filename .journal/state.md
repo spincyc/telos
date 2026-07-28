@@ -3,10 +3,10 @@ schema_version: 1
 repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
-head_observed: "81a6a4a50313dcd6988635926022ccb667e9cdbb"
-working_tree_state: "windows-pro-install-key-tested"
+head_observed: "b43575d5c543c8424ad612a3c297733cfa19acbb"
+working_tree_state: "windows-qemu-requirement-bypass-tested"
 active_tasks: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
-updated_at: "2026-07-28T02:46:25Z"
+updated_at: "2026-07-28T02:51:24Z"
 ---
 
 # Repository recovery state

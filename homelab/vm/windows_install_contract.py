@@ -261,6 +261,11 @@ def render_startup(
         + check
         + "echo TELOS WINPE phase=partition\r\n"
         + 'diskpart /s "%inputs%windows-layout.txt" || exit /b 41\r\n'
+        "echo TELOS WINPE phase=qemu-requirements\r\n"
+        "reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassTPMCheck "
+        "/t REG_DWORD /d 1 /f >nul || exit /b 45\r\n"
+        "reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassSecureBootCheck "
+        "/t REG_DWORD /d 1 /f >nul || exit /b 46\r\n"
         "echo TELOS WINPE phase=setup\r\n"
         "I:\\setup.exe /InstallFrom I:\\sources\\install.wim "
         '/Unattend:"%inputs%Autounattend.xml" || exit /b 50\r\n'
