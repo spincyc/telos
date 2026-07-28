@@ -228,3 +228,10 @@ Controller runner re-matched its retained initial prompt after an intermediate
 serial chunk. Return detection now evaluates only bytes received after
 bootstrap command submission. The fresh disk remained empty. A newly prepared
 bundle and live retry are next.
+
+The corrected retry completed the full planned GPT layout and reached Setup,
+which failed with access denied while launching `I:\setup.exe`. The
+authenticated read-only Samba share now permits Windows execute semantics
+despite sealed media's Unix non-executable modes. Guest and write access remain
+disabled. The partitioned evidence disk will not be reused; a fresh run is
+next.

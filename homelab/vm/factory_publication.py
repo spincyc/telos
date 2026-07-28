@@ -275,6 +275,7 @@ def stage(
                 "map to guest = never\nlogging = file\n"
                 "[windows-release]\npath = /srv/windows-source\n"
                 "read only = yes\nguest ok = no\nvalid users = pxe-install\n"
+                "acl allow execute always = yes\n"
                 "EOF\n"
                 "{ sed 's/\\r$//' \"$password\"; "
                 "sed 's/\\r$//' \"$password\"; } | "
