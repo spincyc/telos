@@ -88,7 +88,11 @@ def _secret_encodings(secret: str | bytes) -> tuple[bytes, ...]:
 
 def _inventory_files(
     inventory: RetainedInventory,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+) -> tuple[
+    tuple[Path, ...],
+    tuple[Path, ...],
+    dict[PurePosixPath, tuple[int, int, int, int, int]],
+]:
     root = inventory.root
     for ancestor in (root, *root.parents):
         try:
@@ -117,6 +121,7 @@ def _inventory_files(
     }
     observed: set[PurePosixPath] = set()
     observed_directories: set[PurePosixPath] = set()
+    identities = {PurePosixPath("."): _metadata_identity(metadata)}
 
     def walk_error(error: OSError) -> None:
         raise WindowsIdentityDiagnosticError(
@@ -127,11 +132,18 @@ def _inventory_files(
         current_path = Path(current)
         for name in tuple(directories):
             entry = current_path / name
-            if entry.is_symlink():
+            try:
+                item = entry.lstat()
+            except OSError as error:
                 raise WindowsIdentityDiagnosticError(
-                    f"retained inventory contains a symlink: {entry}")
-            observed_directories.add(PurePosixPath(
-                entry.relative_to(root).as_posix()))
+                    f"retained inventory changed while enumerated: {entry}"
+                ) from error
+            if stat.S_ISLNK(item.st_mode) or not stat.S_ISDIR(item.st_mode):
+                raise WindowsIdentityDiagnosticError(
+                    f"retained inventory contains a non-directory: {entry}")
+            relative = PurePosixPath(entry.relative_to(root).as_posix())
+            observed_directories.add(relative)
+            identities[relative] = _metadata_identity(item)
         for name in files:
             entry = current_path / name
             relative = PurePosixPath(entry.relative_to(root).as_posix())
@@ -145,13 +157,21 @@ def _inventory_files(
                 raise WindowsIdentityDiagnosticError(
                     f"retained inventory contains a nonregular file: {entry}")
             observed.add(relative)
+            identities[relative] = _metadata_identity(item)
     if observed != declared or observed_directories != declared_directories:
         raise WindowsIdentityDiagnosticError(
             "retained root does not exactly match its exhaustive inventory")
     artifacts = tuple(root / Path(*path.parts)
                       for path in inventory.tracked_artifacts)
     logs = tuple(root / Path(*path.parts) for path in inventory.logs)
-    return artifacts, logs
+    return artifacts, logs, identities
+
+
+def _metadata_identity(item: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
 
 
 def _scan_regular_file(path: Path, needles: tuple[bytes, ...]) -> int:
@@ -177,11 +197,7 @@ def _scan_regular_file(path: Path, needles: tuple[bytes, ...]) -> int:
                 overlap = len(needle) - 1
                 tails[index] = window[-overlap:] if overlap else b""
         after = os.fstat(descriptor)
-        identity = lambda item: (  # noqa: E731
-            item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns,
-            item.st_ctime_ns,
-        )
-        if identity(before) != identity(after):
+        if _metadata_identity(before) != _metadata_identity(after):
             raise WindowsIdentityDiagnosticError(
                 f"diagnostic source changed while scanned: {path}")
         return found
@@ -240,13 +256,20 @@ class ProductionSecretScanner:
         })
         artifacts: list[Path] = []
         logs: list[Path] = []
+        snapshots = []
         for inventory in self.retained:
-            found_artifacts, found_logs = _inventory_files(inventory)
+            found_artifacts, found_logs, snapshot = _inventory_files(inventory)
             artifacts.extend(found_artifacts)
             logs.extend(found_logs)
+            snapshots.append((inventory, snapshot))
         artifact_hits = sum(
             _scan_regular_file(path, needles) for path in artifacts)
         log_hits = sum(_scan_regular_file(path, needles) for path in logs)
+        for inventory, before in snapshots:
+            _, _, after = _inventory_files(inventory)
+            if before != after:
+                raise WindowsIdentityDiagnosticError(
+                    "retained inventory changed while scanned")
         qemu_payload = json.dumps(
             self.qemu_arguments,
             ensure_ascii=False,

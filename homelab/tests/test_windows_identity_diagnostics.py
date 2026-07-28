@@ -184,6 +184,28 @@ class ProductionSecretScannerTests(unittest.TestCase):
                         WindowsIdentityDiagnosticError):
                 scanner((self.secret,))
 
+    def test_inventory_change_after_file_scan_fails_closed(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            scanner = self.scanner(root)
+            from homelab.vm import windows_identity_diagnostics as diagnostics
+            real_scan = diagnostics._scan_regular_file
+            calls = 0
+
+            def scan_and_add(path, needles):
+                nonlocal calls
+                result = real_scan(path, needles)
+                calls += 1
+                if calls == 2:
+                    (root / "late-sidecar").write_bytes(self.secret.encode())
+                return result
+
+            with mock.patch.object(
+                    diagnostics, "_scan_regular_file",
+                    side_effect=scan_and_add), self.assertRaises(
+                        WindowsIdentityDiagnosticError):
+                scanner((self.secret,))
+
 
 if __name__ == "__main__":
     unittest.main()
