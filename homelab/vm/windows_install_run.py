@@ -110,6 +110,7 @@ def run(
             processes["switch"] = subprocess.Popen(
                 switch_command(
                     listener.fileno(), evidence / "switch.jsonl",
+                    accept_timeout=360,
                     idle_timeout=duration + 60),
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT, pass_fds=(listener.fileno(),))
