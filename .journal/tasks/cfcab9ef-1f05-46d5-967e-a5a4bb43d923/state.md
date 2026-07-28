@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:07:25Z"
+updated_at: "2026-07-28T01:14:40Z"
 ---
 
 # Goal
@@ -107,3 +107,11 @@ afterward. All children and the disposable overlay were cleaned up; the fresh
 workstation disk was never booted. Publication now creates the fail-closed
 read-only configuration before adding the synthetic account. A newly prepared
 bundle is required because completed private publication images are immutable.
+
+The second bounded execution also failed before workstation launch: the
+Controller base image intentionally masks `smb.service`. The private publisher
+now explicitly unmasks only that service inside the disposable overlay before
+enabling it. Controller publication also fails immediately when its bootstrap
+returns to the shell without a readiness marker, instead of waiting for the
+outer timeout. Cleanup again completed and the workstation disk was not
+booted.

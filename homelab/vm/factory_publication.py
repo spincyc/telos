@@ -278,6 +278,7 @@ def stage(
                 "EOF\n"
                 "{ cat \"$password\"; cat \"$password\"; } | "
                 "smbpasswd -s -a pxe-install >/dev/null\n"
+                "systemctl unmask smb.service\n"
                 "systemctl enable smb.service\n"
             )
         readiness_units = (
