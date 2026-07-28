@@ -25,6 +25,11 @@ from .windows_identity_operations import (
     ProductionIdentityReceipt,
     execute_production_identity_acceptance,
 )
+from .windows_identity_observations import (
+    ObservationRecords,
+    WindowsIdentityObservationError,
+    map_exact_observation,
+)
 from .windows_identity_progressive import ProgressiveRotationPlan
 from .windows_identity_run import NativeProcessBoundary
 from .windows_join_iso import (
@@ -46,33 +51,12 @@ class Qmp(Protocol):
 
 
 @dataclass(frozen=True)
-class ObservationContext:
-    """Public inputs available to one exact contract observation."""
-
-    static_probe: Mapping[str, object] | None = None
-    credential_action: Mapping[str, object] | None = None
-    join_proof: Mapping[str, object] | None = None
-
-
-@dataclass(frozen=True)
-class ExactObservation:
-    """One semantic mapping bound to the exact raw sources it consumed."""
-
-    check: str
-    sources: frozenset[str]
-    fields: Mapping[str, Any]
-
-
-Observation = Callable[[str, ObservationContext], ExactObservation]
-
-
-@dataclass(frozen=True)
 class AcceptanceCallbacks:
     """Explicit host/guest boundaries required by the production run.
 
-    The observation callback owns semantic interpretation. Static probe and
-    credential-action records are supplied as public context, but the
-    orchestrator never invents missing fields from either record.
+    Semantic interpretation is owned by the built-in exact-source mapper.
+    Callbacks can return only strict raw public records, never asserted
+    acceptance fields or source labels.
     """
 
     qmp: Callable[[], Qmp]
@@ -83,7 +67,6 @@ class AcceptanceCallbacks:
     credential_action: Callable[
         [str, str, str], Mapping[str, object]
     ]
-    observe: Observation
     scan_secrets: Callable[
         [tuple[str, ...]], Mapping[str, Any]
     ]
@@ -102,12 +85,14 @@ class WindowsAcceptanceReceipt:
 
 
 _STATIC_ACTIONS = {
-    "controller-ready": "service-reachability",
+    "controller-ready": ("controller-readiness",),
     "windows-joined": "domain-state",
-    "windows-standard-online": "current-principal",
-    "windows-daily-admin": "current-principal",
+    "windows-standard-online": ("managed-identity-state",),
+    "windows-daily-admin": ("managed-identity-state",),
+    "domain-admin-separate": ("managed-identity-state",),
     "windows-rebooted-joined": "domain-state",
-    "windows-cached-policy": "cached-logon-policy",
+    "windows-cached-policy": (
+        "cached-logon-policy", "managed-identity-state"),
     "controller-offline": "service-reachability",
     "controller-restored": "service-reachability",
     "windows-secure-channel-restored": "domain-state",
@@ -117,70 +102,85 @@ _STATIC_ACTIONS = {
     "optional-storage-access-denied": "dependency-reachability",
     "ad-dns-offline": "service-reachability",
     "combined-dependencies-offline": "dependency-reachability",
-    "windows-services-restored": "service-reachability",
+    "windows-services-restored": (
+        "service-reachability", "domain-state",
+        "dependency-reachability"),
 }
 
 _CREDENTIAL_ROLES = {
-    "windows-standard-online": "student",
-    "windows-daily-admin": "operator",
-    "windows-cached-login": "student",
-    "windows-cached-admin-login": "operator",
-    "windows-uncached-denied": "directory-admin",
-    "windows-local-rescue": "local",
-    "gateway-offline": "student",
-    "optional-storage-offline": "student",
-    "optional-storage-access-denied": "student",
-    "ad-dns-offline": "student",
-    "combined-dependencies-offline": "local",
+    "windows-standard-online": ("student",),
+    "windows-daily-admin": ("operator",),
+    "windows-cached-login": ("student",),
+    "windows-cached-admin-login": ("operator",),
+    "windows-uncached-denied": ("directory-admin",),
+    "windows-local-rescue": ("local",),
+    "gateway-offline": ("student",),
+    "update-source-offline": ("student",),
+    "optional-storage-offline": ("student",),
+    "optional-storage-access-denied": ("student",),
+    "ad-dns-offline": ("student",),
+    "combined-dependencies-offline": ("student", "local"),
 }
 
 
-def _validated_static_probe(
+def _validated_static_probes(
     callbacks: AcceptanceCallbacks, check: str,
-) -> Mapping[str, object] | None:
-    action = _STATIC_ACTIONS.get(check)
-    if action is None:
+) -> Mapping[str, Mapping[str, object]] | None:
+    configured = _STATIC_ACTIONS.get(check)
+    if configured is None:
         return None
-    record = dict(callbacks.static_probe(action))
-    if (
-        record.get("schema_version") != 1
-        or record.get("action") != action
-        or record.get("result") != "pass"
-        or not isinstance(record.get("observation"), dict)
-    ):
-        raise WindowsIdentityOrchestratorError(
-            f"{check} static probe record is invalid")
-    return record
+    actions = (configured,) if isinstance(configured, str) else configured
+    records: dict[str, Mapping[str, object]] = {}
+    for action in actions:
+        record = dict(callbacks.static_probe(action))
+        if (
+            record.get("schema_version") != 1
+            or record.get("action") != action
+            or record.get("result") != "pass"
+            or not isinstance(record.get("observation"), dict)
+        ):
+            raise WindowsIdentityOrchestratorError(
+                f"{check} static probe record is invalid")
+        records[action] = record
+    return records
 
 
-def _credential_context(
+def _credential_contexts(
     callbacks: AcceptanceCallbacks,
     check: str,
     local_credential: str,
     principals: Mapping[str, str],
-) -> Mapping[str, object] | None:
-    role = _CREDENTIAL_ROLES.get(check)
-    if role is None:
+) -> Mapping[str, Mapping[str, object]] | None:
+    roles = _CREDENTIAL_ROLES.get(check)
+    if roles is None:
         return None
-    if role == "local":
-        principal = callbacks.local_principal
-        if not isinstance(principal, str) or not principal:
+    results: dict[str, Mapping[str, object]] = {}
+    for role in roles:
+        if role == "local":
+            principal = callbacks.local_principal
+            if not isinstance(principal, str) or not principal:
+                raise WindowsIdentityOrchestratorError(
+                    f"{check} local principal is unavailable")
+            credential = local_credential
+        else:
+            try:
+                credential = principals[role]
+            except KeyError:
+                raise WindowsIdentityOrchestratorError(
+                    f"{check} principal credential is unavailable") from None
+            principal = role
+        result = dict(callbacks.credential_action(
+            check, principal, credential))
+        action = result.get("action")
+        if (
+            result.get("schema_version") != 1
+            or not isinstance(action, str)
+            or action in results
+        ):
             raise WindowsIdentityOrchestratorError(
-                f"{check} local principal is unavailable")
-        credential = local_credential
-    else:
-        try:
-            credential = principals[role]
-        except KeyError:
-            raise WindowsIdentityOrchestratorError(
-                f"{check} principal credential is unavailable") from None
-        principal = role
-    result = dict(callbacks.credential_action(
-        check, principal, credential))
-    if result.get("schema_version") != 1:
-        raise WindowsIdentityOrchestratorError(
-            f"{check} credential action result is invalid")
-    return result
+                f"{check} credential action result is invalid")
+        results[action] = result
+    return results
 
 
 def _record(
@@ -191,30 +191,21 @@ def _record(
     local_credential: str,
     principals: Mapping[str, str],
     join_proof: Mapping[str, object] | None = None,
+    fault_record: Mapping[str, object] | None = None,
 ) -> None:
-    context = ObservationContext(
-        static_probe=_validated_static_probe(callbacks, check),
-        credential_action=_credential_context(
+    context = ObservationRecords(
+        static_probes=_validated_static_probes(callbacks, check),
+        credential_actions=_credential_contexts(
             callbacks, check, local_credential, principals),
         join_proof=join_proof,
+        fault_record=fault_record,
     )
-    mapped = callbacks.observe(check, context)
-    expected_sources = {f"guest:{check}"}
-    if context.static_probe is not None:
-        expected_sources.add(
-            f"static:{context.static_probe['action']}")
-    if context.credential_action is not None:
-        expected_sources.add(f"credential:{check}")
-    if context.join_proof is not None:
-        expected_sources.add("join:post-reboot")
-    if (
-        not isinstance(mapped, ExactObservation)
-        or mapped.check != check
-        or mapped.sources != frozenset(expected_sources)
-    ):
+    try:
+        fields = map_exact_observation(check, context)
+    except WindowsIdentityObservationError as error:
         raise WindowsIdentityOrchestratorError(
-            f"{check} observation source binding is invalid")
-    collector.record(check, mapped.fields)
+            f"{check} exact observation is invalid: {error}") from error
+    collector.record(check, fields)
 
 
 def _post_reboot_proof(
@@ -348,21 +339,42 @@ def _run_acceptance_checks(
         "windows-standard-online",
         "windows-daily-admin",
         "domain-admin-separate",
-        "windows-rebooted-joined",
-        "windows-cached-policy",
     ):
         record(check)
+    record("windows-rebooted-joined", join_proof=join_proof)
+    record("windows-cached-policy")
+
+    offline: set[str] = set()
+
+    def fault_setter(
+        dependency: str, setter: Callable[[bool], None],
+    ) -> Callable[[bool], None]:
+        def apply(available: bool) -> None:
+            setter(available)
+            if available:
+                offline.discard(dependency)
+            else:
+                offline.add(dependency)
+        return apply
 
     def fault_observe(check: str) -> None:
-        record(check)
+        record(check, fault_record={
+            "schema_version": 1,
+            "check": check,
+            "offline_dependencies": sorted(offline),
+        })
         if check == "windows-secure-channel-restored":
             record("windows-update-policy")
 
     faults = run_fault_phases(FaultPhaseOperations(
-        set_controller_available=boundary.set_controller_available,
-        set_gateway_available=boundary.set_gateway_available,
-        set_update_source_available=boundary.set_update_source_available,
-        set_optional_storage_available=boundary.set_optional_storage_available,
+        set_controller_available=fault_setter(
+            "controller", boundary.set_controller_available),
+        set_gateway_available=fault_setter(
+            "gateway", boundary.set_gateway_available),
+        set_update_source_available=fault_setter(
+            "update-source", boundary.set_update_source_available),
+        set_optional_storage_available=fault_setter(
+            "optional-storage", boundary.set_optional_storage_available),
         observe=fault_observe,
     ))
     diagnostics = callbacks.scan_secrets(

@@ -13,17 +13,32 @@ from homelab.tests.test_windows_identity_acceptance import details
 
 class WindowsIdentityOrchestratorTests(unittest.TestCase):
     def callbacks(self, observed):
-        def observe(check, context):
-            sources = {f"guest:{check}"}
-            if context.static_probe is not None:
-                sources.add(f"static:{context.static_probe['action']}")
-            if context.credential_action is not None:
-                sources.add(f"credential:{check}")
-            if context.join_proof is not None:
-                sources.add("join:post-reboot")
-            observed.append((check, context))
-            return subject.ExactObservation(
-                check, frozenset(sources), details()[check])
+        def credential_action(check, principal, credential):
+            actions = {
+                "windows-standard-online": "connected-domain-login",
+                "windows-daily-admin":
+                    "operator-local-administrators-check",
+                "windows-cached-login": "cached-domain-login",
+                "windows-cached-admin-login": "cached-domain-login",
+                "windows-uncached-denied": "uncached-domain-user-denied",
+                "windows-local-rescue": "local-rescue-login",
+                "gateway-offline": "connected-domain-login",
+                "update-source-offline": "connected-domain-login",
+                "optional-storage-offline": "connected-domain-login",
+                "optional-storage-access-denied":
+                    "connected-domain-login",
+                "ad-dns-offline": "cached-domain-login",
+                "combined-dependencies-offline": (
+                    "local-rescue-login" if principal == "telosadmin"
+                    else "cached-domain-login"),
+            }
+            return {
+                "schema_version": 1,
+                "action": actions[check],
+                "check": check,
+                "principal": principal,
+                "credential_owned": bool(credential),
+            }
 
         return subject.AcceptanceCallbacks(
             qmp=mock.Mock(),
@@ -37,13 +52,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "observed_at": "2026-07-28T15:00:00Z",
                 "observation": {},
             },
-            credential_action=lambda check, principal, credential: {
-                "schema_version": 1,
-                "check": check,
-                "principal": principal,
-                "credential_owned": bool(credential),
-            },
-            observe=observe,
+            credential_action=credential_action,
             scan_secrets=lambda _secrets: details()[
                 "windows-diagnostics-sanitized"],
             local_principal="telosadmin",
@@ -77,6 +86,10 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             destruction_proved=True,
             events=(),
         )
+        def map_observation(check, context):
+            observed.append((check, context))
+            return details()[check]
+
         with tempfile.TemporaryDirectory() as name, mock.patch.object(
             subject, "execute_production_identity_acceptance",
             side_effect=execute_production,
@@ -88,6 +101,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "joined_after_reboot": True,
                 "domain": "FACTORY.TEST",
             }, True),
+        ), mock.patch.object(
+            subject, "map_exact_observation",
+            side_effect=map_observation,
         ):
             root = Path(name)
             root.chmod(0o700)
@@ -117,18 +133,6 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
     def test_observation_failure_leaves_destination_absent(self):
         callbacks = self.callbacks([])
-        callbacks = subject.AcceptanceCallbacks(
-            **{
-                **callbacks.__dict__,
-                "observe": lambda check, _context: subject.ExactObservation(
-                    check,
-                    frozenset({f"guest:{check}"}),
-                    {} if check == "windows-daily-admin"
-                    else details()[check],
-                ),
-            }
-        )
-
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
                 "student": "Student-Secret-47!",
@@ -141,6 +145,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             side_effect=execute_production,
         ), mock.patch.object(
             subject, "_execute_join", return_value=({}, True),
+        ), mock.patch.object(
+            subject, "map_exact_observation",
+            side_effect=lambda check, _context: (
+                {} if check == "windows-daily-admin"
+                else details()[check]),
         ):
             root = Path(name)
             root.chmod(0o700)
@@ -177,6 +186,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             side_effect=execute_production,
         ), mock.patch.object(
             subject, "_execute_join", return_value=({}, True),
+        ), mock.patch.object(
+            subject, "map_exact_observation",
+            side_effect=lambda check, _context: details()[check],
         ):
             root = Path(name)
             root.chmod(0o700)
@@ -197,18 +209,12 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 )
             self.assertFalse(destination.exists())
 
-    def test_unbound_semantic_observation_is_rejected(self):
+    def test_unproved_semantic_observation_is_rejected(self):
         callbacks = self.callbacks([])
-        callbacks = subject.AcceptanceCallbacks(
-            **{
-                **callbacks.__dict__,
-                "observe": lambda check, _context: subject.ExactObservation(
-                    check, frozenset({f"guest:{check}"}), details()[check]),
-            }
-        )
         collector = mock.Mock()
         with self.assertRaisesRegex(
-                subject.WindowsIdentityOrchestratorError, "source binding"):
+                subject.WindowsIdentityOrchestratorError,
+                "exact observation"):
             subject._record(
                 collector,
                 callbacks,
