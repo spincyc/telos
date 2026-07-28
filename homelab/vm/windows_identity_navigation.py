@@ -190,62 +190,65 @@ def capture_navigation(
     cleanup: list[str] = []
     intended: list[str] = []
     previous_umask = os.umask(0o077)
+    signals = SignalGuard()
+    signals_entered = False
     try:
-        with SignalGuard():
-            intended.append("switch")
-            boundary.start_switch()
-            intended.append("controller")
-            boundary.start_controller()
-            intended.append("windows")
-            boundary.start_windows()
-            boundary.authenticate_qmp()
-            if boundary.qmp is None:
-                raise WindowsIdentityNavigationError(
-                    "QMP authentication returned without a client")
-            root = _private_root(evidence_root)
-            driver = WindowsCredentialRotationDriver(
-                boundary.qmp,
-                root,
-                interval=plan.interval,
-                clock=clock,
-                pause=pause,
-            )
-            if plan.sign_in_delay:
-                pause(plan.sign_in_delay)
-            for key in plan.sign_in_keys:
-                boundary.qmp.key(key)
-                pause(0.15)
-            driver._observe(sign_in)
-            try:
-                with recover_credential() as credential:
-                    driver._validate_secret(credential)
-                    boundary.qmp.type_text(credential)
-                    boundary.qmp.key("ret")
-                    submitted = True
-            except Exception:
-                raise WindowsIdentityNavigationError(
-                    "private sign-in operation failed") from None
-            desktop = _stable_frames(
-                boundary, root, "desktop", plan.desktop_crop,
-                timeout=plan.timeout, interval=plan.interval,
-                clock=clock, pause=pause,
-            )
-            boundary.qmp.chord("ctrl", "alt", "delete")
-            security = _stable_frames(
-                boundary, root, "security-options",
-                plan.security_options_crop,
-                timeout=plan.timeout, interval=plan.interval,
-                clock=clock, pause=pause,
-            )
-            for key in plan.change_password_keys:
-                boundary.qmp.key(key)
-                pause(0.15)
-            change = _stable_frames(
-                boundary, root, "change-password",
-                plan.change_password_crop,
-                timeout=plan.timeout, interval=plan.interval,
-                clock=clock, pause=pause,
-            )
+        signals.__enter__()
+        signals_entered = True
+        intended.append("switch")
+        boundary.start_switch()
+        intended.append("controller")
+        boundary.start_controller()
+        intended.append("windows")
+        boundary.start_windows()
+        boundary.authenticate_qmp()
+        if boundary.qmp is None:
+            raise WindowsIdentityNavigationError(
+                "QMP authentication returned without a client")
+        root = _private_root(evidence_root)
+        driver = WindowsCredentialRotationDriver(
+            boundary.qmp,
+            root,
+            interval=plan.interval,
+            clock=clock,
+            pause=pause,
+        )
+        if plan.sign_in_delay:
+            pause(plan.sign_in_delay)
+        for key in plan.sign_in_keys:
+            boundary.qmp.key(key)
+            pause(0.15)
+        driver._observe(sign_in)
+        try:
+            with recover_credential() as credential:
+                driver._validate_secret(credential)
+                boundary.qmp.type_text(credential)
+                boundary.qmp.key("ret")
+                submitted = True
+        except Exception:
+            raise WindowsIdentityNavigationError(
+                "private sign-in operation failed") from None
+        desktop = _stable_frames(
+            boundary, root, "desktop", plan.desktop_crop,
+            timeout=plan.timeout, interval=plan.interval,
+            clock=clock, pause=pause,
+        )
+        boundary.qmp.chord("ctrl", "alt", "delete")
+        security = _stable_frames(
+            boundary, root, "security-options",
+            plan.security_options_crop,
+            timeout=plan.timeout, interval=plan.interval,
+            clock=clock, pause=pause,
+        )
+        for key in plan.change_password_keys:
+            boundary.qmp.key(key)
+            pause(0.15)
+        change = _stable_frames(
+            boundary, root, "change-password",
+            plan.change_password_crop,
+            timeout=plan.timeout, interval=plan.interval,
+            clock=clock, pause=pause,
+        )
     except BaseException as error:
         primary = error
     finally:
@@ -260,7 +263,13 @@ def capture_navigation(
                 stop()
             except BaseException as error:
                 cleanup.append(f"{role}: {type(error).__name__}")
-        os.umask(previous_umask)
+        try:
+            if signals_entered:
+                signals.__exit__(None, None, None)
+        except BaseException as error:
+            cleanup.append(f"signal handlers: {type(error).__name__}")
+        finally:
+            os.umask(previous_umask)
     if primary is not None or cleanup:
         details = []
         if primary is not None:

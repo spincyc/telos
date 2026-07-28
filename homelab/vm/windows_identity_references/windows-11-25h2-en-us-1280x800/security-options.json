@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "state": "security options with Lock focused",
+  "state_kind": "security-options",
+  "captured_after_private_input": true,
+  "contains_private_material": false,
+  "guest": {
+    "release": "Windows 11 25H2",
+    "language": "en-US",
+    "architecture": "x86_64",
+    "installer_iso_sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3",
+    "source_disk_sha256": "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+  },
+  "capture": {
+    "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+    "attempt": "attempt-20260728T144825Z-addcca9c3aca",
+    "geometry": [1280, 800],
+    "crop": [440, 180, 400, 360],
+    "stable_source_frame_sha256": [
+      "b7d4a4133f37512e3c05aab70226102ddf7c5754aaa738430db4ab3ee60eb5a2",
+      "b7d4a4133f37512e3c05aab70226102ddf7c5754aaa738430db4ab3ee60eb5a2",
+      "b7d4a4133f37512e3c05aab70226102ddf7c5754aaa738430db4ab3ee60eb5a2"
+    ]
+  },
+  "reference": {
+    "file": "security-options.ppm",
+    "sha256": "6c418fb66896b7fc7efc90c47b131d405d3d9d890f25bdc7e3323c3d8d07595d"
+  }
+}

@@ -43,7 +43,27 @@ class WindowsIdentityReferenceTests(unittest.TestCase):
         self.assertEqual((360, 360), (
             reference.image.width, reference.image.height))
         self.assertIn("telosadmin", reference.state)
+        self.assertEqual("sign-in", reference.state_kind)
+        self.assertFalse(reference.captured_after_private_input)
+        self.assertFalse(reference.contains_private_material)
         self.assertEqual("Windows 11 25H2", reference.guest.release)
+
+    def test_checked_in_navigation_references_are_public_and_guest_bound(self):
+        expected_kinds = {
+            "desktop": "desktop",
+            "security-options": "security-options",
+            "change-password": "change-password",
+        }
+        sign_in = load_identity_reference(REFERENCE_ROOT / "sign-in.json")
+        for name, kind in expected_kinds.items():
+            with self.subTest(name=name):
+                reference = load_identity_reference(
+                    REFERENCE_ROOT / f"{name}.json",
+                    expected_guest=sign_in.guest,
+                )
+                self.assertEqual(kind, reference.state_kind)
+                self.assertTrue(reference.captured_after_private_input)
+                self.assertFalse(reference.contains_private_material)
 
     def test_operational_load_binds_reference_to_expected_guest(self):
         expected = GuestProvenance(
@@ -99,6 +119,30 @@ class WindowsIdentityReferenceTests(unittest.TestCase):
                 "stable_source_frame_sha256"].__setitem__(1, "0" * 64))
         with self.assertRaisesRegex(
                 WindowsIdentityReferenceError, "not byte-stable"):
+            load_identity_reference(manifest)
+
+    def test_navigation_schema_distinguishes_timing_from_private_content(self):
+        manifest = self.staged()
+        document = json.loads(manifest.read_text())
+        document.pop("credential_entered")
+        document.update({
+            "schema": 2,
+            "state": "focused local change-password form",
+            "state_kind": "change-password",
+            "captured_after_private_input": True,
+            "contains_private_material": False,
+        })
+        manifest.write_text(json.dumps(document))
+
+        reference = load_identity_reference(manifest)
+        self.assertEqual("change-password", reference.state_kind)
+        self.assertTrue(reference.captured_after_private_input)
+        self.assertFalse(reference.contains_private_material)
+
+        document["contains_private_material"] = True
+        manifest.write_text(json.dumps(document))
+        with self.assertRaisesRegex(
+                WindowsIdentityReferenceError, "private material"):
             load_identity_reference(manifest)
 
     def test_rejects_geometry_or_reference_drift(self):

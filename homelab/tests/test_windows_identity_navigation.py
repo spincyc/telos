@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
+from homelab.vm import windows_identity_navigation
 from homelab.tests.test_windows_identity_reference import REFERENCE_ROOT
 from homelab.vm.windows_identity_navigation import (
     NavigationCalibrationPlan,
@@ -286,6 +288,47 @@ class WindowsIdentityNavigationTests(unittest.TestCase):
             )
             self.assertTrue(receipt.teardown_complete)
             self.assertTrue((boundary.runtime / "navigation").is_dir())
+
+    def test_signal_guard_remains_active_through_teardown(self):
+        events = []
+
+        class Guard:
+            def __enter__(self):
+                events.append("signals-enter")
+
+            def __exit__(self, *_exc):
+                events.append("signals-exit")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            qmp = FakeQmp(self.frames())
+            boundary = Boundary(qmp)
+            original_event = boundary._event
+
+            def record(name):
+                events.append(name)
+                original_event(name)
+
+            boundary._event = record
+
+            @contextmanager
+            def recover():
+                yield "Recovered-Private-47!"
+
+            with mock.patch.object(
+                    windows_identity_navigation, "SignalGuard",
+                    return_value=Guard()):
+                capture_navigation(
+                    boundary,
+                    sign_in_manifest=REFERENCE_ROOT / "sign-in.json",
+                    expected_guest=expected_guest(),
+                    recover_credential=recover,
+                    evidence_root=root / "evidence",
+                    plan=plan(),
+                    clock=_Clock(),
+                    pause=lambda _: None,
+                )
+        self.assertLess(events.index("stop-switch"), events.index("signals-exit"))
 
 
 class _Clock:

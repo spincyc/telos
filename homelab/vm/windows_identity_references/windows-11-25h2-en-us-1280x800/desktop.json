@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "state": "stable local telosadmin desktop",
+  "state_kind": "desktop",
+  "captured_after_private_input": true,
+  "contains_private_material": false,
+  "guest": {
+    "release": "Windows 11 25H2",
+    "language": "en-US",
+    "architecture": "x86_64",
+    "installer_iso_sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3",
+    "source_disk_sha256": "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+  },
+  "capture": {
+    "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+    "attempt": "attempt-20260728T144825Z-addcca9c3aca",
+    "geometry": [1280, 800],
+    "crop": [0, 0, 360, 360],
+    "stable_source_frame_sha256": [
+      "0a0fdc922b82719c83d3a7032445b4fd989c76f0fac8ca8bf6cc9ca9ce80fdc5",
+      "0a0fdc922b82719c83d3a7032445b4fd989c76f0fac8ca8bf6cc9ca9ce80fdc5",
+      "0a0fdc922b82719c83d3a7032445b4fd989c76f0fac8ca8bf6cc9ca9ce80fdc5"
+    ]
+  },
+  "reference": {
+    "file": "desktop.ppm",
+    "sha256": "cf61383c161d60b5ef01f4b52051fde7e0057329c782b0334c29febcdc55afca"
+  }
+}

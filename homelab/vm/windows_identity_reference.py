@@ -38,6 +38,9 @@ class ValidatedIdentityReference:
     """A hash-verified, pre-cropped public checkpoint reference."""
 
     state: str
+    state_kind: str
+    captured_after_private_input: bool
+    contains_private_material: bool
     guest: GuestProvenance
     path: Path
     image: Image
@@ -90,18 +93,52 @@ def load_identity_reference(
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise WindowsIdentityReferenceError(
             "reference manifest is not valid JSON") from error
-    root = _object(
-        document,
-        {"schema", "state", "credential_entered", "guest", "capture", "reference"},
-        "reference manifest",
-    )
-    if root["schema"] != 1:
+    if not isinstance(document, dict):
+        raise WindowsIdentityReferenceError("invalid reference manifest fields")
+    schema = document.get("schema")
+    if schema == 1:
+        root = _object(
+            document,
+            {
+                "schema", "state", "credential_entered", "guest", "capture",
+                "reference",
+            },
+            "reference manifest",
+        )
+        if root["credential_entered"] is not False:
+            raise WindowsIdentityReferenceError(
+                "calibration reference must precede credential entry")
+        state_kind = "sign-in"
+        captured_after_private_input = False
+        contains_private_material = False
+    elif schema == 2:
+        root = _object(
+            document,
+            {
+                "schema", "state", "state_kind",
+                "captured_after_private_input", "contains_private_material",
+                "guest", "capture", "reference",
+            },
+            "reference manifest",
+        )
+        state_kind = root["state_kind"]
+        if state_kind not in {
+            "desktop", "security-options", "change-password"
+        }:
+            raise WindowsIdentityReferenceError(
+                "invalid reference state kind")
+        captured_after_private_input = root["captured_after_private_input"]
+        contains_private_material = root["contains_private_material"]
+        if captured_after_private_input is not True:
+            raise WindowsIdentityReferenceError(
+                "navigation reference must follow private sign-in")
+        if contains_private_material is not False:
+            raise WindowsIdentityReferenceError(
+                "reference must not contain private material")
+    else:
         raise WindowsIdentityReferenceError("unsupported reference schema")
     if not isinstance(root["state"], str) or not root["state"].strip():
         raise WindowsIdentityReferenceError("invalid reference state")
-    if root["credential_entered"] is not False:
-        raise WindowsIdentityReferenceError(
-            "calibration reference must precede credential entry")
 
     guest = _object(
         root["guest"],
@@ -189,6 +226,9 @@ def load_identity_reference(
         raise WindowsIdentityReferenceError("reference image is not useful")
     return ValidatedIdentityReference(
         state=root["state"],
+        state_kind=state_kind,
+        captured_after_private_input=captured_after_private_input,
+        contains_private_material=contains_private_material,
         guest=guest_provenance,
         path=path,
         image=image,
