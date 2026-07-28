@@ -153,6 +153,14 @@ class FactoryRunnerTests(unittest.TestCase):
         self.assertIn("workstation=52:54:00:31:12:12", text)
         self.assertNotIn("0.0.0.0", text)
 
+    def test_switch_timeouts_can_cover_controller_publication(self):
+        command = factory_runner.switch_command(
+            9, Path("/run/evidence"),
+            accept_timeout=360, idle_timeout=240)
+        text = " ".join(command)
+        self.assertIn("--accept-timeout 360", text)
+        self.assertIn("--idle-timeout 240", text)
+
     def test_gateway_is_explicit_loopback_switch_peer(self):
         command = factory_runner.gateway_command(31415)
         self.assertIn("--connect", command)

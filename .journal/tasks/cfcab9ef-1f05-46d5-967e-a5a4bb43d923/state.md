@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:18:39Z"
+updated_at: "2026-07-28T01:20:24Z"
 ---
 
 # Goal
@@ -127,3 +127,11 @@ hash-based progress bar. Prompt recognition now requires the Controller's
 structured root-shell prompt. A regression test distinguishes package
 progress from the actual prompt. The run again stopped during disposable
 Controller publication before workstation launch.
+
+The fifth attempt reached Controller readiness and started the workstation,
+but the switch had already ended after its 20-second port-acceptance window
+because publication necessarily precedes the workstation connection. The
+workstation was terminated before firmware completed and its qcow2 remained
+at the empty image allocation size. The Windows lifecycle now gives the switch
+a 360-second connection window while retaining the existing default for other
+callers.
