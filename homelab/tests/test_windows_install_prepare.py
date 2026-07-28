@@ -92,6 +92,8 @@ class WindowsInstallPrepareTests(unittest.TestCase):
             destination = stage.call_args.args[1]
             self.assertNotEqual(destination, Path(destination).parent)
             self.assertEqual(Path(destination).name, "publication")
+            identity = private.render_windows_inputs.call_args.args[1]
+            self.assertEqual(identity.install_user, "pxe-install")
             self.assertTrue(run.is_dir())
 
 
