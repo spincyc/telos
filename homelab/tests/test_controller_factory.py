@@ -71,6 +71,18 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertIn("1 <= candidate[1] <= 15", script)
             self.assertIn(
                 "time.clock_settime(time.CLOCK_REALTIME, measured)", script)
+            self.assertLess(
+                script.index("time-sync-response"),
+                script.index("time-sync-clock"))
+            self.assertLess(
+                script.index("time-sync-clock"),
+                script.index("payload-stage"))
+            self.assertLess(
+                script.index("payload-stage"),
+                script.index("package-preflight"))
+            self.assertLess(
+                script.index("package-preflight"),
+                script.index("TELOS FACTORY STEP ansible"))
             self.assertIn(
                 "pacman -Q samba krb5 ntp python-cryptography", script)
             self.assertIn(

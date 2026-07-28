@@ -142,12 +142,15 @@ with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             break
 if response is None:
     raise SystemExit("simulated-gateway NTP measurement failed")
+print("TELOS FACTORY STEP time-sync-response", flush=True)
 seconds, fraction = struct.unpack("!II", response[40:48])
 measured = seconds - 2_208_988_800 + fraction / 2**32
 time.clock_settime(time.CLOCK_REALTIME, measured)
+print("TELOS FACTORY STEP time-sync-clock", flush=True)
 PY
 printf 'ntpd measurement passed\\n' >/run/telos-factory-state/clock.receipt
 chmod 0600 /run/telos-factory-state/clock.receipt
+echo 'TELOS FACTORY STEP payload-stage'
 install -d -m 0700 /run/secrets
 install -m 0600 "$root/secret/ad-admin" /run/secrets/factory-ad-admin
 trap 'shred -u /run/secrets/factory-ad-admin 2>/dev/null || rm -f /run/secrets/factory-ad-admin' EXIT
@@ -159,6 +162,7 @@ printf '%s\\n' \
   >/etc/homelab/manifest.json
 chmod 0644 /etc/homelab/manifest.json
 systemctl unmask samba.service ntpd.service nginx.service
+echo 'TELOS FACTORY STEP package-preflight'
 pacman -Q samba krb5 ntp python-cryptography python-dnspython \
   python-markdown openresolv bind >/dev/null
 echo 'TELOS FACTORY STEP ansible'
