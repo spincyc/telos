@@ -133,7 +133,7 @@ def _stable_run_frames(
     baseline: Image,
     pause: Callable[[float], None],
 ) -> tuple[tuple[Path, ...], Image]:
-    stable: list[tuple[bytes, Path]] = []
+    stable: list[tuple[bytes, bytes, Path]] = []
     selected_image: Image | None = None
     for sequence in range(1, plan.max_run_frames + 1):
         path = root / f"run-dialog-{sequence:04d}.ppm"
@@ -158,13 +158,17 @@ def _stable_run_frames(
             path.unlink(missing_ok=True)
             pause(plan.interval)
             continue
-        digest = hashlib.sha256(selected.pixels).digest()
-        if stable and stable[-1][0] != digest:
+        full_digest = hashlib.sha256(path.read_bytes()).digest()
+        crop_digest = hashlib.sha256(selected.pixels).digest()
+        if stable and (
+            stable[-1][0] != full_digest
+            or stable[-1][1] != crop_digest
+        ):
             stable.clear()
-        stable.append((digest, path))
+        stable.append((full_digest, crop_digest, path))
         selected_image = selected
         if len(stable) == 3:
-            return tuple(item[1] for item in stable), selected_image
+            return tuple(item[2] for item in stable), selected_image
         pause(plan.interval)
     raise WindowsRunDialogCalibrationError(
         "failed to capture three stable public Run-dialog frames")

@@ -93,6 +93,16 @@ def read_ppm_bytes(value):
         return read_ppm(Path(stream.name))
 
 
+def frame_with_constant_crop(background):
+    image = read_ppm_bytes(ppm(background))
+    pixels = bytearray(image.pixels)
+    for row in range(200, 500):
+        start = (row * image.width + 300) * 3
+        pixels[start:start + 600 * 3] = bytes((40, 70, 90)) * 600
+    return (
+        f"P6\n{image.width} {image.height}\n255\n".encode() + bytes(pixels))
+
+
 def guest():
     document = json.loads((REFERENCE_ROOT / "desktop.json").read_text())
     return GuestProvenance(**document["guest"])
@@ -158,6 +168,8 @@ class RunDialogCalibrationTests(unittest.TestCase):
             self.assertFalse(provenance["contains_private_material"])
             self.assertEqual(
                 1, len(set(provenance["capture"]["stable_crop_pixel_sha256"])))
+            self.assertEqual(
+                1, len(set(provenance["capture"]["source_frame_sha256"])))
             self.assertGreaterEqual(
                 provenance["capture"]["baseline_image_distance"], 6.0)
 
@@ -230,6 +242,21 @@ class RunDialogCalibrationTests(unittest.TestCase):
                 reference_full("sign-in"), reference_full("sign-in"),
                 desktop_full(), desktop_full(),
                 unchanged, unchanged, unchanged, unchanged,
+            ]
+            with self.assertRaisesRegex(
+                    WindowsRunDialogCalibrationError, "calibration failed"):
+                self.run_capture(root, frames)
+
+    def test_stable_crop_over_changing_full_frames_is_not_a_candidate(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            frames = [
+                reference_full("sign-in"), reference_full("sign-in"),
+                desktop_full(), desktop_full(), desktop_full(),
+                frame_with_constant_crop((1, 2, 3)),
+                frame_with_constant_crop((4, 5, 6)),
+                frame_with_constant_crop((7, 8, 9)),
+                frame_with_constant_crop((10, 11, 12)),
             ]
             with self.assertRaisesRegex(
                     WindowsRunDialogCalibrationError, "calibration failed"):
