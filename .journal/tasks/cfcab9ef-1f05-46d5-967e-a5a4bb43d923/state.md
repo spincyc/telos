@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:20:24Z"
+updated_at: "2026-07-28T01:25:11Z"
 ---
 
 # Goal
@@ -135,3 +135,11 @@ workstation was terminated before firmware completed and its qcow2 remained
 at the empty image allocation size. The Windows lifecycle now gives the switch
 a 360-second connection window while retaining the existing default for other
 callers.
+
+The sixth attempt passed the private WinPE overlay gate: all three isolated
+ports connected, DHCP/TFTP/HTTP handoff completed, the exact private files
+were fetched, and wimboot reported injecting `install.bat` and
+`winpeshl.ini`. It did not install Windows. The guest repeatedly returned to
+PXE, with no Setup or DiskPart evidence and only negligible qcow2 allocation.
+The next diagnostic boundary is bounded QMP screenshot capture during WinPE;
+serial evidence cannot expose the Windows-side failure.
