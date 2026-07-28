@@ -30,11 +30,24 @@ from .windows_identity_reference import (
     WindowsIdentityReferenceError,
     load_identity_reference,
 )
-from .windows_identity_run import NativeProcessBoundary
+from .windows_identity_run import (
+    IdentityFailureDiagnostic,
+    NativeProcessBoundary,
+    WindowsIdentityRunError,
+)
 
 
 class WindowsIdentityProgressiveError(RuntimeError):
     """The bounded rotation could not be completed and proved."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: IdentityFailureDiagnostic | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
 
 
 class RecoverableCredential(AbstractContextManager[str], Protocol):
@@ -267,6 +280,7 @@ def execute_progressive_rotation(
         )
     ):
         raise WindowsIdentityProgressiveError("invalid progressive plan")
+    sanitized_failure: WindowsIdentityProgressiveError | None = None
     try:
         references = _load_references(plan)
     except (OSError, WindowsIdentityReferenceError):
@@ -358,8 +372,22 @@ def execute_progressive_rotation(
     except Exception as error:
         # Do not chain backend, generator, or recovery exceptions: any of them
         # could contain a credential value.
-        raise WindowsIdentityProgressiveError(
-            f"progressive rotation failed: {type(error).__name__}") from None
+        detail = f"progressive rotation failed: {type(error).__name__}"
+        if (
+            isinstance(error, WindowsIdentityRunError)
+            and error.diagnostic is not None
+        ):
+            detail += "; " + error.diagnostic.render()
+        sanitized_failure = WindowsIdentityProgressiveError(
+            detail,
+            diagnostic=(
+                error.diagnostic
+                if isinstance(error, WindowsIdentityRunError)
+                else None
+            ),
+        )
+    if sanitized_failure is not None:
+        raise sanitized_failure from None
 
     return ProgressiveRotationReceipt(
         phases=tuple(phases),

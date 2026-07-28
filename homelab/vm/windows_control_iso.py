@@ -19,6 +19,7 @@ ASSET_ROOT = Path(__file__).with_name("windows_control")
 SCRIPT = ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
 MANIFEST = ASSET_ROOT / "manifest.json"
 EXPECTED_FILES = frozenset({SCRIPT.name, MANIFEST.name})
+MAX_PROBE_LAUNCH_CHARS = 240
 
 # The control disc is an observation interface, not a provisioning channel.
 # Keep this deliberately small and case-insensitive.
@@ -48,15 +49,15 @@ def probe_launch_command(
     # Resolve by ISO volume label because Windows drive letters are not stable.
     # Action is an exact manifest member, not caller-provided shell text.
     command = (
-        "powershell.exe -NoLogo -NoProfile -NonInteractive "
-        "-ExecutionPolicy Bypass -Command \"& { "
-        "$v=(Get-Volume -FileSystemLabel 'TELOS_CONTROL' | "
-        "Select-Object -First 1).DriveLetter; "
-        "if (-not $v) { throw 'TELOS_CONTROL volume missing' }; "
-        f"& ($v + ':\\Invoke-TelosIdentityProbe.ps1') -Action '{action}'"
-        " }\""
+        "powershell.exe -NoP -NonI -EP Bypass -C \""
+        "$v=(Get-Volume -FileSystemLabel 'TELOS_CONTROL'|"
+        "Select-Object -First 1).DriveLetter;"
+        f"&($v+':\\Invoke-TelosIdentityProbe.ps1') -Action '{action}'\""
     )
-    if len(command) > 512 or any(ord(character) < 0x20 for character in command):
+    if (
+        len(command) > MAX_PROBE_LAUNCH_CHARS
+        or any(ord(character) < 0x20 for character in command)
+    ):
         raise WindowsControlIsoError("control launch command is not QMP-safe")
     return command
 

@@ -89,6 +89,52 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             with self.assertRaises(subject.WindowsIdentityAdapterError):
                 adapter.static_probe("domain-state")
 
+    def test_controller_readiness_probe_reports_each_fixed_subphase(self):
+        class SecretFailure(RuntimeError):
+            pass
+
+        for phase in ("connect", "launch", "receive", "parse"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as name:
+                adapter = self.adapter(Path(name))
+                adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+                stream = mock.MagicMock()
+                stream.__enter__.return_value = stream
+                stream.recv.return_value = b"invalid\n"
+                if phase == "connect":
+                    stream.connect.side_effect = SecretFailure("private")
+                elif phase == "launch":
+                    adapter.launch_guest = mock.Mock(
+                        side_effect=SecretFailure("private"))
+                elif phase == "receive":
+                    adapter.launch_guest = mock.Mock()
+                    stream.recv.side_effect = SecretFailure("private")
+                else:
+                    adapter.launch_guest = mock.Mock()
+                parse = mock.patch.object(
+                    subject,
+                    "parse_probe_record",
+                    side_effect=(
+                        SecretFailure("private")
+                        if phase == "parse"
+                        else None
+                    ),
+                )
+                with mock.patch.object(
+                    subject.socket, "socket", return_value=stream,
+                ), parse, self.assertRaises(
+                    subject.WindowsIdentityAdapterError,
+                ) as caught:
+                    adapter.static_probe("controller-readiness")
+                error = caught.exception
+                self.assertEqual(
+                    "static-probe.controller-readiness." + phase,
+                    error.diagnostic.operation,
+                )
+                self.assertEqual("UnexpectedError", error.diagnostic.error_type)
+                self.assertNotIn("private", str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
     def test_post_reboot_reauthentication_fails_without_calibrated_plan(self):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))

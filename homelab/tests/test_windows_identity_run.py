@@ -133,6 +133,31 @@ class WindowsIdentityRunTests(unittest.TestCase):
             recovery.destroy_publication.assert_not_called()
             recovery.__exit__.assert_called_once()
 
+    def test_cleanup_only_failure_preserves_safe_diagnostic(self):
+        diagnostic = windows_identity_run.IdentityFailureDiagnostic.static_probe(
+            "controller-ready",
+            "controller-readiness",
+            OSError("private-cleanup-message"),
+            phase="receive",
+        )
+        material = PrivateIdentityMaterial(
+            Path("/private/publication.iso"),
+            Path("/private"),
+            rotate_guest=mock.Mock(),
+            stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock(side_effect=WindowsIdentityRunError(
+                "private-cleanup-message", diagnostic=diagnostic)),
+        )
+        material._new_local = "replacement"
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                material._new_local, lambda _local, _principals: None)
+        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertNotIn("private-cleanup-message", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
     def test_secret_and_destruction_boundaries_have_one_order(self):
         recorder = Recorder()
         receipt = run_lifecycle(recorder.operations())

@@ -42,8 +42,99 @@ from .windows_identity_dependency import DEPENDENCIES
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 
 
+@dataclass(frozen=True)
+class IdentityFailureDiagnostic:
+    """Allowlisted, secret-free identity failure coordinates."""
+
+    check: str
+    operation: str
+    error_type: str
+
+    _STATIC_PROBE_PAIRS = frozenset({
+        ("controller-ready", "controller-readiness"),
+        ("windows-joined", "domain-state"),
+        ("windows-standard-online", "managed-identity-state"),
+        ("windows-daily-admin", "managed-identity-state"),
+        ("domain-admin-separate", "managed-identity-state"),
+        ("windows-rebooted-joined", "domain-state"),
+        ("windows-cached-policy", "cached-logon-policy"),
+        ("windows-cached-policy", "managed-identity-state"),
+        ("controller-offline", "service-reachability"),
+        ("controller-restored", "service-reachability"),
+        ("windows-secure-channel-restored", "domain-state"),
+        ("windows-update-policy", "update-policy"),
+        ("update-source-offline", "dependency-reachability"),
+        ("optional-storage-offline", "dependency-reachability"),
+        ("optional-storage-access-denied", "dependency-reachability"),
+        ("ad-dns-offline", "service-reachability"),
+        ("combined-dependencies-offline", "dependency-reachability"),
+        ("windows-services-restored", "service-reachability"),
+        ("windows-services-restored", "domain-state"),
+        ("windows-services-restored", "dependency-reachability"),
+    })
+    _STATIC_PROBES = frozenset(
+        (check, f"static-probe.{action}{suffix}")
+        for check, action in _STATIC_PROBE_PAIRS
+        for suffix in ("", ".connect", ".launch", ".receive", ".parse")
+    )
+    _ERROR_TYPES = frozenset({
+        "OSError",
+        "TimeoutError",
+        "WindowsControlSerialError",
+        "WindowsIdentityAdapterError",
+        "WindowsPublicCommandError",
+    })
+
+    @classmethod
+    def static_probe(
+        cls,
+        check: str,
+        action: str,
+        error: BaseException,
+        *,
+        phase: str | None = None,
+    ) -> "IdentityFailureDiagnostic":
+        suffix = "" if phase is None else f".{phase}"
+        operation = f"static-probe.{action}{suffix}"
+        if (check, operation) not in cls._STATIC_PROBES:
+            check = "unknown-check"
+            operation = "unknown-operation"
+        error_type = type(error).__name__
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(check, operation, error_type)
+
+    def __post_init__(self) -> None:
+        if (
+            (self.check, self.operation) not in self._STATIC_PROBES
+            and (self.check, self.operation)
+            != ("unknown-check", "unknown-operation")
+        ):
+            raise ValueError("identity failure coordinates are invalid")
+        if (
+            self.error_type not in self._ERROR_TYPES
+            and self.error_type != "UnexpectedError"
+        ):
+            raise ValueError("identity failure type is invalid")
+
+    def render(self) -> str:
+        return (
+            f"check={self.check}; operation={self.operation}; "
+            f"error={self.error_type}"
+        )
+
+
 class WindowsIdentityRunError(RuntimeError):
     """The native identity lifecycle did not reach a safe terminal state."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: IdentityFailureDiagnostic | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
 
 
 @dataclass(repr=False)
@@ -942,8 +1033,17 @@ class PrivateIdentityMaterial:
             if cleanup is not None:
                 details.append(
                     f"principal destruction: {type(cleanup).__name__}")
+            source = primary if primary is not None else cleanup
+            diagnostic = (
+                source.diagnostic
+                if isinstance(source, WindowsIdentityRunError)
+                else None
+            )
+            message = "scoped identity acceptance failed; " + "; ".join(details)
+            if diagnostic is not None:
+                message += "; " + diagnostic.render()
             raise WindowsIdentityRunError(
-                "scoped identity acceptance failed; " + "; ".join(details)
+                message, diagnostic=diagnostic,
             ) from None
 
     def destroy_private_publication(self) -> None:

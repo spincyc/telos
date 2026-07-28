@@ -31,7 +31,11 @@ from .windows_identity_observations import (
     map_exact_observation,
 )
 from .windows_identity_progressive import ProgressiveRotationPlan
-from .windows_identity_run import NativeProcessBoundary
+from .windows_identity_run import (
+    IdentityFailureDiagnostic,
+    NativeProcessBoundary,
+    WindowsIdentityRunError,
+)
 from .windows_join_iso import (
     DuplexJoinSerial,
     JoinMediaChannel,
@@ -40,7 +44,7 @@ from .windows_join_iso import (
 )
 
 
-class WindowsIdentityOrchestratorError(RuntimeError):
+class WindowsIdentityOrchestratorError(WindowsIdentityRunError):
     """The production acceptance composition failed closed."""
 
 
@@ -124,6 +128,39 @@ _CREDENTIAL_ROLES = {
 }
 
 
+def _call_static_probe(
+    callbacks: AcceptanceCallbacks, check: str, action: str,
+) -> Mapping[str, object]:
+    diagnostic: IdentityFailureDiagnostic | None = None
+    try:
+        record = dict(callbacks.static_probe(action))
+    except Exception as error:
+        probe_action = getattr(error, "probe_action", None)
+        probe_phase = getattr(error, "probe_phase", None)
+        if probe_action == action and probe_phase in {
+            "connect", "launch", "receive", "parse",
+        }:
+            diagnostic = IdentityFailureDiagnostic.static_probe(
+                check, action, error, phase=probe_phase)
+        else:
+            diagnostic = (
+                error.diagnostic
+                if (
+                    isinstance(error, WindowsIdentityRunError)
+                    and error.diagnostic is not None
+                )
+                else IdentityFailureDiagnostic.static_probe(
+                    check, action, error)
+            )
+    if diagnostic is not None:
+        raise WindowsIdentityOrchestratorError(
+            "identity observation operation failed; "
+            + diagnostic.render(),
+            diagnostic=diagnostic,
+        ) from None
+    return record
+
+
 def _validated_static_probes(
     callbacks: AcceptanceCallbacks, check: str,
 ) -> Mapping[str, Mapping[str, object]] | None:
@@ -133,7 +170,7 @@ def _validated_static_probes(
     actions = (configured,) if isinstance(configured, str) else configured
     records: dict[str, Mapping[str, object]] = {}
     for action in actions:
-        record = dict(callbacks.static_probe(action))
+        record = _call_static_probe(callbacks, check, action)
         if (
             record.get("schema_version") != 1
             or record.get("action") != action
@@ -214,7 +251,8 @@ def _record(
 def _post_reboot_proof(
     callbacks: AcceptanceCallbacks,
 ) -> Mapping[str, object]:
-    record = dict(callbacks.static_probe("domain-state"))
+    record = _call_static_probe(
+        callbacks, "windows-rebooted-joined", "domain-state")
     observation = record.get("observation")
     if (
         record.get("schema_version") != 1

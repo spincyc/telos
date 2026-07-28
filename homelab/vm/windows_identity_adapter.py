@@ -35,7 +35,11 @@ from .windows_identity_progressive import (
     _load_references,
     _private_evidence_root,
 )
-from .windows_identity_run import NativeProcessBoundary
+from .windows_identity_run import (
+    IdentityFailureDiagnostic,
+    NativeProcessBoundary,
+    WindowsIdentityRunError,
+)
 from .windows_join_iso import DuplexJoinSerial
 from .windows_public_command import (
     PublicPowerShellLaunchPlan,
@@ -43,7 +47,7 @@ from .windows_public_command import (
 )
 
 
-class WindowsIdentityAdapterError(RuntimeError):
+class WindowsIdentityAdapterError(WindowsIdentityRunError):
     """A required production boundary could not be proved."""
 
 
@@ -292,23 +296,61 @@ class NativeWindowsAcceptanceAdapter:
         request = control_probe(action)
         data = bytearray()
         with self._com1():
-            try:
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                failure: BaseException | None = None
+                try:
                     stream.settimeout(self.timeout)
                     stream.connect(str(self._serial_socket()))
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._raise_static_probe_failure(
+                        request.action, "connect", failure)
+                failure = None
+                try:
                     self.launch_guest(request.command)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._raise_static_probe_failure(
+                        request.action, "launch", failure)
+                failure = None
+                try:
                     while b"\n" not in data and len(data) <= MAX_RECORD_BYTES:
                         chunk = stream.recv(
                             min(4096, MAX_RECORD_BYTES + 1 - len(data)))
                         if not chunk:
                             break
                         data.extend(chunk)
-            except WindowsIdentityAdapterError:
-                raise
-            except (OSError, TimeoutError) as error:
-                raise WindowsIdentityAdapterError(
-                    "static probe transport failed") from error
-        return parse_probe_record(bytes(data), request.action)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._raise_static_probe_failure(
+                        request.action, "receive", failure)
+        failure = None
+        try:
+            return parse_probe_record(bytes(data), request.action)
+        except Exception as error:
+            failure = error
+        if failure is not None:
+            self._raise_static_probe_failure(
+                request.action, "parse", failure)
+        raise AssertionError("static probe parser returned no result")
+
+    @staticmethod
+    def _raise_static_probe_failure(
+        action: str, phase: str, error: BaseException,
+    ) -> None:
+        diagnostic = IdentityFailureDiagnostic.static_probe(
+            "controller-ready", action, error, phase=phase)
+        failure = WindowsIdentityAdapterError(
+            "static probe operation failed; " + diagnostic.render(),
+            diagnostic=diagnostic,
+        )
+        failure.probe_action = action
+        failure.probe_phase = phase
+        failure.probe_error_type = diagnostic.error_type
+        raise failure from None
 
     def _destroy_unattached_iso(self, iso: Path) -> None:
         """Delete only the exact private regular file created for this action."""

@@ -1,13 +1,20 @@
 import unittest
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
+from homelab.vm import windows_identity_orchestrator
+from homelab.vm.windows_identity_adapter import WindowsIdentityAdapterError
 from homelab.vm.windows_identity_progressive import (
     NativeBoundaryRotationSession,
     ProgressiveRotationPlan,
     WindowsIdentityProgressiveError,
     execute_progressive_rotation,
+)
+from homelab.vm.windows_identity_run import (
+    IdentityFailureDiagnostic,
+    PrivateIdentityMaterial,
 )
 from homelab.vm.windows_identity_reference import (
     GuestProvenance,
@@ -153,6 +160,86 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertNotIn("destroy", events)
         self.assertNotIn("New-private-83!", str(caught.exception))
         self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
+
+    def test_static_probe_failure_retains_only_allowlisted_coordinates(self):
+        events = []
+        secret = "Controller-private-message-47!"
+
+        diagnostic = IdentityFailureDiagnostic.static_probe(
+            "controller-ready",
+            "controller-readiness",
+            WindowsIdentityAdapterError(secret),
+            phase="receive",
+        )
+        callbacks = SimpleNamespace(
+            static_probe=lambda _action: (_ for _ in ()).throw(
+                WindowsIdentityAdapterError(
+                    secret, diagnostic=diagnostic)))
+        material = PrivateIdentityMaterial(
+            Path(self.temporary.name) / "unused-publication",
+            Path(self.temporary.name),
+            rotate_guest=mock.Mock(),
+            stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock(),
+        )
+
+        def acceptance(_local, _principals):
+            windows_identity_orchestrator._validated_static_probes(
+                callbacks, "controller-ready")
+
+        references = [
+            reference(kind) for kind in (
+                "sign-in", "desktop", "security-options", "change-password")]
+        with mock.patch(
+            "homelab.vm.windows_identity_progressive.load_identity_reference",
+            side_effect=references,
+        ):
+            with self.assertRaises(WindowsIdentityProgressiveError) as caught:
+                execute_progressive_rotation(
+                    plan=self.plan(),
+                    session=Context(object(), events, "session"),
+                    recovery=Recovery("Old-private-47!", events, "recovery"),
+                    generate_credential=material.generate_replacement_credential,
+                    after_rotation=lambda replacement:
+                        material.run_scoped_acceptance(
+                            replacement, acceptance),
+                    pause=lambda _: None,
+                    interaction_factory=lambda _qmp, _root:
+                        Interaction(events),
+                )
+        message = str(caught.exception)
+        self.assertIn("check=controller-ready", message)
+        self.assertIn(
+            "operation=static-probe.controller-readiness.receive", message)
+        self.assertIn("error=WindowsIdentityAdapterError", message)
+        self.assertNotIn(secret, message)
+        self.assertNotIn("Old-private-47!", message)
+        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn("destroy", events)
+        self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
+
+    def test_unknown_static_probe_error_is_normalized_without_context(self):
+        secret = "Unknown-private-message-47!"
+
+        class SecretFailure(RuntimeError):
+            pass
+
+        callbacks = SimpleNamespace(
+            static_probe=lambda _action: (_ for _ in ()).throw(
+                SecretFailure(secret)))
+        with self.assertRaises(
+            windows_identity_orchestrator.WindowsIdentityOrchestratorError,
+        ) as caught:
+            windows_identity_orchestrator._validated_static_probes(
+                callbacks, "controller-ready")
+        message = str(caught.exception)
+        self.assertIn("error=UnexpectedError", message)
+        self.assertNotIn("SecretFailure", message)
+        self.assertNotIn(secret, message)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
 
     def test_failure_before_outcome_preserves_publication_and_tears_down(self):
         with self.assertRaisesRegex(

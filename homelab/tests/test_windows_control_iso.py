@@ -7,6 +7,7 @@ import unittest
 
 from homelab.vm.windows_control_iso import (
     ASSET_ROOT,
+    MAX_PROBE_LAUNCH_CHARS,
     WindowsControlIsoError,
     audit_payload,
     build_control_iso,
@@ -76,10 +77,30 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("TELOS_CONTROL", command)
         self.assertIn("Invoke-TelosIdentityProbe.ps1", command)
         self.assertIn("-Action 'domain-state'", command)
-        self.assertLessEqual(len(command), 512)
+        self.assertLessEqual(len(command), MAX_PROBE_LAUNCH_CHARS)
         with self.assertRaisesRegex(
                 WindowsControlIsoError, "not allowlisted"):
             probe_launch_command("domain-state'; Set-LocalUser")
+
+    def test_every_action_has_one_exact_bounded_launch(self):
+        actions = audit_payload()["actions"]
+        self.assertIsInstance(actions, list)
+        for action in actions:
+            with self.subTest(action=action):
+                command = probe_launch_command(action)
+                self.assertLessEqual(
+                    len(command), MAX_PROBE_LAUNCH_CHARS)
+                self.assertTrue(command.startswith(
+                    "powershell.exe -NoP -NonI -EP Bypass -C \""))
+                self.assertEqual(
+                    1, command.count(
+                        "Get-Volume -FileSystemLabel 'TELOS_CONTROL'"))
+                self.assertEqual(
+                    1, command.count(
+                        "\\Invoke-TelosIdentityProbe.ps1"))
+                self.assertTrue(
+                    command.endswith(f"-Action '{action}'\""))
+                self.assertEqual(1, command.count("-Action '"))
 
     def test_existing_destination_and_mutating_script_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
