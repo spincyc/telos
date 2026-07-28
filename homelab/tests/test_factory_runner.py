@@ -71,6 +71,33 @@ class FactoryRunnerTests(unittest.TestCase):
         __import__("os").close(write_fd)
         reader.close()
 
+    def test_initial_prompt_is_not_mistaken_for_bootstrap_return(self):
+        os = __import__("os")
+        read_fd, write_fd = os.pipe()
+        reader = os.fdopen(read_fd, "rb", buffering=0)
+
+        class Process:
+            stdin = __import__("io").BytesIO()
+            stdout = reader
+
+            @staticmethod
+            def poll():
+                return None
+
+        def emit():
+            os.write(write_fd, b"[root@controller /]#")
+            __import__("time").sleep(0.02)
+            os.write(write_fd, b"\nTELOS PXE SERVICES READY\n")
+
+        thread = threading.Thread(target=emit)
+        thread.start()
+        with tempfile.TemporaryDirectory() as temp_name:
+            factory_runner.activate_publication(
+                Process(), Path(temp_name) / "serial.log", timeout=0.5)
+        thread.join()
+        os.close(write_fd)
+        reader.close()
+
     def test_direct_script_help_resolves_local_imports(self):
         result = subprocess.run(
             [

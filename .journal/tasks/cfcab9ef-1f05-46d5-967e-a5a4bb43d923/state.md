@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:14:40Z"
+updated_at: "2026-07-28T01:16:39Z"
 ---
 
 # Goal
@@ -115,3 +115,9 @@ enabling it. Controller publication also fails immediately when its bootstrap
 returns to the shell without a readiness marker, instead of waiting for the
 outer timeout. Cleanup again completed and the workstation disk was not
 booted.
+
+The third attempt was stopped by a runner-only false positive before the
+bootstrap command executed: the new early-return detector mistook the initial
+prompt that triggered command submission for a returned prompt. It now ignores
+the triggering read and only evaluates later Controller output. A pipe-level
+regression test proves the initial prompt followed by readiness succeeds.
