@@ -154,10 +154,14 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                 boundary.start_controller()
                 boundary.start_windows()
 
-            assert_secret_free(self, commands)
-            for artifact in root.rglob("*"):
-                if artifact.is_file():
-                    assert_secret_free(self, artifact.read_bytes())
+            try:
+                assert_secret_free(self, commands)
+                for artifact in root.rglob("*"):
+                    if artifact.is_file():
+                        assert_secret_free(self, artifact.read_bytes())
+            finally:
+                boundary.processes.clear()
+                boundary._cleanup_qmp_root()
 
 
 if __name__ == "__main__":

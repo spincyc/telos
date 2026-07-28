@@ -117,35 +117,39 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 boundary.authorized_command = ["windows"]
                 boundary.start_windows()
 
-            milestones = [
-                event for event in events
-                if event[0] in {"popen", "overlay", "ready", "audit"}
-            ]
-            self.assertEqual([
-                ("popen", "switch"),
-                ("popen", "gateway"),
-                ("ready", "gateway"),
-                ("overlay", "prepared"),
-                ("popen", "controller"),
-                ("audit", "controller"),
-                ("ready", "controller"),
-                ("popen", "windows"),
-                ("audit", "client"),
-                ("ready", "workstation"),
-            ], milestones)
-            controller_command.assert_called_once_with(
-                boundary.controller_state,
-                overlay.disk,
-                overlay.vars,
-                43119,
-                disk_format="raw",
-            )
-            windows_command.assert_called_once_with(
-                disk=boundary.attempt / "windows.qcow2",
-                variables=boundary.attempt / "OVMF_VARS.fd",
-                qmp_socket=boundary.qmp_root / "windows.qmp",
-                switch_port=43119,
-            )
+            try:
+                milestones = [
+                    event for event in events
+                    if event[0] in {"popen", "overlay", "ready", "audit"}
+                ]
+                self.assertEqual([
+                    ("popen", "switch"),
+                    ("popen", "gateway"),
+                    ("ready", "gateway"),
+                    ("overlay", "prepared"),
+                    ("popen", "controller"),
+                    ("audit", "controller"),
+                    ("ready", "controller"),
+                    ("popen", "windows"),
+                    ("audit", "client"),
+                    ("ready", "workstation"),
+                ], milestones)
+                controller_command.assert_called_once_with(
+                    boundary.controller_state,
+                    overlay.disk,
+                    overlay.vars,
+                    43119,
+                    disk_format="raw",
+                )
+                windows_command.assert_called_once_with(
+                    disk=boundary.attempt / "windows.qcow2",
+                    variables=boundary.attempt / "OVMF_VARS.fd",
+                    qmp_socket=boundary.qmp_root / "windows.qmp",
+                    switch_port=43119,
+                )
+            finally:
+                boundary.processes.clear()
+                boundary._cleanup_qmp_root()
 
     def test_switch_binds_only_an_ephemeral_loopback_listener(self):
         with tempfile.TemporaryDirectory() as name:
