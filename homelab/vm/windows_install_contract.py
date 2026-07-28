@@ -233,19 +233,34 @@ def render_startup(
     )
     return (
         "@echo off\r\nsetlocal EnableExtensions EnableDelayedExpansion\r\n"
+        "call :main\r\n"
+        'set "telos_result=%errorlevel%"\r\n'
+        'if not "%telos_result%"=="0" (\r\n'
+        "  echo TELOS WINPE FAIL code=%telos_result%\r\n"
+        "  pause\r\n"
+        ")\r\n"
+        "exit /b %telos_result%\r\n"
+        ":main\r\n"
+        "echo TELOS WINPE phase=wpeinit\r\n"
         "wpeinit || exit /b 10\r\n"
+        "echo TELOS WINPE phase=disk-check-1\r\n"
         '(echo list disk&echo exit)>X:\\disk-list-script.txt\r\n'
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 11\r\n"
         + check
+        + "echo TELOS WINPE phase=source-mount\r\n"
         + f'net use W: "{install_source_unc}" * /user:"{install_user}" '
         "/persistent:no < X:\\install-password.txt || exit /b 30\r\n"
         'if not exist W:\\setup.exe exit /b 31\r\n'
         'if not exist W:\\sources\\install.wim exit /b 32\r\n'
+        "echo TELOS WINPE phase=disk-check-2\r\n"
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 40\r\n"
         + check
+        + "echo TELOS WINPE phase=partition\r\n"
         + "diskpart /s X:\\windows-layout.txt || exit /b 41\r\n"
+        "echo TELOS WINPE phase=setup\r\n"
         "W:\\setup.exe /InstallFrom W:\\sources\\install.wim "
         "/Unattend:X:\\Autounattend.xml || exit /b 50\r\n"
+        "exit /b 0\r\n"
     )
 
 
