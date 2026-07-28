@@ -3,6 +3,7 @@ import struct
 import unittest
 
 from homelab.vm import simulated_gateway as sim
+from homelab.vm import simulated_topology
 
 
 CLIENT_MAC = bytes.fromhex("525400311102")
@@ -26,6 +27,13 @@ def controller_ip(protocol, payload, target=sim.GATEWAY_IP):
 class SimulatedGatewayTests(unittest.TestCase):
     def setUp(self):
         self.gateway = sim.Gateway()
+
+    def test_controller_identity_matches_qemu_topology(self):
+        self.assertEqual(
+            sim.CONTROLLER_MAC,
+            bytes.fromhex(
+                simulated_topology.MACS["controller"].replace(":", "")),
+        )
 
     def test_arp_answers_only_for_gateway(self):
         arp = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1)
