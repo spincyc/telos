@@ -112,13 +112,37 @@ function Get-Probe {
         'domain-state' {
             $computer = Get-CimInstance Win32_ComputerSystem
             $secure = $false
+            $operator = ''
+            $operatorLocalAdministrator = $false
             if ($computer.PartOfDomain) {
                 $secure = Test-ComputerSecureChannel
+                $operator = 'operator@' + (
+                    [string]$computer.Domain
+                ).ToUpperInvariant()
+                $operatorSid = (
+                    [Security.Principal.NTAccount]::new($operator)
+                ).Translate([Security.Principal.SecurityIdentifier])
+                $administratorsSid = (
+                    [Security.Principal.SecurityIdentifier]::new(
+                        'S-1-5-32-544'
+                    )
+                )
+                $matches = @(
+                    Get-LocalGroupMember -SID $administratorsSid |
+                        Where-Object {
+                            $_.SID.Value -ceq $operatorSid.Value
+                        }
+                )
+                $operatorLocalAdministrator = $matches.Count -eq 1
             }
             return [ordered]@{
                 part_of_domain = [bool]$computer.PartOfDomain
                 domain = [string]$computer.Domain
                 secure_channel = [bool]$secure
+                operator = $operator
+                operator_local_administrator = [bool](
+                    $operatorLocalAdministrator
+                )
             }
         }
         'cached-logon-policy' {

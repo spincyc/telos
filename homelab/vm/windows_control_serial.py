@@ -33,6 +33,8 @@ _OBSERVATION_KEYS = {
         "part_of_domain": bool,
         "domain": str,
         "secure_channel": bool,
+        "operator": str,
+        "operator_local_administrator": bool,
     },
     "cached-logon-policy": {
         "configured": bool,

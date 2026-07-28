@@ -22,6 +22,8 @@ def record(action="domain-state"):
             "part_of_domain": True,
             "domain": "FACTORY.TEST",
             "secure_channel": True,
+            "operator": "operator@FACTORY.TEST",
+            "operator_local_administrator": True,
         },
         "cached-logon-policy": {
             "configured": True,

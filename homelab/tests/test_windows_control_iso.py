@@ -30,6 +30,9 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("'optional-storage:available'", script)
         self.assertIn("'optional-storage:authorization-denied'", script)
         self.assertIn("GetBytes('authorize')", script)
+        self.assertIn("'operator@'", script)
+        self.assertIn("'S-1-5-32-544'", script)
+        self.assertIn("Get-LocalGroupMember", script)
         self.assertNotIn("Password", script)
         self.assertNotIn("Credential", script)
 
