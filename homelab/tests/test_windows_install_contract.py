@@ -267,7 +267,7 @@ class WindowsInstallContractTests(unittest.TestCase):
         helper = render_source_mount(
             r"\\10.1.31.2\windows-release", "pxe-install")
         self.assertIn(
-            'network.MapNetworkDrive "W:", "\\\\10.1.31.2\\windows-release", '
+            'network.MapNetworkDrive "I:", "\\\\10.1.31.2\\windows-release", '
             'False, "pxe-install", password',
             helper)
         self.assertIn('stream.ReadLine', helper)
