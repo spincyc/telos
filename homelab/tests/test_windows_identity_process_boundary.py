@@ -83,6 +83,13 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             disposable = mock.Mock()
             disposable.prepare.side_effect = lambda: (
                 events.append(("overlay", "prepared")) or overlay)
+            factory = mock.Mock()
+            factory.output = boundary.runtime / "controller-convergence.iso"
+            factory.password = "private"
+            factory.build.side_effect = lambda: factory.output.write_bytes(
+                b"private factory media")
+            factory.close.side_effect = lambda: factory.output.unlink(
+                missing_ok=True)
             with (
                 mock.patch.object(
                     windows_identity_run.socket, "socket",
@@ -102,6 +109,13 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 mock.patch.object(
                     windows_identity_run, "DisposableBootDisk",
                     return_value=disposable),
+                mock.patch.object(
+                    windows_identity_run, "FactoryBundle",
+                    return_value=factory) as factory_type,
+                mock.patch.object(
+                    windows_identity_run.QmpClient, "connect") as qmp_connect,
+                mock.patch.object(
+                    boundary, "_process_holds_inode", return_value=False),
                 mock.patch.object(
                     windows_identity_run, "SerialAutomation") as automation,
                 mock.patch.object(
@@ -127,6 +141,11 @@ class NativeProcessBoundaryTests(unittest.TestCase):
 
             automation.return_value.establish_disposable_controller_session\
                 .assert_called_once_with()
+            automation.return_value.converge_disposable_controller\
+                .assert_called_once()
+            qmp_connect.return_value.await_device_deleted.assert_called_once_with(
+                "identityfactorycd", timeout=30.0)
+            factory_type.assert_called_once()
 
             try:
                 milestones = [

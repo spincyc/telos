@@ -178,12 +178,6 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             right.sendall(b"Password: ")
             observed.append(stream.readline())
             right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
-            services = stream.readline()
-            observed.append(services)
-            token = services.split(
-                b"__TELOS_CONTROLLER_SERVICES_", 1)[1].split(b"=", 1)[0]
-            right.sendall(
-                b"\r\n__TELOS_CONTROLLER_SERVICES_" + token + b"=0\r\n")
 
         thread = threading.Thread(target=responder, daemon=True)
         thread.start()
@@ -209,7 +203,66 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertEqual(b"local-rescue\n", observed[5])
         self.assertEqual(password + b"\n", observed[6])
         self.assertNotIn(password, observed[0])
-        self.assertIn(b"systemctl is-active --quiet", observed[7])
+
+    def test_convergence_requires_pass_release_and_ad_readiness(self):
+        left, right = socket.socketpair()
+        password = b"Controller-private-47!"
+        observed = []
+
+        def responder():
+            stream = right.makefile("rb", buffering=0)
+            self.assertEqual(b"\n", stream.readline())
+            right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            command = stream.readline()
+            observed.append(command)
+            sudo = command.split(
+                b"__TELOS_CONVERGE_SUDO_", 1)[1].split(b"__", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_CONVERGE_SUDO_" + sudo + b"__\r\n")
+            observed.append(stream.readline())
+            right.sendall(b"TELOS FACTORY CONTROLLER PASS\r\n")
+            self.assertEqual(b"\n", stream.readline())
+            right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            release = stream.readline()
+            observed.append(release)
+            release_sudo = release.split(
+                b"__TELOS_RELEASE_SUDO_", 1)[1].split(b"__", 1)[0]
+            released = release.split(
+                b"__TELOS_CONVERGENCE_RELEASED_", 1)[1].split(b"=", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_RELEASE_SUDO_" + release_sudo + b"__\r\n")
+            observed.append(stream.readline())
+            right.sendall(
+                b"\r\n__TELOS_CONVERGENCE_RELEASED_" + released + b"=0\r\n")
+            services = stream.readline()
+            observed.append(services)
+            service_token = services.split(
+                b"__TELOS_CONTROLLER_SERVICES_", 1)[1].split(b"=", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_CONTROLLER_SERVICES_"
+                + service_token + b"=0\r\n")
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            console = SerialAutomation(
+                left.makefile("rb", buffering=0),
+                left.makefile("wb", buffering=0),
+                password,
+                timeout=1,
+            )
+            console.converge_disposable_controller(
+                "printf %s abc > /run/telos-factory-authorized")
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertNotIn(password, observed[0] + observed[2] + observed[4])
+        self.assertEqual(password + b"\n", observed[1])
+        self.assertEqual(password + b"\n", observed[3])
+        self.assertIn(b"umount /run/telos-factory", observed[2])
+        self.assertIn(b"systemctl is-active --quiet samba.service", observed[4])
 
 
 if __name__ == "__main__":

@@ -162,6 +162,9 @@ check() {{
   /usr/bin/bash -o pipefail -c "$1"
 }}
 {checks}
+samba-tool user disable Administrator
+samba-tool user show Administrator |
+  grep -q 'accountFlags:.*D'
 touch /var/lib/telos-factory-converged
 echo 'TELOS FACTORY CONTROLLER PASS'
 """
@@ -290,6 +293,8 @@ class FactoryBundle:
             os.chmod(partial, 0o600)
             os.replace(partial, self.output)
         finally:
+            partial = self.output.with_suffix(self.output.suffix + ".partial")
+            partial.unlink(missing_ok=True)
             shutil.rmtree(work, ignore_errors=True)
         return self.output
 
@@ -312,7 +317,13 @@ class FactoryBundle:
         return (
             f"printf %s {authorization_nonce} > /run/telos-factory-authorized; "
             "mkdir -p /run/telos-factory; "
-            f"mount -L {LABEL} /run/telos-factory; "
+            "__telos_factory_device=''; "
+            "for __telos_try in $(seq 1 60); do "
+            f"__telos_factory_device=$(blkid -L {LABEL} || true); "
+            "if [ -n \"$__telos_factory_device\" ]; then break; fi; "
+            "sleep 1; done; "
+            "test -b \"$__telos_factory_device\"; "
+            "mount -o ro \"$__telos_factory_device\" /run/telos-factory; "
             "/run/telos-factory/converge-controller /run/telos-factory"
         )
 

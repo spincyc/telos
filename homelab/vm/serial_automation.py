@@ -114,6 +114,80 @@ class SerialAutomation:
             rb"(?:^|\n)[^\n]*local-rescue[^\n]*\$\s*$",
             "controller-shell-ready",
         )
+
+    def converge_disposable_controller(
+        self, guest_command: str, *, timeout: float = 900.0,
+    ) -> None:
+        """Run the fixed private convergence payload and prove its release."""
+        if (
+            self.password is None
+            or not isinstance(guest_command, str)
+            or not guest_command
+            or "\n" in guest_command
+            or "'" in guest_command
+        ):
+            raise SerialAutomationError(
+                "Controller convergence command is invalid")
+        original_timeout = self.timeout
+        self.timeout = timeout
+        token = uuid.uuid4().hex.encode("ascii")
+        sudo_prompt = b"__TELOS_CONVERGE_SUDO_" + token + b"__"
+        release_prompt = b"__TELOS_RELEASE_SUDO_" + token + b"__"
+        released = b"__TELOS_CONVERGENCE_RELEASED_" + token + b"="
+        try:
+            self._send(b"", "controller-convergence-shell-requested")
+            self._wait(
+                rb"(?:^|\n)[^\n]*\$\s*$",
+                "controller-convergence-shell-ready",
+            )
+            self._send(
+                b"sudo -k -p '" + sudo_prompt
+                + b"' /usr/bin/bash -c '"
+                + guest_command.encode("ascii") + b"'",
+                "controller-convergence-command-sent",
+            )
+            self._wait(
+                rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
+                "controller-convergence-sudo-prompt",
+            )
+            self._send(
+                self.password, "controller-convergence-sudo-password-sent")
+            self._wait(
+                rb"(?:^|\n)TELOS FACTORY CONTROLLER PASS\s*(?:\n|$)",
+                "controller-convergence-pass-observed",
+            )
+            self._send(b"", "controller-convergence-prompt-requested")
+            self._wait(
+                rb"(?:^|\n)[^\n]*\$\s*$",
+                "controller-convergence-post-shell-ready",
+            )
+            self._send(
+                b"sudo -k -p '" + release_prompt
+                + b"' /usr/bin/umount /run/telos-factory; "
+                b"__telos_rc=$?; printf '\\n" + released
+                + b"%s\\n' \"$__telos_rc\"",
+                "controller-convergence-release-command-sent",
+            )
+            self._wait(
+                rb"(?:^|\n)" + re.escape(release_prompt) + rb"\s*$",
+                "controller-convergence-release-sudo-prompt",
+            )
+            self._send(
+                self.password, "controller-convergence-release-password-sent")
+            match = self._wait(
+                rb"(?:^|\n)" + re.escape(released)
+                + rb"([0-9]+)\s*(?:\n|$)",
+                "controller-convergence-release-observed",
+            )
+            if int(match.group(1)) != 0:
+                raise SerialAutomationError(
+                    "Controller convergence media release failed")
+            self._wait_controller_ad()
+        finally:
+            self.timeout = original_timeout
+
+    def _wait_controller_ad(self) -> None:
+        """Require the exact AD service and database on the disposable disk."""
         services = f"__TELOS_CONTROLLER_SERVICES_{self.token}=".encode()
         self._send(
             b"__telos_rc=3; "

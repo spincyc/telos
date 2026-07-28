@@ -140,6 +140,13 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
             overlay.vars = root / "controller-vars.fd"
             overlay.disk.write_bytes(b"public overlay")
             overlay.vars.write_bytes(b"public variables")
+            factory = mock.Mock()
+            factory.output = root / "factory.iso"
+            factory.password = "private"
+            factory.build.side_effect = lambda: factory.output.write_bytes(
+                b"private factory media")
+            factory.close.side_effect = lambda: factory.output.unlink(
+                missing_ok=True)
             with mock.patch(
                     "homelab.vm.windows_identity_run.subprocess.Popen",
                     side_effect=popen), mock.patch(
@@ -148,6 +155,14 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                         "homelab.vm.windows_identity_run.audit_live_process"), \
                     mock.patch(
                         "homelab.vm.windows_identity_run.SerialAutomation"), \
+                    mock.patch(
+                        "homelab.vm.windows_identity_run.FactoryBundle",
+                        return_value=factory), \
+                    mock.patch(
+                        "homelab.vm.windows_identity_run.QmpClient.connect"), \
+                    mock.patch.object(
+                        boundary, "_process_holds_inode",
+                        return_value=False), \
                     mock.patch(
                         "homelab.vm.windows_identity_run.DisposableBootDisk"
                     ) as boot_disk:

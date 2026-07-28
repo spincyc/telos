@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .automated_controller import DisposableBootDisk
 from .bootstrap_dc import paths
+from .controller_factory import FactoryBundle
 from .factory_runner import (
     gateway_command,
     switch_command,
@@ -92,6 +93,10 @@ class NativeProcessBoundary:
         self.suspended_processes: set[str] = set()
         self.dependency_endpoints: dict[str, tuple[str, int]] = {}
         self.controller_console: SerialAutomation | None = None
+        self.controller_factory_bundle: FactoryBundle | None = None
+        self.controller_qmp: QmpClient | None = None
+        self.controller_qmp_root: Path | None = None
+        self.controller_factory_fd: int | None = None
 
     @staticmethod
     def _normalized_command(command: list[str]) -> list[str]:
@@ -122,6 +127,42 @@ class NativeProcessBoundary:
             for block in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(block)
         return digest.hexdigest()
+
+    @staticmethod
+    def _process_holds_inode(
+        pid: int, *, device: int, inode: int,
+    ) -> bool:
+        for entry in Path(f"/proc/{pid}/fd").iterdir():
+            try:
+                opened = entry.stat()
+            except FileNotFoundError:
+                continue
+            if opened.st_dev == device and opened.st_ino == inode:
+                return True
+        return False
+
+    @staticmethod
+    def _destroy_owned_inode(fd: int, expected_path: Path) -> None:
+        owned = os.fstat(fd)
+        matches = []
+        for entry in expected_path.parent.iterdir():
+            try:
+                info = entry.lstat()
+            except FileNotFoundError:
+                continue
+            if info.st_dev == owned.st_dev and info.st_ino == owned.st_ino:
+                matches.append(entry)
+        if len(matches) != 1 or not stat.S_ISREG(matches[0].lstat().st_mode):
+            raise WindowsIdentityRunError(
+                "Controller convergence media ownership is ambiguous")
+        matches[0].unlink()
+        if any(
+            entry.lstat().st_dev == owned.st_dev
+            and entry.lstat().st_ino == owned.st_ino
+            for entry in expected_path.parent.iterdir()
+        ):
+            raise WindowsIdentityRunError(
+                "Controller convergence media destruction failed")
 
     def _validate(self) -> None:
         if (self.attempt.is_symlink() or not self.attempt.is_dir()
@@ -258,7 +299,7 @@ class NativeProcessBoundary:
             self.port = int(listener.getsockname()[1])
             command = switch_command(
                 listener.fileno(), self.runtime / "switch.jsonl",
-                idle_timeout=3600)
+                accept_timeout=1200, idle_timeout=3600)
             for role, spec in DEPENDENCIES.items():
                 command.extend([
                     "--port",
@@ -338,6 +379,24 @@ class NativeProcessBoundary:
                 self.port,
                 disk_format="raw",
             )
+            self.controller_qmp_root = Path(tempfile.mkdtemp(
+                prefix="telos-controller-qmp-"))
+            self.controller_qmp_root.chmod(0o700)
+            controller_qmp_path = self.controller_qmp_root / "controller.qmp"
+            command.extend([
+                "-qmp",
+                f"unix:{controller_qmp_path},server=on,wait=off",
+                "-device", "virtio-scsi-pci,id=identityfactorybus",
+            ])
+            nonce = secrets.token_hex(32)
+            media_root = self.runtime / "controller-media"
+            media_root.mkdir(mode=0o700)
+            factory_bundle = FactoryBundle(
+                Path(__file__).resolve().parents[2],
+                media_root / "controller-convergence.iso",
+                authorization_nonce=nonce,
+            )
+            self.controller_factory_bundle = factory_bundle
             process = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT)
@@ -347,6 +406,7 @@ class NativeProcessBoundary:
                 disposable_disk=self.controller_overlay.disk,
                 disposable_vars=self.controller_overlay.vars,
                 forbidden_paths=(canonical["disk"], canonical["vars"]),
+                qmp_socket=controller_qmp_path,
             )
             if process.stdout is None or process.stdin is None:
                 raise WindowsIdentityRunError(
@@ -364,6 +424,64 @@ class NativeProcessBoundary:
                     "Controller session initialization failed") from error
             self.controller_console = console
             wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
+            deadline = time.monotonic() + 30.0
+            while True:
+                try:
+                    self.controller_qmp = QmpClient.connect(
+                        controller_qmp_path, timeout=5.0)
+                    break
+                except (OSError, RuntimeError):
+                    if time.monotonic() >= deadline:
+                        raise WindowsIdentityRunError(
+                            "Controller QMP authentication failed")
+                    time.sleep(0.1)
+            factory_bundle.build()
+            media_fd = os.open(
+                factory_bundle.output,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            self.controller_factory_fd = media_fd
+            media_stat = os.fstat(media_fd)
+            assert self.controller_qmp is not None
+            self.controller_qmp.execute("blockdev-add", {
+                    "node-name": "identityfactoryfile",
+                    "driver": "file",
+                    "filename": str(factory_bundle.output.resolve()),
+            })
+            self.controller_qmp.execute("blockdev-add", {
+                    "node-name": "identityfactorynode",
+                    "driver": "raw",
+                    "read-only": True,
+                    "file": "identityfactoryfile",
+            })
+            self.controller_qmp.execute("device_add", {
+                    "driver": "scsi-cd",
+                    "id": "identityfactorycd",
+                    "drive": "identityfactorynode",
+                    "bus": "identityfactorybus.0",
+            })
+            console.converge_disposable_controller(
+                FactoryBundle.guest_command(nonce))
+            self.controller_qmp.execute(
+                "device_del", {"id": "identityfactorycd"})
+            self.controller_qmp.await_device_deleted(
+                "identityfactorycd", timeout=30.0)
+            self.controller_qmp.execute(
+                "blockdev-del", {"node-name": "identityfactorynode"})
+            self.controller_qmp.execute(
+                "blockdev-del", {"node-name": "identityfactoryfile"})
+            if self._process_holds_inode(
+                process.pid,
+                device=media_stat.st_dev,
+                inode=media_stat.st_ino,
+            ):
+                raise WindowsIdentityRunError(
+                    "Controller retained convergence media")
+            self._destroy_owned_inode(media_fd, factory_bundle.output)
+            os.close(media_fd)
+            self.controller_factory_fd = None
+            factory_bundle.password = ""
+            self.controller_factory_bundle = None
+            media_root.rmdir()
         except BaseException:
             self.stop_controller()
             raise
@@ -573,10 +691,51 @@ class NativeProcessBoundary:
         if self.controller_console is not None:
             self.controller_console.release_password()
         self.controller_console = None
+        if self.controller_qmp is not None:
+            try:
+                self.controller_qmp.close()
+            except BaseException as error:
+                failures.append(
+                    f"Controller QMP close: {type(error).__name__}")
+            else:
+                self.controller_qmp = None
         try:
             self._stop("controller")
         except BaseException as error:
             failures.append(f"Controller process: {type(error).__name__}")
+        if "controller" not in self.processes and self.controller_factory_bundle is not None:
+            try:
+                if self.controller_factory_fd is not None:
+                    try:
+                        self._destroy_owned_inode(
+                            self.controller_factory_fd,
+                            self.controller_factory_bundle.output,
+                        )
+                    finally:
+                        os.close(self.controller_factory_fd)
+                        self.controller_factory_fd = None
+                else:
+                    self.controller_factory_bundle.close()
+            except BaseException as error:
+                failures.append(
+                    f"Controller convergence media: {type(error).__name__}")
+            else:
+                self.controller_factory_bundle.password = ""
+                self.controller_factory_bundle = None
+        media_root = self.runtime / "controller-media"
+        if (
+            "controller" not in self.processes
+            and self.controller_factory_fd is None
+            and media_root.exists()
+        ):
+            try:
+                if any(media_root.iterdir()):
+                    raise WindowsIdentityRunError(
+                        "Controller convergence media cleanup is unresolved")
+                media_root.rmdir()
+            except BaseException as error:
+                failures.append(
+                    f"Controller media runtime: {type(error).__name__}")
         if self.controller_overlay is not None:
             try:
                 self.controller_overlay.close()
@@ -584,6 +743,25 @@ class NativeProcessBoundary:
                 failures.append(f"Controller overlay: {type(error).__name__}")
             else:
                 self.controller_overlay = None
+        if (
+            "controller" not in self.processes
+            and self.controller_qmp is None
+            and self.controller_qmp_root is not None
+        ):
+            try:
+                for entry in tuple(self.controller_qmp_root.iterdir()):
+                    if entry.name != "controller.qmp" or not stat.S_ISSOCK(
+                        entry.lstat().st_mode
+                    ):
+                        raise WindowsIdentityRunError(
+                            "unexpected Controller QMP runtime entry")
+                    entry.unlink()
+                self.controller_qmp_root.rmdir()
+            except BaseException as error:
+                failures.append(
+                    f"Controller QMP runtime: {type(error).__name__}")
+            else:
+                self.controller_qmp_root = None
         if failures:
             raise WindowsIdentityRunError("; ".join(failures))
 

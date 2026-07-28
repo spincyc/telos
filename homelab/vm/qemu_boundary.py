@@ -47,6 +47,7 @@ def audit_disposable_controller(
     disk: Path,
     vars_file: Path,
     forbidden_paths: tuple[Path, ...] = (),
+    qmp_socket: Path | None = None,
 ) -> None:
     """Require one disposable raw disk, disposable vars, and one loopback NIC."""
     if "-nodefaults" not in argv:
@@ -67,6 +68,15 @@ def audit_disposable_controller(
         for path in forbidden:
             if path and path in item:
                 raise ValueError("canonical state appears in QEMU command")
+
+    qmp = _option_values(argv, "-qmp")
+    expected_qmp = (
+        [] if qmp_socket is None else [
+            f"unix:{Path(qmp_socket).resolve()},server=on,wait=off"
+        ]
+    )
+    if qmp != expected_qmp:
+        raise ValueError("Controller QMP differs from the private boundary")
 
     drives = [_fields(value) for value in _option_values(argv, "-drive")]
     disks = [

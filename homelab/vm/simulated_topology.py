@@ -335,6 +335,7 @@ def audit_live_process(
     disposable_disk: Path | None = None,
     disposable_vars: Path | None = None,
     forbidden_paths: tuple[Path, ...] = (),
+    qmp_socket: Path | None = None,
 ) -> None:
     """Re-audit the kernel's view of a newly started QEMU process."""
     cmdline = proc_root / str(pid) / "cmdline"
@@ -369,7 +370,7 @@ def audit_live_process(
                 "strict live audit requires both disposable paths")
         audit_disposable_controller(
             argv, disk=disposable_disk, vars_file=disposable_vars,
-            forbidden_paths=forbidden_paths)
+            forbidden_paths=forbidden_paths, qmp_socket=qmp_socket)
 
 
 def _validate(controller_state: Path) -> list[str]:
