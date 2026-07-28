@@ -269,8 +269,6 @@ def stage(
                 "pxe-install\n"
                 f"password=www/private/{private_source.name}/install-password.txt\n"
                 "test -s \"$password\" || exit 1\n"
-                "{ cat \"$password\"; cat \"$password\"; } | "
-                "smbpasswd -s -a pxe-install >/dev/null\n"
                 "cat >/etc/samba/smb.conf <<'EOF'\n"
                 "[global]\nserver role = standalone server\n"
                 "interfaces = 10.1.31.2/28\nbind interfaces only = yes\n"
@@ -278,6 +276,8 @@ def stage(
                 "[windows-release]\npath = /srv/windows-source\n"
                 "read only = yes\nguest ok = no\nvalid users = pxe-install\n"
                 "EOF\n"
+                "{ cat \"$password\"; cat \"$password\"; } | "
+                "smbpasswd -s -a pxe-install >/dev/null\n"
                 "systemctl enable smb.service\n"
             )
         readiness_units = (

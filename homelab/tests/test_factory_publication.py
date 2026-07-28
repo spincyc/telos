@@ -229,6 +229,9 @@ class FactoryPublicationTests(unittest.TestCase):
         ):
             self.assertIn(expected, publisher)
         self.assertNotIn("private install-password.txt", publisher)
+        self.assertLess(
+            publisher.index("cat >/etc/samba/smb.conf"),
+            publisher.index("smbpasswd -s -a pxe-install"))
         subprocess.run(
             ["bash", "-n", str(destination / "publish")],
             check=True, capture_output=True)
