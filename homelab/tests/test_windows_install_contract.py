@@ -174,6 +174,12 @@ class WindowsInstallContractTests(unittest.TestCase):
                 self.assertTrue(all(
                     path.stat().st_mode & 0o777 == 0o600
                     for path in generated))
+                password_file = next(
+                    path for path in generated
+                    if path.name == "install-password.txt")
+                self.assertEqual(
+                    password_file.read_bytes(),
+                    identity.install_password.encode("ascii") + b"\n")
                 receipt = run.public_receipt(
                     self.authorization(), generated)
                 serialized = json.dumps(receipt)
