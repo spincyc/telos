@@ -203,3 +203,8 @@ qualification `.\pxe-install` denotes the WinPE client context rather than the
 remote standalone server. New bundles send the exact unqualified Samba passdb
 user `pxe-install`, matching the share's `valid users` rule. No disk mutation
 occurred. A fresh live retry is next.
+
+The unqualified-user retry still returned error 86, so qualification was not
+the remaining cause. New bundles give both Samba and WinPE the exact same
+LF-terminated password line, removing consumer-dependent CRLF handling. No
+disk mutation occurred. A fresh live retry is next.

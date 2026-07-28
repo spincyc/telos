@@ -465,7 +465,7 @@ class PrivateRun(AbstractContextManager["PrivateRun"]):
             "winpeshl.ini": render_winpeshl(),
             "windows-layout.txt": render_diskpart(authorization),
             "Autounattend.xml": render_unattend(identity),
-            "install-password.txt": identity.install_password + "\r\n",
+            "install-password.txt": identity.install_password + "\n",
         }
         if set(values) != PRIVATE_INPUT_NAMES:
             raise WindowsInstallContractError(
