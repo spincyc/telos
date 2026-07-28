@@ -84,7 +84,9 @@ class ControllerFactoryBundleTests(unittest.TestCase):
                 script.index("package-preflight"),
                 script.index("TELOS FACTORY STEP ansible"))
             self.assertIn(
-                "pacman -Q samba krb5 ntp python-cryptography", script)
+                "for package in samba krb5 ntp python-cryptography", script)
+            self.assertIn(
+                'TELOS FACTORY STEP package-missing-$package', script)
             self.assertIn(
                 "/usr/share/ipxe/x86_64/ipxe.efi", script)
             self.assertLess(

@@ -163,8 +163,13 @@ printf '%s\\n' \
 chmod 0644 /etc/homelab/manifest.json
 systemctl unmask samba.service ntpd.service nginx.service
 echo 'TELOS FACTORY STEP package-preflight'
-pacman -Q samba krb5 ntp python-cryptography python-dnspython \
-  python-markdown openresolv bind >/dev/null
+for package in samba krb5 ntp python-cryptography python-dnspython \
+  python-markdown openresolv bind; do
+  if ! pacman -Q "$package" >/dev/null; then
+    echo "TELOS FACTORY STEP package-missing-$package"
+    exit 1
+  fi
+done
 echo 'TELOS FACTORY STEP ansible'
 if ! ANSIBLE_CONFIG="$root/factory-ansible.cfg" \
   ansible-playbook -i "$root/inventory.ini" \

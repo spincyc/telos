@@ -166,7 +166,7 @@ class SerialAutomation:
             while True:
                 outcome = self._wait(
                     rb"(?:^|\n)(?:"
-                    rb"TELOS FACTORY STEP ([a-z-]+)|"
+                    rb"TELOS FACTORY STEP ([a-z0-9-]+)|"
                     rb"(TELOS FACTORY CONTROLLER PASS)|"
                     + re.escape(result) + rb"([0-9]+))\s*\n",
                     "controller-convergence-outcome-observed",

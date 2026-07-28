@@ -298,7 +298,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                 b"__TELOS_CONVERGE_SUDO_" + sudo + b"__\r\n")
             self.assertEqual(password + b"\n", stream.readline())
             for byte in (
-                b"TELOS FACTORY STEP time-sync\r\n"
+                b"TELOS FACTORY STEP package-missing-krb5\r\n"
                 b"__TELOS_CONVERGENCE_RC_" + result + b"=1\r\n"
             ):
                 right.sendall(bytes((byte,)))
@@ -314,7 +314,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 SerialAutomationError,
-                r"returned 1 after time-sync$",
+                r"returned 1 after package-missing-krb5$",
             ):
                 console.converge_disposable_controller(
                     FactoryBundle.guest_command("a" * 64))
