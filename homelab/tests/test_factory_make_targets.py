@@ -37,6 +37,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "homelab-factory-controller-bundle",
             "homelab-factory-pxe",
             "homelab-windows-identity-prepare",
+            "homelab-windows-identity-run",
             "homelab-windows-identity-judge",
         ):
             self.assertIn(target, phony.group("body"))
@@ -52,6 +53,13 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("WINDOWS_RUN", text)
         self.assertIn("APPLY", text)
         self.assertIn("--apply", text)
+
+    def test_windows_identity_run_requires_attempt_and_is_apply_gated(self):
+        text = recipe("homelab-windows-identity-run")
+        self.assertIn("WINDOWS_IDENTITY_ATTEMPT", text)
+        self.assertIn("homelab-windows-identity-run", text)
+        self.assertIn("APPLY", text)
+        self.assertEqual(1, text.count("--apply"))
 
     def test_offline_check_cannot_invoke_acquisition(self):
         declaration = re.search(
