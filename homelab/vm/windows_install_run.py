@@ -37,6 +37,13 @@ except ImportError:
     from windows_install_contract import audit_qemu_disk_boundary, inspect_qcow2
 
 
+MAX_DURATION = 10800
+
+
+def _screenshot_interval(duration: float) -> int:
+    return 30 if duration > 3600 else 10
+
+
 def _bundle(path: Path) -> tuple[dict, list[str]]:
     if path.is_symlink():
         raise RuntimeError("Windows bundle must be a private non-symlink directory")
@@ -89,8 +96,9 @@ def _connect_qmp(path: Path, *, timeout: float = 10) -> QmpClient:
 def run(
     bundle: Path, *, controller_state: Path, duration: float, apply: bool,
 ) -> int:
-    if not 60 <= duration <= 3600:
-        raise RuntimeError("duration must be between 60 and 3600 seconds")
+    if not 60 <= duration <= MAX_DURATION:
+        raise RuntimeError(
+            f"duration must be between 60 and {MAX_DURATION} seconds")
     authorization, workstation_command = _bundle(bundle)
     bundle = bundle.resolve()
     print("Boundary: loopback-only switch; no host or UniFi changes")
@@ -157,6 +165,7 @@ def run(
             result["phase"] = "windows-setup"
             deadline = time.monotonic() + duration
             next_screen = time.monotonic()
+            screen_interval = _screenshot_interval(duration)
             screen_number = 0
             try:
                 while time.monotonic() < deadline:
@@ -174,7 +183,7 @@ def run(
                         screen = screens / f"{screen_number:03d}.ppm"
                         qmp.screenshot(screen)
                         os.chmod(screen, 0o600)
-                        next_screen = now + 10
+                        next_screen = now + screen_interval
                     time.sleep(min(1, max(0, deadline - time.monotonic())))
             finally:
                 qmp.close()

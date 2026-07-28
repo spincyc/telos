@@ -46,6 +46,11 @@ class WindowsInstallRunTests(unittest.TestCase):
                     duration=60, apply=False), 0)
             self.assertFalse((bundle / "evidence").exists())
 
+    def test_long_bounded_run_uses_reduced_screenshot_cadence(self):
+        self.assertEqual(windows_install_run.MAX_DURATION, 10800)
+        self.assertEqual(windows_install_run._screenshot_interval(3600), 10)
+        self.assertEqual(windows_install_run._screenshot_interval(7200), 30)
+
     def test_bundle_rejects_group_or_world_access(self):
         with tempfile.TemporaryDirectory() as temporary:
             bundle = self.bundle(Path(temporary) / "bundle")
