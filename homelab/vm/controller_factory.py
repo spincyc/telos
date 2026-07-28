@@ -202,8 +202,12 @@ check() {{
 echo 'TELOS FACTORY STEP administrator-disable'
 samba-tool user disable Administrator
 echo 'TELOS FACTORY STEP administrator-disabled-proof'
-samba-tool user show Administrator |
-  grep -q 'accountFlags:.*D'
+administrator_uac=$(
+  samba-tool user show Administrator --attributes=userAccountControl |
+    sed -n 's/^userAccountControl: //p'
+)
+[[ "$administrator_uac" =~ ^[0-9]+$ ]]
+(( administrator_uac & 2 ))
 touch /var/lib/telos-factory-converged
 echo 'TELOS FACTORY CONTROLLER PASS'
 """

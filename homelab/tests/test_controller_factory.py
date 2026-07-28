@@ -90,6 +90,12 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertIn(
                 "TELOS FACTORY STEP administrator-disable", script)
             self.assertIn(
+                "--attributes=userAccountControl", script)
+            self.assertIn(
+                '[[ "$administrator_uac" =~ ^[0-9]+$ ]]', script)
+            self.assertIn("(( administrator_uac & 2 ))", script)
+            self.assertNotIn("accountFlags:.*D", script)
+            self.assertIn(
                 "for package in samba krb5 ntp python-cryptography", script)
             self.assertIn(
                 'TELOS FACTORY STEP package-missing-$package', script)
