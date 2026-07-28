@@ -213,6 +213,7 @@ def _write_candidate(
                     baseline.pixels).hexdigest(),
             },
             "stable_crop_pixel_sha256": [crop_hash] * len(frames),
+            "baseline_image_distance": image_distance(image, baseline),
         },
         "candidate": {
             "file": candidate.name,

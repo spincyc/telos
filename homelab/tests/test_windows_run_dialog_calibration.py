@@ -158,6 +158,8 @@ class RunDialogCalibrationTests(unittest.TestCase):
             self.assertFalse(provenance["contains_private_material"])
             self.assertEqual(
                 1, len(set(provenance["capture"]["stable_crop_pixel_sha256"])))
+            self.assertGreaterEqual(
+                provenance["capture"]["baseline_image_distance"], 6.0)
 
     def test_unstable_run_frames_fail_and_teardown(self):
         with tempfile.TemporaryDirectory() as name:
