@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:42:17Z"
+updated_at: "2026-07-28T01:45:39Z"
 ---
 
 # Goal
@@ -173,3 +173,8 @@ the authenticated SMB source. No partition mutation occurred. The next
 diagnostic explicitly distinguishes a missing injected password file with code
 29 and prints only WinPE's isolated `ipconfig` state before the existing mount
 attempt.
+
+The next diagnostic reported code 29: wimboot's injected inputs are not at the
+WinPE `X:\` root. The executing batch itself proves the injection directory is
+available. All injected input references now resolve relative to `%~dp0`,
+while generated scratch files remain on `X:\`. No disk mutation occurred.

@@ -236,18 +236,18 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertNotIn("InstallPass-123", script)
         self.assertIn('net use W: "\\\\controller\\windows-20260727.005" *',
                       script)
-        self.assertIn("< X:\\install-password.txt", script)
+        self.assertIn('< "%inputs%install-password.txt"', script)
         self.assertIn("TELOS WINPE FAIL code=%telos_result%", script)
         self.assertIn("TELOS WINPE phase=source-mount", script)
         self.assertIn(
-            "if not exist X:\\install-password.txt exit /b 29", script)
+            'if not exist "%inputs%install-password.txt" exit /b 29', script)
         self.assertIn("ipconfig", script)
         self.assertIn("pause", script)
         self.assertNotIn("findstr", script)
         self.assertIn('if /I "%%A"=="Disk" if /I "%%C"=="Online"', script)
         self.assertLess(
             script.rindex('"256 GB" exit /b 22'),
-            script.index("diskpart /s X:\\windows-layout.txt"))
+            script.index('diskpart /s "%inputs%windows-layout.txt"'))
 
     def test_unattend_is_explicit_pro_us_partition_three_and_has_no_product_key(self):
         identity = SyntheticIdentity(
