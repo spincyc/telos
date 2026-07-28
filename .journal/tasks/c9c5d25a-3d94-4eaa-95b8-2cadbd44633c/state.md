@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-27T23:57:01Z"
+updated_at: "2026-07-28T00:02:49Z"
 ---
 
 # Goal
@@ -53,3 +53,8 @@ Release `.002` proved full selected image download and non-returning iPXE
 control transfer. Direct Q35 boot proved the exact kernel/initramfs valid.
 The next `.003` release adds early UART and serial-primary diagnostics to
 observe the remaining EFI-to-kernel boundary without weakening acceptance.
+
+Release `.003` proved kernel entry, `/init`, and Archiso PXE hooks. Its
+network-root failure was a deterministic `eth0` rename race; `.004` will bind
+the PXE MAC and disable initramfs interface renaming. Acceptance records the
+partial phases but still requires root-image retrieval and live userspace.

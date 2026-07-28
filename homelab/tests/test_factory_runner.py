@@ -128,7 +128,9 @@ class FactoryRunnerTests(unittest.TestCase):
                 'GET /arch-workstation/20260727.001/payload/arch/boot/'
                 'x86_64/vmlinuz-linux HTTP/1.1\n'
                 'GET /arch-workstation/20260727.001/payload/arch/boot/'
-                'x86_64/initramfs-linux.img HTTP/1.1\n')
+                'x86_64/initramfs-linux.img HTTP/1.1\n'
+                'GET /arch-workstation/20260727.001/payload/arch/x86_64/'
+                'airootfs.sfs HTTP/1.1\n')
             workstation = root / "workstation.log"
             workstation.write_text("archiso login: ")
             self.assertEqual(factory_runner.assess_handoff(
@@ -155,6 +157,7 @@ class FactoryRunnerTests(unittest.TestCase):
                 + base + "boot.ipxe\n"
                 + base + "payload/arch/boot/x86_64/vmlinuz-linux\n"
                 + base + "payload/arch/boot/x86_64/initramfs-linux.img\n"
+                + base + "payload/arch/x86_64/airootfs.sfs\n"
                 + "archiso login: ")
             self.assertEqual(factory_runner.assess_handoff(
                 switch, controller, workstation, "20260727.001"), [])
@@ -179,6 +182,18 @@ class FactoryRunnerTests(unittest.TestCase):
             problems = factory_runner.assess_handoff(
                 switch, controller, workstation, "20260727.001")
             self.assertIn("no Arch or WinPE handoff was observed", problems)
+
+    def test_kernel_and_archiso_hook_are_recorded_but_root_is_required(self):
+        phases = factory_runner.arch_handoff_phases(
+            "TELOS IPXE PRE-BOOT\n"
+            "Run /init as init process\n"
+            ":: running hook [archiso_pxe_common]\n")
+        self.assertEqual(phases, {
+            "ipxe_preboot": True,
+            "kernel_init": True,
+            "archiso_network_hook": True,
+            "network_root_ready": False,
+        })
 
     def test_controller_receives_publication_as_read_only_media(self):
         with mock.patch.object(
