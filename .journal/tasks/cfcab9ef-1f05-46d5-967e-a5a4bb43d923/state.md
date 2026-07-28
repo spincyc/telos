@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "cfcab9ef-1f05-46d5-967e-a5a4bb43d923"
 title: "Implement Windows-first installation"
-status: "active"
+status: "done"
 priority: "normal"
 priority_reason: "Next factory gate after isolated PXE proof"
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T12:54:52Z"
+updated_at: "2026-07-28T12:56:48Z"
 ---
 
 # Goal

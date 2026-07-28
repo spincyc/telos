@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-generated_at: "2026-07-28T12:56:16Z"
+generated_at: "2026-07-28T12:57:15Z"
 task_count: 11
 ---
 
@@ -10,8 +10,7 @@ This file is a rebuildable view. Task `state.md` files are authoritative.
 
 ## Active
 
-- `fe041c7d-9139-4848-b335-6c655d0ebb49` — Audit hands-on projects for pencil drawings [verifying, critical]
-- `cfcab9ef-1f05-46d5-967e-a5a4bb43d923` — Implement Windows-first installation [active, normal] (depends on c9c5d25a-3d94-4eaa-95b8-2cadbd44633c)
+None.
 
 ## Queued
 
@@ -27,7 +26,9 @@ None.
 
 ## Terminal
 
+- `fe041c7d-9139-4848-b335-6c655d0ebb49` — Audit hands-on projects for pencil drawings [done, critical]
 - `ebd2daed-fc26-4851-b1e7-cbd86dba96c0` — Restore repository verification gate [done, high]
 - `97541f7d-8649-4520-af30-9bd8deba2b00` — Reconcile factory durable state and local inputs [done, high]
 - `73e77cf3-f91d-47ae-ae5f-f0d80aea879a` — Complete sealed media and immutable PXE releases [done, high] (depends on ebd2daed-fc26-4851-b1e7-cbd86dba96c0, 97541f7d-8649-4520-af30-9bd8deba2b00)
 - `c9c5d25a-3d94-4eaa-95b8-2cadbd44633c` — Prove integrated isolated PXE handoff [done, high] (depends on 73e77cf3-f91d-47ae-ae5f-f0d80aea879a)
+- `cfcab9ef-1f05-46d5-967e-a5a4bb43d923` — Implement Windows-first installation [done, normal] (depends on c9c5d25a-3d94-4eaa-95b8-2cadbd44633c)
