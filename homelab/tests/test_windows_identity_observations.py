@@ -53,6 +53,14 @@ def fault(check, *offline):
 
 
 class WindowsIdentityObservationTests(unittest.TestCase):
+    diagnostics = {
+        "secrets_found": 0,
+        "reusable_credentials_retained": False,
+        "qemu_arguments_secret_free": True,
+        "tracked_artifacts_secret_free": True,
+        "logs_secret_free": True,
+    }
+
     def test_structured_probes_close_readiness_and_identity_fields(self):
         readiness = map_exact_observation(
             "controller-ready",
@@ -152,6 +160,43 @@ class WindowsIdentityObservationTests(unittest.TestCase):
             "controller_reachable": True,
             "domain_login": True,
         }, fields)
+
+    def test_update_source_login_and_diagnostics_have_exact_sources(self):
+        fields = map_exact_observation(
+            "update-source-offline",
+            ObservationRecords(
+                static_probes={"dependency-reachability": probe(
+                    "dependency-reachability", {
+                        "update_source_reachable": False,
+                        "optional_storage_reachable": True,
+                        "optional_storage_authorization_denied": False,
+                    })},
+                credential_actions={"connected-domain-login": credential(
+                    "connected-domain-login",
+                    domain_reachable=True,
+                    controller_reachable=True,
+                    authentication_semantics="connected-domain",
+                    cache_evidence="online-interactive-logon",
+                )},
+                fault_record=fault(
+                    "update-source-offline", "update-source"),
+                diagnostics_scan=self.diagnostics,
+            ),
+        )
+        self.assertEqual({
+            "update_source_reachable": False,
+            "login_unaffected": True,
+            "diagnostics_secret_free": True,
+        }, fields)
+
+    def test_diagnostics_scan_maps_without_fixture_acceptance_fields(self):
+        self.assertEqual(
+            self.diagnostics,
+            map_exact_observation(
+                "windows-diagnostics-sanitized",
+                ObservationRecords(diagnostics_scan=self.diagnostics),
+            ),
+        )
 
     def test_uncached_denial_comes_from_failure_record(self):
         fields = map_exact_observation(

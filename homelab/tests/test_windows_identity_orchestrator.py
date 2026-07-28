@@ -123,7 +123,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             self.assertTrue(receipt.evidence.read_text().endswith("\n"))
 
         self.assertEqual(
-            list(details())[:-2], [check for check, _ in observed])
+            list(details()), [check for check, _ in observed])
         self.assertEqual(24, receipt.checks)
         self.assertTrue(receipt.dependencies_restored)
         self.assertEqual([

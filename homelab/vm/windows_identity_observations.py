@@ -26,6 +26,7 @@ class ObservationRecords:
     credential_actions: Mapping[str, Mapping[str, object]] | None = None
     join_proof: Mapping[str, object] | None = None
     fault_record: Mapping[str, object] | None = None
+    diagnostics_scan: Mapping[str, object] | None = None
 
 
 _PROBE_KEYS = {
@@ -43,6 +44,11 @@ _JOIN_KEYS = {
     "operator", "operator_local_administrator",
 }
 _FAULT_KEYS = {"schema_version", "check", "offline_dependencies"}
+_DIAGNOSTIC_KEYS = {
+    "secrets_found", "reusable_credentials_retained",
+    "qemu_arguments_secret_free", "tracked_artifacts_secret_free",
+    "logs_secret_free",
+}
 _PROBE_SCHEMAS = {
     "current-principal": {
         "principal": str, "authenticated": bool, "elevated": bool,
@@ -229,6 +235,23 @@ def _dependency_fields(
         raise WindowsIdentityObservationError(str(error)) from error
 
 
+def _diagnostics(records: ObservationRecords) -> Mapping[str, object]:
+    scan = records.diagnostics_scan
+    if (
+        not isinstance(scan, Mapping)
+        or set(scan) != _DIAGNOSTIC_KEYS
+        or type(scan["secrets_found"]) is not int
+        or scan["secrets_found"] < 0
+        or any(
+            type(scan[key]) is not bool
+            for key in _DIAGNOSTIC_KEYS - {"secrets_found"}
+        )
+    ):
+        raise WindowsIdentityObservationError(
+            "exact diagnostics scan is unavailable")
+    return scan
+
+
 def derive_observation(
     check: str, records: ObservationRecords,
 ) -> dict[str, Any]:
@@ -412,6 +435,13 @@ def derive_observation(
             login = _credential(records, action)
             if check == "update-source-offline":
                 fields["login_unaffected"] = login["authenticated"]
+                scan = _diagnostics(records)
+                fields["diagnostics_secret_free"] = (
+                    scan["secrets_found"] == 0
+                    and scan["reusable_credentials_retained"] is False
+                    and scan["qemu_arguments_secret_free"] is True
+                    and scan["tracked_artifacts_secret_free"] is True
+                    and scan["logs_secret_free"] is True)
             else:
                 fields.update({
                     "login_succeeded": login["authenticated"],
@@ -460,6 +490,17 @@ def derive_observation(
             "gateway_reachable": login["gateway_reachable"],
             "controller_reachable": login["controller_reachable"],
             "domain_login": login["authenticated"],
+        })
+
+    elif check == "windows-diagnostics-sanitized":
+        fields.update(_diagnostics(records))
+
+    elif check == "windows-identity-acceptance":
+        fields.update({
+            "checks": len(FIELD_SETS),
+            "firmware_activation_tested": False,
+            "live_microsoft_update_tested": False,
+            "deferred": ["disable-reenable"],
         })
 
     return {key: value for key, value in fields.items()

@@ -192,6 +192,7 @@ def _record(
     principals: Mapping[str, str],
     join_proof: Mapping[str, object] | None = None,
     fault_record: Mapping[str, object] | None = None,
+    diagnostics_scan: Mapping[str, object] | None = None,
 ) -> None:
     context = ObservationRecords(
         static_probes=_validated_static_probes(callbacks, check),
@@ -199,6 +200,7 @@ def _record(
             callbacks, check, local_credential, principals),
         join_proof=join_proof,
         fault_record=fault_record,
+        diagnostics_scan=diagnostics_scan,
     )
     try:
         fields = map_exact_observation(check, context)
@@ -358,11 +360,15 @@ def _run_acceptance_checks(
         return apply
 
     def fault_observe(check: str) -> None:
-        record(check, fault_record={
+        extra: dict[str, object] = {"fault_record": {
             "schema_version": 1,
             "check": check,
             "offline_dependencies": sorted(offline),
-        })
+        }}
+        if check == "update-source-offline":
+            extra["diagnostics_scan"] = callbacks.scan_secrets(
+                (local_credential, *principals.values()))
+        record(check, **extra)
         if check == "windows-secure-channel-restored":
             record("windows-update-policy")
 
@@ -377,15 +383,11 @@ def _run_acceptance_checks(
             "optional-storage", boundary.set_optional_storage_available),
         observe=fault_observe,
     ))
-    diagnostics = callbacks.scan_secrets(
-        (local_credential, *principals.values()))
-    collector.record("windows-diagnostics-sanitized", diagnostics)
-    collector.record("windows-identity-acceptance", {
-        "checks": len(FIELD_SETS),
-        "firmware_activation_tested": False,
-        "live_microsoft_update_tested": False,
-        "deferred": ["disable-reenable"],
-    })
+    record(
+        "windows-diagnostics-sanitized",
+        diagnostics_scan=callbacks.scan_secrets(
+            (local_credential, *principals.values())))
+    record("windows-identity-acceptance")
     if collector.next_check is not None:
         raise WindowsIdentityOrchestratorError(
             f"acceptance ended before {collector.next_check}")
