@@ -133,6 +133,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-cache-seal homelab-factory-offline-check \
 	homelab-factory-controller-bundle homelab-factory-pxe \
 	homelab-factory-sim-plan homelab-factory-sim-run \
+	homelab-windows-install-prepare \
 	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
@@ -533,6 +534,13 @@ homelab-factory-sim-run: homelab-sim-deps
 		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' --target '$(FACTORY_TARGET)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)'); \
 	else \
 		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' --target '$(FACTORY_TARGET)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') --apply; \
+	fi
+
+homelab-windows-install-prepare:
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
+	else \
+		$(PYTHON) homelab/bin/homelab-windows-install-prepare --apply; \
 	fi
 
 # Converge only the temporary Controller role. The private inventory supplies
