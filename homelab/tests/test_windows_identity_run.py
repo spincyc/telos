@@ -2,10 +2,13 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
+from unittest import mock
 
+from homelab.vm import windows_identity_run
 from homelab.vm.windows_identity_run import (
     IdentityOperations,
     NativeProcessBoundary,
+    PrivateIdentityMaterial,
     WindowsIdentityRunError,
     run_lifecycle,
 )
@@ -80,6 +83,57 @@ class WindowsIdentityRunTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     WindowsIdentityRunError, "private real directory"):
                 boundary._validate()
+
+    def test_private_material_rotates_before_destroying_and_staging(self):
+        events = []
+        recovery = mock.MagicMock()
+        recovery.__enter__.return_value = "old-private-value"
+        with mock.patch.object(
+                windows_identity_run, "RecoveredLocalCredential",
+                return_value=recovery):
+            material = PrivateIdentityMaterial(
+                Path("/private/publication.iso"), Path("/private"),
+                rotate_guest=lambda old, new: events.append(
+                    ("rotate", old, new)),
+                stage_principals=lambda values: events.append(
+                    ("stage", dict(values))),
+                destroy_principals=lambda names: events.append(
+                    ("destroy", names)),
+            )
+            material.rotate_local_credential()
+            old, new = events[0][1:]
+            self.assertEqual("old-private-value", old)
+            self.assertNotEqual(old, new)
+            material.destroy_private_publication()
+            recovery.destroy_publication.assert_called_once_with()
+            material.stage_controller_principals()
+            staged = events[1][1]
+            self.assertEqual(
+                {"student", "operator", "directory-admin"}, set(staged))
+            self.assertEqual(3, len(set(staged.values())))
+            self.assertNotIn(old, staged.values())
+            self.assertNotIn(new, staged.values())
+            material.destroy_controller_principals()
+            self.assertEqual(
+                ("student", "operator", "directory-admin"), events[2][1])
+            material.close()
+
+    def test_private_material_preserves_publication_when_rotation_fails(self):
+        recovery = mock.MagicMock()
+        recovery.__enter__.return_value = "old-private-value"
+        with mock.patch.object(
+                windows_identity_run, "RecoveredLocalCredential",
+                return_value=recovery):
+            material = PrivateIdentityMaterial(
+                Path("/private/publication.iso"), Path("/private"),
+                rotate_guest=mock.Mock(side_effect=RuntimeError("failed")),
+                stage_principals=mock.Mock(),
+                destroy_principals=mock.Mock(),
+            )
+            with self.assertRaises(RuntimeError):
+                material.rotate_local_credential()
+            recovery.destroy_publication.assert_not_called()
+            recovery.__exit__.assert_called_once()
 
     def test_secret_and_destruction_boundaries_have_one_order(self):
         recorder = Recorder()

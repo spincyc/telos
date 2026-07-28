@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import secrets
 import socket
 import subprocess
 from typing import Callable
@@ -21,6 +22,7 @@ from .signal_cleanup import terminate_children
 from .simulated_topology import audit_live_process, controller_command
 from .windows_gui import QmpClient
 from .windows_identity_contract import qemu_identity_command
+from .windows_identity_recovery import RecoveredLocalCredential
 
 
 class WindowsIdentityRunError(RuntimeError):
@@ -209,6 +211,91 @@ class NativeProcessBoundary:
 
     def stop_switch(self) -> None:
         self._stop("gateway", "switch")
+
+
+class PrivateIdentityMaterial:
+    """Own recovered and generated credentials without exposing their values."""
+
+    def __init__(
+        self,
+        publication: Path,
+        private_parent: Path,
+        *,
+        rotate_guest: Callable[[str, str], None],
+        stage_principals: Callable[[dict[str, str]], None],
+        destroy_principals: Callable[[tuple[str, ...]], None],
+    ) -> None:
+        self.recovery = RecoveredLocalCredential(
+            publication, private_parent)
+        self.rotate_guest = rotate_guest
+        self.stage_guest_principals = stage_principals
+        self.destroy_guest_principals = destroy_principals
+        self._recovery_context: RecoveredLocalCredential | None = None
+        self._old_local: str | None = None
+        self._new_local: str | None = None
+        self._principals: dict[str, str] = {}
+
+    @staticmethod
+    def _credential() -> str:
+        return "Synthetic-" + secrets.token_urlsafe(24) + "-47!"
+
+    def rotate_local_credential(self) -> None:
+        if self._recovery_context is not None:
+            raise WindowsIdentityRunError(
+                "local credential recovery is already active")
+        self._recovery_context = self.recovery
+        self._old_local = self._recovery_context.__enter__()
+        self._new_local = self._credential()
+        try:
+            self.rotate_guest(self._old_local, self._new_local)
+        except BaseException:
+            self.close()
+            raise
+
+    def destroy_private_publication(self) -> None:
+        if (self._recovery_context is None or self._old_local is None
+                or self._new_local is None):
+            raise WindowsIdentityRunError(
+                "guest rotation must precede publication destruction")
+        self._recovery_context.destroy_publication()
+        self._old_local = None
+        self._recovery_context.__exit__(None, None, None)
+        self._recovery_context = None
+
+    def stage_controller_principals(self) -> None:
+        if self._old_local is not None or self._recovery_context is not None:
+            raise WindowsIdentityRunError(
+                "recovered credential must be destroyed before staging")
+        if self._principals:
+            raise WindowsIdentityRunError(
+                "Controller principals are already staged")
+        self._principals = {
+            name: self._credential()
+            for name in ("student", "operator", "directory-admin")
+        }
+        try:
+            self.stage_guest_principals(self._principals)
+        except BaseException:
+            self._principals.clear()
+            raise
+
+    def destroy_controller_principals(self) -> None:
+        names = tuple(self._principals)
+        if not names:
+            raise WindowsIdentityRunError(
+                "Controller principals were not staged")
+        try:
+            self.destroy_guest_principals(names)
+        finally:
+            self._principals.clear()
+
+    def close(self) -> None:
+        self._old_local = None
+        self._new_local = None
+        self._principals.clear()
+        if self._recovery_context is not None:
+            self._recovery_context.__exit__(None, None, None)
+            self._recovery_context = None
 
 
 def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
