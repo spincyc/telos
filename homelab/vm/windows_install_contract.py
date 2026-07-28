@@ -248,6 +248,8 @@ def render_startup(
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 11\r\n"
         + check
         + "echo TELOS WINPE phase=source-mount\r\n"
+        + "if not exist X:\\install-password.txt exit /b 29\r\n"
+        + "ipconfig\r\n"
         + f'net use W: "{install_source_unc}" * /user:"{install_user}" '
         "/persistent:no < X:\\install-password.txt || exit /b 30\r\n"
         'if not exist W:\\setup.exe exit /b 31\r\n'
