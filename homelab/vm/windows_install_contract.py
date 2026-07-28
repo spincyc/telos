@@ -121,6 +121,7 @@ def qemu_install_command(
     command += [
         "-monitor", "none",
         "-qmp", f"unix:{Path(qmp_socket).resolve()},server=on,wait=off",
+        "-device", "VGA",
         "-drive",
         (
             "if=none,id=osdisk,format=qcow2,cache=none,"

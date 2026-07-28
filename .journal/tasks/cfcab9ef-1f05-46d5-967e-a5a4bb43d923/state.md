@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:25:11Z"
+updated_at: "2026-07-28T01:26:18Z"
 ---
 
 # Goal
@@ -143,3 +143,9 @@ were fetched, and wimboot reported injecting `install.bat` and
 PXE, with no Setup or DiskPart evidence and only negligible qcow2 allocation.
 The next diagnostic boundary is bounded QMP screenshot capture during WinPE;
 serial evidence cannot expose the Windows-side failure.
+
+The workstation command now exposes only a local emulated VGA device in
+addition to its existing QMP Unix socket. During the bounded observation the
+runner captures a private mode-0600 PPM every ten seconds, enabling diagnosis
+without host display or input integration. The next fresh bundle will use this
+evidence to identify the WinPE reboot.

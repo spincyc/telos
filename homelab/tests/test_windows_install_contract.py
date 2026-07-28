@@ -78,6 +78,7 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("e1000e,netdev=factory", text)
         self.assertIn("connect=127.0.0.1:31415", text)
         self.assertIn("windows.qmp,server=on,wait=off", text)
+        self.assertIn("-device VGA", text)
         self.assertNotIn("publication.iso", text)
         self.assertNotIn("media=cdrom", text)
         self.assertNotIn("snapshot=on", text)

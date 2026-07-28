@@ -21,6 +21,7 @@ try:
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
     from .simulated_topology import audit_live_process
+    from .windows_gui import QmpClient
     from .windows_install_contract import (
         audit_qemu_disk_boundary, inspect_qcow2)
 except ImportError:
@@ -32,6 +33,7 @@ except ImportError:
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
     from simulated_topology import audit_live_process
+    from windows_gui import QmpClient
     from windows_install_contract import audit_qemu_disk_boundary, inspect_qcow2
 
 
@@ -137,17 +139,33 @@ def run(
                 allowed_nic_models=("e1000e",))
             serial_thread = capture_serial(
                 processes["workstation"], evidence / "workstation-serial.log")
+            screens = evidence / "screens"
+            screens.mkdir(mode=0o700)
+            qmp = QmpClient.connect(bundle / "windows.qmp", timeout=5)
             result["phase"] = "windows-setup"
             deadline = time.monotonic() + duration
-            while time.monotonic() < deadline:
-                failed = [
-                    role for role, process in processes.items()
-                    if process.poll() is not None
-                ]
-                if failed:
-                    raise RuntimeError(
-                        "Windows lifecycle process failed: " + ", ".join(failed))
-                time.sleep(min(1, max(0, deadline - time.monotonic())))
+            next_screen = time.monotonic()
+            screen_number = 0
+            try:
+                while time.monotonic() < deadline:
+                    failed = [
+                        role for role, process in processes.items()
+                        if process.poll() is not None
+                    ]
+                    if failed:
+                        raise RuntimeError(
+                            "Windows lifecycle process failed: "
+                            + ", ".join(failed))
+                    now = time.monotonic()
+                    if now >= next_screen:
+                        screen_number += 1
+                        screen = screens / f"{screen_number:03d}.ppm"
+                        qmp.screenshot(screen)
+                        os.chmod(screen, 0o600)
+                        next_screen = now + 10
+                    time.sleep(min(1, max(0, deadline - time.monotonic())))
+            finally:
+                qmp.close()
             serial = (evidence / "workstation-serial.log").read_text(
                 encoding="utf-8", errors="replace")
             required = (
