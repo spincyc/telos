@@ -253,3 +253,9 @@ monotonically to 24% over 1,200 seconds, with about 5.1 GB allocated and clean
 timeout teardown. The runner now permits up to 10,800 bounded seconds and
 reduces long-run screenshot cadence to 30 seconds. The partial disk will not
 be reused; a fresh long run is next.
+
+The long run reached its first Setup reboot with about 16 GB allocated, then
+firmware selected PXE again. It was stopped before the second WinPE reached
+DiskPart. New commands use a one-shot network boot followed by disk-first
+resets and remove persistent device boot indexes. The first-pass installed
+evidence disk will not be reused; a fresh long run is next.

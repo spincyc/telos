@@ -120,6 +120,7 @@ def qemu_install_command(
     command = _base("windows-install", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [
+        "-boot", "order=c,once=n,menu=off",
         "-monitor", "none",
         "-qmp", f"unix:{Path(qmp_socket).resolve()},server=on,wait=off",
         "-device", "VGA",
@@ -128,11 +129,11 @@ def qemu_install_command(
             "if=none,id=osdisk,format=qcow2,cache=none,"
             f"file={Path(disk).resolve()}"
         ),
-        "-device", f"nvme,drive=osdisk,serial={serial},bootindex=2",
+        "-device", f"nvme,drive=osdisk,serial={serial}",
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device",
-        f"e1000e,netdev=factory,mac={MACS['client']},bootindex=1",
+        f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
     audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
     audit_qemu_disk_boundary(command, disk=disk, serial=serial)

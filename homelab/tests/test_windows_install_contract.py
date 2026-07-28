@@ -75,8 +75,10 @@ class WindowsInstallContractTests(unittest.TestCase):
             serial="TELOS-WIN-0001")
         text = " ".join(command)
         self.assertIn(
-            "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=2", text)
+            "nvme,drive=osdisk,serial=TELOS-WIN-0001", text)
+        self.assertIn("-boot order=c,once=n,menu=off", text)
         self.assertIn("e1000e,netdev=factory", text)
+        self.assertNotIn("bootindex=", text)
         self.assertIn("connect=127.0.0.1:31415", text)
         self.assertIn("windows.qmp,server=on,wait=off", text)
         self.assertIn("-device VGA", text)
