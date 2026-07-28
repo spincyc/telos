@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:38:03Z"
+updated_at: "2026-07-28T01:42:17Z"
 ---
 
 # Goal
@@ -167,3 +167,9 @@ The selected WinPE image lacks `findstr`; the optional parser utility failed,
 so no disk was counted. DiskPart itself succeeded and no mutation occurred.
 The parser now uses only `cmd.exe` built-ins to recognize en-US DiskPart rows,
 while preserving the exact disk number, count, and capacity requirements.
+
+The next run passed the first disk gate and failed with code 30 while mounting
+the authenticated SMB source. No partition mutation occurred. The next
+diagnostic explicitly distinguishes a missing injected password file with code
+29 and prints only WinPE's isolated `ipconfig` state before the existing mount
+attempt.

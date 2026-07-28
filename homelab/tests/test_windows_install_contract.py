@@ -239,6 +239,9 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("< X:\\install-password.txt", script)
         self.assertIn("TELOS WINPE FAIL code=%telos_result%", script)
         self.assertIn("TELOS WINPE phase=source-mount", script)
+        self.assertIn(
+            "if not exist X:\\install-password.txt exit /b 29", script)
+        self.assertIn("ipconfig", script)
         self.assertIn("pause", script)
         self.assertNotIn("findstr", script)
         self.assertIn('if /I "%%A"=="Disk" if /I "%%C"=="Online"', script)
