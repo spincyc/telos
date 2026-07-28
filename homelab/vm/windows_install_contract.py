@@ -219,13 +219,13 @@ def render_startup(
     # this file, a process argument, or retained evidence.
     check = (
         'set "disk_count=0"\r\n'
-        'for /f "tokens=2,4,5" %%A in ('
-        "'findstr /R /C:\"^  Disk [0-9][0-9]* *Online\" X:\\\\disk-list.txt'"
-        ') do (\r\n'
-        "  set /a disk_count+=1\r\n"
-        '  set "disk_number=%%A"\r\n'
-        '  set "disk_size=%%B"\r\n'
-        '  set "disk_unit=%%C"\r\n'
+        'for /f "tokens=1,2,3,4,5" %%A in (X:\\disk-list.txt) do (\r\n'
+        '  if /I "%%A"=="Disk" if /I "%%C"=="Online" (\r\n'
+        "    set /a disk_count+=1\r\n"
+        '    set "disk_number=%%B"\r\n'
+        '    set "disk_size=%%D"\r\n'
+        '    set "disk_unit=%%E"\r\n'
+        "  )\r\n"
         ")\r\n"
         'if not "!disk_count!"=="1" exit /b 20\r\n'
         'if not "!disk_number!"=="0" exit /b 21\r\n'

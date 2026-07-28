@@ -240,6 +240,8 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("TELOS WINPE FAIL code=%telos_result%", script)
         self.assertIn("TELOS WINPE phase=source-mount", script)
         self.assertIn("pause", script)
+        self.assertNotIn("findstr", script)
+        self.assertIn('if /I "%%A"=="Disk" if /I "%%C"=="Online"', script)
         self.assertLess(
             script.rindex('"256 GB" exit /b 22'),
             script.index("diskpart /s X:\\windows-layout.txt"))
