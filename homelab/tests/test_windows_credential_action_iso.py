@@ -109,6 +109,19 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "failure_classification = 'windows-logon-failure'", script)
         self.assertIn("Get-LocalGroupMember -SID $administratorSid", script)
         self.assertNotIn("WindowsBuiltInRole]::Administrator", script)
+        self.assertIn(
+            "$loginClock = [Diagnostics.Stopwatch]::StartNew()", script)
+        self.assertIn(
+            "$loginClock.Elapsed.TotalSeconds, 3", script)
+        self.assertIn(
+            "Test-Path -LiteralPath $env:USERPROFILE -PathType Container",
+            script)
+        self.assertIn(
+            "Get-NetRoute -DestinationPrefix '0.0.0.0/0'", script)
+        self.assertIn("controller_reachable = [bool]$controllerReachable",
+                      script)
+        self.assertIn("gateway_reachable = [bool]$gatewayReachable", script)
+        self.assertIn("cacheEvidence = 'offline-cache-proven'", script)
         self.assertIn("TerminateProcess(", script)
         self.assertLess(script.index("TerminateProcess("),
                         script.index("throw 'credential action timed out'"))
@@ -232,7 +245,13 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "authenticated": True,
             "local_administrators_member": False,
             "authentication_type": "Kerberos",
+            "authentication_semantics": "cached-domain",
+            "cache_evidence": "offline-cache-proven",
+            "login_elapsed_seconds": 1.25,
+            "local_profile_available": True,
             "domain_reachable": False,
+            "controller_reachable": False,
+            "gateway_reachable": True,
             "failure_classification": "none",
         }
         parsed = parse_action_result(
@@ -250,6 +269,8 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         for mutation in (
                 {**result, "password": "leak"},
                 {**result, "authenticated": 1},
+                {**result, "login_elapsed_seconds": float("nan")},
+                {**result, "controller_reachable": True},
                 {**result, "nonce": "00" * 16}):
             with self.assertRaises(WindowsCredentialActionError):
                 parse_action_result(
@@ -269,11 +290,17 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "authenticated": True,
             "local_administrators_member": False,
             "authentication_type": "Kerberos",
+            "authentication_semantics": "connected-domain",
+            "cache_evidence": "online-interactive-logon",
+            "login_elapsed_seconds": 0.75,
+            "local_profile_available": True,
             "domain_reachable": False,
+            "controller_reachable": False,
+            "gateway_reachable": True,
             "failure_classification": "none",
         }
         with self.assertRaisesRegex(
-                WindowsCredentialActionError, "reachability"):
+                WindowsCredentialActionError, "measurement"):
             parse_action_result(
                 json.dumps(base) + "\n", nonce=NONCE,
                 action="connected-domain-login",
@@ -283,12 +310,27 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             **base,
             "action": "operator-local-administrators-check",
             "domain_reachable": True,
+            "controller_reachable": True,
         }
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "Administrators membership"):
             parse_action_result(
                 json.dumps(membership) + "\n", nonce=NONCE,
                 action="operator-local-administrators-check",
+                expected_principal="AD\\operator",
+                allowed_authentication_types=frozenset({"Kerberos"}))
+
+        unavailable_profile = {
+            **base,
+            "domain_reachable": True,
+            "controller_reachable": True,
+            "local_profile_available": False,
+        }
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "principal proof"):
+            parse_action_result(
+                json.dumps(unavailable_profile) + "\n", nonce=NONCE,
+                action="connected-domain-login",
                 expected_principal="AD\\operator",
                 allowed_authentication_types=frozenset({"Kerberos"}))
 
@@ -303,7 +345,13 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "authenticated": False,
             "local_administrators_member": False,
             "authentication_type": "None",
+            "authentication_semantics": "domain-logon-denied",
+            "cache_evidence": "offline-cache-miss-proven",
+            "login_elapsed_seconds": 0.5,
+            "local_profile_available": False,
             "domain_reachable": False,
+            "controller_reachable": False,
+            "gateway_reachable": True,
             "failure_classification": "windows-logon-failure",
         }
         self.assertEqual(result, parse_action_result(
@@ -315,6 +363,8 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         for mutation in (
                 {**result, "domain_reachable": True},
                 {**result, "authenticated": True},
+                {**result, "local_profile_available": True},
+                {**result, "cache_evidence": "offline-cache-proven"},
                 {**result, "failure_classification": "script-failure"},
                 {**result, "result": "error"}):
             with self.assertRaises(WindowsCredentialActionError):
@@ -344,7 +394,13 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 "authenticated": True,
                 "local_administrators_member": False,
                 "authentication_type": "Kerberos",
+                "authentication_semantics": "cached-domain",
+                "cache_evidence": "offline-cache-proven",
+                "login_elapsed_seconds": 1.25,
+                "local_profile_available": True,
                 "domain_reachable": False,
+                "controller_reachable": False,
+                "gateway_reachable": True,
                 "failure_classification": "none",
             }
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -40,8 +41,23 @@ ACTION_BUS = "controlbus.0"
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
     "principal", "authenticated", "local_administrators_member",
-    "authentication_type", "domain_reachable", "failure_classification",
+    "authentication_type", "authentication_semantics", "cache_evidence",
+    "login_elapsed_seconds", "local_profile_available",
+    "domain_reachable", "controller_reachable", "gateway_reachable",
+    "failure_classification",
 }
+_AUTHENTICATION_SEMANTICS = frozenset({
+    "connected-domain",
+    "cached-domain",
+    "local-account",
+    "domain-logon-denied",
+})
+_CACHE_EVIDENCE = frozenset({
+    "online-interactive-logon",
+    "offline-cache-proven",
+    "offline-cache-miss-proven",
+    "not-applicable",
+})
 
 
 class Qmp(Protocol):
@@ -268,41 +284,80 @@ def parse_action_result(
     if any(result.get(key) != value for key, value in expected.items()):
         raise WindowsCredentialActionError(
             "credential-action result identity is invalid")
-    for key in ("principal", "authentication_type", "failure_classification"):
+    for key in (
+            "principal", "authentication_type", "authentication_semantics",
+            "cache_evidence", "failure_classification"):
         if (not isinstance(result[key], str) or not result[key]
                 or len(result[key]) > 256):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
-    for key in ("authenticated", "local_administrators_member"):
+    for key in (
+            "authenticated", "local_administrators_member",
+            "local_profile_available", "domain_reachable",
+            "controller_reachable", "gateway_reachable"):
         if not isinstance(result[key], bool):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
-    if not isinstance(result["domain_reachable"], bool):
+    elapsed = result["login_elapsed_seconds"]
+    if (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))
+            or not math.isfinite(elapsed) or elapsed < 0 or elapsed > 120):
         raise WindowsCredentialActionError(
             "credential-action result schema is invalid")
+    if (result["authentication_semantics"] not in _AUTHENTICATION_SEMANTICS
+            or result["cache_evidence"] not in _CACHE_EVIDENCE
+            or result["domain_reachable"] != result["controller_reachable"]):
+        raise WindowsCredentialActionError(
+            "credential-action result measurement is invalid")
     if action == "uncached-domain-user-denied":
         if (result["principal"].casefold() != expected_principal.casefold()
                 or result["authenticated"]
                 or result["local_administrators_member"]
+                or result["local_profile_available"]
                 or result["authentication_type"] != "None"
                 or result["domain_reachable"]
+                or result["authentication_semantics"] != "domain-logon-denied"
+                or result["cache_evidence"] != "offline-cache-miss-proven"
                 or result["failure_classification"] != "windows-logon-failure"):
             raise WindowsCredentialActionError(
                 "uncached domain login denial proof is invalid")
         return result
     if (result["principal"].casefold() != expected_principal.casefold()
             or not result["authenticated"]
+            or not result["local_profile_available"]
             or result["authentication_type"] not in allowed_authentication_types
             or result["failure_classification"] != "none"):
         raise WindowsCredentialActionError(
             "credential-action principal proof is invalid")
     if (action == "connected-domain-login"
-            and not result["domain_reachable"]):
+            and (not result["domain_reachable"]
+                 or result["authentication_semantics"] != "connected-domain"
+                 or result["cache_evidence"]
+                 != "online-interactive-logon")):
         raise WindowsCredentialActionError(
-            "connected domain login lacks domain reachability")
-    if action == "cached-domain-login" and result["domain_reachable"]:
+            "connected domain login measurement is invalid")
+    if (action == "cached-domain-login"
+            and (result["domain_reachable"]
+                 or result["authentication_semantics"] != "cached-domain"
+                 or result["cache_evidence"] != "offline-cache-proven")):
         raise WindowsCredentialActionError(
-            "cached domain login was not isolated from the domain")
+            "cached domain login measurement is invalid")
+    if (action == "local-rescue-login"
+            and (result["authentication_semantics"] != "local-account"
+                 or result["cache_evidence"] != "not-applicable")):
+        raise WindowsCredentialActionError(
+            "local rescue login measurement is invalid")
+    if (action == "operator-local-administrators-check"
+            and (result["authentication_semantics"] not in {
+                    "connected-domain", "cached-domain"}
+                 or result["cache_evidence"] not in {
+                    "online-interactive-logon", "offline-cache-proven"}
+                 or (result["authentication_semantics"]
+                     == "connected-domain") != result["controller_reachable"]
+                 or (result["cache_evidence"]
+                     == "online-interactive-logon")
+                    != result["controller_reachable"])):
+        raise WindowsCredentialActionError(
+            "operator authentication measurement is invalid")
     if (action == "operator-local-administrators-check"
             and not result["local_administrators_member"]):
         raise WindowsCredentialActionError(
