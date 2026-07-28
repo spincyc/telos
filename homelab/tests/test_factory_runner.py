@@ -98,6 +98,35 @@ class FactoryRunnerTests(unittest.TestCase):
         os.close(write_fd)
         reader.close()
 
+    def test_intermediate_output_does_not_rematch_initial_prompt(self):
+        os = __import__("os")
+        read_fd, write_fd = os.pipe()
+        reader = os.fdopen(read_fd, "rb", buffering=0)
+
+        class Process:
+            stdin = __import__("io").BytesIO()
+            stdout = reader
+
+            @staticmethod
+            def poll():
+                return None
+
+        def emit():
+            os.write(write_fd, b"[root@controller /]#")
+            __import__("time").sleep(0.02)
+            os.write(write_fd, b"\nbootstrap starting\n")
+            __import__("time").sleep(0.02)
+            os.write(write_fd, b"TELOS PXE SERVICES READY\n")
+
+        thread = threading.Thread(target=emit)
+        thread.start()
+        with tempfile.TemporaryDirectory() as temp_name:
+            factory_runner.activate_publication(
+                Process(), Path(temp_name) / "serial.log", timeout=0.5)
+        thread.join()
+        os.close(write_fd)
+        reader.close()
+
     def test_package_progress_hash_is_not_a_shell_prompt(self):
         self.assertFalse(factory_runner._at_root_prompt(
             b"(1/1) checking package integrity [############"))

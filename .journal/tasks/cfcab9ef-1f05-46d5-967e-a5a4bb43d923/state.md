@@ -222,3 +222,9 @@ partition, and failed with code 41 because the SMB mapping already occupied
 the Windows target letter `W:`. New bundles mount the read-only source at `I:`
 and reserve `W:` for the target volume. The partially partitioned evidence
 disk will not be reused; a fresh live retry is next.
+
+The first source-drive retry stopped before workstation launch when the
+Controller runner re-matched its retained initial prompt after an intermediate
+serial chunk. Return detection now evaluates only bytes received after
+bootstrap command submission. The fresh disk remained empty. A newly prepared
+bundle and live retry are next.
