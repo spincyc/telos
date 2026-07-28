@@ -38,6 +38,7 @@ except ImportError:
 
 
 MAX_DURATION = 10800
+NATIVE_READY_MARKER = "TELOS WINDOWS NATIVE READY"
 
 
 def _screenshot_interval(duration: float) -> int:
@@ -91,6 +92,21 @@ def _connect_qmp(path: Path, *, timeout: float = 10) -> QmpClient:
             last_error = error
             time.sleep(0.05)
     raise RuntimeError("Windows QMP socket did not become ready") from last_error
+
+
+def _validate_lifecycle(serial: str) -> None:
+    required = (
+        "/private/run-", "install.bat", "winpeshl.ini",
+        "Windows Imaging Format bootloader",
+    )
+    if not all(marker in serial for marker in required):
+        raise RuntimeError("private WinPE overlay handoff was not fully observed")
+    if NATIVE_READY_MARKER not in serial:
+        raise RuntimeError(
+            "native Windows readiness and clean shutdown were not observed")
+    if serial.count("UEFI PXEv4") != 1:
+        raise RuntimeError(
+            "workstation did not use exactly one PXE firmware boot")
 
 
 def run(
@@ -171,12 +187,22 @@ def run(
                 while time.monotonic() < deadline:
                     failed = [
                         role for role, process in processes.items()
-                        if process.poll() is not None
+                        if role != "workstation" and process.poll() is not None
                     ]
                     if failed:
                         raise RuntimeError(
                             "Windows lifecycle process failed: "
                             + ", ".join(failed))
+                    if processes["workstation"].poll() is not None:
+                        serial_thread.join(timeout=2)
+                        serial = (
+                            evidence / "workstation-serial.log").read_text(
+                                encoding="utf-8", errors="replace")
+                        if NATIVE_READY_MARKER not in serial:
+                            raise RuntimeError(
+                                "workstation exited before native Windows "
+                                "readiness")
+                        break
                     now = time.monotonic()
                     if now >= next_screen:
                         screen_number += 1
@@ -189,16 +215,11 @@ def run(
                 qmp.close()
             serial = (evidence / "workstation-serial.log").read_text(
                 encoding="utf-8", errors="replace")
-            required = (
-                "/private/run-", "install.bat", "winpeshl.ini",
-                "Windows Imaging Format bootloader",
-            )
-            if not all(marker in serial for marker in required):
-                raise RuntimeError(
-                    "private WinPE overlay handoff was not fully observed")
+            _validate_lifecycle(serial)
             result = {
                 "schema": 1, "status": "observed",
-                "phase": "private-winpe-overlay",
+                "phase": "native-windows-clean-shutdown",
+                "pxe_firmware_boots": 1,
                 "release_version":
                     authorization["authorization"]["release_version"],
             }

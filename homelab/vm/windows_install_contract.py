@@ -351,12 +351,44 @@ def render_unattend(identity: SyntheticIdentity) -> str:
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
       publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <OOBE><HideEULAPage>true</HideEULAPage>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
         <ProtectYourPC>3</ProtectYourPC></OOBE>
       <UserAccounts><LocalAccounts><LocalAccount
         xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
         wcm:action="add"><Name>{user}</Name><Group>Administrators</Group>
         <Password><Value>{password}</Value><PlainText>true</PlainText></Password>
       </LocalAccount></LocalAccounts></UserAccounts>
+      <AutoLogon><Enabled>true</Enabled><LogonCount>1</LogonCount>
+        <Username>{user}</Username>
+        <Password><Value>{password}</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          wcm:action="add"><Order>1</Order>
+          <CommandLine>powercfg.exe /hibernate off</CommandLine>
+          <Description>Disable hibernation</Description>
+        </SynchronousCommand>
+        <SynchronousCommand
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          wcm:action="add"><Order>2</Order>
+          <CommandLine>reg.exe add &quot;HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power&quot; /v HiberbootEnabled /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Disable Fast Startup</Description>
+        </SynchronousCommand>
+        <SynchronousCommand
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          wcm:action="add"><Order>3</Order>
+          <CommandLine>cmd.exe /c "(echo TELOS WINDOWS NATIVE READY&amp;dism.exe /online /Get-CurrentEdition&amp;reg.exe query &quot;HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power&quot; /v HiberbootEnabled&amp;powercfg.exe /a) &gt; COM1"</CommandLine>
+          <Description>Record native Windows assertions</Description>
+        </SynchronousCommand>
+        <SynchronousCommand
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          wcm:action="add"><Order>4</Order>
+          <CommandLine>shutdown.exe /s /t 0</CommandLine>
+          <Description>Leave NTFS cleanly shut down</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
     </component>
   </settings>
 </unattend>
