@@ -145,6 +145,24 @@ class WindowsIdentityReferenceTests(unittest.TestCase):
                 WindowsIdentityReferenceError, "private material"):
             load_identity_reference(manifest)
 
+    def test_navigation_schema_accepts_public_run_dialog_reference(self):
+        manifest = self.staged()
+        document = json.loads(manifest.read_text())
+        document.pop("credential_entered")
+        document.update({
+            "schema": 2,
+            "state": "focused Windows Run dialog",
+            "state_kind": "run-dialog",
+            "captured_after_private_input": True,
+            "contains_private_material": False,
+        })
+        manifest.write_text(json.dumps(document))
+
+        reference = load_identity_reference(manifest)
+
+        self.assertEqual("run-dialog", reference.state_kind)
+        self.assertFalse(reference.contains_private_material)
+
     def test_rejects_geometry_or_reference_drift(self):
         manifest = self.staged(
             lambda value: value["capture"].update(

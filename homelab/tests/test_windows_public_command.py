@@ -1,0 +1,162 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from homelab.vm.windows_gui import Image
+from homelab.vm.windows_identity_reference import (
+    GuestProvenance,
+    ValidatedIdentityReference,
+)
+from homelab.vm.windows_public_command import (
+    PublicPowerShellLaunchPlan,
+    WindowsPublicCommandError,
+    WindowsPublicCommandLauncher,
+)
+
+
+PIXELS = bytes([10, 60, 120, 220, 180, 40]) * (320 * 200 // 2)
+FRAME = b"P6\n320 200\n255\n" + PIXELS
+
+
+class FakeQmp:
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.actions = []
+
+    def screenshot(self, path):
+        self.actions.append(("screenshot", path.name))
+        path.write_bytes(self.frames.pop(0))
+
+    def chord(self, *names):
+        self.actions.append(("chord", names))
+
+    def type_text(self, value):
+        self.actions.append(("text", value))
+
+    def key(self, name):
+        self.actions.append(("key", name))
+
+
+def reference(kind, *, guest=None):
+    guest = guest or GuestProvenance(
+        "windows-11-25h2", "en-US", "x86_64", "1" * 64, "2" * 64)
+    return ValidatedIdentityReference(
+        state=kind,
+        state_kind=kind,
+        captured_after_private_input=True,
+        contains_private_material=False,
+        guest=guest,
+        path=Path(f"{kind}.ppm"),
+        image=Image(320, 200, PIXELS),
+        geometry=(320, 200),
+        crop=(0, 0, 320, 200),
+        source_frame_sha256=("3" * 64,) * 3,
+    )
+
+
+class WindowsPublicCommandTests(unittest.TestCase):
+    def launcher(self, root, frames):
+        qmp = FakeQmp(frames)
+        launcher = WindowsPublicCommandLauncher(
+            qmp, root, interval=0, pause=lambda _: None)
+        return qmp, launcher
+
+    def test_proves_stable_desktop_and_run_dialog_before_typing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            qmp, launcher = self.launcher(root, [FRAME] * 4)
+            events = launcher.launch(
+                "powershell.exe -NoProfile -File C:\\Telos\\probe.ps1",
+                PublicPowerShellLaunchPlan(
+                    reference("desktop"), reference("run-dialog"),
+                    threshold=0, max_frames_per_state=2),
+            )
+        self.assertEqual(("chord", ("meta_l", "r")), qmp.actions[2])
+        self.assertEqual("text", qmp.actions[5][0])
+        self.assertEqual("key", qmp.actions[6][0])
+        self.assertEqual("submitted:public-powershell-command", events[-1])
+
+    def test_never_types_when_desktop_or_run_dialog_is_unproved(self):
+        bad = b"P6\n320 200\n255\n" + bytes([255, 0, 0]) * 320 * 200
+        for frames, expected_chord in (
+            ([bad, bad], False),
+            ([FRAME, FRAME, bad, bad], True),
+        ):
+            with self.subTest(expected_chord=expected_chord):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    root.chmod(0o700)
+                    qmp, launcher = self.launcher(root, frames)
+                    with self.assertRaisesRegex(
+                            WindowsPublicCommandError, "within 2 frames"):
+                        launcher.launch(
+                            "powershell -NoProfile",
+                            PublicPowerShellLaunchPlan(
+                                reference("desktop"),
+                                reference("run-dialog"),
+                                threshold=0, max_frames_per_state=2),
+                        )
+                self.assertEqual(
+                    expected_chord,
+                    ("chord", ("meta_l", "r")) in qmp.actions)
+                self.assertFalse(any(a[0] == "text" for a in qmp.actions))
+
+    def test_rejects_non_powershell_and_unbounded_input_before_qmp(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            qmp, launcher = self.launcher(root, [])
+            for command in ("cmd.exe /c whoami", "powershell\nwhoami", "p" * 513):
+                with self.assertRaises(WindowsPublicCommandError):
+                    launcher.launch(
+                        command,
+                        PublicPowerShellLaunchPlan(
+                            reference("desktop"), reference("run-dialog")),
+                    )
+        self.assertEqual([], qmp.actions)
+
+    def test_rejects_mismatched_or_wrong_reference_authority(self):
+        other = GuestProvenance(
+            "windows-11-25h2", "en-US", "x86_64", "4" * 64, "5" * 64)
+        plans = (
+            PublicPowerShellLaunchPlan(
+                reference("run-dialog"), reference("run-dialog")),
+            PublicPowerShellLaunchPlan(
+                reference("desktop"), reference("desktop")),
+            PublicPowerShellLaunchPlan(
+                reference("desktop"), reference("run-dialog", guest=other)),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            qmp, launcher = self.launcher(root, [])
+            for plan in plans:
+                with self.assertRaises(WindowsPublicCommandError):
+                    launcher.launch("powershell -NoProfile", plan)
+        self.assertEqual([], qmp.actions)
+
+    def test_backend_failure_does_not_echo_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            qmp, launcher = self.launcher(root, [FRAME] * 4)
+            command = "powershell -NoProfile -Command Get-Date"
+
+            def reject(value):
+                raise RuntimeError(f"echoed {value}")
+
+            qmp.type_text = reject
+            with self.assertRaises(WindowsPublicCommandError) as caught:
+                launcher.launch(
+                    command,
+                    PublicPowerShellLaunchPlan(
+                        reference("desktop"), reference("run-dialog"),
+                        threshold=0, max_frames_per_state=2),
+                )
+        self.assertNotIn(command, str(caught.exception))
+        self.assertNotIn("echoed", str(caught.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

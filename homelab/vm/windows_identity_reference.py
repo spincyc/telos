@@ -123,7 +123,7 @@ def load_identity_reference(
         )
         state_kind = root["state_kind"]
         if state_kind not in {
-            "desktop", "security-options", "change-password"
+            "desktop", "run-dialog", "security-options", "change-password"
         }:
             raise WindowsIdentityReferenceError(
                 "invalid reference state kind")
