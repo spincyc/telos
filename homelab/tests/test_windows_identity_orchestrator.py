@@ -326,6 +326,43 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 subject.WindowsIdentityOrchestratorError, "probe is invalid"):
             subject._post_reboot_proof(callbacks)
 
+    def test_join_serial_connects_before_private_media_is_created(self):
+        callbacks = self.callbacks([])
+        order = []
+        serial = mock.Mock()
+        callbacks = subject.AcceptanceCallbacks(**{
+            **callbacks.__dict__,
+            "open_join_serial": lambda: (order.append("serial") or serial),
+        })
+        staged = ControllerJoinResult(
+            "stage", "tj-0123456789abcdef", False, ())
+        destroyed = ControllerJoinResult(
+            "destroy", "tj-0123456789abcdef", True, ())
+
+        def fail_build(path, _material):
+            order.append("build")
+            path.write_bytes(b"partial-private-media")
+            raise RuntimeError("build failed")
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject, "build_join_iso", side_effect=fail_build,
+        ):
+            root = Path(name)
+            root.chmod(0o700)
+            with self.assertRaisesRegex(
+                    Exception, "stage/consumer: RuntimeError"):
+                subject._execute_join(
+                    realm="FACTORY.TEST",
+                    private_root=root,
+                    local_credential="Local-Secret-47!",
+                    callbacks=callbacks,
+                    stage_join_principal=mock.Mock(return_value=staged),
+                    destroy_join_principal=mock.Mock(return_value=destroyed),
+                )
+            self.assertEqual(["serial", "build"], order)
+            self.assertEqual([], list(root.iterdir()))
+            serial.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

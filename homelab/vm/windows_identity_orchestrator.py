@@ -274,16 +274,28 @@ def _execute_join(
     def consume(material: Mapping[str, str]) -> Mapping[str, object]:
         nonce = uuid.uuid4().hex
         iso = private_root / f"windows-join-{nonce}.iso"
-        build_join_iso(iso, {
-            "nonce": nonce,
-            "domain": realm,
-            "realm": realm.upper(),
-            "username": material["principal"],
-            "password": material["credential"],
-            "operator": f"operator@{realm.upper()}",
-        })
-        channel = JoinMediaChannel(callbacks.qmp(), iso, nonce)
         serial = callbacks.open_join_serial()
+        try:
+            build_join_iso(iso, {
+                "nonce": nonce,
+                "domain": realm,
+                "realm": realm.upper(),
+                "username": material["principal"],
+                "password": material["credential"],
+                "operator": f"operator@{realm.upper()}",
+            })
+            channel = JoinMediaChannel(callbacks.qmp(), iso, nonce)
+        except BaseException as primary:
+            serial.close()
+            try:
+                if iso.exists() or iso.is_symlink():
+                    iso.unlink()
+            except BaseException as cleanup:
+                raise WindowsIdentityOrchestratorError(
+                    "join preparation and private cleanup failed: "
+                    f"{type(primary).__name__}; {type(cleanup).__name__}"
+                ) from None
+            raise
         reauthenticated = False
 
         def probe_after_reboot() -> Mapping[str, object]:
