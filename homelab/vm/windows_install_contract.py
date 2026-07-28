@@ -353,7 +353,9 @@ def render_unattend(identity: SyntheticIdentity) -> str:
       <OOBE><HideEULAPage>true</HideEULAPage>
         <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
         <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-        <ProtectYourPC>3</ProtectYourPC></OOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE></OOBE>
       <UserAccounts><LocalAccounts><LocalAccount
         xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
         wcm:action="add"><Name>{user}</Name><Group>Administrators</Group>

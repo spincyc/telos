@@ -293,6 +293,8 @@ class WindowsInstallContractTests(unittest.TestCase):
             "<Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>", answer)
         self.assertIn("<WillShowUI>Never</WillShowUI>", answer)
         self.assertIn("<HideOnlineAccountScreens>true", answer)
+        self.assertIn("<SkipMachineOOBE>true", answer)
+        self.assertIn("<SkipUserOOBE>true", answer)
         self.assertIn("<AutoLogon><Enabled>true</Enabled><LogonCount>1", answer)
         self.assertIn("powercfg.exe /hibernate off", answer)
         self.assertIn("HiberbootEnabled /t REG_DWORD /d 0", answer)
