@@ -176,9 +176,9 @@ class TestRelease(unittest.TestCase):
         self.assertIn(
             "console=tty0 console=ttyS0,115200n8", script)
         self.assertIn("BOOTIF=01-${net0/mac:hexhyp}", script)
-        self.assertIn("ip=:::::eth0:dhcp", script)
+        self.assertIn("ip=dhcp", script)
         self.assertIn("net.ifnames=0", script)
-        self.assertNotIn("ip=dhcp", script)
+        self.assertNotIn("ip=:::::eth0:dhcp", script)
         self.assertIn("TELOS IPXE PRE-BOOT", script)
         self.assertIn("imgstat", script)
         self.assertIn("TELOS IPXE BOOT RETURNED", script)

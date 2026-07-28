@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
 superseded_by: null
 created_at: "2026-07-27T21:51:52Z"
-updated_at: "2026-07-28T00:02:49Z"
+updated_at: "2026-07-28T00:19:18Z"
 ---
 
 # Goal
@@ -58,3 +58,8 @@ Release `.003` proved kernel entry, `/init`, and Archiso PXE hooks. Its
 network-root failure was a deterministic `eth0` rename race; `.004` will bind
 the PXE MAC and disable initramfs interface renaming. Acceptance records the
 partial phases but still requires root-image retrieval and live userspace.
+
+Release `.005` completed real Arch UEFI PXE acceptance through root-image
+retrieval, mount, and `archiso login:` on the loopback-only fabric. Retained
+success evidence records gateway-only DHCP and every handoff phase. Continue
+with the separate real WinPE handoff before completing this task.

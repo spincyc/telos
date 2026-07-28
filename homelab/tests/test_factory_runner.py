@@ -1,6 +1,7 @@
 """Contract tests for the bounded concurrent factory skeleton."""
 
 import subprocess
+import json
 import tempfile
 import threading
 import unittest
@@ -31,6 +32,18 @@ class FactoryRunnerTests(unittest.TestCase):
             result = destination / "result.json"
             self.assertEqual(result.stat().st_mode & 0o777, 0o600)
             self.assertNotIn("exposed", result.read_text())
+
+    def test_success_evidence_is_retained_without_an_error(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "workstation-serial.log").write_text("archiso login: ")
+            destination = factory_runner.retain_evidence(
+                runtime, root / "evidence", status="pass")
+            result = json.loads((destination / "result.json").read_text())
+            self.assertEqual(result["status"], "pass")
+            self.assertNotIn("error", result)
 
     def test_publication_and_service_readiness_timeouts_are_distinct(self):
         read_fd, write_fd = __import__("os").pipe()

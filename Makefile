@@ -67,6 +67,7 @@ WIMBOOT ?= homelab/var/media/wimboot
 SIM_CYCLES ?= 2
 FACTORY_CONTROLLER_BUNDLE ?= homelab/var/factory/controller-convergence.iso
 FACTORY_DURATION ?= 120
+FACTORY_RELEASES ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -523,14 +524,14 @@ homelab-sim-auto-repeat: homelab-sim-deps
 # Bounded concurrent Controller/workstation factory skeleton. State is always
 # disposable and its switch listens only on loopback.
 homelab-factory-sim-plan:
-	@$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)')
+	@$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)')
 
 homelab-factory-sim-run: homelab-sim-deps
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to run the bounded factory skeleton'; \
-		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)'); \
+		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)'); \
 	else \
-		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') --apply; \
+		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') --apply; \
 	fi
 
 # Converge only the temporary Controller role. The private inventory supplies
