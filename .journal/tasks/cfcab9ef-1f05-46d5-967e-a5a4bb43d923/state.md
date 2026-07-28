@@ -235,3 +235,9 @@ authenticated read-only Samba share now permits Windows execute semantics
 despite sealed media's Unix non-executable modes. Guest and write access remain
 disabled. The partitioned evidence disk will not be reused; a fresh run is
 next.
+
+The executable-enabled run launched Setup and stopped at the product-key UI.
+The private answer now supplies Microsoft's public generic Windows 11 Pro
+installation key with key UI disabled. It selects Pro but provides no
+activation entitlement. The prompt-observation disk will not be reused; a
+fresh run is next.

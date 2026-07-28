@@ -20,6 +20,7 @@ from homelab.vm.simulated_topology import MACS, _base, audit_qemu_argv
 
 
 MIN_DISK_BYTES = 256 * GIB
+WINDOWS_11_PRO_INSTALL_KEY = "VK7JG-NPHTM-C97JM-9MPGT-3V66T"
 SAFE_SERIAL = re.compile(r"[A-Z0-9][A-Z0-9._-]{7,31}")
 RUN_ROOT = Path("homelab/var/factory/windows-runs")
 PRIVATE_INPUT_NAMES = frozenset({
@@ -327,7 +328,11 @@ def render_unattend(identity: SyntheticIdentity) -> str:
         <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
         <WillShowUI>OnError</WillShowUI>
       </OSImage></ImageInstall>
-      <UserData><AcceptEula>true</AcceptEula></UserData>
+      <UserData>
+        <ProductKey><Key>{WINDOWS_11_PRO_INSTALL_KEY}</Key>
+          <WillShowUI>Never</WillShowUI></ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
     </component>
   </settings>
   <settings pass="specialize">
