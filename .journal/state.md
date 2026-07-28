@@ -3,10 +3,10 @@ schema_version: 1
 repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
-head_observed: "54c5d0065a32896ec72157a298d7f9b3ca9469df"
-working_tree_state: "windows-private-bundle-prepare-implemented"
+head_observed: "560d5afe054a2a08f445e0cd940411996bad0f77"
+working_tree_state: "windows-smb-password-normalization-tested"
 active_tasks: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
-updated_at: "2026-07-28T02:05:51Z"
+updated_at: "2026-07-28T02:11:22Z"
 ---
 
 # Repository recovery state

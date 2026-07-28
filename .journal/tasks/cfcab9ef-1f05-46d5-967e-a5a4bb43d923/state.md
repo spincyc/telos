@@ -190,3 +190,10 @@ still returned error 53. The prepared client had used hostname `controller`
 and domain `TELOS` even though the publication is a standalone Samba server.
 New bundles use the exact numeric isolated UNC and the local
 `.\pxe-install` account, eliminating DNS and domain assumptions.
+
+The corrected names reached Samba but authentication returned error 86. The
+publisher had passed the WinPE password file's CRLF carriage return into
+`smbpasswd`, while WinPE supplied the logical password line. Publication now
+normalizes only that trailing carriage return before both password
+confirmations. No disk mutation occurred. A fresh bundle and live retry are
+next.
