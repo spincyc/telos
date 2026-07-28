@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "entrypoint": "Invoke-TelosIdentityProbe.ps1",
+  "transport": {
+    "kind": "serial-jsonl",
+    "default_port": "COM1",
+    "baud": 115200
+  },
+  "actions": [
+    "current-principal",
+    "domain-state",
+    "cached-logon-policy",
+    "service-reachability",
+    "update-policy"
+  ]
+}
