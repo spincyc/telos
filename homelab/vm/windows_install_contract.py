@@ -209,7 +209,8 @@ def render_startup(
     if not re.fullmatch(r"\\\\[A-Za-z0-9.-]+\\[A-Za-z0-9$_.-]+",
                         install_source_unc):
         raise WindowsInstallContractError("install source UNC is unsafe")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+\\[A-Za-z0-9_.-]+", install_user):
+    if not re.fullmatch(
+            r"[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)?", install_user):
         raise WindowsInstallContractError("install user is unsafe")
     gib = authorization.disk["virtual_size"] // GIB
     if authorization.disk["virtual_size"] != gib * GIB:
