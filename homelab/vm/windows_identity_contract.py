@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .simulated_topology import MACS, _base, audit_qemu_argv
+from .windows_control_serial import attach_qemu_serial
 from .windows_install_contract import audit_qemu_disk_boundary
 
 DISK_SERIAL = "TELOS-WIN-0001"
@@ -15,6 +16,7 @@ def qemu_identity_command(
     disk: Path,
     variables: Path,
     qmp_socket: Path,
+    serial_socket: Path,
     switch_port: int,
     control_iso: Path | None = None,
 ) -> list[str]:
@@ -66,4 +68,7 @@ def qemu_identity_command(
     joined = " ".join(command)
     if "once=n" in joined or "bootindex=" in joined:
         raise ValueError("identity command must not select PXE")
-    return command
+    # The generic topology audit intentionally rejects all host character
+    # devices. Add only the separately audited, fixed-purpose serial socket
+    # after that broad audit has accepted the rest of the command.
+    return attach_qemu_serial(command, serial_socket)

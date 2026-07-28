@@ -11,6 +11,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import tempfile
 
 from .bootstrap_dc import DEFAULT_STATE
 from .simulation_evidence import private_file
@@ -120,9 +121,16 @@ def prepare(
         ], check=True, capture_output=True)
         overlay.chmod(0o600)
         build_control_iso(control_iso)
-        command = qemu_identity_command(
-            disk=overlay, variables=variables, qmp_socket=qmp,
-            switch_port=switch_port, control_iso=control_iso)
+        with tempfile.TemporaryDirectory(
+                prefix="telos-win-id-authorized-") as template_name:
+            template_root = Path(template_name)
+            template_root.chmod(0o700)
+            serial = template_root / "windows.serial"
+            command = qemu_identity_command(
+                disk=overlay, variables=variables, qmp_socket=qmp,
+                serial_socket=serial,
+                switch_port=switch_port, control_iso=control_iso)
+            authorized_serial_path = str(serial.resolve())
         command_digest = hashlib.sha256(
             json.dumps(command, separators=(",", ":")).encode()).hexdigest()
         plan = {
@@ -141,6 +149,11 @@ def prepare(
                 "source_sha256": source["firmware"]["sha256"],
             },
             "qmp_socket": str(qmp.resolve()),
+            "serial_transport": {
+                "kind": "private-unix-socket-jsonl",
+                "authorized_path": authorized_serial_path,
+                "contains_secrets": False,
+            },
             "qemu_argv_sha256": command_digest,
             "control_media": {
                 "path": str(control_iso.resolve()),

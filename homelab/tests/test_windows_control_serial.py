@@ -70,6 +70,10 @@ class WindowsControlSerialTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     WindowsControlSerialError, "exactly one"):
                 attach_qemu_serial(["qemu"], root / "other.sock")
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "QEMU-safe"):
+                attach_qemu_serial(
+                    ["qemu", "-serial", "stdio"], root / "bad,path.sock")
 
     def test_launch_is_manifest_allowlisted_and_contains_no_input_value(self):
         probe = control_probe("domain-state")

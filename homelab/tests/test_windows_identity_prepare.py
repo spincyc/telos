@@ -84,6 +84,14 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             self.assertTrue(plan["control_media"]["read_only"])
             self.assertFalse(plan["control_media"]["contains_secrets"])
             self.assertEqual(
+                "private-unix-socket-jsonl",
+                plan["serial_transport"]["kind"])
+            self.assertEqual(
+                "windows.serial",
+                Path(plan["serial_transport"]["authorized_path"]).name)
+            self.assertFalse(
+                plan["serial_transport"]["contains_secrets"])
+            self.assertEqual(
                 str((bundle / "windows.qcow2").resolve()),
                 plan["overlay"]["backing_path"])
             self.assertNotIn("password", json.dumps(plan).lower())

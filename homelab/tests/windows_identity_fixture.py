@@ -15,6 +15,7 @@ def write_prepared_authorization(
         disk=attempt / "windows.qcow2",
         variables=attempt / "OVMF_VARS.fd",
         qmp_socket=attempt / "windows.qmp",
+        serial_socket=attempt / "windows.serial",
         switch_port=31415,
         control_iso=control_iso,
     )
@@ -42,6 +43,11 @@ def write_prepared_authorization(
             "path": str(control_iso.resolve()),
             "sha256": hashlib.sha256(control_iso.read_bytes()).hexdigest(),
             "read_only": True,
+            "contains_secrets": False,
+        },
+        "serial_transport": {
+            "kind": "private-unix-socket-jsonl",
+            "authorized_path": str((attempt / "windows.serial").resolve()),
             "contains_secrets": False,
         },
     }

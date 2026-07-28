@@ -19,6 +19,7 @@ class WindowsIdentityContractTests(unittest.TestCase):
             command = qemu_identity_command(
                 disk=disk, variables=variables,
                 qmp_socket=root / "windows.qmp", switch_port=31415,
+                serial_socket=root / "windows.serial",
                 control_iso=control)
             joined = " ".join(command)
             self.assertIn("order=c,menu=off", joined)
@@ -48,7 +49,9 @@ class WindowsIdentityContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "OVMF"):
                 qemu_identity_command(
                     disk=disk, variables=variables,
-                    qmp_socket=root / "windows.qmp", switch_port=31415)
+                    qmp_socket=root / "windows.qmp",
+                    serial_socket=root / "windows.serial",
+                    switch_port=31415)
 
     def test_command_rejects_a_writable_control_iso(self):
         with tempfile.TemporaryDirectory() as name:
@@ -61,7 +64,9 @@ class WindowsIdentityContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "read-only"):
                 qemu_identity_command(
                     disk=disk, variables=variables,
-                    qmp_socket=root / "windows.qmp", switch_port=31415,
+                    qmp_socket=root / "windows.qmp",
+                    serial_socket=root / "windows.serial",
+                    switch_port=31415,
                     control_iso=control)
 
 

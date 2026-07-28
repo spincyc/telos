@@ -111,6 +111,10 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run, "audit_live_process",
                     side_effect=lambda _pid, role, **_kwargs:
                     events.append(("audit", role))),
+                mock.patch.object(
+                    boundary, "_start_dependency",
+                    side_effect=lambda role:
+                    events.append(("dependency", role))),
             ):
                 boundary.start_switch()
                 boundary.start_controller()
@@ -145,6 +149,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     disk=boundary.attempt / "windows.qcow2",
                     variables=boundary.attempt / "OVMF_VARS.fd",
                     qmp_socket=boundary.qmp_root / "windows.qmp",
+                    serial_socket=boundary.qmp_root / "windows.serial",
                     switch_port=43119,
                     control_iso=boundary.attempt / "control.iso",
                 )
@@ -171,6 +176,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     side_effect=(_Process(101), _Process(102))),
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(boundary, "_start_dependency"),
             ):
                 boundary.start_switch()
 
@@ -228,6 +234,13 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             authorized = [
                 "qemu-system-x86_64",
                 "-qmp", "unix:/private/attempt/windows.qmp,server=on,wait=off",
+                "-serial", "chardev:telosidentity",
+                "-chardev",
+                (
+                    "socket,id=telosidentity,"
+                    "path=/private/attempt/windows.serial,"
+                    "server=on,wait=off"
+                ),
                 "-drive", "file=/private/windows.qcow2",
                 "-netdev",
                 "socket,id=factory,connect=127.0.0.1:31415",
@@ -235,6 +248,13 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             runtime = [
                 "qemu-system-x86_64",
                 "-qmp", "unix:/private/runtime/windows.qmp,server=on,wait=off",
+                "-serial", "chardev:telosidentity",
+                "-chardev",
+                (
+                    "socket,id=telosidentity,"
+                    "path=/private/runtime/windows.serial,"
+                    "server=on,wait=off"
+                ),
                 "-drive", "file=/private/windows.qcow2",
                 "-netdev",
                 "socket,id=factory,connect=127.0.0.1:43119",
@@ -251,6 +271,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run, "audit_live_process"),
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(boundary, "_start_dependency"),
             ):
                 boundary.start_windows()
             popen.assert_called_once()
@@ -259,7 +280,25 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             boundary._cleanup_qmp_root()
             boundary.authorized_command = authorized
             tampered = list(runtime)
-            tampered[3] = "file=/different/windows.qcow2"
+            tampered[tampered.index("-drive") + 1] = (
+                "file=/different/windows.qcow2")
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=tampered),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen") as popen,
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError, "authorized template"):
+                    boundary.start_windows()
+            popen.assert_not_called()
+
+            boundary.authorized_command = authorized
+            tampered = list(runtime)
+            serial_index = tampered.index("-chardev") + 1
+            tampered[serial_index] = tampered[serial_index].replace(
+                "server=on", "server=off")
             with (
                 mock.patch.object(
                     windows_identity_run, "qemu_identity_command",
@@ -379,6 +418,31 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 [processes["gateway"], processes["switch"]],
             ], terminated)
             self.assertEqual({}, boundary.processes)
+
+    def test_windows_teardown_removes_qmp_and_probe_serial_sockets(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            runtime = Path(name) / "private-runtime"
+            runtime.mkdir(mode=0o700)
+            boundary.qmp_root = runtime
+            boundary.serial_socket = runtime / "windows.serial"
+            qmp_socket = runtime / "windows.qmp"
+            with (
+                windows_identity_run.socket.socket(
+                    windows_identity_run.socket.AF_UNIX,
+                    windows_identity_run.socket.SOCK_STREAM) as qmp,
+                windows_identity_run.socket.socket(
+                    windows_identity_run.socket.AF_UNIX,
+                    windows_identity_run.socket.SOCK_STREAM) as serial,
+            ):
+                qmp.bind(str(qmp_socket))
+                serial.bind(str(boundary.serial_socket))
+                boundary.stop_windows()
+
+            self.assertFalse(runtime.exists())
+            self.assertFalse(qmp_socket.exists())
+            self.assertIsNone(boundary.serial_socket)
+            self.assertIsNone(boundary.qmp_root)
 
     def test_cleanup_preserves_failed_process_for_a_later_retry(self):
         with tempfile.TemporaryDirectory() as name:

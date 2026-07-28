@@ -13,6 +13,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Callable, Mapping
@@ -32,6 +33,7 @@ from .windows_gui import QmpClient
 from .windows_identity_contract import qemu_identity_command
 from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
+from .windows_identity_dependency import DEPENDENCIES
 
 
 class WindowsIdentityRunError(RuntimeError):
@@ -83,9 +85,11 @@ class NativeProcessBoundary:
         self.controller_overlay: DisposableBootDisk | None = None
         self.qmp: QmpClient | None = None
         self.qmp_root: Path | None = None
+        self.serial_socket: Path | None = None
         self.port: int | None = None
         self.authorized_command: list[str] | None = None
         self.suspended_processes: set[str] = set()
+        self.dependency_endpoints: dict[str, tuple[str, int]] = {}
 
     @staticmethod
     def _normalized_command(command: list[str]) -> list[str]:
@@ -94,6 +98,12 @@ class NativeProcessBoundary:
             if value.startswith("unix:") and value.endswith(
                     ",server=on,wait=off"):
                 normalized.append("unix:<PRIVATE-QMP>,server=on,wait=off")
+            elif re.fullmatch(
+                    r"socket,id=telosidentity,path=[^,]+,"
+                    r"server=on,wait=off", value):
+                normalized.append(
+                    "socket,id=telosidentity,path=<PRIVATE-SERIAL>,"
+                    "server=on,wait=off")
             elif re.fullmatch(
                     r"socket,id=factory,connect=127\.0\.0\.1:"
                     r"[1-9][0-9]{0,4}", value):
@@ -176,6 +186,13 @@ class NativeProcessBoundary:
         overlay = authorization.get("overlay")
         firmware = authorization.get("firmware_copy")
         control_media = authorization.get("control_media")
+        serial_transport = authorization.get("serial_transport")
+        serial_arguments = [
+            value for value in command
+            if re.fullmatch(
+                r"socket,id=telosidentity,path=[^,]+,"
+                r"server=on,wait=off", value)
+        ]
         if (
             not isinstance(overlay, dict)
             or overlay.get("path") != str(
@@ -198,6 +215,18 @@ class NativeProcessBoundary:
         ):
             raise WindowsIdentityRunError(
                 "control ISO differs from the authorized static artifact")
+        if (
+            not isinstance(serial_transport, dict)
+            or set(serial_transport) != {
+                "kind", "authorized_path", "contains_secrets"}
+            or serial_transport.get("kind") != "private-unix-socket-jsonl"
+            or serial_transport.get("contains_secrets") is not False
+            or len(serial_arguments) != 1
+            or serial_transport.get("authorized_path")
+            != serial_arguments[0].split(",path=", 1)[1].split(",", 1)[0]
+        ):
+            raise WindowsIdentityRunError(
+                "serial transport differs from the authorized boundary")
         controller = paths(self.controller_state)
         if (self.controller_state.is_symlink()
                 or not self.controller_state.is_dir()
@@ -225,10 +254,16 @@ class NativeProcessBoundary:
             listener.bind(("127.0.0.1", 0))
             listener.listen(3)
             self.port = int(listener.getsockname()[1])
+            command = switch_command(
+                listener.fileno(), self.runtime / "switch.jsonl",
+                idle_timeout=3600)
+            for role, spec in DEPENDENCIES.items():
+                command.extend([
+                    "--port",
+                    f"{role}={bytes(spec['mac']).hex(':')}",
+                ])
             self.processes["switch"] = subprocess.Popen(
-                switch_command(
-                    listener.fileno(), self.runtime / "switch.jsonl",
-                    idle_timeout=3600),
+                command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
@@ -250,6 +285,40 @@ class NativeProcessBoundary:
             wait_for_switch_port(self.runtime / "switch.jsonl", "gateway")
         except BaseException:
             self._stop("gateway", "switch")
+            raise
+
+    def _start_dependency(self, role: str) -> None:
+        """Attach one separately owned service to its pinned isolated L2 port."""
+        if role in self.processes or role in self.dependency_endpoints:
+            raise WindowsIdentityRunError(
+                f"{role} dependency runtime already exists")
+        if self.port is None:
+            raise WindowsIdentityRunError("switch must start before dependency")
+        spec = DEPENDENCIES[role]
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m", "homelab.vm.windows_identity_dependency",
+                "--role", role,
+                "--switch-port", str(self.port),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        self.processes[role] = process
+        self.dependency_endpoints[role] = (
+            str(spec["ip"]), int(spec["port"]))
+        try:
+            wait_for_switch_port(self.runtime / "switch.jsonl", role)
+            if process.poll() is not None:
+                raise WindowsIdentityRunError(
+                    f"{role} dependency exited during readiness")
+        except BaseException:
+            try:
+                self._stop(role)
+            finally:
+                self.dependency_endpoints.pop(role, None)
             raise
 
     def start_controller(self) -> None:
@@ -292,11 +361,13 @@ class NativeProcessBoundary:
             prefix="telos-win-id-qmp-"))
         self.qmp_root.chmod(0o700)
         qmp_socket = self.qmp_root / "windows.qmp"
+        self.serial_socket = self.qmp_root / "windows.serial"
         try:
             command = qemu_identity_command(
                 disk=self.attempt / "windows.qcow2",
                 variables=self.attempt / "OVMF_VARS.fd",
                 qmp_socket=qmp_socket,
+                serial_socket=self.serial_socket,
                 switch_port=self.port,
                 control_iso=self.attempt / CONTROL_ISO_NAME,
             )
@@ -322,6 +393,8 @@ class NativeProcessBoundary:
             audit_live_process(
                 process.pid, "client", allowed_nic_models=("e1000e",))
             wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
+            self._start_dependency("update-source")
+            self._start_dependency("optional-storage")
         except BaseException:
             self.stop_windows()
             raise
@@ -431,16 +504,29 @@ class NativeProcessBoundary:
         entries = list(self.qmp_root.iterdir())
         for entry in entries:
             metadata = entry.lstat()
-            if entry.name != "windows.qmp" or not stat.S_ISSOCK(
+            if entry.name not in {"windows.qmp", "windows.serial"} or not stat.S_ISSOCK(
                     metadata.st_mode):
                 raise WindowsIdentityRunError(
                     "private QMP runtime contains an unexpected entry")
             entry.unlink()
         self.qmp_root.rmdir()
         self.qmp_root = None
+        self.serial_socket = None
 
     def stop_windows(self) -> None:
         failures = []
+        if {
+            "optional-storage", "update-source"
+        }.intersection(self.processes):
+            try:
+                self._stop("optional-storage", "update-source")
+            except BaseException as error:
+                failures.append(
+                    f"dependency processes: {type(error).__name__}")
+        if not {
+            "optional-storage", "update-source"
+        }.intersection(self.processes):
+            self.dependency_endpoints.clear()
         if self.qmp is not None:
             try:
                 self.qmp.close()
@@ -477,7 +563,17 @@ class NativeProcessBoundary:
             raise WindowsIdentityRunError("; ".join(failures))
 
     def stop_switch(self) -> None:
-        self._stop("gateway", "switch")
+        roles = [
+            role for role in (
+                "optional-storage", "update-source", "gateway", "switch")
+            if role in self.processes
+        ]
+        if roles:
+            self._stop(*roles)
+        if not {
+            "optional-storage", "update-source"
+        }.intersection(self.processes):
+            self.dependency_endpoints.clear()
 
 
 class PrivateIdentityMaterial:

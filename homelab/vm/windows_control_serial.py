@@ -62,6 +62,10 @@ class ControlProbe:
 
 def _validate_socket_path(path: Path) -> Path:
     path = Path(path).absolute()
+    encoded = str(path).encode()
+    if b"," in encoded or any(byte < 0x20 for byte in encoded):
+        raise WindowsControlSerialError(
+            "serial socket path is not QEMU-safe")
     parent = path.parent
     if (parent.is_symlink() or not parent.is_dir()
             or parent.stat().st_mode & 0o077):
@@ -70,7 +74,7 @@ def _validate_socket_path(path: Path) -> Path:
     if path.exists() or path.is_symlink():
         raise WindowsControlSerialError("serial socket path must be absent")
     # Linux sockaddr_un.sun_path has 108 bytes including the trailing NUL.
-    if len(str(path).encode()) >= 108:
+    if len(encoded) >= 108:
         raise WindowsControlSerialError("serial socket path is too long")
     return path
 
