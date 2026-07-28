@@ -277,13 +277,37 @@ def assess_handoff(
     arch_serial = any(marker in workstation for marker in (
         "archiso login:", "Welcome to Arch Linux",
     ))
+    phases = arch_handoff_phases(workstation)
+    root_request = (
+        f"GET {prefix}payload/arch/x86_64/airootfs." in controller
+        or f"http://10.1.31.2{prefix}payload/arch/x86_64/airootfs."
+        in workstation
+    )
     winpe = all(value in controller for value in (
         f"GET /windows/{version}/boot.ipxe ",
         f"GET /windows/{version}/sources/boot.wim ",
     ))
-    if not ((arch_requests and arch_serial) or winpe):
-        problems.append("no Arch or WinPE handoff was observed")
+    if not ((arch_requests and arch_serial and root_request) or winpe):
+        if phases["kernel_init"] and phases["archiso_network_hook"]:
+            problems.append(
+                "Arch kernel/init and PXE hook were observed, but network-root "
+                "did not complete")
+        else:
+            problems.append("no Arch or WinPE handoff was observed")
     return problems
+
+
+def arch_handoff_phases(workstation: str) -> dict[str, bool]:
+    """Report milestones without confusing pre-boot with gate completion."""
+    return {
+        "ipxe_preboot": "TELOS IPXE PRE-BOOT" in workstation,
+        "kernel_init": "Run /init as init process" in workstation,
+        "archiso_network_hook": ":: running hook [archiso_pxe_common]"
+        in workstation,
+        "network_root_ready": any(marker in workstation for marker in (
+            "archiso login:", "Welcome to Arch Linux",
+        )),
+    }
 
 
 def capture_serial(
