@@ -32,6 +32,7 @@ def probe_screen(
     *,
     duration: float = 30.0,
     interval: float = 5.0,
+    wake_after: float | None = None,
     clock: Callable[[], float] = time.monotonic,
     pause: Callable[[float], None] = time.sleep,
 ) -> ProbeReceipt:
@@ -42,7 +43,9 @@ def probe_screen(
     Cleanup does not depend on a start method returning successfully because a
     start method can fail after acquiring a child or disposable resource.
     """
-    if duration <= 0 or interval <= 0:
+    if (duration <= 0 or interval <= 0
+            or wake_after is not None
+            and (wake_after <= 0 or wake_after >= duration)):
         raise ValueError("probe duration and interval must be positive")
 
     previous_umask = os.umask(0o077)
@@ -58,8 +61,10 @@ def probe_screen(
             if boundary.qmp is None:
                 raise WindowsIdentityProbeError(
                     "QMP authentication returned without a client")
-            deadline = clock() + duration
+            started_at = clock()
+            deadline = started_at + duration
             sequence = 0
+            woke = False
             while clock() < deadline:
                 sequence += 1
                 frame = boundary.runtime / f"probe-{sequence:04d}.ppm"
@@ -68,6 +73,13 @@ def probe_screen(
                 screenshots.append(frame)
                 if useful_frame(read_ppm(frame)):
                     useful += 1
+                if (
+                    wake_after is not None
+                    and not woke
+                    and clock() - started_at >= wake_after
+                ):
+                    boundary.qmp.key("spc")
+                    woke = True
                 remaining = deadline - clock()
                 if remaining > 0:
                     pause(min(interval, remaining))

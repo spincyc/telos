@@ -30,6 +30,9 @@ class FakeQmp:
             raise self.failure
         path.write_bytes(ppm(self.useful))
 
+    def key(self, name):
+        self.events.append(("key", name))
+
 
 class Boundary:
     def __init__(self, root, *, fail_start=None, fail_stop=None, qmp=None):
@@ -151,6 +154,18 @@ class WindowsIdentityProbeTests(unittest.TestCase):
             self.assertEqual(
                 ["stop_windows", "stop_controller", "stop_switch"],
                 boundary.events[-3:])
+
+    def test_public_wake_key_is_sent_once_after_the_bounded_delay(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = Boundary(Path(name))
+            ticks = iter((0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0))
+            probe_screen(
+                boundary, duration=3, interval=1, wake_after=1,
+                clock=lambda: next(ticks), pause=lambda _: None)
+            self.assertEqual(
+                [("key", "spc")],
+                [event for event in boundary.events if isinstance(event, tuple)
+                 and event[0] == "key"])
 
 
 if __name__ == "__main__":
