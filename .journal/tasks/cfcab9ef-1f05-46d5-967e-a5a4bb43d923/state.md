@@ -215,3 +215,10 @@ prompt from redirected WinPE input. New bundles inject a secret-free VBScript
 helper that reads the password file in-process and calls
 `WScript.Network.MapNetworkDrive`; no secret enters arguments or logs. No disk
 mutation occurred. A fresh live retry is next.
+
+The helper-backed run mounted SMB and passed both disk gates. DiskPart then
+cleaned and converted the disposable disk, created the ESP, MSR, and Windows
+partition, and failed with code 41 because the SMB mapping already occupied
+the Windows target letter `W:`. New bundles mount the read-only source at `I:`
+and reserve `W:` for the target volume. The partially partitioned evidence
+disk will not be reused; a fresh live retry is next.

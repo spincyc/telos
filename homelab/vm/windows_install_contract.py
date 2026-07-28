@@ -253,15 +253,15 @@ def render_startup(
         + "ipconfig\r\n"
         + "ping -n 1 10.1.31.2 || exit /b 28\r\n"
         + 'cscript.exe //nologo "%inputs%mount-source.vbs" || exit /b 30\r\n'
-        'if not exist W:\\setup.exe exit /b 31\r\n'
-        'if not exist W:\\sources\\install.wim exit /b 32\r\n'
+        'if not exist I:\\setup.exe exit /b 31\r\n'
+        'if not exist I:\\sources\\install.wim exit /b 32\r\n'
         "echo TELOS WINPE phase=disk-check-2\r\n"
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 40\r\n"
         + check
         + "echo TELOS WINPE phase=partition\r\n"
         + 'diskpart /s "%inputs%windows-layout.txt" || exit /b 41\r\n'
         "echo TELOS WINPE phase=setup\r\n"
-        "W:\\setup.exe /InstallFrom W:\\sources\\install.wim "
+        "I:\\setup.exe /InstallFrom I:\\sources\\install.wim "
         '/Unattend:"%inputs%Autounattend.xml" || exit /b 50\r\n'
         "exit /b 0\r\n"
     )
@@ -287,7 +287,7 @@ def render_source_mount(install_source_unc: str, install_user: str) -> str:
         'stream.Close\r\n'
         'On Error Resume Next\r\n'
         'Set network = CreateObject("WScript.Network")\r\n'
-        f'network.MapNetworkDrive "W:", "{install_source_unc}", '
+        f'network.MapNetworkDrive "I:", "{install_source_unc}", '
         f'False, "{install_user}", password\r\n'
         'result = Err.Number\r\n'
         'password = String(Len(password), "x")\r\n'
