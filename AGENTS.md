@@ -9,9 +9,13 @@ add scope-specific requirements.
   commits free of `.journal/` changes and generated or ignored runtime state;
   record attributable journal checkpoints in adjacent journal-only commits.
 - Before every terminal response or handoff, run
-  `python3 .journal/bin/journal.py yield-check`. If it reports an active or
-  runnable task, continue that work; status answers, progress reports,
-  checkpoints, commits, and pushes are non-terminal.
+  `python3 .journal/bin/journal.py yield-check` as the immediately preceding
+  action. Only exit zero with `YIELD PERMITTED` authorizes the response. On
+  denial, discard the proposed final response, return to journal scheduling,
+  and execute the highest-priority runnable task in the same turn. Any later
+  tool call, commit, push, progress message, user question, or checkpoint
+  invalidates a prior successful check. Status answers are commentary inside
+  the loop; they never terminate active work.
 - Do not push without user authority. Before every authorized push, run
   `make verify-site` against the exact commit that will be pushed.
 - After every push, find the `Publish GitHub Pages` workflow run whose
