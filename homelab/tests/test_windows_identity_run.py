@@ -101,6 +101,9 @@ class WindowsIdentityRunTests(unittest.TestCase):
             self.assertNotEqual(old, new)
             material.destroy_private_publication()
             recovery.destroy_publication.assert_called_once_with()
+            self.assertIsNone(material._old_local)
+            self.assertIsNone(material._new_local)
+            self.assertIsNone(material._recovery_context)
             material.stage_controller_principals()
             staged = events[1][1]
             self.assertEqual(

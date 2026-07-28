@@ -237,6 +237,7 @@ def execute_progressive_rotation(
     session: RotationSession,
     recovery: RecoverableCredential,
     generate_credential: Callable[[], str],
+    after_rotation: Callable[[str], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     pause: Callable[[float], None] = time.sleep,
     interaction_factory: Callable[
@@ -287,12 +288,7 @@ def execute_progressive_rotation(
         # recovery and guest-session context managers have both torn down.
         with SignalGuard():
             with recovery as old_credential, session as qmp:
-                new_credential = generate_credential()
                 WindowsCredentialRotationDriver._validate_secret(old_credential)
-                WindowsCredentialRotationDriver._validate_secret(new_credential)
-                if old_credential == new_credential:
-                    raise WindowsIdentityProgressiveError(
-                        "replacement credential must be distinct")
 
                 sign_in, desktop, security_options, change_password = references
                 gui = interaction_factory(
@@ -312,6 +308,15 @@ def execute_progressive_rotation(
                 for key in plan.change_password_keys:
                     gui.key(key)
                 gui.observe(change_password, remaining())
+                # Generate the replacement only at the first operation that
+                # needs it. It must not survive initial login or public
+                # navigation merely because those phases precede rotation.
+                new_credential = generate_credential()
+                WindowsCredentialRotationDriver._validate_secret(
+                    new_credential)
+                if old_credential == new_credential:
+                    raise WindowsIdentityProgressiveError(
+                        "replacement credential must be distinct")
                 gui.type_secret(old_credential)
                 gui.key("tab")
                 gui.type_secret(new_credential)
@@ -336,6 +341,14 @@ def execute_progressive_rotation(
                 gui.observe(desktop, remaining())
                 # A fresh login is the first conclusive password-change proof.
                 phases.append("replacement-credential-sign-in-proved")
+                if after_rotation is not None:
+                    # Keep the replacement credential inside the guarded
+                    # recovery/session lifetime until all acceptance work
+                    # that depends on it has completed. A failed callback
+                    # preserves the old publication so a fresh source overlay
+                    # remains recoverable.
+                    after_rotation(new_credential)
+                    phases.append("post-rotation-acceptance-complete")
                 recovery.destroy_publication()
                 phases.append("private-publication-destroyed")
     except WindowsIdentityProgressiveError:

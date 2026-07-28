@@ -13,7 +13,8 @@ import stat
 import subprocess
 import tempfile
 import time
-from typing import Callable
+from typing import Callable, Mapping
+from types import MappingProxyType
 from pathlib import Path
 
 from .automated_controller import DisposableBootDisk
@@ -429,6 +430,58 @@ class PrivateIdentityMaterial:
             self.close()
             raise
 
+    def generate_replacement_credential(self) -> str:
+        """Generate and retain one replacement for a progressive rotation."""
+        if self._new_local is not None:
+            raise WindowsIdentityRunError(
+                "replacement credential is already owned")
+        self._new_local = self._credential()
+        return self._new_local
+
+    def run_scoped_acceptance(
+        self,
+        replacement: str,
+        acceptance: Callable[[str, Mapping[str, str]], None],
+    ) -> None:
+        """Keep all credentials memory-owned through one acceptance callback.
+
+        The callback receives a read-only principal mapping at runtime.  On a
+        successful acceptance and principal teardown, every retained
+        credential reference owned by this object is released.
+        """
+        if replacement is not self._new_local:
+            raise WindowsIdentityRunError(
+                "acceptance replacement is not the owned credential")
+        if self._old_local is not None or self._recovery_context is not None:
+            raise WindowsIdentityRunError(
+                "recovered credential remains active during acceptance")
+        self.stage_controller_principals()
+        primary: BaseException | None = None
+        cleanup: BaseException | None = None
+        try:
+            acceptance(
+                self._new_local,
+                MappingProxyType(self._principals),
+            )
+        except BaseException as error:
+            primary = error
+        try:
+            self.destroy_controller_principals()
+        except BaseException as error:
+            cleanup = error
+        if cleanup is None:
+            self._new_local = None
+        if primary is not None or cleanup is not None:
+            details = []
+            if primary is not None:
+                details.append(f"acceptance: {type(primary).__name__}")
+            if cleanup is not None:
+                details.append(
+                    f"principal destruction: {type(cleanup).__name__}")
+            raise WindowsIdentityRunError(
+                "scoped identity acceptance failed; " + "; ".join(details)
+            ) from None
+
     def destroy_private_publication(self) -> None:
         if (self._recovery_context is None or self._old_local is None
                 or self._new_local is None):
@@ -436,6 +489,7 @@ class PrivateIdentityMaterial:
                 "guest rotation must precede publication destruction")
         self._recovery_context.destroy_publication()
         self._old_local = None
+        self._new_local = None
         self._recovery_context.__exit__(None, None, None)
         self._recovery_context = None
 

@@ -94,7 +94,9 @@ class ProgressiveRotationTests(unittest.TestCase):
         ):
             receipt = execute_progressive_rotation(
                 plan=self.plan(), session=session, recovery=recovery,
-                generate_credential=lambda: "New-private-83!", clock=clock,
+                generate_credential=lambda: (
+                    events.append("generate") or "New-private-83!"),
+                clock=clock,
                 pause=lambda _: None,
                 interaction_factory=lambda _qmp, _root: Interaction(events, fail))
         return events, receipt
@@ -104,6 +106,10 @@ class ProgressiveRotationTests(unittest.TestCase):
         destroyed = events.index("destroy")
         self.assertEqual("observe:desktop", events[destroyed - 1])
         self.assertLess(events.index("chord:meta_l+l"), destroyed)
+        generated = events.index("generate")
+        self.assertGreater(generated, events.index("observe:change-password"))
+        self.assertGreater(generated, events.index("observe:desktop"))
+        self.assertLess(generated, events.index("type", generated))
         replacement_sign_in = events.index(
             "observe:sign-in", events.index("chord:meta_l+l"))
         self.assertLess(replacement_sign_in, destroyed)
@@ -115,6 +121,37 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertEqual("recovery:exit", events[-1])
         self.assertTrue(receipt.publication_destroyed)
         self.assertTrue(receipt.replacement_sign_in_proved)
+
+    def test_failed_post_rotation_acceptance_preserves_publication(self):
+        events = []
+        recovery = Recovery("Old-private-47!", events, "recovery")
+        session = Context(object(), events, "session")
+        references = [
+            reference(kind) for kind in (
+                "sign-in", "desktop", "security-options", "change-password")]
+
+        def fail_acceptance(_replacement):
+            events.append("acceptance")
+            raise RuntimeError("New-private-83!")
+
+        with mock.patch(
+            "homelab.vm.windows_identity_progressive.load_identity_reference",
+            side_effect=references,
+        ):
+            with self.assertRaises(WindowsIdentityProgressiveError) as caught:
+                execute_progressive_rotation(
+                    plan=self.plan(),
+                    session=session,
+                    recovery=recovery,
+                    generate_credential=lambda: "New-private-83!",
+                    after_rotation=fail_acceptance,
+                    pause=lambda _: None,
+                    interaction_factory=lambda _qmp, _root: Interaction(events),
+                )
+        self.assertIn("acceptance", events)
+        self.assertNotIn("destroy", events)
+        self.assertNotIn("New-private-83!", str(caught.exception))
+        self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
 
     def test_failure_before_outcome_preserves_publication_and_tears_down(self):
         with self.assertRaisesRegex(
