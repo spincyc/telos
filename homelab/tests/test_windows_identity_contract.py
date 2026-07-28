@@ -14,6 +14,8 @@ class WindowsIdentityContractTests(unittest.TestCase):
             control = root / "control.iso"
             for path in (disk, variables, control):
                 path.write_bytes(path.name.encode())
+            control.chmod(0o444)
+            original_control = control.read_bytes()
             command = qemu_identity_command(
                 disk=disk, variables=variables,
                 qmp_socket=root / "windows.qmp", switch_port=31415,
@@ -33,6 +35,8 @@ class WindowsIdentityContractTests(unittest.TestCase):
                 and "if=pflash" not in command[index + 1]
             ]
             self.assertEqual(1, len(writable))
+            self.assertEqual(original_control, control.read_bytes())
+            self.assertEqual(0o444, control.stat().st_mode & 0o777)
 
     def test_command_rejects_missing_or_symlinked_inputs(self):
         with tempfile.TemporaryDirectory() as name:
@@ -45,6 +49,20 @@ class WindowsIdentityContractTests(unittest.TestCase):
                 qemu_identity_command(
                     disk=disk, variables=variables,
                     qmp_socket=root / "windows.qmp", switch_port=31415)
+
+    def test_command_rejects_a_writable_control_iso(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "windows.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            control = root / "control.iso"
+            for path in (disk, variables, control):
+                path.write_bytes(path.name.encode())
+            with self.assertRaisesRegex(ValueError, "read-only"):
+                qemu_identity_command(
+                    disk=disk, variables=variables,
+                    qmp_socket=root / "windows.qmp", switch_port=31415,
+                    control_iso=control)
 
 
 if __name__ == "__main__":

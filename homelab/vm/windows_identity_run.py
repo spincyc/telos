@@ -6,8 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import os
 import re
 import secrets
+import signal
 import socket
 import stat
 import subprocess
@@ -28,6 +30,7 @@ from .signal_cleanup import RunInterrupted, terminate_children
 from .simulated_topology import audit_live_process, controller_command
 from .windows_gui import QmpClient
 from .windows_identity_contract import qemu_identity_command
+from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
 
 
@@ -82,6 +85,7 @@ class NativeProcessBoundary:
         self.qmp_root: Path | None = None
         self.port: int | None = None
         self.authorized_command: list[str] | None = None
+        self.suspended_processes: set[str] = set()
 
     @staticmethod
     def _normalized_command(command: list[str]) -> list[str]:
@@ -99,6 +103,14 @@ class NativeProcessBoundary:
                 normalized.append(value)
         return normalized
 
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
     def _validate(self) -> None:
         if (self.attempt.is_symlink() or not self.attempt.is_dir()
                 or self.attempt.stat().st_mode & 0o077):
@@ -113,6 +125,12 @@ class NativeProcessBoundary:
                     f"identity attempt lacks regular {name}")
             if item.stat().st_mode & 0o077:
                 raise WindowsIdentityRunError(f"{name} must be mode 0600")
+        control_iso = self.attempt / CONTROL_ISO_NAME
+        if control_iso.is_symlink() or not control_iso.is_file():
+            raise WindowsIdentityRunError(
+                "identity attempt lacks regular control.iso")
+        if stat.S_IMODE(control_iso.stat().st_mode) != 0o444:
+            raise WindowsIdentityRunError("control.iso must be mode 0444")
         try:
             authorization = json.loads(
                 (self.attempt / "authorization.json").read_text(
@@ -157,6 +175,7 @@ class NativeProcessBoundary:
                 "identity authorization names a different Controller state")
         overlay = authorization.get("overlay")
         firmware = authorization.get("firmware_copy")
+        control_media = authorization.get("control_media")
         if (
             not isinstance(overlay, dict)
             or overlay.get("path") != str(
@@ -168,6 +187,17 @@ class NativeProcessBoundary:
         ):
             raise WindowsIdentityRunError(
                 "identity authorization paths do not match the attempt")
+        if (
+            not isinstance(control_media, dict)
+            or set(control_media) != {
+                "path", "sha256", "read_only", "contains_secrets"}
+            or control_media.get("path") != str(control_iso.resolve())
+            or control_media.get("read_only") is not True
+            or control_media.get("contains_secrets") is not False
+            or control_media.get("sha256") != self._sha256(control_iso)
+        ):
+            raise WindowsIdentityRunError(
+                "control ISO differs from the authorized static artifact")
         controller = paths(self.controller_state)
         if (self.controller_state.is_symlink()
                 or not self.controller_state.is_dir()
@@ -268,6 +298,7 @@ class NativeProcessBoundary:
                 variables=self.attempt / "OVMF_VARS.fd",
                 qmp_socket=qmp_socket,
                 switch_port=self.port,
+                control_iso=self.attempt / CONTROL_ISO_NAME,
             )
         except BaseException:
             self._cleanup_qmp_root()
@@ -318,6 +349,17 @@ class NativeProcessBoundary:
             "timed out authenticating Windows QMP") from error
 
     def _stop(self, *roles: str) -> None:
+        resume_failures = []
+        for role in roles:
+            if role not in self.suspended_processes:
+                continue
+            try:
+                self._set_process_available(role, True)
+            except BaseException as error:
+                resume_failures.append(
+                    f"{role} resume before teardown: {type(error).__name__}")
+        if resume_failures:
+            raise WindowsIdentityRunError("; ".join(resume_failures))
         selected = [
             (role, self.processes[role]) for role in roles
             if role in self.processes
@@ -331,6 +373,47 @@ class NativeProcessBoundary:
                 raise WindowsIdentityRunError(
                     f"{role} process remained live after teardown")
             self.processes.pop(role, None)
+
+    def _set_process_available(self, role: str, available: bool) -> None:
+        """Suspend or resume one separately owned dependency process.
+
+        SIGSTOP/SIGCONT provide a host-enforced, reversible outage without
+        changing the isolated switch, guest disks, or dependency state.  A
+        dependency must have its own live process: aliases would make the
+        individual and combined fault phases indistinguishable.
+        """
+        if not isinstance(available, bool):
+            raise WindowsIdentityRunError(
+                f"{role} dependency availability must be boolean")
+        process = self.processes.get(role)
+        if process is None:
+            raise WindowsIdentityRunError(
+                f"{role} dependency has no separately owned process")
+        if process.poll() is not None:
+            raise WindowsIdentityRunError(
+                f"{role} dependency process is not live")
+        is_suspended = role in self.suspended_processes
+        if available == (not is_suspended):
+            raise WindowsIdentityRunError(
+                f"{role} dependency is already "
+                f"{'available' if available else 'offline'}")
+        os.kill(process.pid, signal.SIGCONT if available else signal.SIGSTOP)
+        if available:
+            self.suspended_processes.remove(role)
+        else:
+            self.suspended_processes.add(role)
+
+    def set_controller_available(self, available: bool) -> None:
+        self._set_process_available("controller", available)
+
+    def set_gateway_available(self, available: bool) -> None:
+        self._set_process_available("gateway", available)
+
+    def set_update_source_available(self, available: bool) -> None:
+        self._set_process_available("update-source", available)
+
+    def set_optional_storage_available(self, available: bool) -> None:
+        self._set_process_available("optional-storage", available)
 
     def _cleanup_qmp_root(self) -> None:
         if self.qmp_root is None:

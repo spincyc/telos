@@ -44,6 +44,8 @@ def qemu_identity_command(
         if control_iso.is_symlink() or not control_iso.is_file():
             raise ValueError(
                 "control ISO must be a regular non-symlink file")
+        if control_iso.stat().st_mode & 0o222:
+            raise ValueError("control ISO must be read-only")
         command += [
             "-device", "virtio-scsi-pci,id=controlbus",
             "-drive",

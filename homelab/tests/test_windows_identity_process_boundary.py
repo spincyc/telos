@@ -146,6 +146,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     variables=boundary.attempt / "OVMF_VARS.fd",
                     qmp_socket=boundary.qmp_root / "windows.qmp",
                     switch_port=43119,
+                    control_iso=boundary.attempt / "control.iso",
                 )
             finally:
                 boundary.processes.clear()
@@ -186,6 +187,38 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     WindowsIdentityRunError, "switch must start"):
                 boundary.start_windows()
+
+    def test_control_iso_is_bound_by_exact_path_hash_and_read_only_mode(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+
+            control_iso = boundary.attempt / "control.iso"
+            control_iso.chmod(0o644)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "mode 0444"):
+                boundary._validate()
+
+            control_iso.chmod(0o444)
+            original = control_iso.read_bytes()
+            control_iso.chmod(0o600)
+            control_iso.write_bytes(original + b"tampered")
+            control_iso.chmod(0o444)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "authorized static artifact"):
+                boundary._validate()
+
+    def test_control_iso_authorization_contains_no_payload_or_secret(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            authorization = (
+                boundary.attempt / "authorization.json").read_text(
+                    encoding="utf-8")
+            self.assertNotIn("static read-only control payload", authorization)
+            self.assertNotIn("password", authorization.casefold())
+            self.assertEqual(
+                b"static read-only control payload",
+                (boundary.attempt / "control.iso").read_bytes())
 
     def test_runtime_command_allows_only_private_qmp_and_loopback_port_variance(self):
         with tempfile.TemporaryDirectory() as name:

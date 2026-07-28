@@ -40,6 +40,12 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0)
         raise AssertionError(command)
 
+    @staticmethod
+    def control_iso(output):
+        output.write_bytes(b"audited static control payload")
+        output.chmod(0o444)
+        return output
+
     def test_default_is_a_read_only_plan(self):
         with mock.patch.object(prepare, "prepare") as execute:
             self.assertEqual(0, prepare.main([]))
@@ -51,8 +57,13 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             bundle = self.candidate(root)
             controller = root / "controller"
             controller.mkdir()
-            with mock.patch.object(
-                    prepare.subprocess, "run", side_effect=self.qemu):
+            with (
+                mock.patch.object(
+                    prepare.subprocess, "run", side_effect=self.qemu),
+                mock.patch.object(
+                    prepare, "build_control_iso",
+                    side_effect=self.control_iso),
+            ):
                 attempt = prepare.prepare(bundle, controller)
             self.assertEqual(0, attempt.stat().st_mode & 0o077)
             for filename in (
@@ -60,12 +71,18 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                     "qemu-command.json"):
                 self.assertEqual(
                     0, (attempt / filename).stat().st_mode & 0o077)
+            self.assertEqual(0o444, (attempt / "control.iso").stat().st_mode & 0o777)
             plan = json.loads(
                 (attempt / "authorization.json").read_text())
             self.assertEqual("prepared", plan["status"])
             self.assertFalse(plan["external_access"])
             self.assertFalse(plan["installation_media_attached"])
             self.assertFalse(plan["pxe_boot_enabled"])
+            self.assertEqual(
+                str((attempt / "control.iso").resolve()),
+                plan["control_media"]["path"])
+            self.assertTrue(plan["control_media"]["read_only"])
+            self.assertFalse(plan["control_media"]["contains_secrets"])
             self.assertEqual(
                 str((bundle / "windows.qcow2").resolve()),
                 plan["overlay"]["backing_path"])
@@ -74,6 +91,10 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 (attempt / "qemu-command.json").read_text())["argv"]
             self.assertIn("order=c,menu=off", " ".join(command))
             self.assertNotIn("once=n", " ".join(command))
+            self.assertIn("readonly=on", " ".join(command))
+            self.assertIn(
+                f"file={(attempt / 'control.iso').resolve()}",
+                " ".join(command))
 
     def test_candidate_requires_native_marker_private_files_and_clean_qcow2(self):
         with tempfile.TemporaryDirectory() as name:
@@ -110,8 +131,13 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 if command[1] == "create":
                     raise subprocess.CalledProcessError(1, command)
                 return result
-            with mock.patch.object(
-                    prepare.subprocess, "run", side_effect=fail_create):
+            with (
+                mock.patch.object(
+                    prepare.subprocess, "run", side_effect=fail_create),
+                mock.patch.object(
+                    prepare, "build_control_iso",
+                    side_effect=self.control_iso),
+            ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     prepare.prepare(bundle, controller)
             identity = bundle / "identity"

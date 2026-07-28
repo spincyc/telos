@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Protocol
 
 
 class FaultPhaseError(RuntimeError):
     """A dependency fault phase did not reach a restored terminal state."""
+
+
+class RuntimeFaultBoundary(Protocol):
+    """Native boundary required by the ordered fault driver."""
+
+    def set_controller_available(self, available: bool) -> None: ...
+    def set_gateway_available(self, available: bool) -> None: ...
+    def set_update_source_available(self, available: bool) -> None: ...
+    def set_optional_storage_available(self, available: bool) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -27,6 +36,20 @@ class FaultPhaseReceipt:
 
     phases: list[str] = field(default_factory=list)
     all_dependencies_restored: bool = False
+
+
+def native_fault_operations(
+    boundary: RuntimeFaultBoundary,
+    observe: Callable[[str], None],
+) -> FaultPhaseOperations:
+    """Bind the ordered driver to a real native process boundary."""
+    return FaultPhaseOperations(
+        set_controller_available=boundary.set_controller_available,
+        set_gateway_available=boundary.set_gateway_available,
+        set_update_source_available=boundary.set_update_source_available,
+        set_optional_storage_available=boundary.set_optional_storage_available,
+        observe=observe,
+    )
 
 
 _SETTERS = {

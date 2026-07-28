@@ -8,11 +8,15 @@ from homelab.vm.windows_identity_contract import qemu_identity_command
 def write_prepared_authorization(
     attempt: Path, controller_state: Path,
 ) -> None:
+    control_iso = attempt / "control.iso"
+    control_iso.write_bytes(b"static read-only control payload")
+    control_iso.chmod(0o444)
     command = qemu_identity_command(
         disk=attempt / "windows.qcow2",
         variables=attempt / "OVMF_VARS.fd",
         qmp_socket=attempt / "windows.qmp",
         switch_port=31415,
+        control_iso=control_iso,
     )
     command_path = attempt / "qemu-command.json"
     command_path.write_text(json.dumps({
@@ -33,6 +37,12 @@ def write_prepared_authorization(
         },
         "firmware_copy": {
             "path": str((attempt / "OVMF_VARS.fd").resolve()),
+        },
+        "control_media": {
+            "path": str(control_iso.resolve()),
+            "sha256": hashlib.sha256(control_iso.read_bytes()).hexdigest(),
+            "read_only": True,
+            "contains_secrets": False,
         },
     }
     marker = attempt / "authorization.json"

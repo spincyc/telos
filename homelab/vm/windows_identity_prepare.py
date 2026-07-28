@@ -14,6 +14,7 @@ import subprocess
 
 from .bootstrap_dc import DEFAULT_STATE
 from .simulation_evidence import private_file
+from .windows_control_iso import build_control_iso
 from .windows_install_contract import sha256
 from .windows_identity_contract import qemu_identity_command
 
@@ -22,6 +23,7 @@ DEFAULT_BUNDLE = Path(
     "run-20260728T114233Z-afecdf7cc9d0")
 DISK_NAME = "windows.qcow2"
 VARS_NAME = "OVMF_VARS.fd"
+CONTROL_ISO_NAME = "control.iso"
 NATIVE_MARKER = "TELOS WINDOWS NATIVE READY"
 
 
@@ -108,6 +110,7 @@ def prepare(
     try:
         overlay = attempt / DISK_NAME
         variables = attempt / VARS_NAME
+        control_iso = attempt / CONTROL_ISO_NAME
         qmp = attempt / "windows.qmp"
         shutil.copyfile(bundle / VARS_NAME, variables)
         variables.chmod(0o600)
@@ -116,9 +119,10 @@ def prepare(
             "-b", str((bundle / DISK_NAME).resolve()), str(overlay),
         ], check=True, capture_output=True)
         overlay.chmod(0o600)
+        build_control_iso(control_iso)
         command = qemu_identity_command(
             disk=overlay, variables=variables, qmp_socket=qmp,
-            switch_port=switch_port)
+            switch_port=switch_port, control_iso=control_iso)
         command_digest = hashlib.sha256(
             json.dumps(command, separators=(",", ":")).encode()).hexdigest()
         plan = {
@@ -138,6 +142,12 @@ def prepare(
             },
             "qmp_socket": str(qmp.resolve()),
             "qemu_argv_sha256": command_digest,
+            "control_media": {
+                "path": str(control_iso.resolve()),
+                "sha256": sha256(control_iso),
+                "read_only": True,
+                "contains_secrets": False,
+            },
             "installation_media_attached": False,
             "pxe_boot_enabled": False,
         }
