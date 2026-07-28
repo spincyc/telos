@@ -2,7 +2,7 @@
 schema_version: 1
 task_uuid: "fe041c7d-9139-4848-b335-6c655d0ebb49"
 title: "Audit hands-on projects for pencil drawings"
-status: "queued"
+status: "verifying"
 priority: "critical"
 priority_reason: "User explicitly set this as the highest-priority queue item and named potato launcher first."
 parent: null
@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: []
 superseded_by: null
 created_at: "2026-07-28T11:55:20Z"
-updated_at: "2026-07-28T11:55:20Z"
+updated_at: "2026-07-28T12:54:21Z"
 ---
 
 # Goal
@@ -42,6 +42,24 @@ This is the highest-priority queued task. Preserve the active bounded Windows
 installation proof rather than interrupting its live disposable-disk run;
 activate this task at the next safe scheduling boundary, before normal-priority
 queued work.
+
+## Progress
+
+The user explicitly directed maximum sub-agent use, activating this task in an
+independent read-only audit lane while the already-live Windows proof
+continues. Sixty-four audit agents cover potato launcher first, then
+electricity, fishing, homelab, PDF rendering, site integration, accessibility,
+inventory, style, and verification. Initial potato findings are complete; no
+sub-agent edits are permitted, and primary-lane integration remains
+serialized.
+
+All 64 read-only audit lanes completed. Durable repository guidance now makes
+visual progress indicators a primary teaching tool, and the tracked audit
+records the full 4-project/30-family/148-PDF baseline, detailed potato
+publication and gap ledgers, family-level electricity, fishing, and homelab
+findings, accessibility concerns, and an output-verification backlog.
+Verification of this audit checkpoint is in progress. The task remains open
+for potato remediation before broader family remediation.
 
 ## Original request
 

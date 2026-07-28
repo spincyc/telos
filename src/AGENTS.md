@@ -59,6 +59,19 @@ procedure where the project safety contract forbids one.
 
 - Use ample original monochrome illustrations. One decorative overview image
   is not sufficient for a multi-stage process.
+- Treat visual progress indicators as a primary teaching tool in every
+  hands-on publication. For each consequential procedure, provide the
+  complementary views the reader needs to recognize and verify progress: an
+  orienting overview; exact wiring, geometry, or construction detail; staged
+  assembly or transformation states; inspection and measurement checkpoints;
+  the expected visible result; and targeted troubleshooting views of likely
+  failures. Use only the views relevant to the task, but do not substitute one
+  finished-state image for materially different states.
+- Place each progress drawing beside the step, question, decision, or failure
+  branch it teaches, and refer to it explicitly in the prose. Its caption must
+  identify the state shown, the evidence to inspect, and the next action or
+  decision. Repeat a view only when repetition restores needed local context;
+  decorative repetition does not satisfy illustration coverage.
 - Default to high-fidelity graphite or pencil rendering for observational
   subjects: landscapes, shorelines, vegetation, fish and wildlife, people,
   hands, tools, materials, apparatus, food, and successive physical states.

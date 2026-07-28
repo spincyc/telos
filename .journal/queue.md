@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-generated_at: "2026-07-28T11:55:54Z"
+generated_at: "2026-07-28T12:54:31Z"
 task_count: 11
 ---
 
@@ -10,11 +10,11 @@ This file is a rebuildable view. Task `state.md` files are authoritative.
 
 ## Active
 
+- `fe041c7d-9139-4848-b335-6c655d0ebb49` — Audit hands-on projects for pencil drawings [verifying, critical]
 - `cfcab9ef-1f05-46d5-967e-a5a4bb43d923` — Implement Windows-first installation [active, normal] (depends on c9c5d25a-3d94-4eaa-95b8-2cadbd44633c)
 
 ## Queued
 
-- `fe041c7d-9139-4848-b335-6c655d0ebb49` — Audit hands-on projects for pencil drawings [queued, critical]
 - `e1135b56-26e9-4d97-946a-0284f5eb8c99` — Complete Windows identity and recovery acceptance [queued, normal] (depends on cfcab9ef-1f05-46d5-967e-a5a4bb43d923)
 - `0ab775e2-490d-4901-869d-d83e788a8e42` — Implement Arch-second installation and identity [queued, normal] (depends on e1135b56-26e9-4d97-946a-0284f5eb8c99)
 - `6e525567-4ef1-4c2e-ab52-ab099a87c780` — Finish dual-boot recovery and repeatability gates [queued, normal] (depends on 0ab775e2-490d-4901-869d-d83e788a8e42)
