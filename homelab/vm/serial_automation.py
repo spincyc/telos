@@ -162,20 +162,28 @@ class SerialAutomation:
             self._send(
                 self.password, "controller-convergence-sudo-password-sent")
             passed = False
+            last_stage = "begin"
             while True:
                 outcome = self._wait(
                     rb"(?:^|\n)(?:"
+                    rb"TELOS FACTORY STEP ([a-z-]+)|"
                     rb"(TELOS FACTORY CONTROLLER PASS)|"
                     + re.escape(result) + rb"([0-9]+))\s*(?:\n|$)",
                     "controller-convergence-outcome-observed",
                 )
                 if outcome.group(1) is not None:
+                    last_stage = outcome.group(1).decode("ascii")
+                    self.events.append(
+                        "controller-convergence-stage-" + last_stage)
+                    continue
+                if outcome.group(2) is not None:
                     passed = True
                     continue
-                returncode = int(outcome.group(2))
+                returncode = int(outcome.group(3))
                 if returncode != 0:
                     raise SerialAutomationError(
-                        f"Controller convergence returned {returncode}")
+                        "Controller convergence returned "
+                        f"{returncode} after {last_stage}")
                 if not passed:
                     raise SerialAutomationError(
                         "Controller convergence returned without PASS")
