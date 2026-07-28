@@ -18,6 +18,7 @@ from homelab.vm.windows_install_contract import (
     qemu_install_command,
     render_diskpart,
     render_ipxe_overlay,
+    render_source_mount,
     render_startup,
     render_unattend,
     render_winpeshl,
@@ -167,7 +168,8 @@ class WindowsInstallContractTests(unittest.TestCase):
                 self.assertEqual(
                     {
                         "boot.ipxe", "install.bat", "winpeshl.ini",
-                        "windows-layout.txt", "Autounattend.xml",
+                        "mount-source.vbs", "windows-layout.txt",
+                        "Autounattend.xml",
                         "install-password.txt",
                     },
                     {path.name for path in generated})
@@ -240,9 +242,8 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertEqual(2, script.count('"1" exit /b 20'))
         self.assertEqual(2, script.count('"256 GB" exit /b 22'))
         self.assertNotIn("InstallPass-123", script)
-        self.assertIn('net use W: "\\\\controller\\windows-20260727.005" *',
-                      script)
-        self.assertIn('< "%inputs%install-password.txt"', script)
+        self.assertIn(
+            'cscript.exe //nologo "%inputs%mount-source.vbs"', script)
         self.assertIn("TELOS WINPE FAIL code=%telos_result%", script)
         self.assertIn("TELOS WINPE phase=source-mount", script)
         self.assertIn(
@@ -261,7 +262,16 @@ class WindowsInstallContractTests(unittest.TestCase):
             self.authorization(),
             install_source_unc=r"\\10.1.31.2\windows-release",
             install_user="pxe-install")
-        self.assertIn('/user:"pxe-install"', script)
+        self.assertIn('cscript.exe //nologo', script)
+
+        helper = render_source_mount(
+            r"\\10.1.31.2\windows-release", "pxe-install")
+        self.assertIn(
+            'network.MapNetworkDrive "W:", "\\\\10.1.31.2\\windows-release", '
+            'False, "pxe-install", password',
+            helper)
+        self.assertIn('stream.ReadLine', helper)
+        self.assertNotIn("InstallPass-123", helper)
 
     def test_unattend_is_explicit_pro_us_partition_three_and_has_no_product_key(self):
         identity = SyntheticIdentity(

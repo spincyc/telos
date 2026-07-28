@@ -23,8 +23,8 @@ MIN_DISK_BYTES = 256 * GIB
 SAFE_SERIAL = re.compile(r"[A-Z0-9][A-Z0-9._-]{7,31}")
 RUN_ROOT = Path("homelab/var/factory/windows-runs")
 PRIVATE_INPUT_NAMES = frozenset({
-    "boot.ipxe", "install.bat", "winpeshl.ini", "windows-layout.txt",
-    "Autounattend.xml", "install-password.txt",
+    "boot.ipxe", "install.bat", "mount-source.vbs", "winpeshl.ini",
+    "windows-layout.txt", "Autounattend.xml", "install-password.txt",
 })
 
 
@@ -216,8 +216,6 @@ def render_startup(
     if authorization.disk["virtual_size"] != gib * GIB:
         raise WindowsInstallContractError(
             "WinPE capacity boundary requires a whole-GiB disk")
-    # The password is read interactively by `net use *`; it is never placed in
-    # this file, a process argument, or retained evidence.
     check = (
         'set "disk_count=0"\r\n'
         'for /f "tokens=1,2,3,4,5" %%A in (X:\\disk-list.txt) do (\r\n'
@@ -251,10 +249,10 @@ def render_startup(
         + check
         + "echo TELOS WINPE phase=source-mount\r\n"
         + 'if not exist "%inputs%install-password.txt" exit /b 29\r\n'
+        + 'if not exist "%inputs%mount-source.vbs" exit /b 29\r\n'
         + "ipconfig\r\n"
         + "ping -n 1 10.1.31.2 || exit /b 28\r\n"
-        + f'net use W: "{install_source_unc}" * /user:"{install_user}" '
-        '/persistent:no < "%inputs%install-password.txt" || exit /b 30\r\n'
+        + 'cscript.exe //nologo "%inputs%mount-source.vbs" || exit /b 30\r\n'
         'if not exist W:\\setup.exe exit /b 31\r\n'
         'if not exist W:\\sources\\install.wim exit /b 32\r\n'
         "echo TELOS WINPE phase=disk-check-2\r\n"
@@ -266,6 +264,36 @@ def render_startup(
         "W:\\setup.exe /InstallFrom W:\\sources\\install.wim "
         '/Unattend:"%inputs%Autounattend.xml" || exit /b 50\r\n'
         "exit /b 0\r\n"
+    )
+
+
+def render_source_mount(install_source_unc: str, install_user: str) -> str:
+    """Read the private password in-process and mount the isolated SMB share."""
+    if not re.fullmatch(r"\\\\[A-Za-z0-9.-]+\\[A-Za-z0-9$_.-]+",
+                        install_source_unc):
+        raise WindowsInstallContractError("install source UNC is unsafe")
+    if not re.fullmatch(
+            r"[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)?", install_user):
+        raise WindowsInstallContractError("install user is unsafe")
+    return (
+        'Option Explicit\r\n'
+        'Dim base, password, result, stream\r\n'
+        'Dim files, network\r\n'
+        'Set files = CreateObject("Scripting.FileSystemObject")\r\n'
+        'base = files.GetParentFolderName(WScript.ScriptFullName)\r\n'
+        'Set stream = files.OpenTextFile('
+        'base & "\\install-password.txt", 1, False, 0)\r\n'
+        'password = stream.ReadLine\r\n'
+        'stream.Close\r\n'
+        'On Error Resume Next\r\n'
+        'Set network = CreateObject("WScript.Network")\r\n'
+        f'network.MapNetworkDrive "W:", "{install_source_unc}", '
+        f'False, "{install_user}", password\r\n'
+        'result = Err.Number\r\n'
+        'password = String(Len(password), "x")\r\n'
+        'On Error GoTo 0\r\n'
+        'If result <> 0 Then WScript.Quit 1\r\n'
+        'WScript.Quit 0\r\n'
     )
 
 
@@ -344,6 +372,7 @@ def render_ipxe_overlay(version: str, private_base_url: str) -> str:
         "#!ipxe",
         f"kernel {release}/wimboot",
         f"initrd {private}/install.bat install.bat",
+        f"initrd {private}/mount-source.vbs mount-source.vbs",
         f"initrd {private}/winpeshl.ini winpeshl.ini",
         f"initrd {private}/windows-layout.txt windows-layout.txt",
         f"initrd {private}/Autounattend.xml Autounattend.xml",
@@ -462,6 +491,8 @@ class PrivateRun(AbstractContextManager["PrivateRun"]):
                 authorization,
                 install_source_unc=install_source_unc,
                 install_user=identity.install_user),
+            "mount-source.vbs": render_source_mount(
+                install_source_unc, identity.install_user),
             "winpeshl.ini": render_winpeshl(),
             "windows-layout.txt": render_diskpart(authorization),
             "Autounattend.xml": render_unattend(identity),

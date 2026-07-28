@@ -31,8 +31,8 @@ class PublicationError(RuntimeError):
 TFTP_PACKAGE = re.compile(
     r"^packages/(tftp-hpa-[A-Za-z0-9.+_-]+-x86_64\.pkg\.tar\.zst)$")
 PRIVATE_WINDOWS_FILES = frozenset({
-    "boot.ipxe", "install.bat", "winpeshl.ini", "windows-layout.txt",
-    "Autounattend.xml", "install-password.txt",
+    "boot.ipxe", "install.bat", "mount-source.vbs", "winpeshl.ini",
+    "windows-layout.txt", "Autounattend.xml", "install-password.txt",
 })
 
 
