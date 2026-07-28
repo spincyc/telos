@@ -286,7 +286,7 @@ class SerialAutomation:
                 "controller-seed-install-command-sent",
             )
             self._wait(
-                re.escape(sudo_prompt) + rb"\s*$",
+                rb"(?:^|[\r\n])" + re.escape(sudo_prompt) + rb"\s*$",
                 "controller-seed-sudo-prompt",
             )
             self._send(

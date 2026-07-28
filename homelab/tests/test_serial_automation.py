@@ -222,6 +222,29 @@ class ControllerSeedProtocolTests(unittest.TestCase):
         self.assertIn(
             "controller-seed-post-shell-ready", automation.events)
 
+    def test_echoed_sudo_marker_cannot_trigger_password_send(self):
+        observed = []
+
+        def responder(sock):
+            stream = sock.makefile("rb", buffering=0)
+            sock.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            stream.readline()
+            command = stream.readline()
+            prompt = command.split(
+                b"__TELOS_SEED_SUDO_", 1)[1].split(b"__", 1)[0]
+            sock.sendall(
+                b"sudo -p '__TELOS_SEED_SUDO_" + prompt + b"__")
+            sock.settimeout(0.25)
+            try:
+                observed.append(stream.readline())
+            except TimeoutError:
+                observed.append(b"")
+
+        with self.assertRaisesRegex(
+                SerialAutomationError, "controller-seed-sudo-prompt"):
+            self.run_seed(responder)
+        self.assertEqual(observed, [b""])
+
     def failure_responder(
         self, *, markers=(), returncode=b"1", release_code=b"0",
         split_returncode=False,
