@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import secrets
@@ -14,6 +15,7 @@ import subprocess
 from .bootstrap_dc import DEFAULT_STATE
 from .simulation_evidence import private_file
 from .windows_install_contract import sha256
+from .windows_identity_contract import qemu_identity_command
 
 DEFAULT_BUNDLE = Path(
     "homelab/var/factory/windows-installs/"
@@ -90,7 +92,9 @@ def inspect_candidate(bundle: Path) -> dict:
     }
 
 
-def prepare(bundle: Path, controller_state: Path) -> Path:
+def prepare(
+    bundle: Path, controller_state: Path, switch_port: int = 31415,
+) -> Path:
     bundle = bundle.resolve(strict=True)
     source = inspect_candidate(bundle)
     identity_root = bundle / "identity"
@@ -112,6 +116,11 @@ def prepare(bundle: Path, controller_state: Path) -> Path:
             "-b", str((bundle / DISK_NAME).resolve()), str(overlay),
         ], check=True, capture_output=True)
         overlay.chmod(0o600)
+        command = qemu_identity_command(
+            disk=overlay, variables=variables, qmp_socket=qmp,
+            switch_port=switch_port)
+        command_digest = hashlib.sha256(
+            json.dumps(command, separators=(",", ":")).encode()).hexdigest()
         plan = {
             "schema": 1,
             "status": "prepared",
@@ -128,12 +137,16 @@ def prepare(bundle: Path, controller_state: Path) -> Path:
                 "source_sha256": source["firmware"]["sha256"],
             },
             "qmp_socket": str(qmp.resolve()),
+            "qemu_argv_sha256": command_digest,
             "installation_media_attached": False,
             "pxe_boot_enabled": False,
         }
         private_file(
             attempt / "authorization.json",
             (json.dumps(plan, indent=2, sort_keys=True) + "\n").encode())
+        private_file(
+            attempt / "qemu-command.json",
+            (json.dumps({"schema": 1, "argv": command}, indent=2) + "\n").encode())
         return attempt
     except BaseException:
         shutil.rmtree(attempt, ignore_errors=True)
@@ -145,6 +158,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--bundle", type=Path, default=DEFAULT_BUNDLE)
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
+    result.add_argument("--switch-port", type=int, default=31415)
     result.add_argument("--apply", action="store_true")
     return result
 
@@ -158,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.apply:
         print("dry run; repeat with --apply to prepare a private identity attempt")
         return 0
-    print(prepare(args.bundle, args.controller_state))
+    print(prepare(args.bundle, args.controller_state, args.switch_port))
     return 0
 
 

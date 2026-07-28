@@ -56,7 +56,8 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 attempt = prepare.prepare(bundle, controller)
             self.assertEqual(0, attempt.stat().st_mode & 0o077)
             for filename in (
-                    "windows.qcow2", "OVMF_VARS.fd", "authorization.json"):
+                    "windows.qcow2", "OVMF_VARS.fd", "authorization.json",
+                    "qemu-command.json"):
                 self.assertEqual(
                     0, (attempt / filename).stat().st_mode & 0o077)
             plan = json.loads(
@@ -69,6 +70,10 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 str((bundle / "windows.qcow2").resolve()),
                 plan["overlay"]["backing_path"])
             self.assertNotIn("password", json.dumps(plan).lower())
+            command = json.loads(
+                (attempt / "qemu-command.json").read_text())["argv"]
+            self.assertIn("order=c,menu=off", " ".join(command))
+            self.assertNotIn("once=n", " ".join(command))
 
     def test_candidate_requires_native_marker_private_files_and_clean_qcow2(self):
         with tempfile.TemporaryDirectory() as name:
