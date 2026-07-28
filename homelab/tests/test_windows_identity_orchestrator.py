@@ -292,6 +292,26 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "operator_local_administrator": True,
         }, execute.call_args.kwargs["probe_after_reboot"]())
 
+        integer_boolean = {
+            **callbacks.__dict__,
+            "static_probe": lambda action: {
+                "schema_version": 1,
+                "action": action,
+                "result": "pass",
+                "observation": {
+                    "part_of_domain": 1,
+                    "domain": "FACTORY.TEST",
+                    "secure_channel": True,
+                    "operator": "operator@FACTORY.TEST",
+                    "operator_local_administrator": True,
+                },
+            },
+        }
+        callbacks = subject.AcceptanceCallbacks(**integer_boolean)
+        with self.assertRaisesRegex(
+                subject.WindowsIdentityOrchestratorError, "probe is invalid"):
+            subject._post_reboot_proof(callbacks)
+
 
 if __name__ == "__main__":
     unittest.main()
