@@ -23,6 +23,7 @@ class RecoveredLocalCredential(AbstractContextManager[str]):
         self.private_parent = Path(private_parent)
         self._temporary: Path | None = None
         self._value: str | None = None
+        self._publication_identity: tuple[int, int] | None = None
 
     def __enter__(self) -> str:
         if self.publication.is_symlink() or not self.publication.is_file():
@@ -31,6 +32,9 @@ class RecoveredLocalCredential(AbstractContextManager[str]):
         if self.publication.stat().st_mode & 0o077:
             raise WindowsIdentityRecoveryError(
                 "private publication must be mode 0600")
+        publication_stat = self.publication.stat()
+        self._publication_identity = (
+            publication_stat.st_dev, publication_stat.st_ino)
         if (self.private_parent.is_symlink()
                 or not self.private_parent.is_dir()
                 or self.private_parent.stat().st_mode & 0o077):
@@ -89,10 +93,25 @@ class RecoveredLocalCredential(AbstractContextManager[str]):
         if self.publication.is_symlink():
             raise WindowsIdentityRecoveryError(
                 "private publication became a symlink")
+        try:
+            publication_stat = self.publication.stat()
+        except FileNotFoundError as error:
+            raise WindowsIdentityRecoveryError(
+                "private publication disappeared before destruction") from error
+        if (
+            self._publication_identity is None
+            or (publication_stat.st_dev, publication_stat.st_ino)
+            != self._publication_identity
+            or publication_stat.st_mode & 0o077
+        ):
+            raise WindowsIdentityRecoveryError(
+                "private publication identity changed before destruction")
         self.publication.unlink()
+        self._publication_identity = None
 
     def __exit__(self, *_exc: object) -> None:
         self._value = None
+        self._publication_identity = None
         if self._temporary is not None:
             shutil.rmtree(self._temporary, ignore_errors=True)
             self._temporary = None

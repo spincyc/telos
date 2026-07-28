@@ -12,6 +12,9 @@ from homelab.vm.windows_identity_run import (
     WindowsIdentityRunError,
     run_lifecycle,
 )
+from homelab.tests.windows_identity_fixture import (
+    write_prepared_authorization,
+)
 
 
 class Recorder:
@@ -52,15 +55,7 @@ class WindowsIdentityRunTests(unittest.TestCase):
         ):
             path.write_bytes(path.name.encode())
             path.chmod(0o600)
-        authorization = {
-            "status": "prepared",
-            "external_access": False,
-            "installation_media_attached": False,
-            "pxe_boot_enabled": False,
-        }
-        (attempt / "authorization.json").write_text(
-            json.dumps(authorization), encoding="utf-8")
-        (attempt / "authorization.json").chmod(0o600)
+        write_prepared_authorization(attempt, state)
         return NativeProcessBoundary(attempt, state)
 
     def test_native_boundary_requires_private_prepared_isolation(self):

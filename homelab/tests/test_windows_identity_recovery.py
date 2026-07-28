@@ -78,6 +78,25 @@ class WindowsIdentityRecoveryTests(unittest.TestCase):
                         WindowsIdentityRecoveryError, "one unattend"):
                     RecoveredLocalCredential(publication, root).__enter__()
             self.assertTrue(publication.exists())
+
+    def test_publication_substitution_is_not_destroyed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            publication = root / "publication.iso"
+            publication.write_bytes(b"original")
+            publication.chmod(0o600)
+            recovery = RecoveredLocalCredential(publication, root)
+            recovery._value = "recovered"
+            recovery._publication_identity = (
+                publication.stat().st_dev, publication.stat().st_ino)
+            publication.unlink()
+            publication.write_bytes(b"replacement")
+            publication.chmod(0o600)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRecoveryError, "identity changed"):
+                recovery.destroy_publication()
+            self.assertEqual(b"replacement", publication.read_bytes())
             self.assertFalse(any(
                 path.name.startswith(".credential-")
                 for path in root.iterdir()))

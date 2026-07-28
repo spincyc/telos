@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
+import re
 import secrets
 import socket
 import subprocess
+import time
 from typing import Callable
 from pathlib import Path
 
@@ -18,7 +21,7 @@ from .factory_runner import (
     switch_command,
     wait_for_switch_port,
 )
-from .signal_cleanup import terminate_children
+from .signal_cleanup import RunInterrupted, terminate_children
 from .simulated_topology import audit_live_process, controller_command
 from .windows_gui import QmpClient
 from .windows_identity_contract import qemu_identity_command
@@ -29,7 +32,7 @@ class WindowsIdentityRunError(RuntimeError):
     """The native identity lifecycle did not reach a safe terminal state."""
 
 
-@dataclass
+@dataclass(repr=False)
 class IdentityOperations:
     """Secret-owning operations supplied by the native runner adapter."""
 
@@ -46,6 +49,9 @@ class IdentityOperations:
     stop_controller: Callable[[], None]
     stop_switch: Callable[[], None]
 
+    def __repr__(self) -> str:
+        return "IdentityOperations(<private callbacks>)"
+
 
 @dataclass
 class IdentityReceipt:
@@ -56,6 +62,7 @@ class IdentityReceipt:
     private_publication_destroyed: bool = False
     controller_principals_staged: bool = False
     controller_principals_destroyed: bool = False
+    acceptance_complete: bool = False
     teardown_complete: bool = False
 
 
@@ -63,20 +70,39 @@ class NativeProcessBoundary:
     """Own the isolated switch, disposable Controller, Windows VM, and QMP."""
 
     def __init__(self, attempt: Path, controller_state: Path) -> None:
-        self.attempt = Path(attempt).resolve()
-        self.controller_state = Path(controller_state).resolve()
+        self.attempt = Path(attempt).absolute()
+        self.controller_state = Path(controller_state).absolute()
         self.runtime = self.attempt / "runtime"
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
         self.controller_overlay: DisposableBootDisk | None = None
         self.qmp: QmpClient | None = None
         self.port: int | None = None
+        self.authorized_command: list[str] | None = None
+
+    @staticmethod
+    def _normalized_command(command: list[str]) -> list[str]:
+        normalized = []
+        for value in command:
+            if value.startswith("unix:") and value.endswith(
+                    ",server=on,wait=off"):
+                normalized.append("unix:<PRIVATE-QMP>,server=on,wait=off")
+            elif re.fullmatch(
+                    r"socket,id=factory,connect=127\.0\.0\.1:"
+                    r"[1-9][0-9]{0,4}", value):
+                normalized.append(
+                    "socket,id=factory,connect=127.0.0.1:<PORT>")
+            else:
+                normalized.append(value)
+        return normalized
 
     def _validate(self) -> None:
         if (self.attempt.is_symlink() or not self.attempt.is_dir()
                 or self.attempt.stat().st_mode & 0o077):
             raise WindowsIdentityRunError(
                 "identity attempt must be a private real directory")
-        for name in ("windows.qcow2", "OVMF_VARS.fd", "authorization.json"):
+        for name in (
+                "windows.qcow2", "OVMF_VARS.fd", "authorization.json",
+                "qemu-command.json"):
             item = self.attempt / name
             if item.is_symlink() or not item.is_file():
                 raise WindowsIdentityRunError(
@@ -100,12 +126,58 @@ class NativeProcessBoundary:
                for key, value in expected.items()):
             raise WindowsIdentityRunError(
                 "identity authorization does not preserve native isolation")
+        try:
+            command_document = json.loads(
+                (self.attempt / "qemu-command.json").read_text(
+                    encoding="utf-8"))
+            command = command_document["argv"]
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+            raise WindowsIdentityRunError(
+                "authorized QEMU command is unreadable") from error
+        if (not isinstance(command_document, dict)
+                or set(command_document) != {"schema", "argv"}
+                or command_document["schema"] != 1
+                or not isinstance(command, list)
+                or any(not isinstance(value, str) for value in command)):
+            raise WindowsIdentityRunError(
+                "authorized QEMU command has an invalid schema")
+        command_digest = hashlib.sha256(
+            json.dumps(command, separators=(",", ":")).encode()).hexdigest()
+        if authorization.get("qemu_argv_sha256") != command_digest:
+            raise WindowsIdentityRunError(
+                "authorized QEMU command digest does not match")
+        self.authorized_command = command
+        if authorization.get("controller_state") != str(
+                self.controller_state.resolve()):
+            raise WindowsIdentityRunError(
+                "identity authorization names a different Controller state")
+        overlay = authorization.get("overlay")
+        firmware = authorization.get("firmware_copy")
+        if (
+            not isinstance(overlay, dict)
+            or overlay.get("path") != str(
+                (self.attempt / "windows.qcow2").resolve())
+            or overlay.get("format") != "qcow2"
+            or not isinstance(firmware, dict)
+            or firmware.get("path") != str(
+                (self.attempt / "OVMF_VARS.fd").resolve())
+        ):
+            raise WindowsIdentityRunError(
+                "identity authorization paths do not match the attempt")
         controller = paths(self.controller_state)
+        if (self.controller_state.is_symlink()
+                or not self.controller_state.is_dir()
+                or self.controller_state.stat().st_mode & 0o077):
+            raise WindowsIdentityRunError(
+                "Controller state must be a private real directory")
         for key in ("disk", "vars"):
             item = controller[key]
             if item.is_symlink() or not item.is_file():
                 raise WindowsIdentityRunError(
                     f"Controller {key} must be a regular file")
+            if item.stat().st_mode & 0o077:
+                raise WindowsIdentityRunError(
+                    f"Controller {key} must be mode 0600")
 
     def start_switch(self) -> None:
         self._validate()
@@ -128,42 +200,53 @@ class NativeProcessBoundary:
                 stderr=subprocess.STDOUT,
                 pass_fds=(listener.fileno(),),
             )
+        except BaseException:
+            self._stop("switch")
+            raise
         finally:
             listener.close()
-        assert self.port is not None
-        self.processes["gateway"] = subprocess.Popen(
-            gateway_command(self.port),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-        wait_for_switch_port(self.runtime / "switch.jsonl", "gateway")
+        try:
+            assert self.port is not None
+            self.processes["gateway"] = subprocess.Popen(
+                gateway_command(self.port),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+            wait_for_switch_port(self.runtime / "switch.jsonl", "gateway")
+        except BaseException:
+            self._stop("gateway", "switch")
+            raise
 
     def start_controller(self) -> None:
         if self.port is None:
             raise WindowsIdentityRunError("switch must start before Controller")
         canonical = paths(self.controller_state)
-        self.controller_overlay = DisposableBootDisk(
-            canonical["disk"], canonical["vars"],
-            run_root=self.runtime / "controller").prepare()
-        command = controller_command(
-            self.controller_state,
-            self.controller_overlay.disk,
-            self.controller_overlay.vars,
-            self.port,
-            disk_format="raw",
-        )
-        process = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT)
-        self.processes["controller"] = process
-        audit_live_process(
-            process.pid, "controller",
-            disposable_disk=self.controller_overlay.disk,
-            disposable_vars=self.controller_overlay.vars,
-            forbidden_paths=(canonical["disk"], canonical["vars"]),
-        )
-        wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
+        try:
+            self.controller_overlay = DisposableBootDisk(
+                canonical["disk"], canonical["vars"],
+                run_root=self.runtime / "controller").prepare()
+            command = controller_command(
+                self.controller_state,
+                self.controller_overlay.disk,
+                self.controller_overlay.vars,
+                self.port,
+                disk_format="raw",
+            )
+            process = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT)
+            self.processes["controller"] = process
+            audit_live_process(
+                process.pid, "controller",
+                disposable_disk=self.controller_overlay.disk,
+                disposable_vars=self.controller_overlay.vars,
+                forbidden_paths=(canonical["disk"], canonical["vars"]),
+            )
+            wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
+        except BaseException:
+            self.stop_controller()
+            raise
 
     def start_windows(self) -> None:
         if self.port is None:
@@ -175,39 +258,90 @@ class NativeProcessBoundary:
             qmp_socket=qmp_socket,
             switch_port=self.port,
         )
-        process = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT)
-        self.processes["windows"] = process
-        audit_live_process(
-            process.pid, "client", allowed_nic_models=("e1000e",))
-        wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
+        if (
+            self.authorized_command is None
+            or self._normalized_command(command)
+            != self._normalized_command(self.authorized_command)
+        ):
+            raise WindowsIdentityRunError(
+                "runtime QEMU command differs from the authorized template")
+        try:
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT)
+            self.processes["windows"] = process
+            audit_live_process(
+                process.pid, "client", allowed_nic_models=("e1000e",))
+            wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
+        except BaseException:
+            self.stop_windows()
+            raise
 
     def authenticate_qmp(self) -> None:
         if "windows" not in self.processes:
             raise WindowsIdentityRunError("Windows must start before QMP")
-        self.qmp = QmpClient.connect(self.runtime / "windows.qmp", timeout=30)
+        deadline = time.monotonic() + 30
+        error: OSError | None = None
+        while time.monotonic() < deadline:
+            if self.processes["windows"].poll() is not None:
+                raise WindowsIdentityRunError(
+                    "Windows exited before QMP authentication")
+            try:
+                self.qmp = QmpClient.connect(
+                    self.runtime / "windows.qmp", timeout=2)
+                return
+            except OSError as caught:
+                error = caught
+                time.sleep(0.1)
+        raise WindowsIdentityRunError(
+            "timed out authenticating Windows QMP") from error
 
     def _stop(self, *roles: str) -> None:
         selected = [
-            self.processes.pop(role) for role in roles
+            (role, self.processes[role]) for role in roles
             if role in self.processes
         ]
-        failures = terminate_children(selected)
+        children = [process for _, process in selected]
+        failures = terminate_children(children)
+        if failures:
+            raise WindowsIdentityRunError("; ".join(failures))
+        for role, process in selected:
+            if process.poll() is None:
+                raise WindowsIdentityRunError(
+                    f"{role} process remained live after teardown")
+            self.processes.pop(role, None)
+
+    def stop_windows(self) -> None:
+        failures = []
+        if self.qmp is not None:
+            try:
+                self.qmp.close()
+            except BaseException as error:
+                failures.append(f"QMP close: {type(error).__name__}")
+            finally:
+                self.qmp = None
+        try:
+            self._stop("windows")
+        except BaseException as error:
+            failures.append(f"Windows process: {type(error).__name__}")
         if failures:
             raise WindowsIdentityRunError("; ".join(failures))
 
-    def stop_windows(self) -> None:
-        if self.qmp is not None:
-            self.qmp.close()
-            self.qmp = None
-        self._stop("windows")
-
     def stop_controller(self) -> None:
-        self._stop("controller")
+        failures = []
+        try:
+            self._stop("controller")
+        except BaseException as error:
+            failures.append(f"Controller process: {type(error).__name__}")
         if self.controller_overlay is not None:
-            self.controller_overlay.close()
-            self.controller_overlay = None
+            try:
+                self.controller_overlay.close()
+            except BaseException as error:
+                failures.append(f"Controller overlay: {type(error).__name__}")
+            finally:
+                self.controller_overlay = None
+        if failures:
+            raise WindowsIdentityRunError("; ".join(failures))
 
     def stop_switch(self) -> None:
         self._stop("gateway", "switch")
@@ -276,7 +410,10 @@ class PrivateIdentityMaterial:
         try:
             self.stage_guest_principals(self._principals)
         except BaseException:
-            self._principals.clear()
+            try:
+                self.destroy_guest_principals(tuple(self._principals))
+            except BaseException:
+                pass
             raise
 
     def destroy_controller_principals(self) -> None:
@@ -284,10 +421,8 @@ class PrivateIdentityMaterial:
         if not names:
             raise WindowsIdentityRunError(
                 "Controller principals were not staged")
-        try:
-            self.destroy_guest_principals(names)
-        finally:
-            self._principals.clear()
+        self.destroy_guest_principals(names)
+        self._principals.clear()
 
     def close(self) -> None:
         self._old_local = None
@@ -305,14 +440,14 @@ def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
     primary_error: BaseException | None = None
     cleanup_errors: list[str] = []
     try:
-        operations.start_switch()
         started.append("switch")
+        operations.start_switch()
         receipt.phases.append("switch-started")
-        operations.start_controller()
         started.append("controller")
+        operations.start_controller()
         receipt.phases.append("controller-started")
-        operations.start_windows()
         started.append("windows")
+        operations.start_windows()
         receipt.phases.append("windows-started")
         operations.authenticate_qmp()
         receipt.phases.append("qmp-authenticated")
@@ -326,6 +461,7 @@ def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
         receipt.controller_principals_staged = True
         receipt.phases.append("controller-principals-staged")
         operations.run_acceptance_phases()
+        receipt.acceptance_complete = True
         receipt.phases.append("acceptance-complete")
     except BaseException as error:
         primary_error = error
@@ -352,6 +488,8 @@ def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
                 cleanup_errors.append(f"{role} teardown: {type(error).__name__}")
         receipt.teardown_complete = not cleanup_errors
     if primary_error is not None or cleanup_errors:
+        if isinstance(primary_error, RunInterrupted) and not cleanup_errors:
+            raise primary_error
         details = []
         if primary_error is not None:
             details.append(f"lifecycle: {type(primary_error).__name__}")
@@ -363,6 +501,7 @@ def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
         receipt.private_publication_destroyed,
         receipt.controller_principals_staged,
         receipt.controller_principals_destroyed,
+        receipt.acceptance_complete,
         receipt.teardown_complete,
     )
     if not all(required):
