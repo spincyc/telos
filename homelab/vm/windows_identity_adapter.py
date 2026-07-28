@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Concrete, fail-closed adapters for native Windows identity acceptance."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from contextlib import contextmanager
+from pathlib import Path
+import socket
+import stat
+import time
+import uuid
+
+from .controller_join_material import ControllerJoinResult, ControllerJoinSerial
+from .controller_principals import (
+    ControllerPrincipalResult,
+    ControllerPrincipalSerial,
+)
+from .serial_automation import SerialAutomation
+from .windows_control_serial import (
+    MAX_RECORD_BYTES,
+    control_probe,
+    parse_probe_record,
+)
+from .windows_credential_action_iso import (
+    CredentialActionMediaChannel,
+    DuplexCredentialActionSerial,
+    build_credential_action_iso,
+    execute_credential_action,
+)
+from .windows_identity_orchestrator import AcceptanceCallbacks
+from .windows_identity_progressive import (
+    ProgressiveRotationPlan,
+    _GuiInteraction,
+    _load_references,
+    _private_evidence_root,
+)
+from .windows_identity_run import NativeProcessBoundary
+from .windows_join_iso import DuplexJoinSerial
+from .windows_public_command import (
+    PublicPowerShellLaunchPlan,
+    WindowsPublicCommandLauncher,
+)
+
+
+class WindowsIdentityAdapterError(RuntimeError):
+    """A required production boundary could not be proved."""
+
+
+_ACTIONS = {
+    "windows-standard-online": "connected-domain-login",
+    "windows-daily-admin": "operator-local-administrators-check",
+    "windows-cached-login": "cached-domain-login",
+    "windows-cached-admin-login": "cached-domain-login",
+    "windows-uncached-denied": "uncached-domain-user-denied",
+    "windows-local-rescue": "local-rescue-login",
+    "gateway-offline": "connected-domain-login",
+    "update-source-offline": "connected-domain-login",
+    "optional-storage-offline": "connected-domain-login",
+    "optional-storage-access-denied": "connected-domain-login",
+    "ad-dns-offline": "cached-domain-login",
+    "combined-dependencies-offline": "cached-domain-login",
+}
+
+
+class _LeasedSerial:
+    """Release one adapter COM1 lease when the underlying session closes."""
+
+    def __init__(self, serial, release: Callable[[], None]) -> None:
+        self._serial = serial
+        self._release = release
+        self._released = False
+
+    def __getattr__(self, name: str):
+        return getattr(self._serial, name)
+
+    @property
+    def closed(self) -> bool:
+        return self._released or bool(self._serial.closed)
+
+    def close(self) -> None:
+        if self._released:
+            return
+        try:
+            self._serial.close()
+        finally:
+            self._released = True
+            self._release()
+
+
+class NativeWindowsAcceptanceAdapter:
+    """Bind the strict callback contract to one live native process boundary."""
+
+    def __init__(
+        self,
+        boundary: NativeProcessBoundary,
+        private_root: Path,
+        *,
+        realm: str,
+        local_principal: str,
+        scan_secrets: Callable[
+            [tuple[str, ...]], Mapping[str, object]
+        ],
+        rotation_plan: ProgressiveRotationPlan | None = None,
+        command_plan: PublicPowerShellLaunchPlan | None = None,
+        timeout: float = 120.0,
+    ) -> None:
+        self.boundary = boundary
+        self.private_root = Path(private_root).absolute()
+        self.realm = realm.upper()
+        self.local_principal = local_principal
+        self.local_identity = f"TELOS-WIN-01\\{local_principal}"
+        self.scan_secrets = scan_secrets
+        self.rotation_plan = rotation_plan
+        self.command_plan = command_plan
+        self.timeout = timeout
+        self._principal_serial: ControllerPrincipalSerial | None = None
+        self._join_material_serial: ControllerJoinSerial | None = None
+        self._controller_console: SerialAutomation | None = None
+        self._com1_owned = False
+        self._audit_configuration()
+
+    def _audit_configuration(self) -> None:
+        root = self.private_root
+        if (
+            root.is_symlink()
+            or not root.is_dir()
+            or stat.S_IMODE(root.stat().st_mode) != 0o700
+        ):
+            raise WindowsIdentityAdapterError(
+                "adapter private root must be a real mode-0700 directory")
+        if (
+            not isinstance(self.realm, str)
+            or not self.realm
+            or any(
+                not component
+                or not component.replace("-", "").isalnum()
+                for component in self.realm.split(".")
+            )
+        ):
+            raise WindowsIdentityAdapterError("adapter realm is invalid")
+        for value in (self.local_principal, self.local_identity):
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 256
+                or any(character in value for character in "\r\n\x00")
+            ):
+                raise WindowsIdentityAdapterError(
+                    "adapter local identity is invalid")
+        if not 0 < self.timeout <= 300:
+            raise WindowsIdentityAdapterError("adapter timeout is invalid")
+
+    def _qmp(self):
+        process = self.boundary.processes.get("windows")
+        if (
+            process is None
+            or process.poll() is not None
+            or self.boundary.qmp is None
+        ):
+            raise WindowsIdentityAdapterError(
+                "authenticated live Windows QMP is unavailable")
+        return self.boundary.qmp
+
+    def _serial_socket(self) -> Path:
+        path = self.boundary.serial_socket
+        if path is None:
+            raise WindowsIdentityAdapterError(
+                "private Windows serial socket is unavailable")
+        path = Path(path).absolute()
+        parent = path.parent
+        try:
+            parent_info = parent.lstat()
+            socket_info = path.lstat()
+        except OSError as error:
+            raise WindowsIdentityAdapterError(
+                "private Windows serial socket is unavailable") from error
+        if (
+            stat.S_ISLNK(parent_info.st_mode)
+            or not stat.S_ISDIR(parent_info.st_mode)
+            or stat.S_IMODE(parent_info.st_mode) != 0o700
+            or stat.S_ISLNK(socket_info.st_mode)
+            or not stat.S_ISSOCK(socket_info.st_mode)
+        ):
+            raise WindowsIdentityAdapterError(
+                "Windows serial transport is not a private Unix socket")
+        return path
+
+    def _claim_com1(self) -> None:
+        if self._com1_owned:
+            raise WindowsIdentityAdapterError(
+                "Windows COM1 already has an exclusive owner")
+        self._com1_owned = True
+
+    def _release_com1(self) -> None:
+        if not self._com1_owned:
+            raise WindowsIdentityAdapterError(
+                "Windows COM1 ownership state is invalid")
+        self._com1_owned = False
+
+    @contextmanager
+    def _com1(self):
+        self._claim_com1()
+        try:
+            yield
+        finally:
+            self._release_com1()
+
+    def launch_guest(self, command: str) -> None:
+        plan = self.command_plan
+        if plan is None:
+            raise WindowsIdentityAdapterError(
+                "calibrated Windows Run-dialog launch is unavailable")
+        evidence = self.private_root / "public-command-evidence"
+        if not evidence.exists():
+            evidence.mkdir(mode=0o700)
+        try:
+            WindowsPublicCommandLauncher(
+                self._qmp(), evidence,
+            ).launch(command, plan)
+        except Exception as error:
+            raise WindowsIdentityAdapterError(
+                "calibrated public guest command launch failed: "
+                f"{type(error).__name__}") from None
+
+    def await_device_deleted(self, device: str) -> None:
+        """Await the exact correlated QMP deletion event."""
+        if (
+            not isinstance(device, str)
+            or not device
+            or any(character not in
+                   "abcdefghijklmnopqrstuvwxyz0123456789-_."
+                   for character in device)
+        ):
+            raise WindowsIdentityAdapterError("QEMU device id is invalid")
+        qmp = self._qmp()
+        await_deleted = getattr(qmp, "await_device_deleted", None)
+        if not callable(await_deleted):
+            raise WindowsIdentityAdapterError(
+                "QMP deletion-event boundary is unavailable")
+        event = await_deleted(device, timeout=min(self.timeout, 30.0))
+        if (
+            not isinstance(event, Mapping)
+            or event.get("event") != "DEVICE_DELETED"
+            or not isinstance(event.get("data"), Mapping)
+            or event["data"].get("device") != device
+        ):
+            raise WindowsIdentityAdapterError(
+                "QMP deletion event is invalid")
+
+    def open_join_serial(self) -> DuplexJoinSerial:
+        self._claim_com1()
+        try:
+            serial = DuplexJoinSerial.connect(
+                self._serial_socket(), timeout=self.timeout)
+        except BaseException:
+            self._release_com1()
+            raise
+        return _LeasedSerial(serial, self._release_com1)  # type: ignore[return-value]
+
+    def reauthenticate_local(self, credential: str) -> None:
+        """Re-establish only the exact calibrated local-account session."""
+        plan = self.rotation_plan
+        if plan is None:
+            raise WindowsIdentityAdapterError(
+                "post-join calibrated sign-in plan is unavailable")
+        references = _load_references(plan)
+        sign_in, desktop = references[:2]
+        if (
+            sign_in.state_kind != "sign-in"
+            or sign_in.state != (
+                "focused password field for local account "
+                f"{self.local_principal}"
+            )
+        ):
+            raise WindowsIdentityAdapterError(
+                "post-join sign-in reference names a different account")
+        evidence = _private_evidence_root(
+            self.private_root / "post-join-reauthentication")
+        interaction = _GuiInteraction(self._qmp(), evidence)
+        if plan.initial_sign_in_delay:
+            time.sleep(plan.initial_sign_in_delay)
+        for key in plan.wake_after_lock_keys:
+            interaction.key(key)
+        interaction.observe(sign_in, plan.checkpoint_timeout)
+        interaction.observe(sign_in, plan.checkpoint_timeout)
+        interaction.type_secret(credential)
+        interaction.key("ret")
+        interaction.observe(desktop, plan.checkpoint_timeout)
+
+    def static_probe(self, action: str) -> Mapping[str, object]:
+        request = control_probe(action)
+        data = bytearray()
+        with self._com1():
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                    stream.settimeout(self.timeout)
+                    stream.connect(str(self._serial_socket()))
+                    self.launch_guest(request.command)
+                    while b"\n" not in data and len(data) <= MAX_RECORD_BYTES:
+                        chunk = stream.recv(
+                            min(4096, MAX_RECORD_BYTES + 1 - len(data)))
+                        if not chunk:
+                            break
+                        data.extend(chunk)
+            except WindowsIdentityAdapterError:
+                raise
+            except (OSError, TimeoutError) as error:
+                raise WindowsIdentityAdapterError(
+                    "static probe transport failed") from error
+        return parse_probe_record(bytes(data), request.action)
+
+    def _destroy_unattached_iso(self, iso: Path) -> None:
+        """Delete only the exact private regular file created for this action."""
+        try:
+            info = iso.lstat()
+            parent = iso.parent.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise WindowsIdentityAdapterError(
+                "private credential media cleanup failed") from error
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or stat.S_ISLNK(parent.st_mode)
+            or not stat.S_ISDIR(parent.st_mode)
+            or stat.S_IMODE(parent.st_mode) != 0o700
+        ):
+            raise WindowsIdentityAdapterError(
+                "private credential media cleanup identity changed")
+        try:
+            iso.unlink()
+        except OSError as error:
+            raise WindowsIdentityAdapterError(
+                "private credential media cleanup failed") from error
+
+    def _expected_principal(self, principal: str, action: str) -> str:
+        if action == "local-rescue-login":
+            return self.local_identity
+        return f"{self.realm.split('.', 1)[0]}\\{principal}"
+
+    def credential_action(
+        self, check: str, principal: str, credential: str,
+    ) -> Mapping[str, object]:
+        try:
+            action = _ACTIONS[check]
+        except KeyError as error:
+            raise WindowsIdentityAdapterError(
+                "credential check is not mapped") from error
+        if check == "combined-dependencies-offline":
+            action = (
+                "local-rescue-login"
+                if principal == self.local_principal
+                else "cached-domain-login"
+            )
+        nonce = uuid.uuid4().hex
+        iso = self.private_root / f"windows-credential-{nonce}.iso"
+        domain = "." if action == "local-rescue-login" else self.realm
+        qmp = self._qmp()
+        self._claim_com1()
+        try:
+            raw_serial = DuplexCredentialActionSerial.connect(
+                self._serial_socket(), timeout=self.timeout)
+        except BaseException as error:
+            self._release_com1()
+            raise WindowsIdentityAdapterError(
+                "credential serial acquisition failed: "
+                f"{type(error).__name__}") from None
+        serial = _LeasedSerial(raw_serial, self._release_com1)
+        try:
+            try:
+                build_credential_action_iso(iso, {
+                    "nonce": nonce,
+                    "action": action,
+                    "username": principal,
+                    "domain": domain,
+                    "password": credential,
+                })
+                channel = CredentialActionMediaChannel(qmp, iso, nonce)
+            except BaseException as primary:
+                cleanup: BaseException | None = None
+                try:
+                    self._destroy_unattached_iso(iso)
+                except BaseException as error:
+                    cleanup = error
+                serial.close()
+                if cleanup is not None:
+                    raise WindowsIdentityAdapterError(
+                        "credential media creation and cleanup failed: "
+                        f"{type(primary).__name__}; "
+                        f"{type(cleanup).__name__}") from None
+                raise WindowsIdentityAdapterError(
+                    "credential media creation failed: "
+                    f"{type(primary).__name__}") from None
+        except BaseException:
+            if not serial.closed:
+                serial.close()
+            raise
+        allowed = (
+            frozenset({"NTLM", "Negotiate"})
+            if action == "local-rescue-login"
+            else frozenset({"Kerberos", "Negotiate", "NTLM"})
+        )
+        try:
+            return execute_credential_action(
+                channel=channel,
+                serial=serial,
+                action=action,
+                expected_principal=self._expected_principal(principal, action),
+                allowed_authentication_types=allowed,
+                launch_guest=self.launch_guest,
+                await_device_deleted=self.await_device_deleted,
+            )
+        finally:
+            if not serial.closed:
+                serial.close()
+
+    def _controller_streams(self):
+        process = self.boundary.processes.get("controller")
+        if (
+            process is None
+            or process.poll() is not None
+            or process.stdout is None
+            or process.stdin is None
+        ):
+            raise WindowsIdentityAdapterError(
+                "live Controller serial console is unavailable")
+        return process.stdout, process.stdin
+
+    def _shared_controller_console(self) -> SerialAutomation:
+        if self._controller_console is None:
+            reader, writer = self._controller_streams()
+            self._controller_console = SerialAutomation(
+                reader, writer, None, timeout=self.timeout)
+        return self._controller_console
+
+    def stage_principals(
+        self, values: dict[str, str],
+    ) -> ControllerPrincipalResult:
+        reader, writer = self._controller_streams()
+        if self._principal_serial is None:
+            self._principal_serial = ControllerPrincipalSerial(
+                reader, writer, timeout=self.timeout)
+            self._principal_serial.console = self._shared_controller_console()
+        return self._principal_serial.stage(values)
+
+    def destroy_principals(
+        self, names: tuple[str, ...],
+    ) -> ControllerPrincipalResult:
+        if self._principal_serial is None:
+            raise WindowsIdentityAdapterError(
+                "Controller principal owner is unavailable")
+        return self._principal_serial.destroy(names)
+
+    def stage_join_principal(
+        self, credential: str,
+    ) -> ControllerJoinResult:
+        reader, writer = self._controller_streams()
+        if self._join_material_serial is None:
+            self._join_material_serial = ControllerJoinSerial(
+                reader, writer, timeout=self.timeout)
+            self._join_material_serial.console = (
+                self._shared_controller_console())
+        return self._join_material_serial.stage(credential)
+
+    def destroy_join_principal(self) -> ControllerJoinResult:
+        if self._join_material_serial is None:
+            raise WindowsIdentityAdapterError(
+                "Controller join-principal owner is unavailable")
+        return self._join_material_serial.destroy()
+
+    def callbacks(self) -> AcceptanceCallbacks:
+        return AcceptanceCallbacks(
+            qmp=self._qmp,
+            launch_guest=self.launch_guest,
+            await_device_deleted=self.await_device_deleted,
+            open_join_serial=self.open_join_serial,
+            reauthenticate_local=self.reauthenticate_local,
+            static_probe=self.static_probe,
+            credential_action=self.credential_action,
+            scan_secrets=self.scan_secrets,
+            local_principal=self.local_principal,
+        )
