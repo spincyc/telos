@@ -14,6 +14,7 @@ from homelab.vm.windows_gui import (
     read_ppm,
     useful_frame,
 )
+from homelab.vm import windows_gui
 
 
 def ppm(path: Path, width=320, height=200, value=80):
@@ -130,6 +131,29 @@ class WindowsGuiTests(unittest.TestCase):
             self.assertEqual(("tab", "spc", "ret"), loaded[0].keys)
             self.assertEqual(120, loaded[0].timeout)
             self.assertEqual((20, 20, 100, 100), loaded[0].crop)
+
+    def test_qmp_text_typing_uses_key_events_without_echoing_failures(self):
+        client = object.__new__(windows_gui.QmpClient)
+        requests = []
+        client.execute = lambda command, arguments=None: requests.append(
+            (command, arguments))
+        client.type_text("Aa1-_! .")
+        keys = [
+            tuple(key["data"] for key in arguments["keys"])
+            for command, arguments in requests
+            if command == "send-key"
+        ]
+        self.assertEqual(
+            [
+                ("shift", "a"), ("a",), ("1",), ("minus",),
+                ("shift", "minus"), ("shift", "1"), ("spc",), ("dot",),
+            ],
+            keys,
+        )
+        with self.assertRaisesRegex(
+                WindowsGuiError, "offset 1") as failure:
+            client.type_text("x\nsecret")
+        self.assertNotIn("secret", str(failure.exception))
 
 
 if __name__ == "__main__":

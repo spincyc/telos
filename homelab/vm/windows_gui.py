@@ -20,6 +20,19 @@ SAFE_KEYS = frozenset({
     "esc", "tab", "backtab", "ret", "spc", "up", "down", "left", "right",
     "home", "end", "pgup", "pgdn",
 })
+SHIFTED = {
+    "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
+    "&": "7", "*": "8", "(": "9", ")": "0", "_": "minus",
+    "+": "equal", "{": "bracket_left", "}": "bracket_right",
+    "|": "backslash", ":": "semicolon", '"': "apostrophe",
+    "<": "comma", ">": "dot", "?": "slash", "~": "grave_accent",
+}
+PLAIN = {
+    " ": "spc", "-": "minus", "=": "equal", "[": "bracket_left",
+    "]": "bracket_right", "\\": "backslash", ";": "semicolon",
+    "'": "apostrophe", ",": "comma", ".": "dot", "/": "slash",
+    "`": "grave_accent",
+}
 
 
 @dataclass(frozen=True)
@@ -170,6 +183,32 @@ class QmpClient:
             "keys": [{"type": "qcode", "data": name}],
             "hold-time": 60,
         })
+
+    def chord(self, *names: str) -> None:
+        if not names or any(not isinstance(name, str) or not name for name in names):
+            raise WindowsGuiError("invalid GUI key chord")
+        self.execute("send-key", {
+            "keys": [{"type": "qcode", "data": name} for name in names],
+            "hold-time": 60,
+        })
+
+    def type_text(self, value: str) -> None:
+        """Type bounded ASCII without placing its value in an error message."""
+        if not isinstance(value, str) or not 1 <= len(value) <= 512:
+            raise WindowsGuiError("GUI text length is invalid")
+        for offset, character in enumerate(value):
+            if "a" <= character <= "z" or "0" <= character <= "9":
+                keys = (character,)
+            elif "A" <= character <= "Z":
+                keys = ("shift", character.lower())
+            elif character in PLAIN:
+                keys = (PLAIN[character],)
+            elif character in SHIFTED:
+                keys = ("shift", SHIFTED[character])
+            else:
+                raise WindowsGuiError(
+                    f"GUI text has unsupported character at offset {offset}")
+            self.chord(*keys)
 
 
 class WindowsSetupDriver:
