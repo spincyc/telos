@@ -6,6 +6,7 @@ from pathlib import Path
 
 from homelab.vm.windows_identity_evidence import (
     EvidencePublicationError,
+    StrictIdentityEvidenceCollector,
     publish_acceptance_evidence,
 )
 from homelab.workstations import windows_identity_acceptance as acceptance
@@ -82,6 +83,88 @@ class WindowsIdentityEvidenceTests(unittest.TestCase):
                 EvidencePublicationError, "publish-once"):
             publish_acceptance_evidence(self.destination, self.events)
         self.assertEqual("preserve\n", target.read_text(encoding="utf-8"))
+
+    def collector(self, **kwargs):
+        return StrictIdentityEvidenceCollector(
+            self.destination,
+            run_id=self.events[0]["run_id"],
+            observed_at=lambda: "2026-07-28T15:00:00Z",
+            **kwargs,
+        )
+
+    def test_collector_maps_exact_observations_to_24_event_contract(self):
+        collector = self.collector()
+        for event in self.events:
+            observation = {
+                field: value for field, value in event.items()
+                if field in acceptance.FIELD_SETS[event["check"]]
+            }
+            self.assertEqual(event["check"], collector.next_check)
+            collector.record(
+                event["check"], observation,
+                observed_at=event["observed_at"])
+        self.assertIsNone(collector.next_check)
+
+        result = collector.publish()
+        with result.open(encoding="utf-8") as source:
+            emitted = acceptance.load_events(source)
+        self.assertEqual(self.events, emitted)
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "sealed"):
+            collector.publish()
+
+    def test_collector_rejects_reordering_extra_fields_and_early_publish(self):
+        collector = self.collector()
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "controller-ready"):
+            collector.record("windows-joined", {})
+        first = self.events[0]
+        observation = {
+            field: first[field]
+            for field in acceptance.FIELD_SETS[first["check"]]
+        }
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "fields"):
+            collector.record(
+                first["check"], {**observation, "transcript": "unsafe"})
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "incomplete"):
+            collector.publish()
+        self.assertFalse(self.destination.exists())
+
+    def test_collector_rejects_secret_before_retaining_observation(self):
+        secret = "Reusable-Private-Credential-47!"
+        collector = self.collector(known_secrets=(secret,))
+        first = self.events[0]
+        observation = {
+            field: first[field]
+            for field in acceptance.FIELD_SETS[first["check"]]
+        }
+        observation["samba_ad"] = secret
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "known secret"):
+            collector.record(first["check"], observation)
+        self.assertEqual("controller-ready", collector.next_check)
+        self.assertFalse(self.destination.parent.exists())
+
+    def test_collector_copies_mutable_observation_values(self):
+        collector = self.collector()
+        for event in self.events:
+            observation = {
+                field: copy.deepcopy(value)
+                for field, value in event.items()
+                if field in acceptance.FIELD_SETS[event["check"]]
+            }
+            collector.record(
+                event["check"], observation,
+                observed_at=event["observed_at"])
+            if event["check"] == "windows-identity-acceptance":
+                observation["deferred"].append("mutated")
+        collector.publish()
+        with self.destination.open(encoding="utf-8") as source:
+            emitted = acceptance.load_events(source)
+        self.assertEqual(
+            ["disable-reenable"], emitted[-1]["deferred"])
 
 
 if __name__ == "__main__":
