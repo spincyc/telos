@@ -8,9 +8,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import tempfile
+from enum import Enum
 from typing import Callable, Mapping, Protocol
 
 
@@ -35,6 +37,76 @@ class Qmp(Protocol):
     def execute(
         self, command: str, arguments: dict | None = None,
     ) -> Mapping[str, object]: ...
+
+
+class JoinMediaState(Enum):
+    DETACHED = "detached"
+    ATTACHED = "attached"
+    DESTROYED_AWAITING_RELEASE = "destroyed-awaiting-release"
+    RELEASED = "released"
+
+
+class DuplexJoinSerial:
+    """One bounded duplex COM1 connection for marker and release."""
+
+    def __init__(self, connection: socket.socket, *, maximum_line: int = 1024):
+        if not 64 <= maximum_line <= 4096:
+            raise WindowsJoinIsoError("serial line bound is invalid")
+        self.connection = connection
+        self.maximum_line = maximum_line
+        self.closed = False
+
+    @classmethod
+    def connect(
+        cls, path: Path, *, timeout: float = 120.0,
+    ) -> "DuplexJoinSerial":
+        if not 0 < timeout <= 300:
+            raise WindowsJoinIsoError("serial timeout is invalid")
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(timeout)
+        try:
+            connection.connect(str(Path(path)))
+        except Exception:
+            connection.close()
+            raise
+        return cls(connection)
+
+    def read_marker(self) -> str:
+        if self.closed:
+            raise WindowsJoinIsoError("join serial is closed")
+        data = bytearray()
+        while len(data) <= self.maximum_line:
+            chunk = self.connection.recv(1)
+            if not chunk:
+                raise WindowsJoinIsoError(
+                    "join serial closed before marker")
+            if chunk == b"\n":
+                try:
+                    return data.rstrip(b"\r").decode("ascii")
+                except UnicodeDecodeError as error:
+                    raise WindowsJoinIsoError(
+                        "join marker is not ASCII") from error
+            data.extend(chunk)
+        raise WindowsJoinIsoError("join marker exceeds bound")
+
+    def send_release(self, line: str) -> None:
+        if self.closed:
+            raise WindowsJoinIsoError("join serial is closed")
+        encoded = (line + "\n").encode("ascii")
+        if len(encoded) > self.maximum_line:
+            raise WindowsJoinIsoError("join release exceeds bound")
+        self.connection.sendall(encoded)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.connection.close()
+            self.closed = True
+
+    def __enter__(self) -> "DuplexJoinSerial":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 def _regular_private_parent(path: Path) -> Path:
@@ -136,9 +208,11 @@ class JoinMediaChannel:
             raise WindowsJoinIsoError("join nonce is invalid")
         self.nonce = nonce
         self._identity: tuple[int, int] | None = None
+        self._descriptor: int | None = None
         self.node_added = False
         self.attached = False
         self.destroyed = False
+        self.state = JoinMediaState.DETACHED
 
     def _audit_iso(self) -> os.stat_result:
         if self.iso.is_symlink() or not self.iso.is_file():
@@ -154,7 +228,17 @@ class JoinMediaChannel:
         if self.attached or self.destroyed:
             raise WindowsJoinIsoError("join ISO ownership state is invalid")
         info = self._audit_iso()
-        self._identity = (info.st_dev, info.st_ino)
+        try:
+            descriptor = os.open(
+                self.iso, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError as error:
+            raise WindowsJoinIsoError("join ISO ownership open failed") from error
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            os.close(descriptor)
+            raise WindowsJoinIsoError("join ISO identity changed")
+        self._descriptor = descriptor
+        self._identity = (opened.st_dev, opened.st_ino)
         try:
             self.qmp.execute("blockdev-add", {
                 "node-name": JOIN_NODE,
@@ -178,6 +262,30 @@ class JoinMediaChannel:
             raise WindowsJoinIsoError(
                 f"join ISO attach failed: {type(error).__name__}") from None
         self.attached = True
+        self.state = JoinMediaState.ATTACHED
+
+    def _destroy_owned_iso(self) -> None:
+        """Unlink the held inode by its exact name inside the private parent."""
+        if self._identity is None or self._descriptor is None:
+            raise WindowsJoinIsoError("join ISO ownership is unavailable")
+        opened = os.fstat(self._descriptor)
+        if (opened.st_dev, opened.st_ino) != self._identity:
+            raise WindowsJoinIsoError("join ISO descriptor identity changed")
+        matches: list[Path] = []
+        for entry in self.iso.parent.iterdir():
+            try:
+                info = entry.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(info.st_mode) and (
+                    info.st_dev, info.st_ino) == self._identity:
+                matches.append(entry)
+        if len(matches) != 1:
+            raise WindowsJoinIsoError(
+                "exact join ISO name is not uniquely owned")
+        matches[0].unlink()
+        os.close(self._descriptor)
+        self._descriptor = None
 
     def release_after_marker(
         self,
@@ -204,18 +312,30 @@ class JoinMediaChannel:
             self.attached = False
             self.qmp.execute("blockdev-del", {"node-name": JOIN_NODE})
             self.node_added = False
-            current = self._audit_iso()
-            if (current.st_dev, current.st_ino) != self._identity:
-                raise WindowsJoinIsoError("join ISO identity changed")
-            self.iso.unlink()
+            self._destroy_owned_iso()
             self.destroyed = True
-            send_release(f"TELOS_JOIN_MEDIA_DESTROYED {self.nonce}")
+            self.state = JoinMediaState.DESTROYED_AWAITING_RELEASE
+            self.retry_release(send_release)
         except WindowsJoinIsoError:
             raise
         except Exception as error:
             raise WindowsJoinIsoError(
                 f"join ISO destruction failed: {type(error).__name__}"
             ) from None
+
+    def retry_release(self, send_release: Callable[[str], None]) -> None:
+        """Idempotently retry only the public release after exact destruction."""
+        if self.state is JoinMediaState.RELEASED:
+            return
+        if self.state is not JoinMediaState.DESTROYED_AWAITING_RELEASE:
+            raise WindowsJoinIsoError(
+                "join release is not awaiting delivery")
+        try:
+            send_release(f"TELOS_JOIN_MEDIA_DESTROYED {self.nonce}")
+        except Exception as error:
+            raise WindowsJoinIsoError(
+                f"join release failed: {type(error).__name__}") from None
+        self.state = JoinMediaState.RELEASED
 
     def cleanup(
         self, *, await_device_deleted: Callable[[str], None],
@@ -235,14 +355,12 @@ class JoinMediaChannel:
                 self.node_added = False
             except Exception as error:
                 failures.append(f"node: {type(error).__name__}")
-        if not self.attached and not self.node_added and self.iso.exists():
+        if (not self.attached and not self.node_added
+                and self._descriptor is not None):
             try:
-                current = self._audit_iso()
-                if self._identity is not None and (
-                        current.st_dev, current.st_ino) != self._identity:
-                    raise WindowsJoinIsoError("join ISO identity changed")
-                self.iso.unlink()
+                self._destroy_owned_iso()
                 self.destroyed = True
+                self.state = JoinMediaState.DESTROYED_AWAITING_RELEASE
             except Exception as error:
                 failures.append(f"ISO: {type(error).__name__}")
         if failures:
@@ -256,9 +374,9 @@ class JoinMediaChannel:
         expected_domain: str,
     ) -> dict[str, object]:
         """Accept only a post-reboot, static-probe domain-membership proof."""
-        if not self.destroyed:
+        if self.state is not JoinMediaState.RELEASED:
             raise WindowsJoinIsoError(
-                "join result cannot be proved before media destruction")
+                "join result cannot be proved before mutation release")
         result = dict(probe())
         if result != {
             "schema_version": 1,
@@ -273,3 +391,52 @@ class JoinMediaChannel:
             "joined_after_reboot": True,
             "domain": expected_domain,
         }
+
+
+def execute_join_channel(
+    *,
+    channel: JoinMediaChannel,
+    serial: DuplexJoinSerial,
+    launch_guest: Callable[[str], None],
+    await_device_deleted: Callable[[str], None],
+) -> None:
+    """Run the production handoff over one exclusive duplex COM1 session."""
+    channel.attach()
+    try:
+        launch_guest(launch_join_command())
+        marker = serial.read_marker()
+        channel.release_after_marker(
+            marker,
+            await_device_deleted=await_device_deleted,
+            send_release=serial.send_release,
+        )
+        # Release exclusive COM1 ownership before any post-reboot static probe
+        # opens its own serial connection.
+        serial.close()
+    except BaseException:
+        # The caller still owns channel and serial and may invoke cleanup or
+        # retry_release.  This helper never opens a second COM1 connection.
+        raise
+
+
+def execute_join_and_prove(
+    *,
+    channel: JoinMediaChannel,
+    serial: DuplexJoinSerial,
+    launch_guest: Callable[[str], None],
+    await_device_deleted: Callable[[str], None],
+    probe_after_reboot: Callable[[], Mapping[str, object]],
+    expected_domain: str,
+) -> dict[str, object]:
+    """Serialize private COM1 handoff before the public reboot proof."""
+    execute_join_channel(
+        channel=channel,
+        serial=serial,
+        launch_guest=launch_guest,
+        await_device_deleted=await_device_deleted,
+    )
+    if not serial.closed:
+        raise WindowsJoinIsoError(
+            "private COM1 session remains open before public probe")
+    return channel.prove_join_and_reboot(
+        probe_after_reboot, expected_domain=expected_domain)

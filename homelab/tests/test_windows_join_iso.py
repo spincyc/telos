@@ -2,14 +2,19 @@
 
 import json
 from pathlib import Path
+import socket
 import tempfile
 import unittest
 
 from homelab.vm.windows_join_iso import (
+    DuplexJoinSerial,
     JOIN_DEVICE,
     JoinMediaChannel,
+    JoinMediaState,
     WindowsJoinIsoError,
     build_join_iso,
+    execute_join_and_prove,
+    execute_join_channel,
     launch_join_command,
 )
 
@@ -128,36 +133,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 ("deleted", JOIN_DEVICE, True),
                 ("released", f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}", False),
             ], events)
-
-    def test_changed_inode_or_qmp_failure_retains_cleanup_ownership(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = self.private_root(temporary)
-            iso = root / "join.iso"
-            iso.write_bytes(b"private")
-            iso.chmod(0o600)
-            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
-            channel.attach()
-            original = root / "original"
-            iso.rename(original)
-            iso.write_bytes(b"replacement")
-            iso.chmod(0o600)
-            marker = json.dumps({
-                "schema_version": 1,
-                "event": "join-material-loaded",
-                "nonce": NONCE,
-            })
-            released = []
-            with self.assertRaisesRegex(
-                    WindowsJoinIsoError, "identity changed"):
-                channel.release_after_marker(
-                    marker, await_device_deleted=lambda _: None,
-                    send_release=released.append)
-            self.assertFalse(channel.destroyed)
-            self.assertFalse(channel.attached)
-            self.assertFalse(channel.node_added)
-            self.assertEqual([], released)
-            self.assertTrue(iso.exists())
-            self.assertTrue(original.exists())
+            self.assertIs(JoinMediaState.RELEASED, channel.state)
 
     def test_partial_attach_failure_retains_node_and_exact_iso_for_cleanup(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -176,6 +152,58 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertFalse(channel.node_added)
             self.assertFalse(iso.exists())
 
+    def test_renamed_original_is_destroyed_by_held_inode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"secret")
+            iso.chmod(0o600)
+            qmp = FakeQmp()
+            channel = JoinMediaChannel(qmp, iso, NONCE)
+            channel.attach()
+            renamed = root / "renamed-secret.iso"
+            iso.rename(renamed)
+            iso.write_bytes(b"replacement")
+            iso.chmod(0o600)
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+            channel.release_after_marker(
+                marker, await_device_deleted=lambda _: None,
+                send_release=lambda _: None)
+            self.assertFalse(renamed.exists())
+            self.assertTrue(iso.exists())
+
+    def test_failed_release_enters_retryable_destroyed_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"secret")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            channel.attach()
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+            with self.assertRaisesRegex(WindowsJoinIsoError, "release failed"):
+                channel.release_after_marker(
+                    marker, await_device_deleted=lambda _: None,
+                    send_release=lambda _: (_ for _ in ()).throw(
+                        BrokenPipeError()))
+            self.assertFalse(iso.exists())
+            self.assertIs(
+                JoinMediaState.DESTROYED_AWAITING_RELEASE, channel.state)
+            sent = []
+            channel.retry_release(sent.append)
+            channel.retry_release(sent.append)
+            self.assertEqual(
+                [f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}"], sent)
+            self.assertIs(JoinMediaState.RELEASED, channel.state)
+
     def test_bad_marker_never_unplugs_or_releases(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.private_root(temporary)
@@ -193,6 +221,87 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertEqual(before, qmp.calls)
             self.assertTrue(iso.exists())
 
+    def test_production_helper_uses_one_duplex_connection_for_both_directions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexJoinSerial(host)
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+            launched = []
+
+            def launch(command):
+                launched.append(command)
+                guest.sendall((marker + "\n").encode("ascii"))
+
+            execute_join_channel(
+                channel=channel,
+                serial=serial,
+                launch_guest=launch,
+                await_device_deleted=lambda _: None,
+            )
+            self.assertEqual(
+                f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}\n",
+                guest.recv(256).decode("ascii"))
+            self.assertEqual(1, len(launched))
+            self.assertIs(JoinMediaState.RELEASED, channel.state)
+            self.assertTrue(serial.closed)
+            guest.close()
+
+    def test_composition_closes_private_com1_before_public_probe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexJoinSerial(host)
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+
+            def launch(_command):
+                guest.sendall((marker + "\n").encode("ascii"))
+
+            proof = execute_join_and_prove(
+                channel=channel,
+                serial=serial,
+                launch_guest=launch,
+                await_device_deleted=lambda _: None,
+                probe_after_reboot=lambda: {
+                    "schema_version": 1,
+                    "boot_completed": True,
+                    "domain_joined": True,
+                    "domain": "ad.example.test",
+                    **({"serial_was_closed": serial.closed}
+                       if not serial.closed else {}),
+                },
+                expected_domain="ad.example.test",
+            )
+            self.assertTrue(proof["joined_after_reboot"])
+            guest.close()
+
+    def test_duplex_serial_bounds_marker_and_rejects_use_after_close(self):
+        host, guest = socket.socketpair()
+        serial = DuplexJoinSerial(host, maximum_line=64)
+        guest.sendall(b"x" * 65 + b"\n")
+        with self.assertRaisesRegex(WindowsJoinIsoError, "exceeds"):
+            serial.read_marker()
+        serial.close()
+        with self.assertRaisesRegex(WindowsJoinIsoError, "closed"):
+            serial.send_release("public")
+        guest.close()
+
     def test_post_reboot_static_probe_is_required_for_success(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.private_root(temporary)
@@ -201,6 +310,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             iso.chmod(0o600)
             channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
             channel.destroyed = True
+            channel.state = JoinMediaState.RELEASED
             proof = channel.prove_join_and_reboot(
                 lambda: {
                     "schema_version": 1,
