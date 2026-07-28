@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:27:49Z"
+updated_at: "2026-07-28T00:31:52Z"
 ---
 
 # Goal
@@ -39,3 +39,11 @@ Audit the existing answer-file, disk-authorization, and QEMU lifecycle
 surfaces against the acceptance criteria. Implement the smallest missing
 fail-closed controls, then perform an unattended install only on a freshly
 created disposable disk with an exact pinned serial.
+
+## Decisions
+
+Private per-run Windows startup and answer files are authorized for disposable
+QEMU acceptance only. They must use synthetic values, bind mutation to the
+exact disk serial, remain outside Git and immutable releases, retain no
+secrets, and be removed during teardown. Physical launch remains interactive
+and uses user-supplied private values.
