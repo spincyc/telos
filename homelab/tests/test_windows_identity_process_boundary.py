@@ -188,6 +188,131 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 boundary.processes.clear()
                 boundary._cleanup_qmp_root()
 
+    def test_controller_rejects_unsafe_opened_seed_descriptor(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.processes.update({
+                "switch": _Process(101),
+                "gateway": _Process(102),
+            })
+            overlay = mock.Mock()
+            overlay.disk = boundary.runtime / "controller" / "disk.raw"
+            overlay.vars = boundary.runtime / "controller" / "vars.fd"
+            disposable = mock.Mock()
+            disposable.prepare.return_value = overlay
+            factory = mock.Mock()
+            factory.output = boundary.runtime / "controller-convergence.iso"
+
+            with (
+                mock.patch.object(
+                    windows_identity_run, "DisposableBootDisk",
+                    return_value=disposable),
+                mock.patch.object(
+                    windows_identity_run, "FactoryBundle",
+                    return_value=factory),
+                mock.patch.object(
+                    windows_identity_run, "controller_command",
+                    return_value=["controller"]),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    return_value=_Process(103)),
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(
+                    windows_identity_run.QmpClient, "connect") as qmp_connect,
+                mock.patch.object(
+                    windows_identity_run, "SerialAutomation") as automation,
+                mock.patch.object(boundary, "stop_controller"),
+                mock.patch.object(
+                    windows_identity_run.os, "fstat",
+                    return_value=mock.Mock(
+                        st_mode=0o100622, st_dev=7, st_ino=11)),
+            ):
+                with self.assertRaisesRegex(
+                    WindowsIdentityRunError,
+                    "opened Controller seed media is unsafe",
+                ):
+                    boundary.start_controller()
+
+            qmp_connect.return_value.execute.assert_not_called()
+            automation.return_value.install_offline_controller_dependencies\
+                .assert_not_called()
+            boundary.processes.clear()
+            boundary.controller_qmp = None
+            boundary.controller_overlay = None
+            boundary.controller_factory_bundle = None
+            assert boundary.controller_qmp_root is not None
+            boundary.controller_qmp_root.rmdir()
+            boundary.controller_qmp_root = None
+
+    def test_controller_rejects_seed_inode_mismatch_before_device_add(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.processes.update({
+                "switch": _Process(101),
+                "gateway": _Process(102),
+            })
+            overlay = mock.Mock()
+            overlay.disk = boundary.runtime / "controller" / "disk.raw"
+            overlay.vars = boundary.runtime / "controller" / "vars.fd"
+            disposable = mock.Mock()
+            disposable.prepare.return_value = overlay
+            factory = mock.Mock()
+            factory.output = boundary.runtime / "controller-convergence.iso"
+
+            with (
+                mock.patch.object(
+                    windows_identity_run, "DisposableBootDisk",
+                    return_value=disposable),
+                mock.patch.object(
+                    windows_identity_run, "FactoryBundle",
+                    return_value=factory),
+                mock.patch.object(
+                    windows_identity_run, "controller_command",
+                    return_value=["controller"]),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    return_value=_Process(103)),
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(
+                    windows_identity_run.QmpClient, "connect") as qmp_connect,
+                mock.patch.object(
+                    windows_identity_run, "SerialAutomation") as automation,
+                mock.patch.object(boundary, "stop_controller"),
+                mock.patch.object(
+                    boundary, "_process_holds_inode", return_value=False),
+            ):
+                with self.assertRaisesRegex(
+                    WindowsIdentityRunError,
+                    "Controller seed media identity differs from audit",
+                ):
+                    boundary.start_controller()
+
+            commands = [
+                call.args[0]
+                for call in qmp_connect.return_value.execute.call_args_list
+            ]
+            self.assertEqual(["blockdev-add", "blockdev-add"], commands)
+            self.assertNotIn("device_add", commands)
+            automation.return_value.install_offline_controller_dependencies\
+                .assert_not_called()
+            boundary.processes.clear()
+            boundary.controller_qmp = None
+            boundary.controller_overlay = None
+            boundary.controller_factory_bundle = None
+            assert boundary.controller_qmp_root is not None
+            boundary.controller_qmp_root.rmdir()
+            boundary.controller_qmp_root = None
+
     def test_switch_binds_only_an_ephemeral_loopback_listener(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
