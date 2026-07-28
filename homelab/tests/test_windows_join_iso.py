@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import tempfile
 import unittest
+from unittest import mock
 
 from homelab.vm.windows_join_iso import (
     DuplexJoinSerial,
@@ -17,6 +18,7 @@ from homelab.vm.windows_join_iso import (
     execute_join_channel,
     launch_join_command,
 )
+from homelab.vm.windows_public_command import MAX_PUBLIC_COMMAND_CHARS
 
 
 NONCE = "ab" * 16
@@ -106,7 +108,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(
             "homelab/vm/windows_join_control/"
-            "Invoke-TelosDomainJoin.ps1"
+            "TelosJoin.ps1"
         ).read_text(encoding="utf-8")
         positions = [
             script.index("ConvertTo-SecureString"),
@@ -123,6 +125,24 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("'S-1-5-32-544'", script)
         command = launch_join_command()
         self.assertIn("TELOS_JOIN", command)
+        self.assertLessEqual(len(command), MAX_PUBLIC_COMMAND_CHARS)
+        self.assertIn("1..40", command)
+        self.assertIn("|? DriveLetter", command)
+        self.assertIn(
+            "switch($v.Count){0{sleep 1}1{$d=$v[0]}default{throw 2}}",
+            command,
+        )
+        self.assertEqual(1, command.count("&("))
+        self.assertGreater(command.index("&("), command.index("};if(!$d)"))
+        self.assertNotIn("Select-Object -First 1", command)
+        self.assertIn(
+            "$volumes.Count -ne 1",
+            script,
+        )
+        self.assertLess(
+            script.index("Where-Object DriveLetter"),
+            script.index("$volumes.Count -ne 1"),
+        )
         for value in MATERIAL.values():
             self.assertNotIn(value, command)
 
@@ -333,6 +353,24 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertTrue(proof["joined_after_reboot"])
             guest.close()
 
+    def test_invalid_post_reboot_proof_has_result_coordinate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            channel.state = JoinMediaState.RELEASED
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                channel.prove_join_and_reboot(
+                    lambda: {"private": "invalid"},
+                    expected_domain="ad.example.test",
+                )
+        self.assertEqual("result", caught.exception.coordinate.phase)
+        self.assertEqual(
+            "WindowsJoinIsoError",
+            caught.exception.coordinate.error_type,
+        )
+        self.assertNotIn("private", str(caught.exception))
+
     def test_duplex_serial_bounds_marker_and_rejects_use_after_close(self):
         host, guest = socket.socketpair()
         serial = DuplexJoinSerial(host, maximum_line=64)
@@ -343,6 +381,23 @@ class WindowsJoinIsoTests(unittest.TestCase):
         with self.assertRaisesRegex(WindowsJoinIsoError, "closed"):
             serial.send_release("public")
         guest.close()
+
+    def test_duplex_serial_uses_one_absolute_marker_release_deadline(self):
+        connection = mock.Mock()
+        connection.recv.side_effect = [
+            b"m", b"a", b"r", b"k", b"e", b"r", b"\n"]
+        clock = mock.Mock(side_effect=[
+            0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.01])
+        serial = DuplexJoinSerial(
+            connection, maximum_line=64, timeout=1.0, clock=clock)
+
+        self.assertEqual("marker", serial.read_marker())
+        with self.assertRaisesRegex(WindowsJoinIsoError, "deadline expired"):
+            serial.send_release("public")
+
+        connection.sendall.assert_not_called()
+        self.assertAlmostEqual(
+            0.9, connection.settimeout.call_args_list[0].args[0])
 
     def test_post_reboot_static_probe_is_required_for_success(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -366,7 +421,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             )
             self.assertTrue(proof["join_media_destroyed"])
             self.assertTrue(proof["joined_after_reboot"])
-            with self.assertRaisesRegex(WindowsJoinIsoError, "proof"):
+            with self.assertRaises(WindowsJoinIsoError) as caught:
                 channel.prove_join_and_reboot(
                     lambda: {
                         "schema_version": 2,
@@ -378,6 +433,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     },
                     expected_domain="ad.example.test",
                 )
+            self.assertEqual("result", caught.exception.coordinate.phase)
 
 
 if __name__ == "__main__":

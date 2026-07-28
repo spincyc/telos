@@ -6,6 +6,7 @@ from unittest import mock
 
 from homelab.vm import controller_join_material
 from homelab.vm.controller_join_material import (
+    ControllerJoinFailureCoordinate,
     ControllerJoinMaterialError,
     ControllerJoinResult,
     ControllerJoinSerial,
@@ -117,9 +118,77 @@ class ControllerJoinSerialTests(unittest.TestCase):
 
     def test_guest_failure_is_secret_free_and_fail_closed(self):
         with self.assertRaisesRegex(
-                ControllerJoinMaterialError, "stage returned 7") as caught:
+                ControllerJoinMaterialError,
+                "join-material.stage.return-code") as caught:
             self.run_operation(
                 lambda serial: serial.stage(SECRET), returncode=7)
+        self.assertNotIn(SECRET, str(caught.exception))
+        self.assertEqual(
+            ControllerJoinFailureCoordinate(
+                "stage", "return-code", "ControllerJoinReturnCode"),
+            caught.exception.coordinate,
+        )
+        self.assertNotIn("returned 7", str(caught.exception))
+
+    def test_timeout_is_normalized_at_an_allowlisted_safe_subphase(self):
+        serial = ControllerJoinSerial(
+            __import__("io").BytesIO(), __import__("io").BytesIO())
+        serial.console._send = mock.Mock()
+        serial.console._wait = mock.Mock(
+            side_effect=controller_join_material.SerialAutomationError(
+                "timed out waiting for private-value-" + SECRET))
+
+        with self.assertRaises(ControllerJoinMaterialError) as caught:
+            serial.stage(SECRET)
+
+        self.assertEqual(
+            ControllerJoinFailureCoordinate(
+                "stage", "shell-prompt", "TimeoutError"),
+            caught.exception.coordinate,
+        )
+        self.assertEqual(
+            "Controller join stage protocol failed; "
+            "operation=join-material.stage.shell-prompt; "
+            "error=TimeoutError",
+            str(caught.exception),
+        )
+        self.assertNotIn(SECRET, str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    def test_destroy_io_failure_does_not_copy_private_exception_context(self):
+        serial = ControllerJoinSerial(
+            __import__("io").BytesIO(), __import__("io").BytesIO())
+        serial.console._send = mock.Mock(
+            side_effect=OSError("private-value-" + SECRET))
+
+        with self.assertRaises(ControllerJoinMaterialError) as caught:
+            serial.destroy()
+
+        self.assertEqual(
+            ControllerJoinFailureCoordinate(
+                "destroy", "shell-prompt-request", "OSError"),
+            caught.exception.coordinate,
+        )
+        self.assertNotIn(SECRET, str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    def test_unexpected_protocol_failure_is_normalized(self):
+        serial = ControllerJoinSerial(
+            __import__("io").BytesIO(), __import__("io").BytesIO())
+        serial.console._send = mock.Mock(
+            side_effect=ValueError("private-value-" + SECRET))
+
+        with self.assertRaises(ControllerJoinMaterialError) as caught:
+            serial.stage(SECRET)
+
+        self.assertEqual(
+            ControllerJoinFailureCoordinate(
+                "stage", "shell-prompt-request", "UnexpectedError"),
+            caught.exception.coordinate,
+        )
+        self.assertNotIn("ValueError", str(caught.exception))
         self.assertNotIn(SECRET, str(caught.exception))
 
 
@@ -202,6 +271,30 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 ControllerJoinMaterialError, "not pending"):
             material.retry_destruction()
+
+    def test_stage_and_destroy_failure_coordinates_are_both_preserved(self):
+        stage_coordinate = ControllerJoinFailureCoordinate(
+            "stage", "return-code", "ControllerJoinReturnCode")
+        destroy_coordinate = ControllerJoinFailureCoordinate(
+            "destroy", "shell-prompt", "TimeoutError")
+        material = OneUseDomainJoinMaterial(
+            "synthetic.test",
+            stage=mock.Mock(side_effect=ControllerJoinMaterialError(
+                "private-stage-" + SECRET, coordinate=stage_coordinate)),
+            destroy=mock.Mock(side_effect=ControllerJoinMaterialError(
+                "private-destroy-" + SECRET,
+                coordinate=destroy_coordinate)),
+        )
+
+        with self.assertRaises(ControllerJoinMaterialError) as caught:
+            material.use(lambda _values: None)
+
+        self.assertIs(stage_coordinate, caught.exception.coordinate)
+        self.assertIs(
+            destroy_coordinate, caught.exception.cleanup_coordinate)
+        self.assertNotIn(SECRET, str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
 
     def test_rejects_invalid_realms_and_multiline_credentials(self):
         with self.assertRaisesRegex(ValueError, "realm"):

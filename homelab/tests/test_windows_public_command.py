@@ -8,6 +8,7 @@ from homelab.vm.windows_identity_reference import (
     ValidatedIdentityReference,
 )
 from homelab.vm.windows_public_command import (
+    MAX_PUBLIC_COMMAND_CHARS,
     PublicPowerShellLaunchPlan,
     WindowsPublicCommandError,
     WindowsPublicCommandLauncher,
@@ -130,7 +131,11 @@ class WindowsPublicCommandTests(unittest.TestCase):
             root = Path(temporary)
             root.chmod(0o700)
             qmp, launcher = self.launcher(root, [])
-            for command in ("cmd.exe /c whoami", "powershell\nwhoami", "p" * 513):
+            for command in (
+                "cmd.exe /c whoami",
+                "powershell\nwhoami",
+                "powershell " + "p" * (MAX_PUBLIC_COMMAND_CHARS - 10),
+            ):
                 with self.assertRaises(WindowsPublicCommandError):
                     launcher.launch(
                         command,
@@ -138,6 +143,24 @@ class WindowsPublicCommandTests(unittest.TestCase):
                             reference("desktop"), reference("run-dialog")),
                     )
         self.assertEqual([], qmp.actions)
+
+    def test_accepts_exact_public_command_character_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            qmp, launcher = self.launcher(
+                root, [FRAME] * 4 + [OTHER_FRAME] * 2)
+            command = "powershell " + "p" * (
+                MAX_PUBLIC_COMMAND_CHARS - len("powershell "))
+            launcher.launch(
+                command,
+                PublicPowerShellLaunchPlan(
+                    reference("desktop"), reference("run-dialog"),
+                    threshold=0, max_frames_per_state=2),
+            )
+        self.assertEqual(
+            command,
+            "".join(a[1] for a in qmp.actions if a[0] == "text"))
 
     def test_rejects_mismatched_or_wrong_reference_authority(self):
         other = GuestProvenance(

@@ -28,6 +28,33 @@ class WindowsPublicCommandError(RuntimeError):
 
 RUN_DIALOG_REFERENCE_SIZE = (430, 230)
 RUN_DIALOG_CHROME_CROP = (0, 0, 430, 110)
+MAX_PUBLIC_COMMAND_CHARS = 240
+PRIVATE_MEDIA_POLL_ATTEMPTS = 40
+_PRIVATE_MEDIA_LABEL = re.compile(r"[A-Z][A-Z0-9_]{0,31}")
+_PRIVATE_MEDIA_ENTRYPOINT = re.compile(r"[A-Za-z0-9-]+\.ps1")
+
+
+def bounded_media_launch_command(label: str, entrypoint: str) -> str:
+    """Build one bounded, exact-label private-media launcher."""
+    if (
+        not isinstance(label, str)
+        or _PRIVATE_MEDIA_LABEL.fullmatch(label) is None
+        or not isinstance(entrypoint, str)
+        or _PRIVATE_MEDIA_ENTRYPOINT.fullmatch(entrypoint) is None
+    ):
+        raise WindowsPublicCommandError(
+            "private-media launcher inputs are invalid")
+    command = (
+        'powershell -NoP -NonI -EP Bypass -C "'
+        f"1..{PRIVATE_MEDIA_POLL_ATTEMPTS}|%{{"
+        f"if(!$d){{$v=@(Get-Volume -FileSystemLabel {label}|? DriveLetter);"
+        "switch($v.Count){0{sleep 1}1{$d=$v[0]}default{throw 2}}}};"
+        f"if(!$d){{throw 1}};&($d.DriveLetter+':\\{entrypoint}')\""
+    )
+    if len(command) > MAX_PUBLIC_COMMAND_CHARS:
+        raise WindowsPublicCommandError(
+            "private-media launch command exceeds the public command bound")
+    return command
 
 
 @dataclass(frozen=True)
@@ -103,7 +130,7 @@ class WindowsPublicCommandLauncher:
             raise WindowsPublicCommandError("invalid GUI observation bounds")
         if (
             not isinstance(command, str)
-            or not 1 <= len(command) <= 512
+            or not 1 <= len(command) <= MAX_PUBLIC_COMMAND_CHARS
             or "\r" in command
             or "\n" in command
             or "\t" in command

@@ -376,6 +376,39 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             self.assertIsNone(caught.exception.__cause__)
             self.assertIsNone(caught.exception.__context__)
 
+    def test_static_probe_uses_one_absolute_three_stage_deadline(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = subject.NativeWindowsAcceptanceAdapter(
+                self.adapter(Path(name)).boundary,
+                Path(name),
+                realm="factory.test",
+                local_principal="telosadmin",
+                scan_secrets=mock.sentinel.scanner,
+                timeout=1,
+                clock=mock.Mock(side_effect=[0.0, 0.1, 0.3, 0.7, 1.01]),
+            )
+            adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+            adapter.launch_guest = mock.Mock()
+            stream = mock.MagicMock()
+            stream.__enter__.return_value = stream
+            stream.recv.side_effect = [
+                self.launcher(), self.start(), self.outcome()]
+            with mock.patch.object(
+                subject.socket, "socket", return_value=stream,
+            ), self.assertRaises(
+                subject.WindowsIdentityAdapterError,
+            ) as caught:
+                adapter.static_probe("controller-readiness")
+            self.assertEqual(
+                "static-probe.controller-readiness.outcome-receive",
+                caught.exception.diagnostic.operation,
+            )
+            self.assertEqual(
+                "TimeoutError", caught.exception.diagnostic.error_type)
+            self.assertEqual(2, stream.recv.call_count)
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+
     def test_post_reboot_reauthentication_fails_without_calibrated_plan(self):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))

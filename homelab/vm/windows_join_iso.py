@@ -12,6 +12,8 @@ import socket
 import stat
 import subprocess
 import tempfile
+import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Mapping, Protocol
 
@@ -21,15 +23,63 @@ from .windows_identity_contract import (
     PRIVATE_MEDIA_PARENT_DEVICE,
     PRIVATE_MEDIA_PORT,
 )
+from .windows_public_command import bounded_media_launch_command
+
+
+@dataclass(frozen=True)
+class WindowsJoinFailureCoordinate:
+    """Allowlisted, secret-free guest join protocol failure location."""
+
+    phase: str
+    error_type: str
+
+    _PHASES = frozenset({
+        "serial-connect", "prepare", "attach", "launch", "marker-receive",
+        "media-destroy", "release", "result", "reboot-reauth",
+        "reboot-probe", "cleanup",
+    })
+    _ERROR_TYPES = frozenset({
+        "OSError", "TimeoutError", "WindowsJoinIsoError",
+        "WindowsIdentityAdapterError", "WindowsIdentityOrchestratorError",
+        "WindowsPublicCommandError", "UnexpectedError",
+    })
+
+    def __post_init__(self) -> None:
+        if self.phase not in self._PHASES or self.error_type not in self._ERROR_TYPES:
+            raise ValueError("Windows join failure coordinate is invalid")
 
 
 class WindowsJoinIsoError(RuntimeError):
     """The private join channel failed closed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        coordinate: WindowsJoinFailureCoordinate | None = None,
+        cleanup_coordinate: WindowsJoinFailureCoordinate | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.coordinate = coordinate
+        self.cleanup_coordinate = cleanup_coordinate
+
+
+def _join_error(phase: str, error: BaseException) -> WindowsJoinIsoError:
+    error_type = type(error).__name__
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        error_type = "TimeoutError"
+    if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
+        error_type = "UnexpectedError"
+    coordinate = WindowsJoinFailureCoordinate(phase, error_type)
+    return WindowsJoinIsoError(
+        f"Windows join protocol failed; phase={phase}; error={error_type}",
+        coordinate=coordinate,
+    )
+
 
 SCRIPT = (
     Path(__file__).with_name("windows_join_control")
-    / "Invoke-TelosDomainJoin.ps1"
+    / "TelosJoin.ps1"
 )
 NONCE = re.compile(r"[a-f0-9]{32}")
 DOMAIN = re.compile(
@@ -63,33 +113,50 @@ class JoinMediaState(Enum):
 class DuplexJoinSerial:
     """One bounded duplex COM1 connection for marker and release."""
 
-    def __init__(self, connection: socket.socket, *, maximum_line: int = 1024):
+    def __init__(
+        self,
+        connection: socket.socket,
+        *,
+        maximum_line: int = 1024,
+        timeout: float = 120.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         if not 64 <= maximum_line <= 4096:
             raise WindowsJoinIsoError("serial line bound is invalid")
+        if not 0 < timeout <= 300:
+            raise WindowsJoinIsoError("serial timeout is invalid")
         self.connection = connection
         self.maximum_line = maximum_line
+        self._clock = clock
+        self._deadline = clock() + timeout
         self.closed = False
 
     @classmethod
     def connect(
         cls, path: Path, *, timeout: float = 120.0,
     ) -> "DuplexJoinSerial":
-        if not 0 < timeout <= 300:
-            raise WindowsJoinIsoError("serial timeout is invalid")
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.settimeout(timeout)
+        serial = cls(connection, timeout=timeout)
         try:
+            serial._set_operation_timeout()
             connection.connect(str(Path(path)))
         except Exception:
             connection.close()
             raise
-        return cls(connection)
+        return serial
+
+    def _set_operation_timeout(self) -> None:
+        remaining = self._deadline - self._clock()
+        if remaining <= 0:
+            raise WindowsJoinIsoError("join serial deadline expired")
+        self.connection.settimeout(remaining)
 
     def read_marker(self) -> str:
         if self.closed:
             raise WindowsJoinIsoError("join serial is closed")
         data = bytearray()
         while len(data) <= self.maximum_line:
+            self._set_operation_timeout()
             chunk = self.connection.recv(1)
             if not chunk:
                 raise WindowsJoinIsoError(
@@ -109,6 +176,7 @@ class DuplexJoinSerial:
         encoded = (line + "\n").encode("ascii")
         if len(encoded) > self.maximum_line:
             raise WindowsJoinIsoError("join release exceeds bound")
+        self._set_operation_timeout()
         self.connection.sendall(encoded)
 
     def close(self) -> None:
@@ -210,13 +278,8 @@ def build_join_iso(
 
 def launch_join_command() -> str:
     """Return fixed, secret-free PowerShell suitable for GUI injection."""
-    return (
-        "powershell.exe -NoLogo -NoProfile -NonInteractive "
-        "-ExecutionPolicy Bypass -Command \"& { "
-        "$v=(Get-Volume -FileSystemLabel 'TELOS_JOIN' | "
-        "Select-Object -First 1).DriveLetter; "
-        "if (-not $v) { throw 'TELOS_JOIN volume missing' }; "
-        "& ($v + ':\\Invoke-TelosDomainJoin.ps1') }\""
+    return bounded_media_launch_command(
+        "TELOS_JOIN", "TelosJoin.ps1",
     )
 
 
@@ -477,7 +540,15 @@ class JoinMediaChannel:
         if self.state is not JoinMediaState.RELEASED:
             raise WindowsJoinIsoError(
                 "join result cannot be proved before mutation release")
-        result = dict(probe())
+        try:
+            result = dict(probe())
+        except BaseException as error:
+            if (
+                isinstance(error, WindowsJoinIsoError)
+                and error.coordinate is not None
+            ):
+                raise error from None
+            raise _join_error("reboot-probe", error) from None
         if result != {
             "schema_version": 2,
             "boot_completed": True,
@@ -486,7 +557,9 @@ class JoinMediaChannel:
             "operator": f"operator@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }:
-            raise WindowsJoinIsoError("join/reboot proof is invalid")
+            raise _join_error(
+                "result", WindowsJoinIsoError(
+                    "join/reboot proof is invalid")) from None
         return {
             "schema_version": 1,
             "join_media_destroyed": True,
@@ -505,15 +578,32 @@ def execute_join_channel(
     await_device_deleted: Callable[[str], None],
 ) -> None:
     """Run the production handoff over one exclusive duplex COM1 session."""
-    channel.attach()
     try:
-        launch_guest(launch_join_command())
-        marker = serial.read_marker()
-        channel.release_after_marker(
-            marker,
-            await_device_deleted=await_device_deleted,
-            send_release=serial.send_release,
-        )
+        channel.attach()
+    except BaseException as error:
+        raise _join_error("attach", error) from None
+    try:
+        try:
+            launch_guest(launch_join_command())
+        except BaseException as error:
+            raise _join_error("launch", error) from None
+        try:
+            marker = serial.read_marker()
+        except BaseException as error:
+            raise _join_error("marker-receive", error) from None
+        try:
+            channel.release_after_marker(
+                marker,
+                await_device_deleted=await_device_deleted,
+                send_release=serial.send_release,
+            )
+        except BaseException as error:
+            phase = (
+                "release"
+                if channel.state is JoinMediaState.DESTROYED_AWAITING_RELEASE
+                else "media-destroy"
+            )
+            raise _join_error(phase, error) from None
         # Release exclusive COM1 ownership before any post-reboot static probe
         # opens its own serial connection.
         serial.close()
@@ -542,5 +632,14 @@ def execute_join_and_prove(
     if not serial.closed:
         raise WindowsJoinIsoError(
             "private COM1 session remains open before public probe")
-    return channel.prove_join_and_reboot(
-        probe_after_reboot, expected_domain=expected_domain)
+    try:
+        return channel.prove_join_and_reboot(
+            probe_after_reboot, expected_domain=expected_domain)
+    except BaseException as error:
+        if (
+            isinstance(error, WindowsJoinIsoError)
+            and error.coordinate is not None
+        ):
+            raise error from None
+        phase = "reboot-probe"
+        raise _join_error(phase, error) from None

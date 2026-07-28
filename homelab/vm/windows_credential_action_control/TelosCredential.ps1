@@ -4,11 +4,14 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$volume = Get-Volume -FileSystemLabel 'TELOS_CREDENTIAL_ACTION' |
-    Select-Object -First 1
-if (-not $volume) {
-    throw 'TELOS_CREDENTIAL_ACTION volume missing'
+$volumes = @(
+    Get-Volume -FileSystemLabel 'TELOS_CRED' |
+        Where-Object DriveLetter
+)
+if ($volumes.Count -ne 1) {
+    throw 'TELOS_CRED volume count is invalid'
 }
+$volume = $volumes[0]
 $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'action.json') -Raw |
     ConvertFrom-Json

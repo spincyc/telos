@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from homelab.vm import windows_identity_cli
+from homelab.vm.windows_identity_run import IdentityFailureDiagnostic
 from homelab.tests.windows_identity_fixture import (
     write_prepared_authorization,
 )
@@ -125,6 +126,51 @@ class WindowsIdentityCliTests(unittest.TestCase):
                     acceptance_factory=lambda _boundary: configuration,
                 )
         self.assertEqual(2, result)
+
+    def test_typed_join_failure_renders_only_allowlisted_coordinate(self):
+        diagnostic = IdentityFailureDiagnostic.join_material(
+            "stage", "shell-prompt", "TimeoutError")
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            configuration = mock.Mock()
+            configuration.rotation_plan = mock.sentinel.rotation_plan
+            configuration.publication = Path(name) / "publication.iso"
+            configuration.private_root = Path(name)
+            configuration.evidence = Path(name) / "evidence.jsonl"
+            configuration.realm = "FACTORY.TEST"
+            configuration.callbacks = mock.sentinel.callbacks
+            configuration.stage_principals = mock.sentinel.stage_principals
+            configuration.destroy_principals = (
+                mock.sentinel.destroy_principals)
+            configuration.stage_join_principal = (
+                mock.sentinel.stage_join_principal)
+            configuration.destroy_join_principal = (
+                mock.sentinel.destroy_join_principal)
+            failure = windows_identity_cli.WindowsIdentityOrchestratorError(
+                "domain join material failed; " + diagnostic.render(),
+                diagnostic=diagnostic,
+            )
+            with mock.patch.object(
+                windows_identity_cli,
+                "execute_windows_identity_acceptance",
+                side_effect=failure,
+            ), mock.patch("sys.stderr") as stderr:
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=lambda _boundary: configuration,
+                )
+        self.assertEqual(2, result)
+        rendered = " ".join(
+            str(call) for call in stderr.write.call_args_list)
+        self.assertIn(
+            "check=windows-joined; "
+            "operation=join-material.stage.shell-prompt; error=TimeoutError",
+            rendered,
+        )
 
     def test_adapter_configuration_errors_are_normalized(self):
         from homelab.vm.windows_identity_adapter import (

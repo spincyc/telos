@@ -15,8 +15,63 @@ import uuid
 from .serial_automation import SerialAutomation, SerialAutomationError
 
 
+@dataclass(frozen=True)
+class ControllerJoinFailureCoordinate:
+    """Allowlisted, secret-free location and type for one protocol failure."""
+
+    operation: str
+    phase: str
+    error_type: str
+
+    _OPERATIONS = frozenset({"stage", "destroy"})
+    _PHASES = frozenset({
+        "shell-prompt-request",
+        "shell-prompt",
+        "command-send",
+        "secret-input-ready",
+        "secret-input-send",
+        "sudo-password-prompt",
+        "sudo-password-send",
+        "return-code",
+    })
+    _ERROR_TYPES = frozenset({
+        "OSError",
+        "SerialAutomationError",
+        "TimeoutError",
+        "ControllerJoinReturnCode",
+        "UnexpectedError",
+    })
+
+    def __post_init__(self) -> None:
+        if (
+            self.operation not in self._OPERATIONS
+            or self.phase not in self._PHASES
+            or self.error_type not in self._ERROR_TYPES
+        ):
+            raise ValueError("Controller join failure coordinate is invalid")
+
+    def render(self) -> str:
+        return (
+            f"operation=join-material.{self.operation}.{self.phase}; "
+            f"error={self.error_type}"
+        )
+
+
 class ControllerJoinMaterialError(RuntimeError):
     """The Controller did not prove the join-material lifecycle completed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        coordinate: ControllerJoinFailureCoordinate | None = None,
+        cleanup_coordinate: ControllerJoinFailureCoordinate | None = None,
+        diagnostic: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.coordinate = coordinate
+        self.cleanup_coordinate = cleanup_coordinate
+        self.diagnostic = diagnostic
 
 
 @dataclass(frozen=True)
@@ -175,39 +230,87 @@ class ControllerJoinSerial:
             b"__telos_rc=$?; unset __telos_payload; "
             b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
         )
-        try:
-            self.console._send(
-                b"", operation + "-shell-prompt-requested")
-            self.console._wait(
-                rb"(?:^|\n)[^\n]*\$\s*$", "controller-shell-ready")
-            self.console._send(command, operation + "-command-sent")
-            self.console._wait(
+        def invoke(phase: str, callback: Callable[[], _T]) -> _T:
+            failure_type: str | None = None
+            try:
+                return callback()
+            except (OSError, SerialAutomationError) as error:
+                failure_type = type(error).__name__
+                if (
+                    isinstance(error, SerialAutomationError)
+                    and str(error).startswith("timed out waiting for ")
+                ):
+                    failure_type = "TimeoutError"
+            except Exception:
+                failure_type = "UnexpectedError"
+            assert failure_type is not None
+            coordinate = ControllerJoinFailureCoordinate(
+                operation, phase, failure_type)
+            raise ControllerJoinMaterialError(
+                f"Controller join {operation} protocol failed; "
+                + coordinate.render(),
+                coordinate=coordinate,
+            ) from None
+
+        invoke(
+            "shell-prompt-request",
+            lambda: self.console._send(
+                b"", operation + "-shell-prompt-requested"),
+        )
+        invoke(
+            "shell-prompt",
+            lambda: self.console._wait(
+                rb"(?:^|\n)[^\n]*\$\s*$", "controller-shell-ready"),
+        )
+        invoke(
+            "command-send",
+            lambda: self.console._send(command, operation + "-command-sent"),
+        )
+        invoke(
+            "secret-input-ready",
+            lambda: self.console._wait(
                 rb"(?:^|\n)" + re.escape(ready) + rb"\s*(?:\n|$)",
-                operation + "-secret-input-ready")
-            wire = base64.b64encode(json.dumps(
-                payload, sort_keys=True, separators=(",", ":"),
-            ).encode("utf-8"))
-            self.console._send(wire, operation + "-secret-input-sent")
-            if self.console.password is not None:
-                self.console._wait(
+                operation + "-secret-input-ready"),
+        )
+        wire = base64.b64encode(json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8"))
+        invoke(
+            "secret-input-send",
+            lambda: self.console._send(
+                wire, operation + "-secret-input-sent"),
+        )
+        if self.console.password is not None:
+            invoke(
+                "sudo-password-prompt",
+                lambda: self.console._wait(
                     rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
                     operation + "-sudo-password-prompt",
-                )
-                self.console._send(
+                ),
+            )
+            invoke(
+                "sudo-password-send",
+                lambda: self.console._send(
                     self.console.password,
                     operation + "-sudo-password-sent",
-                )
-            match = self.console._wait(
+                ),
+            )
+        match = invoke(
+            "return-code",
+            lambda: self.console._wait(
                 rb"(?:^|\n)" + re.escape(result)
                 + rb"([0-9]+)\s*(?:\n|$)",
-                operation + "-return-code-observed")
-        except SerialAutomationError as error:
-            raise ControllerJoinMaterialError(
-                f"Controller join {operation} protocol failed") from None
+                operation + "-return-code-observed"),
+        )
         returncode = int(match.group(1))
         if returncode:
+            coordinate = ControllerJoinFailureCoordinate(
+                operation, "return-code", "ControllerJoinReturnCode")
             raise ControllerJoinMaterialError(
-                f"Controller join {operation} returned {returncode}")
+                f"Controller join {operation} failed; "
+                + coordinate.render(),
+                coordinate=coordinate,
+            )
         return ControllerJoinResult(
             operation=operation,
             principal=self._principal,
@@ -329,9 +432,23 @@ class OneUseDomainJoinMaterial:
                     details.append(f"stage/consumer: {type(primary).__name__}")
                 if cleanup is not None:
                     details.append(f"destruction: {type(cleanup).__name__}")
+                coordinate = (
+                    primary.coordinate
+                    if isinstance(primary, ControllerJoinMaterialError)
+                    else None
+                )
+                cleanup_coordinate = (
+                    cleanup.coordinate
+                    if isinstance(cleanup, ControllerJoinMaterialError)
+                    else None
+                )
                 raise ControllerJoinMaterialError(
                     "domain join material lifecycle failed; "
-                    + "; ".join(details)) from None
+                    + "; ".join(details),
+                    coordinate=coordinate,
+                    cleanup_coordinate=cleanup_coordinate,
+                    diagnostic=getattr(primary, "diagnostic", None),
+                ) from None
             assert proof is not None
             return value, proof  # type: ignore[return-value]
         finally:

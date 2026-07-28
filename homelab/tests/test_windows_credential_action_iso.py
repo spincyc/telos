@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import tempfile
 import unittest
+from unittest import mock
 
 from homelab.vm.windows_credential_action_iso import (
     ACTION_DEVICE,
@@ -18,6 +19,7 @@ from homelab.vm.windows_credential_action_iso import (
     launch_credential_action_command,
     parse_action_result,
 )
+from homelab.vm.windows_public_command import MAX_PUBLIC_COMMAND_CHARS
 
 
 NONCE = "cd" * 16
@@ -97,7 +99,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
     def test_script_loads_then_waits_for_destruction_before_native_action(self):
         script = Path(
             "homelab/vm/windows_credential_action_control/"
-            "Invoke-TelosCredentialAction.ps1"
+            "TelosCredential.ps1"
         ).read_text(encoding="utf-8")
         positions = [
             script.index("$password = [string]$document.password"),
@@ -137,6 +139,21 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertLess(script.index("TerminateProcess("),
                         script.index("throw 'credential action timed out'"))
         command = launch_credential_action_command()
+        self.assertLessEqual(len(command), MAX_PUBLIC_COMMAND_CHARS)
+        self.assertIn("1..40", command)
+        self.assertIn("|? DriveLetter", command)
+        self.assertIn(
+            "switch($v.Count){0{sleep 1}1{$d=$v[0]}default{throw 2}}",
+            command,
+        )
+        self.assertEqual(1, command.count("&("))
+        self.assertGreater(command.index("&("), command.index("};if(!$d)"))
+        self.assertNotIn("Select-Object -First 1", command)
+        self.assertIn("$volumes.Count -ne 1", script)
+        self.assertLess(
+            script.index("Where-Object DriveLetter"),
+            script.index("$volumes.Count -ne 1"),
+        )
         for value in MATERIAL.values():
             self.assertNotIn(value, command)
 
@@ -501,6 +518,24 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             guest.close()
             self.assertTrue(serial.closed)
             self.assertTrue(channel.destroyed)
+
+    def test_duplex_serial_shares_absolute_deadline_across_records(self):
+        connection = mock.Mock()
+        connection.recv.side_effect = [b"{", b"}", b"\n", b"x"]
+        clock = mock.Mock(side_effect=[
+            0.0, 0.1, 0.2, 0.3, 0.7, 1.01,
+        ])
+        serial = DuplexCredentialActionSerial(
+            connection, timeout=1.0, clock=clock)
+
+        self.assertEqual("{}\n", serial.read_line())
+        serial.send_release("public")
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "deadline expired"):
+            serial.read_line()
+
+        self.assertEqual(3, connection.recv.call_count)
+        self.assertEqual(1, connection.sendall.call_count)
 
 
 if __name__ == "__main__":

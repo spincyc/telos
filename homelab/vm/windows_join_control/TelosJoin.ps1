@@ -1,11 +1,14 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$volume = Get-Volume -FileSystemLabel 'TELOS_JOIN' |
-    Select-Object -First 1
-if (-not $volume) {
-    throw 'TELOS_JOIN volume missing'
+$volumes = @(
+    Get-Volume -FileSystemLabel 'TELOS_JOIN' |
+        Where-Object DriveLetter
+)
+if ($volumes.Count -ne 1) {
+    throw 'TELOS_JOIN volume count is invalid'
 }
+$volume = $volumes[0]
 $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'join.json') -Raw |
     ConvertFrom-Json

@@ -205,6 +205,56 @@ class WindowsIdentityRunTests(unittest.TestCase):
                 WindowsIdentityRunError, "controller teardown"):
             run_lifecycle(recorder.operations())
 
+    def test_lifecycle_preserves_safe_primary_diagnostic(self):
+        diagnostic = windows_identity_run.IdentityFailureDiagnostic.static_probe(
+            "controller-ready",
+            "controller-readiness",
+            TimeoutError("private failure"),
+            phase="outcome-receive",
+        )
+        recorder = Recorder()
+        recorder.failure = None
+        operations = recorder.operations()
+        operations.run_acceptance_phases = mock.Mock(
+            side_effect=WindowsIdentityRunError(
+                "private failure", diagnostic=diagnostic))
+
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            run_lifecycle(operations)
+
+        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertNotIn("private failure", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    def test_lifecycle_keeps_primary_diagnostic_with_cleanup_failure(self):
+        diagnostic = windows_identity_run.IdentityFailureDiagnostic.static_probe(
+            "controller-ready",
+            "controller-readiness",
+            TimeoutError("private primary"),
+            phase="outcome-receive",
+        )
+        recorder = Recorder()
+        operations = recorder.operations()
+        operations.run_acceptance_phases = mock.Mock(
+            side_effect=WindowsIdentityRunError(
+                "private primary", diagnostic=diagnostic))
+        operations.stop_controller = mock.Mock(
+            side_effect=RuntimeError("private cleanup"))
+
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            run_lifecycle(operations)
+
+        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertIn(
+            "controller teardown: RuntimeError", str(caught.exception))
+        self.assertNotIn("private primary", str(caught.exception))
+        self.assertNotIn("private cleanup", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
 
 if __name__ == "__main__":
     unittest.main()

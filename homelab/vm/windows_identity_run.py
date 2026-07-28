@@ -87,13 +87,52 @@ class IdentityFailureDiagnostic:
         )
     )
     _ERROR_TYPES = frozenset({
+        "ControllerJoinMaterialError",
+        "ControllerJoinReturnCode",
         "OSError",
+        "SerialAutomationError",
         "TimeoutError",
         "WindowsControlSerialError",
         "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
+        "WindowsIdentityOrchestratorError",
+        "WindowsJoinIsoError",
         "WindowsPublicCommandError",
     })
+
+    @classmethod
+    def join_material(
+        cls, operation: str, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        """Bind a typed Controller join failure to its acceptance check."""
+        candidate = f"join-material.{operation}.{phase}"
+        if (
+            operation not in {"stage", "destroy"}
+            or phase not in {
+                "shell-prompt-request", "shell-prompt", "command-send",
+                "secret-input-ready", "secret-input-send",
+                "sudo-password-prompt", "sudo-password-send", "return-code",
+            }
+        ):
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls("windows-joined", candidate, error_type)
+
+    @classmethod
+    def join_guest(
+        cls, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        candidate = f"join-guest.{phase}"
+        if phase not in {
+            "serial-connect", "prepare", "attach", "launch", "marker-receive",
+            "media-destroy", "release", "result", "reboot-reauth",
+            "reboot-probe", "cleanup",
+        }:
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls("windows-joined", candidate, error_type)
 
     @classmethod
     def static_probe(
@@ -155,6 +194,27 @@ class IdentityFailureDiagnostic:
     def __post_init__(self) -> None:
         if (
             (self.check, self.operation) not in self._STATIC_PROBES
+            and not (
+                self.check == "windows-joined"
+                and self.operation.startswith("join-material.")
+                and len(self.operation.split(".")) == 3
+                and self.operation.split(".")[1] in {"stage", "destroy"}
+                and self.operation.split(".")[2] in {
+                    "shell-prompt-request", "shell-prompt", "command-send",
+                    "secret-input-ready", "secret-input-send",
+                    "sudo-password-prompt", "sudo-password-send",
+                    "return-code",
+                }
+            )
+            and not (
+                self.check == "windows-joined"
+                and self.operation.startswith("join-guest.")
+                and self.operation.removeprefix("join-guest.") in {
+                    "serial-connect", "prepare", "attach", "launch", "marker-receive",
+                    "media-destroy", "release", "result", "reboot-reauth",
+                    "reboot-probe", "cleanup",
+                }
+            )
             and (self.check, self.operation)
             != ("unknown-check", "unknown-operation")
         ):
@@ -1563,9 +1623,10 @@ class PrivateIdentityMaterial:
                 details.append(
                     f"principal destruction: {type(cleanup).__name__}")
             source = primary if primary is not None else cleanup
+            candidate = getattr(source, "diagnostic", None)
             diagnostic = (
-                source.diagnostic
-                if isinstance(source, WindowsIdentityRunError)
+                candidate
+                if isinstance(candidate, IdentityFailureDiagnostic)
                 else None
             )
             message = "scoped identity acceptance failed; " + "; ".join(details)
@@ -1691,8 +1752,21 @@ def run_lifecycle(operations: IdentityOperations) -> IdentityReceipt:
         if primary_error is not None:
             details.append(f"lifecycle: {type(primary_error).__name__}")
         details.extend(cleanup_errors)
+        diagnostic = (
+            primary_error.diagnostic
+            if (
+                isinstance(primary_error, WindowsIdentityRunError)
+                and isinstance(
+                    primary_error.diagnostic, IdentityFailureDiagnostic)
+            )
+            else None
+        )
+        if diagnostic is not None:
+            details.append(diagnostic.render())
         raise WindowsIdentityRunError(
-            "native identity lifecycle failed; " + "; ".join(details))
+            "native identity lifecycle failed; " + "; ".join(details),
+            diagnostic=diagnostic,
+        ) from None
     required = (
         receipt.local_credential_rotated,
         receipt.private_publication_destroyed,

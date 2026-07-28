@@ -11,6 +11,7 @@ import uuid
 from homelab.workstations.windows_identity_acceptance import FIELD_SETS
 
 from .controller_join_material import (
+    ControllerJoinMaterialError,
     ControllerJoinResult,
     OneUseDomainJoinMaterial,
 )
@@ -39,6 +40,8 @@ from .windows_identity_run import (
 from .windows_join_iso import (
     DuplexJoinSerial,
     JoinMediaChannel,
+    WindowsJoinFailureCoordinate,
+    WindowsJoinIsoError,
     build_join_iso,
     execute_join_and_prove,
 )
@@ -307,10 +310,31 @@ def _execute_join(
         destroy=destroy_join_principal,
     )
 
+    def guest_failure(
+        coordinate: WindowsJoinFailureCoordinate,
+        cleanup: WindowsJoinFailureCoordinate | None = None,
+    ) -> WindowsIdentityOrchestratorError:
+        diagnostic = IdentityFailureDiagnostic.join_guest(
+            coordinate.phase, coordinate.error_type)
+        details = ["domain join guest protocol failed", diagnostic.render()]
+        if cleanup is not None:
+            cleanup_diagnostic = IdentityFailureDiagnostic.join_guest(
+                cleanup.phase, cleanup.error_type)
+            details.append("cleanup-" + cleanup_diagnostic.render())
+        return WindowsIdentityOrchestratorError(
+            "; ".join(details), diagnostic=diagnostic)
+
     def consume(material: Mapping[str, str]) -> Mapping[str, object]:
         nonce = uuid.uuid4().hex
         iso = private_root / f"windows-join-{nonce}.iso"
-        serial = callbacks.open_join_serial()
+        try:
+            serial = callbacks.open_join_serial()
+        except BaseException as error:
+            error_type = type(error).__name__
+            if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
+                error_type = "UnexpectedError"
+            raise guest_failure(WindowsJoinFailureCoordinate(
+                "serial-connect", error_type)) from None
         try:
             build_join_iso(iso, {
                 "nonce": nonce,
@@ -323,15 +347,36 @@ def _execute_join(
             channel = JoinMediaChannel(callbacks.qmp(), iso, nonce)
         except BaseException as primary:
             serial.close()
+            coordinate = (
+                primary.coordinate
+                if isinstance(primary, WindowsJoinIsoError)
+                and primary.coordinate is not None
+                else WindowsJoinFailureCoordinate(
+                    "prepare",
+                    (
+                        type(primary).__name__
+                        if type(primary).__name__
+                        in WindowsJoinFailureCoordinate._ERROR_TYPES
+                        else "UnexpectedError"
+                    ),
+                )
+            )
             try:
                 if iso.exists() or iso.is_symlink():
                     iso.unlink()
             except BaseException as cleanup:
-                raise WindowsIdentityOrchestratorError(
-                    "join preparation and private cleanup failed: "
-                    f"{type(primary).__name__}; {type(cleanup).__name__}"
-                ) from None
-            raise
+                cleanup_coordinate = WindowsJoinFailureCoordinate(
+                    "cleanup",
+                    (
+                        type(cleanup).__name__
+                        if type(cleanup).__name__
+                        in WindowsJoinFailureCoordinate._ERROR_TYPES
+                        else "UnexpectedError"
+                    ),
+                )
+                raise guest_failure(
+                    coordinate, cleanup_coordinate) from None
+            raise guest_failure(coordinate) from None
         reauthenticated = False
 
         def probe_after_reboot() -> Mapping[str, object]:
@@ -339,9 +384,37 @@ def _execute_join(
             if reauthenticated:
                 raise WindowsIdentityOrchestratorError(
                     "post-reboot local session was already authenticated")
-            callbacks.reauthenticate_local(local_credential)
+            try:
+                callbacks.reauthenticate_local(local_credential)
+            except BaseException as error:
+                raise WindowsJoinIsoError(
+                    "post-reboot authentication failed",
+                    coordinate=WindowsJoinFailureCoordinate(
+                        "reboot-reauth",
+                        (
+                            type(error).__name__
+                            if type(error).__name__
+                            in WindowsJoinFailureCoordinate._ERROR_TYPES
+                            else "UnexpectedError"
+                        ),
+                    ),
+                ) from None
             reauthenticated = True
-            return _post_reboot_proof(callbacks)
+            try:
+                return _post_reboot_proof(callbacks)
+            except BaseException as error:
+                raise WindowsJoinIsoError(
+                    "post-reboot probe failed",
+                    coordinate=WindowsJoinFailureCoordinate(
+                        "reboot-probe",
+                        (
+                            type(error).__name__
+                            if type(error).__name__
+                            in WindowsJoinFailureCoordinate._ERROR_TYPES
+                            else "UnexpectedError"
+                        ),
+                    ),
+                ) from None
 
         try:
             return execute_join_and_prove(
@@ -354,17 +427,65 @@ def _execute_join(
             )
         except BaseException as primary:
             serial.close()
+            coordinate = (
+                primary.coordinate
+                if isinstance(primary, WindowsJoinIsoError)
+                and primary.coordinate is not None
+                else WindowsJoinFailureCoordinate(
+                    "result", "UnexpectedError")
+            )
             try:
                 channel.cleanup(
                     await_device_deleted=callbacks.await_device_deleted)
             except BaseException as cleanup:
-                raise WindowsIdentityOrchestratorError(
-                    "domain join and private cleanup failed: "
-                    f"{type(primary).__name__}; {type(cleanup).__name__}"
-                ) from None
-            raise
+                cleanup_coordinate = (
+                    cleanup.coordinate
+                    if isinstance(cleanup, WindowsJoinIsoError)
+                    and cleanup.coordinate is not None
+                    else WindowsJoinFailureCoordinate(
+                        "cleanup", "UnexpectedError")
+                )
+                raise guest_failure(
+                    coordinate, cleanup_coordinate) from None
+            raise guest_failure(coordinate) from None
 
-    proof, destruction = owner.use(consume)
+    join_failure: ControllerJoinMaterialError | None = None
+    try:
+        proof, destruction = owner.use(consume)
+    except ControllerJoinMaterialError as error:
+        carried = getattr(error, "diagnostic", None)
+        if isinstance(carried, IdentityFailureDiagnostic):
+            details = [
+                "domain join guest protocol failed", carried.render()]
+            if error.cleanup_coordinate is not None:
+                cleanup = error.cleanup_coordinate
+                cleanup_diagnostic = IdentityFailureDiagnostic.join_material(
+                    cleanup.operation, cleanup.phase, cleanup.error_type)
+                details.append("cleanup-" + cleanup_diagnostic.render())
+            raise WindowsIdentityOrchestratorError(
+                "; ".join(details),
+                diagnostic=carried,
+            ) from None
+        if error.coordinate is None and error.cleanup_coordinate is None:
+            raise
+        join_failure = error
+    if join_failure is not None:
+        coordinate = (
+            join_failure.coordinate or join_failure.cleanup_coordinate)
+        assert coordinate is not None
+        diagnostic = IdentityFailureDiagnostic.join_material(
+            coordinate.operation, coordinate.phase, coordinate.error_type)
+        details = ["domain join material failed", diagnostic.render()]
+        if (
+            join_failure.cleanup_coordinate is not None
+            and join_failure.cleanup_coordinate is not coordinate
+        ):
+            cleanup = join_failure.cleanup_coordinate
+            cleanup_diagnostic = IdentityFailureDiagnostic.join_material(
+                cleanup.operation, cleanup.phase, cleanup.error_type)
+            details.append("cleanup-" + cleanup_diagnostic.render())
+        raise WindowsIdentityOrchestratorError(
+            "; ".join(details), diagnostic=diagnostic) from None
     if not destruction.destruction_proved:
         raise WindowsIdentityOrchestratorError(
             "Controller join principal destruction was not proved")

@@ -4,7 +4,11 @@ from pathlib import Path
 from unittest import mock
 
 from homelab.vm import windows_identity_orchestrator as subject
-from homelab.vm.controller_join_material import ControllerJoinResult
+from homelab.vm.controller_join_material import (
+    ControllerJoinFailureCoordinate,
+    ControllerJoinMaterialError,
+    ControllerJoinResult,
+)
 from homelab.vm.windows_identity_operations import ProductionIdentityReceipt
 from homelab.vm.windows_identity_progressive import ProgressiveRotationReceipt
 
@@ -12,6 +16,115 @@ from homelab.tests.test_windows_identity_acceptance import details
 
 
 class WindowsIdentityOrchestratorTests(unittest.TestCase):
+    def test_join_stage_failure_is_rebound_to_secret_free_acceptance_coordinate(
+        self,
+    ):
+        private = "private-stage-message"
+        coordinate = ControllerJoinFailureCoordinate(
+            "stage", "shell-prompt", "TimeoutError")
+
+        with tempfile.TemporaryDirectory() as name, self.assertRaises(
+            subject.WindowsIdentityOrchestratorError,
+        ) as caught:
+            subject._execute_join(
+                realm="FACTORY.TEST",
+                private_root=Path(name),
+                local_credential="private-local",
+                callbacks=self.callbacks([]),
+                stage_join_principal=mock.Mock(side_effect=(
+                    ControllerJoinMaterialError(
+                        private, coordinate=coordinate))),
+                destroy_join_principal=mock.Mock(return_value=(
+                    ControllerJoinResult(
+                        "destroy", "tj-0123456789abcdef", True, ()))),
+            )
+
+        error = caught.exception
+        self.assertEqual("windows-joined", error.diagnostic.check)
+        self.assertEqual(
+            "join-material.stage.shell-prompt",
+            error.diagnostic.operation,
+        )
+        self.assertEqual("TimeoutError", error.diagnostic.error_type)
+        self.assertNotIn(private, str(error))
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+
+    def test_join_failure_reports_separate_allowlisted_cleanup_coordinate(self):
+        primary = ControllerJoinFailureCoordinate(
+            "stage", "secret-input-send", "OSError")
+        cleanup = ControllerJoinFailureCoordinate(
+            "destroy", "return-code", "ControllerJoinReturnCode")
+        failure = ControllerJoinMaterialError(
+            "private combined failure",
+            coordinate=primary,
+            cleanup_coordinate=cleanup,
+        )
+        with mock.patch.object(
+            subject.OneUseDomainJoinMaterial, "use", side_effect=failure,
+        ), tempfile.TemporaryDirectory() as name, self.assertRaises(
+            subject.WindowsIdentityOrchestratorError,
+        ) as caught:
+            subject._execute_join(
+                realm="FACTORY.TEST",
+                private_root=Path(name),
+                local_credential="private-local",
+                callbacks=self.callbacks([]),
+                stage_join_principal=mock.Mock(),
+                destroy_join_principal=mock.Mock(),
+            )
+
+        rendered = str(caught.exception)
+        self.assertIn(
+            "check=windows-joined; "
+            "operation=join-material.stage.secret-input-send; error=OSError",
+            rendered,
+        )
+        self.assertIn(
+            "cleanup-check=windows-joined; "
+            "operation=join-material.destroy.return-code; "
+            "error=ControllerJoinReturnCode",
+            rendered,
+        )
+        self.assertNotIn("private combined failure", rendered)
+
+    def test_guest_failure_remains_primary_when_controller_destroy_also_fails(
+        self,
+    ):
+        primary = subject.IdentityFailureDiagnostic.join_guest(
+            "marker-receive", "TimeoutError")
+        cleanup = ControllerJoinFailureCoordinate(
+            "destroy", "return-code", "ControllerJoinReturnCode")
+        failure = ControllerJoinMaterialError(
+            "private guest and cleanup failure",
+            cleanup_coordinate=cleanup,
+            diagnostic=primary,
+        )
+        with mock.patch.object(
+            subject.OneUseDomainJoinMaterial, "use", side_effect=failure,
+        ), tempfile.TemporaryDirectory() as name, self.assertRaises(
+            subject.WindowsIdentityOrchestratorError,
+        ) as caught:
+            subject._execute_join(
+                realm="FACTORY.TEST",
+                private_root=Path(name),
+                local_credential="private-local",
+                callbacks=self.callbacks([]),
+                stage_join_principal=mock.Mock(),
+                destroy_join_principal=mock.Mock(),
+            )
+        error = caught.exception
+        self.assertIs(error.diagnostic, primary)
+        self.assertIn(primary.render(), str(error))
+        self.assertIn(
+            "cleanup-check=windows-joined; "
+            "operation=join-material.destroy.return-code; "
+            "error=ControllerJoinReturnCode",
+            str(error),
+        )
+        self.assertNotIn("private guest and cleanup failure", str(error))
+        self.assertIsNone(error.__cause__)
+
     def callbacks(self, observed):
         def credential_action(check, principal, credential):
             actions = {
@@ -440,8 +553,8 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         ):
             root = Path(name)
             root.chmod(0o700)
-            with self.assertRaisesRegex(
-                    Exception, "stage/consumer: RuntimeError"):
+            with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError) as caught:
                 subject._execute_join(
                     realm="FACTORY.TEST",
                     private_root=root,
@@ -452,7 +565,38 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 )
             self.assertEqual(["serial", "build"], order)
             self.assertEqual([], list(root.iterdir()))
+            self.assertEqual(
+                "join-guest.prepare",
+                caught.exception.diagnostic.operation,
+            )
+            self.assertEqual(
+                "UnexpectedError",
+                caught.exception.diagnostic.error_type,
+            )
+            self.assertNotIn("build failed", str(caught.exception))
+            self.assertIsNone(caught.exception.__cause__)
             serial.close.assert_called_once_with()
+
+    def test_guest_join_coordinates_are_preserved_by_one_use_owner(self):
+        for phase in (
+            "prepare", "attach", "launch", "marker-receive",
+            "media-destroy", "release", "result", "reboot-reauth",
+            "reboot-probe", "cleanup",
+        ):
+            with self.subTest(phase=phase):
+                guest = subject.WindowsIdentityOrchestratorError(
+                    "secret-free guest failure",
+                    diagnostic=subject.IdentityFailureDiagnostic.join_guest(
+                        phase, "WindowsJoinIsoError"),
+                )
+                wrapped = subject.ControllerJoinMaterialError(
+                    "domain join material lifecycle failed")
+                # The production material owner does not own guest diagnostic
+                # typing; PrivateIdentityMaterial must preserve the validated
+                # diagnostic carrier supplied by the orchestrator.
+                self.assertEqual(
+                    f"join-guest.{phase}", guest.diagnostic.operation)
+                self.assertIsNone(wrapped.coordinate)
 
 
 if __name__ == "__main__":

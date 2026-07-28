@@ -112,6 +112,7 @@ class NativeWindowsAcceptanceAdapter:
         rotation_plan: ProgressiveRotationPlan | None = None,
         command_plan: PublicPowerShellLaunchPlan | None = None,
         timeout: float = 120.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.boundary = boundary
         self.private_root = Path(private_root).absolute()
@@ -122,6 +123,7 @@ class NativeWindowsAcceptanceAdapter:
         self.rotation_plan = rotation_plan
         self.command_plan = command_plan
         self.timeout = timeout
+        self.clock = clock
         self._principal_serial: ControllerPrincipalSerial | None = None
         self._join_material_serial: ControllerJoinSerial | None = None
         self._controller_console: SerialAutomation | None = None
@@ -304,6 +306,13 @@ class NativeWindowsAcceptanceAdapter:
         request = control_probe(action)
         data = bytearray()
         received = 0
+        deadline = self.clock() + self.timeout
+
+        def set_operation_timeout(stream: socket.socket) -> None:
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                raise TimeoutError("static probe total deadline expired")
+            stream.settimeout(remaining)
 
         def receive_record(stream: socket.socket) -> bytes:
             nonlocal received
@@ -312,6 +321,7 @@ class NativeWindowsAcceptanceAdapter:
                 if remaining <= 0:
                     raise WindowsControlSerialError(
                         "probe response exceeds size limit")
+                set_operation_timeout(stream)
                 chunk = stream.recv(min(4096, remaining))
                 if not chunk:
                     raise WindowsControlSerialError(
@@ -327,7 +337,7 @@ class NativeWindowsAcceptanceAdapter:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
                 failure: BaseException | None = None
                 try:
-                    stream.settimeout(self.timeout)
+                    set_operation_timeout(stream)
                     stream.connect(str(self._serial_socket()))
                 except Exception as error:
                     failure = error

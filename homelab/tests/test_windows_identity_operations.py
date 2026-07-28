@@ -11,6 +11,7 @@ from homelab.vm.windows_identity_progressive import (
     ProgressiveRotationReceipt,
 )
 from homelab.vm.windows_identity_run import (
+    IdentityFailureDiagnostic,
     PrivateIdentityMaterial,
     WindowsIdentityRunError,
 )
@@ -66,6 +67,26 @@ class WindowsIdentityOperationsTests(unittest.TestCase):
         self.assertIs(material._new_local, replacement)
         self.assertTrue(material._principals)
 
+    def test_scoped_acceptance_preserves_validated_non_run_error_diagnostic(self):
+        class CarrierError(RuntimeError):
+            def __init__(self, diagnostic):
+                super().__init__("private carrier message")
+                self.diagnostic = diagnostic
+
+        diagnostic = IdentityFailureDiagnostic.join_guest(
+            "marker-receive", "TimeoutError")
+        material = self.material([])
+        replacement = material.generate_replacement_credential()
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                replacement,
+                lambda _local, _principals: (
+                    _ for _ in ()).throw(CarrierError(diagnostic)),
+            )
+        self.assertIs(caught.exception.diagnostic, diagnostic)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertNotIn("private carrier message", str(caught.exception))
+
     def test_composition_runs_acceptance_inside_progressive_callback(self):
         boundary = mock.Mock()
         plan = mock.Mock()
@@ -109,6 +130,42 @@ class WindowsIdentityOperationsTests(unittest.TestCase):
         )
         self.assertTrue(receipt.acceptance_complete)
         self.assertTrue(receipt.credentials_released)
+
+    def test_production_composition_preserves_typed_join_diagnostic(self):
+        diagnostic = IdentityFailureDiagnostic.join_material(
+            "stage", "shell-prompt", "TimeoutError")
+
+        def progressive(**kwargs):
+            replacement = kwargs["generate_credential"]()
+            kwargs["after_rotation"](replacement)
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            windows_identity_operations,
+            "execute_progressive_rotation",
+            side_effect=progressive,
+        ), mock.patch.object(
+            windows_identity_operations,
+            "NativeBoundaryRotationSession",
+            return_value=mock.Mock(),
+        ), self.assertRaises(WindowsIdentityRunError) as caught:
+            execute_production_identity_acceptance(
+                boundary=mock.Mock(
+                    controller_overlay=None, processes={}),
+                plan=mock.Mock(),
+                publication=Path(name) / "publication.iso",
+                private_parent=Path(name),
+                stage_principals=mock.Mock(),
+                destroy_principals=mock.Mock(),
+                run_acceptance=lambda _local, _principals: (
+                    _ for _ in ()).throw(WindowsIdentityRunError(
+                        "private join message", diagnostic=diagnostic)),
+            )
+
+        error = caught.exception
+        self.assertIs(error.diagnostic, diagnostic)
+        self.assertIn(diagnostic.render(), str(error))
+        self.assertNotIn("private join message", str(error))
+        self.assertIsNone(error.__cause__)
 
 
 if __name__ == "__main__":

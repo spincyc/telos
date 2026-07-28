@@ -13,6 +13,7 @@ import socket
 import stat
 import subprocess
 import tempfile
+import time
 from enum import Enum
 from typing import Callable, Mapping, Protocol
 
@@ -22,6 +23,7 @@ from .windows_identity_contract import (
     PRIVATE_MEDIA_PARENT_DEVICE,
     PRIVATE_MEDIA_PORT,
 )
+from .windows_public_command import bounded_media_launch_command
 
 
 class WindowsCredentialActionError(RuntimeError):
@@ -30,7 +32,7 @@ class WindowsCredentialActionError(RuntimeError):
 
 SCRIPT = (
     Path(__file__).with_name("windows_credential_action_control")
-    / "Invoke-TelosCredentialAction.ps1"
+    / "TelosCredential.ps1"
 )
 NONCE = re.compile(r"[a-f0-9]{32}")
 ACCOUNT = re.compile(r"[A-Za-z0-9_.@-]{1,256}")
@@ -84,27 +86,44 @@ class CredentialActionMediaState(Enum):
 class DuplexCredentialActionSerial:
     """One bounded duplex COM1 connection for marker, release, and result."""
 
-    def __init__(self, connection: socket.socket, *, maximum_line: int = 4096):
+    def __init__(
+        self,
+        connection: socket.socket,
+        *,
+        maximum_line: int = 4096,
+        timeout: float = 120.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         if not 128 <= maximum_line <= 16384:
             raise WindowsCredentialActionError("serial line bound is invalid")
+        if not 0 < timeout <= 300:
+            raise WindowsCredentialActionError("serial timeout is invalid")
         self.connection = connection
         self.maximum_line = maximum_line
+        self._clock = clock
+        self._deadline = clock() + timeout
         self.closed = False
 
     @classmethod
     def connect(
         cls, path: Path, *, timeout: float = 120.0,
     ) -> "DuplexCredentialActionSerial":
-        if not 0 < timeout <= 300:
-            raise WindowsCredentialActionError("serial timeout is invalid")
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.settimeout(timeout)
+        serial = cls(connection, timeout=timeout)
         try:
+            serial._set_operation_timeout()
             connection.connect(str(Path(path)))
         except Exception:
             connection.close()
             raise
-        return cls(connection)
+        return serial
+
+    def _set_operation_timeout(self) -> None:
+        remaining = self._deadline - self._clock()
+        if remaining <= 0:
+            raise WindowsCredentialActionError(
+                "credential-action serial deadline expired")
+        self.connection.settimeout(remaining)
 
     def read_line(self) -> str:
         if self.closed:
@@ -112,6 +131,7 @@ class DuplexCredentialActionSerial:
                 "credential-action serial is closed")
         data = bytearray()
         while len(data) <= self.maximum_line:
+            self._set_operation_timeout()
             chunk = self.connection.recv(1)
             if not chunk:
                 raise WindowsCredentialActionError(
@@ -138,6 +158,7 @@ class DuplexCredentialActionSerial:
         if len(encoded) > self.maximum_line:
             raise WindowsCredentialActionError(
                 "credential-action release exceeds bound")
+        self._set_operation_timeout()
         self.connection.sendall(encoded)
 
     def close(self) -> None:
@@ -231,7 +252,7 @@ def build_credential_action_iso(
         partial = root / "credential-action.iso"
         runner([
             "xorriso", "-as", "mkisofs", "-quiet",
-            "-V", "TELOS_CREDENTIAL_ACTION", "-J", "-r",
+            "-V", "TELOS_CRED", "-J", "-r",
             "-o", str(partial), str(stage),
         ], check=True)
         if partial.is_symlink() or not partial.is_file():
@@ -245,13 +266,8 @@ def build_credential_action_iso(
 
 def launch_credential_action_command() -> str:
     """Return fixed secret-free PowerShell suitable for GUI injection."""
-    return (
-        "powershell.exe -NoLogo -NoProfile -NonInteractive "
-        "-ExecutionPolicy Bypass -Command \"& { "
-        "$v=(Get-Volume -FileSystemLabel 'TELOS_CREDENTIAL_ACTION' | "
-        "Select-Object -First 1).DriveLetter; "
-        "if (-not $v) { throw 'TELOS_CREDENTIAL_ACTION volume missing' }; "
-        "& ($v + ':\\Invoke-TelosCredentialAction.ps1') }\""
+    return bounded_media_launch_command(
+        "TELOS_CRED", "TelosCredential.ps1",
     )
 
 
