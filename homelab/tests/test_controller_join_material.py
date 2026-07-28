@@ -1,0 +1,174 @@
+import base64
+import socket
+import threading
+import unittest
+from unittest import mock
+
+from homelab.vm.controller_join_material import (
+    ControllerJoinMaterialError,
+    ControllerJoinResult,
+    ControllerJoinSerial,
+    OneUseDomainJoinMaterial,
+)
+
+
+SECRET = "Join-secret-DoNotDisclose-47!"
+
+
+class ControllerJoinSerialTests(unittest.TestCase):
+    def run_operation(self, invoke, returncode=0):
+        left, right = socket.socketpair()
+        observed = []
+
+        def responder():
+            stream = right.makefile("rb", buffering=0)
+            right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            command = stream.readline()
+            observed.append(command)
+            token = command.split(
+                b"__TELOS_JOIN_READY_", 1)[1].split(b"__", 1)[0]
+            result = command.split(
+                b"__TELOS_JOIN_RC_", 1)[1].split(b"=", 1)[0]
+            right.sendall(command)
+            right.sendall(b"__TELOS_JOIN_READY_" + token + b"__\r\n")
+            observed.append(stream.readline())
+            right.sendall(
+                b"\r\n__TELOS_JOIN_RC_" + result + b"="
+                + str(returncode).encode() + b"\r\n")
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            serial = ControllerJoinSerial(
+                left.makefile("rb", buffering=0),
+                left.makefile("wb", buffering=0),
+                timeout=1,
+            )
+            result = invoke(serial)
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        return result, observed
+
+    def test_stage_delivers_secret_only_in_echo_suppressed_stdin(self):
+        result, observed = self.run_operation(
+            lambda serial: serial.stage(SECRET))
+        self.assertEqual("stage", result.operation)
+        self.assertFalse(result.destruction_proved)
+        self.assertIn(b"stty -echo || exit 91", observed[0])
+        self.assertIn(b"sudo -n python3", observed[0])
+        self.assertNotIn(SECRET.encode(), observed[0])
+        self.assertEqual({
+            "principal": "workstation-join",
+            "credential": SECRET,
+        }, __import__("json").loads(base64.b64decode(observed[1])))
+        self.assertNotIn(SECRET, repr(result))
+
+    def test_destroy_program_requires_verified_absence(self):
+        result, observed = self.run_operation(
+            lambda serial: serial.destroy())
+        self.assertTrue(result.destruction_proved)
+        self.assertIn(b"samdb.deleteuser", base64.b64decode(
+            observed[0].split(
+                b"exec(base64.b64decode('", 1)[1].split(b"'))", 1)[0]))
+        self.assertNotIn(SECRET.encode(), b"".join(observed))
+
+    def test_guest_failure_is_secret_free_and_fail_closed(self):
+        with self.assertRaisesRegex(
+                ControllerJoinMaterialError, "stage returned 7") as caught:
+            self.run_operation(
+                lambda serial: serial.stage(SECRET), returncode=7)
+        self.assertNotIn(SECRET, str(caught.exception))
+
+
+class OneUseDomainJoinMaterialTests(unittest.TestCase):
+    def result(self, operation, destroyed=False):
+        return ControllerJoinResult(
+            operation, "workstation-join", destroyed, ())
+
+    def test_material_is_available_once_and_destroyed_after_consumption(self):
+        observed = []
+        stage = mock.Mock(side_effect=lambda secret: (
+            observed.append(secret), self.result("stage"))[1])
+        destroy = mock.Mock(return_value=self.result("destroy", True))
+        material = OneUseDomainJoinMaterial(
+            "synthetic.test", stage=stage, destroy=destroy)
+
+        with mock.patch.object(
+                material, "_generate", return_value=SECRET):
+            value, proof = material.use(
+                lambda values: observed.append(dict(values)) or "joined")
+
+        self.assertEqual("joined", value)
+        self.assertTrue(proof.destruction_proved)
+        self.assertEqual(SECRET, observed[0])
+        self.assertEqual(SECRET, observed[1]["credential"])
+        self.assertNotIn(SECRET, repr(material))
+        with self.assertRaisesRegex(
+                ControllerJoinMaterialError, "one-use"):
+            material.use(lambda _values: None)
+
+    def test_consumer_failure_still_destroys_and_redacts_errors(self):
+        material = OneUseDomainJoinMaterial(
+            "synthetic.test",
+            stage=lambda _secret: self.result("stage"),
+            destroy=lambda: self.result("destroy", True),
+        )
+
+        def fail(_values):
+            raise RuntimeError("failure exposed " + SECRET)
+
+        with mock.patch.object(
+                material, "_generate", return_value=SECRET):
+            with self.assertRaisesRegex(
+                    ControllerJoinMaterialError,
+                    "stage/consumer: RuntimeError") as caught:
+                material.use(fail)
+        self.assertNotIn(SECRET, str(caught.exception))
+
+    def test_indeterminate_stage_still_attempts_destruction(self):
+        destroy = mock.Mock(return_value=self.result("destroy", True))
+        material = OneUseDomainJoinMaterial(
+            "synthetic.test",
+            stage=mock.Mock(side_effect=RuntimeError(SECRET)),
+            destroy=destroy,
+        )
+        with self.assertRaisesRegex(
+                ControllerJoinMaterialError, "stage/consumer"):
+            material.use(lambda _values: None)
+        destroy.assert_called_once_with()
+
+    def test_destruction_failure_does_not_claim_proof(self):
+        destroy = mock.Mock(side_effect=[
+            self.result("destroy", False),
+            self.result("destroy", True),
+        ])
+        material = OneUseDomainJoinMaterial(
+            "synthetic.test",
+            stage=lambda _secret: self.result("stage"),
+            destroy=destroy,
+        )
+        with self.assertRaisesRegex(
+                ControllerJoinMaterialError, "destruction"):
+            material.use(lambda _values: None)
+        self.assertIn("cleanup-pending", repr(material))
+        self.assertTrue(material.retry_destruction().destruction_proved)
+        self.assertNotIn("cleanup-pending", repr(material))
+        with self.assertRaisesRegex(
+                ControllerJoinMaterialError, "not pending"):
+            material.retry_destruction()
+
+    def test_rejects_invalid_realms_and_multiline_credentials(self):
+        with self.assertRaisesRegex(ValueError, "realm"):
+            OneUseDomainJoinMaterial(
+                "unsafe realm", stage=mock.Mock(), destroy=mock.Mock())
+        serial = ControllerJoinSerial(
+            __import__("io").BytesIO(), __import__("io").BytesIO())
+        with self.assertRaisesRegex(ValueError, "credential"):
+            serial.stage("unsafe\nsecret")
+
+
+if __name__ == "__main__":
+    unittest.main()
