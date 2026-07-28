@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:36:32Z"
+updated_at: "2026-07-28T00:37:41Z"
 ---
 
 # Goal
@@ -62,3 +62,7 @@ selected release, standalone 256 GiB-or-larger qcow2, safe serial, exact sole
 writable OS-disk QEMU exposure, layout record, and command digest. Private
 runtime inputs have restrictive permissions, digest-only receipts,
 known-secret evidence rejection, and success/failure teardown.
+
+The user authorized pushing checkpoints and directed continuous progress.
+`origin/main` now includes `dafb18a`; continue with private WinPE input
+rendering and Windows-first partition application.
