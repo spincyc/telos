@@ -16,7 +16,8 @@ $actions = @(
     'connected-domain-login',
     'cached-domain-login',
     'local-rescue-login',
-    'operator-elevation-check'
+    'operator-local-administrators-check',
+    'uncached-domain-user-denied'
 )
 if ($document.schema_version -ne 1 -or
     $document.nonce -notmatch '^[a-f0-9]{32}$' -or
@@ -109,7 +110,6 @@ public static class TelosCredentialLogon {
     $child = @'
 $ErrorActionPreference='Stop'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-$principal=[Security.Principal.WindowsPrincipal]::new($identity)
 $reachable=$false
 if ('__DOMAIN__' -ne '.') {
  $client=[Net.Sockets.TcpClient]::new()
@@ -122,6 +122,16 @@ if ('__DOMAIN__' -ne '.') {
   $client.Dispose()
  }
 }
+$administratorSid='S-1-5-32-544'
+$member=$false
+$localMembers=@(Get-LocalGroupMember -SID $administratorSid -ErrorAction Stop)
+foreach ($localMember in $localMembers) {
+ if ($null -ne $localMember.SID -and
+     $localMember.SID.Value -eq $identity.User.Value) {
+  $member=$true
+  break
+ }
+}
 $record=[ordered]@{
  schema_version=1
  event='credential-action-result'
@@ -130,10 +140,10 @@ $record=[ordered]@{
  result='pass'
  principal=[string]$identity.Name
  authenticated=[bool]$identity.IsAuthenticated
- elevated=[bool]$principal.IsInRole(
-  [Security.Principal.WindowsBuiltInRole]::Administrator)
+ local_administrators_member=[bool]$member
  authentication_type=[string]$identity.AuthenticationType
  domain_reachable=[bool]$reachable
+ failure_classification='none'
 }
 $record | ConvertTo-Json -Compress |
  Set-Content -LiteralPath '__OUTPUT__' -Encoding UTF8 -NoNewline
@@ -150,13 +160,47 @@ $record | ConvertTo-Json -Compress |
     $startup = [TelosCredentialLogon+STARTUPINFO]::new()
     $startup.cb = [Runtime.InteropServices.Marshal]::SizeOf($startup)
     $process = [TelosCredentialLogon+PROCESS_INFORMATION]::new()
+    $controllerReachable = $false
+    if ($domain -ne '.') {
+        $client = [Net.Sockets.TcpClient]::new()
+        try {
+            $pending = $client.ConnectAsync($domain, 389)
+            $controllerReachable = (
+                $pending.Wait(1500) -and $client.Connected)
+        }
+        catch {
+            $controllerReachable = $false
+        }
+        finally {
+            $client.Dispose()
+        }
+    }
     $created = [TelosCredentialLogon]::CreateProcessWithLogonW(
         $username, $domain, $password, 1, $null, $commandLine, 0,
         [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process)
     $password = $null
     if (-not $created) {
+        $logonError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($action -eq 'uncached-domain-user-denied' -and
+                -not $controllerReachable -and $logonError -eq 1326) {
+            $denied = [ordered]@{
+                schema_version = 1
+                event = 'credential-action-result'
+                nonce = $nonce
+                action = $action
+                result = 'pass'
+                principal = $domain + '\' + $username
+                authenticated = $false
+                local_administrators_member = $false
+                authentication_type = 'None'
+                domain_reachable = $false
+                failure_classification = 'windows-logon-failure'
+            }
+            $serial.WriteLine(($denied | ConvertTo-Json -Compress))
+            return
+        }
         throw ('credential action logon failed: ' +
-            [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            $logonError)
     }
     try {
         $wait = [TelosCredentialLogon]::WaitForSingleObject(

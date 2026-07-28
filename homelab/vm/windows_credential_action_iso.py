@@ -31,15 +31,16 @@ ACTIONS = frozenset({
     "connected-domain-login",
     "cached-domain-login",
     "local-rescue-login",
-    "operator-elevation-check",
+    "operator-local-administrators-check",
+    "uncached-domain-user-denied",
 })
 ACTION_NODE = "telos-credential-action-media"
 ACTION_DEVICE = "telos-credential-action-cd"
 ACTION_BUS = "controlbus.0"
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
-    "principal", "authenticated", "elevated", "authentication_type",
-    "domain_reachable",
+    "principal", "authenticated", "local_administrators_member",
+    "authentication_type", "domain_reachable", "failure_classification",
 }
 
 
@@ -154,7 +155,8 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
         raise WindowsCredentialActionError(
             "credential-action password is invalid")
     if (values["action"] in {
-            "connected-domain-login", "cached-domain-login"}
+            "connected-domain-login", "cached-domain-login",
+            "uncached-domain-user-denied"}
             and values["domain"] == "."):
         raise WindowsCredentialActionError(
             "domain login requires a domain")
@@ -266,21 +268,32 @@ def parse_action_result(
     if any(result.get(key) != value for key, value in expected.items()):
         raise WindowsCredentialActionError(
             "credential-action result identity is invalid")
-    for key in ("principal", "authentication_type"):
+    for key in ("principal", "authentication_type", "failure_classification"):
         if (not isinstance(result[key], str) or not result[key]
                 or len(result[key]) > 256):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
-    for key in ("authenticated", "elevated"):
+    for key in ("authenticated", "local_administrators_member"):
         if not isinstance(result[key], bool):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
     if not isinstance(result["domain_reachable"], bool):
         raise WindowsCredentialActionError(
             "credential-action result schema is invalid")
+    if action == "uncached-domain-user-denied":
+        if (result["principal"].casefold() != expected_principal.casefold()
+                or result["authenticated"]
+                or result["local_administrators_member"]
+                or result["authentication_type"] != "None"
+                or result["domain_reachable"]
+                or result["failure_classification"] != "windows-logon-failure"):
+            raise WindowsCredentialActionError(
+                "uncached domain login denial proof is invalid")
+        return result
     if (result["principal"].casefold() != expected_principal.casefold()
             or not result["authenticated"]
-            or result["authentication_type"] not in allowed_authentication_types):
+            or result["authentication_type"] not in allowed_authentication_types
+            or result["failure_classification"] != "none"):
         raise WindowsCredentialActionError(
             "credential-action principal proof is invalid")
     if (action == "connected-domain-login"
@@ -290,9 +303,10 @@ def parse_action_result(
     if action == "cached-domain-login" and result["domain_reachable"]:
         raise WindowsCredentialActionError(
             "cached domain login was not isolated from the domain")
-    if action == "operator-elevation-check" and not result["elevated"]:
+    if (action == "operator-local-administrators-check"
+            and not result["local_administrators_member"]):
         raise WindowsCredentialActionError(
-            "operator elevation proof is invalid")
+            "operator local Administrators membership proof is invalid")
     return result
 
 

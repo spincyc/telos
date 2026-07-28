@@ -84,7 +84,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                     WindowsCredentialActionError, "requires a domain"):
                 build_credential_action_iso(
                     root / "action.iso", {**MATERIAL, "domain": "."})
-            self.assertEqual(4, len(ACTIONS))
+            self.assertEqual(5, len(ACTIONS))
 
     def test_script_loads_then_waits_for_destruction_before_native_action(self):
         script = Path(
@@ -100,6 +100,15 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertEqual(sorted(positions), positions)
         self.assertIn("logonFlags", script)
         self.assertIn("$username, $domain, $password, 1,", script)
+        self.assertIn(
+            "$action -eq 'uncached-domain-user-denied' -and\n"
+            "                -not $controllerReachable -and "
+            "$logonError -eq 1326",
+            script)
+        self.assertIn(
+            "failure_classification = 'windows-logon-failure'", script)
+        self.assertIn("Get-LocalGroupMember -SID $administratorSid", script)
+        self.assertNotIn("WindowsBuiltInRole]::Administrator", script)
         self.assertIn("TerminateProcess(", script)
         self.assertLess(script.index("TerminateProcess("),
                         script.index("throw 'credential action timed out'"))
@@ -221,9 +230,10 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "result": "pass",
             "principal": "AD\\acceptance-operator",
             "authenticated": True,
-            "elevated": False,
+            "local_administrators_member": False,
             "authentication_type": "Kerberos",
             "domain_reachable": False,
+            "failure_classification": "none",
         }
         parsed = parse_action_result(
             json.dumps(result) + "\n",
@@ -248,7 +258,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                     expected_principal="AD\\acceptance-operator",
                     allowed_authentication_types=frozenset({"Kerberos"}))
 
-    def test_action_semantics_reject_network_or_elevation_mismatch(self):
+    def test_action_semantics_reject_network_or_membership_mismatch(self):
         base = {
             "schema_version": 1,
             "event": "credential-action-result",
@@ -257,9 +267,10 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "result": "pass",
             "principal": "AD\\operator",
             "authenticated": True,
-            "elevated": False,
+            "local_administrators_member": False,
             "authentication_type": "Kerberos",
             "domain_reachable": False,
+            "failure_classification": "none",
         }
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "reachability"):
@@ -268,18 +279,51 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 action="connected-domain-login",
                 expected_principal="AD\\operator",
                 allowed_authentication_types=frozenset({"Kerberos"}))
-        elevated = {
+        membership = {
             **base,
-            "action": "operator-elevation-check",
+            "action": "operator-local-administrators-check",
             "domain_reachable": True,
         }
         with self.assertRaisesRegex(
-                WindowsCredentialActionError, "elevation"):
+                WindowsCredentialActionError, "Administrators membership"):
             parse_action_result(
-                json.dumps(elevated) + "\n", nonce=NONCE,
-                action="operator-elevation-check",
+                json.dumps(membership) + "\n", nonce=NONCE,
+                action="operator-local-administrators-check",
                 expected_principal="AD\\operator",
                 allowed_authentication_types=frozenset({"Kerberos"}))
+
+    def test_uncached_denial_requires_offline_classified_failure(self):
+        result = {
+            "schema_version": 1,
+            "event": "credential-action-result",
+            "nonce": NONCE,
+            "action": "uncached-domain-user-denied",
+            "result": "pass",
+            "principal": "AD\\never-cached",
+            "authenticated": False,
+            "local_administrators_member": False,
+            "authentication_type": "None",
+            "domain_reachable": False,
+            "failure_classification": "windows-logon-failure",
+        }
+        self.assertEqual(result, parse_action_result(
+            json.dumps(result) + "\n",
+            nonce=NONCE,
+            action="uncached-domain-user-denied",
+            expected_principal="AD\\never-cached",
+            allowed_authentication_types=frozenset()))
+        for mutation in (
+                {**result, "domain_reachable": True},
+                {**result, "authenticated": True},
+                {**result, "failure_classification": "script-failure"},
+                {**result, "result": "error"}):
+            with self.assertRaises(WindowsCredentialActionError):
+                parse_action_result(
+                    json.dumps(mutation) + "\n",
+                    nonce=NONCE,
+                    action="uncached-domain-user-denied",
+                    expected_principal="AD\\never-cached",
+                    allowed_authentication_types=frozenset())
 
     def test_composition_uses_one_duplex_session_and_closes_it(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -298,9 +342,10 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 "result": "pass",
                 "principal": "AD\\acceptance-operator",
                 "authenticated": True,
-                "elevated": False,
+                "local_administrators_member": False,
                 "authentication_type": "Kerberos",
                 "domain_reachable": False,
+                "failure_classification": "none",
             }
 
             def launch(_command):
