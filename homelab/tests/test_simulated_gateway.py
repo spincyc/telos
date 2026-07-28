@@ -28,12 +28,19 @@ class SimulatedGatewayTests(unittest.TestCase):
     def setUp(self):
         self.gateway = sim.Gateway()
 
-    def test_controller_identity_matches_qemu_topology(self):
-        self.assertEqual(
-            sim.CONTROLLER_MAC,
-            bytes.fromhex(
-                simulated_topology.MACS["controller"].replace(":", "")),
-        )
+    def test_controller_identity_can_bind_to_qemu_topology(self):
+        controller_mac = bytes.fromhex(
+            simulated_topology.MACS["controller"].replace(":", ""))
+        gateway = sim.Gateway(controller_mac=controller_mac)
+        query = bytearray(48)
+        query[0] = 0x23
+        query[40:48] = b"request!"
+        request = controller_ip(
+            17, sim.udp(43210, 123, bytes(query)), sim.NTP_IP)
+        request = request[:6] + controller_mac + request[12:]
+        self.assertEqual(len(gateway.handle(request)), 1)
+        self.gateway.lease_mac = sim.CONTROLLER_MAC
+        self.assertEqual(len(self.gateway.handle(request)), 0)
 
     def test_arp_answers_only_for_gateway(self):
         arp = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1)

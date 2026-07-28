@@ -24,6 +24,7 @@ from .automated_controller import DisposableBootDisk
 from .bootstrap_dc import paths
 from .controller_factory import FactoryBundle
 from .factory_runner import (
+    MACS,
     gateway_command,
     switch_command,
     wait_for_switch_port,
@@ -36,6 +37,8 @@ from .windows_identity_contract import qemu_identity_command
 from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
+
+IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 
 
 class WindowsIdentityRunError(RuntimeError):
@@ -320,7 +323,10 @@ class NativeProcessBoundary:
         try:
             assert self.port is not None
             self.processes["gateway"] = subprocess.Popen(
-                gateway_command(self.port),
+                gateway_command(
+                    self.port,
+                    controller_mac=IDENTITY_CONTROLLER_MAC.hex(":"),
+                ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,

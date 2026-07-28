@@ -244,12 +244,17 @@ def switch_command(
     ]
 
 
-def gateway_command(port: int) -> list[str]:
-    return [
+def gateway_command(
+    port: int, *, controller_mac: str | None = None,
+) -> list[str]:
+    command = [
         sys.executable,
         str(Path(__file__).with_name("simulated_gateway.py")),
         "--port", str(port), "--connect",
     ]
+    if controller_mac is not None:
+        command.extend(["--controller-mac", controller_mac])
+    return command
 
 
 def wait_for_switch_port(

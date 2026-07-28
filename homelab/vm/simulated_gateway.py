@@ -27,7 +27,7 @@ LEASE_IP = ipaddress.IPv4Address("10.1.31.11")
 CONTROLLER_IP = ipaddress.IPv4Address("10.1.31.2")
 NETMASK = ipaddress.IPv4Address("255.255.255.240")
 GATEWAY_MAC = bytes.fromhex("525400311101")
-CONTROLLER_MAC = bytes.fromhex("525400311112")
+CONTROLLER_MAC = bytes.fromhex("525400111112")
 DNS_NAME = "updates.sim.test"
 CONTROLLER_NAME = "bootstrap-dc.lab.home.arpa"
 DNS_SUFFIX = "lab.home.arpa"
@@ -124,14 +124,19 @@ def dhcp_options(data: bytes) -> dict[int, bytes]:
 
 
 class Gateway:
-    def __init__(self, clock=time.time) -> None:
+    def __init__(
+        self, clock=time.time, *, controller_mac: bytes = CONTROLLER_MAC,
+    ) -> None:
+        if len(controller_mac) != 6 or controller_mac[0] & 1:
+            raise ValueError("Controller MAC must be a unicast Ethernet address")
         self.lease_mac: bytes | None = None
         self.clock = clock
+        self.controller_mac = controller_mac
 
     def _valid_source(
         self, source_mac: bytes, source_ip: ipaddress.IPv4Address,
     ) -> bool:
-        if source_mac == CONTROLLER_MAC and source_ip == CONTROLLER_IP:
+        if source_mac == self.controller_mac and source_ip == CONTROLLER_IP:
             return True
         return (
             self.lease_mac is None
@@ -519,10 +524,12 @@ def serve(
                             struct.pack("!I", len(reply)) + reply)
 
 
-def connect_peer(host: str, port: int) -> None:
+def connect_peer(
+    host: str, port: int, *, controller_mac: bytes = CONTROLLER_MAC,
+) -> None:
     if host != "127.0.0.1":
         raise RuntimeError("gateway peer must connect only to 127.0.0.1")
-    gateway = Gateway()
+    gateway = Gateway(controller_mac=controller_mac)
     with socket.create_connection((host, port)) as connection:
         announcement = identity_announcement(GATEWAY_MAC, "gateway")
         connection.sendall(struct.pack("!I", len(announcement)) + announcement)
@@ -547,6 +554,7 @@ def main() -> int:
     parser.add_argument("--listener-fd", type=int)
     parser.add_argument("--audit-first", type=Path)
     parser.add_argument("--connect", action="store_true")
+    parser.add_argument("--controller-mac", default=CONTROLLER_MAC.hex(":"))
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be an unprivileged TCP port")
@@ -555,7 +563,12 @@ def main() -> int:
     if args.connect:
         if args.listener_fd is not None or args.connections != 1:
             parser.error("--connect cannot use --listener-fd or --connections")
-        connect_peer("127.0.0.1", args.port)
+        try:
+            controller_mac = bytes.fromhex(args.controller_mac.replace(":", ""))
+        except ValueError:
+            parser.error("--controller-mac must be six hexadecimal octets")
+        connect_peer(
+            "127.0.0.1", args.port, controller_mac=controller_mac)
     else:
         serve(args.port, args.connections, args.listener_fd, args.audit_first)
     return 0
