@@ -175,6 +175,35 @@ class FactoryRunnerTests(unittest.TestCase):
             self.assertEqual(factory_runner.assess_handoff(
                 switch, controller, workstation, "20260727.001"), [])
 
+    def test_windows_handoff_requires_full_payload_and_wimboot_execution(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            switch = root / "switch.jsonl"
+            switch.write_text("\n".join(
+                f'{{\"kind\":\"{kind}\",\"peer\":\"gateway\"}}'
+                for kind in ("DISCOVER", "OFFER", "REQUEST", "ACK")))
+            controller = root / "controller.log"
+            controller.write_text("TELOS PXE SERVICES READY\n")
+            workstation = root / "workstation.log"
+            base = "http://10.1.31.2/windows/20260727.001/"
+            workstation.write_text(
+                "http://10.1.31.2/boot/boot.ipxe\n"
+                + "".join(base + name + "\n" for name in (
+                    "boot.ipxe", "wimboot", "bootmgr", "boot/BCD",
+                    "boot/boot.sdi", "sources/boot.wim",
+                ))
+                + "Windows Imaging Format bootloader\n"
+                + "...found WIM file boot.wim\n")
+            self.assertEqual(factory_runner.assess_handoff(
+                switch, controller, workstation, "20260727.001", "windows"),
+                [])
+            workstation.write_text(workstation.read_text().replace(
+                "...found WIM file boot.wim\n", ""))
+            self.assertIn("no Arch or WinPE handoff was observed",
+                          factory_runner.assess_handoff(
+                              switch, controller, workstation,
+                              "20260727.001", "windows"))
+
     def test_ipxe_preboot_marker_is_not_kernel_handoff(self):
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

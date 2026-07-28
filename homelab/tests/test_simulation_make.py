@@ -134,6 +134,7 @@ class SimulationMakeTests(unittest.TestCase):
             "FACTORY_CONTROLLER_STATE",
             "WORKSTATION_ISO",
             "FACTORY_RELEASES",
+            "FACTORY_TARGET",
         ):
             self.assertIn(option, plan)
             self.assertIn(option, run)

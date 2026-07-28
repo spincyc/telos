@@ -251,7 +251,7 @@ def wait_for_switch_port(
 
 def assess_handoff(
     switch_evidence: Path, controller_serial: Path, workstation_serial: Path,
-    version: str,
+    version: str, target: str = "arch-workstation",
 ) -> list[str]:
     compact = switch_evidence.read_text(
         encoding="utf-8", errors="replace").replace(" ", "")
@@ -292,11 +292,25 @@ def assess_handoff(
         or f"http://10.1.31.2{prefix}payload/arch/x86_64/airootfs."
         in workstation
     )
-    winpe = all(value in controller for value in (
-        f"GET /windows/{version}/boot.ipxe ",
-        f"GET /windows/{version}/sources/boot.wim ",
-    ))
-    if not ((arch_requests and arch_serial and root_request) or winpe):
+    windows_prefix = f"/windows/{version}/"
+    winpe_requests = all(
+        f"GET {windows_prefix}{value} " in controller
+        or f"http://10.1.31.2{windows_prefix}{value}" in workstation
+        for value in (
+            "boot.ipxe", "wimboot", "bootmgr", "boot/BCD",
+            "boot/boot.sdi", "sources/boot.wim",
+        )
+    )
+    winpe = (
+        winpe_requests
+        and "Windows Imaging Format bootloader" in workstation
+        and "...found WIM file boot.wim" in workstation
+    )
+    accepted = (
+        arch_requests and arch_serial and root_request
+        if target == "arch-workstation" else winpe
+    )
+    if not accepted:
         if phases["kernel_init"] and phases["archiso_network_hook"]:
             problems.append(
                 "Arch kernel/init and PXE hook were observed, but network-root "
@@ -377,6 +391,7 @@ def run(
     seed_iso: Path = DEFAULT_SEED_ISO,
     evidence_root: Path = DEFAULT_FAILURE_EVIDENCE,
     duration: float = DEFAULT_DURATION,
+    target: str = "arch-workstation",
 ) -> int:
     if not 1 <= duration <= 3600:
         print("error: duration must be between 1 and 3600 seconds",
@@ -410,7 +425,7 @@ def run(
         if releases is not None:
             publication = runtime / "publication"
             receipt = stage_publication(
-                releases, publication, seed_iso=seed_iso)
+                releases, publication, seed_iso=seed_iso, target=target)
             publication_iso = runtime / "publication.iso"
             subprocess.run(
                 [
@@ -492,7 +507,7 @@ def run(
             if publication_iso is not None:
                 problems = assess_handoff(
                     runtime / "switch.jsonl", controller_serial,
-                    workstation_serial, receipt["version"])
+                    workstation_serial, receipt["version"], target)
                 if problems:
                     raise RuntimeError(
                         "PXE handoff acceptance failed:\n- "
@@ -527,6 +542,9 @@ def parser() -> argparse.ArgumentParser:
         "--evidence-root", type=Path, default=DEFAULT_FAILURE_EVIDENCE)
     result.add_argument("--seed-iso", type=Path, default=DEFAULT_SEED_ISO)
     result.add_argument("--duration", type=float, default=DEFAULT_DURATION)
+    result.add_argument(
+        "--target", choices=("arch-workstation", "windows"),
+        default="arch-workstation")
     result.add_argument("--apply", action="store_true")
     return result
 
@@ -537,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
         args.controller_state, apply=args.apply,
         workstation_iso=args.workstation_iso, releases=args.releases,
         seed_iso=args.seed_iso, evidence_root=args.evidence_root,
-        duration=args.duration)
+        duration=args.duration, target=args.target)
 
 
 if __name__ == "__main__":
