@@ -12,6 +12,7 @@ from homelab.vm.windows_control_serial import (
     attach_qemu_serial,
     control_probe,
     fault_reachability_fields,
+    parse_probe_launcher,
     parse_probe_record,
     parse_probe_start,
     receive_probe_record,
@@ -76,6 +77,14 @@ def record(action="domain-state"):
 
 
 class WindowsControlSerialTests(unittest.TestCase):
+    def test_launcher_parser_accepts_only_exact_action_marker(self):
+        self.assertEqual(4, parse_probe_launcher(b"4\n", "domain-state"))
+        for invalid in (b"", b"4", b"04\n", b"3\n", b'{"private":4}\n'):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(WindowsControlSerialError) as caught:
+                    parse_probe_launcher(invalid, "domain-state")
+                self.assertNotIn("private", str(caught.exception))
+
     def test_start_parser_accepts_only_exact_action_bound_marker(self):
         valid = (
             b'{"schema_version":1,"action":"domain-state",'
@@ -139,7 +148,7 @@ class WindowsControlSerialTests(unittest.TestCase):
     def test_launch_is_manifest_allowlisted_and_contains_no_input_value(self):
         probe = control_probe("domain-state")
         self.assertEqual("domain-state", probe.action)
-        self.assertIn("-Action 'domain-state'", probe.command)
+        self.assertIn("-A 'domain-state'", probe.command)
         with self.assertRaisesRegex(
                 WindowsControlSerialError, "not allowlisted"):
             control_probe("domain-state'; Write-Host private")

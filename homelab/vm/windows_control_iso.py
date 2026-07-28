@@ -20,6 +20,21 @@ SCRIPT = ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
 MANIFEST = ASSET_ROOT / "manifest.json"
 EXPECTED_FILES = frozenset({SCRIPT.name, MANIFEST.name})
 MAX_PROBE_LAUNCH_CHARS = 240
+_LAUNCH_MARKERS = {
+    action: index
+    for index, action in enumerate((
+        "current-principal",
+        "current-session-state",
+        "controller-readiness",
+        "domain-state",
+        "managed-identity-state",
+        "cached-logon-policy",
+        "gateway-reachability",
+        "dependency-reachability",
+        "service-reachability",
+        "update-policy",
+    ), start=1)
+}
 
 # The control disc is an observation interface, not a provisioning channel.
 # Keep this deliberately small and case-insensitive.
@@ -46,13 +61,15 @@ def probe_launch_command(
     manifest = audit_payload(asset_root)
     if action not in manifest["actions"]:
         raise WindowsControlIsoError("control action is not allowlisted")
-    # Resolve by ISO volume label because Windows drive letters are not stable.
-    # Action is an exact manifest member, not caller-provided shell text.
+    marker = probe_launch_marker(action)
+    # Open COM1 and emit the fixed action marker before touching optical media.
+    # Pass that same port to the script so no reopen race can erase the boundary.
     command = (
         "powershell.exe -NoP -NonI -EP Bypass -C \""
-        "$v=(Get-Volume -FileSystemLabel 'TELOS_CONTROL'|"
-        "Select-Object -First 1).DriveLetter;"
-        f"&($v+':\\Invoke-TelosIdentityProbe.ps1') -Action '{action}'\""
+        "$p=[IO.Ports.SerialPort]::new('COM1',115200);"
+        f"$p.Open();$p.WriteLine({marker});"
+        "&((Get-Volume -FileSystemLabel TELOS_CONTROL).DriveLetter+"
+        f"':\\Invoke-TelosIdentityProbe.ps1') -A '{action}' -S $p\""
     )
     if (
         len(command) > MAX_PROBE_LAUNCH_CHARS
@@ -60,6 +77,15 @@ def probe_launch_command(
     ):
         raise WindowsControlIsoError("control launch command is not QMP-safe")
     return command
+
+
+def probe_launch_marker(action: str) -> int:
+    """Return the exact JSON-number launcher marker for one action."""
+    try:
+        return _LAUNCH_MARKERS[action]
+    except (KeyError, TypeError) as error:
+        raise WindowsControlIsoError(
+            "control action is not allowlisted") from error
 
 
 def _sha256(path: Path) -> str:

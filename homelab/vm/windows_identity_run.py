@@ -76,7 +76,8 @@ class IdentityFailureDiagnostic:
         (check, f"static-probe.{action}{suffix}")
         for check, action in _STATIC_PROBE_PAIRS
         for suffix in (
-            "", ".connect", ".launch", ".start-receive", ".start-parse",
+            "", ".connect", ".launch", ".launcher-receive",
+            ".launcher-parse", ".start-receive", ".start-parse",
             ".outcome-receive", ".outcome-parse", ".guest",
         )
     )
@@ -136,7 +137,8 @@ class IdentityFailureDiagnostic:
             return None
         phase = diagnostic.operation.removeprefix(prefix)
         if phase not in {
-            "connect", "launch", "start-receive", "start-parse",
+            "connect", "launch", "launcher-receive", "launcher-parse",
+            "start-receive", "start-parse",
             "outcome-receive", "outcome-parse", "guest",
         }:
             return None

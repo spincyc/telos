@@ -10,7 +10,11 @@ from pathlib import Path
 import socket
 from typing import Mapping
 
-from .windows_control_iso import audit_payload, probe_launch_command
+from .windows_control_iso import (
+    audit_payload,
+    probe_launch_command,
+    probe_launch_marker,
+)
 
 
 class WindowsControlSerialError(RuntimeError):
@@ -242,6 +246,14 @@ def parse_probe_start(line: bytes, expected_action: str) -> dict[str, object]:
     ):
         raise WindowsControlSerialError("probe start schema is invalid")
     return record
+
+
+def parse_probe_launcher(line: bytes, expected_action: str) -> int:
+    """Parse the exact pre-optical JSON-number marker for an action."""
+    expected = f"{probe_launch_marker(expected_action)}\n".encode("ascii")
+    if line != expected:
+        raise WindowsControlSerialError("probe launcher marker is invalid")
+    return probe_launch_marker(expected_action)
 
 
 def fault_reachability_fields(

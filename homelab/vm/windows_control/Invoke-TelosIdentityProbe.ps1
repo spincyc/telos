@@ -15,8 +15,8 @@ param(
     )]
     [string]$Action,
 
-    [ValidatePattern('^COM[1-9][0-9]*$')]
-    [string]$SerialPort = 'COM1'
+    [Parameter(Mandatory = $true)]
+    [System.IO.Ports.SerialPort]$S
 )
 
 $ErrorActionPreference = 'Stop'
@@ -377,10 +377,8 @@ function Get-Probe {
     }
 }
 
-$serial = [System.IO.Ports.SerialPort]::new(
-    $SerialPort, 115200, 'None', 8, 'One')
+$serial = $S
 try {
-    $serial.Open()
     $start = [ordered]@{
         schema_version = 1
         action = $Action

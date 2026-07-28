@@ -22,6 +22,7 @@ from .windows_control_serial import (
     WindowsControlSerialError,
     WindowsGuestProbeError,
     control_probe,
+    parse_probe_launcher,
     parse_probe_record,
     parse_probe_start,
 )
@@ -342,6 +343,24 @@ class NativeWindowsAcceptanceAdapter:
                     self._static_probe_poisoned = True
                     self._raise_static_probe_failure(
                         request.action, "launch", failure)
+                failure = None
+                try:
+                    launcher = receive_record(stream)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._static_probe_poisoned = True
+                    self._raise_static_probe_failure(
+                        request.action, "launcher-receive", failure)
+                failure = None
+                try:
+                    parse_probe_launcher(launcher, request.action)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._static_probe_poisoned = True
+                    self._raise_static_probe_failure(
+                        request.action, "launcher-parse", failure)
                 failure = None
                 try:
                     start = receive_record(stream)

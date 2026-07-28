@@ -13,6 +13,7 @@ from homelab.vm.windows_control_iso import (
     audit_payload,
     build_control_iso,
     probe_launch_command,
+    probe_launch_marker,
 )
 
 
@@ -63,12 +64,12 @@ class WindowsControlIsoTests(unittest.TestCase):
         script = (
             ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
         ).read_text(encoding="utf-8")
-        open_at = script.index("$serial.Open()")
-        start_at = script.index("result = 'start'", open_at)
+        bind_at = script.index("$serial = $S")
+        start_at = script.index("result = 'start'", bind_at)
         start_write_at = script.index("$serial.WriteLine", start_at)
         probe_at = script.index(
-            "observation = Get-Probe $Action", open_at)
-        self.assertLess(open_at, start_at)
+            "observation = Get-Probe $Action", bind_at)
+        self.assertLess(bind_at, start_at)
         self.assertLess(start_at, start_write_at)
         self.assertLess(start_write_at, probe_at)
         failure = script[
@@ -115,7 +116,12 @@ class WindowsControlIsoTests(unittest.TestCase):
         command = probe_launch_command("domain-state")
         self.assertIn("TELOS_CONTROL", command)
         self.assertIn("Invoke-TelosIdentityProbe.ps1", command)
-        self.assertIn("-Action 'domain-state'", command)
+        self.assertIn("-A 'domain-state'", command)
+        self.assertIn("$p.Open();$p.WriteLine(4);", command)
+        self.assertLess(
+            command.index("$p.WriteLine(4)"),
+            command.index("Get-Volume"),
+        )
         self.assertLessEqual(len(command), MAX_PROBE_LAUNCH_CHARS)
         with self.assertRaisesRegex(
                 WindowsControlIsoError, "not allowlisted"):
@@ -133,13 +139,16 @@ class WindowsControlIsoTests(unittest.TestCase):
                     "powershell.exe -NoP -NonI -EP Bypass -C \""))
                 self.assertEqual(
                     1, command.count(
-                        "Get-Volume -FileSystemLabel 'TELOS_CONTROL'"))
+                        "Get-Volume -FileSystemLabel TELOS_CONTROL"))
                 self.assertEqual(
                     1, command.count(
                         "\\Invoke-TelosIdentityProbe.ps1"))
                 self.assertTrue(
-                    command.endswith(f"-Action '{action}'\""))
-                self.assertEqual(1, command.count("-Action '"))
+                    command.endswith(f"-A '{action}' -S $p\""))
+                self.assertEqual(1, command.count("-A '"))
+                marker = probe_launch_marker(action)
+                self.assertEqual(
+                    1, command.count(f"$p.WriteLine({marker})"))
 
     def test_existing_destination_and_mutating_script_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

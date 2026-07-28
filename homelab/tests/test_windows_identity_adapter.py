@@ -90,6 +90,10 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter.static_probe("domain-state")
 
     @staticmethod
+    def launcher():
+        return b"3\n"
+
+    @staticmethod
     def start(action="controller-readiness"):
         return (
             b'{"schema_version":1,"action":"' + action.encode()
@@ -110,7 +114,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             pass
 
         for phase in (
-            "connect", "launch", "start-receive", "start-parse",
+            "connect", "launch", "launcher-receive", "launcher-parse",
+            "start-receive", "start-parse",
             "outcome-receive", "outcome-parse",
         ):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as name:
@@ -118,25 +123,35 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
                 stream = mock.MagicMock()
                 stream.__enter__.return_value = stream
-                stream.recv.side_effect = [self.start(), self.outcome()]
+                stream.recv.side_effect = [
+                    self.launcher(), self.start(), self.outcome()]
                 if phase == "connect":
                     stream.connect.side_effect = SecretFailure("private")
                 elif phase == "launch":
                     adapter.launch_guest = mock.Mock(
                         side_effect=SecretFailure("private"))
-                elif phase == "start-receive":
+                elif phase == "launcher-receive":
                     adapter.launch_guest = mock.Mock()
                     stream.recv.side_effect = TimeoutError("private")
-                elif phase == "start-parse":
+                elif phase == "launcher-parse":
                     adapter.launch_guest = mock.Mock()
                     stream.recv.side_effect = [b"invalid\n"]
+                elif phase == "start-receive":
+                    adapter.launch_guest = mock.Mock()
+                    stream.recv.side_effect = [
+                        self.launcher(), TimeoutError("private")]
+                elif phase == "start-parse":
+                    adapter.launch_guest = mock.Mock()
+                    stream.recv.side_effect = [
+                        self.launcher(), b"invalid\n"]
                 elif phase == "outcome-receive":
                     adapter.launch_guest = mock.Mock()
                     stream.recv.side_effect = [
-                        self.start(), TimeoutError("private")]
+                        self.launcher(), self.start(), TimeoutError("private")]
                 else:
                     adapter.launch_guest = mock.Mock()
-                    stream.recv.side_effect = [self.start(), b"invalid\n"]
+                    stream.recv.side_effect = [
+                        self.launcher(), self.start(), b"invalid\n"]
                 with mock.patch.object(
                     subject.socket, "socket", return_value=stream,
                 ), self.assertRaises(
@@ -151,9 +166,14 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 self.assertEqual(
                     (
                         "TimeoutError"
-                        if phase in {"start-receive", "outcome-receive"}
+                        if phase in {
+                            "launcher-receive", "start-receive",
+                            "outcome-receive",
+                        }
                         else "WindowsControlSerialError"
-                        if phase in {"start-parse", "outcome-parse"}
+                        if phase in {
+                            "launcher-parse", "start-parse", "outcome-parse",
+                        }
                         else "UnexpectedError"
                     ),
                     error.diagnostic.error_type,
@@ -183,7 +203,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter.launch_guest = mock.Mock()
                 stream = mock.MagicMock()
                 stream.__enter__.return_value = stream
-                stream.recv.side_effect = [self.start(), payload]
+                stream.recv.side_effect = [
+                    self.launcher(), self.start(), payload]
                 with mock.patch.object(
                     subject.socket, "socket", return_value=stream,
                 ), self.assertRaises(
@@ -202,7 +223,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 self.assertIsNone(error.__context__)
 
     def test_probe_accepts_fragmented_and_coalesced_two_record_stream(self):
-        payload = self.start() + self.outcome()
+        payload = self.launcher() + self.start() + self.outcome()
         for chunks in (
             [payload],
             [payload[:7], payload[7:41], payload[41:]],
@@ -223,11 +244,13 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
 
     def test_probe_rejects_reordered_duplicate_extra_and_wrong_action(self):
         invalid_streams = (
-            self.outcome() + self.start(),
-            self.start() + self.start(),
-            self.start() + self.outcome() + self.outcome(),
-            self.start("domain-state") + self.outcome(),
-            self.start() + self.outcome("domain-state"),
+            self.launcher() + self.outcome() + self.start(),
+            self.launcher() + self.launcher() + self.start() + self.outcome(),
+            self.launcher() + self.start() + self.start(),
+            self.launcher() + self.start() + self.outcome() + self.outcome(),
+            b"4\n" + self.start() + self.outcome(),
+            self.launcher() + self.start("domain-state") + self.outcome(),
+            self.launcher() + self.start() + self.outcome("domain-state"),
         )
         for payload in invalid_streams:
             with self.subTest(payload=payload), \
@@ -250,7 +273,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             adapter.launch_guest = mock.Mock()
             stream = mock.MagicMock()
             stream.__enter__.return_value = stream
-            stream.recv.side_effect = [self.start(), TimeoutError("private")]
+            stream.recv.side_effect = [
+                self.launcher(), self.start(), TimeoutError("private")]
             with mock.patch.object(
                 subject.socket, "socket", return_value=stream,
             ), self.assertRaises(subject.WindowsIdentityAdapterError) as first:
@@ -333,7 +357,11 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             stream = mock.MagicMock()
             stream.__enter__.return_value = stream
             stream.recv.side_effect = [
-                start, b" " * (subject.MAX_RECORD_BYTES - len(start)),
+                self.launcher(), start,
+                b" " * (
+                    subject.MAX_RECORD_BYTES
+                    - len(self.launcher()) - len(start)
+                ),
             ]
             with mock.patch.object(
                 subject.socket, "socket", return_value=stream,
