@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "state": "Windows Run dialog with empty Open field",
+  "state_kind": "run-dialog",
+  "captured_after_private_input": true,
+  "contains_private_material": false,
+  "guest": {
+    "release": "Windows 11 25H2",
+    "language": "en-US",
+    "architecture": "x86_64",
+    "installer_iso_sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3",
+    "source_disk_sha256": "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+  },
+  "capture": {
+    "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+    "attempt": "attempt-20260728T160719Z-a01e4dacb2e7",
+    "geometry": [1280, 800],
+    "crop": [0, 520, 430, 230],
+    "stable_source_frame_sha256": [
+      "60d4d2c16b8b369f7d6a66745ae9e956ec776b470dd51279ba34df426a153f85",
+      "60d4d2c16b8b369f7d6a66745ae9e956ec776b470dd51279ba34df426a153f85",
+      "60d4d2c16b8b369f7d6a66745ae9e956ec776b470dd51279ba34df426a153f85"
+    ]
+  },
+  "reference": {
+    "file": "run-dialog.ppm",
+    "sha256": "596f809198d232b68d16a8d862f6b442553b242db8be6960d58ac8db0b17ba7e"
+  }
+}
