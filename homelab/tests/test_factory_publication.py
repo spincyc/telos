@@ -221,6 +221,7 @@ class FactoryPublicationTests(unittest.TestCase):
             "read only = yes",
             "guest ok = no",
             "valid users = pxe-install",
+            "acl allow execute always = yes",
             "sed 's/\\r$//' \"$password\"",
             "smbpasswd -s -a pxe-install",
             "systemctl unmask smb.service",
