@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:49:42Z"
+updated_at: "2026-07-28T01:54:31Z"
 ---
 
 # Goal
@@ -184,3 +184,9 @@ by SMB error 53. The next publication gate now requires an exact TCP listener
 at `10.1.31.2:445`, not merely an active service. WinPE also pings the isolated
 Controller before SMB and assigns reachability failure code 28. The disk
 remained untouched.
+
+The listener-qualified run proved ICMP reachability to `10.1.31.2` but SMB
+still returned error 53. The prepared client had used hostname `controller`
+and domain `TELOS` even though the publication is a standalone Samba server.
+New bundles use the exact numeric isolated UNC and the local
+`.\pxe-install` account, eliminating DNS and domain assumptions.

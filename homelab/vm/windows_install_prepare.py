@@ -90,7 +90,7 @@ def prepare(args: argparse.Namespace) -> Path:
             computer_name="TELOS-WIN-01",
             local_user="telosadmin",
             local_password="S-" + secrets.token_urlsafe(18),
-            install_user=r"TELOS\pxe-install",
+            install_user=r".\pxe-install",
             install_password="S-" + secrets.token_urlsafe(18),
         )
         with PrivateRun(run / "inputs") as private, \
@@ -98,7 +98,7 @@ def prepare(args: argparse.Namespace) -> Path:
                     prefix="publication-parent-", dir=run) as publication_name:
             generated = private.render_windows_inputs(
                 authorization, identity,
-                install_source_unc=r"\\controller\windows-release")
+                install_source_unc=r"\\10.1.31.2\windows-release")
             publication = Path(publication_name) / "publication"
             receipt = stage_publication(
                 args.releases, publication, seed_iso=args.seed,
