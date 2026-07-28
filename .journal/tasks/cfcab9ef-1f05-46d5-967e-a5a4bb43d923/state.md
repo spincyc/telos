@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:28:19Z"
+updated_at: "2026-07-28T01:34:11Z"
 ---
 
 # Goal
@@ -155,3 +155,9 @@ created its Unix socket when the runner tried one immediate connection. QMP
 attachment now retries only local readiness errors within a ten-second bound.
 The evidence-once contract still requires a fresh bundle for the diagnostic
 retry.
+
+The diagnostic screenshots prove WinPE starts and invokes the injected command
+shell, then the startup batch exits and WinPE reboots. The batch now displays
+only non-secret phase names and its numeric fail-closed exit code, then pauses
+on failure for bounded screenshot capture. Disk authorization, capacity
+checks, and mutation ordering are unchanged.
