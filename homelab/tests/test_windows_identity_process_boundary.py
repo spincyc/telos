@@ -141,10 +141,14 @@ class NativeProcessBoundaryTests(unittest.TestCase):
 
             automation.return_value.establish_disposable_controller_session\
                 .assert_called_once_with()
+            automation.return_value.install_offline_controller_dependencies\
+                .assert_called_once_with()
             automation.return_value.converge_disposable_controller\
                 .assert_called_once()
-            qmp_connect.return_value.await_device_deleted.assert_called_once_with(
-                "identityfactorycd", timeout=30.0)
+            qmp_connect.return_value.await_device_deleted.assert_has_calls([
+                mock.call("identityseedcd", timeout=30.0),
+                mock.call("identityfactorycd", timeout=30.0),
+            ])
             factory_type.assert_called_once()
 
             try:

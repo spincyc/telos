@@ -24,6 +24,7 @@ from .automated_controller import DisposableBootDisk
 from .bootstrap_dc import paths
 from .controller_factory import FactoryBundle
 from .factory_runner import (
+    DEFAULT_SEED_ISO,
     MACS,
     gateway_command,
     switch_command,
@@ -441,6 +442,54 @@ class NativeProcessBoundary:
                         raise WindowsIdentityRunError(
                             "Controller QMP authentication failed")
                     time.sleep(0.1)
+            seed_iso = DEFAULT_SEED_ISO.resolve()
+            if (
+                seed_iso.is_symlink()
+                or not seed_iso.is_file()
+                or seed_iso.stat().st_mode & 0o022
+            ):
+                raise WindowsIdentityRunError(
+                    "Controller seed media has an unsafe identity")
+            seed_fd = os.open(
+                seed_iso, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            try:
+                seed_stat = os.fstat(seed_fd)
+                assert self.controller_qmp is not None
+                self.controller_qmp.execute("blockdev-add", {
+                    "node-name": "identityseedfile",
+                    "driver": "file",
+                    "filename": str(seed_iso),
+                })
+                self.controller_qmp.execute("blockdev-add", {
+                    "node-name": "identityseednode",
+                    "driver": "raw",
+                    "read-only": True,
+                    "file": "identityseedfile",
+                })
+                self.controller_qmp.execute("device_add", {
+                    "driver": "scsi-cd",
+                    "id": "identityseedcd",
+                    "drive": "identityseednode",
+                    "bus": "identityfactorybus.0",
+                })
+                console.install_offline_controller_dependencies()
+                self.controller_qmp.execute(
+                    "device_del", {"id": "identityseedcd"})
+                self.controller_qmp.await_device_deleted(
+                    "identityseedcd", timeout=30.0)
+                self.controller_qmp.execute(
+                    "blockdev-del", {"node-name": "identityseednode"})
+                self.controller_qmp.execute(
+                    "blockdev-del", {"node-name": "identityseedfile"})
+                if self._process_holds_inode(
+                    process.pid,
+                    device=seed_stat.st_dev,
+                    inode=seed_stat.st_ino,
+                ):
+                    raise WindowsIdentityRunError(
+                        "Controller retained seed media")
+            finally:
+                os.close(seed_fd)
             factory_bundle.build()
             media_fd = os.open(
                 factory_bundle.output,

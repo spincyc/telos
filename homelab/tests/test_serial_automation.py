@@ -158,5 +158,142 @@ class ProtocolTests(unittest.TestCase):
             self.run_script(responder)
 
 
+class ControllerSeedProtocolTests(unittest.TestCase):
+    def run_seed(self, responder):
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        thread = threading.Thread(target=responder, args=(right,), daemon=True)
+        thread.start()
+        automation = SerialAutomation(
+            reader, writer, b"ephemeral-password", timeout=1.0)
+        try:
+            automation.install_offline_controller_dependencies(timeout=1.0)
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        return automation
+
+    def test_verifies_installs_probes_and_releases_seed(self):
+        commands = []
+
+        def responder(sock):
+            stream = sock.makefile("rb", buffering=0)
+            sock.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            self.assertEqual(stream.readline(), b"\n")
+            commands.append(stream.readline())
+            prompt = commands[0].split(
+                b"__TELOS_SEED_SUDO_", 1)[1].split(b"__", 1)[0]
+            result = commands[0].split(
+                b"__TELOS_SEED_RC_", 1)[1].split(b"=", 1)[0]
+            verified = commands[0].split(
+                b"__TELOS_SEED_VERIFIED_", 1)[1].split(b"__", 1)[0]
+            installed = commands[0].split(
+                b"__TELOS_SEED_INSTALLED_", 1)[1].split(b"__", 1)[0]
+            packages = commands[0].split(
+                b"__TELOS_SEED_PACKAGES_", 1)[1].split(b"__", 1)[0]
+            imported = commands[0].split(
+                b"__TELOS_SEED_IMPORT_", 1)[1].split(b"__", 1)[0]
+            released = commands[0].split(
+                b"__TELOS_SEED_RELEASED_", 1)[1].split(b"=", 1)[0]
+            sock.sendall(b"__TELOS_SEED_SUDO_" + prompt + b"__")
+            self.assertEqual(
+                stream.readline(), b"ephemeral-password\n")
+            sock.sendall(
+                b"__TELOS_SEED_VERIFIED_" + verified + b"__\n"
+                b"__TELOS_SEED_INSTALLED_" + installed + b"__\n"
+                b"__TELOS_SEED_PACKAGES_" + packages + b"__\n"
+                b"__TELOS_SEED_IMPORT_" + imported + b"__\n"
+                b"__TELOS_SEED_RELEASED_" + released + b"=0\n"
+                b"__TELOS_SEED_RC_" + result + b"=0\n")
+            self.assertEqual(stream.readline(), b"\n")
+            sock.sendall(b"\n[local-rescue@bootstrap-dc ~]$ ")
+
+        automation = self.run_seed(responder)
+        self.assertIn(b"mount -o ro -L TELOS_SEED", commands[0])
+        self.assertIn(b"verify-seed", commands[0])
+        self.assertIn(b"install-controller-deps", commands[0])
+        self.assertIn(b"import dns, dns.resolver", commands[0])
+        self.assertIn(b"umount /run/telos-seed", commands[0])
+        self.assertEqual(commands[0].count(b"__TELOS_SEED_RC_"), 1)
+        self.assertNotIn(b"ephemeral-password", b"".join(commands))
+        self.assertIn(
+            "controller-seed-post-shell-ready", automation.events)
+
+    def failure_responder(
+        self, *, markers=(), returncode=b"1", release_code=b"0",
+        split_returncode=False,
+    ):
+        def responder(sock):
+            stream = sock.makefile("rb", buffering=0)
+            sock.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            stream.readline()
+            command = stream.readline()
+            prompt = command.split(
+                b"__TELOS_SEED_SUDO_", 1)[1].split(b"__", 1)[0]
+            result = command.split(
+                b"__TELOS_SEED_RC_", 1)[1].split(b"=", 1)[0]
+            released = command.split(
+                b"__TELOS_SEED_RELEASED_", 1)[1].split(b"=", 1)[0]
+            sock.sendall(b"__TELOS_SEED_SUDO_" + prompt + b"__")
+            stream.readline()
+            for marker in markers:
+                token = command.split(marker, 1)[1].split(b"__", 1)[0]
+                sock.sendall(marker + token + b"__\n")
+            sock.sendall(
+                b"__TELOS_SEED_RELEASED_" + released + b"="
+                + release_code + b"\n")
+            final = (
+                b"__TELOS_SEED_RC_" + result + b"=" + returncode + b"\n")
+            if split_returncode:
+                sock.sendall(final[:-1])
+                sock.sendall(final[-1:])
+            else:
+                sock.sendall(final)
+        return responder
+
+    def test_verify_failure_returns_after_release(self):
+        with self.assertRaisesRegex(
+                SerialAutomationError, "installation returned 7"):
+            self.run_seed(self.failure_responder(returncode=b"7"))
+
+    def test_package_failure_after_receipt_returns_after_release(self):
+        with self.assertRaisesRegex(
+                SerialAutomationError, "installation returned 9"):
+            self.run_seed(self.failure_responder(
+                markers=(
+                    b"__TELOS_SEED_VERIFIED_",
+                    b"__TELOS_SEED_INSTALLED_",
+                ),
+                returncode=b"9",
+            ))
+
+    def test_result_requires_complete_newline_terminated_bytes(self):
+        with self.assertRaisesRegex(
+                SerialAutomationError, "installation returned 12"):
+            self.run_seed(self.failure_responder(
+                returncode=b"12", split_returncode=True))
+
+    def test_release_failure_is_distinct(self):
+        with self.assertRaisesRegex(
+                SerialAutomationError, "media release failed"):
+            self.run_seed(self.failure_responder(
+                returncode=b"0", release_code=b"5"))
+
+    def test_zero_result_without_all_exact_proofs_fails_closed(self):
+        with self.assertRaisesRegex(
+                SerialAutomationError, "success proof is incomplete"):
+            self.run_seed(self.failure_responder(
+                markers=(
+                    b"__TELOS_SEED_VERIFIED_",
+                    b"__TELOS_SEED_INSTALLED_",
+                    b"__TELOS_SEED_PACKAGES_",
+                ),
+                returncode=b"0",
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -218,6 +218,135 @@ class SerialAutomation:
         finally:
             self.timeout = original_timeout
 
+    def install_offline_controller_dependencies(
+        self, *, timeout: float = 1200.0,
+    ) -> None:
+        """Verify and install the attached signed seed, then release it."""
+        if self.password is None:
+            raise SerialAutomationError(
+                "Controller session credential is unavailable")
+        original_timeout = self.timeout
+        self.timeout = timeout
+        token = uuid.uuid4().hex.encode("ascii")
+        sudo_prompt = b"__TELOS_SEED_SUDO_" + token + b"__"
+        verified = b"__TELOS_SEED_VERIFIED_" + token + b"__"
+        installed = b"__TELOS_SEED_INSTALLED_" + token + b"__"
+        packages = b"__TELOS_SEED_PACKAGES_" + token + b"__"
+        imported = b"__TELOS_SEED_IMPORT_" + token + b"__"
+        result = b"__TELOS_SEED_RC_" + token + b"="
+        released = b"__TELOS_SEED_RELEASED_" + token + b"="
+        command = (
+            b"set +e; __telos_rc=0; __telos_mounted=0; "
+            b"install -d -m 0700 /run/telos-seed; "
+            b"mount -o ro -L TELOS_SEED /run/telos-seed; "
+            b"__telos_step=$?; "
+            b"if [ \"$__telos_step\" -eq 0 ]; then __telos_mounted=1; "
+            b"else __telos_rc=$__telos_step; fi; "
+            b"if [ \"$__telos_rc\" -eq 0 ]; then "
+            b"/run/telos-seed/verify-seed /run/telos-seed; "
+            b"__telos_step=$?; "
+            b"if [ \"$__telos_step\" -eq 0 ]; then printf '\\n"
+            + verified + b"\\n'; else __telos_rc=$__telos_step; fi; fi; "
+            b"if [ \"$__telos_rc\" -eq 0 ]; then "
+            b"/run/telos-seed/install-controller-deps /run/telos-seed; "
+            b"__telos_step=$?; "
+            b"if [ \"$__telos_step\" -eq 0 ]; then printf '\\n"
+            + installed + b"\\n'; else __telos_rc=$__telos_step; fi; fi; "
+            b"if [ \"$__telos_rc\" -eq 0 ]; then "
+            b"pacman -Qq python-dnspython samba python >/dev/null; "
+            b"__telos_step=$?; "
+            b"if [ \"$__telos_step\" -eq 0 ]; then printf '\\n"
+            + packages + b"\\n'; else __telos_rc=$__telos_step; fi; fi; "
+            b"if [ \"$__telos_rc\" -eq 0 ]; then "
+            b"python3 -c 'import dns, dns.resolver'; "
+            b"__telos_step=$?; "
+            b"if [ \"$__telos_step\" -eq 0 ]; then printf '\\n"
+            + imported + b"\\n'; else __telos_rc=$__telos_step; fi; fi; "
+            b"__telos_release_rc=0; "
+            b"if [ \"$__telos_mounted\" -eq 1 ]; then "
+            b"umount /run/telos-seed || __telos_release_rc=$?; fi; "
+            b"printf '\\n" + released + b"%s\\n' \"$__telos_release_rc\"; "
+            b"if [ \"$__telos_rc\" -eq 0 ] && "
+            b"[ \"$__telos_release_rc\" -ne 0 ]; then "
+            b"__telos_rc=$__telos_release_rc; fi; "
+            b"exit \"$__telos_rc\""
+        )
+        try:
+            self._send(b"", "controller-seed-shell-requested")
+            self._wait(
+                rb"(?:^|\n)[^\n]*\$\s*$",
+                "controller-seed-shell-ready",
+            )
+            self._send(
+                b"sudo -k -S -p '" + sudo_prompt
+                + b"' /usr/bin/bash -c "
+                + shlex.quote(command.decode("ascii")).encode("ascii")
+                + b" ; __telos_rc=$?; printf '\\n" + result
+                + b"%s\\n' \"$__telos_rc\"",
+                "controller-seed-install-command-sent",
+            )
+            self._wait(
+                rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
+                "controller-seed-sudo-prompt",
+            )
+            self._send(
+                self.password, "controller-seed-sudo-password-sent")
+            seen: set[str] = set()
+            returncode: int | None = None
+            release_code: int | None = None
+            outcome = re.compile(
+                rb"(?:^|\n)(?:"
+                + re.escape(verified) + rb"()|"
+                + re.escape(installed) + rb"()|"
+                + re.escape(packages) + rb"()|"
+                + re.escape(imported) + rb"()|"
+                + re.escape(released) + rb"([0-9]+)|"
+                + re.escape(result) + rb"([0-9]+))\n"
+            )
+            while returncode is None:
+                match = self._wait(
+                    outcome.pattern, "controller-seed-outcome-observed")
+                if match.group(1) is not None:
+                    seen.add("verified")
+                    self.events.append("controller-seed-receipt-verified")
+                elif match.group(2) is not None:
+                    seen.add("installed")
+                    self.events.append(
+                        "controller-seed-dependencies-installed")
+                elif match.group(3) is not None:
+                    seen.add("packages")
+                    self.events.append("controller-seed-packages-proven")
+                elif match.group(4) is not None:
+                    seen.add("imported")
+                    self.events.append("controller-seed-import-proven")
+                elif match.group(5) is not None:
+                    release_code = int(match.group(5))
+                    self.events.append("controller-seed-release-observed")
+                else:
+                    returncode = int(match.group(6))
+                    self.events.append(
+                        "controller-seed-install-result-observed")
+            if release_code is None:
+                raise SerialAutomationError(
+                    "Controller seed media release was not observed")
+            if release_code != 0:
+                raise SerialAutomationError(
+                    "Controller seed media release failed")
+            if returncode != 0:
+                raise SerialAutomationError(
+                    f"Controller seed installation returned {returncode}")
+            required = {"verified", "installed", "packages", "imported"}
+            if seen != required:
+                raise SerialAutomationError(
+                    "Controller seed success proof is incomplete")
+            self._send(b"", "controller-seed-post-shell-requested")
+            self._wait(
+                rb"(?:^|\n)[^\n]*\$\s+$",
+                "controller-seed-post-shell-ready",
+            )
+        finally:
+            self.timeout = original_timeout
+
     def _wait_controller_ad(self) -> None:
         """Require the exact AD service and database on the disposable disk."""
         services = f"__TELOS_CONTROLLER_SERVICES_{self.token}=".encode()
