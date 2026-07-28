@@ -63,21 +63,23 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertIn('/etc/homelab/manifest.json', script)
             self.assertIn("authorization nonce mismatch", script)
             self.assertIn(
-                "server 198.51.100.10 iburst", script)
-            self.assertNotIn("restrict default ignore", script)
+                'probe.sendto(request, ("198.51.100.10", 123))', script)
             self.assertIn(
-                "timeout 30 ntpd -n -gq -c "
-                "/run/telos-factory-state/ntp-measure.conf", script)
-            self.assertNotIn("ntpd -n -gq -p ", script)
+                "candidate[24:32] == request[40:48]", script)
+            self.assertIn("candidate[0] >> 6 != 3", script)
+            self.assertIn("(candidate[0] >> 3) & 0x7 == 4", script)
+            self.assertIn("1 <= candidate[1] <= 15", script)
+            self.assertIn(
+                "time.clock_settime(time.CLOCK_REALTIME, measured)", script)
             self.assertIn(
                 "pacman -Q samba krb5 ntp python-cryptography", script)
             self.assertIn(
                 "/usr/share/ipxe/x86_64/ipxe.efi", script)
             self.assertLess(
                 script.index("systemctl stop ntpd.service"),
-                script.index("timeout 30 ntpd"))
+                script.index("probe.sendto"))
             self.assertLess(
-                script.index("timeout 30 ntpd"),
+                script.index("probe.sendto"),
                 script.index("clock.receipt"))
 
     def test_verifier_covers_ad_dns_pxe_http_and_authority_split(self):

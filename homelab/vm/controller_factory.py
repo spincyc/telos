@@ -110,17 +110,42 @@ printf '127.0.0.1 localhost\\n{spec.address} {spec.fqdn} {spec.hostname}\\n' >/e
 echo 'TELOS FACTORY STEP time-sync'
 systemctl stop ntpd.service
 install -d -m 0700 /run/telos-factory-state
-cat >/run/telos-factory-state/ntp-measure.conf <<'EOF'
-driftfile /run/telos-factory-state/ntp-measure.drift
-restrict default kod limited nomodify nopeer noquery
-restrict 127.0.0.1
-restrict {spec.ntp_upstream} nomodify nopeer noquery
-server {spec.ntp_upstream} iburst
-EOF
-chmod 0600 /run/telos-factory-state/ntp-measure.conf
-timeout 30 ntpd -n -gq -c /run/telos-factory-state/ntp-measure.conf || {{
-  echo "simulated-gateway NTP measurement failed" >&2; exit 1;
-}}
+python3 - <<'PY'
+import os
+import socket
+import struct
+import time
+
+request = bytearray(48)
+request[0] = 0x23
+request[40:48] = os.urandom(8)
+response = None
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+    probe.settimeout(5)
+    for _attempt in range(5):
+        probe.sendto(request, ("{spec.ntp_upstream}", 123))
+        try:
+            candidate, source = probe.recvfrom(512)
+        except TimeoutError:
+            continue
+        if (
+            source == ("{spec.ntp_upstream}", 123)
+            and len(candidate) == 48
+            and candidate[0] >> 6 != 3
+            and (candidate[0] >> 3) & 0x7 == 4
+            and candidate[0] & 0x7 == 4
+            and 1 <= candidate[1] <= 15
+            and candidate[24:32] == request[40:48]
+            and candidate[40:48] != bytes(8)
+        ):
+            response = candidate
+            break
+if response is None:
+    raise SystemExit("simulated-gateway NTP measurement failed")
+seconds, fraction = struct.unpack("!II", response[40:48])
+measured = seconds - 2_208_988_800 + fraction / 2**32
+time.clock_settime(time.CLOCK_REALTIME, measured)
+PY
 printf 'ntpd measurement passed\\n' >/run/telos-factory-state/clock.receipt
 chmod 0600 /run/telos-factory-state/clock.receipt
 install -d -m 0700 /run/secrets
