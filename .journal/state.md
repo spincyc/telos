@@ -4,9 +4,9 @@ repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
 head_observed: "dafb18af99146b6142921bdbd8e798644935ca04"
-working_tree_state: "windows-install-vm-boundary-implemented"
+working_tree_state: "windows-private-bundle-prepare-implemented"
 active_tasks: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
-updated_at: "2026-07-28T00:48:15Z"
+updated_at: "2026-07-28T00:50:11Z"
 ---
 
 # Repository recovery state

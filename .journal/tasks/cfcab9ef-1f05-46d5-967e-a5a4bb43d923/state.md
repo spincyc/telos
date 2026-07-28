@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:48:15Z"
+updated_at: "2026-07-28T00:50:11Z"
 ---
 
 # Goal
@@ -86,3 +86,8 @@ NVMe, 8 GiB RAM, PXE-first e1000e, copied OVMF state, private publication
 media, and QMP. Existing topology callers remain virtio-only. Next, execute a
 real private publication build, then integrate the bounded install and
 native-disk reboot phases.
+
+The guarded preparation command is implemented and dry-run verified. Apply
+creates only new ignored private state and removes incomplete bundles on any
+failure. The next boundary is a real preparation from the sealed source,
+followed by the bounded Controller/workstation install lifecycle.
