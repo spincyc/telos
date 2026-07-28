@@ -28,6 +28,12 @@ NONCE = re.compile(r"[a-f0-9]{32}")
 DOMAIN = re.compile(
     r"(?=.{1,253}\Z)(?![-.])(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+"
 )
+REALM = re.compile(
+    r"(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
+)
+OPERATOR = re.compile(
+    r"operator@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
+)
 JOIN_NODE = "telos-join-media"
 JOIN_DEVICE = "telos-join-cd"
 JOIN_BUS = "controlbus.0"
@@ -119,13 +125,21 @@ def _regular_private_parent(path: Path) -> Path:
 
 
 def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
-    if set(material) != {"nonce", "domain", "username", "password"}:
+    if set(material) != {
+        "nonce", "domain", "realm", "username", "password", "operator",
+    }:
         raise WindowsJoinIsoError("join material fields are invalid")
     values = dict(material)
     if not NONCE.fullmatch(values["nonce"]):
         raise WindowsJoinIsoError("join nonce is invalid")
     if not DOMAIN.fullmatch(values["domain"]):
         raise WindowsJoinIsoError("join domain is invalid")
+    if (not REALM.fullmatch(values["realm"])
+            or values["realm"] != values["domain"].upper()):
+        raise WindowsJoinIsoError("join realm is invalid")
+    if (not OPERATOR.fullmatch(values["operator"])
+            or values["operator"] != f"operator@{values['realm']}"):
+        raise WindowsJoinIsoError("join operator is invalid")
     for name in ("username", "password"):
         value = values[name]
         if (not isinstance(value, str) or not value
@@ -162,7 +176,7 @@ def build_join_iso(
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 json.dump(
-                    {"schema_version": 1, **values},
+                    {"schema_version": 2, **values},
                     stream, separators=(",", ":"), sort_keys=True)
                 stream.write("\n")
         except BaseException:
@@ -379,10 +393,12 @@ class JoinMediaChannel:
                 "join result cannot be proved before mutation release")
         result = dict(probe())
         if result != {
-            "schema_version": 1,
+            "schema_version": 2,
             "boot_completed": True,
             "domain_joined": True,
             "domain": expected_domain,
+            "operator": f"operator@{expected_domain.upper()}",
+            "operator_local_administrator": True,
         }:
             raise WindowsJoinIsoError("join/reboot proof is invalid")
         return {
@@ -390,6 +406,8 @@ class JoinMediaChannel:
             "join_media_destroyed": True,
             "joined_after_reboot": True,
             "domain": expected_domain,
+            "operator": f"operator@{expected_domain.upper()}",
+            "operator_local_administrator": True,
         }
 
 

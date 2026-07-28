@@ -127,6 +127,8 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
         self.assertTrue(proof.destruction_proved)
         self.assertEqual(SECRET, observed[0])
         self.assertEqual(SECRET, observed[1]["credential"])
+        self.assertEqual(
+            "operator@SYNTHETIC.TEST", observed[1]["operator"])
         self.assertNotIn(SECRET, repr(material))
         with self.assertRaisesRegex(
                 ControllerJoinMaterialError, "one-use"):

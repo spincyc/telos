@@ -23,8 +23,10 @@ NONCE = "ab" * 16
 MATERIAL = {
     "nonce": NONCE,
     "domain": "ad.example.test",
+    "realm": "AD.EXAMPLE.TEST",
     "username": "join-operator",
     "password": "private value",
+    "operator": "operator@AD.EXAMPLE.TEST",
 }
 
 
@@ -84,6 +86,14 @@ class WindowsJoinIsoTests(unittest.TestCase):
             with self.assertRaisesRegex(WindowsJoinIsoError, "fields"):
                 build_join_iso(
                     private / "join.iso", {**MATERIAL, "extra": "no"})
+            with self.assertRaisesRegex(WindowsJoinIsoError, "realm"):
+                build_join_iso(
+                    private / "join.iso",
+                    {**MATERIAL, "realm": "OTHER.EXAMPLE.TEST"})
+            with self.assertRaisesRegex(WindowsJoinIsoError, "operator"):
+                build_join_iso(
+                    private / "join.iso",
+                    {**MATERIAL, "operator": "operator@OTHER.EXAMPLE.TEST"})
 
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(
@@ -95,9 +105,14 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index('"join-material-loaded"'),
             script.index("TELOS_JOIN_MEDIA_DESTROYED"),
             script.index("Add-Computer"),
+            script.index("Add-LocalGroupMember"),
+            script.rindex("Get-LocalGroupMember"),
             script.index("Restart-Computer"),
         ]
         self.assertEqual(sorted(positions), positions)
+        self.assertNotIn("Domain Admins", script)
+        self.assertNotIn("Add-ADGroupMember", script)
+        self.assertIn("'S-1-5-32-544'", script)
         command = launch_join_command()
         self.assertIn("TELOS_JOIN", command)
         for value in MATERIAL.values():
@@ -279,10 +294,12 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
                 probe_after_reboot=lambda: {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "boot_completed": True,
                     "domain_joined": True,
                     "domain": "ad.example.test",
+                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator_local_administrator": True,
                     **({"serial_was_closed": serial.closed}
                        if not serial.closed else {}),
                 },
@@ -313,10 +330,12 @@ class WindowsJoinIsoTests(unittest.TestCase):
             channel.state = JoinMediaState.RELEASED
             proof = channel.prove_join_and_reboot(
                 lambda: {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "boot_completed": True,
                     "domain_joined": True,
                     "domain": "ad.example.test",
+                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator_local_administrator": True,
                 },
                 expected_domain="ad.example.test",
             )
@@ -325,10 +344,12 @@ class WindowsJoinIsoTests(unittest.TestCase):
             with self.assertRaisesRegex(WindowsJoinIsoError, "proof"):
                 channel.prove_join_and_reboot(
                     lambda: {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "boot_completed": False,
                         "domain_joined": True,
                         "domain": "ad.example.test",
+                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator_local_administrator": True,
                     },
                     expected_domain="ad.example.test",
                 )

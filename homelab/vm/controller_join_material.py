@@ -283,6 +283,7 @@ class OneUseDomainJoinMaterial:
                     "realm": self.realm,
                     "principal": staged.principal,
                     "credential": self._credential_value,
+                    "operator": f"operator@{self.realm}",
                 })
                 value = consumer(material)
             except BaseException as error:
