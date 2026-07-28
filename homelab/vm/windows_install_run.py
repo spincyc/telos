@@ -104,7 +104,12 @@ def _validate_lifecycle(serial: str) -> None:
     if NATIVE_READY_MARKER not in serial:
         raise RuntimeError(
             "native Windows readiness and clean shutdown were not observed")
-    if serial.count("UEFI PXEv4") != 1:
+    pxe_starts = sum(
+        line.startswith("BdsDxe: starting ")
+        and '"UEFI PXEv4' in line
+        for line in serial.splitlines()
+    )
+    if pxe_starts != 1:
         raise RuntimeError(
             "workstation did not use exactly one PXE firmware boot")
 
@@ -226,6 +231,9 @@ def run(
             return 0
     except BaseException as error:
         result["error_type"] = type(error).__name__
+        result["error"] = redact(
+            str(error).encode("utf-8", errors="replace")).decode(
+                "utf-8", errors="replace")
         raise
     finally:
         listener.close()

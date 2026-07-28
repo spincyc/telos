@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T11:42:05Z"
+updated_at: "2026-07-28T12:54:52Z"
 ---
 
 # Goal
@@ -281,4 +281,17 @@ values alone do not suppress OOBE, so the private answer now explicitly skips
 machine and user OOBE before its one-time native assertion logon. The installed
 evidence disk will not be reused. Prepare and execute a fresh bundle to prove
 the native marker and clean shutdown.
-evidence disk will not be reused; a fresh long run is next.
+
+The corrected standalone-SMB run completed native Windows installation and
+clean shutdown. Serial evidence records exactly one PXE firmware start,
+Windows Professional, the native readiness marker, Fast Startup disabled, and
+the final shutdown. The runner misclassified this successful guest lifecycle
+because it counted both firmware's PXE “loading” and “starting” log lines as
+boots. Validation now counts only firmware starts, and failure receipts retain
+a redacted diagnostic message. All 74 Windows-focused tests pass.
+
+Read-only offline inspection of a sparse raw conversion confirms the 256 GiB
+GPT layout: 1 GiB ESP, 16 MiB MSR, 181.7 GiB Windows, the planned untouched
+gap, and 2 GiB recovery partition. The ESP is readable as `SYSTEM`, the
+Windows partition is NTFS and labeled `Windows`, and its NTFS `$Volume`
+information flags are zero, proving no dirty-volume flag after shutdown.

@@ -110,6 +110,7 @@ class WindowsInstallRunTests(unittest.TestCase):
 
     def test_lifecycle_requires_overlay_native_marker_and_one_pxe_boot(self):
         serial = "\n".join((
+            'BdsDxe: loading Boot0003 "UEFI PXEv4"',
             'BdsDxe: starting Boot0003 "UEFI PXEv4"',
             "http://10.1.31.2/private/run-abc/boot.ipxe",
             "Using install.bat",
