@@ -107,6 +107,10 @@ REALM = re.compile(
 OPERATOR = re.compile(
     r"operator@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
 )
+JOIN_USERNAME = re.compile(
+    r"tj-[a-f0-9]{16}@(?=.{1,253}\Z)(?![-.])"
+    r"(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
+)
 JOIN_NODE = "telos-join-media"
 JOIN_DEVICE = "telos-join-cd"
 JOIN_PARENT = "telos-join-bot"
@@ -243,11 +247,16 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
     if (not OPERATOR.fullmatch(values["operator"])
             or values["operator"] != f"operator@{values['realm']}"):
         raise WindowsJoinIsoError("join operator is invalid")
-    for name in ("username", "password"):
-        value = values[name]
-        if (not isinstance(value, str) or not value
-                or len(value) > 512 or "\r" in value or "\n" in value):
-            raise WindowsJoinIsoError(f"join {name} is invalid")
+    if (
+        not isinstance(values["username"], str)
+        or not JOIN_USERNAME.fullmatch(values["username"])
+        or values["username"].rsplit("@", 1)[1] != values["realm"]
+    ):
+        raise WindowsJoinIsoError("join username is invalid")
+    password = values["password"]
+    if (not isinstance(password, str) or not password
+            or len(password) > 512 or "\r" in password or "\n" in password):
+        raise WindowsJoinIsoError("join password is invalid")
     return values
 
 
@@ -728,6 +737,11 @@ def execute_join_channel(
         try:
             channel.accept_reboot_confirmation(accepted)
         except BaseException as error:
+            if (
+                isinstance(error, WindowsJoinIsoError)
+                and error.coordinate is not None
+            ):
+                raise error from None
             raise _join_error("accepted-parse", error) from None
         # The guest emits readiness after proving every pre-reboot mutation.
         # Release COM1 before Restart-Computer and the later probes reuse it.

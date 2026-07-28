@@ -27,7 +27,7 @@ MATERIAL = {
     "nonce": NONCE,
     "domain": "ad.example.test",
     "realm": "AD.EXAMPLE.TEST",
-    "username": "join-operator",
+    "username": "tj-0123456789abcdef@AD.EXAMPLE.TEST",
     "password": "private value",
     "operator": "operator@AD.EXAMPLE.TEST",
 }
@@ -105,6 +105,18 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 build_join_iso(
                     private / "join.iso",
                     {**MATERIAL, "operator": "operator@OTHER.EXAMPLE.TEST"})
+            for username in (
+                "tj-0123456789abcdef",
+                "tj-0123456789abcdef@OTHER.EXAMPLE.TEST",
+                "other@AD.EXAMPLE.TEST",
+                "tj-0123456789abcdef@AD.EXAMPLE.TEST@AD.EXAMPLE.TEST",
+            ):
+                with self.subTest(username=username), self.assertRaisesRegex(
+                    WindowsJoinIsoError, "username",
+                ):
+                    build_join_iso(
+                        private / "join.iso",
+                        {**MATERIAL, "username": username})
 
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(
@@ -128,6 +140,14 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index("Restart-Computer"),
         ]
         self.assertEqual(sorted(positions), positions)
+        self.assertIn(
+            "$usernameParts[0] -cnotmatch '^tj-[a-f0-9]{16}$'",
+            script,
+        )
+        self.assertIn(
+            "$usernameParts[1] -cne [string]$document.realm",
+            script,
+        )
         self.assertNotIn("Domain Admins", script)
         self.assertNotIn("Add-ADGroupMember", script)
         self.assertIn("'S-1-5-32-544'", script)
@@ -648,6 +668,68 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertEqual("result-ack", caught.exception.coordinate.phase)
             self.assertEqual("OSError", caught.exception.coordinate.error_type)
             self.assertNotIn("private detail", str(caught.exception))
+            self.assertFalse(serial.closed)
+            self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
+
+    def test_guest_reboot_ack_failure_survives_channel_composition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+
+            class GuestAckFailureSerial:
+                closed = False
+                results = iter((
+                    {
+                        "schema_version": 1,
+                        "event": "join-reboot-ready",
+                        "nonce": NONCE,
+                    },
+                    {
+                        "schema_version": 1,
+                        "event": "join-reboot-failed",
+                        "nonce": NONCE,
+                        "phase": "reboot-ack",
+                    },
+                ))
+
+                def read_marker(self):
+                    return json.dumps({
+                        "schema_version": 1,
+                        "event": "join-material-loaded",
+                        "nonce": NONCE,
+                    })
+
+                def send_release(self, _line):
+                    return None
+
+                def read_result(self):
+                    return json.dumps(next(self.results))
+
+                def send_reboot_ack(self, _nonce):
+                    return None
+
+                def close(self):
+                    self.closed = True
+
+            serial = GuestAckFailureSerial()
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                execute_join_channel(
+                    channel=channel,
+                    serial=serial,
+                    launch_guest=lambda _: None,
+                    await_device_deleted=lambda _: None,
+                )
+            self.assertEqual(
+                "result-guest-reboot-ack",
+                caught.exception.coordinate.phase,
+            )
+            self.assertEqual(
+                "WindowsJoinIsoError",
+                caught.exception.coordinate.error_type,
+            )
             self.assertFalse(serial.closed)
             self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
 

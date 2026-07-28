@@ -360,7 +360,9 @@ class SimulatedGatewayTests(unittest.TestCase):
                     self.assertNotIn(66, options)
                     self.assertNotIn(67, options)
                     self.assertEqual(bootp[20:24], sim.GATEWAY_IP.packed)
-                    self.assertEqual(options[6], sim.GATEWAY_IP.packed)
+                    self.assertEqual(options[6], sim.CONTROLLER_IP.packed)
+                    self.assertEqual(
+                        options[15], sim.IDENTITY_DNS_SUFFIX.encode("ascii"))
 
         wrong_mac = bytes.fromhex("525400311199")
         wrong_discover = sim.Gateway(identity_mode=True).handle(request(

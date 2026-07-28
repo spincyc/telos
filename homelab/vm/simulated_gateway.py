@@ -31,6 +31,7 @@ CONTROLLER_MAC = bytes.fromhex("525400111112")
 DNS_NAME = "updates.sim.test"
 CONTROLLER_NAME = "bootstrap-dc.lab.home.arpa"
 DNS_SUFFIX = "lab.home.arpa"
+IDENTITY_DNS_SUFFIX = "ad.factory.test"
 NTP_NAME = "time.sim.test"
 NTP_IP = ipaddress.IPv4Address("198.51.100.10")
 UDP_PROBE_PORT = 31337
@@ -259,9 +260,13 @@ class Gateway:
         options += bytes((54, 4)) + GATEWAY_IP.packed
         options += bytes((1, 4)) + NETMASK.packed
         options += bytes((3, 4)) + GATEWAY_IP.packed
-        dns_server = CONTROLLER_IP if boot_file else GATEWAY_IP
+        identity_client = self.identity_mode and not controller_bootstrap
+        dns_server = (
+            CONTROLLER_IP if boot_file or identity_client else GATEWAY_IP)
         options += bytes((6, 4)) + dns_server.packed
-        suffix = DNS_SUFFIX.encode("ascii")
+        suffix = (
+            IDENTITY_DNS_SUFFIX if identity_client else DNS_SUFFIX
+        ).encode("ascii")
         options += bytes((15, len(suffix))) + suffix
         options += bytes((42, 4)) + NTP_IP.packed
         options += bytes((51, 4)) + struct.pack("!I", 600)

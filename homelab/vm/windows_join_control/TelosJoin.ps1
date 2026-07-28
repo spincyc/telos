@@ -12,13 +12,16 @@ $volume = $volumes[0]
 $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'join.json') -Raw |
     ConvertFrom-Json
+$usernameParts = @(([string]$document.username).Split('@'))
 if ($document.schema_version -ne 2 -or
     $document.nonce -notmatch '^[a-f0-9]{32}$' -or
     $document.domain -notmatch '^[A-Za-z0-9.-]{1,253}$' -or
     $document.realm -notmatch '^[A-Z0-9.-]{1,253}$' -or
     $document.realm -cne ([string]$document.domain).ToUpperInvariant() -or
     $document.operator -cne ('operator@' + [string]$document.realm) -or
-    [string]::IsNullOrWhiteSpace($document.username) -or
+    $usernameParts.Count -ne 2 -or
+    $usernameParts[0] -cnotmatch '^tj-[a-f0-9]{16}$' -or
+    $usernameParts[1] -cne [string]$document.realm -or
     [string]::IsNullOrWhiteSpace($document.password)) {
     throw 'join material is invalid'
 }

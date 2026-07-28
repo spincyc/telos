@@ -376,7 +376,9 @@ def _execute_join(
                 "nonce": nonce,
                 "domain": realm,
                 "realm": realm.upper(),
-                "username": material["principal"],
+                "username": (
+                    f"{material['principal']}@{realm.upper()}"
+                ),
                 "password": material["credential"],
                 "operator": f"operator@{realm.upper()}",
             })

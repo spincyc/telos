@@ -425,7 +425,10 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         def fake_build(path, material):
             path.write_bytes(b"private")
             path.chmod(0o600)
-            self.assertEqual("tj-0123456789abcdef", material["username"])
+            self.assertEqual(
+                "tj-0123456789abcdef@FACTORY.TEST",
+                material["username"],
+            )
             self.assertEqual("FACTORY.TEST", material["realm"])
             self.assertEqual("operator@FACTORY.TEST", material["operator"])
 
