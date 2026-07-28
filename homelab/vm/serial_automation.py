@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import selectors
+import shlex
 import time
 import uuid
 from dataclasses import dataclass
@@ -124,7 +125,6 @@ class SerialAutomation:
             or not isinstance(guest_command, str)
             or not guest_command
             or "\n" in guest_command
-            or "'" in guest_command
         ):
             raise SerialAutomationError(
                 "Controller convergence command is invalid")
@@ -142,8 +142,8 @@ class SerialAutomation:
             )
             self._send(
                 b"sudo -k -p '" + sudo_prompt
-                + b"' /usr/bin/bash -c '"
-                + guest_command.encode("ascii") + b"'",
+                + b"' /usr/bin/bash -c "
+                + shlex.quote(guest_command).encode("ascii"),
                 "controller-convergence-command-sent",
             )
             self._wait(
