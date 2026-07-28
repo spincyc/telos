@@ -90,7 +90,7 @@ def prepare(args: argparse.Namespace) -> Path:
             computer_name="TELOS-WIN-01",
             local_user="telosadmin",
             local_password="S-" + secrets.token_urlsafe(18),
-            install_user=r".\pxe-install",
+            install_user="pxe-install",
             install_password="S-" + secrets.token_urlsafe(18),
         )
         with PrivateRun(run / "inputs") as private, \

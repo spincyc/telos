@@ -197,3 +197,9 @@ publisher had passed the WinPE password file's CRLF carriage return into
 normalizes only that trailing carriage return before both password
 confirmations. No disk mutation occurred. A fresh bundle and live retry are
 next.
+
+The normalized retry still returned error 86. The remaining client-side
+qualification `.\pxe-install` denotes the WinPE client context rather than the
+remote standalone server. New bundles send the exact unqualified Samba passdb
+user `pxe-install`, matching the share's `valid users` rule. No disk mutation
+occurred. A fresh live retry is next.
