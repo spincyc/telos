@@ -16,6 +16,13 @@ import tempfile
 from enum import Enum
 from typing import Callable, Mapping, Protocol
 
+from .windows_identity_contract import (
+    PRIVATE_MEDIA_CHILD_DEVICE,
+    PRIVATE_MEDIA_CONTROLLER_BUS,
+    PRIVATE_MEDIA_PARENT_DEVICE,
+    PRIVATE_MEDIA_PORT,
+)
+
 
 class WindowsCredentialActionError(RuntimeError):
     """The private credential-action channel failed closed."""
@@ -37,7 +44,8 @@ ACTIONS = frozenset({
 })
 ACTION_NODE = "telos-credential-action-media"
 ACTION_DEVICE = "telos-credential-action-cd"
-ACTION_BUS = "controlbus.0"
+ACTION_PARENT = "telos-credential-action-bot"
+ACTION_BUS = f"{ACTION_PARENT}.0"
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
     "principal", "authenticated", "local_administrators_member",
@@ -378,6 +386,8 @@ class CredentialActionMediaChannel:
         self._identity: tuple[int, int] | None = None
         self._descriptor: int | None = None
         self.node_added = False
+        self.parent_added = False
+        self.child_added = False
         self.attached = False
         self.destroyed = False
         self.state = CredentialActionMediaState.DETACHED
@@ -394,6 +404,39 @@ class CredentialActionMediaChannel:
             raise WindowsCredentialActionError(
                 "credential-action ISO parent must be mode 0700")
         return info
+
+    def _prove_qemu_inode(self, expected: bool) -> None:
+        verifier = getattr(self.qmp, "holds_inode", None)
+        if callable(verifier):
+            held = verifier(*self._identity) if self._identity else False
+            if held is not expected:
+                raise WindowsCredentialActionError(
+                    "QEMU credential ISO inode ownership proof failed")
+            return
+        pid = getattr(self.qmp, "qemu_pid", None)
+        if pid is None:
+            raise WindowsCredentialActionError(
+                "QEMU media ownership proof is unavailable")
+        if not isinstance(pid, int) or pid <= 0 or self._identity is None:
+            raise WindowsCredentialActionError(
+                "QEMU media ownership is unavailable")
+        held = False
+        try:
+            entries = Path(f"/proc/{pid}/fd").iterdir()
+            for entry in entries:
+                try:
+                    info = entry.stat()
+                except FileNotFoundError:
+                    continue
+                if (info.st_dev, info.st_ino) == self._identity:
+                    held = True
+                    break
+        except OSError as error:
+            raise WindowsCredentialActionError(
+                "QEMU media ownership cannot be inspected") from error
+        if held is not expected:
+            raise WindowsCredentialActionError(
+                "QEMU credential ISO inode ownership proof failed")
 
     def attach(self) -> None:
         if self.attached or self.destroyed:
@@ -421,9 +464,24 @@ class CredentialActionMediaChannel:
                 "file": {"driver": "file", "filename": str(self.iso.resolve())},
             })
             self.node_added = True
+            self._prove_qemu_inode(True)
             self.qmp.execute("device_add", {
-                "driver": "scsi-cd", "id": ACTION_DEVICE,
-                "bus": ACTION_BUS, "drive": ACTION_NODE,
+                "driver": PRIVATE_MEDIA_PARENT_DEVICE, "id": ACTION_PARENT,
+                "bus": PRIVATE_MEDIA_CONTROLLER_BUS,
+                "port": PRIVATE_MEDIA_PORT,
+                "attached": False,
+            })
+            self.parent_added = True
+            self.qmp.execute("device_add", {
+                "driver": PRIVATE_MEDIA_CHILD_DEVICE, "id": ACTION_DEVICE,
+                "bus": ACTION_BUS,
+                "drive": ACTION_NODE,
+            })
+            self.child_added = True
+            self.qmp.execute("qom-set", {
+                "path": f"/machine/peripheral/{ACTION_PARENT}",
+                "property": "attached",
+                "value": True,
             })
         except Exception as error:
             raise WindowsCredentialActionError(
@@ -477,11 +535,21 @@ class CredentialActionMediaChannel:
             raise WindowsCredentialActionError(
                 "credential-action marker or ownership is invalid")
         try:
+            self.qmp.execute("qom-set", {
+                "path": f"/machine/peripheral/{ACTION_PARENT}",
+                "property": "attached",
+                "value": False,
+            })
+            self.attached = False
             self.qmp.execute("device_del", {"id": ACTION_DEVICE})
             await_device_deleted(ACTION_DEVICE)
-            self.attached = False
+            self.child_added = False
+            self.qmp.execute("device_del", {"id": ACTION_PARENT})
+            await_device_deleted(ACTION_PARENT)
+            self.parent_added = False
             self.qmp.execute("blockdev-del", {"node-name": ACTION_NODE})
             self.node_added = False
+            self._prove_qemu_inode(False)
             self._destroy_owned_iso()
             self.destroyed = True
             self.state = (
@@ -516,15 +584,34 @@ class CredentialActionMediaChannel:
         failures: list[str] = []
         if self.attached:
             try:
-                self.qmp.execute("device_del", {"id": ACTION_DEVICE})
-                await_device_deleted(ACTION_DEVICE)
+                self.qmp.execute("qom-set", {
+                    "path": f"/machine/peripheral/{ACTION_PARENT}",
+                    "property": "attached",
+                    "value": False,
+                })
                 self.attached = False
             except Exception as error:
+                failures.append(f"detach: {type(error).__name__}")
+        if self.child_added and not self.attached:
+            try:
+                self.qmp.execute("device_del", {"id": ACTION_DEVICE})
+                await_device_deleted(ACTION_DEVICE)
+                self.child_added = False
+            except Exception as error:
                 failures.append(f"device: {type(error).__name__}")
-        if self.node_added and not self.attached:
+        if self.parent_added and not self.attached and not self.child_added:
+            try:
+                self.qmp.execute("device_del", {"id": ACTION_PARENT})
+                await_device_deleted(ACTION_PARENT)
+                self.parent_added = False
+            except Exception as error:
+                failures.append(f"parent: {type(error).__name__}")
+        if (self.node_added and not self.attached
+                and not self.child_added and not self.parent_added):
             try:
                 self.qmp.execute("blockdev-del", {"node-name": ACTION_NODE})
                 self.node_added = False
+                self._prove_qemu_inode(False)
             except Exception as error:
                 failures.append(f"node: {type(error).__name__}")
         if (not self.attached and not self.node_added

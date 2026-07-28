@@ -39,6 +39,14 @@ class WindowsIdentityContractTests(unittest.TestCase):
             self.assertIn(f"file={disk.resolve()}", joined)
             self.assertIn(f"file={control.resolve()}", joined)
             self.assertIn("media=cdrom,readonly=on", joined)
+            self.assertIn(
+                "ide-cd,bus=ide.1,drive=controlmedia,"
+                "id=telos-control-cd",
+                command)
+            self.assertNotIn("virtio-scsi", joined)
+            self.assertNotIn("scsi-cd", joined)
+            self.assertIn("qemu-xhci,id=identityusb", command)
+            self.assertNotIn("bus=identityusb.0", joined)
             writable = [
                 command[index + 1]
                 for index, item in enumerate(command[:-1])

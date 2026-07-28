@@ -328,11 +328,12 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
     def test_post_reboot_probe_rebinds_receive_and_parse_failures(self):
         secret = "post-reboot-private-message"
-        for phase in ("receive", "guest", "parse"):
+        for phase in ("outcome-receive", "guest", "outcome-parse"):
             with self.subTest(phase=phase):
                 failure = subject.WindowsIdentityRunError(secret)
-                failure.probe_action = "domain-state"
-                failure.probe_phase = phase
+                failure.diagnostic = (
+                    subject.IdentityFailureDiagnostic.adapter_static_probe(
+                        "domain-state", phase, failure))
                 callbacks = self.callbacks([])
                 callbacks = subject.AcceptanceCallbacks(**{
                     **callbacks.__dict__,
@@ -355,6 +356,66 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 self.assertNotIn(secret, str(error))
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
+
+    def test_static_probe_rebind_preserves_only_normalized_error_type(self):
+        for supplied, expected in (
+            ("TimeoutError", "TimeoutError"),
+            ("SecretFailure-private-message", "UnexpectedError"),
+        ):
+            with self.subTest(supplied=supplied):
+                failure = subject.WindowsIdentityRunError(
+                    "private-wrapper-message")
+                failure.diagnostic = (
+                    subject.IdentityFailureDiagnostic.static_probe(
+                        "controller-ready",
+                        "controller-readiness",
+                        failure,
+                        phase="outcome-receive",
+                        normalized_error_type=supplied,
+                    ))
+                callbacks = self.callbacks([])
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": lambda _action, failure=failure: (
+                        _ for _ in ()).throw(failure),
+                })
+                with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError,
+                ) as caught:
+                    subject._validated_static_probes(
+                        callbacks, "controller-ready")
+                diagnostic = caught.exception.diagnostic
+                self.assertEqual(expected, diagnostic.error_type)
+                self.assertEqual("controller-ready", diagnostic.check)
+                self.assertEqual(
+                    "static-probe.controller-readiness.outcome-receive",
+                    diagnostic.operation,
+                )
+                self.assertNotIn("private", str(caught.exception))
+                self.assertNotIn("SecretFailure", str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+        forged = subject.WindowsIdentityRunError("private-forged-message")
+        forged.probe_action = "controller-readiness"
+        forged.probe_phase = "outcome-receive"
+        forged.probe_error_type = "TimeoutError"
+        callbacks = self.callbacks([])
+        callbacks = subject.AcceptanceCallbacks(**{
+            **callbacks.__dict__,
+            "static_probe": lambda _action: (_ for _ in ()).throw(forged),
+        })
+        with self.assertRaises(
+            subject.WindowsIdentityOrchestratorError,
+        ) as caught:
+            subject._validated_static_probes(callbacks, "controller-ready")
+        self.assertEqual(
+            "static-probe.controller-readiness",
+            caught.exception.diagnostic.operation,
+        )
+        self.assertEqual(
+            "UnexpectedError", caught.exception.diagnostic.error_type)
+        self.assertNotIn("private", str(caught.exception))
 
     def test_join_serial_connects_before_private_media_is_created(self):
         callbacks = self.callbacks([])

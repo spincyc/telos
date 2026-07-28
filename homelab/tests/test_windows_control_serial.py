@@ -13,6 +13,7 @@ from homelab.vm.windows_control_serial import (
     control_probe,
     fault_reachability_fields,
     parse_probe_record,
+    parse_probe_start,
     receive_probe_record,
 )
 
@@ -75,6 +76,28 @@ def record(action="domain-state"):
 
 
 class WindowsControlSerialTests(unittest.TestCase):
+    def test_start_parser_accepts_only_exact_action_bound_marker(self):
+        valid = (
+            b'{"schema_version":1,"action":"domain-state",'
+            b'"result":"start"}\n'
+        )
+        self.assertEqual(
+            "start", parse_probe_start(valid, "domain-state")["result"])
+        invalid = (
+            b"",
+            valid.rstrip(b"\n"),
+            valid + valid,
+            b'{"schema_version":1,"action":"wrong","result":"start"}\n',
+            b'{"schema_version":1,"action":"domain-state","result":"pass"}\n',
+            b'{"schema_version":1,"action":"domain-state",'
+            b'"result":"start","detail":"private"}\n',
+        )
+        for candidate in invalid:
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(WindowsControlSerialError) as caught:
+                    parse_probe_start(candidate, "domain-state")
+                self.assertNotIn("private", str(caught.exception))
+
     def test_qemu_serial_uses_private_socket_without_mutating_source_argv(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

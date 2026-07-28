@@ -19,9 +19,11 @@ from .controller_principals import (
 from .serial_automation import SerialAutomation
 from .windows_control_serial import (
     MAX_RECORD_BYTES,
+    WindowsControlSerialError,
     WindowsGuestProbeError,
     control_probe,
     parse_probe_record,
+    parse_probe_start,
 )
 from .windows_credential_action_iso import (
     CredentialActionMediaChannel,
@@ -123,6 +125,7 @@ class NativeWindowsAcceptanceAdapter:
         self._join_material_serial: ControllerJoinSerial | None = None
         self._controller_console: SerialAutomation | None = None
         self._com1_owned = False
+        self._static_probe_poisoned = False
         self._audit_configuration()
 
     def _audit_configuration(self) -> None:
@@ -294,8 +297,31 @@ class NativeWindowsAcceptanceAdapter:
         interaction.observe(desktop, plan.checkpoint_timeout)
 
     def static_probe(self, action: str) -> Mapping[str, object]:
+        if self._static_probe_poisoned:
+            raise WindowsIdentityAdapterError(
+                "static probe session requires VM teardown")
         request = control_probe(action)
         data = bytearray()
+        received = 0
+
+        def receive_record(stream: socket.socket) -> bytes:
+            nonlocal received
+            while b"\n" not in data:
+                remaining = MAX_RECORD_BYTES - received
+                if remaining <= 0:
+                    raise WindowsControlSerialError(
+                        "probe response exceeds size limit")
+                chunk = stream.recv(min(4096, remaining))
+                if not chunk:
+                    raise WindowsControlSerialError(
+                        "probe response ended before a complete record")
+                data.extend(chunk)
+                received += len(chunk)
+            newline = data.index(b"\n") + 1
+            line = bytes(data[:newline])
+            del data[:newline]
+            return line
+
         with self._com1():
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
                 failure: BaseException | None = None
@@ -313,48 +339,65 @@ class NativeWindowsAcceptanceAdapter:
                 except Exception as error:
                     failure = error
                 if failure is not None:
+                    self._static_probe_poisoned = True
                     self._raise_static_probe_failure(
                         request.action, "launch", failure)
                 failure = None
                 try:
-                    while b"\n" not in data and len(data) <= MAX_RECORD_BYTES:
-                        chunk = stream.recv(
-                            min(4096, MAX_RECORD_BYTES + 1 - len(data)))
-                        if not chunk:
-                            break
-                        data.extend(chunk)
+                    start = receive_record(stream)
                 except Exception as error:
                     failure = error
                 if failure is not None:
+                    self._static_probe_poisoned = True
                     self._raise_static_probe_failure(
-                        request.action, "receive", failure)
+                        request.action, "start-receive", failure)
+                failure = None
+                try:
+                    parse_probe_start(start, request.action)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._static_probe_poisoned = True
+                    self._raise_static_probe_failure(
+                        request.action, "start-parse", failure)
+                failure = None
+                try:
+                    outcome = receive_record(stream)
+                except Exception as error:
+                    failure = error
+                if failure is not None:
+                    self._static_probe_poisoned = True
+                    self._raise_static_probe_failure(
+                        request.action, "outcome-receive", failure)
         failure = None
         try:
-            return parse_probe_record(bytes(data), request.action)
+            if data:
+                raise WindowsControlSerialError(
+                    "probe response contains an extra record")
+            return parse_probe_record(outcome, request.action)
+        except WindowsGuestProbeError as error:
+            failure = error
         except Exception as error:
             failure = error
-        if failure is not None:
+        if isinstance(failure, WindowsGuestProbeError):
             self._raise_static_probe_failure(
-                request.action,
-                "guest" if isinstance(failure, WindowsGuestProbeError)
-                else "parse",
-                failure,
-            )
+                request.action, "guest", failure)
+        if failure is not None:
+            self._static_probe_poisoned = True
+            self._raise_static_probe_failure(
+                request.action, "outcome-parse", failure)
         raise AssertionError("static probe parser returned no result")
 
     @staticmethod
     def _raise_static_probe_failure(
         action: str, phase: str, error: BaseException,
     ) -> None:
-        diagnostic = IdentityFailureDiagnostic.static_probe(
-            "controller-ready", action, error, phase=phase)
+        diagnostic = IdentityFailureDiagnostic.adapter_static_probe(
+            action, phase, error)
         failure = WindowsIdentityAdapterError(
             "static probe operation failed; " + diagnostic.render(),
             diagnostic=diagnostic,
         )
-        failure.probe_action = action
-        failure.probe_phase = phase
-        failure.probe_error_type = diagnostic.error_type
         raise failure from None
 
     def _destroy_unattached_iso(self, iso: Path) -> None:

@@ -381,6 +381,12 @@ $serial = [System.IO.Ports.SerialPort]::new(
     $SerialPort, 115200, 'None', 8, 'One')
 try {
     $serial.Open()
+    $start = [ordered]@{
+        schema_version = 1
+        action = $Action
+        result = 'start'
+    }
+    $serial.WriteLine(($start | ConvertTo-Json -Compress))
     try {
         $record = [ordered]@{
             schema_version = 1

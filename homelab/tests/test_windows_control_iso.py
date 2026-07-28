@@ -64,9 +64,13 @@ class WindowsControlIsoTests(unittest.TestCase):
             ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
         ).read_text(encoding="utf-8")
         open_at = script.index("$serial.Open()")
+        start_at = script.index("result = 'start'", open_at)
+        start_write_at = script.index("$serial.WriteLine", start_at)
         probe_at = script.index(
             "observation = Get-Probe $Action", open_at)
-        self.assertLess(open_at, probe_at)
+        self.assertLess(open_at, start_at)
+        self.assertLess(start_at, start_write_at)
+        self.assertLess(start_write_at, probe_at)
         failure = script[
             script.index("catch {", probe_at):
             script.index("$line = $record", probe_at)

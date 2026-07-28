@@ -9,6 +9,13 @@ from .windows_control_serial import attach_qemu_serial
 from .windows_install_contract import audit_qemu_disk_boundary
 
 DISK_SERIAL = "TELOS-WIN-0001"
+STATIC_CONTROL_BUS = "ide.1"
+OPTICAL_DEVICE = "ide-cd"
+PRIVATE_MEDIA_CONTROLLER = "identityusb"
+PRIVATE_MEDIA_CONTROLLER_BUS = f"{PRIVATE_MEDIA_CONTROLLER}.0"
+PRIVATE_MEDIA_PORT = "1"
+PRIVATE_MEDIA_PARENT_DEVICE = "usb-bot"
+PRIVATE_MEDIA_CHILD_DEVICE = "scsi-cd"
 
 
 def qemu_identity_command(
@@ -50,14 +57,20 @@ def qemu_identity_command(
         if control_iso.stat().st_mode & 0o222:
             raise ValueError("control ISO must be read-only")
         command += [
-            "-device", "virtio-scsi-pci,id=controlbus",
             "-drive",
             (
                 "if=none,id=controlmedia,media=cdrom,readonly=on,"
                 f"file={control_iso.resolve()}"
             ),
-            "-device", "scsi-cd,bus=controlbus.0,drive=controlmedia",
+            "-device",
+            (
+                f"{OPTICAL_DEVICE},bus={STATIC_CONTROL_BUS},"
+                "drive=controlmedia,id=telos-control-cd"
+            ),
         ]
+    command += [
+        "-device", f"qemu-xhci,id={PRIVATE_MEDIA_CONTROLLER}",
+    ]
     command += [
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",

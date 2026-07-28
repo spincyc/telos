@@ -32,6 +32,7 @@ CHARDEV_ID = "telosidentity"
 _PASS_KEYS = {
     "schema_version", "action", "result", "observed_at", "observation",
 }
+_START_KEYS = {"schema_version", "action", "result"}
 _FAILURE_KEYS = {
     "schema_version", "action", "result", "observed_at", "failure",
 }
@@ -218,6 +219,28 @@ def parse_probe_record(line: bytes, expected_action: str) -> dict[str, object]:
                 or not isinstance(value, expected_type)):
             raise WindowsControlSerialError(
                 "probe observation schema is invalid")
+    return record
+
+
+def parse_probe_start(line: bytes, expected_action: str) -> dict[str, object]:
+    """Parse the exact action-bound marker emitted after COM1 opens."""
+    if not line.endswith(b"\n") or b"\n" in line[:-1] or b"\r" in line[:-1]:
+        raise WindowsControlSerialError(
+            "probe start must be exactly one JSONL record")
+    if len(line) > MAX_RECORD_BYTES:
+        raise WindowsControlSerialError("probe response exceeds size limit")
+    try:
+        record = json.loads(line.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise WindowsControlSerialError("probe start is invalid JSON") from error
+    if (
+        not isinstance(record, dict)
+        or set(record) != _START_KEYS
+        or record.get("schema_version") != 1
+        or record.get("action") != expected_action
+        or record.get("result") != "start"
+    ):
+        raise WindowsControlSerialError("probe start schema is invalid")
     return record
 
 

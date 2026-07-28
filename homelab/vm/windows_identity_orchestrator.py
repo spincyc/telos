@@ -135,23 +135,21 @@ def _call_static_probe(
     try:
         record = dict(callbacks.static_probe(action))
     except Exception as error:
-        probe_action = getattr(error, "probe_action", None)
-        probe_phase = getattr(error, "probe_phase", None)
-        if probe_action == action and probe_phase in {
-            "connect", "launch", "receive", "guest", "parse",
-        }:
-            diagnostic = IdentityFailureDiagnostic.static_probe(
-                check, action, error, phase=probe_phase)
-        else:
-            diagnostic = (
-                error.diagnostic
-                if (
-                    isinstance(error, WindowsIdentityRunError)
-                    and error.diagnostic is not None
-                )
-                else IdentityFailureDiagnostic.static_probe(
-                    check, action, error)
+        source_diagnostic = (
+            error.diagnostic
+            if (
+                isinstance(error, WindowsIdentityRunError)
+                and isinstance(
+                    error.diagnostic, IdentityFailureDiagnostic)
             )
+            else None
+        )
+        if source_diagnostic is not None:
+            diagnostic = IdentityFailureDiagnostic.rebind_static_probe(
+                check, action, source_diagnostic)
+        if diagnostic is None:
+            diagnostic = IdentityFailureDiagnostic.static_probe(
+                check, action, error)
     if diagnostic is not None:
         raise WindowsIdentityOrchestratorError(
             "identity observation operation failed; "

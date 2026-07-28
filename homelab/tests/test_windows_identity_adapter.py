@@ -89,39 +89,57 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             with self.assertRaises(subject.WindowsIdentityAdapterError):
                 adapter.static_probe("domain-state")
 
+    @staticmethod
+    def start(action="controller-readiness"):
+        return (
+            b'{"schema_version":1,"action":"' + action.encode()
+            + b'","result":"start"}\n'
+        )
+
+    @staticmethod
+    def outcome(action="controller-readiness"):
+        return (
+            b'{"schema_version":1,"action":"' + action.encode()
+            + b'","result":"pass","observed_at":"2026-07-28T15:00:00Z",'
+            b'"observation":{"samba_ad":true,"dns":true,"kerberos":true,'
+            b'"time":true,"synthetic_directory":true}}\n'
+        )
+
     def test_controller_readiness_probe_reports_each_fixed_subphase(self):
         class SecretFailure(RuntimeError):
             pass
 
-        for phase in ("connect", "launch", "receive", "parse"):
+        for phase in (
+            "connect", "launch", "start-receive", "start-parse",
+            "outcome-receive", "outcome-parse",
+        ):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as name:
                 adapter = self.adapter(Path(name))
                 adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
                 stream = mock.MagicMock()
                 stream.__enter__.return_value = stream
-                stream.recv.return_value = b"invalid\n"
+                stream.recv.side_effect = [self.start(), self.outcome()]
                 if phase == "connect":
                     stream.connect.side_effect = SecretFailure("private")
                 elif phase == "launch":
                     adapter.launch_guest = mock.Mock(
                         side_effect=SecretFailure("private"))
-                elif phase == "receive":
+                elif phase == "start-receive":
                     adapter.launch_guest = mock.Mock()
-                    stream.recv.side_effect = SecretFailure("private")
+                    stream.recv.side_effect = TimeoutError("private")
+                elif phase == "start-parse":
+                    adapter.launch_guest = mock.Mock()
+                    stream.recv.side_effect = [b"invalid\n"]
+                elif phase == "outcome-receive":
+                    adapter.launch_guest = mock.Mock()
+                    stream.recv.side_effect = [
+                        self.start(), TimeoutError("private")]
                 else:
                     adapter.launch_guest = mock.Mock()
-                parse = mock.patch.object(
-                    subject,
-                    "parse_probe_record",
-                    side_effect=(
-                        SecretFailure("private")
-                        if phase == "parse"
-                        else None
-                    ),
-                )
+                    stream.recv.side_effect = [self.start(), b"invalid\n"]
                 with mock.patch.object(
                     subject.socket, "socket", return_value=stream,
-                ), parse, self.assertRaises(
+                ), self.assertRaises(
                     subject.WindowsIdentityAdapterError,
                 ) as caught:
                     adapter.static_probe("controller-readiness")
@@ -130,7 +148,16 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                     "static-probe.controller-readiness." + phase,
                     error.diagnostic.operation,
                 )
-                self.assertEqual("UnexpectedError", error.diagnostic.error_type)
+                self.assertEqual(
+                    (
+                        "TimeoutError"
+                        if phase in {"start-receive", "outcome-receive"}
+                        else "WindowsControlSerialError"
+                        if phase in {"start-parse", "outcome-parse"}
+                        else "UnexpectedError"
+                    ),
+                    error.diagnostic.error_type,
+                )
                 self.assertNotIn("private", str(error))
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
@@ -145,7 +172,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         )
         for payload, expected_phase, expected_error in (
             (failure, "guest", "WindowsGuestProbeError"),
-            (secret.encode() + b"\n", "parse", "WindowsControlSerialError"),
+            (secret.encode() + b"\n", "outcome-parse",
+             "WindowsControlSerialError"),
         ):
             with self.subTest(
                 phase=expected_phase,
@@ -155,7 +183,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter.launch_guest = mock.Mock()
                 stream = mock.MagicMock()
                 stream.__enter__.return_value = stream
-                stream.recv.return_value = payload
+                stream.recv.side_effect = [self.start(), payload]
                 with mock.patch.object(
                     subject.socket, "socket", return_value=stream,
                 ), self.assertRaises(
@@ -172,6 +200,153 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 self.assertNotIn(secret, str(error))
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
+
+    def test_probe_accepts_fragmented_and_coalesced_two_record_stream(self):
+        payload = self.start() + self.outcome()
+        for chunks in (
+            [payload],
+            [payload[:7], payload[7:41], payload[41:]],
+        ):
+            with self.subTest(chunks=len(chunks)), \
+                    tempfile.TemporaryDirectory() as name:
+                adapter = self.adapter(Path(name))
+                adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+                adapter.launch_guest = mock.Mock()
+                stream = mock.MagicMock()
+                stream.__enter__.return_value = stream
+                stream.recv.side_effect = chunks
+                with mock.patch.object(
+                    subject.socket, "socket", return_value=stream,
+                ):
+                    result = adapter.static_probe("controller-readiness")
+                self.assertEqual("pass", result["result"])
+
+    def test_probe_rejects_reordered_duplicate_extra_and_wrong_action(self):
+        invalid_streams = (
+            self.outcome() + self.start(),
+            self.start() + self.start(),
+            self.start() + self.outcome() + self.outcome(),
+            self.start("domain-state") + self.outcome(),
+            self.start() + self.outcome("domain-state"),
+        )
+        for payload in invalid_streams:
+            with self.subTest(payload=payload), \
+                    tempfile.TemporaryDirectory() as name:
+                adapter = self.adapter(Path(name))
+                adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+                adapter.launch_guest = mock.Mock()
+                stream = mock.MagicMock()
+                stream.__enter__.return_value = stream
+                stream.recv.return_value = payload
+                with mock.patch.object(
+                    subject.socket, "socket", return_value=stream,
+                ), self.assertRaises(subject.WindowsIdentityAdapterError):
+                    adapter.static_probe("controller-readiness")
+
+    def test_outcome_receive_failure_poisons_session_without_second_launch(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+            adapter.launch_guest = mock.Mock()
+            stream = mock.MagicMock()
+            stream.__enter__.return_value = stream
+            stream.recv.side_effect = [self.start(), TimeoutError("private")]
+            with mock.patch.object(
+                subject.socket, "socket", return_value=stream,
+            ), self.assertRaises(subject.WindowsIdentityAdapterError) as first:
+                adapter.static_probe("controller-readiness")
+            self.assertEqual(
+                "static-probe.controller-readiness.outcome-receive",
+                first.exception.diagnostic.operation,
+            )
+            with mock.patch.object(
+                subject.socket, "socket",
+            ) as socket_factory, self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError, "VM teardown",
+            ):
+                adapter.static_probe("controller-readiness")
+            adapter.launch_guest.assert_called_once()
+            socket_factory.assert_not_called()
+
+    def test_launch_failure_after_connect_poisons_without_second_attempt(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+            adapter.launch_guest = mock.Mock(
+                side_effect=RuntimeError("private-post-submit-state"))
+            first_stream = mock.MagicMock()
+            first_stream.__enter__.return_value = first_stream
+            with mock.patch.object(
+                subject.socket, "socket", return_value=first_stream,
+            ), self.assertRaises(
+                subject.WindowsIdentityAdapterError,
+            ) as first:
+                adapter.static_probe("controller-readiness")
+            self.assertEqual(
+                "static-probe.controller-readiness.launch",
+                first.exception.diagnostic.operation,
+            )
+            self.assertNotIn("private", str(first.exception))
+            self.assertIsNone(first.exception.__cause__)
+            self.assertIsNone(first.exception.__context__)
+            with mock.patch.object(
+                subject.socket, "socket",
+            ) as socket_factory, self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError, "VM teardown",
+            ):
+                adapter.static_probe("controller-readiness")
+            adapter.launch_guest.assert_called_once()
+            first_stream.connect.assert_called_once()
+            socket_factory.assert_not_called()
+
+    def test_every_post_launch_protocol_failure_poisons_session(self):
+        for payload in (b"", b'{"private":"guest-secret"}\n'):
+            with self.subTest(payload=payload), \
+                    tempfile.TemporaryDirectory() as name:
+                adapter = self.adapter(Path(name))
+                adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+                adapter.launch_guest = mock.Mock()
+                stream = mock.MagicMock()
+                stream.__enter__.return_value = stream
+                stream.recv.return_value = payload
+                with mock.patch.object(
+                    subject.socket, "socket", return_value=stream,
+                ), self.assertRaises(
+                    subject.WindowsIdentityAdapterError,
+                ) as first:
+                    adapter.static_probe("controller-readiness")
+                self.assertNotIn("guest-secret", str(first.exception))
+                self.assertIsNone(first.exception.__cause__)
+                self.assertIsNone(first.exception.__context__)
+                with self.assertRaisesRegex(
+                    subject.WindowsIdentityAdapterError, "VM teardown",
+                ):
+                    adapter.static_probe("controller-readiness")
+                adapter.launch_guest.assert_called_once()
+
+    def test_two_record_transport_has_one_total_byte_cap(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._serial_socket = mock.Mock(return_value=Path("/socket"))
+            adapter.launch_guest = mock.Mock()
+            start = self.start()
+            stream = mock.MagicMock()
+            stream.__enter__.return_value = stream
+            stream.recv.side_effect = [
+                start, b" " * (subject.MAX_RECORD_BYTES - len(start)),
+            ]
+            with mock.patch.object(
+                subject.socket, "socket", return_value=stream,
+            ), self.assertRaises(
+                subject.WindowsIdentityAdapterError,
+            ) as caught:
+                adapter.static_probe("controller-readiness")
+            self.assertEqual(
+                "static-probe.controller-readiness.outcome-receive",
+                caught.exception.diagnostic.operation,
+            )
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
 
     def test_post_reboot_reauthentication_fails_without_calibrated_plan(self):
         with tempfile.TemporaryDirectory() as name:

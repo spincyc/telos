@@ -34,12 +34,20 @@ class FakeQmp:
     def __init__(self, fail_at=None):
         self.calls = []
         self.fail_at = fail_at
+        self.backend_open = False
 
     def execute(self, command, arguments=None):
         self.calls.append((command, arguments))
         if command == self.fail_at:
             raise RuntimeError("sensitive qmp detail")
+        if command == "blockdev-add":
+            self.backend_open = True
+        elif command == "blockdev-del":
+            self.backend_open = False
         return {}
+
+    def holds_inode(self, _device, _inode):
+        return self.backend_open
 
 
 class WindowsCredentialActionIsoTests(unittest.TestCase):
@@ -155,12 +163,29 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             )
             self.assertEqual([
                 ("deleted", ACTION_DEVICE, True),
+                ("deleted", "telos-credential-action-bot", True),
                 ("released",
                  f"TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED {NONCE}", False),
             ], events)
             self.assertEqual(
-                ["blockdev-add", "device_add", "device_del", "blockdev-del"],
+                [
+                    "blockdev-add", "device_add", "device_add", "qom-set",
+                    "qom-set", "device_del", "device_del", "blockdev-del",
+                ],
                 [call[0] for call in qmp.calls])
+            self.assertEqual({
+                "driver": "usb-bot",
+                "id": "telos-credential-action-bot",
+                "bus": "identityusb.0",
+                "port": "1",
+                "attached": False,
+            }, qmp.calls[1][1])
+            self.assertEqual({
+                "driver": "scsi-cd",
+                "id": ACTION_DEVICE,
+                "bus": "telos-credential-action-bot.0",
+                "drive": "telos-credential-action-media",
+            }, qmp.calls[2][1])
 
     def test_partial_attach_and_cleanup_failure_retain_ownership(self):
         with tempfile.TemporaryDirectory() as temporary:

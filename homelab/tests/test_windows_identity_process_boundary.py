@@ -116,7 +116,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run.QmpClient, "connect") as qmp_connect,
                 mock.patch.object(
                     boundary, "_process_holds_inode",
-                    side_effect=(True, False, True, False)),
+                    side_effect=(True, False, True, False, True)),
                 mock.patch.object(
                     windows_identity_run, "SerialAutomation") as automation,
                 mock.patch.object(
@@ -193,6 +193,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_controller_rejects_unsafe_opened_seed_descriptor(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            boundary._validate()
             boundary.port = 43119
             boundary.runtime.mkdir(mode=0o700)
             boundary.processes.update({
@@ -335,6 +336,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
                 mock.patch.object(boundary, "_start_dependency"),
+                mock.patch.object(
+                    boundary, "_process_holds_inode",
+                    return_value=True),
             ):
                 boundary.start_switch()
 
@@ -387,6 +391,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_runtime_command_allows_only_private_qmp_and_loopback_port_variance(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            boundary._validate()
             boundary.port = 43119
             boundary.runtime.mkdir(mode=0o700)
             authorized = [
@@ -440,6 +445,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
                 mock.patch.object(boundary, "_start_dependency"),
+                mock.patch.object(
+                    boundary, "_process_holds_inode",
+                    return_value=True),
             ):
                 boundary.start_windows()
             popen.assert_called_once()
@@ -542,6 +550,58 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             self.assertEqual(3, connect.call_count)
             self.assertEqual([mock.call(0.1), mock.call(0.1)],
                              sleep.call_args_list)
+
+    def test_control_inode_wait_accepts_a_delayed_qemu_open(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            process = _Process(104)
+            with (
+                mock.patch.object(
+                    boundary, "_process_holds_inode",
+                    side_effect=(False, True)) as holds,
+                mock.patch.object(
+                    windows_identity_run.time, "monotonic",
+                    side_effect=(0.0, 0.1)),
+                mock.patch.object(
+                    windows_identity_run.time, "sleep") as sleep,
+            ):
+                boundary._wait_for_process_inode(
+                    process, device=7, inode=11, timeout=1.0)
+            self.assertEqual(2, holds.call_count)
+            sleep.assert_called_once_with(0.05)
+
+    def test_control_inode_wait_rejects_process_exit(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            process = _Process(104, returncode=1)
+            with mock.patch.object(
+                    boundary, "_process_holds_inode") as holds:
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError,
+                        "exited before opening"):
+                    boundary._wait_for_process_inode(
+                        process, device=7, inode=11)
+            holds.assert_not_called()
+
+    def test_control_inode_wait_has_a_bounded_never_open_failure(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            process = _Process(104)
+            with (
+                mock.patch.object(
+                    boundary, "_process_holds_inode",
+                    return_value=False),
+                mock.patch.object(
+                    windows_identity_run.time, "monotonic",
+                    side_effect=(0.0, 0.1, 0.2)),
+                mock.patch.object(
+                    windows_identity_run.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError, "in time"):
+                    boundary._wait_for_process_inode(
+                        process, device=7, inode=11, timeout=0.15)
+            sleep.assert_called_once_with(0.05)
 
     def test_qmp_retry_aborts_when_windows_exits(self):
         with tempfile.TemporaryDirectory() as name:

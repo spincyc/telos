@@ -34,12 +34,20 @@ class FakeQmp:
     def __init__(self, fail_at=None):
         self.calls = []
         self.fail_at = fail_at
+        self.backend_open = False
 
     def execute(self, command, arguments=None):
         self.calls.append((command, arguments))
         if command == self.fail_at:
             raise RuntimeError("sensitive qmp detail")
+        if command == "blockdev-add":
+            self.backend_open = True
+        elif command == "blockdev-del":
+            self.backend_open = False
         return {}
+
+    def holds_inode(self, _device, _inode):
+        return self.backend_open
 
 
 class WindowsJoinIsoTests(unittest.TestCase):
@@ -142,10 +150,27 @@ class WindowsJoinIsoTests(unittest.TestCase):
             )
             self.assertFalse(iso.exists())
             self.assertEqual(
-                ["blockdev-add", "device_add", "device_del", "blockdev-del"],
+                [
+                    "blockdev-add", "device_add", "device_add", "qom-set",
+                    "qom-set", "device_del", "device_del", "blockdev-del",
+                ],
                 [call[0] for call in qmp.calls])
+            self.assertEqual({
+                "driver": "usb-bot",
+                "id": "telos-join-bot",
+                "bus": "identityusb.0",
+                "port": "1",
+                "attached": False,
+            }, qmp.calls[1][1])
+            self.assertEqual({
+                "driver": "scsi-cd",
+                "id": JOIN_DEVICE,
+                "bus": "telos-join-bot.0",
+                "drive": "telos-join-media",
+            }, qmp.calls[2][1])
             self.assertEqual([
                 ("deleted", JOIN_DEVICE, True),
+                ("deleted", "telos-join-bot", True),
                 ("released", f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}", False),
             ], events)
             self.assertIs(JoinMediaState.RELEASED, channel.state)

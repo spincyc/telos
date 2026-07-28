@@ -138,7 +138,7 @@ class WindowsIdentityRunTests(unittest.TestCase):
             "controller-ready",
             "controller-readiness",
             OSError("private-cleanup-message"),
-            phase="receive",
+            phase="outcome-receive",
         )
         material = PrivateIdentityMaterial(
             Path("/private/publication.iso"),

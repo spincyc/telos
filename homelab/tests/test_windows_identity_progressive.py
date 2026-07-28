@@ -170,7 +170,7 @@ class ProgressiveRotationTests(unittest.TestCase):
             "controller-ready",
             "controller-readiness",
             WindowsIdentityAdapterError(secret),
-            phase="receive",
+            phase="outcome-receive",
         )
         callbacks = SimpleNamespace(
             static_probe=lambda _action: (_ for _ in ()).throw(
@@ -211,11 +211,13 @@ class ProgressiveRotationTests(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("check=controller-ready", message)
         self.assertIn(
-            "operation=static-probe.controller-readiness.receive", message)
+            "operation=static-probe.controller-readiness.outcome-receive",
+            message,
+        )
         self.assertIn("error=WindowsIdentityAdapterError", message)
         self.assertNotIn(secret, message)
         self.assertNotIn("Old-private-47!", message)
-        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertEqual(diagnostic, caught.exception.diagnostic)
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
         self.assertNotIn("destroy", events)

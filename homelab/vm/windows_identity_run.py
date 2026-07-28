@@ -76,7 +76,8 @@ class IdentityFailureDiagnostic:
         (check, f"static-probe.{action}{suffix}")
         for check, action in _STATIC_PROBE_PAIRS
         for suffix in (
-            "", ".connect", ".launch", ".receive", ".guest", ".parse",
+            "", ".connect", ".launch", ".start-receive", ".start-parse",
+            ".outcome-receive", ".outcome-parse", ".guest",
         )
     )
     _ERROR_TYPES = frozenset({
@@ -96,16 +97,53 @@ class IdentityFailureDiagnostic:
         error: BaseException,
         *,
         phase: str | None = None,
+        normalized_error_type: str | None = None,
     ) -> "IdentityFailureDiagnostic":
         suffix = "" if phase is None else f".{phase}"
         operation = f"static-probe.{action}{suffix}"
         if (check, operation) not in cls._STATIC_PROBES:
             check = "unknown-check"
             operation = "unknown-operation"
-        error_type = type(error).__name__
+        error_type = (
+            type(error).__name__
+            if normalized_error_type is None
+            else normalized_error_type
+        )
         if error_type not in cls._ERROR_TYPES:
             error_type = "UnexpectedError"
         return cls(check, operation, error_type)
+
+    @classmethod
+    def adapter_static_probe(
+        cls, action: str, phase: str, error: BaseException,
+    ) -> "IdentityFailureDiagnostic":
+        checks = sorted(
+            check for check, candidate in cls._STATIC_PROBE_PAIRS
+            if candidate == action
+        )
+        check = checks[0] if checks else "unknown-check"
+        return cls.static_probe(check, action, error, phase=phase)
+
+    @classmethod
+    def rebind_static_probe(
+        cls,
+        check: str,
+        action: str,
+        diagnostic: "IdentityFailureDiagnostic",
+    ) -> "IdentityFailureDiagnostic | None":
+        prefix = f"static-probe.{action}."
+        if not diagnostic.operation.startswith(prefix):
+            return None
+        phase = diagnostic.operation.removeprefix(prefix)
+        if phase not in {
+            "connect", "launch", "start-receive", "start-parse",
+            "outcome-receive", "outcome-parse", "guest",
+        }:
+            return None
+        operation = f"static-probe.{action}.{phase}"
+        if (check, operation) not in cls._STATIC_PROBES:
+            return None
+        return cls(check, operation, diagnostic.error_type)
 
     def __post_init__(self) -> None:
         if (
@@ -188,6 +226,8 @@ class NativeProcessBoundary:
         self.serial_socket: Path | None = None
         self.port: int | None = None
         self.authorized_command: list[str] | None = None
+        self.control_iso_identity: tuple[int, int] | None = None
+        self.control_iso_fd: int | None = None
         self.suspended_processes: set[str] = set()
         self.dependency_endpoints: dict[str, tuple[str, int]] = {}
         self.controller_console: SerialAutomation | None = None
@@ -227,6 +267,17 @@ class NativeProcessBoundary:
         return digest.hexdigest()
 
     @staticmethod
+    def _sha256_fd(descriptor: int) -> str:
+        digest = hashlib.sha256()
+        offset = 0
+        while True:
+            block = os.pread(descriptor, 1024 * 1024, offset)
+            if not block:
+                return digest.hexdigest()
+            digest.update(block)
+            offset += len(block)
+
+    @staticmethod
     def _process_holds_inode(
         pid: int, *, device: int, inode: int,
     ) -> bool:
@@ -238,6 +289,27 @@ class NativeProcessBoundary:
             if opened.st_dev == device and opened.st_ino == inode:
                 return True
         return False
+
+    def _wait_for_process_inode(
+        self,
+        process: subprocess.Popen[bytes],
+        *,
+        device: int,
+        inode: int,
+        timeout: float = 10.0,
+    ) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            if process.poll() is not None:
+                raise WindowsIdentityRunError(
+                    "Windows exited before opening the authorized control ISO")
+            if self._process_holds_inode(
+                    process.pid, device=device, inode=inode):
+                return
+            if time.monotonic() >= deadline:
+                raise WindowsIdentityRunError(
+                    "Windows did not open the authorized control ISO in time")
+            time.sleep(0.05)
 
     @staticmethod
     def _destroy_owned_inode(fd: int, expected_path: Path) -> None:
@@ -282,6 +354,27 @@ class NativeProcessBoundary:
                 "identity attempt lacks regular control.iso")
         if stat.S_IMODE(control_iso.stat().st_mode) != 0o444:
             raise WindowsIdentityRunError("control.iso must be mode 0444")
+        control_info = control_iso.stat()
+        if self.control_iso_fd is not None:
+            os.close(self.control_iso_fd)
+        try:
+            control_fd = os.open(
+                control_iso,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                "control ISO ownership open failed") from error
+        opened_control = os.fstat(control_fd)
+        if (
+            opened_control.st_dev != control_info.st_dev
+            or opened_control.st_ino != control_info.st_ino
+        ):
+            os.close(control_fd)
+            raise WindowsIdentityRunError(
+                "control ISO identity changed during authorization")
+        self.control_iso_fd = control_fd
+        self.control_iso_identity = (
+            opened_control.st_dev, opened_control.st_ino)
         try:
             authorization = json.loads(
                 (self.attempt / "authorization.json").read_text(
@@ -352,7 +445,7 @@ class NativeProcessBoundary:
             or control_media.get("path") != str(control_iso.resolve())
             or control_media.get("read_only") is not True
             or control_media.get("contains_secrets") is not False
-            or control_media.get("sha256") != self._sha256(control_iso)
+            or control_media.get("sha256") != self._sha256_fd(control_fd)
         ):
             raise WindowsIdentityRunError(
                 "control ISO differs from the authorized static artifact")
@@ -704,6 +797,16 @@ class NativeProcessBoundary:
             audit_live_process(
                 process.pid, "client", allowed_nic_models=("e1000e",),
                 allowed_chardevs=chardevs)
+            if self.control_iso_identity is None:
+                raise WindowsIdentityRunError(
+                    "authorized control ISO ownership is unavailable")
+            self._wait_for_process_inode(
+                process,
+                device=self.control_iso_identity[0],
+                inode=self.control_iso_identity[1],
+            )
+            os.close(self.control_iso_fd)
+            self.control_iso_fd = None
             wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
             self._start_dependency("update-source")
             self._start_dependency("optional-storage")
@@ -726,6 +829,9 @@ class NativeProcessBoundary:
                         "Windows QMP runtime is unavailable")
                 self.qmp = QmpClient.connect(
                     self.qmp_root / "windows.qmp", timeout=2)
+                setattr(
+                    self.qmp, "qemu_pid",
+                    self.processes["windows"].pid)
                 return
             except OSError as caught:
                 error = caught
@@ -827,6 +933,15 @@ class NativeProcessBoundary:
 
     def stop_windows(self) -> None:
         failures = []
+        windows = self.processes.get("windows")
+        if self.control_iso_fd is not None:
+            try:
+                os.close(self.control_iso_fd)
+            except OSError as error:
+                failures.append(
+                    f"control ISO ownership: {type(error).__name__}")
+            else:
+                self.control_iso_fd = None
         if {
             "optional-storage", "update-source"
         }.intersection(self.processes):
@@ -850,6 +965,21 @@ class NativeProcessBoundary:
             self._stop("windows")
         except BaseException as error:
             failures.append(f"Windows process: {type(error).__name__}")
+        if (
+            windows is not None
+            and "windows" not in self.processes
+            and self.control_iso_identity is not None
+        ):
+            try:
+                retained = self._process_holds_inode(
+                    windows.pid,
+                    device=self.control_iso_identity[0],
+                    inode=self.control_iso_identity[1],
+                )
+            except FileNotFoundError:
+                retained = False
+            if retained:
+                failures.append("Windows retained control ISO inode")
         if self.qmp is None and "windows" not in self.processes:
             try:
                 self._cleanup_qmp_root()
