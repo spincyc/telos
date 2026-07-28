@@ -237,7 +237,7 @@ def execute_progressive_rotation(
     session: RotationSession,
     recovery: RecoverableCredential,
     generate_credential: Callable[[], str],
-    after_rotation: Callable[[str], None] | None = None,
+    after_rotation: Callable[[str], None],
     clock: Callable[[], float] = time.monotonic,
     pause: Callable[[float], None] = time.sleep,
     interaction_factory: Callable[
@@ -341,14 +341,14 @@ def execute_progressive_rotation(
                 gui.observe(desktop, remaining())
                 # A fresh login is the first conclusive password-change proof.
                 phases.append("replacement-credential-sign-in-proved")
-                if after_rotation is not None:
-                    # Keep the replacement credential inside the guarded
-                    # recovery/session lifetime until all acceptance work
-                    # that depends on it has completed. A failed callback
-                    # preserves the old publication so a fresh source overlay
-                    # remains recoverable.
-                    after_rotation(new_credential)
-                    phases.append("post-rotation-acceptance-complete")
+                # Keep the replacement credential inside the guarded
+                # recovery/session lifetime until all acceptance work that
+                # depends on it has completed. This continuation is mandatory:
+                # a standalone destructive rotation may not discard the only
+                # replacement credential. A failed callback preserves the old
+                # publication so a fresh source overlay remains recoverable.
+                after_rotation(new_credential)
+                phases.append("post-rotation-acceptance-complete")
                 recovery.destroy_publication()
                 phases.append("private-publication-destroyed")
     except WindowsIdentityProgressiveError:

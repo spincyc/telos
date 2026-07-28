@@ -96,6 +96,7 @@ class ProgressiveRotationTests(unittest.TestCase):
                 plan=self.plan(), session=session, recovery=recovery,
                 generate_credential=lambda: (
                     events.append("generate") or "New-private-83!"),
+                after_rotation=lambda _replacement: None,
                 clock=clock,
                 pause=lambda _: None,
                 interaction_factory=lambda _qmp, _root: Interaction(events, fail))
@@ -185,6 +186,7 @@ class ProgressiveRotationTests(unittest.TestCase):
                 execute_progressive_rotation(
                     plan=self.plan(), session=session, recovery=recovery,
                     generate_credential=lambda: "New-private-83!",
+                    after_rotation=lambda _replacement: None,
                     interaction_factory=lambda _qmp, _root: FailingInteraction(events))
         self.assertNotIn("destroy", events)
         self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
@@ -210,7 +212,8 @@ class ProgressiveRotationTests(unittest.TestCase):
                     plan=self.plan(),
                     session=Context(object(), events, "session"),
                     recovery=Recovery("secret", events, "recovery"),
-                    generate_credential=lambda: "different-secret")
+                    generate_credential=lambda: "different-secret",
+                    after_rotation=lambda _replacement: None)
         self.assertEqual([], events)
 
     def test_invalid_public_navigation_is_rejected_before_private_contexts(self):
@@ -225,7 +228,8 @@ class ProgressiveRotationTests(unittest.TestCase):
                 plan=invalid,
                 session=Context(object(), events, "session"),
                 recovery=Recovery("secret", events, "recovery"),
-                generate_credential=lambda: "different-secret")
+                generate_credential=lambda: "different-secret",
+                after_rotation=lambda _replacement: None)
         self.assertEqual([], events)
 
     def test_native_session_starts_and_tears_down_in_reverse_order(self):
