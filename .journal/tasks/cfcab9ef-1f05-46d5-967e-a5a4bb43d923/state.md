@@ -208,3 +208,10 @@ The unqualified-user retry still returned error 86, so qualification was not
 the remaining cause. New bundles give both Samba and WinPE the exact same
 LF-terminated password line, removing consumer-dependent CRLF handling. No
 disk mutation occurred. A fresh live retry is next.
+
+The byte-identical retry still returned error 86. The remaining failed
+assumption is that `net use ... *` reliably consumes its interactive password
+prompt from redirected WinPE input. New bundles inject a secret-free VBScript
+helper that reads the password file in-process and calls
+`WScript.Network.MapNetworkDrive`; no secret enters arguments or logs. No disk
+mutation occurred. A fresh live retry is next.
