@@ -4,9 +4,9 @@ repository_uuid: "c83632c9-dcb7-426d-acef-3fca0b36c0b7"
 primary_remote: "https://github.com/spincyc/telos.git"
 branch: "main"
 head_observed: "12fc58cddda2c41d4e4f9c89d20dfc38ef547be8"
-working_tree_state: "windows-private-automation-authorized"
+working_tree_state: "windows-disposable-disk-boundary-authorized"
 active_tasks: ["cfcab9ef-1f05-46d5-967e-a5a4bb43d923"]
-updated_at: "2026-07-28T00:31:52Z"
+updated_at: "2026-07-28T00:34:34Z"
 ---
 
 # Repository recovery state

@@ -26,6 +26,12 @@ only when all of these controls hold:
   process arguments, immutable releases, source caches, logs, and Git;
 - edition, locale, disk selection, partition layout, and first-boot checks are
   explicit rather than inherited from Setup defaults;
+- because the sealed stock WinPE image has no proven hardware-serial query
+  primitive, the disposable boundary binds the serial on the host, audits that
+  QEMU exposes exactly one writable disk, and records the exact disk file,
+  capacity, serial, and command line before boot;
+- WinPE independently requires exactly one eligible disk of the authorized
+  capacity both before setup and immediately before partition mutation;
 - retained evidence contains digests and non-secret outcomes, never generated
   answer content or credentials; and
 - teardown removes generated inputs and credentials on success, failure, and
@@ -33,7 +39,8 @@ only when all of these controls hold:
 
 The physical workstation path remains interactive at the authorization and
 private-value boundaries. Its operator supplies real identity and credential
-values at launch.
+values at launch, and authorization uses the hardware serial directly rather
+than the disposable capacity fallback.
 
 This narrowly supersedes ADR 0058's absolute prohibition on unattended code
 for disposable QEMU Windows acceptance. ADR 0058 continues to govern physical

@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:31:52Z"
+updated_at: "2026-07-28T00:34:34Z"
 ---
 
 # Goal
@@ -47,3 +47,10 @@ QEMU acceptance only. They must use synthetic values, bind mutation to the
 exact disk serial, remain outside Git and immutable releases, retain no
 secrets, and be removed during teardown. Physical launch remains interactive
 and uses user-supplied private values.
+
+For disposable QEMU, the synthetic serial is enforced and recorded at the host
+launcher because stock WinPE has no proven direct serial query. QEMU must
+expose exactly one writable disk, and WinPE must independently recheck exactly
+one eligible disk of the authorized capacity before setup and immediately
+before partition mutation. Physical installation still uses the hardware
+serial directly.
