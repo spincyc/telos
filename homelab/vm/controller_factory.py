@@ -108,6 +108,7 @@ ip route replace default via {spec.gateway} dev sim0
 hostnamectl hostname {spec.hostname}
 printf '127.0.0.1 localhost\\n{spec.address} {spec.fqdn} {spec.hostname}\\n' >/etc/hosts
 echo 'TELOS FACTORY STEP time-sync'
+systemctl stop ntpd.service
 install -d -m 0700 /run/telos-factory-state
 cat >/run/telos-factory-state/ntp-measure.conf <<'EOF'
 driftfile /run/telos-factory-state/ntp-measure.drift

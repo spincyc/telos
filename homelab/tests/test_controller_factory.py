@@ -74,6 +74,9 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertIn(
                 "/usr/share/ipxe/x86_64/ipxe.efi", script)
             self.assertLess(
+                script.index("systemctl stop ntpd.service"),
+                script.index("timeout 30 ntpd"))
+            self.assertLess(
                 script.index("timeout 30 ntpd"),
                 script.index("clock.receipt"))
 
