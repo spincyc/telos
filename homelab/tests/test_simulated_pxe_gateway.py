@@ -103,6 +103,7 @@ class SimulatedPxeGatewayTests(unittest.TestCase):
         self.assertEqual(evidence, {
             "kind": "DISCOVER",
             "source_mac": "52:54:00:31:11:11",
+            "client_mac": "52:54:00:31:11:11",
             "transaction": "70786521",
             "architecture": 9,
         })

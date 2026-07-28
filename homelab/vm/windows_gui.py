@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import struct
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -142,16 +143,41 @@ class QmpClient:
         self._response_limit = response_limit
 
     @classmethod
-    def connect(cls, path: Path, timeout: float = 5.0) -> "QmpClient":
+    def connect(
+            cls,
+            path: Path,
+            timeout: float = 5.0,
+            *,
+            expected_peer_pid: int,
+    ) -> "QmpClient":
+        if type(expected_peer_pid) is not int or expected_peer_pid <= 0:
+            raise ValueError("QMP peer pid must be a positive integer")
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.settimeout(timeout)
-        connection.connect(str(path))
-        client = cls(connection)
-        greeting = client._message()
-        if "QMP" not in greeting:
-            raise WindowsGuiError("QMP greeting missing")
-        client.execute("qmp_capabilities")
-        return client
+        try:
+            connection.settimeout(timeout)
+            connection.connect(str(path))
+            credentials = connection.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED,
+                struct.calcsize("3i"))
+            peer_pid, peer_uid, peer_gid = struct.unpack("3i", credentials)
+            expected = (expected_peer_pid, os.geteuid(), os.getegid())
+            if (peer_pid, peer_uid, peer_gid) != expected:
+                raise WindowsGuiError(
+                    "QMP peer credentials do not match the spawned process")
+            client = cls(connection)
+            try:
+                greeting = client._message()
+                if "QMP" not in greeting:
+                    raise WindowsGuiError("QMP greeting missing")
+                client.execute("qmp_capabilities")
+            except BaseException:
+                client.close()
+                raise
+            return client
+        except BaseException:
+            if connection.fileno() >= 0:
+                connection.close()
+            raise
 
     def close(self) -> None:
         self.reader.close()

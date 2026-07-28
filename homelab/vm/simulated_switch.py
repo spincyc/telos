@@ -139,12 +139,19 @@ class ConcurrentSwitch:
             gateway=Gateway(identity_mode=identity_mode),
             gateway_peer=gateway_ports[0] if gateway_ports else None)
         self.evidence = Evidence(evidence_path)
-        self.incoming: queue.Queue[tuple[int, bytes] | None] = queue.Queue(
+        self.incoming: queue.Queue[
+            tuple[int, int, dict[int, int | None], bytes | None] | None
+        ] = queue.Queue(
             maxsize=QUEUE_DEPTH)
-        self.outgoing = {
+        self.connections: dict[
+            int, tuple[socket.socket, queue.Queue[bytes | None], int]
+        ] = {}
+        self.pending_outputs: dict[int, queue.Queue[bytes | None]] = {
             port.number: queue.Queue(maxsize=QUEUE_DEPTH) for port in ports
         }
-        self.connections: dict[int, socket.socket] = {}
+        self.generations = {port.number: 0 for port in ports}
+        self.connection_lock = threading.Lock()
+        self.accepted_ports: set[int] = set()
         self.stop = threading.Event()
         self.error: queue.Queue[BaseException] = queue.Queue()
         self.frames = 0
@@ -159,18 +166,33 @@ class ConcurrentSwitch:
     def _accept(self, threads: list[threading.Thread]) -> None:
         deadline = time.monotonic() + self.accept_timeout
         ports_by_mac = {port.mac: port for port in self.ports}
-        for _ in self.ports:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("timed out waiting for all switch peers")
-            self.listener.settimeout(remaining)
-            connection, address = self.listener.accept()
+        signalled_all = False
+        while not self.stop.is_set():
+            if len(self.accepted_ports) < len(self.ports):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out waiting for all switch peers")
+                self.listener.settimeout(remaining)
+            else:
+                self.listener.settimeout(1.0)
+            try:
+                connection, address = self.listener.accept()
+            except TimeoutError:
+                if len(self.accepted_ports) < len(self.ports):
+                    raise TimeoutError("timed out waiting for all switch peers")
+                continue
             if address[0] != "127.0.0.1":
                 connection.close()
                 raise RuntimeError("refusing non-loopback peer")
-            connection.settimeout(remaining)
+            authentication_deadline = min(
+                deadline if len(self.accepted_ports) < len(self.ports)
+                else time.monotonic() + self.accept_timeout,
+                time.monotonic() + self.accept_timeout,
+            )
+            connection.settimeout(self.accept_timeout)
             try:
-                frame = self._authentication_frame(connection, deadline)
+                frame = self._authentication_frame(
+                    connection, authentication_deadline)
             except BaseException:
                 connection.close()
                 raise
@@ -181,30 +203,50 @@ class ConcurrentSwitch:
                 raise RuntimeError(
                     "refusing switch peer with unconfigured source MAC "
                     f"{mac_text(observed)}")
-            if port.number in self.connections:
-                connection.close()
-                raise RuntimeError(
-                    f"refusing duplicate switch peer for {port.name} "
-                    f"{mac_text(observed)}")
-            connection.settimeout(1.0)
-            self.connections[port.number] = connection
-            self.incoming.put_nowait((port.number, frame))
+            with self.connection_lock:
+                if port.number in self.connections:
+                    connection.close()
+                    self.evidence.write({
+                        "event": "port-connection-refused",
+                        "port": port.name,
+                        "mac": mac_text(observed),
+                        "reason": "active-generation",
+                        "generation": self.generations[port.number],
+                    })
+                    raise RuntimeError(
+                        f"refusing duplicate switch peer for {port.name} "
+                        f"{mac_text(observed)}")
+                generation = self.generations[port.number] + 1
+                self.generations[port.number] = generation
+                output = self.pending_outputs[port.number]
+                connection.settimeout(1.0)
+                self.connections[port.number] = (
+                    connection, output, generation)
+                self.accepted_ports.add(port.number)
+                target_generations = self._target_generations()
+            self.incoming.put_nowait(
+                (port.number, generation, target_generations, frame))
             self.evidence.write({
                 "event": "port-connected",
                 "port": port.name,
                 "mac": mac_text(port.mac),
+                "generation": generation,
             })
             self._signal(f"ACCEPTED {port.name} {mac_text(port.mac)}\n")
             peer_threads = [
                 threading.Thread(
-                    target=self._reader, args=(port,), daemon=True),
+                    target=self._reader,
+                    args=(port, connection, generation), daemon=True),
                 threading.Thread(
-                    target=self._writer, args=(port,), daemon=True),
+                    target=self._writer,
+                    args=(port, connection, output, generation), daemon=True),
             ]
             threads.extend(peer_threads)
             for thread in peer_threads:
                 thread.start()
-        self._signal("ALL-PEERS\n", close=True)
+            if not signalled_all and len(self.accepted_ports) == len(self.ports):
+                self._signal("ALL-PEERS\n", close=True)
+                signalled_all = True
 
     @staticmethod
     def _authentication_frame(
@@ -264,8 +306,9 @@ class ConcurrentSwitch:
         })
         self._signal("READY\n")
 
-    def _reader(self, port: Port) -> None:
-        connection = self.connections[port.number]
+    def _reader(
+        self, port: Port, connection: socket.socket, generation: int,
+    ) -> None:
         try:
             while not self.stop.is_set():
                 try:
@@ -293,20 +336,47 @@ class ConcurrentSwitch:
                     })
                     continue
                 try:
-                    self.incoming.put((port.number, frame), timeout=1.0)
+                    with self.connection_lock:
+                        target_generations = self._target_generations()
+                    self.incoming.put((
+                        port.number, generation, target_generations, frame
+                    ), timeout=1.0)
                 except queue.Full:
                     raise RuntimeError("switch input queue exhausted")
+        except (ConnectionResetError, BrokenPipeError):
+            pass
         except BaseException as error:
             self._fail(error)
         finally:
+            with self.connection_lock:
+                active = self.connections.get(port.number)
+                if active is not None and active[2] == generation:
+                    del self.connections[port.number]
+                    self.pending_outputs[port.number] = queue.Queue(
+                        maxsize=QUEUE_DEPTH)
+                    try:
+                        active[1].put_nowait(None)
+                    except queue.Full:
+                        pass
             try:
-                self.incoming.put(None, timeout=1.0)
-            except queue.Full:
-                self._fail(RuntimeError("switch input queue exhausted"))
+                connection.close()
+            finally:
+                self.evidence.write({
+                    "event": "port-disconnected",
+                    "port": port.name,
+                    "mac": mac_text(port.mac),
+                    "generation": generation,
+                })
+                try:
+                    self.incoming.put(
+                        (port.number, generation, {}, None), timeout=1.0)
+                except queue.Full:
+                    self._fail(RuntimeError("switch input queue exhausted"))
 
-    def _writer(self, port: Port) -> None:
-        connection = self.connections[port.number]
-        output = self.outgoing[port.number]
+    def _writer(
+        self, port: Port, connection: socket.socket,
+        output: queue.Queue[bytes | None], generation: int,
+    ) -> None:
         try:
             while not self.stop.is_set():
                 try:
@@ -316,14 +386,26 @@ class ConcurrentSwitch:
                 if frame is None:
                     return
                 connection.sendall(struct.pack("!I", len(frame)) + frame)
+        except OSError:
+            # The reader owns authenticated-session teardown and evidence.
+            return
         except BaseException as error:
             self._fail(error)
 
+    def _target_generations(self) -> dict[int, int | None]:
+        """Snapshot exact target sessions while connection_lock is held."""
+        return {
+            port.number: (
+                self.connections[port.number][2]
+                if port.number in self.connections
+                else (None if port.number in self.accepted_ports else 0)
+            )
+            for port in self.ports
+        }
+
     def _dispatch(self) -> None:
-        peers = {port.number for port in self.ports}
-        disconnected = 0
         last_frame = time.monotonic()
-        while disconnected < len(peers) and not self.stop.is_set():
+        while not self.stop.is_set():
             timeout = max(0.05, self.idle_timeout - (
                 time.monotonic() - last_frame))
             try:
@@ -331,9 +413,47 @@ class ConcurrentSwitch:
             except queue.Empty:
                 raise RuntimeError("switch idle timeout")
             if item is None:
-                disconnected += 1
                 continue
-            sender, frame = item
+            sender, generation, target_generations, frame = item
+            if frame is None:
+                with self.connection_lock:
+                    if (
+                        len(self.accepted_ports) == len(self.ports)
+                        and not self.connections
+                    ):
+                        self.stop.set()
+                        return
+                continue
+            with self.connection_lock:
+                active = self.connections.get(sender)
+                if (
+                    active is None
+                    or active[2] != generation
+                ):
+                    continue
+                peers = {port.number for port in self.ports}
+                session_snapshot = dict(self.connections)
+                output_snapshot = {
+                    target: (
+                        session_snapshot[target][1]
+                        if (
+                            target_generations.get(target) == 0
+                            and target in session_snapshot
+                            and session_snapshot[target][2] == 1
+                        ) or (
+                            target in session_snapshot
+                            and target_generations.get(target)
+                            == session_snapshot[target][2]
+                        )
+                        else (
+                            self.pending_outputs[target]
+                            if target_generations.get(target) == 0
+                            and target not in self.accepted_ports
+                            else None
+                        )
+                    )
+                    for target in peers
+                }
             self.frames += 1
             last_frame = time.monotonic()
             deliveries, events = self.policy.route(sender, frame, peers)
@@ -346,12 +466,56 @@ class ConcurrentSwitch:
                         int(named["delivered_to"])]
                 if named.get("blocked"):
                     self.blocked += 1
+                peer_number = next((
+                    number for number, name in self.port_names.items()
+                    if name == named.get("peer")
+                ), None)
+                delivered_number = next((
+                    number for number, name in self.port_names.items()
+                    if name == named.get("delivered_to")
+                ), None)
+                peer_session = (
+                    session_snapshot.get(peer_number)
+                    if peer_number is not None else None)
+                delivered_session = (
+                    session_snapshot.get(delivered_number)
+                    if delivered_number is not None else None)
+                peer_ingress = target_generations.get(peer_number)
+                if type(peer_ingress) is int and peer_ingress > 0:
+                    named["peer_generation"] = peer_ingress
+                elif (
+                    peer_ingress == 0 and peer_session is not None
+                    and peer_session[2] == 1
+                ):
+                    named["peer_generation"] = 1
+                delivered_ingress = target_generations.get(delivered_number)
+                if (
+                    delivered_number is not None
+                    and output_snapshot[delivered_number] is not None
+                    and type(delivered_ingress) is int
+                    and delivered_ingress > 0
+                ):
+                    named["delivered_to_generation"] = delivered_ingress
+                elif (
+                    delivered_number is not None
+                    and output_snapshot[delivered_number] is not None
+                    and delivered_ingress == 0
+                    and delivered_session is not None
+                    and delivered_session[2] == 1
+                ):
+                    named["delivered_to_generation"] = 1
+                elif delivered_number is not None:
+                    named.pop("delivered_to", None)
+                    named["delivery_dropped"] = True
                 self.evidence.write({"event": "dhcp", **named})
             for target, frames in deliveries.items():
                 for delivered in frames:
+                    output = output_snapshot[target]
+                    if output is None:
+                        continue
                     self.deliveries += 1
                     try:
-                        self.outgoing[target].put(delivered, timeout=1.0)
+                        output.put(delivered, timeout=1.0)
                     except queue.Full:
                         raise RuntimeError(
                             f"switch output queue exhausted for port {target}")
@@ -388,12 +552,13 @@ class ConcurrentSwitch:
             if self.ready_fd is not None:
                 os.close(self.ready_fd)
                 self.ready_fd = None
-            for output in self.outgoing.values():
+            with self.connection_lock:
+                sessions = list(self.connections.values())
+            for connection, output, _generation in sessions:
                 try:
                     output.put_nowait(None)
                 except queue.Full:
                     pass
-            for connection in self.connections.values():
                 try:
                     connection.shutdown(socket.SHUT_RDWR)
                 except OSError:
@@ -407,7 +572,7 @@ class ConcurrentSwitch:
                 "frames": self.frames,
                 "deliveries": self.deliveries,
                 "blocked": self.blocked,
-                "accepted_ports": len(self.connections),
+                "accepted_ports": len(self.accepted_ports),
             })
             self.evidence.close()
         if not self.error.empty():

@@ -25,9 +25,14 @@ from .bootstrap_dc import paths
 from .controller_factory import FactoryBundle
 from .factory_runner import (
     DEFAULT_SEED_ISO,
+    GATEWAY_MAC,
     MACS,
+    SwitchEvidenceCursor,
+    capture_switch_evidence_cursor,
     gateway_command,
     switch_command,
+    wait_for_plain_dhcp_transaction,
+    wait_for_switch_disconnect,
     wait_for_switch_port,
 )
 from .signal_cleanup import RunInterrupted, terminate_children
@@ -230,6 +235,9 @@ class NativeProcessBoundary:
         self.authorized_command: list[str] | None = None
         self.control_iso_identity: tuple[int, int] | None = None
         self.control_iso_fd: int | None = None
+        self.control_iso_sha256: str | None = None
+        self.gateway_switch_generation: int | None = None
+        self.windows_switch_generation: int | None = None
         self.suspended_processes: set[str] = set()
         self.dependency_endpoints: dict[str, tuple[str, int]] = {}
         self.controller_console: SerialAutomation | None = None
@@ -298,20 +306,65 @@ class NativeProcessBoundary:
         *,
         device: int,
         inode: int,
+        artifact: str = "authorized control ISO",
         timeout: float = 10.0,
     ) -> None:
         deadline = time.monotonic() + timeout
         while True:
             if process.poll() is not None:
                 raise WindowsIdentityRunError(
-                    "Windows exited before opening the authorized control ISO")
+                    f"Windows exited before opening the {artifact}")
             if self._process_holds_inode(
                     process.pid, device=device, inode=inode):
                 return
             if time.monotonic() >= deadline:
                 raise WindowsIdentityRunError(
-                    "Windows did not open the authorized control ISO in time")
+                    f"Windows did not open the {artifact} in time")
             time.sleep(0.05)
+
+    @classmethod
+    def _open_boot_artifact(
+        cls, path: Path,
+    ) -> tuple[int, tuple[int, int, int, int, str]]:
+        try:
+            descriptor = os.open(
+                path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                f"boot artifact open failed: {path.name}") from error
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise WindowsIdentityRunError(
+                    f"boot artifact is not regular: {path.name}")
+            identity = (
+                opened.st_dev, opened.st_ino, opened.st_size,
+                opened.st_blocks, cls._sha256_fd(descriptor),
+            )
+            current = path.stat(follow_symlinks=False)
+            if (
+                current.st_dev != opened.st_dev
+                or current.st_ino != opened.st_ino
+                or not stat.S_ISREG(current.st_mode)
+            ):
+                raise WindowsIdentityRunError(
+                    f"boot artifact identity changed: {path.name}")
+            return descriptor, identity
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    @staticmethod
+    def _prove_boot_artifact_path(
+        path: Path, expected: tuple[int, int, int, int, str],
+    ) -> None:
+        observed = path.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or (observed.st_dev, observed.st_ino) != expected[:2]
+        ):
+            raise WindowsIdentityRunError(
+                f"boot artifact identity changed: {path.name}")
 
     @staticmethod
     def _destroy_owned_inode(fd: int, expected_path: Path) -> None:
@@ -451,6 +504,7 @@ class NativeProcessBoundary:
         ):
             raise WindowsIdentityRunError(
                 "control ISO differs from the authorized static artifact")
+        self.control_iso_sha256 = control_media["sha256"]
         if (
             not isinstance(serial_transport, dict)
             or set(serial_transport) != {
@@ -523,7 +577,8 @@ class NativeProcessBoundary:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
             )
-            wait_for_switch_port(self.runtime / "switch.jsonl", "gateway")
+            self.gateway_switch_generation = wait_for_switch_port(
+                self.runtime / "switch.jsonl", "gateway", GATEWAY_MAC)
         except BaseException:
             self._stop("gateway", "switch")
             raise
@@ -551,7 +606,9 @@ class NativeProcessBoundary:
         self.dependency_endpoints[role] = (
             str(spec["ip"]), int(spec["port"]))
         try:
-            wait_for_switch_port(self.runtime / "switch.jsonl", role)
+            wait_for_switch_port(
+                self.runtime / "switch.jsonl", role,
+                bytes(DEPENDENCIES[role]["mac"]).hex(":"))
             if process.poll() is not None:
                 raise WindowsIdentityRunError(
                     f"{role} dependency exited during readiness")
@@ -621,12 +678,15 @@ class NativeProcessBoundary:
                 raise WindowsIdentityRunError(
                     "Controller session initialization failed") from error
             self.controller_console = console
-            wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
+            wait_for_switch_port(
+                self.runtime / "switch.jsonl", "controller",
+                IDENTITY_CONTROLLER_MAC.hex(":"))
             deadline = time.monotonic() + 30.0
             while True:
                 try:
                     self.controller_qmp = QmpClient.connect(
-                        controller_qmp_path, timeout=5.0)
+                        controller_qmp_path, timeout=5.0,
+                        expected_peer_pid=process.pid)
                     break
                 except (OSError, RuntimeError):
                     if time.monotonic() >= deadline:
@@ -759,16 +819,111 @@ class NativeProcessBoundary:
         if self.qmp_root is not None:
             raise WindowsIdentityRunError(
                 "Windows QMP runtime is already allocated")
+        overlay = self.attempt / "windows.qcow2"
+        firmware = self.attempt / "OVMF_VARS.fd"
+        overlay_fd, pristine = self._open_boot_artifact(overlay)
+        try:
+            firmware_fd, firmware_identity = self._open_boot_artifact(
+                firmware)
+        except BaseException:
+            os.close(overlay_fd)
+            raise
+        firmware_before = firmware_identity[4]
+        try:
+            for boot_attempt in (1, 2):
+                evidence = self.runtime / "switch.jsonl"
+                cursor = capture_switch_evidence_cursor(evidence)
+                self.windows_switch_generation = None
+                self._allocate_windows_qmp_runtime()
+                command = self._authorized_windows_command()
+                process = self._spawn_windows_process(
+                    command, append_log=boot_attempt == 2,
+                    boot_artifacts=(
+                        ("authorized Windows overlay", pristine[:2]),
+                        ("authorized OVMF variables", firmware_identity[:2]),
+                    ))
+                try:
+                    self._wait_for_windows_os_readiness(cursor)
+                except RuntimeError:
+                    boot_diagnostic = self._collect_boot_failure_diagnostic(
+                        process, pristine)
+                    self._stop("windows")
+                    boot_diagnostic["overlay_pristine_after_reap"] = (
+                        self._overlay_is_pristine(
+                            overlay_fd, overlay, pristine))
+                    self._prove_boot_artifact_path(
+                        firmware, firmware_identity)
+                    disconnect_error: BaseException | None = None
+                    if self.windows_switch_generation is not None:
+                        try:
+                            wait_for_switch_disconnect(
+                                evidence, "workstation", MACS["client"],
+                                self.windows_switch_generation, after=cursor)
+                        except BaseException as error:
+                            disconnect_error = error
+                    boot_diagnostic["switch_disconnect_proven"] = (
+                        self.windows_switch_generation is None
+                        or disconnect_error is None
+                    )
+                    retry_eligible = (
+                        boot_attempt == 1
+                        and disconnect_error is None
+                        and self._boot_retry_is_eligible(
+                            boot_diagnostic)
+                    )
+                    self._record_windows_boot_retry(
+                        boot_attempt,
+                        boot_diagnostic,
+                        firmware_before,
+                        firmware_fd,
+                        firmware_identity,
+                        retry_eligible=retry_eligible,
+                    )
+                    if disconnect_error is not None:
+                        raise WindowsIdentityRunError(
+                            "Windows switch disconnect proof failed"
+                        ) from disconnect_error
+                    if not retry_eligible:
+                        raise WindowsIdentityRunError(
+                            "Windows OS readiness failed after bounded retry"
+                        ) from None
+                    self._reopen_control_iso_for_retry(process)
+                    self._cleanup_qmp_root()
+                    continue
+                break
+            os.close(self.control_iso_fd)
+            self.control_iso_fd = None
+            self._start_dependency("update-source")
+            self._start_dependency("optional-storage")
+        except BaseException as start_error:
+            try:
+                self.stop_windows()
+            except BaseException:
+                raise WindowsIdentityRunError(
+                    "Windows startup failed and teardown also failed"
+                ) from start_error
+            raise
+        finally:
+            os.close(firmware_fd)
+            os.close(overlay_fd)
+
+    def _allocate_windows_qmp_runtime(self) -> None:
+        if self.qmp_root is not None:
+            raise WindowsIdentityRunError(
+                "Windows QMP runtime is already allocated")
         self.qmp_root = Path(tempfile.mkdtemp(
             prefix="telos-win-id-qmp-"))
         self.qmp_root.chmod(0o700)
-        qmp_socket = self.qmp_root / "windows.qmp"
         self.serial_socket = self.qmp_root / "windows.serial"
+
+    def _authorized_windows_command(self) -> list[str]:
+        assert self.qmp_root is not None
+        assert self.serial_socket is not None
         try:
             command = qemu_identity_command(
                 disk=self.attempt / "windows.qcow2",
                 variables=self.attempt / "OVMF_VARS.fd",
-                qmp_socket=qmp_socket,
+                qmp_socket=self.qmp_root / "windows.qmp",
                 serial_socket=self.serial_socket,
                 switch_port=self.port,
                 control_iso=self.attempt / CONTROL_ISO_NAME,
@@ -784,37 +939,273 @@ class NativeProcessBoundary:
             self._cleanup_qmp_root()
             raise WindowsIdentityRunError(
                 "runtime QEMU command differs from the authorized template")
-        try:
-            qemu_log = self.runtime / "windows-qemu.log"
-            with qemu_log.open("xb") as output:
-                qemu_log.chmod(0o600)
-                process = subprocess.Popen(
-                    command, stdin=subprocess.DEVNULL, stdout=output,
-                    stderr=subprocess.STDOUT)
-            self.processes["windows"] = process
-            chardevs = (
-                (command[command.index("-chardev") + 1],)
-                if "-chardev" in command else ()
-            )
-            audit_live_process(
-                process.pid, "client", allowed_nic_models=("e1000e",),
-                allowed_chardevs=chardevs)
-            if self.control_iso_identity is None:
-                raise WindowsIdentityRunError(
-                    "authorized control ISO ownership is unavailable")
+        return command
+
+    def _spawn_windows_process(
+        self,
+        command: list[str],
+        *,
+        append_log: bool,
+        boot_artifacts: tuple[
+            tuple[str, tuple[int, int]], ...,
+        ] = (),
+    ) -> subprocess.Popen[bytes]:
+        qemu_log = self.runtime / "windows-qemu.log"
+        with qemu_log.open("ab" if append_log else "xb") as output:
+            qemu_log.chmod(0o600)
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=output,
+                stderr=subprocess.STDOUT)
+        self.processes["windows"] = process
+        chardevs = (
+            (command[command.index("-chardev") + 1],)
+            if "-chardev" in command else ()
+        )
+        audit_live_process(
+            process.pid, "client", allowed_nic_models=("e1000e",),
+            allowed_chardevs=chardevs)
+        if self.control_iso_identity is None:
+            raise WindowsIdentityRunError(
+                "authorized control ISO ownership is unavailable")
+        self._wait_for_process_inode(
+            process,
+            device=self.control_iso_identity[0],
+            inode=self.control_iso_identity[1],
+        )
+        for artifact, identity in boot_artifacts:
             self._wait_for_process_inode(
                 process,
-                device=self.control_iso_identity[0],
-                inode=self.control_iso_identity[1],
+                device=identity[0],
+                inode=identity[1],
+                artifact=artifact,
             )
-            os.close(self.control_iso_fd)
-            self.control_iso_fd = None
-            wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
-            self._start_dependency("update-source")
-            self._start_dependency("optional-storage")
+        return process
+
+    def _wait_for_windows_os_readiness(
+        self, cursor: SwitchEvidenceCursor,
+    ) -> None:
+        evidence = self.runtime / "switch.jsonl"
+        self.windows_switch_generation = wait_for_switch_port(
+            evidence, "workstation", MACS["client"], after=cursor)
+        wait_for_plain_dhcp_transaction(
+            evidence, "workstation", MACS["client"], timeout=90,
+            after=cursor, generation=self.windows_switch_generation,
+            gateway_generation=self.gateway_switch_generation)
+
+    @staticmethod
+    def _prove_pristine_overlay(
+        descriptor: int,
+        overlay: Path,
+        expected: tuple[int, int, int, int, str],
+    ) -> None:
+        info = os.fstat(descriptor)
+        observed = (
+            info.st_dev, info.st_ino, info.st_size, info.st_blocks,
+            NativeProcessBoundary._sha256_fd(descriptor),
+        )
+        if observed != expected:
+            raise WindowsIdentityRunError(
+                "Windows overlay changed before OS readiness")
+        NativeProcessBoundary._prove_boot_artifact_path(overlay, expected)
+
+    @staticmethod
+    def _overlay_is_pristine(
+        descriptor: int,
+        overlay: Path,
+        expected: tuple[int, int, int, int, str],
+    ) -> bool:
+        try:
+            NativeProcessBoundary._prove_pristine_overlay(
+                descriptor, overlay, expected)
+        except (OSError, WindowsIdentityRunError):
+            return False
+        return True
+
+    def _connect_boot_diagnostic_qmp(
+        self, process: subprocess.Popen[bytes],
+    ) -> QmpClient:
+        assert self.qmp_root is not None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise WindowsIdentityRunError(
+                    "Windows exited before boot diagnostics")
+            try:
+                return QmpClient.connect(
+                    self.qmp_root / "windows.qmp", timeout=1.0,
+                    expected_peer_pid=process.pid)
+            except OSError:
+                time.sleep(0.05)
+        raise WindowsIdentityRunError(
+            "Windows boot diagnostics were unavailable")
+
+    def _collect_boot_failure_diagnostic(
+        self,
+        process: subprocess.Popen[bytes],
+        expected: tuple[int, int, int, int, str],
+    ) -> dict[str, int | str | bool]:
+        qmp = self._connect_boot_diagnostic_qmp(process)
+        try:
+            records = qmp.execute("query-blockstats")
+        finally:
+            qmp.close()
+        if not isinstance(records, list):
+            raise WindowsIdentityRunError(
+                "Windows boot block statistics are invalid")
+        selected = [
+            record for record in records
+            if isinstance(record, dict) and record.get("device") == "osdisk"
+        ]
+        if len(selected) != 1 or not isinstance(
+                selected[0].get("stats"), dict):
+            raise WindowsIdentityRunError(
+                "Windows OS disk statistics are unavailable")
+        statistics = selected[0]["stats"]
+        counters = (
+            statistics.get("rd_bytes"),
+            statistics.get("rd_operations"),
+            statistics.get("wr_bytes"),
+            statistics.get("wr_operations"),
+        )
+        if any(type(value) is not int or value < 0 for value in counters):
+            raise WindowsIdentityRunError(
+                "Windows boot block statistics are invalid")
+        if counters[2:] != (0, 0):
+            reason = "osdisk-written-without-os-readiness"
+        elif counters[:2] == (0, 0):
+            reason = "firmware-did-not-read-osdisk"
+        else:
+            reason = "osdisk-read-without-os-readiness"
+        return {
+            "reason": reason,
+            "qmp_rd_bytes": counters[0],
+            "qmp_rd_operations": counters[1],
+            "qmp_wr_bytes": counters[2],
+            "qmp_wr_operations": counters[3],
+            "overlay_blocks": expected[3],
+        }
+
+    def _boot_retry_is_eligible(
+        self,
+        diagnostic: Mapping[str, int | str | bool],
+    ) -> bool:
+        if (
+            diagnostic.get("qmp_wr_bytes") != 0
+            or diagnostic.get("qmp_wr_operations") != 0
+            or diagnostic.get("overlay_pristine_after_reap") is not True
+        ):
+            return False
+        return True
+
+    def _reopen_control_iso_for_retry(
+        self, reaped_process: subprocess.Popen[bytes],
+    ) -> None:
+        if (
+            self.control_iso_fd is None
+            or self.control_iso_identity is None
+            or self.control_iso_sha256 is None
+        ):
+            raise WindowsIdentityRunError(
+                "control ISO ownership was lost before boot retry")
+        if reaped_process.poll() is None:
+            raise WindowsIdentityRunError(
+                "Windows was not reaped before control ISO reopen")
+        os.close(self.control_iso_fd)
+        self.control_iso_fd = None
+        try:
+            descriptor = os.open(
+                self.attempt / CONTROL_ISO_NAME,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            )
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                "control ISO reopen failed before boot retry") from error
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                opened.st_dev,
+                opened.st_ino,
+            ) != self.control_iso_identity:
+                raise WindowsIdentityRunError(
+                    "control ISO identity changed before boot retry")
+            if self._sha256_fd(descriptor) != self.control_iso_sha256:
+                raise WindowsIdentityRunError(
+                    "control ISO hash changed before boot retry")
         except BaseException:
-            self.stop_windows()
+            os.close(descriptor)
             raise
+        self.control_iso_fd = descriptor
+
+    def _record_windows_boot_retry(
+        self,
+        boot_attempt: int,
+        diagnostic: Mapping[str, int | str | bool],
+        firmware_before: str,
+        firmware_fd: int | None = None,
+        firmware_identity: tuple[int, int, int, int, str] | None = None,
+        *,
+        retry_eligible: bool,
+    ) -> None:
+        if boot_attempt not in (1, 2):
+            raise WindowsIdentityRunError(
+                "Windows boot attempt diagnostic index is invalid")
+        if firmware_fd is None or firmware_identity is None:
+            firmware_after = self._sha256(
+                self.attempt / "OVMF_VARS.fd")
+        else:
+            self._prove_boot_artifact_path(
+                self.attempt / "OVMF_VARS.fd", firmware_identity)
+            firmware_after = self._sha256_fd(firmware_fd)
+        output = self.runtime / (
+            f"windows-boot-attempt-{boot_attempt}.json")
+        document = json.dumps({
+            "schema_version": 1,
+            "event": "windows-boot-readiness-timeout",
+            "boot_attempt": boot_attempt,
+            **diagnostic,
+            "firmware_sha256_before": firmware_before,
+            "firmware_sha256_after": firmware_after,
+            "firmware_mutation_retained": True,
+            "retry_eligible": retry_eligible,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+        flags = (
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+            | os.O_NOFOLLOW
+        )
+        try:
+            descriptor = os.open(output, flags, 0o600)
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                "Windows boot diagnostic creation failed") from error
+        try:
+            os.fchmod(descriptor, 0o600)
+            offset = 0
+            while offset < len(document):
+                written = os.write(descriptor, document[offset:])
+                if written <= 0:
+                    raise OSError("Windows boot diagnostic write stalled")
+                offset += written
+            os.fsync(descriptor)
+        except BaseException as error:
+            raise WindowsIdentityRunError(
+                "Windows boot diagnostic write failed") from error
+        finally:
+            os.close(descriptor)
+        try:
+            directory = os.open(
+                self.runtime,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            )
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                "Windows boot diagnostic directory open failed") from error
+        try:
+            os.fsync(directory)
+        except OSError as error:
+            raise WindowsIdentityRunError(
+                "Windows boot diagnostic directory sync failed") from error
+        finally:
+            os.close(directory)
 
     def authenticate_qmp(self) -> None:
         if "windows" not in self.processes:
@@ -830,7 +1221,8 @@ class NativeProcessBoundary:
                     raise WindowsIdentityRunError(
                         "Windows QMP runtime is unavailable")
                 self.qmp = QmpClient.connect(
-                    self.qmp_root / "windows.qmp", timeout=2)
+                    self.qmp_root / "windows.qmp", timeout=2,
+                    expected_peer_pid=self.processes["windows"].pid)
                 setattr(
                     self.qmp, "qemu_pid",
                     self.processes["windows"].pid)

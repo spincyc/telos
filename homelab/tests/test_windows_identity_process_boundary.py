@@ -1,3 +1,6 @@
+import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -116,7 +119,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run.QmpClient, "connect") as qmp_connect,
                 mock.patch.object(
                     boundary, "_process_holds_inode",
-                    side_effect=(True, False, True, False, True)),
+                    side_effect=(
+                        True, False, True, False, True, True, True,
+                        True, True)),
                 mock.patch.object(
                     windows_identity_run, "SerialAutomation") as automation,
                 mock.patch.object(
@@ -124,8 +129,12 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     side_effect=popen),
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port",
-                    side_effect=lambda _log, role:
-                    events.append(("ready", role))),
+                    side_effect=lambda _log, role, _mac, **_kwargs:
+                    (events.append(("ready", role)) or 1)),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_plain_dhcp_transaction",
+                    side_effect=lambda _log, role, _mac, **_kwargs:
+                    events.append(("dhcp-ready", role))),
                 mock.patch.object(
                     windows_identity_run, "audit_live_process",
                     side_effect=lambda _pid, role, **_kwargs:
@@ -157,7 +166,10 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             try:
                 milestones = [
                     event for event in events
-                    if event[0] in {"popen", "overlay", "ready", "audit"}
+                    if event[0] in {
+                        "popen", "overlay", "ready", "audit", "dhcp-ready",
+                        "dependency",
+                    }
                 ]
                 self.assertEqual([
                     ("popen", "switch"),
@@ -170,6 +182,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     ("popen", "windows"),
                     ("audit", "client"),
                     ("ready", "workstation"),
+                    ("dhcp-ready", "workstation"),
+                    ("dependency", "update-source"),
+                    ("dependency", "optional-storage"),
                 ], milestones)
                 controller_command.assert_called_once_with(
                     boundary.controller_state,
@@ -226,6 +241,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
                 mock.patch.object(
+                    windows_identity_run, "wait_for_plain_dhcp_transaction"),
+                mock.patch.object(
                     windows_identity_run.QmpClient, "connect") as qmp_connect,
                 mock.patch.object(
                     windows_identity_run, "SerialAutomation") as automation,
@@ -255,6 +272,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_controller_rejects_seed_inode_mismatch_before_device_add(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            boundary._validate()
             boundary.port = 43119
             boundary.runtime.mkdir(mode=0o700)
             boundary.processes.update({
@@ -335,6 +353,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     side_effect=(_Process(101), _Process(102))),
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_plain_dhcp_transaction"),
                 mock.patch.object(boundary, "_start_dependency"),
                 mock.patch.object(
                     boundary, "_process_holds_inode",
@@ -444,6 +464,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run, "audit_live_process"),
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port"),
+                mock.patch.object(
+                    windows_identity_run,
+                    "wait_for_plain_dhcp_transaction"),
                 mock.patch.object(boundary, "_start_dependency"),
                 mock.patch.object(
                     boundary, "_process_holds_inode",
@@ -522,6 +545,471 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                         WindowsIdentityRunError, "authorized template"):
                     boundary.start_windows()
             popen.assert_not_called()
+
+    def test_pristine_boot_timeout_reaps_once_and_retries_before_dependencies(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.authorized_command = ["windows"]
+            processes = [_Process(201), _Process(202)]
+            events = []
+            readiness_calls = 0
+
+            def popen(*_args, **_kwargs):
+                process = processes[len([
+                    event for event in events if event[0] == "spawn"
+                ])]
+                events.append(("spawn", process.pid))
+                return process
+
+            def readiness(_cursor):
+                nonlocal readiness_calls
+                readiness_calls += 1
+                if readiness_calls == 1:
+                    boundary.windows_switch_generation = 7
+                    raise RuntimeError("not ready")
+
+            def stop_windows(*roles):
+                self.assertEqual(("windows",), roles)
+                process = boundary.processes.pop("windows")
+                process.returncode = 0
+                events.append(("reaped", process.pid))
+
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=["windows"]),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    side_effect=popen) as popen_mock,
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    boundary, "_wait_for_process_inode"),
+                mock.patch.object(
+                    boundary, "_wait_for_windows_os_readiness",
+                    side_effect=readiness) as readiness_mock,
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_disconnect",
+                    side_effect=lambda *_args, **_kwargs:
+                    events.append(("disconnected", 7))),
+                mock.patch.object(
+                    boundary, "_collect_boot_failure_diagnostic",
+                    return_value={
+                        "reason": "firmware-did-not-read-osdisk",
+                        "qmp_rd_bytes": 0,
+                        "qmp_rd_operations": 0,
+                        "qmp_wr_bytes": 0,
+                        "qmp_wr_operations": 0,
+                        "overlay_blocks": 8,
+                    },
+                ) as pristine,
+                mock.patch.object(boundary, "_stop", side_effect=stop_windows),
+                mock.patch.object(
+                    boundary, "_start_dependency",
+                    side_effect=lambda role:
+                    events.append(("dependency", role))),
+            ):
+                boundary.start_windows()
+
+            self.assertEqual(2, popen_mock.call_count)
+            self.assertEqual(2, readiness_mock.call_count)
+            pristine.assert_called_once()
+            self.assertEqual([
+                ("spawn", 201),
+                ("reaped", 201),
+                ("disconnected", 7),
+                ("spawn", 202),
+                ("dependency", "update-source"),
+                ("dependency", "optional-storage"),
+            ], events)
+            self.assertIs(boundary.processes["windows"], processes[1])
+            self.assertFalse(boundary.control_iso_fd)
+            boundary.processes.clear()
+            boundary._cleanup_qmp_root()
+
+    def test_windows_readiness_binds_both_switch_generations(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.gateway_switch_generation = 3
+            cursor = windows_identity_run.SwitchEvidenceCursor(
+                device=1, inode=2, offset=3)
+            with (
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_port",
+                    return_value=7),
+                mock.patch.object(
+                    windows_identity_run,
+                    "wait_for_plain_dhcp_transaction") as dhcp,
+            ):
+                boundary._wait_for_windows_os_readiness(cursor)
+            dhcp.assert_called_once_with(
+                boundary.runtime / "switch.jsonl",
+                "workstation",
+                windows_identity_run.MACS["client"],
+                timeout=90,
+                after=cursor,
+                generation=7,
+                gateway_generation=3,
+            )
+
+    def test_boot_retry_requires_zero_qmp_writes_and_unchanged_overlay(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+            boundary.runtime.mkdir(mode=0o700)
+            overlay = boundary.attempt / "windows.qcow2"
+            info = overlay.stat()
+            expected = (
+                info.st_dev, info.st_ino, info.st_size, info.st_blocks,
+                boundary._sha256(overlay),
+            )
+            process = _Process(201)
+            qmp = mock.Mock()
+            qmp.execute.return_value = [{
+                "device": "osdisk",
+                "stats": {
+                    "rd_bytes": 0,
+                    "rd_operations": 0,
+                    "wr_bytes": 0,
+                    "wr_operations": 0,
+                },
+            }]
+            with mock.patch.object(
+                    boundary, "_connect_boot_diagnostic_qmp",
+                    return_value=qmp):
+                diagnostic = boundary._collect_boot_failure_diagnostic(
+                    process, expected)
+            qmp.execute.assert_called_once_with("query-blockstats")
+            qmp.close.assert_called_once_with()
+            firmware_before = boundary._sha256(
+                boundary.attempt / "OVMF_VARS.fd")
+            diagnostic["overlay_pristine_after_reap"] = True
+            boundary._record_windows_boot_retry(
+                1, diagnostic, firmware_before, retry_eligible=True)
+            self.assertEqual({
+                "boot_attempt": 1,
+                "event": "windows-boot-readiness-timeout",
+                "firmware_mutation_retained": True,
+                "firmware_sha256_after": firmware_before,
+                "firmware_sha256_before": firmware_before,
+                "overlay_blocks": expected[3],
+                "overlay_pristine_after_reap": True,
+                "qmp_rd_bytes": 0,
+                "qmp_rd_operations": 0,
+                "qmp_wr_bytes": 0,
+                "qmp_wr_operations": 0,
+                "reason": "firmware-did-not-read-osdisk",
+                "retry_eligible": True,
+                "schema_version": 1,
+            }, json.loads(
+                (boundary.runtime /
+                 "windows-boot-attempt-1.json").read_text()))
+
+            qmp.reset_mock()
+            qmp.execute.return_value = [{
+                "device": "osdisk",
+                "stats": {
+                    "rd_bytes": 8192,
+                    "rd_operations": 2,
+                    "wr_bytes": 0,
+                    "wr_operations": 0,
+                },
+            }]
+            with mock.patch.object(
+                    boundary, "_connect_boot_diagnostic_qmp",
+                    return_value=qmp):
+                read_diagnostic = boundary._collect_boot_failure_diagnostic(
+                    process, expected)
+            self.assertEqual(
+                "osdisk-read-without-os-readiness",
+                read_diagnostic["reason"],
+            )
+
+            qmp.reset_mock()
+            qmp.execute.return_value = [{
+                "device": "osdisk",
+                "stats": {
+                    "rd_bytes": 4096,
+                    "rd_operations": 1,
+                    "wr_bytes": 4096,
+                    "wr_operations": 1,
+                },
+            }]
+            with mock.patch.object(
+                    boundary, "_connect_boot_diagnostic_qmp",
+                    return_value=qmp):
+                write_diagnostic = (
+                    boundary._collect_boot_failure_diagnostic(
+                        process, expected))
+            self.assertEqual(
+                "osdisk-written-without-os-readiness",
+                write_diagnostic["reason"],
+            )
+            write_diagnostic["overlay_pristine_after_reap"] = True
+            self.assertFalse(boundary._boot_retry_is_eligible(
+                write_diagnostic))
+
+            overlay.write_bytes(b"guest write")
+            descriptor = os.open(
+                overlay, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            try:
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError, "overlay changed"):
+                    boundary._prove_pristine_overlay(
+                        descriptor, overlay, expected)
+            finally:
+                os.close(descriptor)
+
+    def test_boot_artifact_snapshot_binds_fd_hash_and_path_inode(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            overlay = boundary.attempt / "windows.qcow2"
+            descriptor, identity = boundary._open_boot_artifact(overlay)
+            replacement = boundary.attempt / "replacement.qcow2"
+            replacement.write_bytes(overlay.read_bytes())
+            replacement.chmod(0o600)
+            overlay.unlink()
+            replacement.rename(overlay)
+            try:
+                self.assertEqual(identity[4], boundary._sha256_fd(descriptor))
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError,
+                        "boot artifact identity changed"):
+                    boundary._prove_boot_artifact_path(overlay, identity)
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError,
+                        "boot artifact identity changed"):
+                    boundary._prove_pristine_overlay(
+                        descriptor, overlay, identity)
+            finally:
+                os.close(descriptor)
+
+    def test_boot_artifact_snapshot_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            target = boundary.attempt / "windows.qcow2"
+            link = boundary.attempt / "linked.qcow2"
+            link.symlink_to(target)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "boot artifact open failed"):
+                boundary._open_boot_artifact(link)
+
+    def test_second_boot_timeout_fails_closed_without_a_third_spawn(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.authorized_command = ["windows"]
+            processes = [_Process(201), _Process(202)]
+
+            def stop_first(*_roles):
+                process = boundary.processes.pop("windows")
+                process.returncode = 0
+
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=["windows"]),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    side_effect=processes) as popen,
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    boundary, "_wait_for_process_inode"),
+                mock.patch.object(
+                    boundary, "_wait_for_windows_os_readiness",
+                    side_effect=RuntimeError("not ready")),
+                mock.patch.object(
+                    boundary, "_collect_boot_failure_diagnostic",
+                    return_value={
+                        "reason": "firmware-did-not-read-osdisk",
+                        "qmp_rd_bytes": 0,
+                        "qmp_rd_operations": 0,
+                        "qmp_wr_bytes": 0,
+                        "qmp_wr_operations": 0,
+                        "overlay_blocks": 8,
+                    }),
+                mock.patch.object(boundary, "_stop", side_effect=stop_first),
+                mock.patch.object(boundary, "stop_windows"),
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError, "bounded retry"):
+                    boundary.start_windows()
+            self.assertEqual(2, popen.call_count)
+            terminal = json.loads((
+                boundary.runtime / "windows-boot-attempt-2.json"
+            ).read_text())
+            self.assertEqual(2, terminal["boot_attempt"])
+            self.assertEqual(
+                "firmware-did-not-read-osdisk", terminal["reason"])
+            self.assertEqual(0, terminal["qmp_rd_bytes"])
+            self.assertEqual(0, terminal["qmp_rd_operations"])
+            self.assertEqual(0, terminal["qmp_wr_bytes"])
+            self.assertEqual(0, terminal["qmp_wr_operations"])
+            self.assertEqual(8, terminal["overlay_blocks"])
+            self.assertIs(terminal["overlay_pristine_after_reap"], True)
+            expected_firmware = boundary._sha256(
+                boundary.attempt / "OVMF_VARS.fd")
+            self.assertEqual(
+                expected_firmware, terminal["firmware_sha256_before"])
+            self.assertEqual(
+                expected_firmware, terminal["firmware_sha256_after"])
+            self.assertIs(terminal["firmware_mutation_retained"], True)
+            self.assertFalse(terminal["retry_eligible"])
+            self.assertEqual(0o600, stat.S_IMODE((
+                boundary.runtime / "windows-boot-attempt-2.json"
+            ).stat().st_mode))
+
+    def test_boot_timeout_records_terminal_diagnostic_before_disconnect_failure(
+            self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.authorized_command = ["windows"]
+            process = _Process(201)
+
+            def readiness(_cursor):
+                boundary.windows_switch_generation = 7
+                raise RuntimeError("not ready")
+
+            def stop_windows(*roles):
+                self.assertEqual(("windows",), roles)
+                boundary.processes.pop("windows").returncode = 0
+
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=["windows"]),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    return_value=process) as popen,
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    boundary, "_wait_for_process_inode"),
+                mock.patch.object(
+                    boundary, "_wait_for_windows_os_readiness",
+                    side_effect=readiness),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_disconnect",
+                    side_effect=RuntimeError("disconnect unproven")),
+                mock.patch.object(
+                    boundary, "_collect_boot_failure_diagnostic",
+                    return_value={
+                        "reason": "firmware-did-not-read-osdisk",
+                        "qmp_rd_bytes": 0,
+                        "qmp_rd_operations": 0,
+                        "qmp_wr_bytes": 0,
+                        "qmp_wr_operations": 0,
+                        "overlay_blocks": 8,
+                    }),
+                mock.patch.object(boundary, "_stop", side_effect=stop_windows),
+                mock.patch.object(boundary, "stop_windows"),
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError,
+                        "switch disconnect proof failed"):
+                    boundary.start_windows()
+
+            self.assertEqual(1, popen.call_count)
+            diagnostic = json.loads((
+                boundary.runtime / "windows-boot-attempt-1.json"
+            ).read_text())
+            self.assertEqual(1, diagnostic["boot_attempt"])
+            self.assertEqual(
+                "firmware-did-not-read-osdisk", diagnostic["reason"])
+            self.assertEqual(0, diagnostic["qmp_rd_bytes"])
+            self.assertEqual(0, diagnostic["qmp_wr_bytes"])
+            self.assertIs(diagnostic["overlay_pristine_after_reap"], True)
+            self.assertIs(diagnostic["switch_disconnect_proven"], False)
+            self.assertIs(diagnostic["retry_eligible"], False)
+
+    def test_boot_diagnostic_is_exclusive_nonfollowing_and_fully_written(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.runtime.mkdir(mode=0o700)
+            firmware = boundary._sha256(
+                boundary.attempt / "OVMF_VARS.fd")
+            diagnostic = {
+                "reason": "firmware-did-not-read-osdisk",
+                "qmp_rd_bytes": 0,
+                "qmp_rd_operations": 0,
+                "qmp_wr_bytes": 0,
+                "qmp_wr_operations": 0,
+                "overlay_blocks": 8,
+                "overlay_pristine_after_reap": True,
+                "switch_disconnect_proven": True,
+            }
+            real_write = os.write
+
+            def short_write(descriptor, content):
+                return real_write(descriptor, content[:7])
+
+            with (
+                mock.patch.object(
+                    windows_identity_run.os, "write",
+                    side_effect=short_write) as write,
+                mock.patch.object(
+                    windows_identity_run.os, "fsync",
+                    wraps=os.fsync) as fsync,
+            ):
+                boundary._record_windows_boot_retry(
+                    1, diagnostic, firmware, retry_eligible=True)
+            self.assertGreater(write.call_count, 1)
+            self.assertEqual(2, fsync.call_count)
+            output = boundary.runtime / "windows-boot-attempt-1.json"
+            self.assertEqual(0o600, stat.S_IMODE(output.stat().st_mode))
+            self.assertEqual(
+                "firmware-did-not-read-osdisk",
+                json.loads(output.read_text())["reason"])
+
+            original = output.read_bytes()
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "creation failed"):
+                boundary._record_windows_boot_retry(
+                    1, diagnostic, firmware, retry_eligible=True)
+            self.assertEqual(original, output.read_bytes())
+
+            target = boundary.runtime / "elsewhere"
+            target.write_text("untouched", encoding="utf-8")
+            symlink = boundary.runtime / "windows-boot-attempt-2.json"
+            symlink.symlink_to(target)
+            with self.assertRaisesRegex(
+                    WindowsIdentityRunError, "creation failed"):
+                boundary._record_windows_boot_retry(
+                    2, diagnostic, firmware, retry_eligible=False)
+            self.assertEqual("untouched", target.read_text(encoding="utf-8"))
+
+    def test_windows_start_preserves_primary_failure_when_teardown_fails(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary._validate()
+            boundary.port = 43119
+            boundary.runtime.mkdir(mode=0o700)
+            boundary.authorized_command = ["windows"]
+            primary = RuntimeError("readiness failed")
+            cleanup = RuntimeError("teardown failed")
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    side_effect=primary),
+                mock.patch.object(
+                    boundary, "stop_windows", side_effect=cleanup),
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError,
+                        "startup failed and teardown also failed") as raised:
+                    boundary.start_windows()
+            self.assertIs(raised.exception.__cause__, primary)
+            self.assertIs(raised.exception.__context__, cleanup)
 
     def test_qmp_authentication_retries_transient_socket_failures(self):
         with tempfile.TemporaryDirectory() as name:
@@ -640,7 +1128,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                         "timed out authenticating Windows QMP"):
                     boundary.authenticate_qmp()
             connect.assert_called_once_with(
-                boundary.qmp_root / "windows.qmp", timeout=2)
+                boundary.qmp_root / "windows.qmp", timeout=2,
+                expected_peer_pid=104)
 
     def test_cleanup_closes_qmp_and_overlay_and_reaps_every_process(self):
         with tempfile.TemporaryDirectory() as name:

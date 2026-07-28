@@ -186,6 +186,86 @@ class SimulatedSwitchTests(unittest.TestCase):
         thread.join(5)
         self.assertFalse(thread.is_alive())
 
+    def test_authenticated_role_reconnects_with_a_new_generation(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp) / "switch.jsonl"
+            fabric = switch.ConcurrentSwitch(listener, [
+                switch.Port(1, "client", CLIENT),
+                switch.Port(2, "controller", CONTROLLER),
+            ], evidence_path=evidence, idle_timeout=5)
+            thread = threading.Thread(target=fabric.run)
+            thread.start()
+            self.addCleanup(thread.join, 5)
+            controller = socket.create_connection(address)
+            self.addCleanup(controller.close)
+            controller.sendall(framed(
+                gateway.identity_announcement(CONTROLLER, "controller")))
+            first = socket.create_connection(address)
+            self.addCleanup(first.close)
+            client_announcement = gateway.identity_announcement(
+                CLIENT, "client")
+            first.sendall(framed(client_announcement))
+            self.assertEqual(receive(controller), client_announcement)
+            first.close()
+            deadline = __import__("time").monotonic() + 2
+            while __import__("time").monotonic() < deadline:
+                records = [
+                    json.loads(line)
+                    for line in (
+                        evidence.read_text().splitlines()
+                        if evidence.exists() else ()
+                    )]
+                if any(
+                    item.get("event") == "port-disconnected"
+                    and item.get("port") == "client"
+                    and item.get("generation") == 1
+                    for item in records
+                ):
+                    break
+                threading.Event().wait(0.01)
+            else:
+                self.fail("first client generation did not disconnect")
+            stale = gateway.ethernet(
+                CLIENT, CONTROLLER, 0x88b5, b"old-generation")
+            prior_frames = fabric.frames
+            controller.sendall(framed(stale))
+            deadline = __import__("time").monotonic() + 2
+            while (
+                __import__("time").monotonic() < deadline
+                and fabric.frames == prior_frames
+            ):
+                threading.Event().wait(0.01)
+            self.assertGreater(fabric.frames, prior_frames)
+            second = socket.create_connection(address)
+            self.addCleanup(second.close)
+            second.sendall(framed(client_announcement))
+            self.assertEqual(receive(controller), client_announcement)
+            deadline = __import__("time").monotonic() + 2
+            while __import__("time").monotonic() < deadline:
+                records = [
+                    json.loads(line)
+                    for line in evidence.read_text().splitlines()
+                ]
+                if any(
+                    item.get("event") == "port-connected"
+                    and item.get("port") == "client"
+                    and item.get("generation") == 2
+                    for item in records
+                ):
+                    break
+                threading.Event().wait(0.01)
+            else:
+                self.fail("second client generation did not connect")
+            second.settimeout(0.1)
+            with self.assertRaises(TimeoutError):
+                second.recv(1)
+            second.close()
+            controller.close()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+
     def test_authenticated_peers_forward_before_complete_peer_set(self):
         listener = self.listener()
         address = listener.getsockname()

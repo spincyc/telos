@@ -16,7 +16,7 @@ try:
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
     from .factory_runner import (
-        activate_publication, capture_serial, gateway_command, qemu_commands,
+        GATEWAY_MAC, activate_publication, capture_serial, gateway_command, qemu_commands,
         switch_command, wait_for_switch_port)
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
@@ -28,7 +28,7 @@ except ImportError:
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
     from factory_runner import (
-        activate_publication, capture_serial, gateway_command, qemu_commands,
+        GATEWAY_MAC, activate_publication, capture_serial, gateway_command, qemu_commands,
         switch_command, wait_for_switch_port)
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
@@ -93,12 +93,15 @@ def _destroy_private_publication(path: Path) -> str | None:
     return None
 
 
-def _connect_qmp(path: Path, *, timeout: float = 10) -> QmpClient:
+def _connect_qmp(
+        path: Path, *, expected_peer_pid: int, timeout: float = 10,
+) -> QmpClient:
     deadline = time.monotonic() + timeout
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
         try:
-            return QmpClient.connect(path, timeout=1)
+            return QmpClient.connect(
+                path, timeout=1, expected_peer_pid=expected_peer_pid)
         except (OSError, WindowsGuiError) as error:
             last_error = error
             time.sleep(0.05)
@@ -172,7 +175,8 @@ def run(
             processes["gateway"] = subprocess.Popen(
                 gateway_command(31415), stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-            wait_for_switch_port(evidence / "switch.jsonl", "gateway")
+            wait_for_switch_port(
+                evidence / "switch.jsonl", "gateway", GATEWAY_MAC)
             processes["controller"] = subprocess.Popen(
                 controller_command, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -193,7 +197,9 @@ def run(
                 processes["workstation"], evidence / "workstation-serial.log")
             screens = evidence / "screens"
             screens.mkdir(mode=0o700)
-            qmp = _connect_qmp(bundle / "windows.qmp")
+            qmp = _connect_qmp(
+                bundle / "windows.qmp",
+                expected_peer_pid=processes["workstation"].pid)
             result["phase"] = "windows-setup"
             deadline = time.monotonic() + duration
             next_screen = time.monotonic()

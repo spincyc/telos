@@ -120,9 +120,18 @@ class WindowsInstallRunTests(unittest.TestCase):
                 mock.patch.object(windows_install_run.time, "sleep"):
             self.assertIs(
                 windows_install_run._connect_qmp(
-                    Path("/private/windows.qmp"), timeout=1),
+                    Path("/private/windows.qmp"),
+                    expected_peer_pid=731, timeout=1),
                 client)
         self.assertEqual(connect.call_count, 2)
+        self.assertEqual([
+            mock.call(
+                Path("/private/windows.qmp"), timeout=1,
+                expected_peer_pid=731),
+            mock.call(
+                Path("/private/windows.qmp"), timeout=1,
+                expected_peer_pid=731),
+        ], connect.call_args_list)
 
     def test_lifecycle_requires_overlay_native_marker_and_one_pxe_boot(self):
         serial = "\n".join((

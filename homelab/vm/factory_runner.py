@@ -11,11 +11,13 @@ import re
 import select
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -41,6 +43,70 @@ GATEWAY_MAC = "52:54:00:31:11:01"
 DEFAULT_FAILURE_EVIDENCE = Path("homelab/var/factory/evidence")
 DEFAULT_SEED_ISO = Path("homelab/var/seed/telos-controller-seed.iso")
 EVIDENCE_LIMIT = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class SwitchEvidenceCursor:
+    """Immutable boundary before a new authenticated switch session."""
+
+    device: int | None
+    inode: int | None
+    offset: int
+
+
+def capture_switch_evidence_cursor(evidence: Path) -> SwitchEvidenceCursor:
+    try:
+        descriptor = os.open(
+            evidence, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return SwitchEvidenceCursor(None, None, 0)
+    except OSError as error:
+        raise RuntimeError("switch evidence cannot be opened safely") from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("switch evidence is not a regular file")
+        return SwitchEvidenceCursor(info.st_dev, info.st_ino, info.st_size)
+    finally:
+        os.close(descriptor)
+
+
+def _switch_events_after(
+    evidence: Path, cursor: SwitchEvidenceCursor | None,
+) -> list[dict[str, object]]:
+    try:
+        descriptor = os.open(
+            evidence, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise RuntimeError("switch evidence cannot be opened safely") from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("switch evidence is not a regular file")
+        offset = 0 if cursor is None else cursor.offset
+        if cursor is not None and cursor.device is not None and (
+            info.st_dev != cursor.device or info.st_ino != cursor.inode
+        ):
+            raise RuntimeError("switch evidence identity changed")
+        if info.st_size < offset:
+            raise RuntimeError("switch evidence was truncated")
+        raw = os.pread(descriptor, info.st_size - offset, offset)
+    finally:
+        os.close(descriptor)
+    # An event becomes evidence only after its newline-delimited append is
+    # complete.  Ignore a concurrently written suffix.
+    complete = raw.rsplit(b"\n", 1)[0] if b"\n" in raw else b""
+    events: list[dict[str, object]] = []
+    for line in complete.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
 
 
 def _redact(value: bytes) -> bytes:
@@ -265,20 +331,148 @@ def gateway_command(
 
 
 def wait_for_switch_port(
-    evidence: Path, name: str, *, timeout: float = 10.0,
-) -> None:
-    marker = f'"event":"port-connected"'
-    named = f'"port":"{name}"'
+    evidence: Path, name: str, expected_mac: str, *, timeout: float = 10.0,
+    after: SwitchEvidenceCursor | None = None,
+) -> int:
+    expected_mac = expected_mac.casefold()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            text = evidence.read_text(encoding="utf-8").replace(" ", "")
+            events = _switch_events_after(evidence, after)
         except FileNotFoundError:
-            text = ""
-        if marker in text and named in text:
-            return
+            events = []
+        for event in events:
+            if (
+                event.get("event") == "port-connected"
+                and event.get("port") == name
+                and event.get("mac") == expected_mac
+                and type(event.get("generation")) is int
+                and int(event["generation"]) > 0
+            ):
+                return int(event["generation"])
         time.sleep(0.05)
     raise RuntimeError(f"timed out waiting for pinned switch port: {name}")
+
+
+def wait_for_plain_dhcp_transaction(
+    evidence: Path, peer: str, expected_mac: str, *, timeout: float = 90.0,
+    after: SwitchEvidenceCursor | None = None,
+    generation: int | None = None,
+    gateway_generation: int | None = None,
+) -> None:
+    """Require one exact, no-PXE DHCP D/O/R/A transaction for a peer."""
+    if generation is not None and (
+        type(generation) is not int or generation <= 0
+    ):
+        raise ValueError(
+            "workstation switch generation must be a positive integer")
+    if gateway_generation is not None and (
+        type(gateway_generation) is not int or gateway_generation <= 0
+    ):
+        raise ValueError(
+            "gateway switch generation must be a positive integer")
+    expected_mac = expected_mac.casefold()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        progress: dict[str, int] = {}
+        tainted: set[str] = set()
+        sequence = ("DISCOVER", "OFFER", "REQUEST", "ACK")
+        try:
+            events = _switch_events_after(evidence, after)
+        except FileNotFoundError:
+            events = []
+        for event in events:
+            if event.get("event") != "dhcp":
+                continue
+            transaction = event.get("transaction")
+            kind = event.get("kind")
+            if (
+                not isinstance(transaction, str)
+                or re.fullmatch(r"[0-9a-f]{8}", transaction) is None
+            ):
+                continue
+            if kind == "NAK":
+                tainted.add(transaction)
+                continue
+            if kind not in sequence:
+                continue
+            request = kind in {"DISCOVER", "REQUEST"}
+            matches = event.get("client_mac") == expected_mac
+            if request:
+                matches = matches and (
+                    event.get("peer") == peer
+                    and event.get("source_mac") == expected_mac
+                )
+                if generation is not None:
+                    matches = matches and (
+                        type(event.get("peer_generation")) is int
+                        and event.get("peer_generation") == generation)
+                if kind == "REQUEST":
+                    matches = (
+                        matches
+                        and event.get("requested_ip") == "10.1.31.11"
+                    )
+            else:
+                matches = matches and (
+                    event.get("peer") == "gateway"
+                    and event.get("source_mac") == GATEWAY_MAC
+                    and event.get("delivered_to") == peer
+                    and event.get("offered_ip") == "10.1.31.11"
+                )
+                if generation is not None:
+                    matches = matches and (
+                        type(event.get("delivered_to_generation")) is int
+                        and event.get("delivered_to_generation") == generation)
+                if gateway_generation is not None:
+                    matches = matches and (
+                        type(event.get("peer_generation")) is int
+                        and event.get("peer_generation") == gateway_generation)
+            expected_index = progress.get(transaction, 0)
+            if (
+                transaction in tainted
+                or "boot_file" in event
+                or "next_server" in event
+                or "architecture" in event
+                or not matches
+                or expected_index >= len(sequence)
+                or kind != sequence[expected_index]
+            ):
+                tainted.add(transaction)
+                continue
+            progress[transaction] = expected_index + 1
+        if any(
+            transaction not in tainted and index == len(sequence)
+            for transaction, index in progress.items()
+        ):
+            return
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"timed out waiting for plain DHCP readiness: {peer} {expected_mac}")
+
+
+def wait_for_switch_disconnect(
+    evidence: Path, name: str, expected_mac: str, generation: int, *,
+    timeout: float = 10.0,
+    after: SwitchEvidenceCursor | None = None,
+) -> None:
+    """Wait for teardown of exactly one authenticated port generation."""
+    if type(generation) is not int or generation <= 0:
+        raise ValueError("switch generation must be a positive integer")
+    expected_mac = expected_mac.casefold()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for event in _switch_events_after(evidence, after):
+            if (
+                event.get("event") == "port-disconnected"
+                and event.get("port") == name
+                and event.get("mac") == expected_mac
+                and event.get("generation") == generation
+            ):
+                return
+        time.sleep(0.05)
+    raise RuntimeError(
+        f"timed out waiting for switch port disconnect: {name} "
+        f"generation {generation}")
 
 
 def assess_handoff(
@@ -502,7 +696,8 @@ def run(
             processes["gateway"] = subprocess.Popen(
                 gateway_command(port), stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-            wait_for_switch_port(runtime / "switch.jsonl", "gateway")
+            wait_for_switch_port(
+                runtime / "switch.jsonl", "gateway", GATEWAY_MAC)
             for role in ("controller", "workstation"):
                 publication_io = role == "controller" and publication_iso is not None
                 workstation_io = role == "workstation" and publication_iso is not None

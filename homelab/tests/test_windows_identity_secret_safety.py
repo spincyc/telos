@@ -152,6 +152,9 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                     side_effect=popen), mock.patch(
                     "homelab.vm.windows_identity_run.wait_for_switch_port"), \
                     mock.patch(
+                        "homelab.vm.windows_identity_run."
+                        "wait_for_plain_dhcp_transaction"), \
+                    mock.patch(
                         "homelab.vm.windows_identity_run.audit_live_process"), \
                     mock.patch(
                         "homelab.vm.windows_identity_run.SerialAutomation"), \
@@ -162,7 +165,9 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                         "homelab.vm.windows_identity_run.QmpClient.connect"), \
                     mock.patch.object(
                         boundary, "_process_holds_inode",
-                        side_effect=(True, False, True, False, True)), \
+                        side_effect=(
+                            True, False, True, False, True, True, True,
+                            True, True)), \
                     mock.patch(
                         "homelab.vm.windows_identity_run.DisposableBootDisk"
                     ) as boot_disk:

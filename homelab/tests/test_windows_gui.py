@@ -1,8 +1,11 @@
 import json
+import os
 import socket
+import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from homelab.vm.windows_gui import (
     Checkpoint,
@@ -53,6 +56,60 @@ class WindowsGuiTests(unittest.TestCase):
     def send_qmp(peer, *messages):
         peer.sendall(b"".join(
             json.dumps(message).encode() + b"\r\n" for message in messages))
+
+    def test_qmp_connect_requires_exact_unix_peer_credentials(self):
+        connection = mock.Mock()
+        connection.fileno.return_value = 12
+        connection.getsockopt.return_value = struct.pack(
+            "3i", os.getpid(), os.geteuid(), os.getegid())
+        with (
+            mock.patch.object(
+                windows_gui.socket, "socket", return_value=connection),
+            mock.patch.object(
+                windows_gui.QmpClient, "_message",
+                return_value={"QMP": {}}),
+            mock.patch.object(
+                windows_gui.QmpClient, "execute") as execute,
+        ):
+            client = windows_gui.QmpClient.connect(
+                Path("/private/windows.qmp"),
+                expected_peer_pid=os.getpid())
+
+        self.assertIs(connection, client.connection)
+        connection.getsockopt.assert_called_once_with(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        execute.assert_called_once_with("qmp_capabilities")
+        connection.close.assert_not_called()
+
+    def test_qmp_connect_closes_every_peer_credential_mismatch(self):
+        expected = (731, os.geteuid(), os.getegid())
+        mismatches = (
+            (732, expected[1], expected[2]),
+            (expected[0], expected[1] + 1, expected[2]),
+            (expected[0], expected[1], expected[2] + 1),
+        )
+        for observed in mismatches:
+            with self.subTest(observed=observed):
+                connection = mock.Mock()
+                connection.fileno.return_value = 12
+                connection.getsockopt.return_value = struct.pack(
+                    "3i", *observed)
+                with mock.patch.object(
+                        windows_gui.socket, "socket",
+                        return_value=connection):
+                    with self.assertRaisesRegex(
+                            WindowsGuiError, "peer credentials"):
+                        windows_gui.QmpClient.connect(
+                            Path("/private/windows.qmp"),
+                            expected_peer_pid=expected[0])
+                connection.close.assert_called_once_with()
+
+    def test_qmp_connect_rejects_invalid_expected_pid_before_opening_socket(self):
+        with mock.patch.object(windows_gui.socket, "socket") as socket_factory:
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                windows_gui.QmpClient.connect(
+                    Path("/private/windows.qmp"), expected_peer_pid=True)
+        socket_factory.assert_not_called()
 
     def test_ppm_and_distance(self):
         with tempfile.TemporaryDirectory() as temporary:

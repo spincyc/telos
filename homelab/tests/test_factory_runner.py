@@ -13,6 +13,292 @@ from homelab.vm.qemu_boundary import audit_disposable_controller
 
 
 class FactoryRunnerTests(unittest.TestCase):
+    def test_switch_port_readiness_requires_one_exact_json_object(self):
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "switch.jsonl"
+            evidence.write_text(
+                '{"event":"switch-ready","ports":['
+                '{"port":"gateway","mac":"52:54:00:31:11:01"}]}\n'
+                '{"event":"port-connected","port":"controller",'
+                '"mac":"52:54:00:31:11:01","generation":1,'
+                '"transaction":"201851"}\n'
+                '{"event":"port-connected","port":"other",'
+                '"mac":"52:54:00:31:11:01","generation":1}\n'
+                '{"event":"other","port":"gateway",'
+                '"mac":"52:54:00:31:11:01","generation":1}\n'
+                '{"event":"port-connected","port":"gateway",'
+                '"mac":"52:54:00:31:11:99","generation":1}\n'
+                '{"event":"port-connected","port":"gateway"\n')
+            with self.assertRaisesRegex(RuntimeError, "pinned switch port"):
+                factory_runner.wait_for_switch_port(
+                    evidence, "gateway", factory_runner.GATEWAY_MAC,
+                    timeout=0.01)
+            with evidence.open("a") as output:
+                output.write(
+                    '{"event":"port-connected","port":"gateway",'
+                    '"mac":"52:54:00:31:11:01","generation":true}\n')
+            with self.assertRaisesRegex(RuntimeError, "pinned switch port"):
+                factory_runner.wait_for_switch_port(
+                    evidence, "gateway", factory_runner.GATEWAY_MAC,
+                    timeout=0.01)
+            with evidence.open("a") as output:
+                output.write(
+                    '{"event":"port-connected","port":"gateway",'
+                    '"mac":"52:54:00:31:11:01","generation":1}\n')
+            factory_runner.wait_for_switch_port(
+                evidence, "gateway", factory_runner.GATEWAY_MAC,
+                timeout=0.01)
+
+    def test_plain_dhcp_readiness_rejects_mixed_spoofed_and_pxe_records(self):
+        expected = "52:54:00:31:12:12"
+
+        def event(kind, transaction, **extra):
+            source = (
+                expected if kind in {"DISCOVER", "REQUEST"}
+                else factory_runner.GATEWAY_MAC
+            )
+            peer = (
+                "workstation" if kind in {"DISCOVER", "REQUEST"}
+                else "gateway"
+            )
+            record = {
+                "event": "dhcp", "kind": kind, "transaction": transaction,
+                "source_mac": source, "client_mac": expected, "peer": peer,
+            }
+            if kind in {"OFFER", "ACK"}:
+                record.update({
+                    "delivered_to": "workstation",
+                    "offered_ip": "10.1.31.11",
+                })
+            if kind == "REQUEST":
+                record["requested_ip"] = "10.1.31.11"
+            record.update(extra)
+            return json.dumps(record)
+
+        invalid_cases = (
+            [
+                event("DISCOVER", "00000001"), event("OFFER", "00000002"),
+                event("REQUEST", "00000001"), event("ACK", "00000002"),
+            ],
+            [
+                event("DISCOVER", "00000001",
+                      source_mac="52:54:00:31:12:99"),
+                event("OFFER", "00000001"), event("REQUEST", "00000001"),
+                event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001"), event("OFFER", "00000001"),
+                event("REQUEST", "00000001"), event("ACK", "00000001",
+                                               boot_file="ipxe.efi"),
+            ],
+            [
+                '{"event":"dhcp","kind":"DISCOVER"',
+                event("OFFER", "00000001"), event("REQUEST", "00000001"),
+                event("ACK", "00000001"),
+            ],
+            [
+                event("OFFER", "00000001"), event("DISCOVER", "00000001"),
+                event("REQUEST", "00000001"), event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001"), event("OFFER", "00000001"),
+                event("OFFER", "00000001"), event("REQUEST", "00000001"),
+                event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001"),
+                event("OFFER", "00000001", delivered_to="controller"),
+                event("REQUEST", "00000001"), event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001", architecture=7),
+                event("OFFER", "00000001"), event("REQUEST", "00000001"),
+                event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001"),
+                event("OFFER", "00000001",
+                      client_mac="52:54:00:31:12:99"),
+                event("REQUEST", "00000001"), event("ACK", "00000001"),
+            ],
+            [
+                event("DISCOVER", "00000001"), event("OFFER", "00000001"),
+                event("REQUEST", "00000001"), event("NAK", "00000001"),
+                event("ACK", "00000001"),
+            ],
+        )
+        for records in invalid_cases:
+            with self.subTest(records=records):
+                with tempfile.TemporaryDirectory() as name:
+                    evidence = Path(name) / "switch.jsonl"
+                    evidence.write_text("\n".join(records) + "\n")
+                    with self.assertRaisesRegex(RuntimeError, "DHCP readiness"):
+                        factory_runner.wait_for_plain_dhcp_transaction(
+                            evidence, "workstation", expected, timeout=0.01)
+
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "switch.jsonl"
+            evidence.write_text("\n".join(
+                event(kind, "deadbeef") for kind in
+                ("DISCOVER", "OFFER", "REQUEST", "ACK")) + "\n")
+            factory_runner.wait_for_plain_dhcp_transaction(
+                evidence, "workstation", expected, timeout=0.01)
+
+    def test_readiness_is_scoped_to_cursor_and_connection_generation(self):
+        expected = "52:54:00:31:12:12"
+
+        def transaction(generation, transaction_id="deadbeef"):
+            common = (
+                f'"event":"dhcp","transaction":"{transaction_id}",'
+                f'"client_mac":"{expected}"'
+            )
+            return [
+                "{" + common + ',"kind":"DISCOVER","peer":"workstation",'
+                f'"source_mac":"{expected}","peer_generation":{generation}}}',
+                "{" + common + ',"kind":"OFFER","peer":"gateway",'
+                f'"source_mac":"{factory_runner.GATEWAY_MAC}",'
+                '"offered_ip":"10.1.31.11","delivered_to":"workstation",'
+                f'"peer_generation":1,"delivered_to_generation":{generation}}}',
+                "{" + common + ',"kind":"REQUEST","peer":"workstation",'
+                f'"source_mac":"{expected}","requested_ip":"10.1.31.11",'
+                f'"peer_generation":{generation}}}',
+                "{" + common + ',"kind":"ACK","peer":"gateway",'
+                f'"source_mac":"{factory_runner.GATEWAY_MAC}",'
+                '"offered_ip":"10.1.31.11","delivered_to":"workstation",'
+                f'"peer_generation":1,"delivered_to_generation":{generation}}}',
+            ]
+
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "switch.jsonl"
+            evidence.write_text("\n".join(transaction(1)) + "\n")
+            cursor = factory_runner.capture_switch_evidence_cursor(evidence)
+            with self.assertRaisesRegex(RuntimeError, "DHCP readiness"):
+                factory_runner.wait_for_plain_dhcp_transaction(
+                    evidence, "workstation", expected, timeout=0.01,
+                    after=cursor, generation=2, gateway_generation=1)
+            with evidence.open("a") as output:
+                output.write("\n".join(transaction(1)) + "\n")
+            with self.assertRaisesRegex(RuntimeError, "DHCP readiness"):
+                factory_runner.wait_for_plain_dhcp_transaction(
+                    evidence, "workstation", expected, timeout=0.01,
+                    after=cursor, generation=2, gateway_generation=1)
+            with evidence.open("a") as output:
+                output.write("\n".join(transaction(2, "cafebabe")) + "\n")
+            factory_runner.wait_for_plain_dhcp_transaction(
+                evidence, "workstation", expected, timeout=0.01,
+                after=cursor, generation=2, gateway_generation=1)
+
+    def test_dhcp_readiness_rejects_boolean_connection_generations(self):
+        expected = "52:54:00:31:12:12"
+        base = [
+            {
+                "event": "dhcp", "kind": "DISCOVER",
+                "transaction": "deadbeef", "client_mac": expected,
+                "peer": "workstation", "source_mac": expected,
+                "peer_generation": 1,
+            },
+            {
+                "event": "dhcp", "kind": "OFFER",
+                "transaction": "deadbeef", "client_mac": expected,
+                "peer": "gateway",
+                "source_mac": factory_runner.GATEWAY_MAC,
+                "offered_ip": "10.1.31.11", "delivered_to": "workstation",
+                "peer_generation": 1, "delivered_to_generation": 1,
+            },
+            {
+                "event": "dhcp", "kind": "REQUEST",
+                "transaction": "deadbeef", "client_mac": expected,
+                "peer": "workstation", "source_mac": expected,
+                "requested_ip": "10.1.31.11", "peer_generation": 1,
+            },
+            {
+                "event": "dhcp", "kind": "ACK",
+                "transaction": "deadbeef", "client_mac": expected,
+                "peer": "gateway",
+                "source_mac": factory_runner.GATEWAY_MAC,
+                "offered_ip": "10.1.31.11", "delivered_to": "workstation",
+                "peer_generation": 1, "delivered_to_generation": 1,
+            },
+        ]
+        for record_index, field in (
+            (0, "peer_generation"),
+            (1, "peer_generation"),
+            (1, "delivered_to_generation"),
+        ):
+            with self.subTest(record_index=record_index, field=field):
+                records = [dict(record) for record in base]
+                records[record_index][field] = True
+                with tempfile.TemporaryDirectory() as name:
+                    evidence = Path(name) / "switch.jsonl"
+                    evidence.write_text(
+                        "".join(json.dumps(record) + "\n"
+                                for record in records))
+                    with self.assertRaisesRegex(
+                            RuntimeError, "DHCP readiness"):
+                        factory_runner.wait_for_plain_dhcp_transaction(
+                            evidence, "workstation", expected, timeout=0.01,
+                            generation=1, gateway_generation=1)
+
+    def test_readiness_rejects_invalid_expected_generations(self):
+        evidence = Path("unused-switch-evidence.jsonl")
+        invalid = (True, False, 0, -1, "1", 1.0)
+        for generation in invalid:
+            with self.subTest(api="dhcp-workstation", generation=generation):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    factory_runner.wait_for_plain_dhcp_transaction(
+                        evidence, "workstation", "52:54:00:31:12:12",
+                        timeout=0.01, generation=generation)
+            with self.subTest(api="dhcp-gateway", generation=generation):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    factory_runner.wait_for_plain_dhcp_transaction(
+                        evidence, "workstation", "52:54:00:31:12:12",
+                        timeout=0.01, gateway_generation=generation)
+            with self.subTest(api="disconnect", generation=generation):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    factory_runner.wait_for_switch_disconnect(
+                        evidence, "workstation", "52:54:00:31:12:12",
+                        generation, timeout=0.01)
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            factory_runner.wait_for_switch_disconnect(
+                evidence, "workstation", "52:54:00:31:12:12",
+                None, timeout=0.01)
+
+    def test_switch_cursor_rejects_replacement_and_ignores_partial_suffix(self):
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "switch.jsonl"
+            evidence.write_text('{"event":"switch-ready"}\n')
+            cursor = factory_runner.capture_switch_evidence_cursor(evidence)
+            evidence.write_text("")
+            with self.assertRaisesRegex(RuntimeError, "truncated"):
+                factory_runner.wait_for_switch_port(
+                    evidence, "gateway", factory_runner.GATEWAY_MAC,
+                    timeout=0.01, after=cursor)
+            evidence.unlink()
+            evidence.write_text('{"event":"switch-ready"}\n')
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                factory_runner.wait_for_switch_port(
+                    evidence, "gateway", factory_runner.GATEWAY_MAC,
+                    timeout=0.01, after=cursor)
+
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "switch.jsonl"
+            evidence.write_text('{"event":"switch-ready"}\n')
+            cursor = factory_runner.capture_switch_evidence_cursor(evidence)
+            record = (
+                '{"event":"port-connected","port":"gateway",'
+                f'"mac":"{factory_runner.GATEWAY_MAC}","generation":1}}')
+            with evidence.open("a") as output:
+                output.write(record)
+            with self.assertRaisesRegex(RuntimeError, "pinned switch port"):
+                factory_runner.wait_for_switch_port(
+                    evidence, "gateway", factory_runner.GATEWAY_MAC,
+                    timeout=0.01, after=cursor)
+            with evidence.open("a") as output:
+                output.write("\n")
+            self.assertEqual(factory_runner.wait_for_switch_port(
+                evidence, "gateway", factory_runner.GATEWAY_MAC,
+                timeout=0.01, after=cursor), 1)
+
     def test_failure_evidence_is_private_bounded_and_redacted(self):
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

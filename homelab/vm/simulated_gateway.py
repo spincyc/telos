@@ -399,8 +399,13 @@ def dhcp_packet_evidence(frame: bytes) -> dict[str, object] | None:
     result: dict[str, object] = {
         "kind": names[value[0]],
         "source_mac": ":".join(f"{part:02x}" for part in frame[6:12]),
+        "client_mac": ":".join(f"{part:02x}" for part in bootp[28:34]),
         "transaction": bootp[4:8].hex(),
     }
+    if bootp[16:20] != b"\0" * 4:
+        result["offered_ip"] = str(ipaddress.IPv4Address(bootp[16:20]))
+    if len(options.get(50, b"")) == 4:
+        result["requested_ip"] = str(ipaddress.IPv4Address(options[50]))
     architecture = options.get(93)
     if architecture is not None and len(architecture) == 2:
         result["architecture"] = struct.unpack("!H", architecture)[0]
@@ -434,10 +439,12 @@ class HubPolicy:
                 return deliveries, evidence
             dhcp = dhcp_packet_evidence(frame)
             if dhcp:
-                evidence.append({**dhcp, "peer": "gateway"})
                 target = self.dhcp_clients.get(str(dhcp["transaction"]))
+                record = {**dhcp, "peer": "gateway"}
                 if target in peers and target != sender:
+                    record["delivered_to"] = target
                     deliveries[target] = [frame]
+                evidence.append(record)
                 return deliveries, evidence
             target = self.learned.get(destination)
             if target in peers and target != sender:
