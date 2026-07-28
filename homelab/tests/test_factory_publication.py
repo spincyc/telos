@@ -222,6 +222,7 @@ class FactoryPublicationTests(unittest.TestCase):
             "guest ok = no",
             "valid users = pxe-install",
             "smbpasswd -s -a pxe-install",
+            "systemctl unmask smb.service",
             "systemctl enable smb.service",
             "systemctl is-active --quiet smb.service",
             "Requires=telos-factory-http.service "

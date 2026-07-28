@@ -150,6 +150,9 @@ def activate_publication(
                 target=drain, name="controller-serial-drain", daemon=True,
             ).start()
             return
+        if command_sent and transcript.rstrip().endswith(b"#"):
+            raise RuntimeError(
+                "Controller returned to its shell before services were ready")
     if publication_passed:
         raise RuntimeError(
             "verified PXE publication completed, but Controller services "
