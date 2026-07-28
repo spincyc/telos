@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from homelab.lib import pxe_release_set
+from homelab.lib import pxe_release_set, windows_install_source
 from homelab.vm import factory_publication
 
 
@@ -28,6 +28,10 @@ class FactoryPublicationTests(unittest.TestCase):
             leaf = self.release_set / "targets" / target / self.version
             leaf.mkdir(parents=True)
             (leaf / "boot.ipxe").write_text(f"#!ipxe\n# {target}\n")
+        (self.release_set / "targets" / "windows" / self.version
+         / "release.json").write_text(json.dumps({
+             "source_iso_sha256": "a" * 64,
+         }))
         selected = {
             "schema": 1,
             "version": self.version,
@@ -42,7 +46,7 @@ class FactoryPublicationTests(unittest.TestCase):
         self.seed = self.root / "seed.iso"
         self.seed.write_bytes(b"verified seed")
 
-    def stage(self, destination):
+    def stage(self, destination, **kwargs):
         def repair(_seed, repair_root):
             repair_root.mkdir()
             package = repair_root / "tftp-hpa-5.2-11-x86_64.pkg.tar.zst"
@@ -64,7 +68,7 @@ class FactoryPublicationTests(unittest.TestCase):
                 side_effect=repair):
             return factory_publication.stage(
                 self.releases, destination, seed_iso=self.seed,
-                ipxe_binary=self.ipxe)
+                ipxe_binary=self.ipxe, **kwargs)
 
     def extract_receipt(self, payload_files):
         receipt = json.dumps({"payload_files": payload_files}).encode()
@@ -144,6 +148,87 @@ class FactoryPublicationTests(unittest.TestCase):
         )
         self.assertEqual(
             receipt["offline_repair"]["seed_iso_sha256"], "1" * 64)
+        subprocess.run(
+            ["bash", "-n", str(destination / "publish")],
+            check=True, capture_output=True)
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_private_windows_inputs_are_explicit_complete_and_checksummed(
+        self, _verify,
+    ):
+        private = self.root / "run-abc123"
+        private.mkdir(mode=0o700)
+        for name in factory_publication.PRIVATE_WINDOWS_FILES:
+            (private / name).write_text(f"private {name}\n")
+        destination = self.root / "publication"
+        receipt = self.stage(
+            destination, target="windows", private_windows_inputs=private)
+        self.assertEqual(receipt["private_windows_run"], "run-abc123")
+        bootstrap = destination / receipt["bootstrap"]
+        self.assertIn(
+            "http://10.1.31.2/private/run-abc123/boot.ipxe",
+            bootstrap.read_text())
+        sums = (destination / "SHA256SUMS").read_text()
+        for name in factory_publication.PRIVATE_WINDOWS_FILES:
+            self.assertIn(f"www/private/run-abc123/{name}", sums)
+        # The immutable selected release remains byte-for-byte unchanged.
+        self.assertEqual(
+            (self.release_set / "targets" / "windows" / self.version
+             / "boot.ipxe").read_text(),
+            "#!ipxe\n# windows\n")
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_private_windows_inputs_fail_closed_on_missing_or_extra_files(
+        self, _verify,
+    ):
+        private = self.root / "run-abc123"
+        private.mkdir()
+        (private / "boot.ipxe").write_text("#!ipxe\n")
+        with self.assertRaisesRegex(
+                factory_publication.PublicationError, "incomplete"):
+            self.stage(
+                self.root / "publication", target="windows",
+                private_windows_inputs=private)
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    @mock.patch.object(windows_install_source, "verify_cache")
+    def test_verified_complete_windows_source_is_private_read_only_smb(
+        self, verify_cache, _verify,
+    ):
+        verify_cache.return_value = {
+            "bytes": 1234, "file_count": 2,
+            "source_iso_sha256": "a" * 64,
+        }
+        private = self.root / "run-abc123"
+        private.mkdir()
+        for name in factory_publication.PRIVATE_WINDOWS_FILES:
+            (private / name).write_text(f"private {name}\n")
+        source = self.root / "windows-source"
+        source.mkdir()
+        (source / "receipt.json").write_text('{"schema":1}\n')
+        (source / "setup.exe").write_bytes(b"setup")
+        destination = self.root / "publication"
+        receipt = self.stage(
+            destination, target="windows", private_windows_inputs=private,
+            windows_source=source)
+        verify_cache.assert_called_once_with(source, "a" * 64)
+        self.assertEqual(
+            receipt["windows_install_source"]["file_count"], 2)
+        self.assertTrue((destination / "windows-source/setup.exe").is_file())
+        publisher = (destination / "publish").read_text()
+        for expected in (
+            "bind interfaces only = yes",
+            "read only = yes",
+            "guest ok = no",
+            "valid users = pxe-install",
+            "smbpasswd -s -a pxe-install",
+            "systemctl enable smb.service",
+            "systemctl is-active --quiet smb.service",
+            "Requires=telos-factory-http.service "
+            "telos-factory-tftp.service smb.service",
+        ):
+            self.assertIn(expected, publisher)
+        self.assertNotIn("private install-password.txt", publisher)
         subprocess.run(
             ["bash", "-n", str(destination / "publish")],
             check=True, capture_output=True)

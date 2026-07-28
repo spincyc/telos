@@ -15,8 +15,10 @@ from homelab.vm.windows_install_contract import (
     audit_qemu_disk_boundary,
     inspect_qcow2,
     render_diskpart,
+    render_ipxe_overlay,
     render_startup,
     render_unattend,
+    render_winpeshl,
 )
 
 
@@ -92,6 +94,31 @@ class WindowsInstallContractTests(unittest.TestCase):
             self.assertIsNotNone(private_path)
             self.assertFalse(private_path.exists())
 
+    def test_complete_private_input_set_is_rendered_and_digest_only(self):
+        identity = SyntheticIdentity(
+            "TELOS-WIN-01", "telosadmin", "SynthPass-123",
+            r"TELOS\pxe-install", "InstallPass-123")
+        with tempfile.TemporaryDirectory() as temporary:
+            with PrivateRun(Path(temporary) / "runs") as run:
+                generated = run.render_windows_inputs(
+                    self.authorization(), identity,
+                    install_source_unc=r"\\controller\windows-20260727.005")
+                self.assertEqual(
+                    {
+                        "boot.ipxe", "install.bat", "winpeshl.ini",
+                        "windows-layout.txt", "Autounattend.xml",
+                        "install-password.txt",
+                    },
+                    {path.name for path in generated})
+                self.assertTrue(all(
+                    path.stat().st_mode & 0o777 == 0o600
+                    for path in generated))
+                receipt = run.public_receipt(
+                    self.authorization(), generated)
+                serialized = json.dumps(receipt)
+                self.assertNotIn(identity.local_password, serialized)
+                self.assertNotIn(identity.install_password, serialized)
+
     def test_failure_also_tears_down_private_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "runs"
@@ -145,9 +172,10 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertEqual(2, script.count("disk_count=0"))
         self.assertEqual(2, script.count('"1" exit /b 20'))
         self.assertEqual(2, script.count('"256 GB" exit /b 22'))
-        self.assertNotIn("password", script.casefold())
+        self.assertNotIn("InstallPass-123", script)
         self.assertIn('net use W: "\\\\controller\\windows-20260727.005" *',
                       script)
+        self.assertIn("< X:\\install-password.txt", script)
         self.assertLess(
             script.rindex('"256 GB" exit /b 22'),
             script.index("diskpart /s X:\\windows-layout.txt"))
@@ -162,6 +190,28 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("<DiskID>0</DiskID><PartitionID>3</PartitionID>", answer)
         self.assertNotIn("ProductKey", answer)
         self.assertNotIn(identity.install_password, answer)
+
+    def test_private_ipxe_overlay_injects_inputs_without_altering_release(self):
+        script = render_ipxe_overlay(
+            "20260727.005", "http://10.1.31.2/private/run-abc123")
+        immutable = "http://10.1.31.2/windows/20260727.005"
+        for artifact in (
+                "wimboot", "bootmgr", "boot/BCD", "boot/boot.sdi",
+                "sources/boot.wim"):
+            self.assertIn(f"{immutable}/{artifact}", script)
+        for name in (
+                "install.bat", "winpeshl.ini", "windows-layout.txt",
+                "Autounattend.xml", "install-password.txt"):
+            self.assertIn(
+                f"http://10.1.31.2/private/run-abc123/{name} {name}", script)
+        self.assertNotIn("InstallPass-123", script)
+        self.assertEqual('[LaunchApps]\r\n"install.bat"\r\n', render_winpeshl())
+
+    def test_private_ipxe_overlay_cannot_name_an_external_server(self):
+        with self.assertRaisesRegex(
+                WindowsInstallContractError, "isolated Controller"):
+            render_ipxe_overlay(
+                "20260727.005", "https://external.example/private/run")
 
 
 if __name__ == "__main__":

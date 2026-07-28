@@ -13,7 +13,10 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Callable
 
-import windows_iso
+try:
+    from . import windows_iso
+except ImportError:  # Direct script/test imports with homelab/lib on sys.path.
+    import windows_iso
 
 REQUIRED = (
     "setup.exe",

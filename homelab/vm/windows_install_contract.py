@@ -21,6 +21,10 @@ from homelab.workstations.layout import GIB, build_record
 MIN_DISK_BYTES = 256 * GIB
 SAFE_SERIAL = re.compile(r"[A-Z0-9][A-Z0-9._-]{7,31}")
 RUN_ROOT = Path("homelab/var/factory/windows-runs")
+PRIVATE_INPUT_NAMES = frozenset({
+    "boot.ipxe", "install.bat", "winpeshl.ini", "windows-layout.txt",
+    "Autounattend.xml", "install-password.txt",
+})
 
 
 class WindowsInstallContractError(RuntimeError):
@@ -197,7 +201,7 @@ def render_startup(
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 11\r\n"
         + check
         + f'net use W: "{install_source_unc}" * /user:"{install_user}" '
-        "/persistent:no || exit /b 30\r\n"
+        "/persistent:no < X:\\install-password.txt || exit /b 30\r\n"
         'if not exist W:\\setup.exe exit /b 31\r\n'
         'if not exist W:\\sources\\install.wim exit /b 32\r\n'
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 40\r\n"
@@ -263,6 +267,39 @@ def render_unattend(identity: SyntheticIdentity) -> str:
 """
 
 
+def render_winpeshl() -> str:
+    """Launch the injected private startup script instead of interactive Setup."""
+    return '[LaunchApps]\r\n"install.bat"\r\n'
+
+
+def render_ipxe_overlay(version: str, private_base_url: str) -> str:
+    """Load immutable WinPE plus per-run files using wimboot injection."""
+    if not re.fullmatch(r"\d{8}\.\d{3}", version):
+        raise WindowsInstallContractError("release version is invalid")
+    if not re.fullmatch(
+            r"http://10\.1\.31\.2/private/[A-Za-z0-9._-]+",
+            private_base_url.rstrip("/")):
+        raise WindowsInstallContractError(
+            "private input URL must remain on the isolated Controller")
+    release = f"http://10.1.31.2/windows/{version}"
+    private = private_base_url.rstrip("/")
+    return "\n".join((
+        "#!ipxe",
+        f"kernel {release}/wimboot",
+        f"initrd {private}/install.bat install.bat",
+        f"initrd {private}/winpeshl.ini winpeshl.ini",
+        f"initrd {private}/windows-layout.txt windows-layout.txt",
+        f"initrd {private}/Autounattend.xml Autounattend.xml",
+        f"initrd {private}/install-password.txt install-password.txt",
+        f"initrd {release}/bootmgr bootmgr",
+        f"initrd {release}/boot/BCD BCD",
+        f"initrd {release}/boot/boot.sdi boot.sdi",
+        f"initrd {release}/sources/boot.wim boot.wim",
+        "boot",
+        "",
+    ))
+
+
 def authorize(
     *,
     disk: Path,
@@ -325,6 +362,38 @@ class PrivateRun(AbstractContextManager["PrivateRun"]):
         if any(not value for value in values):
             raise WindowsInstallContractError("known secrets must be nonempty")
         self.known_secrets += tuple(values)
+
+    def render_windows_inputs(
+        self,
+        authorization: Authorization,
+        identity: SyntheticIdentity,
+        *,
+        install_source_unc: str,
+    ) -> list[Path]:
+        if self.path is None:
+            raise WindowsInstallContractError("private run is not active")
+        self.remember_secrets(
+            identity.local_password, identity.install_password)
+        base = f"http://10.1.31.2/private/{self.path.name}"
+        values = {
+            "boot.ipxe": render_ipxe_overlay(
+                authorization.release_version, base),
+            "install.bat": render_startup(
+                authorization,
+                install_source_unc=install_source_unc,
+                install_user=identity.install_user),
+            "winpeshl.ini": render_winpeshl(),
+            "windows-layout.txt": render_diskpart(authorization),
+            "Autounattend.xml": render_unattend(identity),
+            "install-password.txt": identity.install_password + "\r\n",
+        }
+        if set(values) != PRIVATE_INPUT_NAMES:
+            raise WindowsInstallContractError(
+                "private Windows input set is incomplete")
+        return [
+            self.write_secret(name, values[name])
+            for name in sorted(values)
+        ]
 
     def public_receipt(
         self, authorization: Authorization, generated: list[Path],

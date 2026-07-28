@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 try:
-    from homelab.lib import pxe_release_set
+    from homelab.lib import pxe_release_set, windows_install_source
     from homelab.vm.controller_factory import (
         FactorySpec, nginx_config, tftp_unit)
 except ModuleNotFoundError as error:
@@ -20,6 +20,7 @@ except ModuleNotFoundError as error:
         raise
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
     import pxe_release_set
+    import windows_install_source
     from controller_factory import FactorySpec, nginx_config, tftp_unit
 
 
@@ -29,6 +30,10 @@ class PublicationError(RuntimeError):
 
 TFTP_PACKAGE = re.compile(
     r"^packages/(tftp-hpa-[A-Za-z0-9.+_-]+-x86_64\.pkg\.tar\.zst)$")
+PRIVATE_WINDOWS_FILES = frozenset({
+    "boot.ipxe", "install.bat", "winpeshl.ini", "windows-layout.txt",
+    "Autounattend.xml", "install-password.txt",
+})
 
 
 def digest(path: Path) -> str:
@@ -138,6 +143,8 @@ def extract_tftp_repair(seed_iso: Path, destination: Path) -> dict:
 def stage(
     releases: Path, destination: Path, *, seed_iso: Path,
     ipxe_binary: Path | None = None, target: str = "arch-workstation",
+    private_windows_inputs: Path | None = None,
+    windows_source: Path | None = None,
 ) -> dict:
     """Copy only manifest-verified selected bytes into a private staging tree."""
     releases = Path(releases).resolve()
@@ -164,6 +171,39 @@ def stage(
     ipxe = _ipxe_binary(ipxe_binary)
     if target not in ("arch-workstation", "windows"):
         raise PublicationError(f"unsupported PXE publication target: {target}")
+    private_source = None
+    if private_windows_inputs is not None:
+        private_source = Path(private_windows_inputs)
+        if target != "windows":
+            raise PublicationError(
+                "private Windows inputs require the windows target")
+        if private_source.is_symlink() or not private_source.is_dir():
+            raise PublicationError(
+                "private Windows inputs must be a non-symlink directory")
+        if not re.fullmatch(r"run-[A-Za-z0-9._-]+", private_source.name):
+            raise PublicationError("private Windows run name is unsafe")
+        entries = {path.name for path in private_source.iterdir()}
+        if entries != PRIVATE_WINDOWS_FILES:
+            raise PublicationError(
+                "private Windows input set is incomplete or unexpected")
+        if any(path.is_symlink() or not path.is_file()
+               for path in private_source.iterdir()):
+            raise PublicationError(
+                "private Windows inputs must be regular non-symlink files")
+    verified_windows_source = None
+    if windows_source is not None:
+        if private_source is None:
+            raise PublicationError(
+                "Windows install source requires private Windows inputs")
+        windows_manifest = _json(
+            release_set / "targets" / "windows" / version / "release.json")
+        expected_iso = windows_manifest.get("source_iso_sha256")
+        try:
+            verified_windows_source = windows_install_source.verify_cache(
+                Path(windows_source), expected_iso)
+        except (OSError, RuntimeError) as error:
+            raise PublicationError(
+                f"Windows install source verification failed: {error}") from error
 
     www = destination / "www"
     try:
@@ -185,9 +225,16 @@ def stage(
             shutil.copytree(source, www / release_target / version)
         bootstrap = www / "boot" / "boot.ipxe"
         bootstrap.parent.mkdir()
+        selected_boot = f"{target}/{version}/boot.ipxe"
+        if private_source is not None:
+            private_destination = www / "private" / private_source.name
+            shutil.copytree(private_source, private_destination)
+            selected_boot = f"private/{private_source.name}/boot.ipxe"
+        if verified_windows_source is not None:
+            shutil.copytree(Path(windows_source), destination / "windows-source")
         bootstrap.write_text(
             "#!ipxe\n"
-            f"chain http://10.1.31.2/{target}/{version}/boot.ipxe"
+            f"chain http://10.1.31.2/{selected_boot}"
             " || goto failed\n"
             ":failed\n"
             f"echo Selected {target} release failed to load.\n"
@@ -204,6 +251,42 @@ def stage(
                 for path in checksummed
             ),
             encoding="ascii",
+        )
+        windows_publish = ""
+        if verified_windows_source is not None:
+            windows_publish = (
+                "command -v smbd >/dev/null || { "
+                "echo 'TELOS PXE READINESS FAIL missing smbd' >/dev/ttyS0; "
+                "exit 1; }\n"
+                "test ! -e /etc/samba/smb.conf || { "
+                "echo 'TELOS PXE READINESS FAIL existing smb.conf' >/dev/ttyS0; "
+                "exit 1; }\n"
+                "install -d -m 0755 /srv/windows-source /etc/samba\n"
+                "cp -a -- windows-source/. /srv/windows-source/\n"
+                "chmod -R a+rX /srv/windows-source\n"
+                "id -u pxe-install >/dev/null 2>&1 || "
+                "useradd --system --no-create-home --shell /usr/bin/nologin "
+                "pxe-install\n"
+                f"password=www/private/{private_source.name}/install-password.txt\n"
+                "test -s \"$password\" || exit 1\n"
+                "{ cat \"$password\"; cat \"$password\"; } | "
+                "smbpasswd -s -a pxe-install >/dev/null\n"
+                "cat >/etc/samba/smb.conf <<'EOF'\n"
+                "[global]\nserver role = standalone server\n"
+                "interfaces = 10.1.31.2/28\nbind interfaces only = yes\n"
+                "map to guest = never\nlogging = file\n"
+                "[windows-release]\npath = /srv/windows-source\n"
+                "read only = yes\nguest ok = no\nvalid users = pxe-install\n"
+                "EOF\n"
+                "systemctl enable smb.service\n"
+            )
+        readiness_units = (
+            "telos-factory-http.service telos-factory-tftp.service"
+            + (" smb.service" if verified_windows_source is not None else "")
+        )
+        readiness_smb = (
+            " && systemctl is-active --quiet smb.service"
+            if verified_windows_source is not None else ""
         )
         publisher = destination / "publish"
         publisher.write_text(
@@ -238,7 +321,8 @@ def stage(
             "test -s tftp/ipxe.efi || { "
             "echo 'TELOS PXE READINESS FAIL missing ipxe.efi' >/dev/ttyS0; "
             "exit 1; }\n"
-            "install -d -m 0755 /etc/homelab /srv/tftp\n"
+            + windows_publish
+            + "install -d -m 0755 /etc/homelab /srv/tftp\n"
             "install -m 0644 controller/factory-nginx.conf "
             "/etc/homelab/factory-nginx.conf\n"
             "install -m 0644 controller/telos-factory-tftp.service "
@@ -267,8 +351,8 @@ def stage(
             "ExecReload=/usr/bin/nginx -s reload -c /etc/homelab/factory-nginx.conf\n"
             "[Install]\nWantedBy=multi-user.target\nEOF\n"
             "cat >/etc/systemd/system/telos-pxe-evidence.service <<'EOF'\n"
-            "[Unit]\nAfter=telos-factory-http.service telos-factory-tftp.service\n"
-            "Requires=telos-factory-http.service telos-factory-tftp.service\n"
+            f"[Unit]\nAfter={readiness_units}\n"
+            f"Requires={readiness_units}\n"
             "[Service]\nType=simple\n"
             "ExecStart=/usr/bin/tail -n 0 -F /var/log/nginx/factory-access.log\n"
             "StandardOutput=tty\nTTYPath=/dev/ttyS0\n"
@@ -278,15 +362,16 @@ def stage(
             "for attempt in {1..60}; do\n"
             "  if systemctl is-active --quiet telos-factory-http.service && "
             "systemctl is-active --quiet telos-factory-tftp.service && "
-            "ip -4 address show | grep -q '10.1.31.2/28'; then\n"
-            f"    selected=/srv/http/homelab/{target}/{version}/boot.ipxe\n"
-            f"    source=/run/telos-pxe-release/www/{target}/{version}/boot.ipxe\n"
+            "ip -4 address show | grep -q '10.1.31.2/28'"
+            f"{readiness_smb}; then\n"
+            f"    selected=/srv/http/homelab/{selected_boot}\n"
+            f"    source=/run/telos-pxe-release/www/{selected_boot}\n"
             "    test -s \"$selected\" && cmp -s \"$source\" \"$selected\" || "
             "{ sleep 1; continue; }\n"
             f"    python -c \"import pathlib,urllib.request; "
             f"expected=pathlib.Path('$selected').read_bytes(); "
             f"actual=urllib.request.urlopen("
-            f"'http://10.1.31.2/{target}/{version}/boot.ipxe',"
+            f"'http://10.1.31.2/{selected_boot}',"
             f"timeout=2).read(); "
             f"assert actual == expected\" || {{ sleep 1; continue; }}\n"
             "    if ss -H -lun | grep -Eq ':(67|4011)[[:space:]]'; then\n"
@@ -299,14 +384,13 @@ def stage(
             "{ echo 'TELOS PXE READINESS FAIL timeout'; "
             "systemctl --no-pager --full status telos-factory-http.service "
             "telos-factory-tftp.service; ip -4 address show; ss -H -lntup; "
-            f"ls -ld /srv/http/homelab/{target} "
-            f"/srv/http/homelab/{target}/{version} "
-            f"/srv/http/homelab/{target}/{version}/boot.ipxe; "
+            f"ls -ld /srv/http/homelab/{Path(selected_boot).parent} "
+            f"/srv/http/homelab/{selected_boot}; "
             "tail -50 /var/log/nginx/factory-error.log 2>/dev/null || true; "
             "} >/dev/ttyS0 2>&1\nexit 1\nEOF\n"
             "chmod 0755 /usr/local/sbin/telos-pxe-ready\n"
             "cat >/etc/systemd/system/telos-pxe-ready.service <<'EOF'\n"
-            "[Unit]\nAfter=telos-factory-http.service telos-factory-tftp.service\n"
+            f"[Unit]\nAfter={readiness_units}\n"
             "[Service]\nType=oneshot\n"
             "ExecStart=/usr/local/sbin/telos-pxe-ready\n"
             "[Install]\nWantedBy=multi-user.target\nEOF\n"
@@ -321,7 +405,12 @@ def stage(
             "/etc/systemd/system/multi-user.target.wants/telos-pxe-evidence.service\n"
             "ln -sfn ../telos-pxe-ready.service "
             "/etc/systemd/system/multi-user.target.wants/telos-pxe-ready.service\n"
-            "echo 'TELOS PXE PUBLICATION PASS'\n",
+            + (
+                "ln -sfn /usr/lib/systemd/system/smb.service "
+                "/etc/systemd/system/multi-user.target.wants/smb.service\n"
+                if verified_windows_source is not None else ""
+            )
+            + "echo 'TELOS PXE PUBLICATION PASS'\n",
             encoding="utf-8",
         )
         publisher.chmod(0o755)
@@ -337,6 +426,15 @@ def stage(
             "schema": 1,
             "version": version,
             "target": target,
+            "private_windows_run": (
+                private_source.name if private_source is not None else None),
+            "windows_install_source": (
+                {
+                    "receipt_sha256": digest(
+                        Path(windows_source) / "receipt.json"),
+                    "bytes": verified_windows_source["bytes"],
+                    "file_count": verified_windows_source["file_count"],
+                } if verified_windows_source is not None else None),
             "selected_manifest_sha256": selected["manifest_sha256"],
             "bootstrap": "www/boot/boot.ipxe",
             "offline_repair": repair,
