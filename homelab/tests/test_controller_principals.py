@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import socket
+import shlex
 import threading
 import unittest
 
@@ -11,6 +12,7 @@ from homelab.vm.controller_principals import (
     ControllerPrincipalSerial,
 )
 from homelab.vm.serial_automation import SerialAutomation
+from homelab.vm.controller_factory import FactoryBundle
 
 
 VALUES = {
@@ -251,8 +253,8 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                 password,
                 timeout=1,
             )
-            console.converge_disposable_controller(
-                "printf %s abc > /run/telos-factory-authorized")
+            guest_command = FactoryBundle.guest_command("a" * 64)
+            console.converge_disposable_controller(guest_command)
         finally:
             left.close()
             right.close()
@@ -263,6 +265,8 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertEqual(password + b"\n", observed[3])
         self.assertIn(b"umount /run/telos-factory", observed[2])
         self.assertIn(b"systemctl is-active --quiet samba.service", observed[4])
+        self.assertEqual(guest_command, shlex.split(
+            observed[0].decode("ascii").strip())[-1])
 
 
 if __name__ == "__main__":
