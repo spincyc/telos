@@ -154,7 +154,7 @@ class ConcurrentSwitch:
             self.error.put(error)
         self.stop.set()
 
-    def _accept(self) -> None:
+    def _accept(self, threads: list[threading.Thread]) -> None:
         deadline = time.monotonic() + self.accept_timeout
         ports_by_mac = {port.mac: port for port in self.ports}
         for _ in self.ports:
@@ -193,6 +193,15 @@ class ConcurrentSwitch:
                 "mac": mac_text(port.mac),
             })
             self._signal(f"ACCEPTED {port.name} {mac_text(port.mac)}\n")
+            peer_threads = [
+                threading.Thread(
+                    target=self._reader, args=(port,), daemon=True),
+                threading.Thread(
+                    target=self._writer, args=(port,), daemon=True),
+            ]
+            threads.extend(peer_threads)
+            for thread in peer_threads:
+                thread.start()
         self._signal("ALL-PEERS\n", close=True)
 
     @staticmethod
@@ -347,23 +356,33 @@ class ConcurrentSwitch:
 
     def run(self) -> None:
         threads: list[threading.Thread] = []
+        dispatch_error: list[BaseException] = []
+
+        def dispatch() -> None:
+            try:
+                self._dispatch()
+            except BaseException as error:
+                dispatch_error.append(error)
+                self._fail(error)
+
         try:
             self._ready()
-            self._accept()
-            for port in self.ports:
-                threads.extend([
-                    threading.Thread(
-                        target=self._reader, args=(port,), daemon=True),
-                    threading.Thread(
-                        target=self._writer, args=(port,), daemon=True),
-                ])
-            for thread in threads:
-                thread.start()
-            self._dispatch()
+            dispatch_thread = threading.Thread(
+                target=dispatch, name="switch-dispatch", daemon=True)
+            threads.append(dispatch_thread)
+            dispatch_thread.start()
+            self._accept(threads)
+            dispatch_thread.join()
+            if dispatch_error:
+                raise dispatch_error[0]
             if not self.error.empty():
                 raise self.error.get()
         finally:
             self.stop.set()
+            try:
+                self.incoming.put_nowait(None)
+            except queue.Full:
+                pass
             if self.ready_fd is not None:
                 os.close(self.ready_fd)
                 self.ready_fd = None
