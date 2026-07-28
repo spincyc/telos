@@ -106,7 +106,6 @@ def qemu_install_command(
     *,
     disk: Path,
     variables: Path,
-    publication_iso: Path,
     qmp_socket: Path,
     switch_port: int,
     serial: str,
@@ -114,12 +113,9 @@ def qemu_install_command(
     """Build the persistent UEFI/NVMe/e1000e Windows installation command."""
     if not 1 <= switch_port <= 65535:
         raise WindowsInstallContractError("switch port is invalid")
-    for path, label in (
-        (variables, "OVMF variables"),
-        (publication_iso, "publication ISO"),
-    ):
-        if Path(path).is_symlink():
-            raise WindowsInstallContractError(f"{label} must not be a symlink")
+    if Path(variables).is_symlink():
+        raise WindowsInstallContractError(
+            "OVMF variables must not be a symlink")
     command = _base("windows-install", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [
@@ -131,13 +127,6 @@ def qemu_install_command(
             f"file={Path(disk).resolve()}"
         ),
         "-device", f"nvme,drive=osdisk,serial={serial},bootindex=2",
-        "-device", "virtio-scsi-pci,id=publicationbus",
-        "-drive",
-        (
-            "if=none,id=publicationmedia,media=cdrom,readonly=on,"
-            f"file={Path(publication_iso).resolve()}"
-        ),
-        "-device", "scsi-cd,bus=publicationbus.0,drive=publicationmedia",
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device",
@@ -365,6 +354,29 @@ def authorize(
     audit_qemu_disk_boundary(command, disk=disk, serial=serial)
     layout = build_record(
         disk_record["virtual_size"], layout_profile, workstation_profile)
+    partitions = layout["layout"]["partitions"]
+    start_mib = 1
+    windows_first = []
+    arch_extent = None
+    for partition in partitions:
+        extent = {
+            "role": partition["type"],
+            "start_mib": start_mib,
+            "size_mib": partition["size_mib"],
+        }
+        if partition["type"] == "linux-root":
+            arch_extent = {
+                **extent, "role": "reserved-arch", "state": "unallocated"}
+        else:
+            windows_first.append(extent)
+        start_mib += partition["size_mib"]
+    if arch_extent is None:
+        raise WindowsInstallContractError(
+            "layout has no reserved Arch extent")
+    layout["windows_first_layout"] = {
+        "partitioned_extents": windows_first,
+        "reserved_arch_extent": arch_extent,
+    }
     argv_digest = hashlib.sha256(
         json.dumps(command, separators=(",", ":")).encode()).hexdigest()
     return Authorization(

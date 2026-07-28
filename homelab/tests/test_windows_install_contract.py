@@ -13,6 +13,7 @@ from homelab.vm.windows_install_contract import (
     SyntheticIdentity,
     WindowsInstallContractError,
     audit_qemu_disk_boundary,
+    authorize,
     inspect_qcow2,
     qemu_install_command,
     render_diskpart,
@@ -68,7 +69,6 @@ class WindowsInstallContractTests(unittest.TestCase):
         command = qemu_install_command(
             disk=Path("/run/private/windows.qcow2"),
             variables=Path("/run/private/OVMF_VARS.fd"),
-            publication_iso=Path("/run/private/publication.iso"),
             qmp_socket=Path("/run/private/windows.qmp"),
             switch_port=31415,
             serial="TELOS-WIN-0001")
@@ -78,7 +78,8 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertIn("e1000e,netdev=factory", text)
         self.assertIn("connect=127.0.0.1:31415", text)
         self.assertIn("windows.qmp,server=on,wait=off", text)
-        self.assertIn("publication.iso", text)
+        self.assertNotIn("publication.iso", text)
+        self.assertNotIn("media=cdrom", text)
         self.assertNotIn("snapshot=on", text)
         self.assertNotIn("virtio-blk", text)
         self.assertNotIn("Win11", text)
@@ -107,6 +108,40 @@ class WindowsInstallContractTests(unittest.TestCase):
                     return_value=small), self.assertRaisesRegex(
                         WindowsInstallContractError, "256 GiB"):
                 inspect_qcow2(disk)
+
+    def test_authorization_records_arch_as_unallocated_windows_phase_extent(self):
+        layout = {
+            "layout": {"partitions": [
+                {"type": "esp", "size_mib": 1024},
+                {"type": "msr", "size_mib": 16},
+                {"type": "basic-data", "size_mib": 180000},
+                {"type": "linux-root", "size_mib": 78000},
+                {"type": "windows-recovery", "size_mib": 2048},
+            ]},
+        }
+        with mock.patch(
+                "homelab.vm.windows_install_contract.inspect_qcow2",
+                return_value={
+                    "path": "/private/disk", "virtual_size": 256 * 1024**3,
+                    "format": "qcow2", "sha256": "c" * 64,
+                }), mock.patch(
+                    "homelab.vm.windows_install_contract."
+                    "audit_qemu_disk_boundary"), mock.patch(
+                        "homelab.vm.windows_install_contract.build_record",
+                        return_value=layout):
+            receipt = authorize(
+                disk=Path("/private/disk"), serial="TELOS-WIN-0001",
+                command=["qemu"], release_version="20260727.005",
+                release_manifest_sha256="a" * 64,
+                layout_profile=Path("layout.json"),
+                workstation_profile=Path("workstation.json"))
+        intermediate = receipt.layout["windows_first_layout"]
+        self.assertEqual(
+            "unallocated",
+            intermediate["reserved_arch_extent"]["state"])
+        self.assertNotIn(
+            "linux-root",
+            {item["role"] for item in intermediate["partitioned_extents"]})
 
     def test_private_inputs_are_mode_limited_and_always_removed(self):
         with tempfile.TemporaryDirectory() as temporary:

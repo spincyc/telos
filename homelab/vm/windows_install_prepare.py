@@ -76,7 +76,7 @@ def prepare(args: argparse.Namespace) -> Path:
         shutil.copyfile(pair[1], variables)
         variables.chmod(0o600)
         command = qemu_install_command(
-            disk=disk, variables=variables, publication_iso=publication_iso,
+            disk=disk, variables=variables,
             qmp_socket=qmp_socket, switch_port=args.switch_port,
             serial=DISK_SERIAL)
         selected = _selected(args.releases)
@@ -119,6 +119,9 @@ def prepare(args: argparse.Namespace) -> Path:
             _private_file(
                 run / "authorization.json",
                 json.dumps(public, indent=2, sort_keys=True) + "\n")
+        inputs_root = run / "inputs"
+        if inputs_root.exists():
+            inputs_root.rmdir()
         _private_file(
             run / "qemu-command.json",
             json.dumps({"schema": 1, "argv": command}, indent=2) + "\n")
