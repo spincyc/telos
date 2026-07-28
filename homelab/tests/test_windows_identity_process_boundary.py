@@ -183,6 +183,56 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     WindowsIdentityRunError, "switch must start"):
                 boundary.start_windows()
 
+    def test_runtime_command_allows_only_private_qmp_and_loopback_port_variance(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.port = 43119
+            authorized = [
+                "qemu-system-x86_64",
+                "-qmp", "unix:/private/attempt/windows.qmp,server=on,wait=off",
+                "-drive", "file=/private/windows.qcow2",
+                "-netdev",
+                "socket,id=factory,connect=127.0.0.1:31415",
+            ]
+            runtime = [
+                "qemu-system-x86_64",
+                "-qmp", "unix:/private/runtime/windows.qmp,server=on,wait=off",
+                "-drive", "file=/private/windows.qcow2",
+                "-netdev",
+                "socket,id=factory,connect=127.0.0.1:43119",
+            ]
+            boundary.authorized_command = authorized
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=runtime),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen",
+                    return_value=_Process(104)) as popen,
+                mock.patch.object(
+                    windows_identity_run, "audit_live_process"),
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_port"),
+            ):
+                boundary.start_windows()
+            popen.assert_called_once()
+
+            boundary.processes.clear()
+            boundary.authorized_command = authorized
+            tampered = list(runtime)
+            tampered[3] = "file=/different/windows.qcow2"
+            with (
+                mock.patch.object(
+                    windows_identity_run, "qemu_identity_command",
+                    return_value=tampered),
+                mock.patch.object(
+                    windows_identity_run.subprocess, "Popen") as popen,
+            ):
+                with self.assertRaisesRegex(
+                        WindowsIdentityRunError, "authorized template"):
+                    boundary.start_windows()
+            popen.assert_not_called()
+
     def test_qmp_authentication_retries_transient_socket_failures(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
