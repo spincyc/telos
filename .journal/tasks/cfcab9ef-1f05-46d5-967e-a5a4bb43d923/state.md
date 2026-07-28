@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:34:34Z"
+updated_at: "2026-07-28T00:36:32Z"
 ---
 
 # Goal
@@ -54,3 +54,11 @@ expose exactly one writable disk, and WinPE must independently recheck exactly
 one eligible disk of the authorized capacity before setup and immediately
 before partition mutation. Physical installation still uses the hardware
 serial directly.
+
+## Progress
+
+The host authorization contract is implemented and tested. It binds the
+selected release, standalone 256 GiB-or-larger qcow2, safe serial, exact sole
+writable OS-disk QEMU exposure, layout record, and command digest. Private
+runtime inputs have restrictive permissions, digest-only receipts,
+known-secret evidence rejection, and success/failure teardown.
