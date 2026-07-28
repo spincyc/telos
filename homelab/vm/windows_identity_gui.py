@@ -29,7 +29,13 @@ class WindowsIdentityGuiError(RuntimeError):
 
 @dataclass(frozen=True)
 class CredentialRotationPlan:
-    """Public visual states and navigation for one password rotation."""
+    """Calibrated public visual states and navigation for one rotation.
+
+    References must come from the same installed Windows release and QEMU
+    display geometry.  The sign-in and change-password references must show
+    their password fields already focused; generic or setup-era images are
+    not authority to enter a credential.
+    """
 
     sign_in: Checkpoint
     desktop: Checkpoint
