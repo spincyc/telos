@@ -318,7 +318,7 @@ class NativeProcessBoundary:
                 self.qmp.close()
             except BaseException as error:
                 failures.append(f"QMP close: {type(error).__name__}")
-            finally:
+            else:
                 self.qmp = None
         try:
             self._stop("windows")
@@ -338,7 +338,7 @@ class NativeProcessBoundary:
                 self.controller_overlay.close()
             except BaseException as error:
                 failures.append(f"Controller overlay: {type(error).__name__}")
-            finally:
+            else:
                 self.controller_overlay = None
         if failures:
             raise WindowsIdentityRunError("; ".join(failures))
@@ -409,11 +409,15 @@ class PrivateIdentityMaterial:
         }
         try:
             self.stage_guest_principals(self._principals)
-        except BaseException:
+        except BaseException as stage_error:
             try:
                 self.destroy_guest_principals(tuple(self._principals))
-            except BaseException:
-                pass
+            except BaseException as destroy_error:
+                raise WindowsIdentityRunError(
+                    "Controller principal staging and rollback both failed: "
+                    f"{type(stage_error).__name__}; "
+                    f"{type(destroy_error).__name__}") from stage_error
+            self._principals.clear()
             raise
 
     def destroy_controller_principals(self) -> None:
@@ -424,9 +428,12 @@ class PrivateIdentityMaterial:
         self.destroy_guest_principals(names)
         self._principals.clear()
 
-    def close(self) -> None:
+    def close(self, *, controller_destroyed: bool = False) -> None:
         self._old_local = None
         self._new_local = None
+        if self._principals and not controller_destroyed:
+            raise WindowsIdentityRunError(
+                "Controller principal cleanup remains unresolved")
         self._principals.clear()
         if self._recovery_context is not None:
             self._recovery_context.__exit__(None, None, None)

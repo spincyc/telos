@@ -354,7 +354,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     boundary.stop_windows()
 
             terminate.assert_called_once_with([windows])
-            self.assertIsNone(boundary.qmp)
+            self.assertIs(qmp, boundary.qmp)
             self.assertIs(windows, boundary.processes["windows"])
 
     def test_failed_start_is_cleaned_when_process_was_already_created(self):
