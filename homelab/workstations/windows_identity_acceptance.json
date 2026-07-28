@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "network_policy": {
+    "mode": "local-only",
+    "external_access": "forbidden"
+  },
+  "login_bound_seconds": 30,
+  "required_checks": [
+    "controller-ready",
+    "windows-joined",
+    "windows-standard-online",
+    "windows-daily-admin",
+    "domain-admin-separate",
+    "windows-rebooted-joined",
+    "windows-cached-policy",
+    "controller-offline",
+    "windows-cached-login",
+    "windows-cached-admin-login",
+    "windows-uncached-denied",
+    "windows-local-rescue",
+    "controller-restored",
+    "windows-secure-channel-restored",
+    "windows-update-policy",
+    "gateway-offline",
+    "update-source-offline",
+    "optional-storage-offline",
+    "optional-storage-access-denied",
+    "ad-dns-offline",
+    "combined-dependencies-offline",
+    "windows-services-restored",
+    "windows-diagnostics-sanitized",
+    "windows-identity-acceptance"
+  ],
+  "deferred_checks": [
+    "disable-reenable"
+  ],
+  "out_of_scope": [
+    "firmware-activation",
+    "live-microsoft-update"
+  ]
+}

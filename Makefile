@@ -135,6 +135,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
+	homelab-windows-identity-judge \
 	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
@@ -555,6 +556,14 @@ homelab-windows-install-run:
 		$(PYTHON) homelab/bin/homelab-windows-install-run \
 			--bundle '$(WINDOWS_RUN)' --duration '$(FACTORY_DURATION)' --apply; \
 	fi
+
+homelab-windows-identity-judge:
+	@if [ -z '$(WINDOWS_IDENTITY_EVIDENCE)' ]; then \
+		echo 'require WINDOWS_IDENTITY_EVIDENCE=<private JSONL evidence>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-windows-identity-judge \
+		'$(WINDOWS_IDENTITY_EVIDENCE)'
 
 # Converge only the temporary Controller role. The private inventory supplies
 # every identity value and the opt-in provisioning secret path. Check mode is
