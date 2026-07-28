@@ -128,7 +128,7 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
                 material.use(fail)
         self.assertNotIn(SECRET, str(caught.exception))
 
-    def test_indeterminate_stage_still_attempts_destruction(self):
+    def test_failed_stage_never_deletes_an_unowned_fixed_principal(self):
         destroy = mock.Mock(return_value=self.result("destroy", True))
         material = OneUseDomainJoinMaterial(
             "synthetic.test",
@@ -138,7 +138,8 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 ControllerJoinMaterialError, "stage/consumer"):
             material.use(lambda _values: None)
-        destroy.assert_called_once_with()
+        destroy.assert_not_called()
+        self.assertNotIn("cleanup-pending", repr(material))
 
     def test_destruction_failure_does_not_claim_proof(self):
         destroy = mock.Mock(side_effect=[

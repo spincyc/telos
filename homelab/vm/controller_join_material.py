@@ -221,12 +221,19 @@ class OneUseDomainJoinMaterial:
             raise ControllerJoinMaterialError(
                 "domain join material is one-use")
         self._credential_value = self._generate()
-        self._destruction_pending = True
         try:
             primary: BaseException | None = None
             value: _T | None = None
             try:
-                self._stage(self._credential_value)
+                staged = self._stage(self._credential_value)
+                if (
+                    staged.operation != "stage"
+                    or staged.principal != _PRINCIPAL
+                    or staged.destruction_proved
+                ):
+                    raise ControllerJoinMaterialError(
+                        "Controller did not prove join-principal ownership")
+                self._destruction_pending = True
                 material = MappingProxyType({
                     "realm": self.realm,
                     "principal": _PRINCIPAL,
@@ -237,14 +244,15 @@ class OneUseDomainJoinMaterial:
                 primary = error
             proof: ControllerJoinResult | None = None
             cleanup: BaseException | None = None
-            try:
-                proof = self._destroy()
-                if not proof.destruction_proved:
-                    raise ControllerJoinMaterialError(
-                        "Controller did not prove join-principal destruction")
-                self._destruction_pending = False
-            except BaseException as error:
-                cleanup = error
+            if self._destruction_pending:
+                try:
+                    proof = self._destroy()
+                    if not proof.destruction_proved:
+                        raise ControllerJoinMaterialError(
+                            "Controller did not prove join-principal destruction")
+                    self._destruction_pending = False
+                except BaseException as error:
+                    cleanup = error
             if primary is not None or cleanup is not None:
                 details = []
                 if primary is not None:
