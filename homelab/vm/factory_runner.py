@@ -119,6 +119,7 @@ def activate_publication(
     deadline = time.monotonic() + timeout
     transcript = bytearray()
     command_sent = False
+    command_transcript = bytearray()
     publication_passed = False
     capture.touch(mode=0o600)
     capture.chmod(0o600)
@@ -133,7 +134,10 @@ def activate_publication(
         if not chunk:
             continue
         transcript.extend(chunk)
-        command_sent_now = False
+        if command_sent:
+            command_transcript.extend(chunk)
+            if len(command_transcript) > 64 * 1024:
+                del command_transcript[:-64 * 1024]
         if len(transcript) > 1024 * 1024:
             del transcript[:-1024 * 1024]
         capture.write_bytes(transcript)
@@ -142,7 +146,6 @@ def activate_publication(
             process.stdin.write(publication_bootstrap_command())
             process.stdin.flush()
             command_sent = True
-            command_sent_now = True
         if b"TELOS PXE PUBLICATION PASS" in transcript:
             publication_passed = True
         if command_sent and b"TELOS PXE SERVICES READY" in transcript:
@@ -159,8 +162,8 @@ def activate_publication(
             ).start()
             return
         if (
-            command_sent and not command_sent_now
-            and _at_root_prompt(transcript)
+            command_sent
+            and _at_root_prompt(command_transcript)
         ):
             raise RuntimeError(
                 "Controller returned to its shell before services were ready")
