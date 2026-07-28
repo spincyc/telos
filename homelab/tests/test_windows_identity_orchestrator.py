@@ -326,6 +326,36 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 subject.WindowsIdentityOrchestratorError, "probe is invalid"):
             subject._post_reboot_proof(callbacks)
 
+    def test_post_reboot_probe_rebinds_receive_and_parse_failures(self):
+        secret = "post-reboot-private-message"
+        for phase in ("receive", "parse"):
+            with self.subTest(phase=phase):
+                failure = subject.WindowsIdentityRunError(secret)
+                failure.probe_action = "domain-state"
+                failure.probe_phase = phase
+                callbacks = self.callbacks([])
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": lambda _action, failure=failure: (
+                        _ for _ in ()).throw(failure),
+                })
+                with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError,
+                ) as caught:
+                    subject._post_reboot_proof(callbacks)
+                error = caught.exception
+                self.assertEqual(
+                    "windows-rebooted-joined", error.diagnostic.check)
+                self.assertEqual(
+                    "static-probe.domain-state." + phase,
+                    error.diagnostic.operation,
+                )
+                self.assertEqual("UnexpectedError",
+                                 error.diagnostic.error_type)
+                self.assertNotIn(secret, str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
     def test_join_serial_connects_before_private_media_is_created(self):
         callbacks = self.callbacks([])
         order = []
