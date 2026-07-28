@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:58:25Z"
+updated_at: "2026-07-28T01:07:25Z"
 ---
 
 # Goal
@@ -99,3 +99,11 @@ the persistent workstation without installation media, re-audits both live
 QEMU processes, captures secret-free evidence, and guarantees child teardown.
 Focused tests and the real-bundle dry run pass. The next operation is the first
 bounded loopback-only WinPE overlay observation.
+
+The first bounded execution failed safely during Controller publication,
+before the workstation launched. Samba's password-database command requires
+its configuration file to exist, but the publisher created the file
+afterward. All children and the disposable overlay were cleaned up; the fresh
+workstation disk was never booted. Publication now creates the fail-closed
+read-only configuration before adding the synthetic account. A newly prepared
+bundle is required because completed private publication images are immutable.
