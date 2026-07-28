@@ -38,6 +38,10 @@ _OBSERVATION_KEYS = {
         "configured": bool,
         "cached_logon_count": (int, type(None)),
     },
+    "dependency-reachability": {
+        "update_source_reachable": bool,
+        "optional_storage_reachable": bool,
+    },
     "service-reachability": {
         "domain": str,
         "dns": bool,
@@ -154,6 +158,55 @@ def parse_probe_record(line: bytes, expected_action: str) -> dict[str, object]:
             raise WindowsControlSerialError(
                 "probe observation schema is invalid")
     return record
+
+
+def fault_reachability_fields(
+    record: Mapping[str, object],
+    check: str,
+) -> dict[str, bool]:
+    """Map a validated dependency probe into one fault observation fragment.
+
+    Login, profile, and rescue outcomes remain owned by their separate guest
+    observations. This maps only facts established by the two fixed UDP role
+    probes, and refuses record-shaped input that did not pass the strict
+    parser.
+    """
+    if (set(record) != _TOP_LEVEL_KEYS
+            or record.get("schema_version") != 1
+            or record.get("action") != "dependency-reachability"
+            or record.get("result") != "pass"):
+        raise WindowsControlSerialError(
+            "dependency probe record is not validated")
+    observation = record.get("observation")
+    schema = _OBSERVATION_KEYS["dependency-reachability"]
+    if (not isinstance(observation, dict)
+            or set(observation) != set(schema)
+            or any(type(observation[key]) is not bool for key in schema)):
+        raise WindowsControlSerialError(
+            "dependency probe observation schema is invalid")
+    mappings = {
+        "update-source-offline": {
+            "update_source_reachable": "update_source_reachable",
+        },
+        "optional-storage-offline": {
+            "storage_reachable": "optional_storage_reachable",
+        },
+        "combined-dependencies-offline": {
+            "update_source_reachable": "update_source_reachable",
+            "optional_storage_reachable": "optional_storage_reachable",
+        },
+        "windows-services-restored": {
+            "optional_storage_reachable": "optional_storage_reachable",
+        },
+    }
+    try:
+        fields = mappings[check]
+    except KeyError as error:
+        raise WindowsControlSerialError(
+            "fault check has no dependency reachability mapping") from error
+    return {
+        target: observation[source] for target, source in fields.items()
+    }
 
 
 def receive_probe_record(

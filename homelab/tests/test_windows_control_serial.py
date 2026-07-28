@@ -10,6 +10,7 @@ from homelab.vm.windows_control_serial import (
     WindowsControlSerialError,
     attach_qemu_serial,
     control_probe,
+    fault_reachability_fields,
     parse_probe_record,
     receive_probe_record,
 )
@@ -25,6 +26,10 @@ def record(action="domain-state"):
         "cached-logon-policy": {
             "configured": True,
             "cached_logon_count": 2,
+        },
+        "dependency-reachability": {
+            "update_source_reachable": False,
+            "optional_storage_reachable": True,
         },
     }
     return {
@@ -113,6 +118,36 @@ class WindowsControlSerialTests(unittest.TestCase):
         for invalid in (encoded, encoded + b"\n{}\n", encoded + b"\r\n"):
             with self.assertRaises(WindowsControlSerialError):
                 parse_probe_record(invalid, "domain-state")
+
+    def test_dependency_probe_maps_only_reachability_fault_fields(self):
+        encoded = json.dumps(
+            record("dependency-reachability")).encode() + b"\n"
+        observed = parse_probe_record(
+            encoded, "dependency-reachability")
+        self.assertEqual(
+            {"update_source_reachable": False},
+            fault_reachability_fields(observed, "update-source-offline"))
+        self.assertEqual(
+            {"storage_reachable": True},
+            fault_reachability_fields(observed, "optional-storage-offline"))
+        self.assertEqual({
+            "update_source_reachable": False,
+            "optional_storage_reachable": True,
+        }, fault_reachability_fields(
+            observed, "combined-dependencies-offline"))
+        self.assertEqual(
+            {"optional_storage_reachable": True},
+            fault_reachability_fields(observed, "windows-services-restored"))
+        with self.assertRaisesRegex(
+                WindowsControlSerialError, "no dependency"):
+            fault_reachability_fields(observed, "controller-offline")
+
+    def test_dependency_probe_mapping_rejects_unvalidated_shapes(self):
+        candidate = record("dependency-reachability")
+        candidate["observation"]["update_source_reachable"] = 0
+        with self.assertRaisesRegex(
+                WindowsControlSerialError, "schema"):
+            fault_reachability_fields(candidate, "update-source-offline")
 
     def test_receiver_reads_one_record_from_unix_socket(self):
         with tempfile.TemporaryDirectory() as temporary:

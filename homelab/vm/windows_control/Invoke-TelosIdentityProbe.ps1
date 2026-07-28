@@ -5,6 +5,7 @@ param(
         'current-principal',
         'domain-state',
         'cached-logon-policy',
+        'dependency-reachability',
         'service-reachability',
         'update-policy'
     )]
@@ -26,6 +27,35 @@ function Test-TcpPort {
     try {
         $pending = $client.ConnectAsync($HostName, $Port)
         return $pending.Wait(1500) -and $client.Connected
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Test-UdpRole {
+    param(
+        [System.Net.IPAddress]$Address,
+        [int]$Port,
+        [string]$ExpectedReply
+    )
+    $client = [System.Net.Sockets.UdpClient]::new()
+    try {
+        $client.Client.ReceiveTimeout = 1500
+        $client.Connect($Address, $Port)
+        $request = [Text.Encoding]::ASCII.GetBytes('health')
+        [void]$client.Send($request, $request.Length)
+        $remote = [System.Net.IPEndPoint]::new(
+            [System.Net.IPAddress]::Any, 0)
+        $reply = $client.Receive([ref]$remote)
+        return (
+            $remote.Address.Equals($Address) -and
+            $remote.Port -eq $Port -and
+            [Text.Encoding]::ASCII.GetString($reply) -ceq $ExpectedReply
+        )
     }
     catch {
         return $false
@@ -72,6 +102,16 @@ function Get-Probe {
                 } else {
                     [int]$value
                 }
+            }
+        }
+        'dependency-reachability' {
+            return [ordered]@{
+                update_source_reachable = Test-UdpRole `
+                    ([System.Net.IPAddress]::Parse('10.1.31.3')) 31338 `
+                    'update-source:available'
+                optional_storage_reachable = Test-UdpRole `
+                    ([System.Net.IPAddress]::Parse('10.1.31.4')) 31339 `
+                    'optional-storage:available'
             }
         }
         'service-reachability' {

@@ -23,6 +23,11 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertEqual("serial-jsonl", manifest["transport"]["kind"])
         self.assertIn("ValidateSet", script)
         self.assertIn("[System.IO.Ports.SerialPort]", script)
+        self.assertIn("dependency-reachability", manifest["actions"])
+        self.assertIn("'10.1.31.3')) 31338", script)
+        self.assertIn("'update-source:available'", script)
+        self.assertIn("'10.1.31.4')) 31339", script)
+        self.assertIn("'optional-storage:available'", script)
         self.assertNotIn("Password", script)
         self.assertNotIn("Credential", script)
 

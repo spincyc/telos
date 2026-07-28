@@ -10,6 +10,7 @@
     "current-principal",
     "domain-state",
     "cached-logon-policy",
+    "dependency-reachability",
     "service-reachability",
     "update-policy"
   ]
