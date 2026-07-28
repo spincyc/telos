@@ -195,6 +195,12 @@ class FactoryRunnerTests(unittest.TestCase):
         self.assertIn("--connect", command)
         self.assertIn("31415", command)
         self.assertNotIn("0.0.0.0", " ".join(command))
+        identity_command = factory_runner.gateway_command(
+            31415, controller_mac=factory_runner.MACS["controller"])
+        self.assertEqual(
+            identity_command[-2:],
+            ["--controller-mac", "52:54:00:31:11:12"],
+        )
 
     def test_handoff_requires_dhcp_bootstrap_and_installer_markers(self):
         with tempfile.TemporaryDirectory() as temp_name:
