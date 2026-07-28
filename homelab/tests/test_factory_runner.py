@@ -98,6 +98,12 @@ class FactoryRunnerTests(unittest.TestCase):
         os.close(write_fd)
         reader.close()
 
+    def test_package_progress_hash_is_not_a_shell_prompt(self):
+        self.assertFalse(factory_runner._at_root_prompt(
+            b"(1/1) checking package integrity [############"))
+        self.assertTrue(factory_runner._at_root_prompt(
+            b"\x1b[?2004h[root@archlinux /]# "))
+
     def test_direct_script_help_resolves_local_imports(self):
         result = subprocess.run(
             [
