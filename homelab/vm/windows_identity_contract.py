@@ -31,7 +31,7 @@ def qemu_identity_command(
     command = _base("windows-identity", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [
-        "-boot", "order=c,menu=off,strict=on",
+        "-boot", "menu=off,strict=on",
         "-monitor", "none",
         "-qmp", f"unix:{qmp_socket.resolve()},server=on,wait=off",
         "-device", "VGA",
@@ -68,10 +68,11 @@ def qemu_identity_command(
     audit_qemu_disk_boundary(command, disk=disk, serial=DISK_SERIAL)
     joined = " ".join(command)
     if (
-        "once=n" in joined
+        "order=" in command[command.index("-boot") + 1]
+        or "once=" in command[command.index("-boot") + 1]
         or joined.count("bootindex=") != 1
         or command[command.index("-boot") + 1]
-        != "order=c,menu=off,strict=on"
+        != "menu=off,strict=on"
         or not any(
             value
             == f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1"

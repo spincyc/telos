@@ -97,8 +97,9 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             self.assertNotIn("password", json.dumps(plan).lower())
             command = json.loads(
                 (attempt / "qemu-command.json").read_text())["argv"]
-            self.assertIn("order=c,menu=off,strict=on", " ".join(command))
-            self.assertNotIn("once=n", " ".join(command))
+            self.assertIn("-boot menu=off,strict=on", " ".join(command))
+            self.assertNotIn("order=", " ".join(command))
+            self.assertNotIn("once=", " ".join(command))
             self.assertEqual(1, " ".join(command).count("bootindex="))
             self.assertIn(
                 "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=1",

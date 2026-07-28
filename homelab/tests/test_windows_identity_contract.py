@@ -22,14 +22,14 @@ class WindowsIdentityContractTests(unittest.TestCase):
                 serial_socket=root / "windows.serial",
                 control_iso=control)
             joined = " ".join(command)
-            self.assertIn("order=c,menu=off,strict=on", joined)
-            self.assertNotIn("once=n", joined)
+            self.assertIn("-boot menu=off,strict=on", joined)
+            self.assertNotIn("order=", joined)
+            self.assertNotIn("once=", joined)
             self.assertEqual(1, joined.count("bootindex="))
             self.assertIn(
                 "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=1",
                 command,
             )
-            self.assertIn("-boot order=c,menu=off,strict=on", joined)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn(",romfile=", joined)
             nic = next(
