@@ -194,6 +194,7 @@ class ProgressiveRotationPlan:
     initial_sign_in_keys: tuple[str, ...] = ("spc",)
     change_password_keys: tuple[str, ...] = ()
     wake_after_lock_keys: tuple[str, ...] = ("spc",)
+    post_join_local_account_keys: tuple[str, ...] = ()
     initial_sign_in_delay: float = 60.0
     lock_settle_delay: float = 2.0
     timeout: float = 360.0
@@ -262,10 +263,14 @@ class _GuiInteraction:
     def __init__(self, qmp: QmpClient, evidence_root: Path) -> None:
         self._driver = WindowsCredentialRotationDriver(qmp, evidence_root)
         self._qmp = qmp
+        self._durable_capture_enabled = True
 
     def observe(
         self, reference: ValidatedIdentityReference, timeout: float
     ) -> None:
+        if not self._durable_capture_enabled:
+            raise WindowsIdentityGuiError(
+                "durable pixel capture is disabled")
         checkpoint = Checkpoint(
             reference.state_kind,
             reference.path,
@@ -274,6 +279,46 @@ class _GuiInteraction:
             crop=reference.crop,
         )
         self._driver._observe(checkpoint)
+
+    def disable_durable_capture(self) -> None:
+        """Irreversibly prohibit retained screenshots after secret entry."""
+        self._durable_capture_enabled = False
+
+    def observe_ephemeral(
+        self, reference: ValidatedIdentityReference, timeout: float
+    ) -> None:
+        """Prove a state while deleting every captured frame immediately."""
+        deadline = self._driver.clock() + timeout
+        consecutive = 0
+        reference_image = read_ppm(reference.path)
+        if (
+            reference.crop is not None
+            and (reference_image.width, reference_image.height)
+            == (reference.crop[2], reference.crop[3])
+        ):
+            expected = reference_image
+        else:
+            expected = crop_image(reference_image, reference.crop)
+        while self._driver.clock() < deadline:
+            self._driver.sequence += 1
+            path = self._driver.observer.root / (
+                f".identity-{self._driver.sequence:04d}-ephemeral.ppm")
+            try:
+                self._qmp.screenshot(path)
+                os.chmod(path, 0o600)
+                actual = crop_image(read_ppm(path), reference.crop)
+                distance = image_distance(actual, expected)
+            finally:
+                path.unlink(missing_ok=True)
+            if useful_frame(actual) and distance <= 6.0:
+                consecutive += 1
+                if consecutive == 2:
+                    return
+            else:
+                consecutive = 0
+            self._driver.pause(self._driver.interval)
+        raise WindowsIdentityGuiError(
+            f"timed out proving {reference.state_kind}")
 
     def observe_departure(
         self, reference: ValidatedIdentityReference, timeout: float
@@ -378,6 +423,7 @@ def execute_progressive_rotation(
                 plan.initial_sign_in_keys,
                 plan.change_password_keys,
                 plan.wake_after_lock_keys,
+                plan.post_join_local_account_keys,
             )
             for key in keys
         )

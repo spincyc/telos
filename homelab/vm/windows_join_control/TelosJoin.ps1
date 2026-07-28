@@ -45,21 +45,15 @@ try {
     if ($release -ne ('TELOS_JOIN_MEDIA_DESTROYED ' + $nonce)) {
         throw 'join mutation release was not authorized'
     }
-}
-finally {
-    if ($serial.IsOpen) {
-        $serial.Close()
-    }
-    $serial.Dispose()
-}
-
-Add-Computer -DomainName $domain -Credential $credential -ErrorAction Stop
+    $failurePhase = 'add-computer'
+    Add-Computer -DomainName $domain -Credential $credential -ErrorAction Stop
 
 # Resolve the fixed realm-qualified daily operator to a SID, assign only that
 # SID to the built-in local Administrators group, and prove the assignment
 # before reboot.  Any resolution, mutation, or verification failure stops the
 # join path; this script never grants any domain-wide privileged group.
-$operatorSid = ([Security.Principal.NTAccount]::new($operator)).Translate(
+    $failurePhase = 'operator-assignment'
+    $operatorSid = ([Security.Principal.NTAccount]::new($operator)).Translate(
     [Security.Principal.SecurityIdentifier]
 )
 $administratorsSid = [Security.Principal.SecurityIdentifier]::new(
@@ -79,5 +73,68 @@ $operatorAssigned = @(
 )
 if (@($operatorAssigned).Count -ne 1) {
     throw 'daily operator local Administrators assignment was not proved'
+}
+
+# Force the post-join sign-in surface to request an explicit qualified
+# principal instead of exposing or selecting the last interactive user.
+# Verify the exact DWORD before reboot and fail closed rather than attempting
+# brittle account-tile navigation.
+    $logonPolicyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    $logonPolicyName = 'DontDisplayLastUserName'
+    $failurePhase = 'policy-mutation'
+    try {
+    New-ItemProperty -LiteralPath $logonPolicyPath -Name $logonPolicyName `
+        -PropertyType DWord -Value 1 -Force -ErrorAction Stop | Out-Null
+}
+    catch {
+        throw 'generic logon policy mutation failed'
+    }
+    $failurePhase = 'policy-readback'
+    try {
+    $logonPolicyValue = Get-ItemPropertyValue -LiteralPath $logonPolicyPath `
+        -Name $logonPolicyName -ErrorAction Stop
+}
+catch {
+    throw 'generic logon policy readback failed'
+}
+    if ($logonPolicyValue -ne 1) {
+        $failurePhase = 'policy-verification'
+        throw 'generic logon policy verification failed'
+    }
+    $serial.WriteLine(
+        '{"schema_version":1,"event":"join-reboot-ready","nonce":"' +
+        $nonce + '"}'
+    )
+    $failurePhase = 'reboot-ack'
+    $rebootAck = $serial.ReadLine().Trim()
+    if ($rebootAck -ne ('TELOS_JOIN_REBOOT_ACK ' + $nonce)) {
+        throw 'join reboot acknowledgment was not authorized'
+    }
+    $serial.WriteLine(
+        '{"schema_version":1,"event":"join-reboot-accepted","nonce":"' +
+        $nonce + '"}'
+    )
+}
+catch {
+    $originalError = $_
+    if ($serial.IsOpen -and $failurePhase) {
+        try {
+            $serial.WriteLine(
+                '{"schema_version":1,"event":"join-reboot-failed","nonce":"' +
+                $nonce + '","phase":"' + $failurePhase + '"}'
+            )
+        }
+        catch {
+            # The original typed failure remains authoritative when COM1 is
+            # already broken; never replace it with a reporting failure.
+        }
+    }
+    throw $originalError
+}
+finally {
+    if ($serial.IsOpen) {
+        $serial.Close()
+    }
+    $serial.Dispose()
 }
 Restart-Computer -Force

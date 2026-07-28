@@ -107,7 +107,15 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
             ):
                 evidence = boundary.attempt / surface_name
                 evidence.mkdir(mode=0o700)
-                (evidence / "proof.ppm").write_bytes(b"public frame")
+                if surface_name == "post-join-reauthentication":
+                    (
+                        evidence / "post-join-generic-prompt.ppm"
+                    ).write_bytes(b"public frame")
+                    (
+                        evidence / "post-join-generic-prompt.json"
+                    ).write_text('{"secret_input_since_post_join_reboot":false}')
+                else:
+                    (evidence / "proof.ppm").write_bytes(b"public frame")
             boundary.qmp_root = Path(name) / "runtime-qmp"
             boundary.qmp_root.mkdir(mode=0o700)
             boundary.serial_socket = boundary.qmp_root / "windows.serial"
@@ -126,7 +134,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
             "runtime/windows-qemu.log",
             "rotation-evidence/proof.ppm",
             "public-command-evidence/proof.ppm",
-            "post-join-reauthentication/proof.ppm",
+            "post-join-reauthentication/post-join-generic-prompt.ppm",
         ):
             with self.subTest(relative=relative), tempfile.TemporaryDirectory(
             ) as name:
@@ -148,7 +156,12 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 ):
                     target = boundary.attempt / surface
                     target.mkdir(mode=0o700)
-                    (target / "proof.ppm").write_bytes(b"clean")
+                    proof_name = (
+                        "post-join-generic-prompt.ppm"
+                        if surface == "post-join-reauthentication"
+                        else "proof.ppm"
+                    )
+                    (target / proof_name).write_bytes(b"clean")
                 (boundary.attempt / relative).write_bytes(secret.encode())
                 boundary.qmp_root = Path(name) / "qmp"
                 boundary.qmp_root.mkdir(mode=0o700)
@@ -159,6 +172,44 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 result = configuration.callbacks.scan_secrets(
                     (secret, "two", "three", "four"))
                 self.assertGreater(result["secrets_found"], 0)
+
+    def test_scanner_rejects_unallowlisted_post_join_ppm(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            configuration = self.factory(boundary, bundle)
+            runtime = boundary.attempt / "runtime"
+            (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+            for relative in (
+                "switch.jsonl", "windows-qemu.log",
+                "controller/controller.raw", "controller/OVMF_VARS.fd",
+                "controller/guard/controller-overlay.qcow2",
+                "controller/guard/OVMF_VARS.fd",
+            ):
+                (runtime / relative).write_bytes(b"clean")
+            for surface in (
+                "rotation-evidence", "public-command-evidence",
+                "post-join-reauthentication",
+            ):
+                target = boundary.attempt / surface
+                target.mkdir(mode=0o700)
+                frame = (
+                    "unreviewed.ppm"
+                    if surface == "post-join-reauthentication"
+                    else "proof.ppm"
+                )
+                (target / frame).write_bytes(b"clean")
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
+            boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            boundary.port = 31415
+            boundary.processes["windows"] = mock.Mock(
+                poll=mock.Mock(return_value=None))
+
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "unexpected retained path"
+            ):
+                configuration.callbacks.scan_secrets(
+                    ("one", "two", "three", "four"))
 
     def test_rejects_missing_recovery_publication(self):
         with tempfile.TemporaryDirectory() as name:

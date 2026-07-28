@@ -35,6 +35,7 @@ from .windows_identity_progressive import ProgressiveRotationPlan
 from .windows_identity_run import (
     IdentityFailureDiagnostic,
     NativeProcessBoundary,
+    WindowsLocalReauthenticationError,
     WindowsIdentityRunError,
 )
 from .windows_join_iso import (
@@ -114,6 +115,41 @@ _STATIC_ACTIONS = {
         "service-reachability", "domain-state",
         "dependency-reachability"),
 }
+
+_LOCAL_REAUTH_OPERATIONS = frozenset({
+    "wake",
+    "calibration-capture",
+    "calibration-required",
+    "select-local-account",
+    "type-public-username",
+    "prove-password-target",
+    "type-secret",
+    "submit",
+    "desktop",
+})
+
+
+def _local_reauthentication_coordinate(
+    error: BaseException,
+) -> WindowsJoinFailureCoordinate:
+    """Map only the fixed adapter carrier to a public reauthentication phase."""
+    error_type = type(error).__name__
+    phase = "reboot-reauth"
+    operation = getattr(error, "reauth_operation", None)
+    if (
+        isinstance(error, WindowsLocalReauthenticationError)
+        and operation in _LOCAL_REAUTH_OPERATIONS
+    ):
+        phase = f"reboot-reauth-{operation}"
+    if (
+        error_type == "WindowsLocalReauthenticationError"
+        and not isinstance(error, WindowsLocalReauthenticationError)
+    ):
+        error_type = "UnexpectedError"
+    if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
+        error_type = "UnexpectedError"
+    return WindowsJoinFailureCoordinate(phase, error_type)
+
 
 _CREDENTIAL_ROLES = {
     "windows-standard-online": ("student",),
@@ -389,15 +425,7 @@ def _execute_join(
             except BaseException as error:
                 raise WindowsJoinIsoError(
                     "post-reboot authentication failed",
-                    coordinate=WindowsJoinFailureCoordinate(
-                        "reboot-reauth",
-                        (
-                            type(error).__name__
-                            if type(error).__name__
-                            in WindowsJoinFailureCoordinate._ERROR_TYPES
-                            else "UnexpectedError"
-                        ),
-                    ),
+                    coordinate=_local_reauthentication_coordinate(error),
                 ) from None
             reauthenticated = True
             try:

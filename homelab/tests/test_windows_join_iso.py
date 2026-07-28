@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -117,12 +118,32 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index("Add-Computer"),
             script.index("Add-LocalGroupMember"),
             script.rindex("Get-LocalGroupMember"),
+            script.index("New-ItemProperty"),
+            script.index("Get-ItemPropertyValue"),
+            script.index("generic logon policy verification failed"),
+            script.index('"join-reboot-ready"'),
+            script.index("TELOS_JOIN_REBOOT_ACK"),
+            script.index('"join-reboot-accepted"'),
+            script.index("$serial.Close()"),
             script.index("Restart-Computer"),
         ]
         self.assertEqual(sorted(positions), positions)
         self.assertNotIn("Domain Admins", script)
         self.assertNotIn("Add-ADGroupMember", script)
         self.assertIn("'S-1-5-32-544'", script)
+        self.assertIn(
+            "'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System'",
+            script,
+        )
+        self.assertIn("'DontDisplayLastUserName'", script)
+        self.assertIn("-PropertyType DWord -Value 1 -Force", script)
+        self.assertNotIn("Set-ItemProperty", script)
+        self.assertIn("generic logon policy mutation failed", script)
+        self.assertIn("generic logon policy readback failed", script)
+        self.assertLess(
+            script.index("New-ItemProperty"),
+            script.index("Get-ItemPropertyValue"),
+        )
         command = launch_join_command()
         self.assertIn("TELOS_JOIN", command)
         self.assertLessEqual(len(command), MAX_PUBLIC_COMMAND_CHARS)
@@ -296,10 +317,37 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 "nonce": NONCE,
             })
             launched = []
+            guest_errors = []
+            guest_thread = None
 
             def launch(command):
+                nonlocal guest_thread
                 launched.append(command)
                 guest.sendall((marker + "\n").encode("ascii"))
+                def complete_join():
+                    try:
+                        release = guest.recv(256).decode("ascii")
+                        self.assertEqual(
+                            f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}\n", release)
+                        guest.sendall((json.dumps({
+                            "schema_version": 1,
+                            "event": "join-reboot-ready",
+                            "nonce": NONCE,
+                        }) + "\n").encode("ascii"))
+                        self.assertEqual(
+                            f"TELOS_JOIN_REBOOT_ACK {NONCE}\n",
+                            guest.recv(256).decode("ascii"),
+                        )
+                        guest.sendall((json.dumps({
+                            "schema_version": 1,
+                            "event": "join-reboot-accepted",
+                            "nonce": NONCE,
+                        }) + "\n").encode("ascii"))
+                    except BaseException as error:
+                        guest_errors.append(error)
+                guest_thread = threading.Thread(
+                    target=complete_join, daemon=True)
+                guest_thread.start()
 
             execute_join_channel(
                 channel=channel,
@@ -307,11 +355,11 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
             )
-            self.assertEqual(
-                f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}\n",
-                guest.recv(256).decode("ascii"))
+            guest_thread.join(timeout=1)
+            self.assertFalse(guest_thread.is_alive())
+            self.assertFalse(guest_errors)
             self.assertEqual(1, len(launched))
-            self.assertIs(JoinMediaState.RELEASED, channel.state)
+            self.assertIs(JoinMediaState.REBOOT_ACCEPTED, channel.state)
             self.assertTrue(serial.closed)
             guest.close()
 
@@ -332,6 +380,20 @@ class WindowsJoinIsoTests(unittest.TestCase):
 
             def launch(_command):
                 guest.sendall((marker + "\n").encode("ascii"))
+                def complete_join():
+                    guest.recv(256)
+                    guest.sendall((json.dumps({
+                        "schema_version": 1,
+                        "event": "join-reboot-ready",
+                        "nonce": NONCE,
+                    }) + "\n").encode("ascii"))
+                    guest.recv(256)
+                    guest.sendall((json.dumps({
+                        "schema_version": 1,
+                        "event": "join-reboot-accepted",
+                        "nonce": NONCE,
+                    }) + "\n").encode("ascii"))
+                threading.Thread(target=complete_join, daemon=True).start()
 
             proof = execute_join_and_prove(
                 channel=channel,
@@ -358,7 +420,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             root = self.private_root(temporary)
             iso = root / "join.iso"
             channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
-            channel.state = JoinMediaState.RELEASED
+            channel.state = JoinMediaState.REBOOT_ACCEPTED
             with self.assertRaises(WindowsJoinIsoError) as caught:
                 channel.prove_join_and_reboot(
                     lambda: {"private": "invalid"},
@@ -381,6 +443,283 @@ class WindowsJoinIsoTests(unittest.TestCase):
         with self.assertRaisesRegex(WindowsJoinIsoError, "closed"):
             serial.send_release("public")
         guest.close()
+
+    def test_reboot_ready_result_is_exact_nonce_bound_and_post_release(self):
+        channel = JoinMediaChannel(FakeQmp(), Path("unused"), NONCE)
+        ready = json.dumps({
+            "schema_version": 1,
+            "event": "join-reboot-ready",
+            "nonce": NONCE,
+        })
+        with self.assertRaisesRegex(
+                WindowsJoinIsoError, "cannot precede"):
+            channel.accept_reboot_ready(ready)
+        channel.state = JoinMediaState.RELEASED
+        for invalid in (
+            "{}",
+            json.dumps({
+                "schema_version": 1,
+                "event": "join-reboot-ready",
+                "nonce": "cd" * 16,
+            }),
+            json.dumps({
+                "schema_version": 1,
+                "event": "join-reboot-ready",
+                "nonce": NONCE,
+                "password": "must-not-be-accepted",
+            }),
+        ):
+            with self.assertRaisesRegex(WindowsJoinIsoError, "invalid"):
+                channel.accept_reboot_ready(invalid)
+        channel.accept_reboot_ready(ready)
+        self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
+        accepted = json.dumps({
+            "schema_version": 1,
+            "event": "join-reboot-accepted",
+            "nonce": NONCE,
+        })
+        for invalid in (
+            "{}",
+            json.dumps({
+                "schema_version": 1,
+                "event": "join-reboot-accepted",
+                "nonce": "cd" * 16,
+            }),
+            json.dumps({
+                "schema_version": 1,
+                "event": "join-reboot-accepted",
+                "nonce": NONCE,
+                "extra": True,
+            }),
+        ):
+            with self.assertRaisesRegex(WindowsJoinIsoError, "invalid"):
+                channel.accept_reboot_confirmation(invalid)
+        channel.accept_reboot_confirmation(accepted)
+        self.assertIs(JoinMediaState.REBOOT_ACCEPTED, channel.state)
+
+    def test_guest_failure_result_has_allowlisted_secret_free_coordinate(self):
+        channel = JoinMediaChannel(FakeQmp(), Path("unused"), NONCE)
+        channel.state = JoinMediaState.RELEASED
+        failure = json.dumps({
+            "schema_version": 1,
+            "event": "join-reboot-failed",
+            "nonce": NONCE,
+            "phase": "policy-readback",
+        })
+        with self.assertRaises(WindowsJoinIsoError) as caught:
+            channel.accept_reboot_ready(failure)
+        self.assertEqual(
+            "result-guest-policy-readback",
+            caught.exception.coordinate.phase,
+        )
+        self.assertNotIn(NONCE, str(caught.exception))
+        channel.state = JoinMediaState.RELEASED
+        reboot_ack_failure = json.dumps({
+            "schema_version": 1,
+            "event": "join-reboot-failed",
+            "nonce": NONCE,
+            "phase": "reboot-ack",
+        })
+        with self.assertRaises(WindowsJoinIsoError) as caught:
+            channel.accept_reboot_ready(reboot_ack_failure)
+        self.assertEqual(
+            "result-guest-reboot-ack",
+            caught.exception.coordinate.phase,
+        )
+
+    def test_malformed_result_has_parse_coordinate_and_retains_serial(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexJoinSerial(host)
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+
+            def launch(_command):
+                guest.sendall((marker + "\n").encode("ascii"))
+                def reject():
+                    guest.recv(256)
+                    guest.sendall(b'{"event":"unexpected"}\n')
+                threading.Thread(target=reject, daemon=True).start()
+
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                execute_join_channel(
+                    channel=channel,
+                    serial=serial,
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            self.assertEqual("result-parse", caught.exception.coordinate.phase)
+            self.assertEqual(
+                "WindowsJoinIsoError",
+                caught.exception.coordinate.error_type,
+            )
+            self.assertFalse(serial.closed)
+            self.assertIs(JoinMediaState.RELEASED, channel.state)
+            serial.close()
+            guest.close()
+
+    def test_result_timeout_has_receive_coordinate_and_no_reboot_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexJoinSerial(host, timeout=0.05)
+            marker = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-loaded",
+                "nonce": NONCE,
+            })
+
+            def launch(_command):
+                guest.sendall((marker + "\n").encode("ascii"))
+                threading.Thread(
+                    target=lambda: guest.recv(256), daemon=True).start()
+
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                execute_join_channel(
+                    channel=channel,
+                    serial=serial,
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            self.assertEqual(
+                "result-receive", caught.exception.coordinate.phase)
+            self.assertEqual("TimeoutError", caught.exception.coordinate.error_type)
+            self.assertIs(JoinMediaState.RELEASED, channel.state)
+            self.assertFalse(serial.closed)
+            serial.close()
+            guest.close()
+
+    def test_reboot_ack_failure_is_typed_and_retains_serial_ownership(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+
+            class AckFailureSerial:
+                closed = False
+
+                def read_marker(self):
+                    return json.dumps({
+                        "schema_version": 1,
+                        "event": "join-material-loaded",
+                        "nonce": NONCE,
+                    })
+
+                def send_release(self, _line):
+                    return None
+
+                def read_result(self):
+                    return json.dumps({
+                        "schema_version": 1,
+                        "event": "join-reboot-ready",
+                        "nonce": NONCE,
+                    })
+
+                def send_reboot_ack(self, _nonce):
+                    raise BrokenPipeError("private detail")
+
+                def close(self):
+                    self.closed = True
+
+            serial = AckFailureSerial()
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                execute_join_channel(
+                    channel=channel,
+                    serial=serial,
+                    launch_guest=lambda _: None,
+                    await_device_deleted=lambda _: None,
+                )
+            self.assertEqual("result-ack", caught.exception.coordinate.phase)
+            self.assertEqual("OSError", caught.exception.coordinate.error_type)
+            self.assertNotIn("private detail", str(caught.exception))
+            self.assertFalse(serial.closed)
+            self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
+
+    def test_accepted_confirmation_receive_and_parse_failures_are_typed(self):
+        ready = json.dumps({
+            "schema_version": 1,
+            "event": "join-reboot-ready",
+            "nonce": NONCE,
+        })
+        cases = (
+            (
+                TimeoutError(),
+                "accepted-receive",
+                "TimeoutError",
+            ),
+            (
+                json.dumps({
+                    "schema_version": 1,
+                    "event": "join-reboot-accepted",
+                    "nonce": "cd" * 16,
+                }),
+                "accepted-parse",
+                "WindowsJoinIsoError",
+            ),
+        )
+        for final_result, phase, error_type in cases:
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
+                root = self.private_root(temporary)
+                iso = root / "join.iso"
+                iso.write_bytes(b"private")
+                iso.chmod(0o600)
+                channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+
+                class ConfirmationSerial:
+                    closed = False
+
+                    def __init__(self):
+                        self.results = iter((ready, final_result))
+
+                    def read_marker(self):
+                        return json.dumps({
+                            "schema_version": 1,
+                            "event": "join-material-loaded",
+                            "nonce": NONCE,
+                        })
+
+                    def send_release(self, _line):
+                        return None
+
+                    def read_result(self):
+                        result = next(self.results)
+                        if isinstance(result, BaseException):
+                            raise result
+                        return result
+
+                    def send_reboot_ack(self, _nonce):
+                        return None
+
+                    def close(self):
+                        self.closed = True
+
+                serial = ConfirmationSerial()
+                with self.assertRaises(WindowsJoinIsoError) as caught:
+                    execute_join_channel(
+                        channel=channel,
+                        serial=serial,
+                        launch_guest=lambda _: None,
+                        await_device_deleted=lambda _: None,
+                    )
+                self.assertEqual(phase, caught.exception.coordinate.phase)
+                self.assertEqual(
+                    error_type, caught.exception.coordinate.error_type)
+                self.assertFalse(serial.closed)
+                self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
 
     def test_duplex_serial_uses_one_absolute_marker_release_deadline(self):
         connection = mock.Mock()
@@ -407,7 +746,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             iso.chmod(0o600)
             channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
             channel.destroyed = True
-            channel.state = JoinMediaState.RELEASED
+            channel.state = JoinMediaState.REBOOT_ACCEPTED
             proof = channel.prove_join_and_reboot(
                 lambda: {
                     "schema_version": 2,

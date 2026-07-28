@@ -8,6 +8,41 @@ from homelab.vm import windows_identity_adapter as subject
 
 
 class WindowsIdentityAdapterTests(unittest.TestCase):
+    def test_local_reauthentication_operations_drop_backend_context(self):
+        for operation in sorted(
+            subject.WindowsLocalReauthenticationError._OPERATIONS
+        ):
+            with self.subTest(operation=operation), self.assertRaises(
+                subject.WindowsLocalReauthenticationError,
+            ) as caught:
+                subject._run_local_reauthentication_operation(
+                    operation,
+                    lambda: (_ for _ in ()).throw(
+                        RuntimeError("backend-private")),
+                )
+            self.assertEqual(operation, caught.exception.reauth_operation)
+            self.assertNotIn("backend-private", str(caught.exception))
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+
+    def test_local_reauthentication_operations_preserve_interruptions(self):
+        interruptions = (
+            KeyboardInterrupt(),
+            SystemExit(17),
+            subject.RunInterrupted(15),
+        )
+        for interruption in interruptions:
+            with (
+                self.subTest(interruption=type(interruption).__name__),
+                self.assertRaises(type(interruption)) as caught,
+            ):
+                subject._run_local_reauthentication_operation(
+                    "type-secret",
+                    lambda interruption=interruption: (
+                        _ for _ in ()).throw(interruption),
+                )
+            self.assertIs(interruption, caught.exception)
+
     def adapter(self, root: Path, boundary=None):
         root.chmod(0o700)
         if boundary is None:
@@ -413,8 +448,117 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))
             with self.assertRaisesRegex(
-                    subject.WindowsIdentityAdapterError, "sign-in plan"):
+                    subject.WindowsLocalReauthenticationError,
+                    "prove-password-target"):
                 adapter.reauthenticate_local("private")
+
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_reference_failure_drops_context(
+        self, load_references,
+    ):
+        load_references.side_effect = RuntimeError("backend-private")
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter.rotation_plan = mock.Mock()
+            with self.assertRaises(
+                subject.WindowsLocalReauthenticationError,
+            ) as caught:
+                adapter.reauthenticate_local("private")
+        self.assertEqual(
+            "prove-password-target", caught.exception.reauth_operation)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_reference_property_failure_drops_context(
+        self, load_references,
+    ):
+        class HostileReference:
+            @property
+            def state_kind(self):
+                backend = RuntimeError("backend-private")
+                backend.__context__ = ValueError("nested-private")
+                raise backend
+
+        load_references.return_value = (
+            HostileReference(), mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter.rotation_plan = mock.Mock()
+            with self.assertRaises(
+                subject.WindowsLocalReauthenticationError,
+            ) as caught:
+                adapter.reauthenticate_local("private")
+        self.assertEqual(
+            "prove-password-target", caught.exception.reauth_operation)
+        self.assertNotIn("private", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_selection_property_failure_drops_context(
+        self, load_references, private_evidence_root, interaction_type,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for local account telosadmin",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = mock.sentinel.evidence
+
+        class HostilePlan:
+            @property
+            def post_join_local_account_keys(self):
+                raise RuntimeError("backend-private")
+
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter.rotation_plan = HostilePlan()
+            adapter._qmp = mock.Mock(return_value=mock.sentinel.qmp)
+            with self.assertRaises(
+                subject.WindowsLocalReauthenticationError,
+            ) as caught:
+                adapter.reauthenticate_local("private")
+        self.assertEqual(
+            "select-local-account", caught.exception.reauth_operation)
+        self.assertNotIn("private", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        interaction_type.return_value.type_secret.assert_not_called()
+
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_setup_failure_drops_context(
+        self, load_references, private_evidence_root,
+    ):
+        load_references.return_value = (
+            mock.Mock(
+                state_kind="sign-in",
+                state="focused password field for local account telosadmin",
+            ),
+            mock.sentinel.desktop,
+            mock.sentinel.security,
+            mock.sentinel.change,
+        )
+        private_evidence_root.side_effect = RuntimeError("backend-private")
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter.rotation_plan = mock.Mock()
+            with self.assertRaises(
+                subject.WindowsLocalReauthenticationError,
+            ) as caught:
+                adapter.reauthenticate_local("private")
+        self.assertEqual(
+            "prove-password-target", caught.exception.reauth_operation)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
 
     def test_credential_action_maps_local_and_domain_material_exactly(self):
         with tempfile.TemporaryDirectory() as name, mock.patch.object(

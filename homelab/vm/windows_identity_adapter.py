@@ -17,6 +17,7 @@ from .controller_principals import (
     ControllerPrincipalSerial,
 )
 from .serial_automation import SerialAutomation
+from .signal_cleanup import RunInterrupted
 from .windows_control_serial import (
     MAX_RECORD_BYTES,
     WindowsControlSerialError,
@@ -39,9 +40,11 @@ from .windows_identity_progressive import (
     _load_references,
     _private_evidence_root,
 )
+from .windows_gui import SAFE_KEYS
 from .windows_identity_run import (
     IdentityFailureDiagnostic,
     NativeProcessBoundary,
+    WindowsLocalReauthenticationError,
     WindowsIdentityRunError,
 )
 from .windows_join_iso import DuplexJoinSerial
@@ -49,10 +52,35 @@ from .windows_public_command import (
     PublicPowerShellLaunchPlan,
     WindowsPublicCommandLauncher,
 )
+from .windows_postjoin_calibration import capture_post_join_calibration
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
     """A required production boundary could not be proved."""
+
+
+def _run_local_reauthentication_operation(
+    operation: str, action: Callable[[], None],
+) -> None:
+    """Run one private GUI operation without retaining backend exceptions."""
+    failure_operation: str | None = None
+    try:
+        action()
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException as error:
+        failure_operation = (
+            error.reauth_operation
+            if (
+                type(error) is WindowsLocalReauthenticationError
+                and error.reauth_operation
+                in WindowsLocalReauthenticationError._OPERATIONS
+            )
+            else operation
+        )
+    if failure_operation is not None:
+        raise WindowsLocalReauthenticationError(
+            failure_operation) from None
 
 
 _ACTIONS = {
@@ -273,31 +301,173 @@ class NativeWindowsAcceptanceAdapter:
         """Re-establish only the exact calibrated local-account session."""
         plan = self.rotation_plan
         if plan is None:
-            raise WindowsIdentityAdapterError(
-                "post-join calibrated sign-in plan is unavailable")
-        references = _load_references(plan)
-        sign_in, desktop = references[:2]
-        if (
-            sign_in.state_kind != "sign-in"
-            or sign_in.state != (
-                "focused password field for local account "
-                f"{self.local_principal}"
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target")
+        deadline = self.clock() + self.timeout
+
+        def remaining(operation: str) -> float:
+            budget = deadline - self.clock()
+            if budget <= 0:
+                raise WindowsLocalReauthenticationError(operation)
+            return budget
+
+        reference_failure = False
+        try:
+            references = _load_references(plan)
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            reference_failure = True
+        if reference_failure:
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target") from None
+        try:
+            sign_in, desktop = references[:2]
+            reference_valid = (
+                sign_in.state_kind == "sign-in"
+                and sign_in.state == (
+                    "focused password field for local account "
+                    f"{self.local_principal}"
+                )
             )
-        ):
-            raise WindowsIdentityAdapterError(
-                "post-join sign-in reference names a different account")
-        evidence = _private_evidence_root(
-            self.private_root / "post-join-reauthentication")
-        interaction = _GuiInteraction(self._qmp(), evidence)
-        if plan.initial_sign_in_delay:
-            time.sleep(plan.initial_sign_in_delay)
-        for key in plan.wake_after_lock_keys:
-            interaction.key(key)
-        interaction.observe(sign_in, plan.checkpoint_timeout)
-        interaction.observe(sign_in, plan.checkpoint_timeout)
-        interaction.type_secret(credential)
-        interaction.key("ret")
-        interaction.observe(desktop, plan.checkpoint_timeout)
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            reference_valid = False
+        if not reference_valid:
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target") from None
+        setup_failure = False
+        try:
+            evidence = _private_evidence_root(
+                self.private_root / "post-join-reauthentication")
+            interaction = _GuiInteraction(self._qmp(), evidence)
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            setup_failure = True
+        if setup_failure:
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target") from None
+        selection_failure = False
+        try:
+            selection_keys = tuple(plan.post_join_local_account_keys)
+            wake_keys = tuple(plan.wake_after_lock_keys)
+            initial_delay = float(plan.initial_sign_in_delay)
+            if (
+                initial_delay < 0
+                or any(key not in SAFE_KEYS for key in selection_keys)
+                or any(key not in SAFE_KEYS for key in wake_keys)
+            ):
+                selection_failure = True
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            selection_failure = True
+        if selection_failure:
+            raise WindowsLocalReauthenticationError(
+                "select-local-account") from None
+
+        def wake() -> None:
+            if initial_delay:
+                budget = remaining("wake")
+                time.sleep(min(initial_delay, budget))
+                remaining("wake")
+            for key in wake_keys:
+                remaining("wake")
+                interaction.key(key)
+
+        _run_local_reauthentication_operation("wake", wake)
+
+        if not selection_keys:
+            def capture_calibration() -> None:
+                remaining("calibration-capture")
+                capture_post_join_calibration(
+                    self._qmp(),
+                    evidence,
+                    plan.expected_guest,
+                    state="generic-prompt",
+                )
+                remaining("calibration-capture")
+                self._qmp().type_text(f".\\{self.local_principal}")
+                remaining("calibration-capture")
+                interaction.key("tab")
+                remaining("calibration-capture")
+                capture_post_join_calibration(
+                    self._qmp(),
+                    evidence,
+                    plan.expected_guest,
+                    state="password-target",
+                )
+
+            _run_local_reauthentication_operation(
+                "calibration-capture", capture_calibration)
+            raise WindowsLocalReauthenticationError("calibration-required")
+
+        timeout_failure = False
+        try:
+            checkpoint_timeout = float(plan.checkpoint_timeout)
+            if checkpoint_timeout <= 0:
+                timeout_failure = True
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            timeout_failure = True
+        if timeout_failure:
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target") from None
+
+        def select_local_account() -> None:
+            for key in selection_keys:
+                remaining("select-local-account")
+                interaction.key(key)
+
+        _run_local_reauthentication_operation(
+            "select-local-account", select_local_account)
+        # The account name is public.  Select it before recovering or typing
+        # the private credential, then require the exact local-account
+        # password-field reference twice.  A wrong focus therefore fails
+        # closed without disclosing the credential.
+        _run_local_reauthentication_operation(
+            "type-public-username",
+            lambda: (
+                remaining("type-public-username"),
+                self._qmp().type_text(f".\\{self.local_principal}"),
+            ),
+        )
+
+        def prove_password_target() -> None:
+            remaining("prove-password-target")
+            interaction.key("tab")
+            interaction.observe(
+                sign_in,
+                min(checkpoint_timeout, remaining("prove-password-target")),
+            )
+            interaction.observe(
+                sign_in,
+                min(checkpoint_timeout, remaining("prove-password-target")),
+            )
+
+        _run_local_reauthentication_operation(
+            "prove-password-target", prove_password_target)
+        _run_local_reauthentication_operation(
+            "type-secret", interaction.disable_durable_capture)
+        _run_local_reauthentication_operation(
+            "type-secret", lambda: (
+                remaining("type-secret"),
+                interaction.type_secret(credential),
+            ))
+        _run_local_reauthentication_operation(
+            "submit", lambda: (
+                remaining("submit"),
+                interaction.key("ret"),
+            ))
+        _run_local_reauthentication_operation(
+            "desktop",
+            lambda: interaction.observe_ephemeral(
+                desktop, min(
+                    checkpoint_timeout, remaining("desktop"))),
+        )
 
     def static_probe(self, action: str) -> Mapping[str, object]:
         if self._static_probe_poisoned:

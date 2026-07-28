@@ -95,8 +95,10 @@ class IdentityFailureDiagnostic:
         "WindowsControlSerialError",
         "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
+        "WindowsIdentityGuiError",
         "WindowsIdentityOrchestratorError",
         "WindowsJoinIsoError",
+        "WindowsLocalReauthenticationError",
         "WindowsPublicCommandError",
     })
 
@@ -126,8 +128,23 @@ class IdentityFailureDiagnostic:
         candidate = f"join-guest.{phase}"
         if phase not in {
             "serial-connect", "prepare", "attach", "launch", "marker-receive",
-            "media-destroy", "release", "result", "reboot-reauth",
+            "media-destroy", "release", "result-receive", "result-parse",
+            "result-ack", "accepted-receive", "accepted-parse",
+            "result", "reboot-reauth",
             "reboot-probe", "cleanup",
+            "result-guest-add-computer",
+            "result-guest-operator-assignment",
+            "result-guest-policy-mutation",
+            "result-guest-policy-readback",
+            "result-guest-policy-verification",
+            "result-guest-reboot-ack",
+        } and phase not in {
+            f"reboot-reauth-{operation}"
+            for operation in (
+                "wake", "calibration-capture", "calibration-required",
+                "select-local-account", "type-public-username",
+                "prove-password-target", "type-secret", "submit", "desktop",
+            )
         }:
             return cls("unknown-check", "unknown-operation", "UnexpectedError")
         if error_type not in cls._ERROR_TYPES:
@@ -211,8 +228,24 @@ class IdentityFailureDiagnostic:
                 and self.operation.startswith("join-guest.")
                 and self.operation.removeprefix("join-guest.") in {
                     "serial-connect", "prepare", "attach", "launch", "marker-receive",
-                    "media-destroy", "release", "result", "reboot-reauth",
+                    "media-destroy", "release", "result-receive",
+                    "result-parse", "result-ack", "accepted-receive",
+                    "accepted-parse", "result", "reboot-reauth",
                     "reboot-probe", "cleanup",
+                    "result-guest-add-computer",
+                    "result-guest-operator-assignment",
+                    "result-guest-policy-mutation",
+                    "result-guest-policy-readback",
+                    "result-guest-policy-verification",
+                    "result-guest-reboot-ack",
+                } | {
+                    f"reboot-reauth-{operation}"
+                    for operation in (
+                        "wake", "calibration-capture",
+                        "calibration-required", "select-local-account",
+                        "type-public-username", "prove-password-target",
+                        "type-secret", "submit", "desktop",
+                    )
                 }
             )
             and (self.check, self.operation)
@@ -243,6 +276,29 @@ class WindowsIdentityRunError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.diagnostic = diagnostic
+
+
+class WindowsLocalReauthenticationError(WindowsIdentityRunError):
+    """Secret-free, allowlisted coordinate for post-join GUI failures."""
+
+    _OPERATIONS = frozenset({
+        "wake",
+        "calibration-capture",
+        "calibration-required",
+        "select-local-account",
+        "type-public-username",
+        "prove-password-target",
+        "type-secret",
+        "submit",
+        "desktop",
+    })
+
+    def __init__(self, operation: str) -> None:
+        if operation not in self._OPERATIONS:
+            operation = "prove-password-target"
+        self.reauth_operation = operation
+        super().__init__(
+            f"post-join local reauthentication failed at {operation}")
 
 
 @dataclass(repr=False)

@@ -16,6 +16,56 @@ from homelab.tests.test_windows_identity_acceptance import details
 
 
 class WindowsIdentityOrchestratorTests(unittest.TestCase):
+    def test_reboot_reauthentication_preserves_gui_failure_type(self):
+        for error_type in (
+            "WindowsIdentityGuiError",
+            "WindowsLocalReauthenticationError",
+        ):
+            with self.subTest(error_type=error_type):
+                coordinate = subject.WindowsJoinFailureCoordinate(
+                    "reboot-reauth", error_type)
+                diagnostic = subject.IdentityFailureDiagnostic.join_guest(
+                    coordinate.phase, coordinate.error_type)
+
+                self.assertEqual("windows-joined", diagnostic.check)
+                self.assertEqual(
+                    "join-guest.reboot-reauth", diagnostic.operation)
+                self.assertEqual(error_type, diagnostic.error_type)
+
+    def test_reboot_reauthentication_maps_only_allowlisted_subphases(self):
+        forged_error_type = type(
+            "WindowsLocalReauthenticationError",
+            (RuntimeError,),
+            {},
+        )
+        for operation in sorted(subject._LOCAL_REAUTH_OPERATIONS):
+            with self.subTest(operation=operation):
+                error = subject.WindowsLocalReauthenticationError(operation)
+                coordinate = subject._local_reauthentication_coordinate(error)
+                self.assertEqual(
+                    f"reboot-reauth-{operation}", coordinate.phase)
+                self.assertEqual(
+                    "WindowsLocalReauthenticationError",
+                    coordinate.error_type)
+
+        forged = forged_error_type("private")
+        forged.reauth_operation = "private-arbitrary-value"
+        coordinate = subject._local_reauthentication_coordinate(forged)
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertEqual("UnexpectedError", coordinate.error_type)
+
+        unrelated = RuntimeError("private")
+        unrelated.reauth_operation = "wake"
+        coordinate = subject._local_reauthentication_coordinate(unrelated)
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertEqual("UnexpectedError", coordinate.error_type)
+
+        forged = forged_error_type("private")
+        forged.reauth_operation = "wake"
+        coordinate = subject._local_reauthentication_coordinate(forged)
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertEqual("UnexpectedError", coordinate.error_type)
+
     def test_join_stage_failure_is_rebound_to_secret_free_acceptance_coordinate(
         self,
     ):

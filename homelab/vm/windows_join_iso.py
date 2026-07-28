@@ -35,13 +35,27 @@ class WindowsJoinFailureCoordinate:
 
     _PHASES = frozenset({
         "serial-connect", "prepare", "attach", "launch", "marker-receive",
-        "media-destroy", "release", "result", "reboot-reauth",
+        "media-destroy", "release", "result-receive", "result-parse",
+        "result-ack", "accepted-receive", "accepted-parse",
+        "result", "reboot-reauth",
         "reboot-probe", "cleanup",
-    })
+        "result-guest-add-computer", "result-guest-operator-assignment",
+        "result-guest-policy-mutation", "result-guest-policy-readback",
+        "result-guest-policy-verification", "result-guest-reboot-ack",
+    }) | frozenset(
+        f"reboot-reauth-{operation}"
+        for operation in (
+            "wake", "calibration-capture", "calibration-required",
+            "select-local-account", "type-public-username",
+            "prove-password-target", "type-secret", "submit", "desktop",
+        )
+    )
     _ERROR_TYPES = frozenset({
         "OSError", "TimeoutError", "WindowsJoinIsoError",
-        "WindowsIdentityAdapterError", "WindowsIdentityOrchestratorError",
-        "WindowsPublicCommandError", "UnexpectedError",
+        "WindowsIdentityAdapterError", "WindowsIdentityGuiError",
+        "WindowsIdentityOrchestratorError",
+        "WindowsLocalReauthenticationError", "WindowsPublicCommandError",
+        "UnexpectedError",
     })
 
     def __post_init__(self) -> None:
@@ -68,6 +82,8 @@ def _join_error(phase: str, error: BaseException) -> WindowsJoinIsoError:
     error_type = type(error).__name__
     if isinstance(error, (TimeoutError, socket.timeout)):
         error_type = "TimeoutError"
+    elif isinstance(error, OSError):
+        error_type = "OSError"
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
     coordinate = WindowsJoinFailureCoordinate(phase, error_type)
@@ -108,6 +124,8 @@ class JoinMediaState(Enum):
     ATTACHED = "attached"
     DESTROYED_AWAITING_RELEASE = "destroyed-awaiting-release"
     RELEASED = "released"
+    REBOOT_READY = "reboot-ready"
+    REBOOT_ACCEPTED = "reboot-accepted"
 
 
 class DuplexJoinSerial:
@@ -151,7 +169,7 @@ class DuplexJoinSerial:
             raise WindowsJoinIsoError("join serial deadline expired")
         self.connection.settimeout(remaining)
 
-    def read_marker(self) -> str:
+    def _read_line(self, kind: str) -> str:
         if self.closed:
             raise WindowsJoinIsoError("join serial is closed")
         data = bytearray()
@@ -160,15 +178,21 @@ class DuplexJoinSerial:
             chunk = self.connection.recv(1)
             if not chunk:
                 raise WindowsJoinIsoError(
-                    "join serial closed before marker")
+                    f"join serial closed before {kind}")
             if chunk == b"\n":
                 try:
                     return data.rstrip(b"\r").decode("ascii")
                 except UnicodeDecodeError as error:
                     raise WindowsJoinIsoError(
-                        "join marker is not ASCII") from error
+                        f"join {kind} is not ASCII") from error
             data.extend(chunk)
-        raise WindowsJoinIsoError("join marker exceeds bound")
+        raise WindowsJoinIsoError(f"join {kind} exceeds bound")
+
+    def read_marker(self) -> str:
+        return self._read_line("marker")
+
+    def read_result(self) -> str:
+        return self._read_line("result")
 
     def send_release(self, line: str) -> None:
         if self.closed:
@@ -178,6 +202,9 @@ class DuplexJoinSerial:
             raise WindowsJoinIsoError("join release exceeds bound")
         self._set_operation_timeout()
         self.connection.sendall(encoded)
+
+    def send_reboot_ack(self, nonce: str) -> None:
+        self.send_release(f"TELOS_JOIN_REBOOT_ACK {nonce}")
 
     def close(self) -> None:
         if not self.closed:
@@ -537,9 +564,9 @@ class JoinMediaChannel:
         expected_domain: str,
     ) -> dict[str, object]:
         """Accept only a post-reboot, static-probe domain-membership proof."""
-        if self.state is not JoinMediaState.RELEASED:
+        if self.state is not JoinMediaState.REBOOT_ACCEPTED:
             raise WindowsJoinIsoError(
-                "join result cannot be proved before mutation release")
+                "join result cannot be proved before reboot acceptance")
         try:
             result = dict(probe())
         except BaseException as error:
@@ -568,6 +595,67 @@ class JoinMediaChannel:
             "operator": f"operator@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }
+
+    def accept_reboot_ready(self, result_line: str) -> None:
+        """Accept the nonce-bound guest result only after media release."""
+        if self.state is not JoinMediaState.RELEASED:
+            raise WindowsJoinIsoError(
+                "join reboot readiness cannot precede mutation release")
+        try:
+            result = json.loads(result_line)
+        except json.JSONDecodeError as error:
+            raise WindowsJoinIsoError(
+                "join reboot-ready result is invalid") from error
+        expected = {
+            "schema_version": 1,
+            "event": "join-reboot-ready",
+            "nonce": self.nonce,
+        }
+        if result == expected:
+            self.state = JoinMediaState.REBOOT_READY
+            return
+        guest_failure = {
+            "schema_version": 1,
+            "event": "join-reboot-failed",
+            "nonce": self.nonce,
+        }
+        phase = result.get("phase")
+        if (
+            set(result) == {*guest_failure, "phase"}
+            and all(result[name] == value for name, value in guest_failure.items())
+            and phase in {
+                "add-computer", "operator-assignment", "policy-mutation",
+                "policy-readback", "policy-verification", "reboot-ack",
+            }
+        ):
+            coordinate = WindowsJoinFailureCoordinate(
+                f"result-guest-{phase}", "WindowsJoinIsoError")
+            raise WindowsJoinIsoError(
+                "guest reported a pre-reboot join failure",
+                coordinate=coordinate,
+            )
+        else:
+            raise WindowsJoinIsoError(
+                "join reboot-ready result is invalid")
+
+    def accept_reboot_confirmation(self, result_line: str) -> None:
+        """Prove that the guest consumed the host's exact reboot ACK."""
+        if self.state is not JoinMediaState.REBOOT_READY:
+            raise WindowsJoinIsoError(
+                "join reboot acceptance cannot precede reboot readiness")
+        try:
+            result = json.loads(result_line)
+        except json.JSONDecodeError as error:
+            raise WindowsJoinIsoError(
+                "join reboot-accepted result is invalid") from error
+        if result != {
+            "schema_version": 1,
+            "event": "join-reboot-accepted",
+            "nonce": self.nonce,
+        }:
+            raise WindowsJoinIsoError(
+                "join reboot-accepted result is invalid")
+        self.state = JoinMediaState.REBOOT_ACCEPTED
 
 
 def execute_join_channel(
@@ -604,8 +692,33 @@ def execute_join_channel(
                 else "media-destroy"
             )
             raise _join_error(phase, error) from None
-        # Release exclusive COM1 ownership before any post-reboot static probe
-        # opens its own serial connection.
+        try:
+            result = serial.read_result()
+        except BaseException as error:
+            raise _join_error("result-receive", error) from None
+        try:
+            channel.accept_reboot_ready(result)
+        except BaseException as error:
+            if (
+                isinstance(error, WindowsJoinIsoError)
+                and error.coordinate is not None
+            ):
+                raise error from None
+            raise _join_error("result-parse", error) from None
+        try:
+            serial.send_reboot_ack(channel.nonce)
+        except BaseException as error:
+            raise _join_error("result-ack", error) from None
+        try:
+            accepted = serial.read_result()
+        except BaseException as error:
+            raise _join_error("accepted-receive", error) from None
+        try:
+            channel.accept_reboot_confirmation(accepted)
+        except BaseException as error:
+            raise _join_error("accepted-parse", error) from None
+        # The guest emits readiness after proving every pre-reboot mutation.
+        # Release COM1 before Restart-Computer and the later probes reuse it.
         serial.close()
     except BaseException:
         # The caller still owns channel and serial and may invoke cleanup or

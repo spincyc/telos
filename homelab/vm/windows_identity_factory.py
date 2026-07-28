@@ -280,10 +280,23 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
             if not evidence.is_dir():
                 raise WindowsIdentityFactoryError(
                     f"{name} retained evidence is unavailable")
+            expected_calibration_names = {
+                "post-join-generic-prompt.ppm",
+                "post-join-generic-prompt.json",
+                "post-join-password-target.ppm",
+                "post-join-password-target.json",
+            }
             if any(
                 path.is_symlink()
                 or not path.is_file()
-                or path.suffix != ".ppm"
+                or (
+                    name == "post-join-reauthentication"
+                    and path.name not in expected_calibration_names
+                )
+                or (
+                    name != "post-join-reauthentication"
+                    and path.suffix != ".ppm"
+                )
                 for path in evidence.iterdir()
             ):
                 raise WindowsIdentityFactoryError(
