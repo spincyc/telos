@@ -250,6 +250,13 @@ class WindowsInstallContractTests(unittest.TestCase):
             script.rindex('"256 GB" exit /b 22'),
             script.index('diskpart /s "%inputs%windows-layout.txt"'))
 
+    def test_startup_accepts_unqualified_standalone_smb_user(self):
+        script = render_startup(
+            self.authorization(),
+            install_source_unc=r"\\10.1.31.2\windows-release",
+            install_user="pxe-install")
+        self.assertIn('/user:"pxe-install"', script)
+
     def test_unattend_is_explicit_pro_us_partition_three_and_has_no_product_key(self):
         identity = SyntheticIdentity(
             "TELOS-WIN-01", "telosadmin", "SynthPass-123",
