@@ -165,6 +165,7 @@ class ControllerPrincipalSerial:
             b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
         )
         try:
+            console._send(b"", operation + "-shell-prompt-requested")
             console._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-shell-ready")
             console._send(command, operation + "-command-sent")

@@ -176,6 +176,8 @@ class ControllerJoinSerial:
             b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
         )
         try:
+            self.console._send(
+                b"", operation + "-shell-prompt-requested")
             self.console._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-shell-ready")
             self.console._send(command, operation + "-command-sent")

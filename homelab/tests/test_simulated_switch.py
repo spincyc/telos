@@ -186,6 +186,49 @@ class SimulatedSwitchTests(unittest.TestCase):
         thread.join(5)
         self.assertFalse(thread.is_alive())
 
+    def test_authenticated_peers_forward_before_complete_peer_set(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        third = bytes.fromhex("525400311103")
+        fabric = switch.ConcurrentSwitch(listener, [
+            switch.Port(1, "client", CLIENT),
+            switch.Port(2, "controller", CONTROLLER),
+            switch.Port(3, "later-peer", third),
+        ], accept_timeout=2, idle_timeout=5)
+        thread = threading.Thread(target=fabric.run)
+        thread.start()
+        controller = socket.create_connection(address)
+        controller.sendall(framed(
+            gateway.identity_announcement(CONTROLLER, "controller")))
+        client = socket.create_connection(address)
+        announcement = gateway.identity_announcement(CLIENT, "client")
+        client.sendall(framed(announcement))
+        self.assertEqual(receive(controller), announcement)
+        later = socket.create_connection(address)
+        later_announcement = gateway.identity_announcement(
+            third, "later-peer")
+        later.sendall(framed(later_announcement))
+        self.assertEqual(receive(controller), later_announcement)
+        self.assertEqual(
+            {receive(client), receive(client)},
+            {
+                gateway.identity_announcement(CONTROLLER, "controller"),
+                later_announcement,
+            },
+        )
+        self.assertEqual(
+            {receive(later), receive(later)},
+            {
+                gateway.identity_announcement(CONTROLLER, "controller"),
+                announcement,
+            },
+        )
+        controller.close()
+        client.close()
+        later.close()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
     def test_unconfigured_and_duplicate_source_macs_fail_closed(self):
         for first_mac, second_mac, message in (
             (bytes.fromhex("525400311199"), None, "unconfigured source MAC"),

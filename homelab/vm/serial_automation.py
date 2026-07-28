@@ -116,11 +116,18 @@ class SerialAutomation:
         )
         services = f"__TELOS_CONTROLLER_SERVICES_{self.token}=".encode()
         self._send(
-            b"__telos_rc=1; "
+            b"__telos_rc=3; "
             b"for __telos_try in $(seq 1 90); do "
-            b"if /usr/bin/systemctl is-active --quiet "
-            b"samba.service; then "
+            b"if /usr/bin/systemctl is-active --quiet samba.service; then "
             b"__telos_rc=0; break; fi; /usr/bin/sleep 1; done; "
+            b"if [ \"$__telos_rc\" -ne 0 ]; then "
+            b"if /usr/bin/systemctl is-failed --quiet samba.service; then "
+            b"__telos_rc=2; "
+            b"elif ! /usr/bin/systemctl list-unit-files samba.service "
+            b"--no-legend 2>/dev/null | /usr/bin/grep -q '^samba.service'; "
+            b"then __telos_rc=4; fi; "
+            b"if [ -f /var/lib/samba/private/sam.ldb ]; then "
+            b"__telos_rc=$((__telos_rc + 10)); fi; fi; "
             b"printf '\\n" + services + b"%s\\n' \"$__telos_rc\"",
             "controller-service-readiness-command-sent",
         )
@@ -129,8 +136,15 @@ class SerialAutomation:
             "controller-service-readiness-observed",
         )
         if int(match.group(1)) != 0:
+            code = int(match.group(1))
+            state = {
+                2: "failed", 3: "inactive", 4: "missing",
+                12: "failed", 13: "inactive", 14: "missing",
+            }.get(code, "unknown")
+            database = "present" if code >= 10 else "absent"
             raise SerialAutomationError(
-                "Controller services did not become ready")
+                "Controller AD service did not become ready "
+                f"(state={state}, database={database})")
 
     def release_password(self) -> None:
         """Drop the retained attempt-local Controller credential."""

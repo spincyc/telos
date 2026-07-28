@@ -27,6 +27,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
 
         def responder():
             stream = right.makefile("rb", buffering=0)
+            self.assertEqual(b"\n", stream.readline())
             right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
             command = stream.readline()
             observed.append(command)
