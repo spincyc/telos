@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:34:11Z"
+updated_at: "2026-07-28T01:38:03Z"
 ---
 
 # Goal
@@ -161,3 +161,9 @@ shell, then the startup batch exits and WinPE reboots. The batch now displays
 only non-secret phase names and its numeric fail-closed exit code, then pauses
 on failure for bounded screenshot capture. Disk authorization, capacity
 checks, and mutation ordering are unchanged.
+
+The diagnostic run reported fail-closed code 20 at the first disk-count check.
+The selected WinPE image lacks `findstr`; the optional parser utility failed,
+so no disk was counted. DiskPart itself succeeded and no mutation occurred.
+The parser now uses only `cmd.exe` built-ins to recognize en-US DiskPart rows,
+while preserving the exact disk number, count, and capacity requirements.
