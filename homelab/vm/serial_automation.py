@@ -132,6 +132,8 @@ class SerialAutomation:
         self.timeout = timeout
         token = uuid.uuid4().hex.encode("ascii")
         sudo_prompt = b"__TELOS_CONVERGE_SUDO_" + token + b"__"
+        begin = b"__TELOS_CONVERGENCE_BEGIN_" + token + b"__"
+        result = b"__TELOS_CONVERGENCE_RC_" + token + b"="
         release_prompt = b"__TELOS_RELEASE_SUDO_" + token + b"__"
         released = b"__TELOS_CONVERGENCE_RELEASED_" + token + b"="
         try:
@@ -141,10 +143,17 @@ class SerialAutomation:
                 "controller-convergence-shell-ready",
             )
             self._send(
-                b"sudo -k -p '" + sudo_prompt
+                b"printf '\\n" + begin + b"\\n'; "
+                b"sudo -k -S -p '" + sudo_prompt
                 + b"' /usr/bin/bash -c "
-                + shlex.quote(guest_command).encode("ascii"),
+                + shlex.quote(guest_command).encode("ascii")
+                + b" ; __telos_rc=$?; printf '\\n" + result
+                + b"%s\\n' \"$__telos_rc\"",
                 "controller-convergence-command-sent",
+            )
+            self._wait(
+                rb"(?:^|\n)" + re.escape(begin) + rb"\s*(?:\n|$)",
+                "controller-convergence-begin-observed",
             )
             self._wait(
                 rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
@@ -152,17 +161,32 @@ class SerialAutomation:
             )
             self._send(
                 self.password, "controller-convergence-sudo-password-sent")
-            self._wait(
-                rb"(?:^|\n)TELOS FACTORY CONTROLLER PASS\s*(?:\n|$)",
-                "controller-convergence-pass-observed",
-            )
+            passed = False
+            while True:
+                outcome = self._wait(
+                    rb"(?:^|\n)(?:"
+                    rb"(TELOS FACTORY CONTROLLER PASS)|"
+                    + re.escape(result) + rb"([0-9]+))\s*(?:\n|$)",
+                    "controller-convergence-outcome-observed",
+                )
+                if outcome.group(1) is not None:
+                    passed = True
+                    continue
+                returncode = int(outcome.group(2))
+                if returncode != 0:
+                    raise SerialAutomationError(
+                        f"Controller convergence returned {returncode}")
+                if not passed:
+                    raise SerialAutomationError(
+                        "Controller convergence returned without PASS")
+                break
             self._send(b"", "controller-convergence-prompt-requested")
             self._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$",
                 "controller-convergence-post-shell-ready",
             )
             self._send(
-                b"sudo -k -p '" + release_prompt
+                b"sudo -k -S -p '" + release_prompt
                 + b"' /usr/bin/umount /run/telos-factory; "
                 b"__telos_rc=$?; printf '\\n" + released
                 + b"%s\\n' \"$__telos_rc\"",

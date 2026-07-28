@@ -219,10 +219,17 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             observed.append(command)
             sudo = command.split(
                 b"__TELOS_CONVERGE_SUDO_", 1)[1].split(b"__", 1)[0]
+            begin = command.split(
+                b"__TELOS_CONVERGENCE_BEGIN_", 1)[1].split(b"__", 1)[0]
+            result = command.split(
+                b"__TELOS_CONVERGENCE_RC_", 1)[1].split(b"=", 1)[0]
             right.sendall(
-                b"\r\n__TELOS_CONVERGE_SUDO_" + sudo + b"__\r\n")
+                b"\r\n__TELOS_CONVERGENCE_BEGIN_" + begin + b"__\r\n"
+                b"__TELOS_CONVERGE_SUDO_" + sudo + b"__\r\n")
             observed.append(stream.readline())
-            right.sendall(b"TELOS FACTORY CONTROLLER PASS\r\n")
+            right.sendall(
+                b"TELOS FACTORY CONTROLLER PASS\r\n"
+                b"__TELOS_CONVERGENCE_RC_" + result + b"=0\r\n")
             self.assertEqual(b"\n", stream.readline())
             right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
             release = stream.readline()
@@ -265,8 +272,8 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertEqual(password + b"\n", observed[3])
         self.assertIn(b"umount /run/telos-factory", observed[2])
         self.assertIn(b"systemctl is-active --quiet samba.service", observed[4])
-        self.assertEqual(guest_command, shlex.split(
-            observed[0].decode("ascii").strip())[-1])
+        words = shlex.split(observed[0].decode("ascii").strip())
+        self.assertEqual(guest_command, words[words.index("-c") + 1])
 
 
 if __name__ == "__main__":
