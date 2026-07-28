@@ -256,6 +256,10 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertLess(
             script.rindex('"256 GB" exit /b 22'),
             script.index('diskpart /s "%inputs%windows-layout.txt"'))
+        self.assertIn(
+            "LabConfig /v BypassTPMCheck /t REG_DWORD /d 1", script)
+        self.assertIn(
+            "LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1", script)
 
     def test_startup_accepts_unqualified_standalone_smb_user(self):
         script = render_startup(
