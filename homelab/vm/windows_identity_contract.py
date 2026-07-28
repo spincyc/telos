@@ -40,7 +40,8 @@ def qemu_identity_command(
             "if=none,id=osdisk,format=qcow2,cache=none,"
             f"file={disk.resolve()}"
         ),
-        "-device", f"nvme,drive=osdisk,serial={DISK_SERIAL}",
+        "-device",
+        f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1",
     ]
     if control_iso is not None:
         if control_iso.is_symlink() or not control_iso.is_file():
@@ -68,9 +69,14 @@ def qemu_identity_command(
     joined = " ".join(command)
     if (
         "once=n" in joined
-        or "bootindex=" in joined
+        or joined.count("bootindex=") != 1
         or command[command.index("-boot") + 1]
         != "order=c,menu=off,strict=on"
+        or not any(
+            value
+            == f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1"
+            for value in command
+        )
         or not any(
             value.startswith("e1000e,") and value.endswith(",romfile=")
             for value in command

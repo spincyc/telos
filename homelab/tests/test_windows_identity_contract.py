@@ -24,10 +24,18 @@ class WindowsIdentityContractTests(unittest.TestCase):
             joined = " ".join(command)
             self.assertIn("order=c,menu=off,strict=on", joined)
             self.assertNotIn("once=n", joined)
-            self.assertNotIn("bootindex=", joined)
+            self.assertEqual(1, joined.count("bootindex="))
+            self.assertIn(
+                "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=1",
+                command,
+            )
             self.assertIn("-boot order=c,menu=off,strict=on", joined)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn(",romfile=", joined)
+            nic = next(
+                value for value in command
+                if value.startswith("e1000e,netdev=factory,"))
+            self.assertNotIn("bootindex=", nic)
             self.assertIn(f"file={disk.resolve()}", joined)
             self.assertIn(f"file={control.resolve()}", joined)
             self.assertIn("media=cdrom,readonly=on", joined)

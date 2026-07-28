@@ -99,6 +99,11 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 (attempt / "qemu-command.json").read_text())["argv"]
             self.assertIn("order=c,menu=off,strict=on", " ".join(command))
             self.assertNotIn("once=n", " ".join(command))
+            self.assertEqual(1, " ".join(command).count("bootindex="))
+            self.assertIn(
+                "nvme,drive=osdisk,serial=TELOS-WIN-0001,bootindex=1",
+                command,
+            )
             self.assertIn(",romfile=", " ".join(command))
             self.assertIn("readonly=on", " ".join(command))
             self.assertIn(

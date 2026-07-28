@@ -400,6 +400,11 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     "server=on,wait=off"
                 ),
                 "-drive", "file=/private/windows.qcow2",
+                "-device",
+                (
+                    "nvme,drive=osdisk,serial=TELOS-WIN-0001,"
+                    "bootindex=1"
+                ),
                 "-netdev",
                 "socket,id=factory,connect=127.0.0.1:31415",
             ]
@@ -414,6 +419,11 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     "server=on,wait=off"
                 ),
                 "-drive", "file=/private/windows.qcow2",
+                "-device",
+                (
+                    "nvme,drive=osdisk,serial=TELOS-WIN-0001,"
+                    "bootindex=1"
+                ),
                 "-netdev",
                 "socket,id=factory,connect=127.0.0.1:43119",
             ]
@@ -451,6 +461,42 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                         WindowsIdentityRunError, "authorized template"):
                     boundary.start_windows()
             popen.assert_not_called()
+
+            for label, mutate in (
+                (
+                    "missing",
+                    lambda value: value.replace(",bootindex=1", ""),
+                ),
+                (
+                    "changed",
+                    lambda value: value.replace(
+                        ",bootindex=1", ",bootindex=2"),
+                ),
+                (
+                    "duplicate",
+                    lambda value: value + ",bootindex=1",
+                ),
+            ):
+                with self.subTest(bootindex=label):
+                    boundary.authorized_command = authorized
+                    tampered = list(runtime)
+                    device_index = next(
+                        index for index, value in enumerate(tampered)
+                        if value.startswith("nvme,drive=osdisk,")
+                    )
+                    tampered[device_index] = mutate(tampered[device_index])
+                    with (
+                        mock.patch.object(
+                            windows_identity_run, "qemu_identity_command",
+                            return_value=tampered),
+                        mock.patch.object(
+                            windows_identity_run.subprocess, "Popen") as popen,
+                    ):
+                        with self.assertRaisesRegex(
+                                WindowsIdentityRunError,
+                                "authorized template"):
+                            boundary.start_windows()
+                    popen.assert_not_called()
 
             boundary.authorized_command = authorized
             tampered = list(runtime)
