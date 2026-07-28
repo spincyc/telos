@@ -7,7 +7,6 @@ from homelab.vm import windows_identity_cli
 from homelab.tests.windows_identity_fixture import (
     write_prepared_authorization,
 )
-from homelab.vm.windows_identity_run import IdentityReceipt
 
 
 class WindowsIdentityCliTests(unittest.TestCase):
@@ -41,26 +40,49 @@ class WindowsIdentityCliTests(unittest.TestCase):
             " ".join(str(call) for call in output.call_args_list),
         )
 
-    def test_apply_delegates_to_core_lifecycle(self):
+    def test_apply_delegates_to_strict_production_acceptance(self):
         with tempfile.TemporaryDirectory() as name:
             attempt, controller = self.private_attempt(Path(name))
-            operations = mock.sentinel.operations
-            factory = mock.Mock(return_value=operations)
+            configuration = windows_identity_cli.AcceptanceConfiguration(
+                rotation_plan=mock.sentinel.rotation_plan,
+                publication=Path(name) / "publication.iso",
+                private_root=Path(name),
+                evidence=Path(name) / "evidence.jsonl",
+                realm="FACTORY.TEST",
+                callbacks=mock.sentinel.callbacks,
+                stage_principals=mock.sentinel.stage_principals,
+                destroy_principals=mock.sentinel.destroy_principals,
+                stage_join_principal=mock.sentinel.stage_join_principal,
+                destroy_join_principal=mock.sentinel.destroy_join_principal,
+            )
+            factory = mock.Mock(return_value=configuration)
             with mock.patch.object(
-                windows_identity_cli, "run_lifecycle",
-                return_value=IdentityReceipt(),
-            ) as lifecycle:
+                windows_identity_cli, "execute_windows_identity_acceptance",
+            ) as acceptance:
                 result = windows_identity_cli.main(
                     [
                         "--attempt", str(attempt),
                         "--controller-state", str(controller),
                         "--apply",
                     ],
-                    operations_factory=factory,
+                    acceptance_factory=factory,
                 )
         self.assertEqual(0, result)
         factory.assert_called_once()
-        lifecycle.assert_called_once_with(operations)
+        boundary = factory.call_args.args[0]
+        acceptance.assert_called_once_with(
+            boundary=boundary,
+            rotation_plan=configuration.rotation_plan,
+            publication=configuration.publication,
+            private_root=configuration.private_root,
+            evidence=configuration.evidence,
+            realm=configuration.realm,
+            callbacks=configuration.callbacks,
+            stage_principals=configuration.stage_principals,
+            destroy_principals=configuration.destroy_principals,
+            stage_join_principal=configuration.stage_join_principal,
+            destroy_join_principal=configuration.destroy_join_principal,
+        )
 
     def test_apply_without_live_adapter_fails_closed(self):
         with tempfile.TemporaryDirectory() as name:
@@ -70,6 +92,38 @@ class WindowsIdentityCliTests(unittest.TestCase):
                 "--controller-state", str(controller),
                 "--apply",
             ])
+        self.assertEqual(2, result)
+
+    def test_production_acceptance_refusal_is_reported(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            configuration = windows_identity_cli.AcceptanceConfiguration(
+                rotation_plan=mock.sentinel.rotation_plan,
+                publication=Path(name) / "publication.iso",
+                private_root=Path(name),
+                evidence=Path(name) / "evidence.jsonl",
+                realm="FACTORY.TEST",
+                callbacks=mock.sentinel.callbacks,
+                stage_principals=mock.sentinel.stage_principals,
+                destroy_principals=mock.sentinel.destroy_principals,
+                stage_join_principal=mock.sentinel.stage_join_principal,
+                destroy_join_principal=mock.sentinel.destroy_join_principal,
+            )
+            with mock.patch.object(
+                windows_identity_cli,
+                "execute_windows_identity_acceptance",
+                side_effect=(
+                    windows_identity_cli.WindowsIdentityOrchestratorError(
+                        "observation unavailable")),
+            ):
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=lambda _boundary: configuration,
+                )
         self.assertEqual(2, result)
 
 
