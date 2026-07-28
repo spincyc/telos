@@ -168,7 +168,7 @@ class SerialAutomation:
                     rb"(?:^|\n)(?:"
                     rb"TELOS FACTORY STEP ([a-z-]+)|"
                     rb"(TELOS FACTORY CONTROLLER PASS)|"
-                    + re.escape(result) + rb"([0-9]+))\s*(?:\n|$)",
+                    + re.escape(result) + rb"([0-9]+))\s*\n",
                     "controller-convergence-outcome-observed",
                 )
                 if outcome.group(1) is not None:

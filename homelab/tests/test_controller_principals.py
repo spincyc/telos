@@ -11,7 +11,10 @@ from homelab.vm.controller_principals import (
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
 )
-from homelab.vm.serial_automation import SerialAutomation
+from homelab.vm.serial_automation import (
+    SerialAutomation,
+    SerialAutomationError,
+)
 from homelab.vm.controller_factory import FactoryBundle
 
 
@@ -274,6 +277,52 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertIn(b"systemctl is-active --quiet samba.service", observed[4])
         words = shlex.split(observed[0].decode("ascii").strip())
         self.assertEqual(guest_command, words[words.index("-c") + 1])
+
+    def test_convergence_waits_for_complete_stage_line(self):
+        left, right = socket.socketpair()
+        password = b"Controller-private-47!"
+
+        def responder():
+            stream = right.makefile("rb", buffering=0)
+            self.assertEqual(b"\n", stream.readline())
+            right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            command = stream.readline()
+            sudo = command.split(
+                b"__TELOS_CONVERGE_SUDO_", 1)[1].split(b"__", 1)[0]
+            begin = command.split(
+                b"__TELOS_CONVERGENCE_BEGIN_", 1)[1].split(b"__", 1)[0]
+            result = command.split(
+                b"__TELOS_CONVERGENCE_RC_", 1)[1].split(b"=", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_CONVERGENCE_BEGIN_" + begin + b"__\r\n"
+                b"__TELOS_CONVERGE_SUDO_" + sudo + b"__\r\n")
+            self.assertEqual(password + b"\n", stream.readline())
+            for byte in (
+                b"TELOS FACTORY STEP time-sync\r\n"
+                b"__TELOS_CONVERGENCE_RC_" + result + b"=1\r\n"
+            ):
+                right.sendall(bytes((byte,)))
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            console = SerialAutomation(
+                left.makefile("rb", buffering=0),
+                left.makefile("wb", buffering=0),
+                password,
+                timeout=1,
+            )
+            with self.assertRaisesRegex(
+                SerialAutomationError,
+                r"returned 1 after time-sync$",
+            ):
+                console.converge_disposable_controller(
+                    FactoryBundle.guest_command("a" * 64))
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
 
 
 if __name__ == "__main__":
