@@ -8,7 +8,14 @@ import ipaddress
 import socket
 import struct
 
-from .simulated_gateway import checksum, ethernet, ipv4, receive_exact, udp
+from .simulated_gateway import (
+    checksum,
+    ethernet,
+    identity_announcement,
+    ipv4,
+    receive_exact,
+    udp,
+)
 
 
 DEPENDENCIES = {
@@ -103,6 +110,8 @@ class DependencyPeer:
 def connect_peer(role: str, switch_port: int) -> None:
     peer = DependencyPeer(role)
     with socket.create_connection(("127.0.0.1", switch_port)) as connection:
+        announcement = identity_announcement(peer.mac, role)
+        connection.sendall(struct.pack("!I", len(announcement)) + announcement)
         while True:
             header = receive_exact(connection, 4)
             if header is None:

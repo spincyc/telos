@@ -71,6 +71,8 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
         authorization_path.chmod(0o600)
         boundary = NativeProcessBoundary(attempt, controller)
         boundary._validate()
+        boundary.controller_console = mock.Mock(
+            password=b"Synthetic-Controller-Fixture-47!")
         return boundary, bundle
 
     def test_builds_exact_default_configuration_and_scanner(self):

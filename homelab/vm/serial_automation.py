@@ -61,6 +61,81 @@ class SerialAutomation:
         self.events: list[str] = []
         self.token = uuid.uuid4().hex
 
+    def establish_disposable_controller_session(self) -> None:
+        """Start systemd and authenticate one attempt-local Controller shell."""
+        if self.password is None:
+            raise SerialAutomationError(
+                "Controller session credential is unavailable")
+        marker = f"__TELOS_CONTROLLER_INIT_{self.token}__".encode()
+        self._wait(rb"(?:^|\n)[^\n]*#\s*$", "disposable-init-shell")
+        self._send(
+            b"/usr/bin/mount -o remount,rw / && "
+            b"/usr/bin/findmnt -no OPTIONS / | /usr/bin/grep -qw rw && "
+            b"/usr/bin/printf '\\n" + marker + b"\\n'",
+            "controller-root-remount-command-sent",
+        )
+        self._wait(
+            rb"(?:^|\n)" + re.escape(marker) + rb"\s*(?:\n|$)",
+            "controller-root-remount-confirmed",
+        )
+        self._wait(rb"(?:^|\n)[^\n]*#\s*$", "controller-init-shell-ready")
+        self._send(
+            b"/usr/bin/passwd local-rescue",
+            "controller-passwd-command-sent",
+        )
+        self._wait(rb"New password:\s*$", "controller-new-password-prompt")
+        self._send(self.password, "controller-new-password-sent")
+        self._wait(
+            rb"Retype new password:\s*$",
+            "controller-password-confirm-prompt",
+        )
+        self._send(self.password, "controller-password-confirm-sent")
+        self._wait(
+            rb"(?:^|\n)passwd: password updated successfully\s*(?:\n|$)",
+            "controller-password-updated",
+        )
+        self._wait(
+            rb"(?:^|\n)[^\n]*#\s*$", "controller-post-passwd-init-shell")
+        self._send(
+            b"exec /usr/lib/systemd/systemd",
+            "controller-systemd-exec-sent",
+        )
+        self._wait(
+            rb"(?:^|\n)bootstrap-dc login:\s*$",
+            "controller-login-prompt",
+        )
+        self._send(b"local-rescue", "controller-username-sent")
+        self._wait(
+            rb"(?:^|\n)Password:\s*$",
+            "controller-login-password-prompt",
+        )
+        self._send(self.password, "controller-login-password-sent")
+        self._wait(
+            rb"(?:^|\n)[^\n]*local-rescue[^\n]*\$\s*$",
+            "controller-shell-ready",
+        )
+        services = f"__TELOS_CONTROLLER_SERVICES_{self.token}=".encode()
+        self._send(
+            b"__telos_rc=1; "
+            b"for __telos_try in $(seq 1 90); do "
+            b"if /usr/bin/systemctl is-active --quiet "
+            b"samba.service; then "
+            b"__telos_rc=0; break; fi; /usr/bin/sleep 1; done; "
+            b"printf '\\n" + services + b"%s\\n' \"$__telos_rc\"",
+            "controller-service-readiness-command-sent",
+        )
+        match = self._wait(
+            rb"(?:^|\n)" + re.escape(services) + rb"([0-9]+)\s*(?:\n|$)",
+            "controller-service-readiness-observed",
+        )
+        if int(match.group(1)) != 0:
+            raise SerialAutomationError(
+                "Controller services did not become ready")
+
+    def release_password(self) -> None:
+        """Drop the retained attempt-local Controller credential."""
+        self.password = None
+
     def _send(self, value: bytes, event: str) -> None:
         self.writer.write(value + b"\n")
         self.writer.flush()

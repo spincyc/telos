@@ -19,6 +19,8 @@ class _Process:
     def __init__(self, pid, *, returncode=None):
         self.pid = pid
         self.returncode = returncode
+        self.stdout = mock.Mock()
+        self.stdin = mock.Mock()
 
     def poll(self):
         return self.returncode
@@ -101,6 +103,8 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     windows_identity_run, "DisposableBootDisk",
                     return_value=disposable),
                 mock.patch.object(
+                    windows_identity_run, "SerialAutomation") as automation,
+                mock.patch.object(
                     windows_identity_run.subprocess, "Popen",
                     side_effect=popen),
                 mock.patch.object(
@@ -120,6 +124,9 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 boundary.start_controller()
                 boundary.authorized_command = ["windows"]
                 boundary.start_windows()
+
+            automation.return_value.establish_disposable_controller_session\
+                .assert_called_once_with()
 
             try:
                 milestones = [

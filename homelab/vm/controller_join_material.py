@@ -156,6 +156,12 @@ class ControllerJoinSerial:
         token = uuid.uuid4().hex.encode("ascii")
         ready = b"__TELOS_JOIN_READY_" + token + b"__"
         result = b"__TELOS_JOIN_RC_" + token + b"="
+        sudo_prompt = b"__TELOS_JOIN_SUDO_" + token + b"__"
+        sudo = (
+            b"sudo -n"
+            if self.console.password is None
+            else b"sudo -k -p '" + sudo_prompt + b"'"
+        )
         command = (
             b"trap 'stty echo' INT TERM EXIT; "
             b"stty -echo || exit 91; "
@@ -163,9 +169,9 @@ class ControllerJoinSerial:
             b"IFS= read -r __telos_payload; "
             b"stty echo; trap - INT TERM EXIT; "
             b"printf '%s' \"$__telos_payload\" | base64 -d | "
-            b"sudo -n python3 -c \"import base64;"
+            + sudo + b" python3 -c \"import os;os.close(2);import base64;"
             b"exec(base64.b64decode('"
-            + _encoded_program(program) + b"'))\" 2>/dev/null; "
+            + _encoded_program(program) + b"'))\"; "
             b"__telos_rc=$?; unset __telos_payload; "
             b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
         )
@@ -180,6 +186,15 @@ class ControllerJoinSerial:
                 payload, sort_keys=True, separators=(",", ":"),
             ).encode("utf-8"))
             self.console._send(wire, operation + "-secret-input-sent")
+            if self.console.password is not None:
+                self.console._wait(
+                    rb"(?:^|\n)" + re.escape(sudo_prompt) + rb"\s*$",
+                    operation + "-sudo-password-prompt",
+                )
+                self.console._send(
+                    self.console.password,
+                    operation + "-sudo-password-sent",
+                )
             match = self.console._wait(
                 rb"(?:^|\n)" + re.escape(result)
                 + rb"([0-9]+)\s*(?:\n|$)",

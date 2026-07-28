@@ -10,6 +10,7 @@ from homelab.vm.controller_principals import (
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
 )
+from homelab.vm.serial_automation import SerialAutomation
 
 
 VALUES = {
@@ -20,7 +21,7 @@ VALUES = {
 
 
 class ControllerPrincipalSerialTests(unittest.TestCase):
-    def run_operation(self, invoke, returncode=0):
+    def run_operation(self, invoke, returncode=0, sudo_password=None):
         left, right = socket.socketpair()
         observed = []
 
@@ -41,6 +42,12 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                 b"__TELOS_PRINCIPAL_READY_" + token + b"__\r\n")
             payload = stream.readline()
             observed.append(payload)
+            if sudo_password is not None:
+                prompt = command.split(
+                    b"__TELOS_PRINCIPAL_SUDO_", 1)[1].split(b"__", 1)[0]
+                right.sendall(
+                    b"\r\n__TELOS_PRINCIPAL_SUDO_" + prompt + b"__\r\n")
+                observed.append(stream.readline())
             right.sendall(
                 b"\r\n__TELOS_PRINCIPAL_RC_" + result + b"="
                 + str(returncode).encode() + b"\r\n")
@@ -53,6 +60,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                 left.makefile("wb", buffering=0),
                 timeout=1,
             )
+            serial.console.password = sudo_password
             result = invoke(serial)
         finally:
             left.close()
@@ -68,7 +76,8 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertEqual(tuple(VALUES), result.principals)
         self.assertIn(b"stty -echo || exit 91", observed[0])
         self.assertIn(b"sudo -n python3", observed[0])
-        self.assertIn(b"2>/dev/null", observed[0])
+        self.assertIn(b"os.close(2)", observed[0])
+        self.assertNotIn(b"2>/dev/null", observed[0])
         self.assertNotIn(b"samba-tool", observed[0])
         self.assertEqual(
             VALUES,
@@ -91,6 +100,16 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertFalse(any(
             secret.encode() in b"".join(observed)
             for secret in VALUES.values()))
+
+    def test_password_authenticated_sudo_is_secret_safe(self):
+        password = b"Controller-private-47!"
+        result, observed = self.run_operation(
+            lambda serial: serial.stage(VALUES), sudo_password=password)
+        self.assertEqual("stage", result.operation)
+        self.assertIn(b"sudo -k -p", observed[0])
+        self.assertNotIn(b"sudo -S", observed[0])
+        self.assertNotIn(password, observed[0])
+        self.assertEqual(password + b"\n", observed[2])
 
     def test_result_shape_cannot_retain_payload_or_transcript(self):
         self.assertEqual(
@@ -129,6 +148,67 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         finally:
             left.close()
             right.close()
+
+    def test_disposable_controller_session_starts_systemd_and_logs_in(self):
+        left, right = socket.socketpair()
+        password = b"Controller-private-47!"
+        observed = []
+
+        def responder():
+            stream = right.makefile("rb", buffering=0)
+            right.sendall(b"bash-5.2# ")
+            remount = stream.readline()
+            observed.append(remount)
+            marker = remount.split(
+                b"__TELOS_CONTROLLER_INIT_", 1)[1].split(b"__", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_CONTROLLER_INIT_" + marker + b"__\r\n"
+                b"bash-5.2# ")
+            observed.append(stream.readline())
+            right.sendall(b"New password: ")
+            observed.append(stream.readline())
+            right.sendall(b"Retype new password: ")
+            observed.append(stream.readline())
+            right.sendall(
+                b"passwd: password updated successfully\r\nbash-5.2# ")
+            observed.append(stream.readline())
+            right.sendall(b"bootstrap-dc login: ")
+            observed.append(stream.readline())
+            right.sendall(b"Password: ")
+            observed.append(stream.readline())
+            right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            services = stream.readline()
+            observed.append(services)
+            token = services.split(
+                b"__TELOS_CONTROLLER_SERVICES_", 1)[1].split(b"=", 1)[0]
+            right.sendall(
+                b"\r\n__TELOS_CONTROLLER_SERVICES_" + token + b"=0\r\n")
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            console = SerialAutomation(
+                left.makefile("rb", buffering=0),
+                left.makefile("wb", buffering=0),
+                password,
+                timeout=1,
+            )
+            console.establish_disposable_controller_session()
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertIn(b"mount -o remount,rw /", observed[0])
+        self.assertEqual(b"/usr/bin/passwd local-rescue\n", observed[1])
+        self.assertEqual(password + b"\n", observed[2])
+        self.assertEqual(password + b"\n", observed[3])
+        self.assertEqual(
+            b"exec /usr/lib/systemd/systemd\n", observed[4])
+        self.assertEqual(b"local-rescue\n", observed[5])
+        self.assertEqual(password + b"\n", observed[6])
+        self.assertNotIn(password, observed[0])
+        self.assertIn(b"systemctl is-active --quiet", observed[7])
 
 
 if __name__ == "__main__":

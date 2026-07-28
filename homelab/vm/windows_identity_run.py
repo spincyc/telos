@@ -28,6 +28,7 @@ from .factory_runner import (
     wait_for_switch_port,
 )
 from .signal_cleanup import RunInterrupted, terminate_children
+from .serial_automation import SerialAutomation, SerialAutomationError
 from .simulated_topology import audit_live_process, controller_command
 from .windows_gui import QmpClient
 from .windows_identity_contract import qemu_identity_command
@@ -90,6 +91,7 @@ class NativeProcessBoundary:
         self.authorized_command: list[str] | None = None
         self.suspended_processes: set[str] = set()
         self.dependency_endpoints: dict[str, tuple[str, int]] = {}
+        self.controller_console: SerialAutomation | None = None
 
     @staticmethod
     def _normalized_command(command: list[str]) -> list[str]:
@@ -346,6 +348,21 @@ class NativeProcessBoundary:
                 disposable_vars=self.controller_overlay.vars,
                 forbidden_paths=(canonical["disk"], canonical["vars"]),
             )
+            if process.stdout is None or process.stdin is None:
+                raise WindowsIdentityRunError(
+                    "Controller serial console is unavailable")
+            password = (
+                "Synthetic-Controller-" + secrets.token_urlsafe(24) + "-47!"
+            ).encode("ascii")
+            console = SerialAutomation(
+                process.stdout, process.stdin, password, timeout=120.0)
+            try:
+                console.establish_disposable_controller_session()
+            except SerialAutomationError as error:
+                console.release_password()
+                raise WindowsIdentityRunError(
+                    "Controller session initialization failed") from error
+            self.controller_console = console
             wait_for_switch_port(self.runtime / "switch.jsonl", "controller")
         except BaseException:
             self.stop_controller()
@@ -553,6 +570,9 @@ class NativeProcessBoundary:
 
     def stop_controller(self) -> None:
         failures = []
+        if self.controller_console is not None:
+            self.controller_console.release_password()
+        self.controller_console = None
         try:
             self._stop("controller")
         except BaseException as error:

@@ -50,10 +50,14 @@ class SimulatedSwitchTests(unittest.TestCase):
         ], idle_timeout=5)
         thread = threading.Thread(target=fabric.run)
         thread.start()
-        client = socket.create_connection(address)
         controller = socket.create_connection(address)
+        controller_announcement = gateway.identity_announcement(
+            CONTROLLER, "controller")
+        controller.sendall(framed(controller_announcement))
+        client = socket.create_connection(address)
         broadcast = gateway.ethernet(b"\xff" * 6, CLIENT, 0x88b5, b"x")
         client.sendall(framed(broadcast))
+        self.assertEqual(receive(client), controller_announcement)
         self.assertEqual(receive(controller), broadcast)
         unicast = gateway.ethernet(CLIENT, CONTROLLER, 0x88b5, b"y")
         controller.sendall(framed(unicast))
@@ -73,6 +77,7 @@ class SimulatedSwitchTests(unittest.TestCase):
         thread.start()
         self.assertEqual(__import__("os").read(read_fd, 6), b"READY\n")
         client = socket.create_connection(listener.getsockname())
+        client.sendall(framed(gateway.identity_announcement(CLIENT, "client")))
         receipt = bytearray()
         while True:
             part = __import__("os").read(read_fd, 4096)
@@ -120,7 +125,15 @@ class SimulatedSwitchTests(unittest.TestCase):
             thread = threading.Thread(target=fabric.run)
             thread.start()
             client = socket.create_connection(address)
+            client.sendall(framed(
+                gateway.identity_announcement(CLIENT, "client")))
             controller = socket.create_connection(address)
+            controller.sendall(framed(
+                gateway.identity_announcement(CONTROLLER, "controller")))
+            self.assertEqual(receive(controller), gateway.identity_announcement(
+                CLIENT, "client"))
+            self.assertEqual(receive(client), gateway.identity_announcement(
+                CONTROLLER, "controller"))
             wrong = gateway.ethernet(
                 b"\xff" * 6, CONTROLLER, 0x88b5, b"spoof")
             client.sendall(framed(wrong))
@@ -146,6 +159,58 @@ class SimulatedSwitchTests(unittest.TestCase):
             self.assertEqual(dhcp[0]["peer"], "controller")
             self.assertEqual(events[-1]["event"], "switch-summary")
             self.assertEqual(events[-1]["blocked"], 1)
+
+    def test_reversed_arrival_binds_each_configured_source_mac(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        fabric = switch.ConcurrentSwitch(listener, [
+            switch.Port(1, "client", CLIENT),
+            switch.Port(2, "controller", CONTROLLER),
+        ], idle_timeout=5)
+        thread = threading.Thread(target=fabric.run)
+        thread.start()
+        controller = socket.create_connection(address)
+        controller.sendall(framed(
+            gateway.identity_announcement(CONTROLLER, "controller")))
+        client = socket.create_connection(address)
+        client.sendall(framed(
+            gateway.identity_announcement(CLIENT, "client")))
+        self.assertEqual(
+            receive(client),
+            gateway.identity_announcement(CONTROLLER, "controller"))
+        self.assertEqual(
+            receive(controller),
+            gateway.identity_announcement(CLIENT, "client"))
+        controller.close()
+        client.close()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
+    def test_unconfigured_and_duplicate_source_macs_fail_closed(self):
+        for first_mac, second_mac, message in (
+            (bytes.fromhex("525400311199"), None, "unconfigured source MAC"),
+            (CLIENT, CLIENT, "duplicate switch peer"),
+        ):
+            with self.subTest(message=message):
+                listener = self.listener()
+                address = listener.getsockname()
+                fabric = switch.ConcurrentSwitch(listener, [
+                    switch.Port(1, "client", CLIENT),
+                    switch.Port(2, "controller", CONTROLLER),
+                ], accept_timeout=1, idle_timeout=1)
+                first = socket.create_connection(address)
+                first.sendall(framed(
+                    gateway.identity_announcement(first_mac, "peer")))
+                second = None
+                if second_mac is not None:
+                    second = socket.create_connection(address)
+                    second.sendall(framed(
+                        gateway.identity_announcement(second_mac, "peer")))
+                with self.assertRaisesRegex(RuntimeError, message):
+                    fabric.run()
+                first.close()
+                if second is not None:
+                    second.close()
 
     @staticmethod
     def _discover(mac):

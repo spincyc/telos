@@ -147,6 +147,8 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                     mock.patch(
                         "homelab.vm.windows_identity_run.audit_live_process"), \
                     mock.patch(
+                        "homelab.vm.windows_identity_run.SerialAutomation"), \
+                    mock.patch(
                         "homelab.vm.windows_identity_run.DisposableBootDisk"
                     ) as boot_disk:
                 boot_disk.return_value.prepare.return_value = overlay

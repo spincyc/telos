@@ -431,9 +431,11 @@ class NativeWindowsAcceptanceAdapter:
 
     def _shared_controller_console(self) -> SerialAutomation:
         if self._controller_console is None:
-            reader, writer = self._controller_streams()
-            self._controller_console = SerialAutomation(
-                reader, writer, None, timeout=self.timeout)
+            console = self.boundary.controller_console
+            if console is None:
+                raise WindowsIdentityAdapterError(
+                    "initialized Controller serial console is unavailable")
+            self._controller_console = console
         return self._controller_console
 
     def stage_principals(

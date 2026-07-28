@@ -156,7 +156,8 @@ class ConcurrentSwitch:
 
     def _accept(self) -> None:
         deadline = time.monotonic() + self.accept_timeout
-        for port in self.ports:
+        ports_by_mac = {port.mac: port for port in self.ports}
+        for _ in self.ports:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("timed out waiting for all switch peers")
@@ -165,8 +166,27 @@ class ConcurrentSwitch:
             if address[0] != "127.0.0.1":
                 connection.close()
                 raise RuntimeError("refusing non-loopback peer")
+            connection.settimeout(remaining)
+            try:
+                frame = self._authentication_frame(connection, deadline)
+            except BaseException:
+                connection.close()
+                raise
+            observed = frame[6:12]
+            port = ports_by_mac.get(observed)
+            if port is None:
+                connection.close()
+                raise RuntimeError(
+                    "refusing switch peer with unconfigured source MAC "
+                    f"{mac_text(observed)}")
+            if port.number in self.connections:
+                connection.close()
+                raise RuntimeError(
+                    f"refusing duplicate switch peer for {port.name} "
+                    f"{mac_text(observed)}")
             connection.settimeout(1.0)
             self.connections[port.number] = connection
+            self.incoming.put_nowait((port.number, frame))
             self.evidence.write({
                 "event": "port-connected",
                 "port": port.name,
@@ -174,6 +194,40 @@ class ConcurrentSwitch:
             })
             self._signal(f"ACCEPTED {port.name} {mac_text(port.mac)}\n")
         self._signal("ALL-PEERS\n", close=True)
+
+    @staticmethod
+    def _authentication_frame(
+        connection: socket.socket, deadline: float,
+    ) -> bytes:
+        """Read and validate the first frame used to bind a socket to a port."""
+        def receive_before_deadline(size: int) -> bytes | None:
+            chunks = bytearray()
+            while len(chunks) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out authenticating switch peer")
+                connection.settimeout(remaining)
+                try:
+                    chunk = connection.recv(size - len(chunks))
+                except TimeoutError as error:
+                    raise TimeoutError(
+                        "timed out authenticating switch peer") from error
+                if not chunk:
+                    return None
+                chunks.extend(chunk)
+            return bytes(chunks)
+
+        header = receive_before_deadline(4)
+        if header is None:
+            raise RuntimeError("switch peer closed before authentication")
+        size = struct.unpack("!I", header)[0]
+        if not 14 <= size <= MAX_FRAME:
+            raise RuntimeError(
+                f"invalid authentication Ethernet frame size {size}")
+        frame = receive_before_deadline(size)
+        if frame is None:
+            raise RuntimeError("truncated authentication Ethernet frame")
+        return frame
 
     def _signal(self, message: str, *, close: bool = False) -> None:
         if self.ready_fd is None:

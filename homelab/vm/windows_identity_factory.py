@@ -396,6 +396,16 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         ):
             raise WindowsIdentityFactoryError(
                 "live Windows command differs from authorization")
+        controller_console = boundary.controller_console
+        if controller_console is None or controller_console.password is None:
+            raise WindowsIdentityFactoryError(
+                "Controller session credential is outside diagnostics scope")
+        try:
+            controller_secret = controller_console.password.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise WindowsIdentityFactoryError(
+                "Controller session credential encoding is invalid") from error
+        scoped_secrets = known_secrets + (controller_secret,)
         return ProductionSecretScanner(
             retained=(
                 source_inventory,
@@ -404,13 +414,13 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
             qemu_arguments=tuple(runtime_command),
             credential_ownership=CredentialOwnershipState(
                 acceptance_scope_active=True,
-                scoped_credentials=len(known_secrets),
+                scoped_credentials=len(scoped_secrets),
                 credentials_outside_scope=0,
                 recovery_publication_exists=(
                     publication.exists() or publication.is_symlink()),
                 recovered_credential_invalidated=True,
             ),
-        )(known_secrets)
+        )(scoped_secrets)
 
     adapter = NativeWindowsAcceptanceAdapter(
         boundary,

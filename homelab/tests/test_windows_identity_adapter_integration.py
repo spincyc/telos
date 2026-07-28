@@ -158,18 +158,18 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.qmp.await_device_deleted.assert_called_once_with(
             "telos-credential-action-cd", timeout=30.0)
 
-    @mock.patch.object(subject, "SerialAutomation")
     @mock.patch.object(subject, "ControllerJoinSerial")
     @mock.patch.object(subject, "ControllerPrincipalSerial")
     def test_controller_drivers_share_one_console_and_transport_pair(
-        self, principal_type, join_type, automation_type,
+        self, principal_type, join_type,
     ):
         controller = mock.Mock()
         controller.poll.return_value = None
         controller.stdout = mock.sentinel.reader
         controller.stdin = mock.sentinel.writer
         self.boundary.processes["controller"] = controller
-        console = automation_type.return_value
+        console = mock.sentinel.console
+        self.boundary.controller_console = console
         adapter = self.adapter()
 
         adapter.stage_principals({"student": "private"})
@@ -179,8 +179,6 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             mock.sentinel.reader, mock.sentinel.writer, timeout=7)
         join_type.assert_called_once_with(
             mock.sentinel.reader, mock.sentinel.writer, timeout=7)
-        automation_type.assert_called_once_with(
-            mock.sentinel.reader, mock.sentinel.writer, None, timeout=7)
         self.assertIs(console, principal_type.return_value.console)
         self.assertIs(console, join_type.return_value.console)
 

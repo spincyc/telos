@@ -17,7 +17,7 @@ SECRET = "Join-secret-DoNotDisclose-47!"
 
 
 class ControllerJoinSerialTests(unittest.TestCase):
-    def run_operation(self, invoke, returncode=0):
+    def run_operation(self, invoke, returncode=0, sudo_password=None):
         left, right = socket.socketpair()
         observed = []
 
@@ -33,6 +33,12 @@ class ControllerJoinSerialTests(unittest.TestCase):
             right.sendall(command)
             right.sendall(b"__TELOS_JOIN_READY_" + token + b"__\r\n")
             observed.append(stream.readline())
+            if sudo_password is not None:
+                prompt = command.split(
+                    b"__TELOS_JOIN_SUDO_", 1)[1].split(b"__", 1)[0]
+                right.sendall(
+                    b"\r\n__TELOS_JOIN_SUDO_" + prompt + b"__\r\n")
+                observed.append(stream.readline())
             right.sendall(
                 b"\r\n__TELOS_JOIN_RC_" + result + b"="
                 + str(returncode).encode() + b"\r\n")
@@ -45,6 +51,7 @@ class ControllerJoinSerialTests(unittest.TestCase):
                 left.makefile("wb", buffering=0),
                 timeout=1,
             )
+            serial.console.password = sudo_password
             result = invoke(serial)
         finally:
             left.close()
@@ -78,6 +85,16 @@ class ControllerJoinSerialTests(unittest.TestCase):
         payload = __import__("json").loads(base64.b64decode(observed[1]))
         self.assertEqual(result.principal, payload["principal"])
         self.assertRegex(payload["ownership_token"], r"^[0-9a-f]{64}$")
+
+    def test_password_authenticated_sudo_is_secret_safe(self):
+        password = b"Controller-private-47!"
+        result, observed = self.run_operation(
+            lambda serial: serial.stage(SECRET), sudo_password=password)
+        self.assertEqual("stage", result.operation)
+        self.assertIn(b"sudo -k -p", observed[0])
+        self.assertNotIn(b"sudo -S", observed[0])
+        self.assertNotIn(password, observed[0])
+        self.assertEqual(password + b"\n", observed[2])
 
     def test_stage_and_destroy_share_unique_ownership_identity(self):
         left = __import__("io").BytesIO()

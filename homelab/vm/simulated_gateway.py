@@ -35,6 +35,7 @@ NTP_NAME = "time.sim.test"
 NTP_IP = ipaddress.IPv4Address("198.51.100.10")
 UDP_PROBE_PORT = 31337
 NTP_EPOCH = 2_208_988_800
+IDENTITY_ETHERTYPE = 0x88B5
 IPXE_SCRIPT = f"http://{CONTROLLER_IP}/boot/boot.ipxe"
 PXE_BOOT_FILES = {
     0: "undionly.kpxe",
@@ -56,6 +57,14 @@ def checksum(data: bytes) -> int:
 
 def ethernet(dst: bytes, src: bytes, kind: int, payload: bytes) -> bytes:
     return dst + src + struct.pack("!H", kind) + payload
+
+
+def identity_announcement(source_mac: bytes, role: str) -> bytes:
+    """Return a harmless public frame that authenticates a passive peer."""
+    return ethernet(
+        b"\xff" * 6, source_mac, IDENTITY_ETHERTYPE,
+        f"telos-switch-peer:{role}".encode("ascii"),
+    )
 
 
 def ipv4(src: ipaddress.IPv4Address, dst: ipaddress.IPv4Address,
@@ -515,6 +524,8 @@ def connect_peer(host: str, port: int) -> None:
         raise RuntimeError("gateway peer must connect only to 127.0.0.1")
     gateway = Gateway()
     with socket.create_connection((host, port)) as connection:
+        announcement = identity_announcement(GATEWAY_MAC, "gateway")
+        connection.sendall(struct.pack("!I", len(announcement)) + announcement)
         while True:
             header = receive_exact(connection, 4)
             if header is None:
