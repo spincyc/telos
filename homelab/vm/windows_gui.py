@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -123,10 +124,22 @@ def useful_frame(image: Image) -> bool:
 class QmpClient:
     """Small synchronous QMP client with correlated responses."""
 
-    def __init__(self, connection: socket.socket) -> None:
+    def __init__(
+            self,
+            connection: socket.socket,
+            *,
+            event_limit: int = 256,
+            response_limit: int = 256,
+    ) -> None:
+        if event_limit < 1 or response_limit < 1:
+            raise ValueError("QMP queue limits must be positive")
         self.connection = connection
         self.reader = connection.makefile("rb")
         self.sequence = 0
+        self._events: deque[dict] = deque()
+        self._responses: dict[object, dict] = {}
+        self._event_limit = event_limit
+        self._response_limit = response_limit
 
     @classmethod
     def connect(cls, path: Path, timeout: float = 5.0) -> "QmpClient":
@@ -144,17 +157,38 @@ class QmpClient:
         self.reader.close()
         self.connection.close()
 
+    def _read_message(self) -> dict:
+        line = self.reader.readline()
+        if not line:
+            raise WindowsGuiError("QMP connection closed")
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise WindowsGuiError("QMP returned malformed JSON") from error
+        if not isinstance(message, dict):
+            raise WindowsGuiError("QMP returned malformed message")
+        return message
+
+    def _queue_event(self, message: dict) -> None:
+        if len(self._events) >= self._event_limit:
+            raise WindowsGuiError("QMP event queue limit exceeded")
+        self._events.append(message)
+
+    def _queue_response(self, message: dict) -> None:
+        identifier = message.get("id")
+        if identifier in self._responses:
+            raise WindowsGuiError("QMP returned duplicate response id")
+        if len(self._responses) >= self._response_limit:
+            raise WindowsGuiError("QMP response queue limit exceeded")
+        self._responses[identifier] = message
+
     def _message(self) -> dict:
         while True:
-            line = self.reader.readline()
-            if not line:
-                raise WindowsGuiError("QMP connection closed")
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError as error:
-                raise WindowsGuiError("QMP returned malformed JSON") from error
-            if "event" not in message:
-                return message
+            message = self._read_message()
+            if "event" in message:
+                self._queue_event(message)
+                continue
+            return message
 
     def execute(self, command: str, arguments: dict | None = None) -> dict:
         self.sequence += 1
@@ -165,13 +199,56 @@ class QmpClient:
         self.connection.sendall(
             json.dumps(request, separators=(",", ":")).encode() + b"\r\n")
         while True:
-            response = self._message()
+            response = self._responses.pop(identifier, None)
+            if response is None:
+                response = self._message()
             if response.get("id") != identifier:
+                self._queue_response(response)
                 continue
             if "error" in response:
                 raise WindowsGuiError(
                     f"QMP {command} failed: {response['error']}")
             return response.get("return", {})
+
+    def await_device_deleted(
+            self, device_id: str, *, timeout: float = 5.0) -> dict:
+        """Await DEVICE_DELETED for exactly *device_id*, retaining other QMP traffic."""
+        if not isinstance(device_id, str) or not device_id:
+            raise ValueError("QMP device id must be non-empty")
+        if timeout <= 0:
+            raise ValueError("QMP event timeout must be positive")
+
+        for event in tuple(self._events):
+            if (event.get("event") == "DEVICE_DELETED"
+                    and event.get("data", {}).get("device") == device_id):
+                self._events.remove(event)
+                return event
+
+        deadline = time.monotonic() + timeout
+        previous_timeout = self.connection.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise WindowsGuiError(
+                        f"timed out awaiting DEVICE_DELETED for {device_id}")
+                self.connection.settimeout(remaining)
+                try:
+                    message = self._read_message()
+                except (socket.timeout, TimeoutError) as error:
+                    raise WindowsGuiError(
+                        f"timed out awaiting DEVICE_DELETED for {device_id}"
+                    ) from error
+                if "event" in message:
+                    if (message.get("event") == "DEVICE_DELETED"
+                            and message.get("data", {}).get("device")
+                            == device_id):
+                        return message
+                    self._queue_event(message)
+                else:
+                    self._queue_response(message)
+        finally:
+            self.connection.settimeout(previous_timeout)
 
     def screenshot(self, path: Path) -> None:
         self.execute("screendump", {"filename": str(path)})

@@ -1,4 +1,5 @@
 import json
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,24 @@ class FakeQmp:
 
 
 class WindowsGuiTests(unittest.TestCase):
+    def qmp_pair(self, *, event_limit=256, response_limit=256):
+        client_socket, peer = socket.socketpair()
+        self.addCleanup(client_socket.close)
+        self.addCleanup(peer.close)
+        return (
+            windows_gui.QmpClient(
+                client_socket,
+                event_limit=event_limit,
+                response_limit=response_limit,
+            ),
+            peer,
+        )
+
+    @staticmethod
+    def send_qmp(peer, *messages):
+        peer.sendall(b"".join(
+            json.dumps(message).encode() + b"\r\n" for message in messages))
+
     def test_ppm_and_distance(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -154,6 +173,53 @@ class WindowsGuiTests(unittest.TestCase):
                 WindowsGuiError, "offset 1") as failure:
             client.type_text("x\nsecret")
         self.assertNotIn("secret", str(failure.exception))
+
+    def test_qmp_awaits_exact_device_deleted_and_retains_other_events(self):
+        client, peer = self.qmp_pair()
+        self.send_qmp(
+            peer,
+            {"event": "DEVICE_DELETED", "data": {"device": "other"}},
+            {"event": "RESET", "data": {}},
+            {"event": "DEVICE_DELETED", "data": {"device": "join-media"}},
+        )
+        event = client.await_device_deleted("join-media", timeout=0.5)
+        self.assertEqual("join-media", event["data"]["device"])
+        self.assertEqual(
+            ["DEVICE_DELETED", "RESET"],
+            [queued["event"] for queued in client._events],
+        )
+
+    def test_qmp_await_preserves_response_for_correlated_execute(self):
+        client, peer = self.qmp_pair()
+        self.send_qmp(
+            peer,
+            {"return": {"preserved": True}, "id": "windows-gui-1"},
+            {"event": "DEVICE_DELETED", "data": {"device": "join-media"}},
+        )
+        client.await_device_deleted("join-media", timeout=0.5)
+        self.assertEqual(
+            {"preserved": True}, client.execute("query-status"))
+        request = json.loads(peer.recv(4096).splitlines()[0])
+        self.assertEqual("windows-gui-1", request["id"])
+
+    def test_qmp_event_queue_is_bounded_and_timeout_restored(self):
+        client, peer = self.qmp_pair(event_limit=1)
+        peer_timeout = client.connection.gettimeout()
+        self.send_qmp(
+            peer,
+            {"event": "RESET"},
+            {"event": "STOP"},
+        )
+        with self.assertRaisesRegex(
+                WindowsGuiError, "event queue limit exceeded"):
+            client.await_device_deleted("join-media", timeout=0.5)
+        self.assertEqual(peer_timeout, client.connection.gettimeout())
+
+    def test_qmp_device_deleted_timeout_is_bounded(self):
+        client, _peer = self.qmp_pair()
+        with self.assertRaisesRegex(
+                WindowsGuiError, "timed out awaiting DEVICE_DELETED"):
+            client.await_device_deleted("join-media", timeout=0.01)
 
 
 if __name__ == "__main__":
