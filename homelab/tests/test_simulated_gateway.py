@@ -228,6 +228,64 @@ class SimulatedGatewayTests(unittest.TestCase):
         )
         self.assertEqual(self.gateway.handle(spoofed), [])
 
+    def test_controller_bootstrap_dhcp_does_not_consume_workstation_lease(self):
+        def dhcp(mac, message, requested=None):
+            fixed = bytearray(236)
+            fixed[0:4] = b"\x01\x01\x06\x00"
+            fixed[4:8] = b"role"
+            fixed[28:34] = mac
+            options = b"\x63\x82\x53\x63" + bytes((53, 1, message))
+            if requested is not None:
+                options += bytes((50, 4)) + requested.packed
+                options += bytes((54, 4)) + sim.GATEWAY_IP.packed
+            options += b"\xff"
+            return sim.ethernet(
+                b"\xff" * 6, mac, 0x0800,
+                sim.ipv4(
+                    ipaddress.IPv4Address("0.0.0.0"),
+                    ipaddress.IPv4Address("255.255.255.255"),
+                    17, sim.udp(68, 67, bytes(fixed) + options),
+                ),
+            )
+
+        def offered_address(frame):
+            return ipaddress.IPv4Address(frame[14 + 20 + 8 + 16:
+                                                14 + 20 + 8 + 20])
+
+        for mac, expected in (
+            (sim.CONTROLLER_MAC, sim.CONTROLLER_IP),
+            (CLIENT_MAC, sim.LEASE_IP),
+        ):
+            offer = self.gateway.handle(dhcp(mac, 1))
+            self.assertEqual(len(offer), 1)
+            self.assertEqual(offered_address(offer[0]), expected)
+            acknowledgement = self.gateway.handle(dhcp(mac, 3, expected))
+            self.assertEqual(len(acknowledgement), 1)
+            self.assertEqual(offered_address(acknowledgement[0]), expected)
+
+        self.assertEqual(self.gateway.lease_mac, CLIENT_MAC)
+        query = bytearray(48)
+        query[0] = 0x23
+        query[40:48] = b"request!"
+        self.assertEqual(len(self.gateway.handle(controller_ip(
+            17, sim.udp(43210, 123, bytes(query)), sim.NTP_IP))), 1)
+        self.assertEqual(len(self.gateway.handle(request_ip(
+            17, sim.udp(43211, 123, bytes(query)), sim.NTP_IP))), 1)
+
+        self.assertEqual(
+            self.gateway.handle(dhcp(sim.CONTROLLER_MAC, 3, sim.LEASE_IP)), [])
+        self.assertEqual(
+            self.gateway.handle(dhcp(CLIENT_MAC, 3, sim.CONTROLLER_IP)), [])
+        second_client = bytes.fromhex("525400311199")
+        self.assertEqual(self.gateway.handle(dhcp(second_client, 1)), [])
+        spoofed_controller_ip = sim.ethernet(
+            sim.GATEWAY_MAC, CLIENT_MAC, 0x0800,
+            sim.ipv4(
+                sim.CONTROLLER_IP, sim.GATEWAY_IP, 17,
+                sim.udp(40000, sim.UDP_PROBE_PORT, b"x")),
+        )
+        self.assertEqual(self.gateway.handle(spoofed_controller_ip), [])
+
     def test_arp_rejects_mismatched_payload_mac(self):
         other = bytes.fromhex("525400311199")
         arp = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1)

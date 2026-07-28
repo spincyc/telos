@@ -223,20 +223,23 @@ class Gateway:
         message = message_option[0]
         if message not in (1, 3):
             return []
-        if self.lease_mac not in (None, source_mac):
+        controller_bootstrap = source_mac == self.controller_mac
+        offered_ip = CONTROLLER_IP if controller_bootstrap else LEASE_IP
+        if not controller_bootstrap and self.lease_mac not in (None, source_mac):
             return []
         if message == 3:
             requested = options.get(50)
             server = options.get(54)
-            if requested not in (None, LEASE_IP.packed):
+            if requested not in (None, offered_ip.packed):
                 return []
             if server not in (None, GATEWAY_IP.packed):
                 return []
-        self.lease_mac = source_mac
+        if not controller_bootstrap:
+            self.lease_mac = source_mac
         response_type = 2 if message == 1 else 5
         fixed = bytearray(data[:236])
         fixed[0] = 2
-        fixed[16:20] = LEASE_IP.packed
+        fixed[16:20] = offered_ip.packed
         architecture = None
         if len(options.get(93, b"")) == 2:
             architecture = struct.unpack("!H", options[93])[0]
