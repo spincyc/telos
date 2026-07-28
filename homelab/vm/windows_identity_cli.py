@@ -71,9 +71,8 @@ def run(
         print("dry run; repeat with --apply to run the identity lifecycle")
         return 0
     if acceptance_factory is None:
-        raise WindowsIdentityRunError(
-            "complete production acceptance adapters are unavailable; "
-            "refusing applied identity run")
+        from .windows_identity_factory import default_acceptance_factory
+        acceptance_factory = default_acceptance_factory
     configuration = acceptance_factory(boundary)
     with SignalGuard():
         execute_windows_identity_acceptance(
@@ -108,8 +107,28 @@ def main(
     except RunInterrupted as error:
         print(f"windows identity run: {error}", file=sys.stderr)
         return error.exit_code
-    except (WindowsIdentityRunError, WindowsIdentityOrchestratorError) as error:
+    except (
+        WindowsIdentityRunError,
+        WindowsIdentityOrchestratorError,
+    ) as error:
         print(f"windows identity run: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:
+        from .windows_identity_adapter import WindowsIdentityAdapterError
+        from .windows_identity_diagnostics import WindowsIdentityDiagnosticError
+        from .windows_identity_factory import WindowsIdentityFactoryError
+        from .windows_identity_reference import WindowsIdentityReferenceError
+        if not isinstance(error, (
+            WindowsIdentityAdapterError,
+            WindowsIdentityDiagnosticError,
+            WindowsIdentityFactoryError,
+            WindowsIdentityReferenceError,
+        )):
+            raise
+        print(
+            f"windows identity run: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         return 2
 
 

@@ -24,6 +24,8 @@ class RetainedInventory:
     root: Path
     tracked_artifacts: tuple[PurePosixPath, ...]
     logs: tuple[PurePosixPath, ...]
+    directories: tuple[PurePosixPath, ...]
+    active_media: tuple[PurePosixPath, ...]
 
     def __init__(
         self,
@@ -31,6 +33,8 @@ class RetainedInventory:
         *,
         tracked_artifacts: Iterable[str | PurePosixPath],
         logs: Iterable[str | PurePosixPath],
+        directories: Iterable[str | PurePosixPath] = (),
+        active_media: Iterable[str | PurePosixPath] = (),
     ) -> None:
         object.__setattr__(self, "root", Path(root).absolute())
         object.__setattr__(
@@ -40,10 +44,34 @@ class RetainedInventory:
         object.__setattr__(
             self, "logs", tuple(_relative_path(path) for path in logs),
         )
-        declared = self.tracked_artifacts + self.logs
-        if not declared or len(set(declared)) != len(declared):
+        object.__setattr__(
+            self, "directories",
+            tuple(_relative_path(path) for path in directories),
+        )
+        object.__setattr__(
+            self, "active_media",
+            tuple(_relative_path(path) for path in active_media),
+        )
+        declared = self.tracked_artifacts + self.logs + self.active_media
+        if (
+            not declared
+            or len(set(declared)) != len(declared)
+            or len(set(self.directories)) != len(self.directories)
+        ):
             raise WindowsIdentityDiagnosticError(
                 "retained inventory paths must be non-empty and unique")
+        inferred_directories = {
+            parent
+            for path in declared
+            for parent in path.parents
+            if parent != PurePosixPath(".")
+        }
+        if (
+            any(path in inferred_directories for path in self.directories)
+            or any(path in declared for path in self.directories)
+        ):
+            raise WindowsIdentityDiagnosticError(
+                "explicit retained directories must be empty and unique")
 
 
 @dataclass(frozen=True)
@@ -112,13 +140,21 @@ def _inventory_files(
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise WindowsIdentityDiagnosticError(
             f"retained root is not a real directory: {root}")
-    declared = set(inventory.tracked_artifacts + inventory.logs)
+    declared = set(
+        inventory.tracked_artifacts + inventory.logs + inventory.active_media)
     declared_directories = {
         parent
         for path in declared
         for parent in path.parents
         if parent != PurePosixPath(".")
     }
+    declared_directories.update(inventory.directories)
+    declared_directories.update(
+        parent
+        for path in inventory.directories
+        for parent in path.parents
+        if parent != PurePosixPath(".")
+    )
     observed: set[PurePosixPath] = set()
     observed_directories: set[PurePosixPath] = set()
     identities = {PurePosixPath("."): _metadata_identity(metadata)}

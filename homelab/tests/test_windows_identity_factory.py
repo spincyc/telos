@@ -1,0 +1,203 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+
+from homelab.tests.windows_identity_fixture import (
+    write_prepared_authorization,
+)
+from homelab.vm.windows_identity_factory import (
+    WindowsIdentityFactoryError,
+    default_acceptance_factory,
+)
+from homelab.vm.windows_identity_run import NativeProcessBoundary
+
+
+SOURCE_DISK_SHA256 = (
+    "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+)
+
+
+class WindowsIdentityFactoryTests(unittest.TestCase):
+    def factory(self, boundary, bundle):
+        with mock.patch(
+            "homelab.vm.windows_identity_factory._sha256",
+            return_value=SOURCE_DISK_SHA256,
+        ), mock.patch(
+            "homelab.vm.windows_identity_factory._actual_overlay_backing",
+            return_value=(bundle / "windows.qcow2").resolve(),
+        ):
+            return default_acceptance_factory(boundary)
+
+    def prepared(self, root: Path):
+        attempt = root / "attempt"
+        controller = root / "controller"
+        bundle = root / "bundle"
+        attempt.mkdir(mode=0o700)
+        controller.mkdir(mode=0o700)
+        bundle.mkdir(mode=0o700)
+        for path in (
+            attempt / "windows.qcow2",
+            attempt / "OVMF_VARS.fd",
+            controller / "bootstrap-dc.qcow2",
+            controller / "OVMF_VARS.fd",
+        ):
+            path.write_bytes(b"fixture")
+            path.chmod(0o600)
+        publication = bundle / "publication.iso"
+        publication.write_bytes(b"private recovery")
+        publication.chmod(0o600)
+        evidence = bundle / "evidence"
+        (evidence / "screens").mkdir(parents=True)
+        (evidence / "controller/guard").mkdir(parents=True)
+        (evidence / "screens/001.ppm").write_bytes(b"public frame")
+        (evidence / "workstation.log").write_bytes(b"public log")
+        write_prepared_authorization(attempt, controller)
+        authorization_path = attempt / "authorization.json"
+        authorization = json.loads(authorization_path.read_text())
+        source_disk = bundle / "windows.qcow2"
+        source_disk.write_bytes(b"source")
+        source_disk.chmod(0o600)
+        authorization["source"] = {
+            "bundle": str(bundle.resolve()),
+            "disk": {
+                "path": str(source_disk.resolve()),
+                "sha256": SOURCE_DISK_SHA256,
+            },
+        }
+        authorization["overlay"]["backing_path"] = str(source_disk.resolve())
+        authorization_path.write_text(json.dumps(authorization))
+        authorization_path.chmod(0o600)
+        boundary = NativeProcessBoundary(attempt, controller)
+        boundary._validate()
+        return boundary, bundle
+
+    def test_builds_exact_default_configuration_and_scanner(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            configuration = self.factory(boundary, bundle)
+            self.assertEqual(
+                bundle / "publication.iso", configuration.publication)
+            self.assertEqual(boundary.attempt, configuration.private_root)
+            self.assertEqual("AD.FACTORY.TEST", configuration.realm)
+            self.assertEqual(
+                "run-dialog",
+                configuration.callbacks.launch_guest.__self__.
+                command_plan.run_dialog.state_kind,
+            )
+            runtime = boundary.attempt / "runtime"
+            (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+            for relative in (
+                "switch.jsonl", "windows-qemu.log",
+                "controller/controller.raw", "controller/OVMF_VARS.fd",
+                "controller/guard/controller-overlay.qcow2",
+                "controller/guard/OVMF_VARS.fd",
+            ):
+                (runtime / relative).write_bytes(b"clean")
+            for surface_name in (
+                "rotation-evidence", "public-command-evidence",
+                "post-join-reauthentication",
+            ):
+                evidence = boundary.attempt / surface_name
+                evidence.mkdir(mode=0o700)
+                (evidence / "proof.ppm").write_bytes(b"public frame")
+            boundary.qmp_root = Path(name) / "runtime-qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
+            boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            boundary.port = 31415
+            boundary.processes["windows"] = mock.Mock(
+                poll=mock.Mock(return_value=None))
+            scan = configuration.callbacks.scan_secrets(
+                tuple(f"Synthetic-Unique-{index}-47!"
+                      for index in range(4)))
+            self.assertEqual(0, scan["secrets_found"])
+            self.assertTrue(scan["logs_secret_free"])
+
+    def test_scanner_detects_attempt_runtime_and_gui_evidence_leaks(self):
+        secret = "Synthetic-Runtime-Leak-47!"
+        for relative in (
+            "runtime/windows-qemu.log",
+            "rotation-evidence/proof.ppm",
+            "public-command-evidence/proof.ppm",
+            "post-join-reauthentication/proof.ppm",
+        ):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory(
+            ) as name:
+                boundary, _bundle = self.prepared(Path(name))
+                configuration = self.factory(boundary, _bundle)
+                runtime = boundary.attempt / "runtime"
+                (runtime / "controller/guard").mkdir(
+                    parents=True, mode=0o700)
+                for item in (
+                    "switch.jsonl", "windows-qemu.log",
+                    "controller/controller.raw", "controller/OVMF_VARS.fd",
+                    "controller/guard/controller-overlay.qcow2",
+                    "controller/guard/OVMF_VARS.fd",
+                ):
+                    (runtime / item).write_bytes(b"clean")
+                for surface in (
+                    "rotation-evidence", "public-command-evidence",
+                    "post-join-reauthentication",
+                ):
+                    target = boundary.attempt / surface
+                    target.mkdir(mode=0o700)
+                    (target / "proof.ppm").write_bytes(b"clean")
+                (boundary.attempt / relative).write_bytes(secret.encode())
+                boundary.qmp_root = Path(name) / "qmp"
+                boundary.qmp_root.mkdir(mode=0o700)
+                boundary.serial_socket = boundary.qmp_root / "windows.serial"
+                boundary.port = 31415
+                boundary.processes["windows"] = mock.Mock(
+                    poll=mock.Mock(return_value=None))
+                result = configuration.callbacks.scan_secrets(
+                    (secret, "two", "three", "four"))
+                self.assertGreater(result["secrets_found"], 0)
+
+    def test_rejects_missing_recovery_publication(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            (bundle / "publication.iso").unlink()
+            with self.assertRaisesRegex(
+                    WindowsIdentityFactoryError, "publication"):
+                self.factory(boundary, bundle)
+
+    def test_rejects_source_hash_and_actual_backing_mismatch(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            with mock.patch(
+                "homelab.vm.windows_identity_factory._sha256",
+                return_value="0" * 64,
+            ), mock.patch(
+                "homelab.vm.windows_identity_factory._actual_overlay_backing",
+                return_value=(bundle / "windows.qcow2").resolve(),
+            ), self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "source disk"):
+                default_acceptance_factory(boundary)
+            with mock.patch(
+                "homelab.vm.windows_identity_factory._sha256",
+                return_value=SOURCE_DISK_SHA256,
+            ), mock.patch(
+                "homelab.vm.windows_identity_factory._actual_overlay_backing",
+                return_value=(bundle / "different.qcow2").resolve(),
+            ), self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "source disk"):
+                default_acceptance_factory(boundary)
+
+    def test_rejects_stale_acceptance_state(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            (boundary.attempt / "rotation-evidence").mkdir(mode=0o700)
+            with mock.patch(
+                "homelab.vm.windows_identity_factory._sha256",
+                return_value=SOURCE_DISK_SHA256,
+            ), mock.patch(
+                "homelab.vm.windows_identity_factory._actual_overlay_backing",
+                return_value=(bundle / "windows.qcow2").resolve(),
+            ), self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "stale"):
+                default_acceptance_factory(boundary)
+
+
+if __name__ == "__main__":
+    unittest.main()

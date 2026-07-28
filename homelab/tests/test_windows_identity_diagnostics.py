@@ -114,6 +114,24 @@ class ProductionSecretScannerTests(unittest.TestCase):
             with self.assertRaises(WindowsIdentityDiagnosticError):
                 scanner((self.secret,))
 
+    def test_explicit_empty_directories_are_exhaustively_accounted_for(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "artifact").write_bytes(b"clean")
+            (root / "empty/nested").mkdir(parents=True)
+            scanner = ProductionSecretScanner(
+                retained=(RetainedInventory(
+                    root,
+                    tracked_artifacts=("artifact",),
+                    logs=(),
+                    directories=("empty/nested",),
+                ),),
+                qemu_arguments=("qemu",),
+                credential_ownership=CredentialOwnershipState(
+                    True, 1, 0, False, True),
+            )
+            self.assertEqual(0, scanner((self.secret,))["secrets_found"])
+
     def test_ownership_must_exactly_describe_the_active_secret_scope(self):
         with tempfile.TemporaryDirectory() as name:
             for state in (

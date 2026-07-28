@@ -126,6 +126,25 @@ class WindowsIdentityCliTests(unittest.TestCase):
                 )
         self.assertEqual(2, result)
 
+    def test_adapter_configuration_errors_are_normalized(self):
+        from homelab.vm.windows_identity_adapter import (
+            WindowsIdentityAdapterError,
+        )
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            factory = mock.Mock(side_effect=WindowsIdentityAdapterError(
+                "trusted adapter unavailable"))
+            with mock.patch("sys.stderr"):
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=factory,
+                )
+        self.assertEqual(2, result)
+
 
 if __name__ == "__main__":
     unittest.main()
