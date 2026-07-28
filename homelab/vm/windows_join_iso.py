@@ -625,7 +625,7 @@ class JoinMediaChannel:
             and all(result[name] == value for name, value in guest_failure.items())
             and phase in {
                 "add-computer", "operator-assignment", "policy-mutation",
-                "policy-readback", "policy-verification", "reboot-ack",
+                "policy-readback", "policy-verification",
             }
         ):
             coordinate = WindowsJoinFailureCoordinate(
@@ -648,14 +648,26 @@ class JoinMediaChannel:
         except json.JSONDecodeError as error:
             raise WindowsJoinIsoError(
                 "join reboot-accepted result is invalid") from error
-        if result != {
+        if result == {
             "schema_version": 1,
             "event": "join-reboot-accepted",
             "nonce": self.nonce,
         }:
+            self.state = JoinMediaState.REBOOT_ACCEPTED
+            return
+        if result == {
+            "schema_version": 1,
+            "event": "join-reboot-failed",
+            "nonce": self.nonce,
+            "phase": "reboot-ack",
+        }:
             raise WindowsJoinIsoError(
-                "join reboot-accepted result is invalid")
-        self.state = JoinMediaState.REBOOT_ACCEPTED
+                "guest rejected the reboot acknowledgment",
+                coordinate=WindowsJoinFailureCoordinate(
+                    "result-guest-reboot-ack", "WindowsJoinIsoError"),
+            )
+        raise WindowsJoinIsoError(
+            "join reboot-accepted result is invalid")
 
 
 def execute_join_channel(

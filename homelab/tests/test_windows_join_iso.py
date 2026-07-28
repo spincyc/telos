@@ -520,12 +520,14 @@ class WindowsJoinIsoTests(unittest.TestCase):
             "nonce": NONCE,
             "phase": "reboot-ack",
         })
+        channel.state = JoinMediaState.REBOOT_READY
         with self.assertRaises(WindowsJoinIsoError) as caught:
-            channel.accept_reboot_ready(reboot_ack_failure)
+            channel.accept_reboot_confirmation(reboot_ack_failure)
         self.assertEqual(
             "result-guest-reboot-ack",
             caught.exception.coordinate.phase,
         )
+        self.assertIs(JoinMediaState.REBOOT_READY, channel.state)
 
     def test_malformed_result_has_parse_coordinate_and_retains_serial(self):
         with tempfile.TemporaryDirectory() as temporary:
