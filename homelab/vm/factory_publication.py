@@ -287,6 +287,7 @@ def stage(
         )
         readiness_smb = (
             " && systemctl is-active --quiet smb.service"
+            " && ss -H -ltn | grep -Fq '10.1.31.2:445'"
             if verified_windows_source is not None else ""
         )
         publisher = destination / "publish"

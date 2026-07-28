@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:45:39Z"
+updated_at: "2026-07-28T01:49:42Z"
 ---
 
 # Goal
@@ -178,3 +178,9 @@ The next diagnostic reported code 29: wimboot's injected inputs are not at the
 WinPE `X:\` root. The executing batch itself proves the injection directory is
 available. All injected input references now resolve relative to `%~dp0`,
 while generated scratch files remain on `X:\`. No disk mutation occurred.
+
+The corrected input path exposed a valid WinPE address and gateway, followed
+by SMB error 53. The next publication gate now requires an exact TCP listener
+at `10.1.31.2:445`, not merely an active service. WinPE also pings the isolated
+Controller before SMB and assigns reachability failure code 28. The disk
+remained untouched.

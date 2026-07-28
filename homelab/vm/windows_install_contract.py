@@ -251,6 +251,7 @@ def render_startup(
         + "echo TELOS WINPE phase=source-mount\r\n"
         + 'if not exist "%inputs%install-password.txt" exit /b 29\r\n'
         + "ipconfig\r\n"
+        + "ping -n 1 10.1.31.2 || exit /b 28\r\n"
         + f'net use W: "{install_source_unc}" * /user:"{install_user}" '
         '/persistent:no < "%inputs%install-password.txt" || exit /b 30\r\n'
         'if not exist W:\\setup.exe exit /b 31\r\n'

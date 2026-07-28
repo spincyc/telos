@@ -225,6 +225,7 @@ class FactoryPublicationTests(unittest.TestCase):
             "systemctl unmask smb.service",
             "systemctl enable smb.service",
             "systemctl is-active --quiet smb.service",
+            "grep -Fq '10.1.31.2:445'",
             "Requires=telos-factory-http.service "
             "telos-factory-tftp.service smb.service",
         ):
