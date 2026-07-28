@@ -242,7 +242,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             released = release.split(
                 b"__TELOS_CONVERGENCE_RELEASED_", 1)[1].split(b"=", 1)[0]
             right.sendall(
-                b"\r\n__TELOS_RELEASE_SUDO_" + release_sudo + b"__\r\n")
+                b"\r__TELOS_RELEASE_SUDO_" + release_sudo + b"__")
             observed.append(stream.readline())
             right.sendall(
                 b"\r\n__TELOS_CONVERGENCE_RELEASED_" + released + b"=0\r\n")

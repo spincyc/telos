@@ -201,7 +201,7 @@ class SerialAutomation:
                 "controller-convergence-release-command-sent",
             )
             self._wait(
-                rb"(?:^|\n)" + re.escape(release_prompt) + rb"\s*$",
+                rb"(?:^|[\r\n])" + re.escape(release_prompt) + rb"\s*$",
                 "controller-convergence-release-sudo-prompt",
             )
             self._send(
