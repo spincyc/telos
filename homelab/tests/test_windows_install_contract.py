@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import xml.etree.ElementTree as ET
 
 from homelab.vm.windows_install_contract import (
     Authorization,
@@ -284,12 +285,19 @@ class WindowsInstallContractTests(unittest.TestCase):
             "TELOS-WIN-01", "telosadmin", "SynthPass-123",
             r"TELOS\pxe-install", "InstallPass-123")
         answer = render_unattend(identity)
+        ET.fromstring(answer)
         self.assertIn("<Value>Windows 11 Pro</Value>", answer)
         self.assertIn("<UILanguage>en-US</UILanguage>", answer)
         self.assertIn("<DiskID>0</DiskID><PartitionID>3</PartitionID>", answer)
         self.assertIn(
             "<Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>", answer)
         self.assertIn("<WillShowUI>Never</WillShowUI>", answer)
+        self.assertIn("<HideOnlineAccountScreens>true", answer)
+        self.assertIn("<AutoLogon><Enabled>true</Enabled><LogonCount>1", answer)
+        self.assertIn("powercfg.exe /hibernate off", answer)
+        self.assertIn("HiberbootEnabled /t REG_DWORD /d 0", answer)
+        self.assertIn("TELOS WINDOWS NATIVE READY", answer)
+        self.assertIn("shutdown.exe /s /t 0", answer)
         self.assertNotIn(identity.install_password, answer)
 
     def test_private_ipxe_overlay_injects_inputs_without_altering_release(self):

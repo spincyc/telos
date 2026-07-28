@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T01:54:31Z"
+updated_at: "2026-07-28T10:57:21Z"
 ---
 
 # Goal
@@ -258,4 +258,17 @@ The long run reached its first Setup reboot with about 16 GB allocated, then
 firmware selected PXE again. It was stopped before the second WinPE reached
 DiskPart. New commands use a one-shot network boot followed by disk-first
 resets and remove persistent device boot indexes. The first-pass installed
+evidence disk will not be reused.
+
+One fresh run was externally interrupted during WinPE loading at an execution
+window boundary, with its disk still empty. A second attempt exited before
+QEMU launch while the old loopback listener finished cleanup. The current
+fresh run is progressing under persistent tmux so it survives execution
+windows. The next-bundle answer now performs one native automatic logon,
+disables hibernation and Fast Startup, emits secret-free edition and power
+assertions to COM1, and cleanly shuts down. The runner accepts only the native
+marker, clean workstation exit, complete private-overlay evidence, and exactly
+one firmware PXE boot. Continue monitoring the current install through its
+first disk-first reboot; then use its exact boundary to decide whether a fresh
+native-assertion bundle is required.
 evidence disk will not be reused; a fresh long run is next.

@@ -108,6 +108,24 @@ class WindowsInstallRunTests(unittest.TestCase):
                 client)
         self.assertEqual(connect.call_count, 2)
 
+    def test_lifecycle_requires_overlay_native_marker_and_one_pxe_boot(self):
+        serial = "\n".join((
+            'BdsDxe: starting Boot0003 "UEFI PXEv4"',
+            "http://10.1.31.2/private/run-abc/boot.ipxe",
+            "Using install.bat",
+            "Using winpeshl.ini",
+            "Windows Imaging Format bootloader",
+            windows_install_run.NATIVE_READY_MARKER,
+        ))
+        windows_install_run._validate_lifecycle(serial)
+
+        with self.assertRaisesRegex(RuntimeError, "exactly one PXE"):
+            windows_install_run._validate_lifecycle(
+                serial + '\nBdsDxe: starting Boot0003 "UEFI PXEv4"')
+        with self.assertRaisesRegex(RuntimeError, "native Windows"):
+            windows_install_run._validate_lifecycle(
+                serial.replace(windows_install_run.NATIVE_READY_MARKER, ""))
+
 
 if __name__ == "__main__":
     unittest.main()
