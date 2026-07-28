@@ -84,6 +84,12 @@ class ControllerFactoryBundleTests(unittest.TestCase):
                 script.index("package-preflight"),
                 script.index("TELOS FACTORY STEP ansible"))
             self.assertIn(
+                'check verify-01 "samba-tool domain info 127.0.0.1"',
+                script)
+            self.assertIn("check verify-10 ", script)
+            self.assertIn(
+                "TELOS FACTORY STEP administrator-disable", script)
+            self.assertIn(
                 "for package in samba krb5 ntp python-cryptography", script)
             self.assertIn(
                 'TELOS FACTORY STEP package-missing-$package', script)

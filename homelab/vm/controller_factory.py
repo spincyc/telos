@@ -77,7 +77,8 @@ def verification_commands(spec: FactorySpec) -> tuple[str, ...]:
 
 def _script(spec: FactorySpec) -> str:
     checks = "\n".join(
-        f"check {json.dumps(command)}" for command in verification_commands(spec))
+        f"check verify-{index:02d} {json.dumps(command)}"
+        for index, command in enumerate(verification_commands(spec), 1))
     return f"""#!/usr/bin/bash
 set -euo pipefail
 umask 077
@@ -193,11 +194,14 @@ systemctl restart telos-factory-tftp.service
 nginx -c /etc/homelab/factory-nginx.conf
 echo 'TELOS FACTORY STEP verify'
 check() {{
-  printf 'VERIFY %s\\n' "$1"
+  echo "TELOS FACTORY STEP $1"
+  shift
   /usr/bin/bash -o pipefail -c "$1"
 }}
 {checks}
+echo 'TELOS FACTORY STEP administrator-disable'
 samba-tool user disable Administrator
+echo 'TELOS FACTORY STEP administrator-disabled-proof'
 samba-tool user show Administrator |
   grep -q 'accountFlags:.*D'
 touch /var/lib/telos-factory-converged
