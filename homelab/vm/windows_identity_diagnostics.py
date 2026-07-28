@@ -52,13 +52,15 @@ class CredentialOwnershipState:
 
     Credentials needed by the running acceptance remain in the intended
     in-memory scope. A credential is "retained" only if it exists outside
-    that scope or if the recovery publication still exists.
+    that scope, or if the recovery publication still contains a credential
+    that the proved rotation did not invalidate.
     """
 
     acceptance_scope_active: bool
     scoped_credentials: int
     credentials_outside_scope: int
     recovery_publication_exists: bool
+    recovered_credential_invalidated: bool
 
 
 def _relative_path(value: str | PurePosixPath) -> PurePosixPath:
@@ -259,6 +261,7 @@ class ProductionSecretScanner:
             or type(ownership.credentials_outside_scope) is not int
             or ownership.credentials_outside_scope < 0
             or type(ownership.recovery_publication_exists) is not bool
+            or type(ownership.recovered_credential_invalidated) is not bool
         ):
             raise WindowsIdentityDiagnosticError(
                 "credential ownership state is invalid")
@@ -270,7 +273,10 @@ class ProductionSecretScanner:
                 "known secrets are not exactly owned by the active scope")
         retained = (
             ownership.credentials_outside_scope > 0
-            or ownership.recovery_publication_exists
+            or (
+                ownership.recovery_publication_exists
+                and not ownership.recovered_credential_invalidated
+            )
         )
         return {
             "secrets_found": artifact_hits + log_hits + qemu_hits,

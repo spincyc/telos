@@ -22,7 +22,7 @@ class ProductionSecretScannerTests(unittest.TestCase):
         qemu_arguments: tuple[str, ...] = ("qemu-system-x86_64", "-nodefaults"),
         ownership: CredentialOwnershipState | None = None,
     ) -> ProductionSecretScanner:
-        (root / "artifacts").mkdir()
+        (root / "artifacts").mkdir(parents=True)
         (root / "logs").mkdir()
         (root / "artifacts/authorization.json").write_bytes(
             b'{"contains_secrets":false}\n')
@@ -39,6 +39,7 @@ class ProductionSecretScannerTests(unittest.TestCase):
                 scoped_credentials=1,
                 credentials_outside_scope=0,
                 recovery_publication_exists=False,
+                recovered_credential_invalidated=True,
             ),
         )
 
@@ -58,7 +59,7 @@ class ProductionSecretScannerTests(unittest.TestCase):
             scanner = self.scanner(
                 Path(name),
                 qemu_arguments=("qemu-system-x86_64", f"token={self.secret}"),
-                ownership=CredentialOwnershipState(True, 1, 1, False),
+                ownership=CredentialOwnershipState(True, 1, 1, False, True),
             )
             scanner.retained[0].root.joinpath(
                 "artifacts/authorization.json").write_bytes(
@@ -116,9 +117,9 @@ class ProductionSecretScannerTests(unittest.TestCase):
     def test_ownership_must_exactly_describe_the_active_secret_scope(self):
         with tempfile.TemporaryDirectory() as name:
             for state in (
-                CredentialOwnershipState(False, 1, 0, False),
-                CredentialOwnershipState(True, 0, 0, False),
-                CredentialOwnershipState(True, 1, -1, False),
+                CredentialOwnershipState(False, 1, 0, False, True),
+                CredentialOwnershipState(True, 0, 0, False, True),
+                CredentialOwnershipState(True, 1, -1, False, True),
             ):
                 root = Path(name) / str(len(tuple(Path(name).iterdir())))
                 root.mkdir()
@@ -127,13 +128,19 @@ class ProductionSecretScannerTests(unittest.TestCase):
                         WindowsIdentityDiagnosticError):
                     scanner((self.secret,))
 
-    def test_recovery_publication_is_reported_as_retained(self):
+    def test_only_reusable_recovery_publication_is_reported_as_retained(self):
         with tempfile.TemporaryDirectory() as name:
             scanner = self.scanner(
-                Path(name),
-                ownership=CredentialOwnershipState(True, 1, 0, True),
+                Path(name) / "reusable",
+                ownership=CredentialOwnershipState(True, 1, 0, True, False),
             )
             self.assertTrue(
+                scanner((self.secret,))["reusable_credentials_retained"])
+            scanner = self.scanner(
+                Path(name) / "invalidated",
+                ownership=CredentialOwnershipState(True, 1, 0, True, True),
+            )
+            self.assertFalse(
                 scanner((self.secret,))["reusable_credentials_retained"])
 
     def test_invalid_secret_and_qemu_arguments_fail_closed(self):
@@ -150,7 +157,7 @@ class ProductionSecretScannerTests(unittest.TestCase):
                 ),),
                 qemu_arguments=("qemu", ""),
                 credential_ownership=CredentialOwnershipState(
-                    True, 1, 0, False),
+                    True, 1, 0, False, True),
             )
 
     def test_source_mutation_during_scan_fails_closed(self):
