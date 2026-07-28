@@ -127,6 +127,7 @@ def activate_publication(
         if not chunk:
             continue
         transcript.extend(chunk)
+        command_sent_now = False
         if len(transcript) > 1024 * 1024:
             del transcript[:-1024 * 1024]
         capture.write_bytes(transcript)
@@ -135,6 +136,7 @@ def activate_publication(
             process.stdin.write(publication_bootstrap_command())
             process.stdin.flush()
             command_sent = True
+            command_sent_now = True
         if b"TELOS PXE PUBLICATION PASS" in transcript:
             publication_passed = True
         if command_sent and b"TELOS PXE SERVICES READY" in transcript:
@@ -150,7 +152,10 @@ def activate_publication(
                 target=drain, name="controller-serial-drain", daemon=True,
             ).start()
             return
-        if command_sent and transcript.rstrip().endswith(b"#"):
+        if (
+            command_sent and not command_sent_now
+            and transcript.rstrip().endswith(b"#")
+        ):
             raise RuntimeError(
                 "Controller returned to its shell before services were ready")
     if publication_passed:
