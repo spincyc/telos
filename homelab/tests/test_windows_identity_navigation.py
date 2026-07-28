@@ -34,9 +34,10 @@ class FakeQmp:
 
 
 class Boundary:
-    def __init__(self, qmp, fail=None):
+    def __init__(self, qmp, fail=None, runtime=None):
         self.qmp = qmp
         self.fail = fail
+        self.runtime = runtime
         self.events = []
 
     def _event(self, name):
@@ -46,6 +47,8 @@ class Boundary:
 
     def start_switch(self):
         self._event("start-switch")
+        if self.runtime is not None:
+            self.runtime.mkdir(mode=0o700)
 
     def start_controller(self):
         self._event("start-controller")
@@ -81,6 +84,7 @@ def plan():
         desktop_crop=(0, 0, 320, 200),
         security_options_crop=(0, 0, 320, 200),
         change_password_crop=(0, 0, 320, 200),
+        sign_in_keys=("spc",),
         change_password_keys=("down", "ret"),
         timeout=20,
         interval=1,
@@ -133,6 +137,7 @@ class WindowsIdentityNavigationTests(unittest.TestCase):
                 Path(temporary))
             events = qmp.events
             private_index = events.index(("private-text", secret))
+            self.assertIn(("key", "spc"), events[:private_index])
             self.assertEqual(
                 2,
                 len([event for event in events[:private_index]
@@ -257,6 +262,30 @@ class WindowsIdentityNavigationTests(unittest.TestCase):
             ["stop-windows", "stop-controller", "stop-switch"],
             boundary.events[-3:],
         )
+
+    def test_evidence_may_live_below_runtime_created_by_switch(self):
+        secret = "Recovered-Private-47!"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            qmp = FakeQmp(self.frames())
+            boundary = Boundary(qmp, runtime=root / "runtime")
+
+            @contextmanager
+            def recover():
+                yield secret
+
+            receipt = capture_navigation(
+                boundary,
+                sign_in_manifest=REFERENCE_ROOT / "sign-in.json",
+                expected_guest=expected_guest(),
+                recover_credential=recover,
+                evidence_root=boundary.runtime / "navigation",
+                plan=plan(),
+                clock=_Clock(),
+                pause=lambda _: None,
+            )
+            self.assertTrue(receipt.teardown_complete)
+            self.assertTrue((boundary.runtime / "navigation").is_dir())
 
 
 class _Clock:

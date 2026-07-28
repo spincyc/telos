@@ -41,7 +41,9 @@ class NavigationCalibrationPlan:
     desktop_crop: tuple[int, int, int, int]
     security_options_crop: tuple[int, int, int, int]
     change_password_crop: tuple[int, int, int, int]
+    sign_in_keys: tuple[str, ...]
     change_password_keys: tuple[str, ...]
+    sign_in_delay: float = 0.0
     timeout: float = 90.0
     interval: float = 1.0
 
@@ -168,12 +170,17 @@ def capture_navigation(
     if (
         plan.timeout <= 0
         or plan.interval <= 0
-        or any(key not in SAFE_KEYS for key in plan.change_password_keys)
+        or plan.sign_in_delay < 0
+        or any(
+            key not in SAFE_KEYS
+            for keys in (plan.sign_in_keys, plan.change_password_keys)
+            for key in keys
+        )
     ):
         raise WindowsIdentityNavigationError(
             "navigation calibration plan is invalid")
     sign_in = _bound_sign_in(sign_in_manifest, expected_guest)
-    root = _private_root(evidence_root)
+    evidence_root = Path(evidence_root).absolute()
     driver: WindowsCredentialRotationDriver | None = None
     desktop: tuple[Path, ...] = ()
     security: tuple[Path, ...] = ()
@@ -195,6 +202,7 @@ def capture_navigation(
             if boundary.qmp is None:
                 raise WindowsIdentityNavigationError(
                     "QMP authentication returned without a client")
+            root = _private_root(evidence_root)
             driver = WindowsCredentialRotationDriver(
                 boundary.qmp,
                 root,
@@ -202,6 +210,11 @@ def capture_navigation(
                 clock=clock,
                 pause=pause,
             )
+            if plan.sign_in_delay:
+                pause(plan.sign_in_delay)
+            for key in plan.sign_in_keys:
+                boundary.qmp.key(key)
+                pause(0.15)
             driver._observe(sign_in)
             try:
                 with recover_credential() as credential:
