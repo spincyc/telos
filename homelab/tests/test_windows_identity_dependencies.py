@@ -9,6 +9,7 @@ from homelab.vm.simulated_gateway import HubPolicy, ethernet, ipv4, udp
 from homelab.vm.windows_identity_dependency import (
     DEPENDENCIES,
     DependencyPeer,
+    OPTIONAL_STORAGE_ACCESS_DENIED,
 )
 from homelab.vm.windows_identity_run import (
     NativeProcessBoundary,
@@ -46,6 +47,16 @@ def health_request(role: str) -> bytes:
         ),
     )
 
+def dependency_request(role: str, payload: bytes) -> bytes:
+    spec = DEPENDENCIES[role]
+    return ethernet(
+        spec["mac"], CLIENT_MAC, 0x0800,
+        ipv4(
+            CLIENT_IP, spec["ip"], 17,
+            udp(41000, spec["port"], payload),
+        ),
+    )
+
 
 class WindowsIdentityDependencyTests(unittest.TestCase):
     def test_each_peer_is_guest_visible_at_its_distinct_l2_identity(self):
@@ -70,6 +81,23 @@ class WindowsIdentityDependencyTests(unittest.TestCase):
             [],
             DependencyPeer("update-source").handle(
                 health_request("optional-storage")),
+        )
+
+    def test_optional_storage_has_reachable_but_access_denied_mode(self):
+        peer = DependencyPeer("optional-storage")
+        response = peer.handle(
+            dependency_request("optional-storage", b"authorize"))
+        self.assertEqual(1, len(response))
+        self.assertIn(OPTIONAL_STORAGE_ACCESS_DENIED, response[0])
+        self.assertEqual(
+            [],
+            DependencyPeer("update-source").handle(
+                dependency_request("update-source", b"authorize")),
+        )
+        self.assertEqual(
+            [],
+            peer.handle(dependency_request(
+                "optional-storage", b"credential=not-allowed")),
         )
 
     def test_switch_routes_guest_arp_and_health_to_dependency_peer(self):

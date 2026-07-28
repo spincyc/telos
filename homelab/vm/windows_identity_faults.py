@@ -150,6 +150,7 @@ def run_fault_phases(
         driver.disable("optional-storage")
         driver.observe("optional-storage-offline")
         driver.restore("optional-storage")
+        driver.observe("optional-storage-access-denied")
 
         driver.disable("controller")
         driver.observe("ad-dns-offline")

@@ -24,6 +24,9 @@ DEPENDENCIES = {
     },
 }
 
+OPTIONAL_STORAGE_ACCESS_REQUEST = b"authorize"
+OPTIONAL_STORAGE_ACCESS_DENIED = b"optional-storage:authorization-denied"
+
 
 class DependencyPeer:
     """Pure ARP/UDP responder with one fixed L2 and L3 identity."""
@@ -64,9 +67,18 @@ class DependencyPeer:
         ):
             return []
         request = body[ihl + 8:ihl + length]
-        if request != b"health":
+        if request == b"health":
+            payload = f"{self.role}:available".encode("ascii")
+        elif (
+            self.role == "optional-storage"
+            and request == OPTIONAL_STORAGE_ACCESS_REQUEST
+        ):
+            # This is a credential-free negative authorization oracle.  It
+            # proves that the peer is reachable and deliberately denies the
+            # fixed access request; it cannot authenticate or expose storage.
+            payload = OPTIONAL_STORAGE_ACCESS_DENIED
+        else:
             return []
-        payload = f"{self.role}:available".encode("ascii")
         packet = udp(self.port, source_port, payload)
         return [ethernet(
             source_mac, self.mac, 0x0800,

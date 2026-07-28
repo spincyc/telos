@@ -62,6 +62,7 @@ class WindowsIdentityFaultTests(unittest.TestCase):
             "disable:optional-storage",
             "observe:optional-storage-offline",
             "restore:optional-storage",
+            "observe:optional-storage-access-denied",
             "disable:controller",
             "observe:ad-dns-offline",
             "disable:gateway",

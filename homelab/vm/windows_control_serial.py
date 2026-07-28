@@ -41,6 +41,7 @@ _OBSERVATION_KEYS = {
     "dependency-reachability": {
         "update_source_reachable": bool,
         "optional_storage_reachable": bool,
+        "optional_storage_authorization_denied": bool,
     },
     "service-reachability": {
         "domain": str,
@@ -163,7 +164,7 @@ def parse_probe_record(line: bytes, expected_action: str) -> dict[str, object]:
 def fault_reachability_fields(
     record: Mapping[str, object],
     check: str,
-) -> dict[str, bool]:
+) -> dict[str, object]:
     """Map a validated dependency probe into one fault observation fragment.
 
     Login, profile, and rescue outcomes remain owned by their separate guest
@@ -191,6 +192,10 @@ def fault_reachability_fields(
         "optional-storage-offline": {
             "storage_reachable": "optional_storage_reachable",
         },
+        "optional-storage-access-denied": {
+            "storage_reachable": "optional_storage_reachable",
+            "storage_access": "optional_storage_authorization_denied",
+        },
         "combined-dependencies-offline": {
             "update_source_reachable": "update_source_reachable",
             "optional_storage_reachable": "optional_storage_reachable",
@@ -204,9 +209,20 @@ def fault_reachability_fields(
     except KeyError as error:
         raise WindowsControlSerialError(
             "fault check has no dependency reachability mapping") from error
-    return {
-        target: observation[source] for target, source in fields.items()
-    }
+    result: dict[str, object] = {}
+    for target, source in fields.items():
+        value: object = observation[source]
+        if check == "optional-storage-access-denied":
+            if observation["optional_storage_reachable"] is not True:
+                raise WindowsControlSerialError(
+                    "storage denial proof requires reachable storage")
+            if target == "storage_access":
+                if value is not True:
+                    raise WindowsControlSerialError(
+                        "storage denial proof is absent")
+                value = "denied"
+        result[target] = value
+    return result
 
 
 def receive_probe_record(

@@ -65,6 +65,36 @@ function Test-UdpRole {
     }
 }
 
+function Test-UdpAuthorizationDenied {
+    param(
+        [System.Net.IPAddress]$Address,
+        [int]$Port,
+        [string]$ExpectedReply
+    )
+    $client = [System.Net.Sockets.UdpClient]::new()
+    try {
+        $client.Client.ReceiveTimeout = 1500
+        $client.Connect($Address, $Port)
+        # The fixed public request contains no identity or credential.
+        $request = [Text.Encoding]::ASCII.GetBytes('authorize')
+        [void]$client.Send($request, $request.Length)
+        $remote = [System.Net.IPEndPoint]::new(
+            [System.Net.IPAddress]::Any, 0)
+        $reply = $client.Receive([ref]$remote)
+        return (
+            $remote.Address.Equals($Address) -and
+            $remote.Port -eq $Port -and
+            [Text.Encoding]::ASCII.GetString($reply) -ceq $ExpectedReply
+        )
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
 function Get-Probe {
     param([string]$Name)
     switch ($Name) {
@@ -112,6 +142,10 @@ function Get-Probe {
                 optional_storage_reachable = Test-UdpRole `
                     ([System.Net.IPAddress]::Parse('10.1.31.4')) 31339 `
                     'optional-storage:available'
+                optional_storage_authorization_denied = `
+                    Test-UdpAuthorizationDenied `
+                    ([System.Net.IPAddress]::Parse('10.1.31.4')) 31339 `
+                    'optional-storage:authorization-denied'
             }
         }
         'service-reachability' {

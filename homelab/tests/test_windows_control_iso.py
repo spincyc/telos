@@ -28,6 +28,8 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("'update-source:available'", script)
         self.assertIn("'10.1.31.4')) 31339", script)
         self.assertIn("'optional-storage:available'", script)
+        self.assertIn("'optional-storage:authorization-denied'", script)
+        self.assertIn("GetBytes('authorize')", script)
         self.assertNotIn("Password", script)
         self.assertNotIn("Credential", script)
 

@@ -30,6 +30,7 @@ def record(action="domain-state"):
         "dependency-reachability": {
             "update_source_reachable": False,
             "optional_storage_reachable": True,
+            "optional_storage_authorization_denied": True,
         },
     }
     return {
@@ -131,6 +132,11 @@ class WindowsControlSerialTests(unittest.TestCase):
             {"storage_reachable": True},
             fault_reachability_fields(observed, "optional-storage-offline"))
         self.assertEqual({
+            "storage_reachable": True,
+            "storage_access": "denied",
+        }, fault_reachability_fields(
+            observed, "optional-storage-access-denied"))
+        self.assertEqual({
             "update_source_reachable": False,
             "optional_storage_reachable": True,
         }, fault_reachability_fields(
@@ -148,6 +154,17 @@ class WindowsControlSerialTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 WindowsControlSerialError, "schema"):
             fault_reachability_fields(candidate, "update-source-offline")
+
+    def test_storage_denial_proof_is_distinct_from_an_outage(self):
+        for reachable, denied in ((False, True), (True, False)):
+            candidate = record("dependency-reachability")
+            candidate["observation"]["optional_storage_reachable"] = reachable
+            candidate["observation"][
+                "optional_storage_authorization_denied"] = denied
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "storage denial proof"):
+                fault_reachability_fields(
+                    candidate, "optional-storage-access-denied")
 
     def test_receiver_reads_one_record_from_unix_socket(self):
         with tempfile.TemporaryDirectory() as temporary:
