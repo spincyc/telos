@@ -96,6 +96,22 @@ class WindowsInstallRunTests(unittest.TestCase):
             self.assertNotIn(b"should-not-survive", log.read_bytes())
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
+    def test_private_publication_is_destroyed_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            publication = root / "publication.iso"
+            publication.write_bytes(b"embedded private inputs")
+            self.assertIsNone(
+                windows_install_run._destroy_private_publication(publication))
+            self.assertFalse(publication.exists())
+            target = root / "target"
+            target.write_bytes(b"preserve")
+            publication.symlink_to(target)
+            self.assertIn(
+                "symlink",
+                windows_install_run._destroy_private_publication(publication))
+            self.assertTrue(target.exists())
+
     def test_qmp_connection_waits_for_socket_readiness(self):
         client = object()
         with mock.patch.object(

@@ -82,6 +82,17 @@ def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
     private_file(path, redact(data[-maximum:]))
 
 
+def _destroy_private_publication(path: Path) -> str | None:
+    """Remove the ISO that embeds per-run unattend and SMB credentials."""
+    try:
+        if path.is_symlink():
+            return "private publication became a symlink"
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        return f"private publication cleanup failed: {type(error).__name__}"
+    return None
+
+
 def _connect_qmp(path: Path, *, timeout: float = 10) -> QmpClient:
     deadline = time.monotonic() + timeout
     last_error: BaseException | None = None
@@ -243,6 +254,11 @@ def run(
             serial_thread.join(timeout=2)
         _sanitize_log(evidence / "controller-publication.log")
         _sanitize_log(evidence / "workstation-serial.log")
+        publication_failure = _destroy_private_publication(
+            bundle / "publication.iso")
+        if publication_failure:
+            failures.append(publication_failure)
+        result["private_publication_destroyed"] = publication_failure is None
         if failures:
             result["cleanup_failures"] = failures
         output = evidence / "result.json"
