@@ -12,7 +12,7 @@ soft_dependencies: []
 related_to: ["e1135b56-26e9-4d97-946a-0284f5eb8c99"]
 superseded_by: null
 created_at: "2026-07-27T21:51:53Z"
-updated_at: "2026-07-28T00:40:13Z"
+updated_at: "2026-07-28T00:45:56Z"
 ---
 
 # Goal
@@ -73,3 +73,10 @@ to Pro, en-US, and the precreated Windows partition. The disk-count and
 capacity boundary is checked twice before the sole destructive call. Next,
 construct and verify the private WinPE overlay and complete install-source
 publication.
+
+The private wimboot injection set and complete install-source publication are
+implemented. The disposable Controller verifies and checksums the private
+overlay and sealed Windows tree, serves the overlay only on the isolated HTTP
+endpoint, and exports the source through authenticated read-only SMB.
+Readiness now includes SMB. Next, integrate this material with a persistent
+NVMe Windows install lifecycle and native-boot evidence.
