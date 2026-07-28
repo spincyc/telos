@@ -45,6 +45,7 @@ from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
+WINDOWS_OS_READINESS_TIMEOUT = 90.0
 
 
 @dataclass(frozen=True)
@@ -1101,10 +1102,15 @@ class NativeProcessBoundary:
         self, cursor: SwitchEvidenceCursor,
     ) -> None:
         evidence = self.runtime / "switch.jsonl"
+        deadline = time.monotonic() + WINDOWS_OS_READINESS_TIMEOUT
         self.windows_switch_generation = wait_for_switch_port(
-            evidence, "workstation", MACS["client"], after=cursor)
+            evidence, "workstation", MACS["client"],
+            timeout=max(0.0, deadline - time.monotonic()), after=cursor)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Windows OS readiness deadline expired")
         wait_for_plain_dhcp_transaction(
-            evidence, "workstation", MACS["client"], timeout=90,
+            evidence, "workstation", MACS["client"], timeout=remaining,
             after=cursor, generation=self.windows_switch_generation,
             gateway_generation=self.gateway_switch_generation)
 

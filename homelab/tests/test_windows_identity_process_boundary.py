@@ -640,21 +640,53 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             with (
                 mock.patch.object(
                     windows_identity_run, "wait_for_switch_port",
-                    return_value=7),
+                    return_value=7) as switch_port,
                 mock.patch.object(
                     windows_identity_run,
                     "wait_for_plain_dhcp_transaction") as dhcp,
+                mock.patch.object(
+                    windows_identity_run.time, "monotonic",
+                    side_effect=(100.0, 100.0, 125.0)),
             ):
                 boundary._wait_for_windows_os_readiness(cursor)
+            switch_port.assert_called_once_with(
+                boundary.runtime / "switch.jsonl",
+                "workstation",
+                windows_identity_run.MACS["client"],
+                timeout=90.0,
+                after=cursor,
+            )
             dhcp.assert_called_once_with(
                 boundary.runtime / "switch.jsonl",
                 "workstation",
                 windows_identity_run.MACS["client"],
-                timeout=90,
+                timeout=65.0,
                 after=cursor,
                 generation=7,
                 gateway_generation=3,
             )
+
+    def test_windows_readiness_rejects_exhausted_port_budget(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.runtime.mkdir(mode=0o700)
+            cursor = windows_identity_run.SwitchEvidenceCursor(
+                device=1, inode=2, offset=3)
+            with (
+                mock.patch.object(
+                    windows_identity_run, "wait_for_switch_port",
+                    return_value=7),
+                mock.patch.object(
+                    windows_identity_run,
+                    "wait_for_plain_dhcp_transaction") as dhcp,
+                mock.patch.object(
+                    windows_identity_run.time, "monotonic",
+                    side_effect=(100.0, 100.0, 190.0)),
+            ):
+                with self.assertRaisesRegex(
+                        RuntimeError, "readiness deadline expired"):
+                    boundary._wait_for_windows_os_readiness(cursor)
+            dhcp.assert_not_called()
 
     def test_boot_retry_requires_zero_qmp_writes_and_unchanged_overlay(self):
         with tempfile.TemporaryDirectory() as name:
