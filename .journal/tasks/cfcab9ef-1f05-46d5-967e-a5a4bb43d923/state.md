@@ -247,3 +247,9 @@ platform has neither TPM 2.0 nor Secure Boot. Private QEMU startup now sets
 only the two corresponding Windows Setup lab bypasses. Physical installation
 still requires real Windows 11 hardware compliance. The requirements-screen
 disk will not be reused; a fresh run is next.
+
+The bypassed run reached unattended image application and progressed
+monotonically to 24% over 1,200 seconds, with about 5.1 GB allocated and clean
+timeout teardown. The runner now permits up to 10,800 bounded seconds and
+reduces long-run screenshot cadence to 30 seconds. The partial disk will not
+be reused; a fresh long run is next.
