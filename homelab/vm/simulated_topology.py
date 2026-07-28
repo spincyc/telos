@@ -245,6 +245,7 @@ def run_client_bounded(
 def audit_qemu_argv(
     role: str, argv: list[str], *,
     allowed_nic_models: tuple[str, ...] = ("virtio-net-pci",),
+    allowed_chardevs: tuple[str, ...] = (),
 ) -> None:
     """Fail closed unless argv describes the intended guest-only NICs."""
     if role not in NIC_COUNTS:
@@ -262,8 +263,15 @@ def audit_qemu_argv(
         "guest-agent", "qemu-ga", "org.qemu.guest_agent",
     )
     lowered = [item.lower() for item in argv]
-    for item in lowered:
+    for index, item in enumerate(lowered):
         if item in forbidden_options:
+            if (
+                item == "-chardev"
+                and index + 1 < len(argv)
+                and argv[index + 1] in allowed_chardevs
+                and argv.count("-chardev") == len(allowed_chardevs)
+            ):
+                continue
             raise ValueError(f"{role}: forbidden QEMU option {item}")
         for term in forbidden_text:
             if term in item:
@@ -323,6 +331,7 @@ def audit_live_process(
     pid: int, role: str, proc_root: Path = Path("/proc"),
     *,
     allowed_nic_models: tuple[str, ...] = ("virtio-net-pci",),
+    allowed_chardevs: tuple[str, ...] = (),
     disposable_disk: Path | None = None,
     disposable_vars: Path | None = None,
     forbidden_paths: tuple[Path, ...] = (),
@@ -352,7 +361,8 @@ def audit_live_process(
         raise RuntimeError(
             f"{role}: live process is not approved QEMU: {executable}")
     audit_qemu_argv(
-        role, argv, allowed_nic_models=allowed_nic_models)
+        role, argv, allowed_nic_models=allowed_nic_models,
+        allowed_chardevs=allowed_chardevs)
     if disposable_disk is not None or disposable_vars is not None:
         if disposable_disk is None or disposable_vars is None:
             raise RuntimeError(

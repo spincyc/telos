@@ -105,6 +105,31 @@ class SimulatedTopologyTests(unittest.TestCase):
                     simulated_topology.audit_qemu_argv(
                         "controller", valid + addition)
 
+    def test_allows_only_one_exact_authorized_private_chardev(self):
+        valid = [
+            "qemu-system-x86_64", "-nodefaults",
+            "-netdev", "socket,id=x,connect=127.0.0.1:12971",
+            "-device", "e1000e,netdev=x",
+        ]
+        serial = (
+            "socket,id=telosidentity,path=/private/windows.serial,"
+            "server=on,wait=off")
+        command = valid + ["-chardev", serial, "-serial",
+                           "chardev:telosidentity"]
+        simulated_topology.audit_qemu_argv(
+            "client", command, allowed_nic_models=("e1000e",),
+            allowed_chardevs=(serial,))
+        for candidate in (
+            command + ["-chardev", serial],
+            valid + ["-chardev", serial.replace(
+                "/private/", "/different/")],
+        ):
+            with self.subTest(candidate=candidate), self.assertRaises(
+                    ValueError):
+                simulated_topology.audit_qemu_argv(
+                    "client", candidate, allowed_nic_models=("e1000e",),
+                    allowed_chardevs=(serial,))
+
     def test_live_proc_cmdline_is_reaudited(self):
         argv = [
             "/usr/bin/qemu-system-x86_64", "-nodefaults",

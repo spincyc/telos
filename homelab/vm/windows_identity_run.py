@@ -390,8 +390,13 @@ class NativeProcessBoundary:
                     command, stdin=subprocess.DEVNULL, stdout=output,
                     stderr=subprocess.STDOUT)
             self.processes["windows"] = process
+            chardevs = (
+                (command[command.index("-chardev") + 1],)
+                if "-chardev" in command else ()
+            )
             audit_live_process(
-                process.pid, "client", allowed_nic_models=("e1000e",))
+                process.pid, "client", allowed_nic_models=("e1000e",),
+                allowed_chardevs=chardevs)
             wait_for_switch_port(self.runtime / "switch.jsonl", "workstation")
             self._start_dependency("update-source")
             self._start_dependency("optional-storage")
