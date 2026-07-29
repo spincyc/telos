@@ -20,8 +20,8 @@ class WindowsGuiError(RuntimeError):
 
 
 SAFE_KEYS = frozenset({
-    "esc", "tab", "backtab", "ret", "spc", "up", "down", "left", "right",
-    "home", "end", "pgup", "pgdn",
+    "esc", "tab", "backtab", "backspace", "ret", "spc", "up", "down",
+    "left", "right", "home", "end", "pgup", "pgdn",
 })
 SHIFTED = {
     "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
@@ -134,9 +134,17 @@ class QmpClient:
             event_limit: int = 256,
             response_limit: int = 256,
             clock: Callable[[], float] = time.monotonic,
+            pause: Callable[[float], None] = time.sleep,
+            key_interval: float = 0.10,
     ) -> None:
         if event_limit < 1 or response_limit < 1:
             raise ValueError("QMP queue limits must be positive")
+        if (
+            type(key_interval) not in (int, float)
+            or not math.isfinite(key_interval)
+            or key_interval < 0
+        ):
+            raise ValueError("QMP key interval must be nonnegative")
         self.connection = connection
         self.reader = connection.makefile("rb")
         self.sequence = 0
@@ -145,6 +153,8 @@ class QmpClient:
         self._event_limit = event_limit
         self._response_limit = response_limit
         self._clock = clock
+        self._pause = pause
+        self._key_interval = float(key_interval)
 
     @classmethod
     def connect(
@@ -369,12 +379,18 @@ class QmpClient:
         ):
             raise WindowsGuiError("QMP text timeout is invalid")
         deadline = None if timeout is None else self._clock() + timeout
-        for keys in encoded:
+        for index, keys in enumerate(encoded):
             remaining = (
                 None if deadline is None
                 else self._remaining_timeout(deadline, None)
             )
             self.chord(*keys, timeout=remaining)
+            if index + 1 < len(encoded) and self._key_interval:
+                interval = self._key_interval
+                if deadline is not None:
+                    interval = min(
+                        interval, self._remaining_timeout(deadline, None))
+                self._pause(interval)
 
 
 class WindowsSetupDriver:

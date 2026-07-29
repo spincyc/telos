@@ -212,6 +212,8 @@ class WindowsGuiTests(unittest.TestCase):
         client = object.__new__(windows_gui.QmpClient)
         requests = []
         client._clock = lambda: 0.0
+        client._pause = lambda interval: None
+        client._key_interval = 0.10
         client.execute = (
             lambda command, arguments=None, timeout=None:
             requests.append((command, arguments))
@@ -235,10 +237,30 @@ class WindowsGuiTests(unittest.TestCase):
         self.assertNotIn("secret", str(failure.exception))
         self.assertEqual(8, len(requests))
 
+    def test_qmp_key_allows_backspace_and_rejects_unlisted_keys(self):
+        client = object.__new__(windows_gui.QmpClient)
+        client.execute = mock.Mock()
+
+        client.key("backspace", timeout=2.0)
+
+        client.execute.assert_called_once_with(
+            "send-key",
+            {
+                "keys": [{"type": "qcode", "data": "backspace"}],
+                "hold-time": 60,
+            },
+            timeout=2.0,
+        )
+        with self.assertRaisesRegex(WindowsGuiError, "unsafe GUI key"):
+            client.key("delete")
+        self.assertEqual(1, client.execute.call_count)
+
     def test_qmp_text_typing_shares_one_aggregate_timeout(self):
         client = object.__new__(windows_gui.QmpClient)
         now = [10.0]
         client._clock = lambda: now[0]
+        client._pause = lambda interval: now.__setitem__(0, now[0] + interval)
+        client._key_interval = 0.10
         requests = []
 
         def execute(command, arguments=None, *, timeout=None):
@@ -251,19 +273,63 @@ class WindowsGuiTests(unittest.TestCase):
             client.type_text("abc", timeout=1.0)
 
         self.assertEqual(2, len(requests))
-        self.assertEqual([1.0, 0.4], [
+        self.assertEqual([1.0, 0.3], [
             round(request[2], 1) for request in requests])
         self.assertNotIn("abc", str(failure.exception))
 
     def test_qmp_text_prevalidates_before_sending_any_key(self):
         client = object.__new__(windows_gui.QmpClient)
         client._clock = lambda: 0.0
+        client._pause = lambda interval: None
+        client._key_interval = 0.10
         client.execute = mock.Mock()
 
         with self.assertRaisesRegex(WindowsGuiError, "offset 2"):
             client.type_text("ab\nsecret", timeout=1.0)
 
         client.execute.assert_not_called()
+
+    def test_qmp_text_typing_paces_between_keys_with_one_deadline(self):
+        client = object.__new__(windows_gui.QmpClient)
+        now = [4.0]
+        pauses = []
+        requests = []
+        client._clock = lambda: now[0]
+        client._key_interval = 0.10
+
+        def pause(interval):
+            pauses.append(interval)
+            now[0] += interval
+
+        def execute(command, arguments=None, *, timeout=None):
+            requests.append((command, timeout))
+            now[0] += 0.1
+
+        client._pause = pause
+        client.execute = execute
+        client.type_text("abc", timeout=1.0)
+
+        self.assertEqual([0.10, 0.10], pauses)
+        self.assertEqual(
+            [1.0, 0.8, 0.6],
+            [round(timeout, 2) for _, timeout in requests],
+        )
+
+    def test_qmp_text_pacing_cannot_exceed_aggregate_deadline(self):
+        client = object.__new__(windows_gui.QmpClient)
+        now = [8.0]
+        client._clock = lambda: now[0]
+        client._key_interval = 0.10
+        client.execute = mock.Mock()
+
+        def pause(interval):
+            now[0] += interval
+
+        client._pause = pause
+        with self.assertRaisesRegex(WindowsGuiError, "timed out"):
+            client.type_text("ab", timeout=0.02)
+
+        client.execute.assert_called_once()
 
     def test_qmp_execute_clamps_and_restores_socket_timeout(self):
         client = object.__new__(windows_gui.QmpClient)

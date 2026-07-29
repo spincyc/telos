@@ -8,9 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 import socket
+from types import SimpleNamespace
 from unittest import mock
 
 from homelab.vm import windows_identity_adapter as subject
+from homelab.vm.windows_gui import Image
 
 
 class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
@@ -42,6 +44,43 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         arguments.update(changes)
         return subject.NativeWindowsAcceptanceAdapter(
             self.boundary, self.root, **arguments)
+
+    def test_secret_entry_departure_is_ephemeral_and_requires_two_frames(self):
+        evidence = self.root / "evidence"
+        evidence.mkdir(mode=0o700)
+        width, height = 320, 200
+        empty_pixels = bytes(reversed(range(256))) * 750
+        departed_pixels = bytes(range(256)) * 750
+        reference = SimpleNamespace(
+            geometry=(width, height),
+            crop=None,
+            image=Image(width, height, empty_pixels),
+        )
+        paths = []
+
+        def screenshot(path):
+            paths.append(path)
+            path.write_bytes(
+                f"P6\n{width} {height}\n255\n".encode() + departed_pixels)
+
+        qmp = mock.Mock()
+        qmp.screenshot.side_effect = screenshot
+        pause = mock.Mock()
+
+        subject._prove_secret_entry_departure(
+            qmp,
+            evidence,
+            reference,
+            timeout=1,
+            clock=lambda: 0,
+            pause=pause,
+        )
+
+        self.assertEqual(2, qmp.screenshot.call_count)
+        self.assertEqual([mock.call(0.5)], pause.call_args_list)
+        self.assertTrue(paths)
+        self.assertTrue(all(not path.exists() for path in paths))
+        self.assertEqual([], list(evidence.iterdir()))
 
     @mock.patch.object(subject, "execute_credential_action")
     @mock.patch.object(
@@ -198,11 +237,13 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertEqual(0o700, evidence.stat().st_mode & 0o777)
 
     @mock.patch.object(subject.time, "sleep")
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
     def test_calibrated_reauthentication_observes_before_secret_entry(
-        self, load_references, private_evidence_root, interaction_type, sleep,
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure, sleep,
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
@@ -222,6 +263,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             interaction.observe_ephemeral, "observe_ephemeral")
         manager.attach_mock(interaction.type_secret, "type_secret")
         manager.attach_mock(interaction.key, "key")
+        manager.attach_mock(interaction.chord, "chord")
+        manager.attach_mock(prove_departure, "prove_departure")
         plan = mock.Mock(
             initial_sign_in_delay=0,
             lock_settle_delay=2,
@@ -238,11 +281,20 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertEqual(
             [
                 mock.call.key("spc", timeout=mock.ANY),
+                mock.call.chord("ctrl", "a", timeout=mock.ANY),
+                mock.call.key("backspace", timeout=mock.ANY),
                 mock.call.key("tab", timeout=mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.disable_durable_capture(),
                 mock.call.type_secret("private", timeout=mock.ANY),
+                mock.call.prove_departure(
+                    self.qmp,
+                    evidence,
+                    sign_in,
+                    timeout=mock.ANY,
+                    clock=adapter.clock,
+                ),
                 mock.call.key("ret", timeout=mock.ANY),
                 mock.call.observe_ephemeral(
                     desktop,
@@ -264,11 +316,53 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             ".\\telosadmin", timeout=mock.ANY)
         self.assertEqual([mock.call(2)], sleep.call_args_list)
 
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_never_submits_without_secret_entry_departure(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for local account telosadmin",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        prove_departure.side_effect = RuntimeError("private backend detail")
+        interaction = interaction_type.return_value
+        adapter = self.adapter(rotation_plan=mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=(),
+            post_join_local_account_keys=(),
+            post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
+            checkpoint_timeout=11,
+        ))
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_local("private")
+
+        self.assertEqual("type-secret", caught.exception.reauth_operation)
+        self.assertNotIn("private backend detail", str(caught.exception))
+        interaction.type_secret.assert_called_once_with(
+            "private", timeout=mock.ANY)
+        self.assertNotIn(mock.call("ret"), interaction.key.call_args_list)
+        interaction.observe_ephemeral.assert_not_called()
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
     def test_reauthentication_classifies_persisted_sign_in_after_submit(
         self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
@@ -299,11 +393,13 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             caught.exception.reauth_operation,
         )
 
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
     def test_reauthentication_maps_terminal_near_references(
         self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
@@ -337,12 +433,14 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     adapter.reauthenticate_local("private")
                 self.assertEqual(operation, caught.exception.reauth_operation)
 
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
     @mock.patch.object(subject.time, "sleep")
     def test_reauthentication_deadline_starts_after_boot_settle(
         self, sleep, load_references, private_evidence_root, interaction_type,
+        prove_departure,
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
@@ -443,12 +541,17 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 self.assertGreater(timeout, 0)
                 self.assertLessEqual(timeout, 7)
                 self.assertEqual(
-                    [mock.call(
-                        "up" if domain_operator else "down",
-                        timeout=mock.ANY,
-                    )],
+                    [
+                        mock.call(
+                            "up" if domain_operator else "down",
+                            timeout=mock.ANY,
+                        ),
+                        mock.call("backspace", timeout=mock.ANY),
+                    ],
                     interaction_type.return_value.key.call_args_list,
                 )
+                interaction_type.return_value.chord.assert_called_once_with(
+                    "ctrl", "a", timeout=mock.ANY)
                 interaction_type.return_value.type_secret.assert_not_called()
 
     @mock.patch.object(subject, "_GuiInteraction")

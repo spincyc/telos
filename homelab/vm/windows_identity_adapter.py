@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+import os
 import socket
 import stat
 import time
@@ -42,7 +43,13 @@ from .windows_identity_progressive import (
     WindowsIdentityGuiAlternateState,
     WindowsIdentityGuiNearReference,
 )
-from .windows_gui import SAFE_KEYS
+from .windows_gui import (
+    SAFE_KEYS,
+    crop_image,
+    image_distance,
+    read_ppm,
+    useful_frame,
+)
 from .windows_identity_run import (
     IdentityFailureDiagnostic,
     NativeProcessBoundary,
@@ -104,6 +111,60 @@ _ACTIONS = {
     "ad-dns-offline": "cached-domain-login",
     "combined-dependencies-offline": "cached-domain-login",
 }
+
+
+def _prove_secret_entry_departure(
+    qmp,
+    evidence: Path,
+    reference,
+    *,
+    timeout: float,
+    clock: Callable[[], float],
+    pause: Callable[[float], None] = time.sleep,
+) -> None:
+    """Ephemerally prove two frames departed the empty password target."""
+    deadline = clock() + timeout
+    consecutive = 0
+    previous = None
+    while clock() < deadline:
+        path = evidence / f".secret-entry-{uuid.uuid4().hex}.ppm"
+        try:
+            qmp.screenshot(path)
+            os.chmod(path, 0o600)
+            full_actual = read_ppm(path)
+            if (
+                (full_actual.width, full_actual.height)
+                != reference.geometry
+            ):
+                raise WindowsIdentityAdapterError(
+                    "post-secret screenshot geometry differs from reference")
+            actual = crop_image(full_actual, reference.crop)
+            departed = (
+                useful_frame(actual)
+                and image_distance(actual, reference.image) > 6.0
+            )
+        finally:
+            path.unlink(missing_ok=True)
+        if departed:
+            if previous is not None and image_distance(
+                    actual, previous) <= 6.0:
+                consecutive += 1
+            else:
+                consecutive = 1
+            previous = actual
+            if consecutive == 2:
+                del full_actual, actual, previous
+                return
+        else:
+            consecutive = 0
+            previous = None
+        del full_actual, actual
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        pause(min(0.5, remaining))
+    raise WindowsIdentityAdapterError(
+        "post-secret password-target departure was not proved")
 
 
 class _LeasedSerial:
@@ -536,10 +597,17 @@ class NativeWindowsAcceptanceAdapter:
         # the private credential, then require the exact local-account
         # password-field reference twice.  A wrong focus therefore fails
         # closed without disclosing the credential.
+        def normalize_public_username() -> None:
+            interaction.chord(
+                "ctrl", "a", timeout=remaining("type-public-username"))
+            interaction.key(
+                "backspace", timeout=remaining("type-public-username"))
+            self._qmp().type_text(
+                principal, timeout=remaining("type-public-username"))
+
         _run_local_reauthentication_operation(
             "type-public-username",
-            lambda: self._qmp().type_text(
-                principal, timeout=remaining("type-public-username")),
+            normalize_public_username,
         )
 
         def prove_password_target() -> None:
@@ -561,6 +629,16 @@ class NativeWindowsAcceptanceAdapter:
         _run_local_reauthentication_operation(
             "type-secret", lambda: interaction.type_secret(
                 credential, timeout=remaining("type-secret")))
+        _run_local_reauthentication_operation(
+            "type-secret",
+            lambda: _prove_secret_entry_departure(
+                self._qmp(),
+                evidence,
+                sign_in,
+                timeout=remaining("type-secret"),
+                clock=self.clock,
+            ),
+        )
 
         def settle_secret_input() -> None:
             if lock_settle_delay:
