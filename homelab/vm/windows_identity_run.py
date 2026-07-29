@@ -98,6 +98,35 @@ class IdentityFailureDiagnostic:
             ".outcome-receive", ".outcome-parse", ".guest",
         )
     )
+    _CONTROLLER_CONVERGENCE_STAGES = frozenset({
+        "network",
+        "time-sync",
+        "time-sync-response",
+        "time-sync-clock",
+        "payload-stage",
+        "package-preflight",
+        "package-missing-samba",
+        "package-missing-krb5",
+        "package-missing-ntp",
+        "package-missing-python-cryptography",
+        "package-missing-python-dnspython",
+        "package-missing-python-markdown",
+        "package-missing-openresolv",
+        "package-missing-bind",
+        "ansible",
+        "services",
+        "auth-audit",
+        "auth-audit-preflight",
+        "auth-audit-sink-create",
+        "auth-audit-config-write",
+        "auth-audit-config-verify",
+        "auth-audit-restart",
+        "auth-audit-sink-verify",
+        "verify",
+        *(f"verify-{index:02d}" for index in range(1, 11)),
+        "administrator-disable",
+        "administrator-disabled-proof",
+    })
     _ERROR_TYPES = frozenset({
         "ControllerJoinMaterialError",
         "ControllerJoinReturnCode",
@@ -132,6 +161,21 @@ class IdentityFailureDiagnostic:
         if error_type not in cls._ERROR_TYPES:
             error_type = "UnexpectedError"
         return cls("windows-joined", candidate, error_type)
+
+    @classmethod
+    def controller_convergence(
+        cls, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        """Bind a Controller factory failure to its last public phase."""
+        if phase not in cls._CONTROLLER_CONVERGENCE_STAGES:
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(
+            "controller-ready",
+            f"controller-convergence.{phase}",
+            error_type,
+        )
 
     @classmethod
     def join_guest(
@@ -364,6 +408,13 @@ class IdentityFailureDiagnostic:
                         "desktop-sign-in-near-reference",
                     )
                 }
+            )
+            and not (
+                self.check == "controller-ready"
+                and self.operation.startswith("controller-convergence.")
+                and self.operation.removeprefix(
+                    "controller-convergence."
+                ) in self._CONTROLLER_CONVERGENCE_STAGES
             )
             and (self.check, self.operation)
             != ("unknown-check", "unknown-operation")
@@ -1127,8 +1178,8 @@ class NativeProcessBoundary:
                     "drive": "identityfactorynode",
                     "bus": "identityfactorybus.0",
             })
-            console.converge_disposable_controller(
-                FactoryBundle.guest_command(nonce))
+            self._converge_controller(
+                console, FactoryBundle.guest_command(nonce))
             self.controller_qmp.execute(
                 "device_del", {"id": "identityfactorycd"})
             self.controller_qmp.await_device_deleted(
@@ -1153,6 +1204,32 @@ class NativeProcessBoundary:
         except BaseException:
             self.stop_controller()
             raise
+
+    @staticmethod
+    def _converge_controller(
+        console: SerialAutomation, guest_command: str,
+    ) -> None:
+        """Converge while retaining only the last allowlisted public phase."""
+        diagnostic: IdentityFailureDiagnostic | None = None
+        try:
+            console.converge_disposable_controller(guest_command)
+        except SerialAutomationError:
+            prefix = "controller-convergence-stage-"
+            phase = next(
+                (
+                    event.removeprefix(prefix)
+                    for event in reversed(console.events)
+                    if event.startswith(prefix)
+                ),
+                "",
+            )
+            diagnostic = IdentityFailureDiagnostic.controller_convergence(
+                phase, "SerialAutomationError")
+        if diagnostic is not None:
+            raise WindowsIdentityRunError(
+                "Controller convergence failed",
+                diagnostic=diagnostic,
+            ) from None
 
     def start_windows(self) -> None:
         if self.port is None:

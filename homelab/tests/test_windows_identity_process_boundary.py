@@ -205,6 +205,36 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 boundary.processes.clear()
                 boundary._cleanup_qmp_root()
 
+    def test_controller_convergence_failure_retains_only_last_public_phase(self):
+        console = mock.Mock()
+        console.events = [
+            "controller-convergence-stage-services",
+            "private-event-secret-47",
+            "controller-convergence-stage-auth-audit-config-verify",
+        ]
+        console.converge_disposable_controller.side_effect = (
+            windows_identity_run.SerialAutomationError(
+                "private convergence secret 47"))
+
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            NativeProcessBoundary._converge_controller(
+                console, "private guest command")
+
+        diagnostic = caught.exception.diagnostic
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual("controller-ready", diagnostic.check)
+        self.assertEqual(
+            "controller-convergence.auth-audit-config-verify",
+            diagnostic.operation,
+        )
+        self.assertEqual("SerialAutomationError", diagnostic.error_type)
+        self.assertIn(diagnostic.render(), diagnostic.render())
+        self.assertNotIn("private convergence secret", str(caught.exception))
+        self.assertNotIn("private guest command", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
     def test_controller_rejects_unsafe_opened_seed_descriptor(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))

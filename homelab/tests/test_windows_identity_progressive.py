@@ -413,6 +413,48 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertNotIn("destroy", events)
         self.assertEqual(["session:exit", "recovery:exit"], events[-2:])
 
+    def test_controller_convergence_failure_is_preserved_and_rendered(self):
+        events = []
+        diagnostic = IdentityFailureDiagnostic.controller_convergence(
+            "auth-audit-sink-verify", "SerialAutomationError")
+
+        class FailingSession:
+            def __enter__(self):
+                raise progressive_subject.WindowsIdentityRunError(
+                    "private controller detail", diagnostic=diagnostic)
+
+            def __exit__(self, *_exc):
+                events.append("session:exit")
+
+        session = FailingSession()
+
+        with mock.patch(
+            "homelab.vm.windows_identity_progressive.load_identity_reference",
+            side_effect=[
+                reference(kind) for kind in (
+                    "sign-in", "desktop", "security-options",
+                    "change-password")
+            ],
+        ):
+            with self.assertRaises(WindowsIdentityProgressiveError) as caught:
+                execute_progressive_rotation(
+                    plan=self.plan(),
+                    session=session,
+                    recovery=Recovery(
+                        "Old-private-47!", events, "recovery"),
+                    generate_credential=lambda: "New-private-83!",
+                    after_rotation=lambda _replacement: None,
+                    pause=lambda _: None,
+                    interaction_factory=lambda _qmp, _root:
+                        Interaction(events),
+                )
+
+        self.assertIs(diagnostic, caught.exception.diagnostic)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertNotIn("private controller detail", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
     def test_unknown_static_probe_error_is_normalized_without_context(self):
         secret = "Unknown-private-message-47!"
 

@@ -159,6 +159,43 @@ class WindowsIdentityRunTests(unittest.TestCase):
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
 
+    def test_controller_convergence_diagnostic_allows_exact_factory_phases(self):
+        for phase in (
+            "network",
+            "package-missing-python-cryptography",
+            "auth-audit",
+            "auth-audit-preflight",
+            "auth-audit-sink-create",
+            "auth-audit-config-write",
+            "auth-audit-config-verify",
+            "auth-audit-restart",
+            "auth-audit-sink-verify",
+            "verify-10",
+            "administrator-disabled-proof",
+        ):
+            with self.subTest(phase=phase):
+                diagnostic = (
+                    windows_identity_run.IdentityFailureDiagnostic
+                    .controller_convergence(phase, "SerialAutomationError")
+                )
+                self.assertEqual("controller-ready", diagnostic.check)
+                self.assertEqual(
+                    f"controller-convergence.{phase}",
+                    diagnostic.operation,
+                )
+                self.assertEqual(
+                    "SerialAutomationError", diagnostic.error_type)
+
+        rejected = (
+            windows_identity_run.IdentityFailureDiagnostic
+            .controller_convergence(
+                "auth-audit-private-detail", "PrivateFailure")
+        )
+        self.assertEqual(
+            ("unknown-check", "unknown-operation", "UnexpectedError"),
+            (rejected.check, rejected.operation, rejected.error_type),
+        )
+
     def test_secret_and_destruction_boundaries_have_one_order(self):
         recorder = Recorder()
         receipt = run_lifecycle(recorder.operations())
