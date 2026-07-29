@@ -224,7 +224,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         manager.attach_mock(interaction.key, "key")
         plan = mock.Mock(
             initial_sign_in_delay=0,
-            lock_settle_delay=0,
+            lock_settle_delay=2,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=(),
             post_join_local_account_calibrated=True,
@@ -261,7 +261,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(observe_timeouts[0], observe_timeouts[1])
         self.assertGreaterEqual(observe_timeouts[1], final_timeout)
         self.qmp.type_text.assert_called_once_with(".\\telosadmin")
-        sleep.assert_not_called()
+        self.assertEqual([mock.call(2)], sleep.call_args_list)
 
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")

@@ -516,6 +516,15 @@ class NativeWindowsAcceptanceAdapter:
                 remaining("type-secret"),
                 interaction.type_secret(credential),
             ))
+
+        def settle_secret_input() -> None:
+            if lock_settle_delay:
+                budget = remaining("submit")
+                time.sleep(min(lock_settle_delay, budget))
+                remaining("submit")
+
+        _run_local_reauthentication_operation(
+            "submit", settle_secret_input)
         _run_local_reauthentication_operation(
             "submit", lambda: (
                 remaining("submit"),
