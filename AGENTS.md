@@ -16,6 +16,12 @@ add scope-specific requirements.
   tool call, commit, push, progress message, user question, or checkpoint
   invalidates a prior successful check. Status answers are commentary inside
   the loop; they never terminate active work.
+- A bounded sub-agent reporting its completed result to the coordinating agent
+  is an internal progress delivery, not a repository handoff or terminal
+  response. It must deliver that result and finish even when the repository
+  yield check is denied. The coordinating/root agent alone applies the
+  repository yield gate before yielding control outside the active journal
+  loop.
 - Do not push without user authority. Before every authorized push, run
   `make verify-site` against the exact commit that will be pushed.
 - After every push, find the `Publish GitHub Pages` workflow run whose
