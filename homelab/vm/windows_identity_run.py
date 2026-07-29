@@ -43,7 +43,10 @@ from .windows_identity_contract import qemu_identity_command
 from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
-from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCode
+from .windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCode,
+    PostSubmitDiagnosticCollection,
+)
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 WINDOWS_OS_READINESS_TIMEOUT = 300.0
@@ -57,6 +60,7 @@ class IdentityFailureDiagnostic:
     operation: str
     error_type: str
     post_submit_diagnostic: str | None = None
+    post_submit_collection: str | None = None
 
     _STATIC_PROBE_PAIRS = frozenset({
         ("controller-ready", "controller-readiness"),
@@ -129,6 +133,7 @@ class IdentityFailureDiagnostic:
     def join_guest(
         cls, phase: str, error_type: str,
         post_submit_diagnostic: str | None = None,
+        post_submit_collection: str | None = None,
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
@@ -170,6 +175,7 @@ class IdentityFailureDiagnostic:
         return cls(
             "windows-joined", candidate, error_type,
             post_submit_diagnostic,
+            post_submit_collection,
         )
 
     @classmethod
@@ -249,6 +255,24 @@ class IdentityFailureDiagnostic:
         ):
             raise ValueError("post-submit diagnostic is invalid")
         if (
+            self.post_submit_collection is not None
+            and (
+                type(self.post_submit_collection) is not str
+                or self.post_submit_collection not in {
+                    code.value for code in PostSubmitDiagnosticCollection
+                }
+                or self.operation not in {
+                    "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-desktop-near-reference",
+                    "join-guest.reboot-reauth-desktop-sign-in-persisted",
+                    "join-guest.reboot-reauth-desktop-sign-in-near-reference",
+                }
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("post-submit collection is invalid")
+        if (
             (self.check, self.operation) not in self._STATIC_PROBES
             and not (
                 self.check == "windows-joined"
@@ -319,6 +343,11 @@ class IdentityFailureDiagnostic:
                 "; post-submit-diagnostic="
                 f"{self.post_submit_diagnostic}"
             )
+        if self.post_submit_collection is not None:
+            rendered += (
+                "; post-submit-collection="
+                f"{self.post_submit_collection}"
+            )
         return rendered
 
 
@@ -359,6 +388,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         operation: str,
         *,
         post_submit_diagnostic: PostSubmitDiagnosticCode | None = None,
+        post_submit_collection: PostSubmitDiagnosticCollection | None = None,
     ) -> None:
         if operation not in self._OPERATIONS:
             operation = "prove-password-target"
@@ -376,6 +406,20 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
             post_submit_diagnostic = None
         self.reauth_operation = operation
         self.post_submit_diagnostic = post_submit_diagnostic
+        if (
+            post_submit_collection is not None
+            and (
+                type(post_submit_collection)
+                is not PostSubmitDiagnosticCollection
+                or operation not in {
+                    "desktop", "desktop-near-reference",
+                    "desktop-sign-in-persisted",
+                    "desktop-sign-in-near-reference",
+                }
+            )
+        ):
+            post_submit_collection = None
+        self.post_submit_collection = post_submit_collection
         super().__init__(
             f"post-join local reauthentication failed at {operation}")
 

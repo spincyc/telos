@@ -67,6 +67,10 @@ from .windows_postjoin_calibration import (
     retain_post_join_calibration,
     sample_post_join_calibration,
 )
+from .windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCode,
+    PostSubmitDiagnosticCollection,
+)
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
@@ -88,6 +92,11 @@ def _run_local_reauthentication_operation(
             if type(error) is WindowsLocalReauthenticationError
             else None
         )
+        post_submit_collection = (
+            error.post_submit_collection
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -101,6 +110,7 @@ def _run_local_reauthentication_operation(
         raise WindowsLocalReauthenticationError(
             failure_operation,
             post_submit_diagnostic=post_submit_diagnostic,
+            post_submit_collection=post_submit_collection,
         ) from None
 
 
@@ -235,6 +245,7 @@ class NativeWindowsAcceptanceAdapter:
         self._com1_owned = False
         self._static_probe_poisoned = False
         self._post_submit_diagnostic_code: object | None = None
+        self._post_submit_diagnostic_collection: object | None = None
         self._audit_configuration()
 
     def _audit_configuration(self) -> None:
@@ -685,6 +696,7 @@ class NativeWindowsAcceptanceAdapter:
 
         diagnostic_factory = self.post_submit_diagnostic
         self._post_submit_diagnostic_code = None
+        self._post_submit_diagnostic_collection = None
         if diagnostic_factory is None or not domain_operator:
             submit_secret()
         else:
@@ -715,15 +727,30 @@ class NativeWindowsAcceptanceAdapter:
                     armed = True
                     submit_secret()
                     try:
-                        session.submitted()
-                        self._post_submit_diagnostic_code = session.result()
+                        terminal = session.submitted()
                     except (KeyboardInterrupt, SystemExit, RunInterrupted):
                         raise
                     except BaseException:
-                        # This evidence is diagnostic only.  Transport,
-                        # watcher, and classification failures cannot replace
-                        # the authoritative GUI desktop result.
-                        self._post_submit_diagnostic_code = None
+                        self._post_submit_diagnostic_collection = (
+                            PostSubmitDiagnosticCollection.
+                            SUBMITTED_RECEIPT_UNAVAILABLE
+                        )
+                    else:
+                        if type(terminal) is PostSubmitDiagnosticCode:
+                            self._post_submit_diagnostic_code = terminal
+                        else:
+                            try:
+                                self._post_submit_diagnostic_code = (
+                                    session.result())
+                            except (
+                                KeyboardInterrupt, SystemExit, RunInterrupted,
+                            ):
+                                raise
+                            except BaseException:
+                                self._post_submit_diagnostic_collection = (
+                                    PostSubmitDiagnosticCollection.
+                                    RESULT_RECEIPT_UNAVAILABLE
+                                )
                 except (KeyboardInterrupt, SystemExit, RunInterrupted):
                     raise
                 except BaseException as error:
@@ -741,6 +768,10 @@ class NativeWindowsAcceptanceAdapter:
                             raise
                         except BaseException as error:
                             self._static_probe_poisoned = True
+                            self._post_submit_diagnostic_collection = (
+                                PostSubmitDiagnosticCollection.
+                                CLEANUP_RECEIPT_UNAVAILABLE
+                            )
                             if primary is None and not armed:
                                 primary = error
             if primary is not None:
@@ -763,6 +794,8 @@ class NativeWindowsAcceptanceAdapter:
                         "desktop-sign-in-persisted",
                         post_submit_diagnostic=(
                             self._post_submit_diagnostic_code),
+                        post_submit_collection=(
+                            self._post_submit_diagnostic_collection),
                     ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
@@ -771,12 +804,16 @@ class NativeWindowsAcceptanceAdapter:
                         "desktop-near-reference",
                         post_submit_diagnostic=(
                             self._post_submit_diagnostic_code),
+                        post_submit_collection=(
+                            self._post_submit_diagnostic_collection),
                     ) from None
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
                         "desktop-sign-in-near-reference",
                         post_submit_diagnostic=(
                             self._post_submit_diagnostic_code),
+                        post_submit_collection=(
+                            self._post_submit_diagnostic_collection),
                     ) from None
                 raise
 
@@ -789,6 +826,8 @@ class NativeWindowsAcceptanceAdapter:
             raise WindowsLocalReauthenticationError(
                 desktop_failure,
                 post_submit_diagnostic=self._post_submit_diagnostic_code,
+                post_submit_collection=(
+                    self._post_submit_diagnostic_collection),
             ) from None
 
     def static_probe(self, action: str) -> Mapping[str, object]:

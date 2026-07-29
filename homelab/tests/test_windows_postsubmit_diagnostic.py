@@ -190,6 +190,42 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
                 PostSubmitDiagnosticError, "result is invalid"):
             session.result()
 
+    def test_submitted_accepts_only_exact_terminal_guest_result(self):
+        session, guest = self.session()
+        session._state = "armed"
+        guest.sendall(record({
+            "schema_version": 1, "event": "result", "nonce": NONCE,
+            "code": "watcher-error", "cleanup_complete": True,
+        }))
+
+        self.assertIs(
+            PostSubmitDiagnosticCode.WATCHER_ERROR,
+            session.submitted(),
+        )
+        self.assertEqual("finished", session._state)
+        self.assertEqual({
+            "schema_version": 1, "command": "submitted", "nonce": NONCE,
+        }, json.loads(guest.recv(1024)))
+
+        for mutation in (
+            {"nonce": "cd" * 16},
+            {"cleanup_complete": False},
+            {"code": "raw-private-code"},
+            {"private": "detail"},
+        ):
+            with self.subTest(mutation=mutation):
+                session, guest = self.session()
+                session._state = "armed"
+                candidate = {
+                    "schema_version": 1, "event": "result",
+                    "nonce": NONCE, "code": "watcher-error",
+                    "cleanup_complete": True,
+                }
+                candidate.update(mutation)
+                guest.sendall(record(candidate))
+                with self.assertRaises(PostSubmitDiagnosticError):
+                    session.submitted()
+
     def test_terminal_state_rejects_duplicate_result_and_cancel(self):
         session, guest = self.session()
         session._state = "submitted"

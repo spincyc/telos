@@ -666,6 +666,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
         interaction_type.return_value.observe_ephemeral.side_effect = (
             RuntimeError("private desktop backend detail"))
+        diagnostic.result.side_effect = RuntimeError(
+            "private result transport detail")
         adapter = self.adapter(
             post_submit_diagnostic=diagnostic_factory,
             rotation_plan=adapter.rotation_plan,
@@ -675,13 +677,52 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             adapter.reauthenticate_domain_operator(
                 "operator@FACTORY.TEST", "private", "b" * 32)
         self.assertEqual("desktop", caught.exception.reauth_operation)
+        self.assertIsNone(caught.exception.post_submit_diagnostic)
         self.assertIs(
-            PostSubmitDiagnosticCode.BAD_CREDENTIAL,
-            caught.exception.post_submit_diagnostic,
+            subject.PostSubmitDiagnosticCollection.
+            RESULT_RECEIPT_UNAVAILABLE,
+            caught.exception.post_submit_collection,
         )
         self.assertNotIn("private desktop", str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
+
+        diagnostic.submitted.side_effect = RuntimeError(
+            "private submitted transport detail")
+        diagnostic.result.side_effect = None
+        diagnostic.result.return_value = PostSubmitDiagnosticCode.BAD_CREDENTIAL
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=adapter.rotation_plan,
+        )
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "c" * 32)
+        self.assertIs(
+            subject.PostSubmitDiagnosticCollection.
+            SUBMITTED_RECEIPT_UNAVAILABLE,
+            caught.exception.post_submit_collection,
+        )
+
+        diagnostic.submitted.side_effect = None
+        diagnostic.submitted.return_value = None
+        diagnostic.__exit__.side_effect = RuntimeError(
+            "private cleanup transport detail")
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=adapter.rotation_plan,
+        )
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "d" * 32)
+        self.assertIs(
+            subject.PostSubmitDiagnosticCollection.
+            CLEANUP_RECEIPT_UNAVAILABLE,
+            caught.exception.post_submit_collection,
+        )
+        self.assertNotIn("private cleanup", str(caught.exception))
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")

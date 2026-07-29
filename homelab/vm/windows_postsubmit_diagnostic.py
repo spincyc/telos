@@ -45,6 +45,14 @@ class PostSubmitDiagnosticCode(Enum):
     WATCHER_ERROR = "watcher-error"
 
 
+class PostSubmitDiagnosticCollection(Enum):
+    """Fixed host collection failures, distinct from guest auth outcomes."""
+
+    SUBMITTED_RECEIPT_UNAVAILABLE = "submitted-receipt-unavailable"
+    RESULT_RECEIPT_UNAVAILABLE = "result-receipt-unavailable"
+    CLEANUP_RECEIPT_UNAVAILABLE = "cleanup-receipt-unavailable"
+
+
 class PostSubmitDiagnosticSession:
     """Own one exclusive COM1 socket from arming through the final result."""
 
@@ -198,37 +206,20 @@ class PostSubmitDiagnosticSession:
                 "diagnostic armed receipt is invalid")
         self._state = "armed"
 
-    def submitted(self) -> None:
-        if self._state != "armed":
-            raise PostSubmitDiagnosticError(
-                "diagnostic submission is out of order")
-        self._send("submitted")
-        record = self._read()
-        expected = {
-            "schema_version": SCHEMA_VERSION,
-            "event": "submitted",
-            "nonce": self.nonce,
-        }
-        if record != expected:
-            raise PostSubmitDiagnosticError(
-                "diagnostic submitted receipt is invalid")
-        self._state = "submitted"
-
-    def result(self) -> PostSubmitDiagnosticCode:
-        if self._state != "submitted":
-            raise PostSubmitDiagnosticError(
-                "diagnostic result is out of order")
-        record = self._read()
+    def _accept_result_record(
+        self, record: Mapping[str, object],
+    ) -> PostSubmitDiagnosticCode:
         if set(record) != {
             "schema_version", "event", "nonce", "code", "cleanup_complete",
         }:
             raise PostSubmitDiagnosticError(
                 "diagnostic result fields are invalid")
         if (
-            record["schema_version"] != SCHEMA_VERSION
+            type(record["schema_version"]) is not int
+            or record["schema_version"] != SCHEMA_VERSION
             or record["event"] != "result"
             or record["nonce"] != self.nonce
-            or not isinstance(record["code"], str)
+            or type(record["code"]) is not str
             or record["cleanup_complete"] is not True
         ):
             raise PostSubmitDiagnosticError(
@@ -239,12 +230,34 @@ class PostSubmitDiagnosticSession:
             raise PostSubmitDiagnosticError(
                 "diagnostic result code is invalid") from None
         self._state = "finished"
-        # The guest writes its terminal record only after removing the task
-        # and staged files, then immediately closes COM1 in ``finally``.
-        # Keep the exclusive host lease for a bounded handoff interval so the
-        # following static probe cannot race that close.
         self._pause(self._quiescence_delay)
         return code
+
+    def submitted(self) -> PostSubmitDiagnosticCode | None:
+        if self._state != "armed":
+            raise PostSubmitDiagnosticError(
+                "diagnostic submission is out of order")
+        self._send("submitted")
+        record = self._read()
+        expected = {
+            "schema_version": SCHEMA_VERSION,
+            "event": "submitted",
+            "nonce": self.nonce,
+        }
+        if record == expected:
+            self._state = "submitted"
+            return None
+        if record.get("event") == "result":
+            return self._accept_result_record(record)
+        else:
+            raise PostSubmitDiagnosticError(
+                "diagnostic submitted receipt is invalid")
+
+    def result(self) -> PostSubmitDiagnosticCode:
+        if self._state != "submitted":
+            raise PostSubmitDiagnosticError(
+                "diagnostic result is out of order")
+        return self._accept_result_record(self._read())
 
     def cancel(self) -> None:
         if self._state not in {"armed", "submitted"}:

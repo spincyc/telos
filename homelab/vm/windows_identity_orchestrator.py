@@ -47,6 +47,7 @@ from .windows_join_iso import (
     execute_join_and_prove,
 )
 from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCode
+from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCollection
 
 
 class WindowsIdentityOrchestratorError(WindowsIdentityRunError):
@@ -143,12 +144,19 @@ def _local_reauthentication_coordinate(
     phase = "reboot-reauth"
     operation = None
     post_submit_diagnostic = None
+    post_submit_collection = None
     if type(error) is WindowsLocalReauthenticationError:
         operation = error.reauth_operation
         post_submit_diagnostic = error.post_submit_diagnostic
+        post_submit_collection = error.post_submit_collection
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
+        else None
+    )
+    collection_value = (
+        post_submit_collection.value
+        if type(post_submit_collection) is PostSubmitDiagnosticCollection
         else None
     )
     if (
@@ -164,7 +172,7 @@ def _local_reauthentication_coordinate(
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
     return WindowsJoinFailureCoordinate(
-        phase, error_type, diagnostic_value)
+        phase, error_type, diagnostic_value, collection_value)
 
 
 _CREDENTIAL_ROLES = {
@@ -422,6 +430,7 @@ def _execute_join(
             coordinate.phase,
             coordinate.error_type,
             coordinate.post_submit_diagnostic,
+            coordinate.post_submit_collection,
         )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:

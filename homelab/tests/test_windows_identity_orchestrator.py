@@ -13,6 +13,7 @@ from homelab.vm.windows_identity_operations import ProductionIdentityReceipt
 from homelab.vm.windows_identity_progressive import ProgressiveRotationReceipt
 from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
+    PostSubmitDiagnosticCollection,
 )
 
 from homelab.tests.test_windows_identity_acceptance import details
@@ -69,12 +70,15 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         supplemental = subject.WindowsLocalReauthenticationError(
             "desktop-sign-in-persisted",
             post_submit_diagnostic=PostSubmitDiagnosticCode.BAD_CREDENTIAL,
+            post_submit_collection=(
+                PostSubmitDiagnosticCollection.RESULT_RECEIPT_UNAVAILABLE),
         )
         coordinate = subject._local_reauthentication_coordinate(supplemental)
         diagnostic = subject.IdentityFailureDiagnostic.join_guest(
             coordinate.phase,
             coordinate.error_type,
             coordinate.post_submit_diagnostic,
+            coordinate.post_submit_collection,
         )
         self.assertEqual(
             "reboot-reauth-desktop-sign-in-persisted",
@@ -87,6 +91,10 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         )
         self.assertIn(
             "post-submit-diagnostic=bad-credential",
+            diagnostic.render(),
+        )
+        self.assertIn(
+            "post-submit-collection=result-receipt-unavailable",
             diagnostic.render(),
         )
         self.assertNotIn("private", diagnostic.render())
@@ -147,6 +155,13 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "join-guest.reboot-reauth-wake",
                 "WindowsLocalReauthenticationError",
                 "bad-credential",
+            )
+        with self.assertRaises(ValueError):
+            subject.WindowsJoinFailureCoordinate(
+                "reboot-reauth-wake",
+                "WindowsLocalReauthenticationError",
+                None,
+                "result-receipt-unavailable",
             )
 
     def test_join_stage_failure_is_rebound_to_secret_free_acceptance_coordinate(
