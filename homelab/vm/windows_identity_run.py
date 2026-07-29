@@ -213,7 +213,8 @@ class IdentityFailureDiagnostic:
                 "wake", "calibration-capture", "calibration-required",
                 "select-local-account", "type-public-username",
                 "prove-password-target", "submit-focus-calibration",
-                "controller-auth-arm", "diagnostic-arm", "type-secret",
+                "controller-auth-arm", "diagnostic-arm",
+                "diagnostic-cleanup", "type-secret",
                 "submit", "desktop",
                 "desktop-near-reference",
                 "desktop-sign-in-persisted",
@@ -298,6 +299,7 @@ class IdentityFailureDiagnostic:
                 }
                 or self.operation not in {
                     "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-diagnostic-cleanup",
                     "join-guest.reboot-reauth-desktop-near-reference",
                     "join-guest.reboot-reauth-desktop-sign-in-persisted",
                     "join-guest.reboot-reauth-desktop-sign-in-near-reference",
@@ -316,6 +318,7 @@ class IdentityFailureDiagnostic:
                 }
                 or self.operation not in {
                     "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-diagnostic-cleanup",
                     "join-guest.reboot-reauth-desktop-near-reference",
                     "join-guest.reboot-reauth-desktop-sign-in-persisted",
                     "join-guest.reboot-reauth-desktop-sign-in-near-reference",
@@ -334,6 +337,7 @@ class IdentityFailureDiagnostic:
                 }
                 or self.operation not in {
                     "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-diagnostic-cleanup",
                     "join-guest.reboot-reauth-desktop-near-reference",
                     "join-guest.reboot-reauth-desktop-sign-in-persisted",
                     "join-guest.reboot-reauth-desktop-sign-in-near-reference",
@@ -349,6 +353,7 @@ class IdentityFailureDiagnostic:
                 type(self.controller_auth) is not ControllerAuthResult
                 or self.operation not in {
                     "join-guest.reboot-reauth-controller-auth-arm",
+                    "join-guest.reboot-reauth-diagnostic-cleanup",
                     "join-guest.reboot-reauth-desktop",
                     "join-guest.reboot-reauth-desktop-near-reference",
                     "join-guest.reboot-reauth-desktop-sign-in-persisted",
@@ -404,6 +409,7 @@ class IdentityFailureDiagnostic:
                         "calibration-required", "select-local-account",
                         "type-public-username", "prove-password-target",
                         "controller-auth-arm", "diagnostic-arm", "type-secret",
+                        "diagnostic-cleanup",
                         "submit", "desktop",
                         "desktop-near-reference",
                         "desktop-sign-in-persisted",
@@ -489,6 +495,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         "submit-focus-calibration",
         "controller-auth-arm",
         "diagnostic-arm",
+        "diagnostic-cleanup",
         "type-secret",
         "submit",
         "desktop",
@@ -514,6 +521,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
                 type(post_submit_diagnostic) is not PostSubmitDiagnosticCode
                 or operation not in {
                     "desktop", "desktop-near-reference",
+                    "diagnostic-cleanup",
                     "desktop-sign-in-persisted",
                     "desktop-sign-in-near-reference",
                 }
@@ -529,6 +537,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
                 is not PostSubmitDiagnosticCollection
                 or operation not in {
                     "desktop", "desktop-near-reference",
+                    "diagnostic-cleanup",
                     "desktop-sign-in-persisted",
                     "desktop-sign-in-near-reference",
                 }
@@ -542,6 +551,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
                 type(post_submit_cleanup) is not PostSubmitDiagnosticCleanup
                 or operation not in {
                     "desktop", "desktop-near-reference",
+                    "diagnostic-cleanup",
                     "desktop-sign-in-persisted",
                     "desktop-sign-in-near-reference",
                 }
@@ -556,6 +566,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
                 or operation not in {
                     "controller-auth-arm",
                     "diagnostic-arm",
+                    "diagnostic-cleanup",
                     "type-secret",
                     "submit",
                     "desktop", "desktop-near-reference",

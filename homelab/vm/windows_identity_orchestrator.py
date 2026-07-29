@@ -130,6 +130,7 @@ _LOCAL_REAUTH_OPERATIONS = frozenset({
     "submit-focus-calibration",
     "controller-auth-arm",
     "diagnostic-arm",
+    "diagnostic-cleanup",
     "type-secret",
     "submit",
     "desktop",

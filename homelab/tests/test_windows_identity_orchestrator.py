@@ -95,6 +95,36 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             diagnostic.render(),
         )
 
+        cleanup = subject.WindowsLocalReauthenticationError(
+            "diagnostic-cleanup",
+            post_submit_diagnostic=(
+                PostSubmitDiagnosticCode.INTERACTIVE_LOGON_SUCCESS),
+            post_submit_cleanup=(
+                PostSubmitDiagnosticCleanup.CLEANUP_RECEIPT_UNAVAILABLE),
+            controller_auth_result=result,
+        )
+        coordinate = subject._local_reauthentication_coordinate(cleanup)
+        diagnostic = subject.IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            coordinate.post_submit_diagnostic,
+            coordinate.post_submit_collection,
+            coordinate.post_submit_cleanup,
+            coordinate.controller_auth,
+        )
+        self.assertEqual(
+            "join-guest.reboot-reauth-diagnostic-cleanup",
+            diagnostic.operation,
+        )
+        self.assertIn(
+            "post-submit-cleanup=cleanup-receipt-unavailable",
+            diagnostic.render(),
+        )
+        self.assertIn(
+            "controller-auth-cleanup=sink-absence-unproved",
+            diagnostic.render(),
+        )
+
         supplemental = subject.WindowsLocalReauthenticationError(
             "desktop-sign-in-persisted",
             post_submit_diagnostic=PostSubmitDiagnosticCode.BAD_CREDENTIAL,

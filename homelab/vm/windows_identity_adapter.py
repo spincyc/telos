@@ -869,6 +869,7 @@ class NativeWindowsAcceptanceAdapter:
         self._post_submit_diagnostic_cleanup = None
         self._controller_auth_result = None
         controller_auth = None
+        diagnostic_cleanup_failed = False
         if domain_operator:
             try:
                 controller_auth = ControllerAuthDiagnosticSession(
@@ -1084,6 +1085,8 @@ class NativeWindowsAcceptanceAdapter:
                             )
                             if primary is None and not armed:
                                 primary = error
+                            elif armed:
+                                diagnostic_cleanup_failed = True
             if primary is not None:
                 if not armed:
                     self._static_probe_poisoned = True
@@ -1150,6 +1153,16 @@ class NativeWindowsAcceptanceAdapter:
         if desktop_failure is not None:
             raise WindowsLocalReauthenticationError(
                 desktop_failure,
+                post_submit_diagnostic=self._post_submit_diagnostic_code,
+                post_submit_collection=(
+                    self._post_submit_diagnostic_collection),
+                post_submit_cleanup=(
+                    self._post_submit_diagnostic_cleanup),
+                controller_auth_result=self._controller_auth_result,
+            ) from None
+        if diagnostic_cleanup_failed:
+            raise WindowsLocalReauthenticationError(
+                "diagnostic-cleanup",
                 post_submit_diagnostic=self._post_submit_diagnostic_code,
                 post_submit_collection=(
                     self._post_submit_diagnostic_collection),

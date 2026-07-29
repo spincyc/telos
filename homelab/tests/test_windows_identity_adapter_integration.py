@@ -1218,6 +1218,67 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    def test_armed_diagnostic_cleanup_failure_stops_at_reauth_boundary(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        desktop = mock.sentinel.desktop
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(
+            side_effect=RuntimeError("private cleanup transport detail"))
+        diagnostic.result.return_value = (
+            PostSubmitDiagnosticCode.INTERACTIVE_LOGON_SUCCESS)
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "e" * 32)
+
+        self.assertEqual(
+            "diagnostic-cleanup", caught.exception.reauth_operation)
+        self.assertIs(
+            PostSubmitDiagnosticCode.INTERACTIVE_LOGON_SUCCESS,
+            caught.exception.post_submit_diagnostic,
+        )
+        self.assertIs(
+            subject.PostSubmitDiagnosticCleanup.
+            CLEANUP_RECEIPT_UNAVAILABLE,
+            caught.exception.post_submit_cleanup,
+        )
+        self.assertNotIn("private cleanup", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        interaction_type.return_value.observe_ephemeral.assert_called_once_with(
+            desktop, 11, alternatives=(("sign-in", sign_in),))
+        self.assertTrue(adapter._static_probe_poisoned)
+        self.assertFalse(adapter._com1_owned)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     def test_reauthentication_maps_terminal_near_references(
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,

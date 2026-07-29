@@ -71,7 +71,7 @@ class WindowsJoinFailureCoordinate:
             "select-local-account", "type-public-username",
             "prove-password-target", "submit-focus-calibration",
             "controller-auth-arm",
-            "diagnostic-arm", "type-secret",
+            "diagnostic-arm", "diagnostic-cleanup", "type-secret",
             "submit", "desktop",
             "desktop-near-reference",
             "desktop-sign-in-persisted",
@@ -98,6 +98,7 @@ class WindowsJoinFailureCoordinate:
                 }
                 or self.phase not in {
                     "reboot-reauth-desktop",
+                    "reboot-reauth-diagnostic-cleanup",
                     "reboot-reauth-desktop-near-reference",
                     "reboot-reauth-desktop-sign-in-persisted",
                     "reboot-reauth-desktop-sign-in-near-reference",
@@ -116,6 +117,7 @@ class WindowsJoinFailureCoordinate:
                 }
                 or self.phase not in {
                     "reboot-reauth-desktop",
+                    "reboot-reauth-diagnostic-cleanup",
                     "reboot-reauth-desktop-near-reference",
                     "reboot-reauth-desktop-sign-in-persisted",
                     "reboot-reauth-desktop-sign-in-near-reference",
@@ -134,6 +136,7 @@ class WindowsJoinFailureCoordinate:
                 }
                 or self.phase not in {
                     "reboot-reauth-desktop",
+                    "reboot-reauth-diagnostic-cleanup",
                     "reboot-reauth-desktop-near-reference",
                     "reboot-reauth-desktop-sign-in-persisted",
                     "reboot-reauth-desktop-sign-in-near-reference",
@@ -149,6 +152,7 @@ class WindowsJoinFailureCoordinate:
                 type(self.controller_auth) is not ControllerAuthResult
                 or self.phase not in {
                     "reboot-reauth-controller-auth-arm",
+                    "reboot-reauth-diagnostic-cleanup",
                     "reboot-reauth-desktop",
                     "reboot-reauth-desktop-near-reference",
                     "reboot-reauth-desktop-sign-in-persisted",
