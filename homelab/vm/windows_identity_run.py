@@ -213,7 +213,7 @@ class IdentityFailureDiagnostic:
                 "wake", "calibration-capture", "calibration-required",
                 "select-local-account", "type-public-username",
                 "prove-password-target", "submit-focus-calibration",
-                "diagnostic-arm", "type-secret",
+                "controller-auth-arm", "diagnostic-arm", "type-secret",
                 "submit", "desktop",
                 "desktop-near-reference",
                 "desktop-sign-in-persisted",
@@ -348,6 +348,7 @@ class IdentityFailureDiagnostic:
             and (
                 type(self.controller_auth) is not ControllerAuthResult
                 or self.operation not in {
+                    "join-guest.reboot-reauth-controller-auth-arm",
                     "join-guest.reboot-reauth-desktop",
                     "join-guest.reboot-reauth-desktop-near-reference",
                     "join-guest.reboot-reauth-desktop-sign-in-persisted",
@@ -402,7 +403,8 @@ class IdentityFailureDiagnostic:
                         "wake", "calibration-capture",
                         "calibration-required", "select-local-account",
                         "type-public-username", "prove-password-target",
-                        "diagnostic-arm", "type-secret", "submit", "desktop",
+                        "controller-auth-arm", "diagnostic-arm", "type-secret",
+                        "submit", "desktop",
                         "desktop-near-reference",
                         "desktop-sign-in-persisted",
                         "desktop-sign-in-near-reference",
@@ -485,6 +487,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         "type-public-username",
         "prove-password-target",
         "submit-focus-calibration",
+        "controller-auth-arm",
         "diagnostic-arm",
         "type-secret",
         "submit",
@@ -551,6 +554,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
             and (
                 type(controller_auth_result) is not ControllerAuthResult
                 or operation not in {
+                    "controller-auth-arm",
                     "desktop", "desktop-near-reference",
                     "desktop-sign-in-persisted",
                     "desktop-sign-in-near-reference",

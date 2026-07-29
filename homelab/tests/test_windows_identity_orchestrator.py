@@ -9,6 +9,11 @@ from homelab.vm.controller_join_material import (
     ControllerJoinMaterialError,
     ControllerJoinResult,
 )
+from homelab.vm.controller_auth_diagnostic import (
+    ControllerAuthCollection,
+    ControllerAuthCleanup,
+    ControllerAuthResult,
+)
 from homelab.vm.windows_identity_operations import ProductionIdentityReceipt
 from homelab.vm.windows_identity_progressive import ProgressiveRotationReceipt
 from homelab.vm.windows_postsubmit_diagnostic import (
@@ -67,6 +72,26 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "join-guest.reboot-reauth-desktop-sign-in-persisted",
             diagnostic.operation,
         )
+
+        result = ControllerAuthResult(
+            collection=ControllerAuthCollection.SINK_INVALID,
+            cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+        )
+        error = subject.WindowsLocalReauthenticationError(
+            "controller-auth-arm", controller_auth_result=result)
+        coordinate = subject._local_reauthentication_coordinate(error)
+        diagnostic = subject.IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+        )
+        self.assertEqual(
+            "reboot-reauth-controller-auth-arm", coordinate.phase)
+        self.assertIs(result, coordinate.controller_auth)
+        self.assertIn(
+            "controller-auth-collection=sink-invalid", diagnostic.render())
+        self.assertIn(
+            "controller-auth-cleanup=absence-unproved", diagnostic.render())
 
         supplemental = subject.WindowsLocalReauthenticationError(
             "desktop-sign-in-persisted",

@@ -167,6 +167,66 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             [call.args[1] for call in console._send.call_args_list],
         )
 
+    def test_configuration_failure_is_terminal_before_arm(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            re.search(
+                rb"(code|collection):([a-z-]+)",
+                b"collection:configuration-invalid"),
+            re.match(rb"(ok|absence-unproved)", b"ok"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+        self.assertEqual(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.CONFIGURATION_INVALID,
+        )
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertNotIn(
+            "controller-auth-abort-sent",
+            [call.args[1] for call in console._send.call_args_list],
+        )
+
+    def test_sink_failure_reports_unproved_terminal_cleanup(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            re.search(
+                rb"(code|collection):([a-z-]+)",
+                b"collection:sink-invalid"),
+            re.match(rb"(ok|absence-unproved)", b"absence-unproved"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+        self.assertEqual(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.SINK_INVALID,
+        )
+        self.assertEqual(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.ABSENCE_UNPROVED,
+        )
+        self.assertFalse(caught.exception.cleanup_proved)
+
+    def test_arm_receipt_failure_is_typed_and_recovers_cleanup(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            RuntimeError("receipt unavailable"),
+            re.match(rb"(ok|absence-unproved)", b"ok"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+        self.assertEqual(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+        )
+        self.assertTrue(caught.exception.cleanup_proved)
+
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)
         coordinate = WindowsJoinFailureCoordinate(

@@ -864,11 +864,20 @@ class NativeWindowsAcceptanceAdapter:
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
             except ControllerAuthDiagnosticError as error:
+                self._controller_auth_result = error.controller_auth_result
                 if not error.cleanup_proved:
+                    operation = (
+                        "controller-auth-arm"
+                        if self._controller_auth_result.collection in {
+                            ControllerAuthCollection.CONFIGURATION_INVALID,
+                            ControllerAuthCollection.SINK_INVALID,
+                        }
+                        else "diagnostic-arm"
+                    )
                     raise WindowsLocalReauthenticationError(
-                        "diagnostic-arm") from None
-                self._controller_auth_result = ControllerAuthResult(
-                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                        operation,
+                        controller_auth_result=(
+                            self._controller_auth_result)) from None
                 controller_auth = None
             except BaseException:
                 self._controller_auth_result = ControllerAuthResult(

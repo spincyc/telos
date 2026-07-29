@@ -90,8 +90,18 @@ class ControllerAuthCleanup(Enum):
 class ControllerAuthDiagnosticError(RuntimeError):
     """Host protocol failure with explicit Controller cleanup status."""
 
-    def __init__(self, *, cleanup_proved: bool) -> None:
+    def __init__(
+        self, *,
+        controller_auth_result: "ControllerAuthResult | None" = None,
+        cleanup_proved: bool,
+    ) -> None:
         super().__init__("Controller auth diagnostic protocol failed")
+        if controller_auth_result is None:
+            controller_auth_result = ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        if type(controller_auth_result) is not ControllerAuthResult:
+            raise TypeError("Controller auth diagnostic result is invalid")
+        self.controller_auth_result = controller_auth_result
         self.cleanup_proved = cleanup_proved
 
 
@@ -669,6 +679,50 @@ class ControllerAuthDiagnosticSession:
             self._state = "poisoned"
             return False
 
+    @staticmethod
+    def _closed_result(kind: bytes, value: bytes) -> ControllerAuthResult:
+        try:
+            if kind == b"code":
+                return ControllerAuthResult(
+                    code=ControllerAuthCode(value.decode("ascii")))
+            if kind == b"collection":
+                return ControllerAuthResult(
+                    collection=ControllerAuthCollection(value.decode("ascii")))
+        except (UnicodeError, ValueError):
+            pass
+        raise ValueError("Controller auth result coordinate is invalid")
+
+    def _terminal_cleanup(
+        self, result: ControllerAuthResult, label: str,
+    ) -> tuple[ControllerAuthResult, bool]:
+        cleanup_marker = (
+            f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
+        try:
+            cleanup_match = self._wait(
+                rb"(?:^|\n)" + re.escape(cleanup_marker)
+                + rb"(ok|absence-unproved)\s*(?:\n|$)",
+                label)
+        except BaseException:
+            self._state = "poisoned"
+            return (
+                ControllerAuthResult(
+                    code=result.code,
+                    collection=result.collection,
+                    cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+                ),
+                False,
+            )
+        cleanup_proved = cleanup_match.group(1) == b"ok"
+        if not cleanup_proved:
+            result = ControllerAuthResult(
+                code=result.code,
+                collection=result.collection,
+                cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+            )
+        self._result = result
+        self._state = "finished"
+        return result, cleanup_proved
+
     def arm(self) -> None:
         if self._state != "new":
             raise RuntimeError("Controller auth diagnostic cannot be armed")
@@ -703,12 +757,28 @@ class ControllerAuthDiagnosticSession:
                     "controller-auth-sudo-password-prompt")
                 self.console._send(
                     self.console.password, "controller-auth-sudo-password-sent")
-            marker = (
+            armed_marker = (
                 f"__TELOS_AUTH_ARMED_{self._tokens['arm']}__".encode())
-            self._wait(
-                rb"(?:^|\n)" + re.escape(marker) + rb"\s*(?:\n|$)",
+            result_marker = (
+                f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
+            match = self._wait(
+                rb"(?:^|\n)(?:"
+                + re.escape(armed_marker)
+                + rb"\s*(?:\n|$)|"
+                + re.escape(result_marker)
+                + rb"(code|collection):([a-z-]+)\s*(?:\n|$))",
                 "controller-auth-armed")
+            if match.group(1) in {b"code", b"collection"}:
+                result = self._closed_result(
+                    match.group(1), match.group(2))
+                result, cleanup_proved = self._terminal_cleanup(
+                    result, "controller-auth-prearm-cleanup")
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=result,
+                    cleanup_proved=cleanup_proved)
             self._state = "armed"
+        except ControllerAuthDiagnosticError:
+            raise
         except BaseException:
             raise ControllerAuthDiagnosticError(
                 cleanup_proved=self._recover_cleanup()) from None

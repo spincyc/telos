@@ -70,6 +70,7 @@ class WindowsJoinFailureCoordinate:
             "wake", "calibration-capture", "calibration-required",
             "select-local-account", "type-public-username",
             "prove-password-target", "submit-focus-calibration",
+            "controller-auth-arm",
             "diagnostic-arm", "type-secret",
             "submit", "desktop",
             "desktop-near-reference",
@@ -147,6 +148,7 @@ class WindowsJoinFailureCoordinate:
             and (
                 type(self.controller_auth) is not ControllerAuthResult
                 or self.phase not in {
+                    "reboot-reauth-controller-auth-arm",
                     "reboot-reauth-desktop",
                     "reboot-reauth-desktop-near-reference",
                     "reboot-reauth-desktop-sign-in-persisted",

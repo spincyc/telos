@@ -128,6 +128,7 @@ _LOCAL_REAUTH_OPERATIONS = frozenset({
     "type-public-username",
     "prove-password-target",
     "submit-focus-calibration",
+    "controller-auth-arm",
     "diagnostic-arm",
     "type-secret",
     "submit",

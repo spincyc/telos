@@ -18,6 +18,8 @@ from homelab.vm.windows_postsubmit_diagnostic import (
 )
 from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthCode,
+    ControllerAuthCollection,
+    ControllerAuthCleanup,
     ControllerAuthDiagnosticError,
     ControllerAuthExpectation,
     ControllerAuthResult,
@@ -87,14 +89,18 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 subject, "ControllerAuthDiagnosticSession") as controller_type,
         ):
             controller_type.return_value.arm.side_effect = (
-                ControllerAuthDiagnosticError(cleanup_proved=True))
+                ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.CONFIGURATION_INVALID)),
+                    cleanup_proved=True))
             adapter = self.adapter(rotation_plan=plan)
             adapter.reauthenticate_domain_operator(
                 "operator@FACTORY.TEST", "private", "a" * 32)
         interaction_type.return_value.type_secret.assert_called_once()
         self.assertEqual(
             adapter.controller_auth_result.collection.value,
-            "receipt-unavailable")
+            "configuration-invalid")
 
     def test_controller_prelaunch_unavailable_cannot_veto_gui(self):
         sign_in, desktop, plan = self._domain_reauthentication_fixture()
@@ -138,13 +144,24 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 subject, "ControllerAuthDiagnosticSession") as controller_type,
         ):
             controller_type.return_value.arm.side_effect = (
-                ControllerAuthDiagnosticError(cleanup_proved=False))
+                ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=ControllerAuthCollection.SINK_INVALID,
+                        cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED),
+                    cleanup_proved=False))
             adapter = self.adapter(rotation_plan=plan)
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
                     "operator@FACTORY.TEST", "private", "a" * 32)
-        self.assertEqual(caught.exception.reauth_operation, "diagnostic-arm")
+        self.assertEqual(
+            caught.exception.reauth_operation, "controller-auth-arm")
+        self.assertEqual(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.SINK_INVALID)
+        self.assertEqual(
+            caught.exception.controller_auth_result.cleanup,
+            ControllerAuthCleanup.ABSENCE_UNPROVED)
         interaction_type.return_value.type_secret.assert_not_called()
 
     def test_controller_collection_unavailable_cannot_veto_gui(self):
