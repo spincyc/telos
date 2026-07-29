@@ -15,6 +15,8 @@ from homelab.vm.windows_postjoin_calibration import (
     MAX_CALIBRATION_FRAME_BYTES,
     WindowsPostJoinCalibrationError,
     capture_post_join_calibration,
+    retain_post_join_calibration,
+    sample_post_join_calibration,
 )
 
 
@@ -72,9 +74,27 @@ class PostJoinCalibrationTests(unittest.TestCase):
         self.assertEqual(document["frame"]["height"], 200)
         self.assertEqual(
             document["frame"]["samples"], CALIBRATION_SAMPLE_COUNT)
+        self.assertEqual(document["frame"]["stability_samples"], 1)
         self.assertEqual(len(qmp.paths), CALIBRATION_SAMPLE_COUNT)
         self.assertEqual(document["guest"]["source_disk_sha256"], "b" * 64)
         self.assertFalse(any(path.name.startswith(".") for path in self.root.iterdir()))
+
+    def test_rejects_invalid_stability_sample_count_before_retention(self):
+        sampled = sample_post_join_calibration(FakeQmp(), self.root)
+
+        with self.assertRaisesRegex(
+            WindowsPostJoinCalibrationError,
+            "stability sample count is invalid",
+        ):
+            retain_post_join_calibration(
+                sampled,
+                self.root,
+                self.guest,
+                state="generic-prompt",
+                stability_samples=0,
+            )
+
+        self.assertEqual(tuple(self.root.iterdir()), ())
 
     def test_refuses_existing_or_symlink_destination_without_following(self):
         outside = Path(self.temporary.name) / "outside"
@@ -127,6 +147,22 @@ class PostJoinCalibrationTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 WindowsPostJoinCalibrationError,
                 "calibration evidence write failed",
+            ) as caught:
+                capture_post_join_calibration(
+                    FakeQmp(), self.root, self.guest)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn("backend-private-path", str(caught.exception))
+        self.assertEqual(tuple(self.root.iterdir()), ())
+
+    def test_retention_filesystem_failure_is_sanitized_and_cleans_outputs(self):
+        with mock.patch(
+            "homelab.vm.windows_postjoin_calibration.os.fsync",
+            side_effect=(None, None, OSError("backend-private-path")),
+        ):
+            with self.assertRaisesRegex(
+                WindowsPostJoinCalibrationError,
+                "post-join calibration capture failed",
             ) as caught:
                 capture_post_join_calibration(
                     FakeQmp(), self.root, self.guest)

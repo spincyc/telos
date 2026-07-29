@@ -224,6 +224,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         manager.attach_mock(interaction.key, "key")
         plan = mock.Mock(
             initial_sign_in_delay=0,
+            lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("esc", "end", "ret"),
             checkpoint_timeout=11,
@@ -262,10 +263,12 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
-    @mock.patch.object(subject, "capture_post_join_calibration")
+    @mock.patch.object(subject, "retain_post_join_calibration")
+    @mock.patch.object(subject, "sample_post_join_calibration")
+    @mock.patch.object(subject.time, "sleep")
     def test_reauthentication_fails_before_secret_without_account_selection(
-        self, capture_calibration, load_references, private_evidence_root,
-        interaction_type,
+        self, sleep, sample_calibration, retain_calibration, load_references,
+        private_evidence_root, interaction_type,
     ):
         load_references.return_value = (
             mock.Mock(
@@ -277,8 +280,23 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             mock.sentinel.change,
         )
         private_evidence_root.return_value = self.root / "reauth-evidence"
+        def frame(content):
+            return subject.PostJoinCalibrationFrame(
+                content, mock.Mock(width=1280, height=800))
+        baseline = frame(b"baseline")
+        generic = frame(b"generic")
+        password = frame(b"password")
+        sample_calibration.side_effect = (
+            baseline, generic, generic, generic,
+            password, password, password,
+        )
+        ordering = mock.Mock()
+        ordering.attach_mock(sleep, "sleep")
+        ordering.attach_mock(sample_calibration, "sample")
+        ordering.attach_mock(interaction_type.return_value.key, "key")
         adapter = self.adapter(rotation_plan=mock.Mock(
-            initial_sign_in_delay=0,
+            initial_sign_in_delay=5,
+            lock_settle_delay=2,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=(),
             expected_guest=mock.sentinel.guest,
@@ -290,19 +308,21 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             adapter.reauthenticate_local("private")
 
         self.assertEqual(
-            capture_calibration.call_args_list,
+            retain_calibration.call_args_list,
             [
                 mock.call(
-                    self.qmp,
+                    generic,
                     self.root / "reauth-evidence",
                     mock.sentinel.guest,
                     state="generic-prompt",
+                    stability_samples=3,
                 ),
                 mock.call(
-                    self.qmp,
+                    password,
                     self.root / "reauth-evidence",
                     mock.sentinel.guest,
                     state="password-target",
+                    stability_samples=3,
                 ),
             ],
         )
@@ -312,6 +332,124 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
         interaction_type.return_value.type_secret.assert_not_called()
         self.qmp.type_text.assert_called_once_with(".\\telosadmin")
+        self.assertEqual(
+            [
+                mock.call.sleep(5),
+                mock.call.sample(
+                    self.qmp, self.root / "reauth-evidence"),
+                mock.call.key("spc"),
+                mock.call.sample(
+                    self.qmp, self.root / "reauth-evidence"),
+            ],
+            ordering.mock_calls[:4],
+        )
+        self.assertEqual(
+            [mock.call(5)] + [mock.call(2)] * 4,
+            sleep.call_args_list,
+        )
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject, "retain_post_join_calibration")
+    @mock.patch.object(subject, "sample_post_join_calibration")
+    @mock.patch.object(subject.time, "sleep")
+    def test_unchanged_calibration_frames_exhaust_total_deadline(
+        self, sleep, sample_calibration, retain_calibration, load_references,
+        private_evidence_root, interaction_type,
+    ):
+        load_references.return_value = (
+            mock.Mock(
+                state_kind="sign-in",
+                state="focused password field for local account telosadmin",
+            ),
+            mock.sentinel.desktop,
+            mock.sentinel.security,
+            mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        unchanged = subject.PostJoinCalibrationFrame(
+            b"unchanged", mock.Mock(width=1280, height=800))
+        sample_calibration.return_value = unchanged
+        elapsed = [0.0]
+        sleep.side_effect = lambda delay: elapsed.__setitem__(
+            0, elapsed[0] + delay)
+        adapter = self.adapter(
+            timeout=3,
+            clock=lambda: elapsed[0],
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=2,
+                wake_after_lock_keys=("spc",),
+                post_join_local_account_keys=(),
+                expected_guest=mock.sentinel.guest,
+            ),
+        )
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_local("private")
+
+        self.assertEqual(
+            "calibration-capture", caught.exception.reauth_operation)
+        self.assertEqual([mock.call(2), mock.call(1)], sleep.call_args_list)
+        self.assertEqual(3, sample_calibration.call_count)
+        retain_calibration.assert_not_called()
+        self.qmp.type_text.assert_not_called()
+        interaction_type.return_value.type_secret.assert_not_called()
+        interaction_type.return_value.disable_durable_capture.assert_not_called()
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject, "retain_post_join_calibration")
+    @mock.patch.object(subject, "sample_post_join_calibration")
+    @mock.patch.object(subject.time, "sleep")
+    def test_transient_calibration_frames_are_never_retained(
+        self, sleep, sample_calibration, retain_calibration, load_references,
+        private_evidence_root, interaction_type,
+    ):
+        load_references.return_value = (
+            mock.Mock(
+                state_kind="sign-in",
+                state="focused password field for local account telosadmin",
+            ),
+            mock.sentinel.desktop,
+            mock.sentinel.security,
+            mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        frames = [
+            subject.PostJoinCalibrationFrame(
+                content, mock.Mock(width=1280, height=800))
+            for content in (b"baseline", b"a", b"b", b"a", b"b", b"a")
+        ]
+        sample_calibration.side_effect = frames
+        elapsed = [0.0]
+        sleep.side_effect = lambda delay: elapsed.__setitem__(
+            0, elapsed[0] + delay)
+        adapter = self.adapter(
+            timeout=4,
+            clock=lambda: elapsed[0],
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=1,
+                wake_after_lock_keys=("spc",),
+                post_join_local_account_keys=(),
+                expected_guest=mock.sentinel.guest,
+            ),
+        )
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_local("private")
+
+        self.assertEqual(
+            "calibration-capture", caught.exception.reauth_operation)
+        self.assertEqual([mock.call(1)] * 4, sleep.call_args_list)
+        retain_calibration.assert_not_called()
+        self.qmp.type_text.assert_not_called()
+        interaction_type.return_value.type_secret.assert_not_called()
 
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
@@ -332,6 +470,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         adapter = self.adapter(
             rotation_plan=mock.Mock(
                 initial_sign_in_delay=0,
+                lock_settle_delay=0,
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=("end", "ret"),
                 checkpoint_timeout=11,
@@ -367,6 +506,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         interaction.observe.side_effect = RuntimeError("backend-private")
         adapter = self.adapter(rotation_plan=mock.Mock(
             initial_sign_in_delay=0,
+            lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
             checkpoint_timeout=11,
@@ -399,6 +539,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         interaction = interaction_type.return_value
         plan = mock.Mock(
             initial_sign_in_delay=0,
+            lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
             checkpoint_timeout=11,

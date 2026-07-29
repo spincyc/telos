@@ -52,7 +52,11 @@ from .windows_public_command import (
     PublicPowerShellLaunchPlan,
     WindowsPublicCommandLauncher,
 )
-from .windows_postjoin_calibration import capture_post_join_calibration
+from .windows_postjoin_calibration import (
+    PostJoinCalibrationFrame,
+    retain_post_join_calibration,
+    sample_post_join_calibration,
+)
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
@@ -354,8 +358,10 @@ class NativeWindowsAcceptanceAdapter:
             selection_keys = tuple(plan.post_join_local_account_keys)
             wake_keys = tuple(plan.wake_after_lock_keys)
             initial_delay = float(plan.initial_sign_in_delay)
+            lock_settle_delay = float(plan.lock_settle_delay)
             if (
                 initial_delay < 0
+                or lock_settle_delay < 0
                 or any(key not in SAFE_KEYS for key in selection_keys)
                 or any(key not in SAFE_KEYS for key in wake_keys)
             ):
@@ -368,37 +374,74 @@ class NativeWindowsAcceptanceAdapter:
             raise WindowsLocalReauthenticationError(
                 "select-local-account") from None
 
+        calibration_baselines: list[PostJoinCalibrationFrame] = []
+
         def wake() -> None:
             if initial_delay:
                 budget = remaining("wake")
                 time.sleep(min(initial_delay, budget))
                 remaining("wake")
+            if not selection_keys:
+                try:
+                    remaining("calibration-capture")
+                    calibration_baselines.append(
+                        sample_post_join_calibration(self._qmp(), evidence))
+                except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                    raise
+                except BaseException:
+                    raise WindowsLocalReauthenticationError(
+                        "calibration-capture") from None
             for key in wake_keys:
                 remaining("wake")
                 interaction.key(key)
 
         _run_local_reauthentication_operation("wake", wake)
 
-        if not selection_keys:
+        if calibration_baselines:
+            def observe_transition(
+                baseline: PostJoinCalibrationFrame,
+                state: str,
+            ) -> PostJoinCalibrationFrame:
+                stable: list[PostJoinCalibrationFrame] = []
+                while True:
+                    remaining("calibration-capture")
+                    candidate = sample_post_join_calibration(
+                        self._qmp(), evidence)
+                    if (
+                        (candidate.image.width, candidate.image.height)
+                        == (baseline.image.width, baseline.image.height)
+                        and candidate.content != baseline.content
+                    ):
+                        if (
+                            stable
+                            and stable[-1].content != candidate.content
+                        ):
+                            stable.clear()
+                        stable.append(candidate)
+                        if len(stable) == 3:
+                            retain_post_join_calibration(
+                                candidate,
+                                evidence,
+                                plan.expected_guest,
+                                state=state,
+                                stability_samples=3,
+                            )
+                            return candidate
+                    else:
+                        stable.clear()
+                    budget = remaining("calibration-capture")
+                    if lock_settle_delay:
+                        time.sleep(min(lock_settle_delay, budget))
+                        remaining("calibration-capture")
+
             def capture_calibration() -> None:
-                remaining("calibration-capture")
-                capture_post_join_calibration(
-                    self._qmp(),
-                    evidence,
-                    plan.expected_guest,
-                    state="generic-prompt",
-                )
+                generic = observe_transition(
+                    calibration_baselines[0], "generic-prompt")
                 remaining("calibration-capture")
                 self._qmp().type_text(f".\\{self.local_principal}")
                 remaining("calibration-capture")
                 interaction.key("tab")
-                remaining("calibration-capture")
-                capture_post_join_calibration(
-                    self._qmp(),
-                    evidence,
-                    plan.expected_guest,
-                    state="password-target",
-                )
+                observe_transition(generic, "password-target")
 
             _run_local_reauthentication_operation(
                 "calibration-capture", capture_calibration)

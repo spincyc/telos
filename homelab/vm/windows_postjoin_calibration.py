@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import stat
 import uuid
+from dataclasses import dataclass
 
 from .windows_gui import Image, QmpClient, useful_frame
 from .windows_identity_reference import GuestProvenance
@@ -23,6 +24,14 @@ CALIBRATION_RECORD_NAME = "post-join-generic-prompt.json"
 
 class WindowsPostJoinCalibrationError(RuntimeError):
     """A bounded, public-only calibration capture could not be retained."""
+
+
+@dataclass(frozen=True)
+class PostJoinCalibrationFrame:
+    """One useful public frame held in memory until its state is proved."""
+
+    content: bytes
+    image: Image
 
 
 def _parse_authenticated_ppm(content: bytes) -> Image:
@@ -102,21 +111,11 @@ def _exclusive_write(path: Path, content: bytes) -> None:
             "calibration evidence write failed") from None
 
 
-def capture_post_join_calibration(
+def sample_post_join_calibration(
     qmp: QmpClient,
     evidence_root: Path,
-    guest: GuestProvenance,
-    *,
-    state: str = "generic-prompt",
-) -> tuple[Path, Path]:
-    """Retain one pre-secret forensic frame and fixed public provenance.
-
-    The caller invokes this after wake and before any credential input. The
-    generic frame precedes public username input; the password-target frame
-    may follow only that public username and Tab. The frame is review input,
-    not a stable or promotable reference. Existing destinations are never
-    replaced.
-    """
+) -> PostJoinCalibrationFrame:
+    """Capture one useful public frame without assigning it a UI state."""
     root = Path(evidence_root).absolute()
     if (
         root.is_symlink()
@@ -126,23 +125,7 @@ def capture_post_join_calibration(
         raise WindowsPostJoinCalibrationError(
             "calibration evidence root is not a private real directory")
 
-    if state not in CALIBRATION_STATES:
-        raise WindowsPostJoinCalibrationError(
-            "calibration state is not allowlisted")
-    frame_name = f"post-join-{state}.ppm"
-    record_name = f"post-join-{state}.json"
-    frame_path = root / frame_name
-    record_path = root / record_name
-    if (
-        frame_path.exists()
-        or frame_path.is_symlink()
-        or record_path.exists()
-        or record_path.is_symlink()
-    ):
-        raise WindowsPostJoinCalibrationError(
-            "calibration evidence already exists")
-
-    staging = root / f".post-join-{state}-{uuid.uuid4().hex}.ppm"
+    staging = root / f".post-join-sample-{uuid.uuid4().hex}.ppm"
     descriptor = os.open(
         staging,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
@@ -151,7 +134,7 @@ def capture_post_join_calibration(
     identity = os.fstat(descriptor)
     os.close(descriptor)
     unexpected_failure = False
-    result: tuple[Path, Path] | None = None
+    result: PostJoinCalibrationFrame | None = None
     try:
         for _sample in range(CALIBRATION_SAMPLE_COUNT):
             qmp.screenshot(staging)
@@ -182,7 +165,60 @@ def capture_post_join_calibration(
         if not useful_frame(image):
             raise WindowsPostJoinCalibrationError(
                 "calibration frame is not useful")
-        _exclusive_write(frame_path, content)
+        result = PostJoinCalibrationFrame(content, image)
+    except WindowsPostJoinCalibrationError:
+        raise
+    except BaseException:
+        unexpected_failure = True
+    finally:
+        try:
+            staging.unlink()
+        except FileNotFoundError:
+            pass
+    if unexpected_failure or result is None:
+        raise WindowsPostJoinCalibrationError(
+            "post-join calibration capture failed") from None
+    return result
+
+
+def retain_post_join_calibration(
+    frame: PostJoinCalibrationFrame,
+    evidence_root: Path,
+    guest: GuestProvenance,
+    *,
+    state: str,
+    stability_samples: int = 1,
+) -> tuple[Path, Path]:
+    """Assign a proved stable public frame its forensic state atomically."""
+    root = Path(evidence_root).absolute()
+    if (
+        root.is_symlink()
+        or not root.is_dir()
+        or stat.S_IMODE(root.stat().st_mode) != 0o700
+    ):
+        raise WindowsPostJoinCalibrationError(
+            "calibration evidence root is not a private real directory")
+    if state not in CALIBRATION_STATES:
+        raise WindowsPostJoinCalibrationError(
+            "calibration state is not allowlisted")
+    if type(stability_samples) is not int or not 1 <= stability_samples <= 3:
+        raise WindowsPostJoinCalibrationError(
+            "calibration stability sample count is invalid")
+    frame_name = f"post-join-{state}.ppm"
+    record_name = f"post-join-{state}.json"
+    frame_path = root / frame_name
+    record_path = root / record_name
+    if (
+        frame_path.exists()
+        or frame_path.is_symlink()
+        or record_path.exists()
+        or record_path.is_symlink()
+    ):
+        raise WindowsPostJoinCalibrationError(
+            "calibration evidence already exists")
+    content, image = frame.content, frame.image
+    _exclusive_write(frame_path, content)
+    try:
         record = {
             "schema": 1,
             "phase": (
@@ -200,6 +236,7 @@ def capture_post_join_calibration(
                 "width": image.width,
                 "height": image.height,
                 "samples": CALIBRATION_SAMPLE_COUNT,
+                "stability_samples": stability_samples,
             },
             "guest": {
                 "release": guest.release,
@@ -222,20 +259,30 @@ def capture_post_join_calibration(
             os.fsync(directory)
         finally:
             os.close(directory)
-        result = (frame_path, record_path)
+        return frame_path, record_path
     except WindowsPostJoinCalibrationError:
+        frame_path.unlink(missing_ok=True)
+        record_path.unlink(missing_ok=True)
         raise
     except BaseException:
-        unexpected_failure = True
-    finally:
-        try:
-            staging.unlink()
-        except FileNotFoundError:
-            pass
-    if unexpected_failure:
-        raise WindowsPostJoinCalibrationError(
-            "post-join calibration capture failed") from None
-    if result is None:
-        raise WindowsPostJoinCalibrationError(
-            "post-join calibration capture failed") from None
-    return result
+        frame_path.unlink(missing_ok=True)
+        record_path.unlink(missing_ok=True)
+    raise WindowsPostJoinCalibrationError(
+        "post-join calibration capture failed") from None
+
+
+def capture_post_join_calibration(
+    qmp: QmpClient,
+    evidence_root: Path,
+    guest: GuestProvenance,
+    *,
+    state: str = "generic-prompt",
+) -> tuple[Path, Path]:
+    """Compatibility capture for callers that already proved the UI state."""
+    return retain_post_join_calibration(
+        sample_post_join_calibration(qmp, evidence_root),
+        evidence_root,
+        guest,
+        state=state,
+        stability_samples=1,
+    )
