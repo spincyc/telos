@@ -49,7 +49,12 @@ try {
         throw 'join mutation release was not authorized'
     }
     $failurePhase = 'add-computer'
-    $joinResult = Invoke-CimMethod -ClassName Win32_ComputerSystem `
+    $computerSystems = @(Get-CimInstance -ClassName Win32_ComputerSystem `
+        -ErrorAction Stop)
+    if ($computerSystems.Count -ne 1) {
+        throw 'computer-system instance count is invalid'
+    }
+    $joinResult = Invoke-CimMethod -InputObject $computerSystems[0] `
         -MethodName JoinDomainOrWorkgroup -Arguments @{
             Name = $domain
             Password = $joinPassword

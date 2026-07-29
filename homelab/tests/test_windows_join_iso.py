@@ -127,6 +127,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index("$joinPassword = [string]$document.password"),
             script.index('"join-material-loaded"'),
             script.index("TELOS_JOIN_MEDIA_DESTROYED"),
+            script.index("Get-CimInstance"),
             script.index("Invoke-CimMethod"),
             script.index("Add-LocalGroupMember"),
             script.rindex("Get-LocalGroupMember"),
@@ -144,6 +145,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             "$usernameParts[0] -cnotmatch '^tj-[a-f0-9]{16}$'",
             script,
         )
+        self.assertIn("$computerSystems.Count -ne 1", script)
+        self.assertIn("-InputObject $computerSystems[0]", script)
         self.assertIn(
             "$usernameParts[1] -cne [string]$document.realm",
             script,
