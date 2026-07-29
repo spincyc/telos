@@ -15,6 +15,12 @@ from .controller_join_material import (
     ControllerJoinResult,
     OneUseDomainJoinMaterial,
 )
+from .controller_auth_diagnostic import (
+    ControllerAuthCleanup,
+    ControllerAuthCode,
+    ControllerAuthCollection,
+    ControllerAuthResult,
+)
 from .windows_control_serial import ControlProbe
 from .windows_identity_evidence import StrictIdentityEvidenceCollector
 from .windows_identity_faults import (
@@ -143,20 +149,27 @@ _LOCAL_REAUTH_OPERATIONS = frozenset({
 def _local_reauthentication_coordinate(
     error: BaseException,
 ) -> WindowsJoinFailureCoordinate:
-    """Map only the fixed adapter carrier to a public reauthentication phase."""
+    """Totally map only the fixed adapter carrier to a public coordinate."""
     error_type = type(error).__name__
     phase = "reboot-reauth"
-    operation = None
-    post_submit_diagnostic = None
-    post_submit_collection = None
-    post_submit_cleanup = None
-    controller_auth = None
+    operation: object = None
+    post_submit_diagnostic: object = None
+    post_submit_collection: object = None
+    post_submit_cleanup: object = None
+    controller_auth: object = None
     if type(error) is WindowsLocalReauthenticationError:
-        operation = error.reauth_operation
-        post_submit_diagnostic = error.post_submit_diagnostic
-        post_submit_collection = error.post_submit_collection
-        post_submit_cleanup = error.post_submit_cleanup
-        controller_auth = error.controller_auth_result
+        try:
+            operation = error.reauth_operation
+            post_submit_diagnostic = error.post_submit_diagnostic
+            post_submit_collection = error.post_submit_collection
+            post_submit_cleanup = error.post_submit_cleanup
+            controller_auth = error.controller_auth_result
+        except BaseException:
+            operation = None
+            post_submit_diagnostic = None
+            post_submit_collection = None
+            post_submit_cleanup = None
+            controller_auth = None
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
@@ -172,11 +185,48 @@ def _local_reauthentication_coordinate(
         if type(post_submit_cleanup) is PostSubmitDiagnosticCleanup
         else None
     )
-    if (
-        type(error) is WindowsLocalReauthenticationError
-        and operation in _LOCAL_REAUTH_OPERATIONS
-    ):
+    if type(operation) is str and operation in _LOCAL_REAUTH_OPERATIONS:
         phase = f"reboot-reauth-{operation}"
+    else:
+        operation = None
+    allowed_supplemental_phases = {
+        "reboot-reauth-desktop",
+        "reboot-reauth-diagnostic-cleanup",
+        "reboot-reauth-desktop-near-reference",
+        "reboot-reauth-desktop-sign-in-persisted",
+        "reboot-reauth-desktop-sign-in-near-reference",
+    }
+    if phase not in allowed_supplemental_phases:
+        diagnostic_value = None
+        collection_value = None
+        cleanup_value = None
+    normalized_controller_auth = None
+    if (
+        phase in {
+            "reboot-reauth-controller-auth-arm",
+            *allowed_supplemental_phases,
+        }
+        and type(controller_auth) is ControllerAuthResult
+    ):
+        try:
+            code = controller_auth.code
+            collection = controller_auth.collection
+            cleanup = controller_auth.cleanup
+            if (
+                (code is None or type(code) is ControllerAuthCode)
+                and (
+                    collection is None
+                    or type(collection) is ControllerAuthCollection
+                )
+                and (cleanup is None or type(cleanup) is ControllerAuthCleanup)
+            ):
+                # Exercise the invariant constructor, while retaining the
+                # already-valid immutable carrier for compatibility.
+                ControllerAuthResult(
+                    code=code, collection=collection, cleanup=cleanup)
+                normalized_controller_auth = controller_auth
+        except BaseException:
+            normalized_controller_auth = None
     if (
         error_type == "WindowsLocalReauthenticationError"
         and not isinstance(error, WindowsLocalReauthenticationError)
@@ -186,7 +236,7 @@ def _local_reauthentication_coordinate(
         error_type = "UnexpectedError"
     return WindowsJoinFailureCoordinate(
         phase, error_type, diagnostic_value, collection_value, cleanup_value,
-        controller_auth)
+        normalized_controller_auth)
 
 
 _CREDENTIAL_ROLES = {

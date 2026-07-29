@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from itertools import product
 from pathlib import Path
 from unittest import mock
 
@@ -10,6 +11,7 @@ from homelab.vm.controller_join_material import (
     ControllerJoinResult,
 )
 from homelab.vm.controller_auth_diagnostic import (
+    ControllerAuthCode,
     ControllerAuthCollection,
     ControllerAuthCleanup,
     ControllerAuthResult,
@@ -26,6 +28,135 @@ from homelab.tests.test_windows_identity_acceptance import details
 
 
 class WindowsIdentityOrchestratorTests(unittest.TestCase):
+    def test_reauthentication_coordinate_totally_normalizes_carrier_state(self):
+        supplemental_operations = {
+            "desktop",
+            "diagnostic-cleanup",
+            "desktop-near-reference",
+            "desktop-sign-in-persisted",
+            "desktop-sign-in-near-reference",
+        }
+        controller_operations = supplemental_operations | {
+            "controller-auth-arm",
+        }
+        controller_results = [
+            *(
+                ControllerAuthResult(code=code)
+                for code in ControllerAuthCode
+            ),
+            *(
+                ControllerAuthResult(collection=collection)
+                for collection in ControllerAuthCollection
+            ),
+            *(
+                ControllerAuthResult(
+                    collection=ControllerAuthCollection.SINK_INVALID,
+                    cleanup=cleanup,
+                )
+                for cleanup in ControllerAuthCleanup
+            ),
+        ]
+        for operation in sorted(supplemental_operations):
+            for diagnostic, collection, cleanup, controller in product(
+                [None, *PostSubmitDiagnosticCode],
+                [None, *PostSubmitDiagnosticCollection],
+                [None, *PostSubmitDiagnosticCleanup],
+                [None, *controller_results],
+            ):
+                error = subject.WindowsLocalReauthenticationError(
+                    operation,
+                    post_submit_diagnostic=diagnostic,
+                    post_submit_collection=collection,
+                    post_submit_cleanup=cleanup,
+                    controller_auth_result=controller,
+                )
+                coordinate = subject._local_reauthentication_coordinate(error)
+                self.assertEqual(
+                    diagnostic.value if diagnostic is not None else None,
+                    coordinate.post_submit_diagnostic,
+                )
+                self.assertEqual(
+                    collection.value if collection is not None else None,
+                    coordinate.post_submit_collection,
+                )
+                self.assertEqual(
+                    cleanup.value if cleanup is not None else None,
+                    coordinate.post_submit_cleanup,
+                )
+                self.assertEqual(controller, coordinate.controller_auth)
+
+        for operation in sorted(subject._LOCAL_REAUTH_OPERATIONS):
+            diagnostics = (
+                list(PostSubmitDiagnosticCode)
+                if operation in supplemental_operations else [None]
+            )
+            collections = (
+                list(PostSubmitDiagnosticCollection)
+                if operation in supplemental_operations else [None]
+            )
+            cleanups = (
+                list(PostSubmitDiagnosticCleanup)
+                if operation in supplemental_operations else [None]
+            )
+            for value in diagnostics:
+                error = subject.WindowsLocalReauthenticationError(
+                    operation, post_submit_diagnostic=value)
+                coordinate = subject._local_reauthentication_coordinate(error)
+                self.assertEqual(
+                    value.value if value is not None else None,
+                    coordinate.post_submit_diagnostic,
+                )
+            for value in collections:
+                error = subject.WindowsLocalReauthenticationError(
+                    operation, post_submit_collection=value)
+                coordinate = subject._local_reauthentication_coordinate(error)
+                self.assertEqual(
+                    value.value if value is not None else None,
+                    coordinate.post_submit_collection,
+                )
+            for value in cleanups:
+                error = subject.WindowsLocalReauthenticationError(
+                    operation, post_submit_cleanup=value)
+                coordinate = subject._local_reauthentication_coordinate(error)
+                self.assertEqual(
+                    value.value if value is not None else None,
+                    coordinate.post_submit_cleanup,
+                )
+            for result in controller_results:
+                error = subject.WindowsLocalReauthenticationError(
+                    operation, controller_auth_result=result)
+                coordinate = subject._local_reauthentication_coordinate(error)
+                expected = result if operation in controller_operations else None
+                self.assertEqual(expected, coordinate.controller_auth)
+
+        forged = subject.WindowsLocalReauthenticationError("wake")
+        forged.reauth_operation = ["unhashable"]
+        forged.post_submit_diagnostic = "private"
+        forged.post_submit_collection = object()
+        forged.post_submit_cleanup = object()
+        forged.controller_auth_result = object()
+        coordinate = subject._local_reauthentication_coordinate(forged)
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertIsNone(coordinate.post_submit_diagnostic)
+        self.assertIsNone(coordinate.post_submit_collection)
+        self.assertIsNone(coordinate.post_submit_cleanup)
+        self.assertIsNone(coordinate.controller_auth)
+
+        missing = subject.WindowsLocalReauthenticationError("desktop")
+        del missing.post_submit_collection
+        coordinate = subject._local_reauthentication_coordinate(missing)
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertIsNone(coordinate.controller_auth)
+
+        invalid_result = object.__new__(ControllerAuthResult)
+        object.__setattr__(invalid_result, "code", "authenticated")
+        object.__setattr__(invalid_result, "collection", None)
+        object.__setattr__(invalid_result, "cleanup", None)
+        forged = subject.WindowsLocalReauthenticationError("desktop")
+        forged.controller_auth_result = invalid_result
+        coordinate = subject._local_reauthentication_coordinate(forged)
+        self.assertIsNone(coordinate.controller_auth)
+
     def test_reboot_reauthentication_preserves_gui_failure_type(self):
         for error_type in (
             "WindowsIdentityGuiError",
