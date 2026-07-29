@@ -219,33 +219,116 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             self.assertEqual(subject._controller_session(encoded), 2)
         cleanup.assert_called_once_with(None, None)
 
-    def test_effective_configuration_accepts_semantic_token_spacing(self):
-        completed = mock.Mock(
-            returncode=0,
-            stdout=(
-                "  0   auth_json_audit:3@"
-                "/run/telos-factory-auth-audit/auth.jsonl\n"
+    def test_effective_configuration_proves_file_syntax_and_live_route(self):
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            config.write_text(
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n")
+            syntax = mock.Mock(returncode=0)
+            live = mock.Mock(
+                returncode=0,
+                stdout=(
+                    "PID 41: debug levels:\n"
+                    "  all: 0\n"
+                    "  auth_json_audit: 3\n"
+                ),
+            )
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(
+                    subject.subprocess, "run",
+                    side_effect=(syntax, live),
+                ) as run,
+            ):
+                self.assertTrue(subject._effective_configuration())
+            self.assertEqual(
+                run.call_args_list[0].args[0],
+                ["testparm", "-s", str(config)],
+            )
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["smbcontrol", "all", "debuglevel"],
+            )
+
+    def test_effective_configuration_rejects_bad_config_file_or_syntax(self):
+        variants = (
+            "[global]\n",
+            "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n"
+            + subject.AUTH_JSON_CONFIG_LINE + "\n",
+            "[global]\n " + subject.AUTH_JSON_CONFIG_LINE.lstrip() + "\n",
+        )
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            for text in variants:
+                with self.subTest(text=text):
+                    config.write_text(text)
+                    with (
+                        mock.patch.object(
+                            subject, "SMB_CONFIG_PATH", str(config)),
+                        mock.patch.object(subject.subprocess, "run") as run,
+                    ):
+                        self.assertFalse(subject._effective_configuration())
+                        run.assert_not_called()
+            config.write_text(
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n")
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(
+                    subject.subprocess, "run",
+                    return_value=mock.Mock(returncode=1),
+                ) as run,
+            ):
+                self.assertFalse(subject._effective_configuration())
+                self.assertEqual(run.call_count, 1)
+
+    def test_effective_configuration_rejects_adversarial_live_routes(self):
+        outputs = (
+            ("", False),
+            (
+                "PID 1: debug levels:\n auth_json_audit: 3\n"
+                "PID 2: debug levels:\n auth_json_audit:3\n",
+                True,
+            ),
+            (
+                "PID 1: debug levels:\n auth_json_audit: 2\n",
+                False,
+            ),
+            (
+                "PID 1: auth_json_audit: 3\n"
+                "PID 2: auth_json_audit: 2\n",
+                False,
+            ),
+            (
+                "PID 1: auth_json_audit:\n"
+                "PID 2: auth_json_audit: 3\n",
+                False,
+            ),
+            (
+                "PID 1: prefixauth_json_audit: 9 "
+                "auth_json_audit: 3\n",
+                True,
             ),
         )
-        with mock.patch.object(
-                subject.subprocess, "run", return_value=completed):
-            self.assertTrue(subject._effective_configuration())
-
-    def test_effective_configuration_rejects_extra_or_duplicate_tokens(self):
-        exact = (
-            "0 auth_json_audit:3@"
-            "/run/telos-factory-auth-audit/auth.jsonl"
-        )
-        for output in (
-            f"{exact} auth:1\n",
-            f"{exact} auth_json_audit:3@"
-            "/run/telos-factory-auth-audit/auth.jsonl\n",
-            f"1 {exact.split(' ', 1)[1]}\n",
-        ):
-            with self.subTest(output=output), mock.patch.object(
-                    subject.subprocess, "run",
-                    return_value=mock.Mock(returncode=0, stdout=output)):
-                self.assertFalse(subject._effective_configuration())
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            config.write_text(
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n")
+            for output, expected in outputs:
+                with (
+                    self.subTest(output=output),
+                    mock.patch.object(
+                        subject, "SMB_CONFIG_PATH", str(config)),
+                    mock.patch.object(
+                        subject.subprocess,
+                        "run",
+                        side_effect=(
+                            mock.Mock(returncode=0),
+                            mock.Mock(returncode=0, stdout=output),
+                        ),
+                    ),
+                ):
+                    self.assertEqual(
+                        expected, subject._effective_configuration())
 
     def test_cleanup_never_unlinks_hardlink_or_replacement(self):
         with tempfile.TemporaryDirectory() as name:
@@ -256,7 +339,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             os.link(path, hardlink)
             descriptor = os.open(path, os.O_RDONLY)
             info = os.fstat(descriptor)
-            completed = mock.Mock(returncode=0, stdout="debug level 0\n")
+            completed = mock.Mock(
+                returncode=0, stdout="auth_json_audit: 0\n")
             with (
                 mock.patch.object(subject, "AUDIT_PATH", str(path)),
                 mock.patch.object(
@@ -280,6 +364,36 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     descriptor, (info.st_dev, info.st_ino)))
             self.assertEqual(path.read_bytes(), b"replacement")
 
+    def test_cleanup_queries_live_debuglevel_after_disabling_route(self):
+        disabled = mock.Mock(returncode=0)
+        verified = mock.Mock(
+            returncode=0,
+            stdout=(
+                "PID 1: auth_json_audit: 0\n"
+                "PID 2: auth_json_audit:0\n"
+            ),
+        )
+        with mock.patch.object(
+                subject.subprocess, "run",
+                side_effect=(disabled, verified)) as run:
+            self.assertFalse(subject._disable_and_destroy_sink(None, None))
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            ["smbcontrol", "all", "debug", "0 auth_json_audit:0"],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            ["smbcontrol", "all", "debuglevel"],
+        )
+
+    def test_live_auth_json_level_rejects_absent_and_conflicting_levels(self):
+        self.assertFalse(subject._live_auth_json_level("all: 0\n", 0))
+        self.assertFalse(subject._live_auth_json_level(
+            "auth_json_audit: 0\nauth_json_audit: 3\n", 0))
+        self.assertTrue(subject._live_auth_json_level(
+            "PID 1: auth_json_audit: 0\n"
+            "PID 2: auth_json_audit:0\n", 0))
+
     def test_cleanup_restores_replacement_racing_quarantine(self):
         with tempfile.TemporaryDirectory() as name:
             path = Path(name) / "auth.jsonl"
@@ -287,7 +401,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             path.chmod(0o600)
             descriptor = os.open(path, os.O_RDONLY)
             info = os.fstat(descriptor)
-            completed = mock.Mock(returncode=0, stdout="debug level 0\n")
+            completed = mock.Mock(
+                returncode=0, stdout="auth_json_audit: 0\n")
             original_lstat = Path.lstat
             original_rename = Path.rename
             raced = [False]

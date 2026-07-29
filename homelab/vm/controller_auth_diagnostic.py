@@ -30,12 +30,32 @@ MAX_AUDIT_RECORDS = 256
 AUDIT_QUIET_SECONDS = 0.5
 AUDIT_DIRECTORY = "/run/telos-factory-auth-audit"
 AUDIT_PATH = AUDIT_DIRECTORY + "/auth.jsonl"
+SMB_CONFIG_PATH = "/etc/samba/smb.conf"
 AUTH_JSON_COMPONENT = "auth_json_audit"
 AUTH_JSON_LEVEL = 3
+AUTH_JSON_ROUTE = f"{AUTH_JSON_COMPONENT}:{AUTH_JSON_LEVEL}@{AUDIT_PATH}"
+AUTH_JSON_CONFIG_LINE = f"\tlog level = 0 {AUTH_JSON_ROUTE}"
 
 _ACCOUNT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _DOMAIN = re.compile(r"[A-Z0-9][A-Z0-9-]{0,14}")
 _SID = re.compile(r"S-1-5-21-(?:[0-9]{1,10}-){2}[0-9]{1,10}-[0-9]{1,10}")
+
+
+def _live_auth_json_level(output: str, expected: int) -> bool:
+    occurrences = re.findall(
+        rf"(?<![A-Za-z0-9_]){re.escape(AUTH_JSON_COMPONENT)}:",
+        output,
+    )
+    levels = re.findall(
+        rf"(?<![A-Za-z0-9_]){re.escape(AUTH_JSON_COMPONENT)}:"
+        r"[ \t]*([^\s,;()\[\]{}]+)",
+        output,
+    )
+    return (
+        bool(occurrences)
+        and len(levels) == len(occurrences)
+        and all(level == str(expected) for level in levels)
+    )
 
 
 class ControllerAuthCode(Enum):
@@ -299,8 +319,28 @@ def _safe_sink() -> tuple[int, os.stat_result]:
 
 
 def _effective_configuration() -> bool:
-    result = subprocess.run(
-        ["testparm", "-s", "--parameter-name=log level"],
+    try:
+        config_lines = Path(SMB_CONFIG_PATH).read_text(
+            encoding="utf-8",
+        ).splitlines()
+    except (OSError, UnicodeError):
+        return False
+    if config_lines.count(AUTH_JSON_CONFIG_LINE) != 1:
+        return False
+
+    syntax = subprocess.run(
+        ["testparm", "-s", SMB_CONFIG_PATH],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=5,
+    )
+    if syntax.returncode != 0:
+        return False
+
+    live = subprocess.run(
+        ["smbcontrol", "all", "debuglevel"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -308,11 +348,9 @@ def _effective_configuration() -> bool:
         text=True,
         timeout=5,
     )
-    return (
-        result.returncode == 0
-        and result.stdout.split()
-        == ["0", f"auth_json_audit:3@{AUDIT_PATH}"]
-    )
+    if live.returncode != 0:
+        return False
+    return _live_auth_json_level(live.stdout, AUTH_JSON_LEVEL)
 
 
 def _staged_sid(account: str) -> str:
@@ -355,7 +393,7 @@ def _disable_and_destroy_sink(
             os.close(descriptor)
         return False
     verified = subprocess.run(
-        ["smbcontrol", "all", "debug"],
+        ["smbcontrol", "all", "debuglevel"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -365,12 +403,7 @@ def _disable_and_destroy_sink(
     )
     if (
         verified.returncode != 0
-        or f"auth_json_audit:3@{AUDIT_PATH}" in verified.stdout
-        or re.search(
-            r"(?:^|[\s:=])0(?:$|[\s])",
-            verified.stdout,
-            re.MULTILINE,
-        ) is None
+        or not _live_auth_json_level(verified.stdout, 0)
     ):
         if descriptor is not None:
             os.close(descriptor)

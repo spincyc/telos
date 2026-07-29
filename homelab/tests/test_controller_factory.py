@@ -109,21 +109,24 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertNotIn(
                 "log file = /run/telos-factory-auth-audit", script)
             self.assertIn(
-                "testparm -s --parameter-name='log level'", script)
+                "grep -Fxc $'\\tlog level = 0 auth_json_audit:3@", script)
+            self.assertIn(
+                "testparm -s /etc/samba/smb.conf >/dev/null 2>&1", script)
+            self.assertNotIn("--parameter-name='log level'", script)
+            self.assertIn(
+                "auth_audit_live=$(smbcontrol all debuglevel)", script)
+            self.assertIn(
+                "mapfile -t auth_audit_levels", script)
+            self.assertIn(
+                'if (token == "auth_json_audit:")', script)
+            self.assertIn(
+                '[[ ${#auth_audit_levels[@]} -gt 0 ]]', script)
+            self.assertIn(
+                'for auth_audit_level in "${auth_audit_levels[@]}"', script)
             self.assertIn("smbd -b | awk", script)
             self.assertIn(
                 '$1 == "HAVE_JSON_OBJECT" && NF == 1', script)
-            self.assertIn(
-                "read -r -d '' -a auth_audit_tokens", script)
-            self.assertIn(
-                '[[ ${#auth_audit_tokens[@]} -eq 2 ]]', script)
-            self.assertIn(
-                '[[ "${auth_audit_tokens[0]}" == 0 ]]', script)
-            self.assertNotIn(
-                "'0 auth_json_audit:3@"
-                "/run/telos-factory-auth-audit/auth.jsonl' ]]",
-                script,
-            )
+            self.assertNotIn("auth_audit_tokens", script)
             self.assertIn(
                 "test -d /run/telos-factory-auth-audit", script)
             self.assertIn(

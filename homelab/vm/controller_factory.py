@@ -211,18 +211,32 @@ sed -i \
   /etc/samba/smb.conf
 chmod 0600 /etc/samba/smb.conf
 echo 'TELOS FACTORY STEP auth-audit-config-verify'
-auth_audit_config=$(
-  testparm -s --parameter-name='log level' 2>/dev/null
-)
-IFS=$' \\t\\r\\n' read -r -d '' -a auth_audit_tokens < <(
-  printf '%s\\0' "$auth_audit_config"
-)
-[[ ${{#auth_audit_tokens[@]}} -eq 2 ]]
-[[ "${{auth_audit_tokens[0]}}" == 0 ]]
-[[ "${{auth_audit_tokens[1]}}" == \
-  'auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' ]]
+test "$(grep -Fxc $'\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
+  /etc/samba/smb.conf)" == 1
+testparm -s /etc/samba/smb.conf >/dev/null 2>&1
 echo 'TELOS FACTORY STEP auth-audit-restart'
 systemctl restart samba.service
+auth_audit_live=$(smbcontrol all debuglevel)
+mapfile -t auth_audit_levels < <(
+  awk '
+    {{
+      for (field = 1; field <= NF; field++) {{
+        token = $field
+        gsub(/^[,;()\\[\\]{{}}]+|[,;()\\[\\]{{}}]+$/, "", token)
+        if (token == "auth_json_audit:") {{
+          print $(field + 1)
+        }} else if (token ~ /^auth_json_audit:/) {{
+          sub(/^auth_json_audit:/, "", token)
+          print token
+        }}
+      }}
+    }}
+  ' <<<"$auth_audit_live"
+)
+[[ ${{#auth_audit_levels[@]}} -gt 0 ]]
+for auth_audit_level in "${{auth_audit_levels[@]}}"; do
+  [[ "$auth_audit_level" == 3 ]]
+done
 echo 'TELOS FACTORY STEP auth-audit-sink-verify'
 test -d /run/telos-factory-auth-audit
 test ! -L /run/telos-factory-auth-audit
