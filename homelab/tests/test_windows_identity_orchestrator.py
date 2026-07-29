@@ -48,6 +48,21 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     "WindowsLocalReauthenticationError",
                     coordinate.error_type)
 
+        persisted = subject.WindowsLocalReauthenticationError(
+            "desktop-sign-in-persisted")
+        coordinate = subject._local_reauthentication_coordinate(persisted)
+        diagnostic = subject.IdentityFailureDiagnostic.join_guest(
+            coordinate.phase, coordinate.error_type)
+        self.assertEqual(
+            "reboot-reauth-desktop-sign-in-persisted",
+            coordinate.phase,
+        )
+        self.assertEqual("windows-joined", diagnostic.check)
+        self.assertEqual(
+            "join-guest.reboot-reauth-desktop-sign-in-persisted",
+            diagnostic.operation,
+        )
+
         forged = forged_error_type("private")
         forged.reauth_operation = "private-arbitrary-value"
         coordinate = subject._local_reauthentication_coordinate(forged)

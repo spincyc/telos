@@ -59,6 +59,7 @@ class WindowsJoinFailureCoordinate:
             "wake", "calibration-capture", "calibration-required",
             "select-local-account", "type-public-username",
             "prove-password-target", "type-secret", "submit", "desktop",
+            "desktop-sign-in-persisted",
         )
     )
     _ERROR_TYPES = frozenset({

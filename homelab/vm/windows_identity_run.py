@@ -153,6 +153,7 @@ class IdentityFailureDiagnostic:
                 "wake", "calibration-capture", "calibration-required",
                 "select-local-account", "type-public-username",
                 "prove-password-target", "type-secret", "submit", "desktop",
+                "desktop-sign-in-persisted",
             )
         }:
             return cls("unknown-check", "unknown-operation", "UnexpectedError")
@@ -262,6 +263,7 @@ class IdentityFailureDiagnostic:
                         "calibration-required", "select-local-account",
                         "type-public-username", "prove-password-target",
                         "type-secret", "submit", "desktop",
+                        "desktop-sign-in-persisted",
                     )
                 }
             )
@@ -308,6 +310,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         "type-secret",
         "submit",
         "desktop",
+        "desktop-sign-in-persisted",
     })
 
     def __init__(self, operation: str) -> None:

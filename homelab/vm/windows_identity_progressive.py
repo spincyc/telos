@@ -287,20 +287,20 @@ class _GuiInteraction:
         self._durable_capture_enabled = False
 
     def observe_ephemeral(
-        self, reference: ValidatedIdentityReference, timeout: float
+        self,
+        reference: ValidatedIdentityReference,
+        timeout: float,
+        *,
+        alternatives: tuple[
+            tuple[str, ValidatedIdentityReference], ...
+        ] = (),
     ) -> None:
         """Prove a state while deleting every captured frame immediately."""
         deadline = self._driver.clock() + timeout
         consecutive = 0
-        reference_image = read_ppm(reference.path)
-        if (
-            reference.crop is not None
-            and (reference_image.width, reference_image.height)
-            == (reference.crop[2], reference.crop[3])
-        ):
-            expected = reference_image
-        else:
-            expected = crop_image(reference_image, reference.crop)
+        alternative_consecutive = {
+            name: 0 for name, _reference in alternatives}
+        expected = reference.image
         while self._driver.clock() < deadline:
             self._driver.sequence += 1
             path = self._driver.observer.root / (
@@ -308,7 +308,8 @@ class _GuiInteraction:
             try:
                 self._qmp.screenshot(path)
                 os.chmod(path, 0o600)
-                actual = crop_image(read_ppm(path), reference.crop)
+                full_actual = read_ppm(path)
+                actual = crop_image(full_actual, reference.crop)
                 distance = image_distance(actual, expected)
             finally:
                 path.unlink(missing_ok=True)
@@ -318,6 +319,19 @@ class _GuiInteraction:
                     return
             else:
                 consecutive = 0
+            for name, alternative in alternatives:
+                alternative_actual = crop_image(
+                    full_actual, alternative.crop)
+                if (
+                    useful_frame(alternative_actual)
+                    and image_distance(
+                        alternative_actual, alternative.image) <= 6.0
+                ):
+                    alternative_consecutive[name] += 1
+                    if alternative_consecutive[name] == 2:
+                        raise WindowsIdentityGuiAlternateState(name)
+                else:
+                    alternative_consecutive[name] = 0
             self._driver.pause(self._driver.interval)
         raise WindowsIdentityGuiError(
             f"timed out proving {reference.state_kind}")
@@ -356,6 +370,14 @@ class _GuiInteraction:
 
     def chord(self, *names: str) -> None:
         self._qmp.chord(*names)
+
+
+class WindowsIdentityGuiAlternateState(WindowsIdentityGuiError):
+    """A reviewed alternate state persisted after secret submission."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__("reviewed alternate GUI state persisted")
 
 
 def _load_references(

@@ -39,6 +39,7 @@ from .windows_identity_progressive import (
     _GuiInteraction,
     _load_references,
     _private_evidence_root,
+    WindowsIdentityGuiAlternateState,
 )
 from .windows_gui import SAFE_KEYS
 from .windows_identity_run import (
@@ -517,12 +518,20 @@ class NativeWindowsAcceptanceAdapter:
                 remaining("submit"),
                 interaction.key("ret"),
             ))
-        _run_local_reauthentication_operation(
-            "desktop",
-            lambda: interaction.observe_ephemeral(
-                desktop, min(
-                    checkpoint_timeout, remaining("desktop"))),
-        )
+        def prove_desktop() -> None:
+            try:
+                interaction.observe_ephemeral(
+                    desktop,
+                    min(checkpoint_timeout, remaining("desktop")),
+                    alternatives=(("sign-in", sign_in),),
+                )
+            except WindowsIdentityGuiAlternateState as error:
+                if error.state == "sign-in":
+                    raise WindowsLocalReauthenticationError(
+                        "desktop-sign-in-persisted") from None
+                raise
+
+        _run_local_reauthentication_operation("desktop", prove_desktop)
 
     def static_probe(self, action: str) -> Mapping[str, object]:
         if self._static_probe_poisoned:

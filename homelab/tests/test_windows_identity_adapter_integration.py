@@ -244,7 +244,11 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.disable_durable_capture(),
                 mock.call.type_secret("private"),
                 mock.call.key("ret"),
-                mock.call.observe_ephemeral(desktop, mock.ANY),
+                mock.call.observe_ephemeral(
+                    desktop,
+                    mock.ANY,
+                    alternatives=(("sign-in", sign_in),),
+                ),
             ],
             manager.mock_calls,
         )
@@ -258,6 +262,41 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(observe_timeouts[1], final_timeout)
         self.qmp.type_text.assert_called_once_with(".\\telosadmin")
         sleep.assert_not_called()
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_classifies_persisted_sign_in_after_submit(
+        self, load_references, private_evidence_root, interaction_type,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for local account telosadmin",
+        )
+        desktop = mock.sentinel.desktop
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        interaction_type.return_value.observe_ephemeral.side_effect = (
+            subject.WindowsIdentityGuiAlternateState("sign-in"))
+        adapter = self.adapter(rotation_plan=mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=("spc",),
+            post_join_local_account_keys=(),
+            post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
+            checkpoint_timeout=11,
+        ))
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_local("private")
+
+        self.assertEqual(
+            "desktop-sign-in-persisted",
+            caught.exception.reauth_operation,
+        )
 
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
