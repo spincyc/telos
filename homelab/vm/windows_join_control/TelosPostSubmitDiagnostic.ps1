@@ -235,9 +235,9 @@ public static class TelosAuditPolicy {
     Write-DiagnosticEvent 'submitted' $nonce
     $serial.ReadTimeout = 500
 
-    # Finish before the host's independently enforced 15-second diagnostic
-    # budget so terminal cleanup and COM1 handoff retain time to complete.
-    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    # The host grants this scan an independent 70-second phase. Keep ten
+    # seconds for its terminal receipt, verified cleanup, and COM1 handoff.
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
     $sawInteractiveLogon = $false
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($serial.BytesToRead -gt 0) {

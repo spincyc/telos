@@ -238,6 +238,10 @@ class WindowsJoinIsoTests(unittest.TestCase):
         )
         self.assertIn(
             "if ($sawInteractiveLogon)", diagnostic)
+        self.assertIn(
+            "[DateTime]::UtcNow.AddSeconds(60)", diagnostic)
+        self.assertIn(
+            "independent 70-second phase", diagnostic)
         self.assertNotIn("Format-List", diagnostic)
         self.assertNotIn("Format-Table", diagnostic)
         self.assertNotIn("$targetName -like", diagnostic)

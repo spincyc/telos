@@ -16,6 +16,8 @@ from typing import Callable, Mapping
 
 
 SCHEMA_VERSION = 1
+GUEST_SCAN_TIMEOUT = 60.0
+SUBMISSION_PHASE_TIMEOUT = 70.0
 _NONCE = re.compile(r"[0-9a-f]{32}")
 _UPN_LOCAL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _UPN_REALM = re.compile(
@@ -69,6 +71,7 @@ class PostSubmitDiagnosticSession:
         principal: str,
         *,
         timeout: float = 120.0,
+        submission_timeout: float = SUBMISSION_PHASE_TIMEOUT,
         maximum_line: int = 1024,
         clock: Callable[[], float] = time.monotonic,
         pause: Callable[[float], None] = time.sleep,
@@ -86,6 +89,9 @@ class PostSubmitDiagnosticSession:
             raise PostSubmitDiagnosticError("diagnostic principal is invalid")
         if not 0 < timeout <= 300:
             raise PostSubmitDiagnosticError("diagnostic timeout is invalid")
+        if not GUEST_SCAN_TIMEOUT + 5 <= submission_timeout <= 300:
+            raise PostSubmitDiagnosticError(
+                "diagnostic submission timeout is invalid")
         if not 128 <= maximum_line <= 4096:
             raise PostSubmitDiagnosticError(
                 "diagnostic serial line bound is invalid")
@@ -97,6 +103,7 @@ class PostSubmitDiagnosticSession:
         self._pause = pause
         self._quiescence_delay = quiescence_delay
         self._timeout = timeout
+        self._submission_timeout = submission_timeout
         self._deadline = clock() + timeout
         self._state = "connected"
         self.closed = False
@@ -248,7 +255,7 @@ class PostSubmitDiagnosticSession:
         # independently bounded acceptance budget. Start a fresh diagnostic
         # phase here so that time cannot expire this transport before it sends
         # the submitted fence or receives the watcher's bounded result.
-        self._deadline = self._clock() + self._timeout
+        self._deadline = self._clock() + self._submission_timeout
         self._send("submitted")
         record = self._read()
         expected = {

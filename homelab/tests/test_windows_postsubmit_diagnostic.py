@@ -5,9 +5,11 @@ import socket
 import unittest
 
 from homelab.vm.windows_postsubmit_diagnostic import (
+    GUEST_SCAN_TIMEOUT,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticError,
     PostSubmitDiagnosticSession,
+    SUBMISSION_PHASE_TIMEOUT,
 )
 
 
@@ -22,6 +24,13 @@ def record(value):
 
 
 class PostSubmitDiagnosticSessionTests(unittest.TestCase):
+    def test_submission_phase_reserves_guest_scan_cleanup_margin(self):
+        self.assertEqual(60, GUEST_SCAN_TIMEOUT)
+        self.assertGreaterEqual(
+            SUBMISSION_PHASE_TIMEOUT,
+            GUEST_SCAN_TIMEOUT + 5,
+        )
+
     def session(self):
         host, guest = socket.socketpair()
         self.addCleanup(host.close)
@@ -236,6 +245,7 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
             NONCE,
             PRINCIPAL,
             timeout=5,
+            submission_timeout=70,
             clock=lambda: elapsed[0],
             pause=lambda _delay: None,
         )
@@ -247,14 +257,18 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
             "schema_version": 1, "event": "submitted", "nonce": NONCE,
         }))
         self.assertIsNone(session.submitted())
-        self.assertEqual(14, session._deadline)
+        self.assertEqual(79, session._deadline)
         self.assertEqual({
             "schema_version": 1, "command": "submitted", "nonce": NONCE,
         }, json.loads(guest.recv(1024)))
 
+        # Ordinary receive-timeout refreshes cannot extend the phase.
+        elapsed[0] = 20
+        session._set_operation_timeout()
+        self.assertEqual(79, session._deadline)
+
         # A failed result phase can likewise exhaust its deadline without
         # preventing the independently bounded cleanup command.
-        elapsed[0] = 20
         guest.sendall(record({
             "schema_version": 1, "event": "cancelled", "nonce": NONCE,
             "cleanup_complete": True,
