@@ -32,9 +32,6 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
     def test_exact_ordered_protocol_returns_fixed_code(self):
         session, guest = self.session()
         guest.sendall(record({
-            "schema_version": 1, "event": "diagnostic-ready", "nonce": NONCE,
-        }))
-        guest.sendall(record({
             "schema_version": 1, "event": "armed", "nonce": NONCE,
         }))
         session.arm()
@@ -167,19 +164,20 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
         }, json.loads(guest.recv(1024)))
         self.assertEqual("finished", session._state)
 
-    def test_arm_rejects_stale_ready_nonce_before_sending_command(self):
+    def test_arm_sends_command_before_rejecting_stale_receipt(self):
         session, guest = self.session()
         guest.sendall(record({
             "schema_version": 1,
-            "event": "diagnostic-ready",
+            "event": "armed",
             "nonce": "cd" * 16,
         }))
         with self.assertRaisesRegex(
-                PostSubmitDiagnosticError, "ready receipt"):
+                PostSubmitDiagnosticError, "armed receipt"):
             session.arm()
-        guest.setblocking(False)
-        with self.assertRaises(BlockingIOError):
-            guest.recv(1)
+        self.assertEqual({
+            "schema_version": 1, "command": "arm", "nonce": NONCE,
+            "principal": PRINCIPAL,
+        }, json.loads(guest.recv(1024)))
 
     def test_result_rejects_unproved_cleanup(self):
         session, guest = self.session()

@@ -195,7 +195,10 @@ public static class TelosAuditPolicy {
         throw 'diagnostic serial deadline expired'
     }
 
-    Write-DiagnosticEvent 'diagnostic-ready' $nonce
+    # QEMU's wait=off socket chardev does not retain output written before a
+    # host client connects. Wait for the nonce- and principal-bound host
+    # command first so startup ordering cannot discard a one-shot readiness
+    # receipt and leave both peers waiting on each other.
     [void](Read-ExactCommand @('arm') $nonce $operatorPrincipal)
     $securityLog = Get-WinEvent -ListLog Security -ErrorAction Stop
     $auditPointer = [IntPtr]::Zero

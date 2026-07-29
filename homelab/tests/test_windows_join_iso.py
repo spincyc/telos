@@ -98,7 +98,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertEqual(MATERIAL["password"], observed["join"]["password"])
             self.assertIn("-Verb RunAs", observed["script"])
             self.assertIn("join-elevation-requested", observed["script"])
-            self.assertIn(
+            self.assertNotIn(
                 "diagnostic-ready", observed["diagnostic"])
             self.assertLess(
                 observed["script"].index("join-elevation-requested"),
@@ -155,7 +155,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, diagnostic.lower())
         self.assertIn("'COM1'", diagnostic)
-        self.assertIn("diagnostic-ready", diagnostic)
+        self.assertNotIn("diagnostic-ready", diagnostic)
         self.assertIn("ConvertFrom-Json", diagnostic)
         self.assertIn(
             "$remainingTask = Get-ScheduledTask", diagnostic)

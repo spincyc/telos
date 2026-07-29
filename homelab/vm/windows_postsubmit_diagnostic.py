@@ -183,14 +183,9 @@ class PostSubmitDiagnosticSession:
         if self._state != "connected":
             raise PostSubmitDiagnosticError(
                 "diagnostic session cannot be armed")
-        ready = self._read()
-        if ready != {
-            "schema_version": SCHEMA_VERSION,
-            "event": "diagnostic-ready",
-            "nonce": self.nonce,
-        }:
-            raise PostSubmitDiagnosticError(
-                "diagnostic ready receipt is invalid")
+        # The startup watcher predates this host connection. A wait=off QEMU
+        # socket chardev cannot replay guest output produced during that gap,
+        # so the nonce-bound host command initiates the handshake.
         self._send("arm", include_principal=True)
         record = self._read()
         expected = {
