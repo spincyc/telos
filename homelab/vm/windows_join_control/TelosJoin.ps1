@@ -26,6 +26,39 @@ if ($document.schema_version -ne 2 -or
     throw 'join material is invalid'
 }
 
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+if (-not $principal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $nonce = [string]$document.nonce
+    $serial = [System.IO.Ports.SerialPort]::new(
+        'COM1', 115200, 'None', 8, 'One')
+    $serial.NewLine = "`n"
+    try {
+        $serial.Open()
+        $serial.WriteLine(
+            '{"schema_version":1,"event":"join-elevation-requested",' +
+            '"nonce":"' + $nonce + '"}'
+        )
+    }
+    finally {
+        if ($serial.IsOpen) {
+            $serial.Close()
+        }
+        $serial.Dispose()
+    }
+    $document = $null
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $MyInvocation.MyCommand.Path
+    )
+    exit
+}
+
 # Copy the one-use join inputs into process memory before announcing that the
 # medium may be destroyed. Nothing mutating occurs before the host replies.
 $joinUsername = [string]$document.username

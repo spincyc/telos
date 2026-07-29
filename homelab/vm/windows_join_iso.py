@@ -106,7 +106,6 @@ SCRIPT = (
     Path(__file__).with_name("windows_join_control")
     / "TelosJoin.ps1"
 )
-ELEVATE_SCRIPT = SCRIPT.with_name("TelosJoinElevate.ps1")
 NONCE = re.compile(r"[a-f0-9]{32}")
 DOMAIN = re.compile(
     r"(?=.{1,253}\Z)(?![-.])(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+"
@@ -282,10 +281,7 @@ def build_join_iso(
         raise WindowsJoinIsoError("join ISO destination must be absent")
     parent = _regular_private_parent(output.parent)
     values = _validate_material(material)
-    if (
-        SCRIPT.is_symlink() or not SCRIPT.is_file()
-        or ELEVATE_SCRIPT.is_symlink() or not ELEVATE_SCRIPT.is_file()
-    ):
+    if SCRIPT.is_symlink() or not SCRIPT.is_file():
         raise WindowsJoinIsoError("join script is unavailable")
     with tempfile.TemporaryDirectory(
             prefix=".windows-join-", dir=parent) as temporary:
@@ -295,8 +291,6 @@ def build_join_iso(
         stage.mkdir(mode=0o700)
         shutil.copyfile(SCRIPT, stage / SCRIPT.name)
         (stage / SCRIPT.name).chmod(0o400)
-        shutil.copyfile(ELEVATE_SCRIPT, stage / ELEVATE_SCRIPT.name)
-        (stage / ELEVATE_SCRIPT.name).chmod(0o400)
         join = stage / "join.json"
         descriptor = os.open(
             join, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
@@ -330,7 +324,7 @@ def build_join_iso(
 def launch_join_command() -> str:
     """Return fixed, secret-free PowerShell suitable for GUI injection."""
     return bounded_media_launch_command(
-        "TELOS_JOIN", "TelosJoinElevate.ps1",
+        "TELOS_JOIN", "TelosJoin.ps1",
     )
 
 

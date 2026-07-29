@@ -83,8 +83,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 stage = Path(command[-1])
                 observed["join"] = json.loads(
                     (stage / "join.json").read_text(encoding="utf-8"))
-                observed["elevate"] = (
-                    stage / "TelosJoinElevate.ps1"
+                observed["script"] = (
+                    stage / "TelosJoin.ps1"
                 ).read_text(encoding="utf-8")
                 Path(command[command.index("-o") + 1]).write_bytes(b"iso")
 
@@ -93,11 +93,11 @@ class WindowsJoinIsoTests(unittest.TestCase):
             for value in MATERIAL.values():
                 self.assertNotIn(value, argv)
             self.assertEqual(MATERIAL["password"], observed["join"]["password"])
-            self.assertIn("-Verb RunAs", observed["elevate"])
-            self.assertIn("join-elevation-requested", observed["elevate"])
+            self.assertIn("-Verb RunAs", observed["script"])
+            self.assertIn("join-elevation-requested", observed["script"])
             self.assertLess(
-                observed["elevate"].index("join-elevation-requested"),
-                observed["elevate"].index("-Verb RunAs"),
+                observed["script"].index("join-elevation-requested"),
+                observed["script"].index("-Verb RunAs"),
             )
             self.assertEqual(0o600, output.stat().st_mode & 0o777)
             self.assertFalse(any(
@@ -158,7 +158,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index('"join-reboot-ready"'),
             script.index("TELOS_JOIN_REBOOT_ACK"),
             script.index('"join-reboot-accepted"'),
-            script.index("$serial.Close()"),
+            script.rindex("$serial.Close()"),
             script.index("Restart-Computer"),
         ]
         self.assertEqual(sorted(positions), positions)
@@ -168,12 +168,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
         )
         self.assertIn("$computerSystems.Count -ne 1", script)
         self.assertIn("-InputObject $computerSystems[0]", script)
-        elevate = Path(
-            "homelab/vm/windows_join_control/"
-            "TelosJoinElevate.ps1"
-        ).read_text(encoding="utf-8")
-        self.assertIn("-Verb RunAs", elevate)
-        self.assertIn("'TelosJoin.ps1'", elevate)
+        self.assertIn("-Verb RunAs", script)
+        self.assertIn("$MyInvocation.MyCommand.Path", script)
         self.assertIn(
             "$usernameParts[1] -cne [string]$document.realm",
             script,
