@@ -128,7 +128,8 @@ class IdentityFailureDiagnostic:
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
-            "serial-connect", "prepare", "attach", "launch", "marker-receive",
+            "serial-connect", "prepare", "attach", "launch",
+            "elevation-receive", "elevation-parse", "marker-receive",
             "media-destroy", "release", "result-receive", "result-parse",
             "result-ack", "accepted-receive", "accepted-parse",
             "result", "reboot-reauth",
