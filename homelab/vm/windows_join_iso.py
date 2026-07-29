@@ -46,6 +46,7 @@ class WindowsJoinFailureCoordinate:
         "result-guest-add-computer", "result-guest-operator-resolution",
         "result-guest-operator-mutation",
         "result-guest-operator-verification",
+        "marker-guest-diagnostic-source",
         "result-guest-join-authorization",
         "result-guest-join-authentication",
         "result-guest-join-domain-discovery",
@@ -492,6 +493,20 @@ class JoinMediaChannel:
             marker = json.loads(marker_line)
         except json.JSONDecodeError as error:
             raise WindowsJoinIsoError("join marker is invalid") from error
+        failure = {
+            "schema_version": 1,
+            "event": "join-material-failed",
+            "nonce": self.nonce,
+            "phase": "diagnostic-source",
+        }
+        if marker == failure and self.attached and self._identity is not None:
+            raise WindowsJoinIsoError(
+                "guest failed to load the post-submit diagnostic source",
+                coordinate=WindowsJoinFailureCoordinate(
+                    "marker-guest-diagnostic-source",
+                    "WindowsJoinIsoError",
+                ),
+            )
         if marker != expected or not self.attached or self._identity is None:
             raise WindowsJoinIsoError("join marker or ownership is invalid")
         try:
@@ -771,6 +786,11 @@ def execute_join_channel(
                 send_release=serial.send_release,
             )
         except BaseException as error:
+            if (
+                isinstance(error, WindowsJoinIsoError)
+                and error.coordinate is not None
+            ):
+                raise error from None
             phase = (
                 "release"
                 if channel.state is JoinMediaState.DESTROYED_AWAITING_RELEASE

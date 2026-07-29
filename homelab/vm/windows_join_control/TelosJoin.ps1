@@ -12,8 +12,6 @@ $volume = $volumes[0]
 $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'join.json') -Raw |
     ConvertFrom-Json
-$diagnosticSource = Get-Content -LiteralPath (
-    $root + 'TelosPostSubmitDiagnostic.ps1') -Raw
 $usernameParts = @(([string]$document.username).Split('@'))
 if ($document.schema_version -ne 2 -or
     $document.nonce -notmatch '^[a-f0-9]{32}$' -or
@@ -75,6 +73,13 @@ $serial.ReadTimeout = 120000
 $serial.NewLine = "`n"
 try {
     $serial.Open()
+    # The filtered bootstrap must first prove that it reached RunAs. Load the
+    # watcher only in the elevated child, while the private medium is still
+    # attached and before announcing that all material is resident in memory.
+    $failurePhase = 'diagnostic-source'
+    $diagnosticSource = Get-Content -LiteralPath (
+        $root + 'TelosPostSubmitDiagnostic.ps1') -Raw
+    $failurePhase = $null
     $serial.WriteLine(
         '{"schema_version":1,"event":"join-material-loaded","nonce":"' +
         $nonce + '"}'
@@ -286,10 +291,20 @@ catch {
     $originalError = $_
     if ($serial.IsOpen -and $failurePhase) {
         try {
-            $serial.WriteLine(
-                '{"schema_version":1,"event":"join-reboot-failed","nonce":"' +
-                $nonce + '","phase":"' + $failurePhase + '"}'
-            )
+            if ($failurePhase -ceq 'diagnostic-source') {
+                $serial.WriteLine(
+                    '{"schema_version":1,"event":"join-material-failed",' +
+                    '"nonce":"' + $nonce +
+                    '","phase":"diagnostic-source"}'
+                )
+            }
+            else {
+                $serial.WriteLine(
+                    '{"schema_version":1,"event":"join-reboot-failed",' +
+                    '"nonce":"' + $nonce + '","phase":"' +
+                    $failurePhase + '"}'
+                )
+            }
         }
         catch {
             # The original typed failure remains authoritative when COM1 is

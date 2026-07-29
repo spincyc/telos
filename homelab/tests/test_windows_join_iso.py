@@ -125,6 +125,18 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("-RunLevel Highest", join_script)
         self.assertIn("New-ScheduledTaskTrigger -AtStartup", join_script)
         self.assertIn("diagnostic-staging", join_script)
+        diagnostic_load = "$diagnosticSource = Get-Content"
+        self.assertEqual(1, join_script.count(diagnostic_load))
+        protected_order = [
+            join_script.index('"join-elevation-requested"'),
+            join_script.index("-Verb RunAs"),
+            join_script.index("$failurePhase = 'diagnostic-source'"),
+            join_script.index(diagnostic_load),
+            join_script.index('"join-material-loaded"'),
+            join_script.index("TELOS_JOIN_MEDIA_DESTROYED"),
+        ]
+        self.assertEqual(sorted(protected_order), protected_order)
+        self.assertIn('"event":"join-material-failed"', join_script)
         self.assertLess(
             join_script.index("TelosPostSubmitDiagnostic.ps1"),
             join_script.index('"join-reboot-ready"'),
@@ -419,6 +431,40 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 ("released", f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}", False),
             ], events)
             self.assertIs(JoinMediaState.RELEASED, channel.state)
+
+    def test_diagnostic_source_failure_is_classified_before_destruction(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            qmp = FakeQmp()
+            channel = JoinMediaChannel(qmp, iso, NONCE)
+            channel.attach()
+            before = list(qmp.calls)
+            failure = json.dumps({
+                "schema_version": 1,
+                "event": "join-material-failed",
+                "nonce": NONCE,
+                "phase": "diagnostic-source",
+            })
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                channel.release_after_marker(
+                    failure,
+                    await_device_deleted=lambda _: self.fail(
+                        "must not destroy"),
+                    send_release=lambda _: self.fail("must not release"),
+                )
+            self.assertEqual(
+                "marker-guest-diagnostic-source",
+                caught.exception.coordinate.phase,
+            )
+            self.assertEqual(before, qmp.calls)
+            self.assertTrue(iso.exists())
+            self.assertTrue(channel.attached)
+            self.assertIs(JoinMediaState.ATTACHED, channel.state)
+            channel.cleanup(await_device_deleted=lambda _: None)
+            self.assertFalse(iso.exists())
 
     def test_partial_attach_failure_retains_node_and_exact_iso_for_cleanup(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -819,6 +865,48 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertIs(JoinMediaState.RELEASED, channel.state)
             serial.close()
             guest.close()
+
+    def test_diagnostic_source_failure_survives_channel_composition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            qmp = FakeQmp()
+            channel = JoinMediaChannel(qmp, iso, NONCE)
+
+            class DiagnosticFailureSerial:
+                closed = False
+                markers = iter((ELEVATION, json.dumps({
+                    "schema_version": 1,
+                    "event": "join-material-failed",
+                    "nonce": NONCE,
+                    "phase": "diagnostic-source",
+                })))
+
+                def read_marker(self):
+                    return next(self.markers)
+
+                def send_release(self, _line):
+                    self.fail("must not release")
+
+            serial = DiagnosticFailureSerial()
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                execute_join_channel(
+                    channel=channel,
+                    serial=serial,
+                    launch_guest=lambda _: None,
+                    await_device_deleted=lambda _: self.fail(
+                        "must not destroy"),
+                )
+            self.assertEqual(
+                "marker-guest-diagnostic-source",
+                caught.exception.coordinate.phase,
+            )
+            self.assertFalse(serial.closed)
+            self.assertTrue(iso.exists())
+            self.assertTrue(channel.attached)
+            channel.cleanup(await_device_deleted=lambda _: None)
 
     def test_result_timeout_has_receive_coordinate_and_no_reboot_ready(self):
         with tempfile.TemporaryDirectory() as temporary:

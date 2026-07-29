@@ -726,7 +726,8 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
     def test_guest_join_coordinates_are_preserved_by_one_use_owner(self):
         for phase in (
             "prepare", "attach", "launch", "marker-receive",
-            "media-destroy", "release", "result", "reboot-reauth",
+            "marker-guest-diagnostic-source", "media-destroy", "release",
+            "result", "reboot-reauth",
             "reboot-probe", "cleanup",
         ):
             with self.subTest(phase=phase):
