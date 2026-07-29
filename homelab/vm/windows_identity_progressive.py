@@ -300,6 +300,9 @@ class _GuiInteraction:
         consecutive = 0
         alternative_consecutive = {
             name: 0 for name, _reference in alternatives}
+        near_consecutive = 0
+        alternative_near_consecutive = {
+            name: 0 for name, _reference in alternatives}
         expected = reference.image
         while self._driver.clock() < deadline:
             self._driver.sequence += 1
@@ -319,21 +322,44 @@ class _GuiInteraction:
                     return
             else:
                 consecutive = 0
+            if useful_frame(actual) and distance <= 12.0:
+                near_consecutive += 1
+            else:
+                near_consecutive = 0
             for name, alternative in alternatives:
                 alternative_actual = crop_image(
                     full_actual, alternative.crop)
+                alternative_distance = image_distance(
+                    alternative_actual, alternative.image)
                 if (
                     useful_frame(alternative_actual)
-                    and image_distance(
-                        alternative_actual, alternative.image) <= 6.0
+                    and alternative_distance <= 6.0
                 ):
                     alternative_consecutive[name] += 1
                 else:
                     alternative_consecutive[name] = 0
+                if (
+                    useful_frame(alternative_actual)
+                    and alternative_distance <= 12.0
+                ):
+                    alternative_near_consecutive[name] += 1
+                else:
+                    alternative_near_consecutive[name] = 0
+                del alternative_actual, alternative_distance
+            del full_actual, actual, distance
             self._driver.pause(self._driver.interval)
         for name, matches in alternative_consecutive.items():
             if matches >= 2:
                 raise WindowsIdentityGuiAlternateState(name)
+        near_states = [
+            name for name, matches
+            in alternative_near_consecutive.items()
+            if matches >= 2
+        ]
+        if near_consecutive >= 2 and not near_states:
+            raise WindowsIdentityGuiNearReference(reference.state_kind)
+        if near_consecutive < 2 and len(near_states) == 1:
+            raise WindowsIdentityGuiNearReference(near_states[0])
         raise WindowsIdentityGuiError(
             f"timed out proving {reference.state_kind}")
 
@@ -379,6 +405,14 @@ class WindowsIdentityGuiAlternateState(WindowsIdentityGuiError):
     def __init__(self, state: str) -> None:
         self.state = state
         super().__init__("reviewed alternate GUI state persisted")
+
+
+class WindowsIdentityGuiNearReference(WindowsIdentityGuiError):
+    """A terminal pair was near exactly one reviewed reference."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__("terminal frames were near a reviewed GUI state")
 
 
 def _load_references(

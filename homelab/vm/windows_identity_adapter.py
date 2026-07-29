@@ -40,6 +40,7 @@ from .windows_identity_progressive import (
     _load_references,
     _private_evidence_root,
     WindowsIdentityGuiAlternateState,
+    WindowsIdentityGuiNearReference,
 )
 from .windows_gui import SAFE_KEYS
 from .windows_identity_run import (
@@ -531,6 +532,14 @@ class NativeWindowsAcceptanceAdapter:
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
                         "desktop-sign-in-persisted") from None
+                raise
+            except WindowsIdentityGuiNearReference as error:
+                if error.state == "desktop":
+                    raise WindowsLocalReauthenticationError(
+                        "desktop-near-reference") from None
+                if error.state == "sign-in":
+                    raise WindowsLocalReauthenticationError(
+                        "desktop-sign-in-near-reference") from None
                 raise
 
         _run_local_reauthentication_operation("desktop", prove_desktop)

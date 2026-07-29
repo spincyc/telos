@@ -189,6 +189,64 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertEqual(2, qmp.screenshot.call_count)
         self.assertEqual([], list(evidence.iterdir()))
 
+    def test_concrete_interaction_classifies_only_terminal_near_reference(self):
+        for state, distances in (
+            ("desktop", (9.0, 30.0, 9.0, 30.0)),
+            ("sign-in", (30.0, 9.0, 30.0, 9.0)),
+        ):
+            with self.subTest(state=state):
+                evidence = Path(self.temporary.name) / f"near-{state}"
+                evidence.mkdir(mode=0o700)
+                qmp = mock.Mock()
+                qmp.screenshot.side_effect = (
+                    lambda path: path.write_bytes(b"ephemeral-pixels"))
+                driver = mock.Mock(
+                    sequence=0,
+                    observer=SimpleNamespace(root=evidence),
+                    clock=mock.Mock(side_effect=(0.0, 0.0, 0.0, 2.0)),
+                    pause=mock.Mock(),
+                    interval=1.0,
+                )
+                with (
+                    mock.patch.object(
+                        progressive_subject,
+                        "WindowsCredentialRotationDriver",
+                        return_value=driver,
+                    ),
+                    mock.patch.object(
+                        progressive_subject, "read_ppm",
+                        return_value=SimpleNamespace(width=16, height=16),
+                    ),
+                    mock.patch.object(
+                        progressive_subject, "crop_image",
+                        return_value=mock.sentinel.cropped,
+                    ),
+                    mock.patch.object(
+                        progressive_subject, "image_distance",
+                        side_effect=distances,
+                    ),
+                    mock.patch.object(
+                        progressive_subject, "useful_frame",
+                        return_value=True,
+                    ),
+                ):
+                    interaction = progressive_subject._GuiInteraction(
+                        qmp, evidence)
+                    with self.assertRaises(
+                        progressive_subject.WindowsIdentityGuiNearReference,
+                    ) as caught:
+                        interaction.observe_ephemeral(
+                            reference("desktop"),
+                            1.0,
+                            alternatives=(
+                                ("sign-in", reference("sign-in")),
+                            ),
+                        )
+
+                self.assertEqual(state, caught.exception.state)
+                self.assertEqual(2, qmp.screenshot.call_count)
+                self.assertEqual([], list(evidence.iterdir()))
+
     def execute(self, *, fail=None, clock=lambda: 0):
         events = []
         self.events = events

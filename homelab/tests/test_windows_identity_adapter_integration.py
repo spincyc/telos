@@ -301,6 +301,44 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    def test_reauthentication_maps_terminal_near_references(
+        self, load_references, private_evidence_root, interaction_type,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for local account telosadmin",
+        )
+        desktop = mock.Mock(state_kind="desktop")
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        adapter = self.adapter(rotation_plan=mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=("spc",),
+            post_join_local_account_keys=(),
+            post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
+            checkpoint_timeout=11,
+        ))
+
+        for state, operation in (
+            ("desktop", "desktop-near-reference"),
+            ("sign-in", "desktop-sign-in-near-reference"),
+        ):
+            with self.subTest(state=state):
+                interaction_type.return_value.reset_mock()
+                interaction_type.return_value.observe_ephemeral.side_effect = (
+                    subject.WindowsIdentityGuiNearReference(state))
+                with self.assertRaises(
+                    subject.WindowsLocalReauthenticationError,
+                ) as caught:
+                    adapter.reauthenticate_local("private")
+                self.assertEqual(operation, caught.exception.reauth_operation)
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     @mock.patch.object(subject.time, "sleep")
     def test_reauthentication_deadline_starts_after_boot_settle(
         self, sleep, load_references, private_evidence_root, interaction_type,

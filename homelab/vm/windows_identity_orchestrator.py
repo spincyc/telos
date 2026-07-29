@@ -126,7 +126,9 @@ _LOCAL_REAUTH_OPERATIONS = frozenset({
     "type-secret",
     "submit",
     "desktop",
+    "desktop-near-reference",
     "desktop-sign-in-persisted",
+    "desktop-sign-in-near-reference",
 })
 
 
