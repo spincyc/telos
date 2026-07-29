@@ -26,10 +26,10 @@ if ($document.schema_version -ne 2 -or
     throw 'join material is invalid'
 }
 
-# Convert the one-use password to a SecureString before announcing that the
-# medium may be destroyed.  Nothing mutating occurs before the host replies.
-$password = ConvertTo-SecureString ([string]$document.password) -AsPlainText -Force
-$credential = [PSCredential]::new([string]$document.username, $password)
+# Copy the one-use join inputs into process memory before announcing that the
+# medium may be destroyed. Nothing mutating occurs before the host replies.
+$joinUsername = [string]$document.username
+$joinPassword = [string]$document.password
 $domain = [string]$document.domain
 $operator = [string]$document.operator
 $nonce = [string]$document.nonce
@@ -49,7 +49,26 @@ try {
         throw 'join mutation release was not authorized'
     }
     $failurePhase = 'add-computer'
-    Add-Computer -DomainName $domain -Credential $credential -ErrorAction Stop
+    $joinResult = Invoke-CimMethod -ClassName Win32_ComputerSystem `
+        -MethodName JoinDomainOrWorkgroup -Arguments @{
+            Name = $domain
+            Password = $joinPassword
+            UserName = $joinUsername
+            AccountOU = $null
+            FJoinOptions = [uint32]3
+        } -ErrorAction Stop
+    $joinPassword = $null
+    $joinStatus = [uint32]$joinResult.ReturnValue
+    if ($joinStatus -ne 0) {
+        $failurePhase = switch ($joinStatus) {
+            5 { 'join-authorization' }
+            1326 { 'join-authentication' }
+            1355 { 'join-domain-discovery' }
+            2224 { 'join-account-conflict' }
+            default { 'join-unclassified' }
+        }
+        throw 'domain join returned a classified failure'
+    }
 
 # Resolve the fixed realm-qualified daily operator to a SID, assign only that
 # SID to the built-in local Administrators group, and prove the assignment
@@ -135,6 +154,7 @@ catch {
     throw $originalError
 }
 finally {
+    $joinPassword = $null
     if ($serial.IsOpen) {
         $serial.Close()
     }

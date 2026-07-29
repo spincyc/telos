@@ -124,10 +124,10 @@ class WindowsJoinIsoTests(unittest.TestCase):
             "TelosJoin.ps1"
         ).read_text(encoding="utf-8")
         positions = [
-            script.index("ConvertTo-SecureString"),
+            script.index("$joinPassword = [string]$document.password"),
             script.index('"join-material-loaded"'),
             script.index("TELOS_JOIN_MEDIA_DESTROYED"),
-            script.index("Add-Computer"),
+            script.index("Invoke-CimMethod"),
             script.index("Add-LocalGroupMember"),
             script.rindex("Get-LocalGroupMember"),
             script.index("New-ItemProperty"),
@@ -533,6 +533,27 @@ class WindowsJoinIsoTests(unittest.TestCase):
             caught.exception.coordinate.phase,
         )
         self.assertNotIn(NONCE, str(caught.exception))
+        for phase in (
+            "join-authorization",
+            "join-authentication",
+            "join-domain-discovery",
+            "join-account-conflict",
+            "join-unclassified",
+        ):
+            channel.state = JoinMediaState.RELEASED
+            classified = json.dumps({
+                "schema_version": 1,
+                "event": "join-reboot-failed",
+                "nonce": NONCE,
+                "phase": phase,
+            })
+            with self.subTest(phase=phase), self.assertRaises(
+                    WindowsJoinIsoError) as classified_error:
+                channel.accept_reboot_ready(classified)
+            self.assertEqual(
+                f"result-guest-{phase}",
+                classified_error.exception.coordinate.phase,
+            )
         channel.state = JoinMediaState.RELEASED
         reboot_ack_failure = json.dumps({
             "schema_version": 1,

@@ -40,6 +40,11 @@ class WindowsJoinFailureCoordinate:
         "result", "reboot-reauth",
         "reboot-probe", "cleanup",
         "result-guest-add-computer", "result-guest-operator-assignment",
+        "result-guest-join-authorization",
+        "result-guest-join-authentication",
+        "result-guest-join-domain-discovery",
+        "result-guest-join-account-conflict",
+        "result-guest-join-unclassified",
         "result-guest-policy-mutation", "result-guest-policy-readback",
         "result-guest-policy-verification", "result-guest-reboot-ack",
     }) | frozenset(
@@ -635,6 +640,9 @@ class JoinMediaChannel:
             and phase in {
                 "add-computer", "operator-assignment", "policy-mutation",
                 "policy-readback", "policy-verification",
+                "join-authorization", "join-authentication",
+                "join-domain-discovery", "join-account-conflict",
+                "join-unclassified",
             }
         ):
             coordinate = WindowsJoinFailureCoordinate(
