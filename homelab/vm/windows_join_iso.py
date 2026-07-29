@@ -25,6 +25,7 @@ from .windows_identity_contract import (
 )
 from .windows_public_command import bounded_media_launch_command
 from .windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCleanup,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
@@ -41,6 +42,7 @@ class WindowsJoinFailureCoordinate:
     error_type: str
     post_submit_diagnostic: str | None = None
     post_submit_collection: str | None = None
+    post_submit_cleanup: str | None = None
 
     _PHASES = frozenset({
         "serial-connect", "prepare", "attach", "launch",
@@ -119,6 +121,24 @@ class WindowsJoinFailureCoordinate:
             )
         ):
             raise ValueError("Windows join collection is invalid")
+        if (
+            self.post_submit_cleanup is not None
+            and (
+                type(self.post_submit_cleanup) is not str
+                or self.post_submit_cleanup not in {
+                    code.value for code in PostSubmitDiagnosticCleanup
+                }
+                or self.phase not in {
+                    "reboot-reauth-desktop",
+                    "reboot-reauth-desktop-near-reference",
+                    "reboot-reauth-desktop-sign-in-persisted",
+                    "reboot-reauth-desktop-sign-in-near-reference",
+                }
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("Windows join cleanup is invalid")
 
 
 class WindowsJoinIsoError(RuntimeError):

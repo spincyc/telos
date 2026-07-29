@@ -707,6 +707,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
         diagnostic.submitted.side_effect = None
         diagnostic.submitted.return_value = None
+        diagnostic.result.side_effect = RuntimeError(
+            "private root result transport detail")
         diagnostic.__exit__.side_effect = RuntimeError(
             "private cleanup transport detail")
         adapter = self.adapter(
@@ -718,11 +720,17 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             adapter.reauthenticate_domain_operator(
                 "operator@FACTORY.TEST", "private", "d" * 32)
         self.assertIs(
-            subject.PostSubmitDiagnosticCollection.
+            subject.PostSubmitDiagnosticCleanup.
             CLEANUP_RECEIPT_UNAVAILABLE,
+            caught.exception.post_submit_cleanup,
+        )
+        self.assertIs(
+            subject.PostSubmitDiagnosticCollection.
+            RESULT_RECEIPT_UNAVAILABLE,
             caught.exception.post_submit_collection,
         )
         self.assertNotIn("private cleanup", str(caught.exception))
+        self.assertNotIn("private root", str(caught.exception))
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")

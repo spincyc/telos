@@ -48,6 +48,7 @@ from .windows_join_iso import (
 )
 from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCode
 from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCollection
+from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCleanup
 
 
 class WindowsIdentityOrchestratorError(WindowsIdentityRunError):
@@ -145,10 +146,12 @@ def _local_reauthentication_coordinate(
     operation = None
     post_submit_diagnostic = None
     post_submit_collection = None
+    post_submit_cleanup = None
     if type(error) is WindowsLocalReauthenticationError:
         operation = error.reauth_operation
         post_submit_diagnostic = error.post_submit_diagnostic
         post_submit_collection = error.post_submit_collection
+        post_submit_cleanup = error.post_submit_cleanup
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
@@ -157,6 +160,11 @@ def _local_reauthentication_coordinate(
     collection_value = (
         post_submit_collection.value
         if type(post_submit_collection) is PostSubmitDiagnosticCollection
+        else None
+    )
+    cleanup_value = (
+        post_submit_cleanup.value
+        if type(post_submit_cleanup) is PostSubmitDiagnosticCleanup
         else None
     )
     if (
@@ -172,7 +180,7 @@ def _local_reauthentication_coordinate(
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
     return WindowsJoinFailureCoordinate(
-        phase, error_type, diagnostic_value, collection_value)
+        phase, error_type, diagnostic_value, collection_value, cleanup_value)
 
 
 _CREDENTIAL_ROLES = {
@@ -431,6 +439,7 @@ def _execute_join(
             coordinate.error_type,
             coordinate.post_submit_diagnostic,
             coordinate.post_submit_collection,
+            coordinate.post_submit_cleanup,
         )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:

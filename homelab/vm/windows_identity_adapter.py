@@ -68,6 +68,7 @@ from .windows_postjoin_calibration import (
     sample_post_join_calibration,
 )
 from .windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCleanup,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
@@ -97,6 +98,11 @@ def _run_local_reauthentication_operation(
             if type(error) is WindowsLocalReauthenticationError
             else None
         )
+        post_submit_cleanup = (
+            error.post_submit_cleanup
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -111,6 +117,7 @@ def _run_local_reauthentication_operation(
             failure_operation,
             post_submit_diagnostic=post_submit_diagnostic,
             post_submit_collection=post_submit_collection,
+            post_submit_cleanup=post_submit_cleanup,
         ) from None
 
 
@@ -246,6 +253,7 @@ class NativeWindowsAcceptanceAdapter:
         self._static_probe_poisoned = False
         self._post_submit_diagnostic_code: object | None = None
         self._post_submit_diagnostic_collection: object | None = None
+        self._post_submit_diagnostic_cleanup: object | None = None
         self._audit_configuration()
 
     def _audit_configuration(self) -> None:
@@ -697,6 +705,7 @@ class NativeWindowsAcceptanceAdapter:
         diagnostic_factory = self.post_submit_diagnostic
         self._post_submit_diagnostic_code = None
         self._post_submit_diagnostic_collection = None
+        self._post_submit_diagnostic_cleanup = None
         if diagnostic_factory is None or not domain_operator:
             submit_secret()
         else:
@@ -768,8 +777,8 @@ class NativeWindowsAcceptanceAdapter:
                             raise
                         except BaseException as error:
                             self._static_probe_poisoned = True
-                            self._post_submit_diagnostic_collection = (
-                                PostSubmitDiagnosticCollection.
+                            self._post_submit_diagnostic_cleanup = (
+                                PostSubmitDiagnosticCleanup.
                                 CLEANUP_RECEIPT_UNAVAILABLE
                             )
                             if primary is None and not armed:
@@ -796,6 +805,8 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_code),
                         post_submit_collection=(
                             self._post_submit_diagnostic_collection),
+                        post_submit_cleanup=(
+                            self._post_submit_diagnostic_cleanup),
                     ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
@@ -806,6 +817,8 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_code),
                         post_submit_collection=(
                             self._post_submit_diagnostic_collection),
+                        post_submit_cleanup=(
+                            self._post_submit_diagnostic_cleanup),
                     ) from None
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
@@ -814,6 +827,8 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_code),
                         post_submit_collection=(
                             self._post_submit_diagnostic_collection),
+                        post_submit_cleanup=(
+                            self._post_submit_diagnostic_cleanup),
                     ) from None
                 raise
 
@@ -828,6 +843,8 @@ class NativeWindowsAcceptanceAdapter:
                 post_submit_diagnostic=self._post_submit_diagnostic_code,
                 post_submit_collection=(
                     self._post_submit_diagnostic_collection),
+                post_submit_cleanup=(
+                    self._post_submit_diagnostic_cleanup),
             ) from None
 
     def static_probe(self, action: str) -> Mapping[str, object]:

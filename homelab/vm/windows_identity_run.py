@@ -44,6 +44,7 @@ from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
 from .windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCleanup,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
@@ -61,6 +62,7 @@ class IdentityFailureDiagnostic:
     error_type: str
     post_submit_diagnostic: str | None = None
     post_submit_collection: str | None = None
+    post_submit_cleanup: str | None = None
 
     _STATIC_PROBE_PAIRS = frozenset({
         ("controller-ready", "controller-readiness"),
@@ -134,6 +136,7 @@ class IdentityFailureDiagnostic:
         cls, phase: str, error_type: str,
         post_submit_diagnostic: str | None = None,
         post_submit_collection: str | None = None,
+        post_submit_cleanup: str | None = None,
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
@@ -176,6 +179,7 @@ class IdentityFailureDiagnostic:
             "windows-joined", candidate, error_type,
             post_submit_diagnostic,
             post_submit_collection,
+            post_submit_cleanup,
         )
 
     @classmethod
@@ -273,6 +277,24 @@ class IdentityFailureDiagnostic:
         ):
             raise ValueError("post-submit collection is invalid")
         if (
+            self.post_submit_cleanup is not None
+            and (
+                type(self.post_submit_cleanup) is not str
+                or self.post_submit_cleanup not in {
+                    code.value for code in PostSubmitDiagnosticCleanup
+                }
+                or self.operation not in {
+                    "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-desktop-near-reference",
+                    "join-guest.reboot-reauth-desktop-sign-in-persisted",
+                    "join-guest.reboot-reauth-desktop-sign-in-near-reference",
+                }
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("post-submit cleanup is invalid")
+        if (
             (self.check, self.operation) not in self._STATIC_PROBES
             and not (
                 self.check == "windows-joined"
@@ -348,6 +370,11 @@ class IdentityFailureDiagnostic:
                 "; post-submit-collection="
                 f"{self.post_submit_collection}"
             )
+        if self.post_submit_cleanup is not None:
+            rendered += (
+                "; post-submit-cleanup="
+                f"{self.post_submit_cleanup}"
+            )
         return rendered
 
 
@@ -389,6 +416,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         *,
         post_submit_diagnostic: PostSubmitDiagnosticCode | None = None,
         post_submit_collection: PostSubmitDiagnosticCollection | None = None,
+        post_submit_cleanup: PostSubmitDiagnosticCleanup | None = None,
     ) -> None:
         if operation not in self._OPERATIONS:
             operation = "prove-password-target"
@@ -420,6 +448,19 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         ):
             post_submit_collection = None
         self.post_submit_collection = post_submit_collection
+        if (
+            post_submit_cleanup is not None
+            and (
+                type(post_submit_cleanup) is not PostSubmitDiagnosticCleanup
+                or operation not in {
+                    "desktop", "desktop-near-reference",
+                    "desktop-sign-in-persisted",
+                    "desktop-sign-in-near-reference",
+                }
+            )
+        ):
+            post_submit_cleanup = None
+        self.post_submit_cleanup = post_submit_cleanup
         super().__init__(
             f"post-join local reauthentication failed at {operation}")
 

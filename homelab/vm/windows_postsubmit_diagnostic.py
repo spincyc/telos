@@ -50,6 +50,11 @@ class PostSubmitDiagnosticCollection(Enum):
 
     SUBMITTED_RECEIPT_UNAVAILABLE = "submitted-receipt-unavailable"
     RESULT_RECEIPT_UNAVAILABLE = "result-receipt-unavailable"
+
+
+class PostSubmitDiagnosticCleanup(Enum):
+    """Fixed cleanup failure that may supplement a collection root cause."""
+
     CLEANUP_RECEIPT_UNAVAILABLE = "cleanup-receipt-unavailable"
 
 

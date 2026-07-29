@@ -12,6 +12,7 @@ from homelab.vm.controller_join_material import (
 from homelab.vm.windows_identity_operations import ProductionIdentityReceipt
 from homelab.vm.windows_identity_progressive import ProgressiveRotationReceipt
 from homelab.vm.windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCleanup,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
@@ -72,6 +73,8 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             post_submit_diagnostic=PostSubmitDiagnosticCode.BAD_CREDENTIAL,
             post_submit_collection=(
                 PostSubmitDiagnosticCollection.RESULT_RECEIPT_UNAVAILABLE),
+            post_submit_cleanup=(
+                PostSubmitDiagnosticCleanup.CLEANUP_RECEIPT_UNAVAILABLE),
         )
         coordinate = subject._local_reauthentication_coordinate(supplemental)
         diagnostic = subject.IdentityFailureDiagnostic.join_guest(
@@ -79,6 +82,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             coordinate.error_type,
             coordinate.post_submit_diagnostic,
             coordinate.post_submit_collection,
+            coordinate.post_submit_cleanup,
         )
         self.assertEqual(
             "reboot-reauth-desktop-sign-in-persisted",
@@ -95,6 +99,10 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         )
         self.assertIn(
             "post-submit-collection=result-receipt-unavailable",
+            diagnostic.render(),
+        )
+        self.assertIn(
+            "post-submit-cleanup=cleanup-receipt-unavailable",
             diagnostic.render(),
         )
         self.assertNotIn("private", diagnostic.render())
