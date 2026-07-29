@@ -39,6 +39,8 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             stage = bundle.stage(root / "stage")
             self.assertTrue((stage / "ansible/playbooks/bootstrap-controller.yml").is_file())
             self.assertTrue((stage / "converge-controller").is_file())
+            self.assertTrue(
+                (stage / "controller-auth-diagnostic.py").is_file())
             variables = (stage / "factory-vars.json").read_text()
             factory_ansible = (stage / "factory-ansible.cfg").read_text()
             self.assertIn(
@@ -99,6 +101,15 @@ class ControllerFactoryBundleTests(unittest.TestCase):
                 "for package in samba krb5 ntp python-cryptography", script)
             self.assertIn(
                 'TELOS FACTORY STEP package-missing-$package', script)
+            self.assertIn(
+                "log level = 0 auth_json_audit:3@"
+                "/run/telos-factory-auth-audit/auth.jsonl",
+                script,
+            )
+            self.assertNotIn(
+                "log file = /run/telos-factory-auth-audit", script)
+            self.assertIn(
+                "testparm -s --parameter-name='log level'", script)
             self.assertIn(
                 "/usr/share/ipxe/x86_64/ipxe.efi", script)
             self.assertLess(

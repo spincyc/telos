@@ -48,6 +48,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
+from .controller_auth_diagnostic import ControllerAuthResult
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 WINDOWS_OS_READINESS_TIMEOUT = 300.0
@@ -63,6 +64,7 @@ class IdentityFailureDiagnostic:
     post_submit_diagnostic: str | None = None
     post_submit_collection: str | None = None
     post_submit_cleanup: str | None = None
+    controller_auth: ControllerAuthResult | None = None
 
     _STATIC_PROBE_PAIRS = frozenset({
         ("controller-ready", "controller-readiness"),
@@ -137,6 +139,7 @@ class IdentityFailureDiagnostic:
         post_submit_diagnostic: str | None = None,
         post_submit_collection: str | None = None,
         post_submit_cleanup: str | None = None,
+        controller_auth: ControllerAuthResult | None = None,
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
@@ -181,6 +184,7 @@ class IdentityFailureDiagnostic:
             post_submit_diagnostic,
             post_submit_collection,
             post_submit_cleanup,
+            controller_auth,
         )
 
     @classmethod
@@ -296,6 +300,21 @@ class IdentityFailureDiagnostic:
         ):
             raise ValueError("post-submit cleanup is invalid")
         if (
+            self.controller_auth is not None
+            and (
+                type(self.controller_auth) is not ControllerAuthResult
+                or self.operation not in {
+                    "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-desktop-near-reference",
+                    "join-guest.reboot-reauth-desktop-sign-in-persisted",
+                    "join-guest.reboot-reauth-desktop-sign-in-near-reference",
+                }
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("Controller auth diagnostic is invalid")
+        if (
             (self.check, self.operation) not in self._STATIC_PROBES
             and not (
                 self.check == "windows-joined"
@@ -376,6 +395,18 @@ class IdentityFailureDiagnostic:
                 "; post-submit-cleanup="
                 f"{self.post_submit_cleanup}"
             )
+        if self.controller_auth is not None:
+            if self.controller_auth.code is not None:
+                rendered += (
+                    f"; controller-auth={self.controller_auth.code.value}")
+            if self.controller_auth.collection is not None:
+                rendered += (
+                    "; controller-auth-collection="
+                    f"{self.controller_auth.collection.value}")
+            if self.controller_auth.cleanup is not None:
+                rendered += (
+                    "; controller-auth-cleanup="
+                    f"{self.controller_auth.cleanup.value}")
         return rendered
 
 
@@ -419,6 +450,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         post_submit_diagnostic: PostSubmitDiagnosticCode | None = None,
         post_submit_collection: PostSubmitDiagnosticCollection | None = None,
         post_submit_cleanup: PostSubmitDiagnosticCleanup | None = None,
+        controller_auth_result: ControllerAuthResult | None = None,
     ) -> None:
         if operation not in self._OPERATIONS:
             operation = "prove-password-target"
@@ -463,6 +495,19 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         ):
             post_submit_cleanup = None
         self.post_submit_cleanup = post_submit_cleanup
+        if (
+            controller_auth_result is not None
+            and (
+                type(controller_auth_result) is not ControllerAuthResult
+                or operation not in {
+                    "desktop", "desktop-near-reference",
+                    "desktop-sign-in-persisted",
+                    "desktop-sign-in-near-reference",
+                }
+            )
+        ):
+            controller_auth_result = None
+        self.controller_auth_result = controller_auth_result
         super().__init__(
             f"post-join local reauthentication failed at {operation}")
 

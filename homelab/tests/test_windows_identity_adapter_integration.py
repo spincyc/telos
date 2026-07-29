@@ -16,6 +16,12 @@ from homelab.vm.windows_gui import Image
 from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
 )
+from homelab.vm.controller_auth_diagnostic import (
+    ControllerAuthCode,
+    ControllerAuthDiagnosticError,
+    ControllerAuthExpectation,
+    ControllerAuthResult,
+)
 
 
 class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
@@ -47,6 +53,128 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         arguments.update(changes)
         return subject.NativeWindowsAcceptanceAdapter(
             self.boundary, self.root, **arguments)
+
+    def _domain_reauthentication_fixture(self):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        return sign_in, mock.sentinel.desktop, mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=(),
+            post_join_operator_account_keys=(),
+            post_join_operator_account_calibrated=True,
+            post_join_operator_sign_in_manifest=None,
+            checkpoint_timeout=11,
+        )
+
+    def test_controller_arm_unavailable_with_cleanup_cannot_veto_gui(self):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction") as interaction_type,
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            controller_type.return_value.arm.side_effect = (
+                ControllerAuthDiagnosticError(cleanup_proved=True))
+            adapter = self.adapter(rotation_plan=plan)
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+        interaction_type.return_value.type_secret.assert_called_once()
+        self.assertEqual(
+            adapter.controller_auth_result.collection.value,
+            "receipt-unavailable")
+
+    def test_controller_prelaunch_unavailable_cannot_veto_gui(self):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction") as interaction_type,
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession",
+                side_effect=RuntimeError("prelaunch unavailable")),
+        ):
+            adapter = self.adapter(rotation_plan=plan)
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+        interaction_type.return_value.type_secret.assert_called_once()
+        self.assertEqual(
+            adapter.controller_auth_result.collection.value,
+            "receipt-unavailable")
+
+    def test_controller_arm_unproved_cleanup_aborts_before_secret(self):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction") as interaction_type,
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            controller_type.return_value.arm.side_effect = (
+                ControllerAuthDiagnosticError(cleanup_proved=False))
+            adapter = self.adapter(rotation_plan=plan)
+            with self.assertRaises(
+                    subject.WindowsLocalReauthenticationError) as caught:
+                adapter.reauthenticate_domain_operator(
+                    "operator@FACTORY.TEST", "private", "a" * 32)
+        self.assertEqual(caught.exception.reauth_operation, "diagnostic-arm")
+        interaction_type.return_value.type_secret.assert_not_called()
+
+    def test_controller_collection_unavailable_cannot_veto_gui(self):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction"),
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            controller_type.return_value.submitted.side_effect = (
+                ControllerAuthDiagnosticError(cleanup_proved=False))
+            controller_type.return_value.armed = False
+            adapter = self.adapter(rotation_plan=plan)
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+        self.assertEqual(
+            adapter.controller_auth_result.collection.value,
+            "receipt-unavailable")
+        self.assertEqual(
+            adapter.controller_auth_result.cleanup.value,
+            "absence-unproved")
 
     def test_secret_entry_departure_is_ephemeral_and_requires_two_frames(self):
         evidence = self.root / "evidence"
@@ -496,9 +624,10 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject, "ControllerAuthDiagnosticSession")
     def test_post_submit_diagnostic_lifecycle_surrounds_gui_submission(
-        self, load_references, private_evidence_root, interaction_type,
-        prove_departure,
+        self, controller_type, load_references, private_evidence_root,
+        interaction_type, prove_departure,
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
@@ -513,6 +642,10 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         diagnostic = diagnostic_factory.return_value
         diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
         diagnostic.__exit__ = mock.Mock(return_value=False)
+        controller = controller_type.return_value
+        controller.submitted.return_value = ControllerAuthResult(
+            code=ControllerAuthCode.AUTHENTICATED)
+        controller.armed = False
         interaction = interaction_type.return_value
         ordering = mock.Mock()
         ordering.attach_mock(interaction.observe, "observe")
@@ -523,6 +656,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         ordering.attach_mock(interaction.key, "key")
         ordering.attach_mock(diagnostic.submitted, "submitted")
         ordering.attach_mock(diagnostic.result, "result")
+        ordering.attach_mock(controller.arm, "controller_arm")
+        ordering.attach_mock(controller.submitted, "controller_submitted")
         ordering.attach_mock(
             interaction.observe_ephemeral, "observe_ephemeral")
         adapter = self.adapter(
@@ -542,6 +677,14 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "operator@FACTORY.TEST", "private", "a" * 32)
 
         diagnostic_factory.assert_called_once()
+        controller_type.assert_called_once_with(
+            self.boundary.controller_console,
+            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
+            timeout=mock.ANY,
+        )
+        self.assertGreater(controller_type.call_args.kwargs["timeout"], 0)
+        self.assertLessEqual(
+            controller_type.call_args.kwargs["timeout"], 7)
         diagnostic_arguments = diagnostic_factory.call_args.kwargs
         self.assertEqual(
             "operator@FACTORY.TEST", diagnostic_arguments["principal"])
@@ -554,6 +697,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.key("tab", timeout=mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
+                mock.call.controller_arm(),
                 mock.call.arm(),
                 mock.call.disable(),
                 mock.call.type_secret("private", timeout=mock.ANY),
@@ -567,6 +711,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.key("ret", timeout=mock.ANY),
                 mock.call.submitted(),
                 mock.call.result(),
+                mock.call.controller_submitted(),
                 mock.call.observe_ephemeral(
                     desktop,
                     mock.ANY,

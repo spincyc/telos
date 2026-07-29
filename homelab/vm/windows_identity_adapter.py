@@ -13,11 +13,21 @@ import time
 import uuid
 
 from .controller_join_material import ControllerJoinResult, ControllerJoinSerial
+from .controller_factory import FactorySpec
+from .controller_auth_diagnostic import (
+    ControllerAuthCollection,
+    ControllerAuthCleanup,
+    ControllerAuthDiagnosticError,
+    ControllerAuthDiagnosticSession,
+    ControllerAuthExpectation,
+    ControllerAuthResult,
+)
 from .controller_principals import (
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
 )
 from .serial_automation import SerialAutomation
+from .simulated_gateway import LEASE_IP
 from .signal_cleanup import RunInterrupted
 from .windows_control_serial import (
     MAX_RECORD_BYTES,
@@ -104,6 +114,11 @@ def _run_local_reauthentication_operation(
             if type(error) is WindowsLocalReauthenticationError
             else None
         )
+        controller_auth_result = (
+            error.controller_auth_result
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -119,6 +134,7 @@ def _run_local_reauthentication_operation(
             post_submit_diagnostic=post_submit_diagnostic,
             post_submit_collection=post_submit_collection,
             post_submit_cleanup=post_submit_cleanup,
+            controller_auth_result=controller_auth_result,
         ) from None
 
 
@@ -255,7 +271,13 @@ class NativeWindowsAcceptanceAdapter:
         self._post_submit_diagnostic_code: object | None = None
         self._post_submit_diagnostic_collection: object | None = None
         self._post_submit_diagnostic_cleanup: object | None = None
+        self._controller_auth_result: ControllerAuthResult | None = None
         self._audit_configuration()
+
+    @property
+    def controller_auth_result(self) -> ControllerAuthResult | None:
+        """Return supplemental Controller context without changing authority."""
+        return self._controller_auth_result
 
     def _audit_configuration(self) -> None:
         root = self.private_root
@@ -827,8 +849,67 @@ class NativeWindowsAcceptanceAdapter:
         self._post_submit_diagnostic_code = None
         self._post_submit_diagnostic_collection = None
         self._post_submit_diagnostic_cleanup = None
+        self._controller_auth_result = None
+        controller_auth = None
+        if domain_operator:
+            try:
+                controller_auth = ControllerAuthDiagnosticSession(
+                    self._shared_controller_console(),
+                    ControllerAuthExpectation(
+                        "operator", FactorySpec().netbios,
+                        str(LEASE_IP)),
+                    timeout=min(45.0, remaining("diagnostic-arm")),
+                )
+                controller_auth.arm()
+            except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                raise
+            except ControllerAuthDiagnosticError as error:
+                if not error.cleanup_proved:
+                    raise WindowsLocalReauthenticationError(
+                        "diagnostic-arm") from None
+                self._controller_auth_result = ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                controller_auth = None
+            except BaseException:
+                self._controller_auth_result = ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                controller_auth = None
         if diagnostic_factory is None or not domain_operator:
-            submit_secret()
+            try:
+                submit_secret()
+                if controller_auth is not None:
+                    try:
+                        self._controller_auth_result = (
+                            controller_auth.submitted())
+                    except ControllerAuthDiagnosticError as error:
+                        self._controller_auth_result = ControllerAuthResult(
+                            collection=(
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                            cleanup=(
+                                None if error.cleanup_proved
+                                else ControllerAuthCleanup.ABSENCE_UNPROVED),
+                        )
+                    except BaseException:
+                        self._controller_auth_result = ControllerAuthResult(
+                            collection=(
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                            cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+                        )
+            except BaseException:
+                if (
+                    controller_auth is not None
+                    and controller_auth.armed
+                ):
+                    try:
+                        controller_auth.cancel()
+                    except BaseException:
+                        self._controller_auth_result = ControllerAuthResult(
+                            collection=(
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                            cleanup=(
+                                ControllerAuthCleanup.ABSENCE_UNPROVED),
+                        )
+                raise
         else:
             manager = None
             session = None
@@ -881,11 +962,54 @@ class NativeWindowsAcceptanceAdapter:
                                     PostSubmitDiagnosticCollection.
                                     RESULT_RECEIPT_UNAVAILABLE
                                 )
+                    if controller_auth is not None:
+                        try:
+                            self._controller_auth_result = (
+                                controller_auth.submitted())
+                        except (
+                            KeyboardInterrupt, SystemExit, RunInterrupted,
+                        ):
+                            raise
+                        except ControllerAuthDiagnosticError as error:
+                            self._controller_auth_result = ControllerAuthResult(
+                                collection=(
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
+                                cleanup=(
+                                    None if error.cleanup_proved
+                                    else ControllerAuthCleanup.ABSENCE_UNPROVED),
+                            )
+                        except BaseException:
+                            self._controller_auth_result = ControllerAuthResult(
+                                collection=(
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
+                                cleanup=(
+                                    ControllerAuthCleanup.ABSENCE_UNPROVED),
+                            )
                 except (KeyboardInterrupt, SystemExit, RunInterrupted):
                     raise
                 except BaseException as error:
                     primary = error
                 finally:
+                    if (
+                        controller_auth is not None
+                        and controller_auth.armed
+                    ):
+                        try:
+                            controller_auth.cancel()
+                        except (
+                            KeyboardInterrupt, SystemExit, RunInterrupted,
+                        ):
+                            raise
+                        except BaseException:
+                            self._controller_auth_result = ControllerAuthResult(
+                                collection=(
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
+                                cleanup=(
+                                    ControllerAuthCleanup.ABSENCE_UNPROVED),
+                            )
                     if manager is not None:
                         try:
                             manager.__exit__(
@@ -928,6 +1052,7 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_collection),
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
+                        controller_auth_result=self._controller_auth_result,
                     ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
@@ -940,6 +1065,7 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_collection),
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
+                        controller_auth_result=self._controller_auth_result,
                     ) from None
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
@@ -950,6 +1076,7 @@ class NativeWindowsAcceptanceAdapter:
                             self._post_submit_diagnostic_collection),
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
+                        controller_auth_result=self._controller_auth_result,
                     ) from None
                 raise
 
@@ -966,6 +1093,7 @@ class NativeWindowsAcceptanceAdapter:
                     self._post_submit_diagnostic_collection),
                 post_submit_cleanup=(
                     self._post_submit_diagnostic_cleanup),
+                controller_auth_result=self._controller_auth_result,
             ) from None
 
     def static_probe(self, action: str) -> Mapping[str, object]:

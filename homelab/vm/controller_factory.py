@@ -157,6 +157,8 @@ install -m 0600 "$root/secret/ad-admin" /run/secrets/factory-ad-admin
 trap 'shred -u /run/secrets/factory-ad-admin 2>/dev/null || rm -f /run/secrets/factory-ad-admin' EXIT
 install -d -m 0755 /opt/telos-factory
 cp -a "$root/ansible" /opt/telos-factory/
+install -o root -g root -m 0700 "$root/controller-auth-diagnostic.py" \
+  /opt/telos-factory/controller-auth-diagnostic.py
 install -d -m 0755 /etc/homelab
 printf '%s\\n' \
   '{{"profile":"controller","hostname":"{spec.hostname}","development_proof":true}}' \
@@ -192,6 +194,29 @@ systemctl daemon-reload
 systemctl restart samba.service ntpd.service
 systemctl restart telos-factory-tftp.service
 nginx -c /etc/homelab/factory-nginx.conf
+echo 'TELOS FACTORY STEP auth-audit'
+install -d -o root -g root -m 0700 /run/telos-factory-auth-audit
+install -o root -g root -m 0600 /dev/null \
+  /run/telos-factory-auth-audit/auth.jsonl
+test "$(grep -c '^\\[global\\]$' /etc/samba/smb.conf)" == 1
+sed -i \
+  '/^\\[global\\]$/a\\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
+  /etc/samba/smb.conf
+chmod 0600 /etc/samba/smb.conf
+auth_audit_config=$(
+  testparm -s --parameter-name='log level' 2>/dev/null
+)
+[[ "$auth_audit_config" == \
+  '0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' ]]
+systemctl restart samba.service
+test "$(stat -Lc '%U:%G:%a:%F:%h' \
+  /run/telos-factory-auth-audit)" == 'root:root:700:directory:2'
+test "$(stat -Lc '%U:%G:%a:%F:%h' \
+  /run/telos-factory-auth-audit/auth.jsonl)" == \
+  'root:root:600:regular empty file:1' ||
+test "$(stat -Lc '%U:%G:%a:%F:%h' \
+  /run/telos-factory-auth-audit/auth.jsonl)" == \
+  'root:root:600:regular file:1'
 echo 'TELOS FACTORY STEP verify'
 check() {{
   echo "TELOS FACTORY STEP $1"
@@ -269,6 +294,12 @@ class FactoryBundle:
                 raise FileNotFoundError(source)
             shutil.copytree(source, destination / Path(relative).name,
                             symlinks=False)
+        shutil.copyfile(
+            self.repo / "homelab/vm/controller_auth_diagnostic.py",
+            destination / "controller-auth-diagnostic.py",
+            follow_symlinks=False,
+        )
+        (destination / "controller-auth-diagnostic.py").chmod(0o600)
         secret_dir = destination / "secret"
         secret_dir.mkdir(mode=0o700)
         secret = secret_dir / "ad-admin"

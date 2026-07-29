@@ -148,11 +148,13 @@ def _local_reauthentication_coordinate(
     post_submit_diagnostic = None
     post_submit_collection = None
     post_submit_cleanup = None
+    controller_auth = None
     if type(error) is WindowsLocalReauthenticationError:
         operation = error.reauth_operation
         post_submit_diagnostic = error.post_submit_diagnostic
         post_submit_collection = error.post_submit_collection
         post_submit_cleanup = error.post_submit_cleanup
+        controller_auth = error.controller_auth_result
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
@@ -181,7 +183,8 @@ def _local_reauthentication_coordinate(
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
     return WindowsJoinFailureCoordinate(
-        phase, error_type, diagnostic_value, collection_value, cleanup_value)
+        phase, error_type, diagnostic_value, collection_value, cleanup_value,
+        controller_auth)
 
 
 _CREDENTIAL_ROLES = {
@@ -441,6 +444,7 @@ def _execute_join(
             coordinate.post_submit_diagnostic,
             coordinate.post_submit_collection,
             coordinate.post_submit_cleanup,
+            coordinate.controller_auth,
         )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:
