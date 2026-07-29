@@ -75,7 +75,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
         result = ControllerAuthResult(
             collection=ControllerAuthCollection.SINK_INVALID,
-            cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+            cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
         )
         error = subject.WindowsLocalReauthenticationError(
             "controller-auth-arm", controller_auth_result=result)
@@ -91,7 +91,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         self.assertIn(
             "controller-auth-collection=sink-invalid", diagnostic.render())
         self.assertIn(
-            "controller-auth-cleanup=absence-unproved", diagnostic.render())
+            "controller-auth-cleanup=sink-absence-unproved",
+            diagnostic.render(),
+        )
 
         supplemental = subject.WindowsLocalReauthenticationError(
             "desktop-sign-in-persisted",

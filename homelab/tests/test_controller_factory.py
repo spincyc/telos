@@ -111,6 +111,10 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertIn(
                 "grep -Fxc $'\\tlog level = 0 auth_json_audit:3@", script)
             self.assertIn(
+                "! grep -Eq '^[[:space:]]*[^#;].*auth_json_audit'",
+                script,
+            )
+            self.assertIn(
                 "testparm -s /etc/samba/smb.conf >/dev/null 2>&1", script)
             self.assertNotIn("--parameter-name='log level'", script)
             self.assertIn(

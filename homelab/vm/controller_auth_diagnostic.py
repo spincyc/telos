@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tempfile
 import time
 from typing import Mapping
 import uuid
@@ -35,6 +36,9 @@ AUTH_JSON_COMPONENT = "auth_json_audit"
 AUTH_JSON_LEVEL = 3
 AUTH_JSON_ROUTE = f"{AUTH_JSON_COMPONENT}:{AUTH_JSON_LEVEL}@{AUDIT_PATH}"
 AUTH_JSON_CONFIG_LINE = f"\tlog level = 0 {AUTH_JSON_ROUTE}"
+MAX_OBSERVATION_SECONDS = 30
+MIN_OBSERVATION_SECONDS = 1
+CLEANUP_MARGIN_SECONDS = 16
 
 _ACCOUNT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _DOMAIN = re.compile(r"[A-Z0-9][A-Z0-9-]{0,14}")
@@ -84,7 +88,9 @@ class ControllerAuthCollection(Enum):
 class ControllerAuthCleanup(Enum):
     """Closed sink destruction failures."""
 
-    ABSENCE_UNPROVED = "absence-unproved"
+    CONFIGURATION_UNPROVED = "configuration-unproved"
+    LIVE_ROUTE_UNPROVED = "live-route-unproved"
+    SINK_ABSENCE_UNPROVED = "sink-absence-unproved"
 
 
 class ControllerAuthDiagnosticError(RuntimeError):
@@ -117,6 +123,44 @@ class ControllerAuthResult:
         if (self.code is None) == (self.collection is None):
             raise ValueError(
                 "Controller auth result needs exactly one primary coordinate")
+        if self.cleanup is not None and type(
+                self.cleanup) is not ControllerAuthCleanup:
+            raise TypeError("Controller auth cleanup coordinate is invalid")
+
+
+_CODE_BY_WIRE = {
+    b"authenticated": ControllerAuthCode.AUTHENTICATED,
+    b"rejected": ControllerAuthCode.REJECTED,
+    b"no-event": ControllerAuthCode.NO_EVENT,
+    b"uncorrelated": ControllerAuthCode.UNCORRELATED,
+    b"ambiguous": ControllerAuthCode.AMBIGUOUS,
+}
+_COLLECTION_BY_WIRE = {
+    b"configuration-invalid": ControllerAuthCollection.CONFIGURATION_INVALID,
+    b"sink-invalid": ControllerAuthCollection.SINK_INVALID,
+    b"rotated": ControllerAuthCollection.ROTATED,
+    b"truncated": ControllerAuthCollection.TRUNCATED,
+    b"oversized": ControllerAuthCollection.OVERSIZED,
+    b"malformed": ControllerAuthCollection.MALFORMED,
+    b"cancelled": ControllerAuthCollection.CANCELLED,
+    b"receipt-unavailable": ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+}
+_CLEANUP_BY_WIRE = {
+    b"configuration-unproved": ControllerAuthCleanup.CONFIGURATION_UNPROVED,
+    b"live-route-unproved": ControllerAuthCleanup.LIVE_ROUTE_UNPROVED,
+    b"sink-absence-unproved":
+        ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+}
+if (
+    set(_CODE_BY_WIRE.values()) != set(ControllerAuthCode)
+    or set(_COLLECTION_BY_WIRE.values()) != set(ControllerAuthCollection)
+    or set(_CLEANUP_BY_WIRE.values()) != set(ControllerAuthCleanup)
+):
+    raise RuntimeError("Controller auth wire vocabulary snapshot is stale")
+_PREARM_COLLECTIONS = frozenset({
+    ControllerAuthCollection.CONFIGURATION_INVALID,
+    ControllerAuthCollection.SINK_INVALID,
+})
 
 
 @dataclass(frozen=True)
@@ -333,9 +377,14 @@ def _effective_configuration() -> bool:
         config_lines = Path(SMB_CONFIG_PATH).read_text(
             encoding="utf-8",
         ).splitlines()
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError, subprocess.SubprocessError):
         return False
-    if config_lines.count(AUTH_JSON_CONFIG_LINE) != 1:
+    active_routes = [
+        line for line in config_lines
+        if AUTH_JSON_COMPONENT in line
+        and not line.lstrip().startswith(("#", ";"))
+    ]
+    if active_routes != [AUTH_JSON_CONFIG_LINE]:
         return False
 
     syntax = subprocess.run(
@@ -387,39 +436,127 @@ def _staged_sid(account: str) -> str:
     return values[0]
 
 
+def _remove_persistent_route() -> bool:
+    path = Path(SMB_CONFIG_PATH)
+    temporary_name: str | None = None
+    try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            return False
+        original = path.read_bytes()
+        lines = original.decode("utf-8").splitlines(keepends=True)
+        active = [
+            line.rstrip("\r\n") for line in lines
+            if AUTH_JSON_COMPONENT in line
+            and not line.lstrip().startswith(("#", ";"))
+        ]
+        if active != [AUTH_JSON_CONFIG_LINE]:
+            return False
+        retained = [
+            line for line in lines
+            if line.rstrip("\r\n") != AUTH_JSON_CONFIG_LINE
+        ]
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".telos-smb-conf-", dir=path.parent)
+        try:
+            os.fchmod(descriptor, stat.S_IMODE(info.st_mode))
+            os.fchown(descriptor, info.st_uid, info.st_gid)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.writelines(retained)
+                output.flush()
+                os.fsync(output.fileno())
+            syntax = subprocess.run(
+                ["testparm", "-s", temporary_name],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+            if syntax.returncode != 0:
+                return False
+            current = path.lstat()
+            if (
+                (current.st_dev, current.st_ino)
+                != (info.st_dev, info.st_ino)
+                or path.read_bytes() != original
+            ):
+                return False
+            os.replace(temporary_name, path)
+            temporary_name = None
+            directory = os.open(
+                path.parent, os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise
+        return not any(
+            AUTH_JSON_COMPONENT in line
+            and not line.lstrip().startswith(("#", ";"))
+            for line in path.read_text(encoding="utf-8").splitlines()
+        )
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        return False
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
+
+
 def _disable_and_destroy_sink(
     descriptor: int | None, identity: tuple[int, int] | None,
-) -> bool:
-    disabled = subprocess.run(
-        ["smbcontrol", "all", "debug", "0 auth_json_audit:0"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=5,
-    ).returncode == 0
+) -> ControllerAuthCleanup | None:
+    persistent_removed = _remove_persistent_route()
+    try:
+        disabled = subprocess.run(
+            ["smbcontrol", "all", "debug", "0 auth_json_audit:0"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        disabled = False
     if not disabled:
         if descriptor is not None:
             os.close(descriptor)
-        return False
-    verified = subprocess.run(
-        ["smbcontrol", "all", "debuglevel"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        text=True,
-        timeout=5,
-    )
+        return ControllerAuthCleanup.LIVE_ROUTE_UNPROVED
+    try:
+        verified = subprocess.run(
+            ["smbcontrol", "all", "debuglevel"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        if descriptor is not None:
+            os.close(descriptor)
+        return ControllerAuthCleanup.LIVE_ROUTE_UNPROVED
     if (
         verified.returncode != 0
         or not _live_auth_json_level(verified.stdout, 0)
     ):
         if descriptor is not None:
             os.close(descriptor)
-        return False
+        return ControllerAuthCleanup.LIVE_ROUTE_UNPROVED
     if descriptor is None or identity is None:
-        return False
+        return (
+            ControllerAuthCleanup.CONFIGURATION_UNPROVED
+            if not persistent_removed
+            else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+        )
     opened = os.fstat(descriptor)
     if (
         (opened.st_dev, opened.st_ino) != identity
@@ -427,7 +564,7 @@ def _disable_and_destroy_sink(
         or opened.st_nlink != 1
     ):
         os.close(descriptor)
-        return False
+        return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
     deadline = time.monotonic() + 5
     own_fd = str(descriptor)
     while time.monotonic() < deadline:
@@ -451,13 +588,13 @@ def _disable_and_destroy_sink(
         time.sleep(0.05)
     else:
         os.close(descriptor)
-        return False
+        return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
     path = Path(AUDIT_PATH)
     quarantine = path.with_name(
         f".{path.name}.telos-delete-{os.getpid()}")
     try:
         if quarantine.exists() or quarantine.is_symlink():
-            return False
+            return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
         current = path.lstat()
         if (
             (current.st_dev, current.st_ino) != identity
@@ -467,7 +604,7 @@ def _disable_and_destroy_sink(
             or stat.S_IMODE(current.st_mode) != 0o600
             or current.st_nlink != 1
         ):
-            return False
+            return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
         path.rename(quarantine)
         moved = quarantine.lstat()
         if (
@@ -476,12 +613,16 @@ def _disable_and_destroy_sink(
         ):
             if not path.exists() and not path.is_symlink():
                 quarantine.rename(path)
-            return False
+            return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
         quarantine.unlink()
         captured = os.fstat(descriptor)
-        return captured.st_nlink == 0 and not path.exists()
+        if captured.st_nlink != 0 or path.exists():
+            return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+        if not persistent_removed:
+            return ControllerAuthCleanup.CONFIGURATION_UNPROVED
+        return None
     except OSError:
-        return False
+        return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
     finally:
         os.close(descriptor)
 
@@ -490,14 +631,14 @@ def _controller_session(encoded: str) -> int:
     """Run inside the disposable Controller; emit closed coordinates only."""
     descriptor: int | None = None
     identity: tuple[int, int] | None = None
-    cleanup = ControllerAuthCleanup.ABSENCE_UNPROVED
+    cleanup = ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
     try:
         try:
             payload = json.loads(base64.b64decode(
                 encoded, validate=True).decode("utf-8"))
             if type(payload) is not dict or set(payload) != {
                 "account", "domain", "workstation_ip", "arm", "submit", "cancel",
-                "result", "cleanup",
+                "result", "cleanup", "observation_seconds",
             }:
                 raise ValueError
             expectation = ControllerAuthExpectation(
@@ -508,6 +649,13 @@ def _controller_session(encoded: str) -> int:
                 key: payload[key]
                 for key in ("arm", "submit", "cancel", "result", "cleanup")
             }
+            observation_seconds = payload["observation_seconds"]
+            if (
+                type(observation_seconds) is not int
+                or not MIN_OBSERVATION_SECONDS
+                <= observation_seconds <= MAX_OBSERVATION_SECONDS
+            ):
+                raise ValueError
             if any(
                 type(value) is not str
                 or re.fullmatch(r"[0-9a-f]{32}", value) is None
@@ -540,7 +688,7 @@ def _controller_session(encoded: str) -> int:
                 elif submitted != f"__TELOS_AUTH_SUBMIT_{markers['submit']}__":
                     primary = ControllerAuthCollection.MALFORMED
                 else:
-                    deadline = time.monotonic() + 30
+                    deadline = time.monotonic() + observation_seconds
                     last_size = offset
                     last_size_change = time.monotonic()
                     events: tuple[Mapping[str, object], ...] = ()
@@ -614,8 +762,15 @@ def _controller_session(encoded: str) -> int:
             flush=True,
         )
     finally:
-        if _disable_and_destroy_sink(descriptor, identity):
-            cleanup = None
+        try:
+            cleanup = _disable_and_destroy_sink(descriptor, identity)
+        except BaseException:
+            cleanup = ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
         if 'markers' in locals():
             cleanup_value = (
                 "ok" if cleanup is None else cleanup.value)
@@ -634,12 +789,16 @@ class ControllerAuthDiagnosticSession:
         self, console, expectation: ControllerAuthExpectation,
         *, timeout: float = 45.0, clock=time.monotonic,
     ) -> None:
-        if not 1 <= timeout <= 60:
+        if not CLEANUP_MARGIN_SECONDS + MIN_OBSERVATION_SECONDS <= timeout <= 60:
             raise ValueError("Controller auth timeout is invalid")
         self.console = console
         self.expectation = expectation
         self._clock = clock
         self._deadline = clock() + timeout
+        self._observation_seconds = min(
+            MAX_OBSERVATION_SECONDS,
+            int(timeout - CLEANUP_MARGIN_SECONDS),
+        )
         self._tokens = {name: uuid.uuid4().hex for name in (
             "arm", "submit", "cancel", "result", "cleanup")}
         self._state = "new"
@@ -671,7 +830,7 @@ class ControllerAuthDiagnosticSession:
                 f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
             match = self._wait(
                 rb"(?:^|\n)" + re.escape(marker)
-                + rb"(ok|absence-unproved)\s*(?:\n|$)",
+                + rb"(ok|[a-z-]+)\s*(?:\n|$)",
                 "controller-auth-abort-cleanup")
             self._state = "finished"
             return match.group(1) == b"ok"
@@ -681,15 +840,10 @@ class ControllerAuthDiagnosticSession:
 
     @staticmethod
     def _closed_result(kind: bytes, value: bytes) -> ControllerAuthResult:
-        try:
-            if kind == b"code":
-                return ControllerAuthResult(
-                    code=ControllerAuthCode(value.decode("ascii")))
-            if kind == b"collection":
-                return ControllerAuthResult(
-                    collection=ControllerAuthCollection(value.decode("ascii")))
-        except (UnicodeError, ValueError):
-            pass
+        if kind == b"code" and value in _CODE_BY_WIRE:
+            return ControllerAuthResult(code=_CODE_BY_WIRE[value])
+        if kind == b"collection" and value in _COLLECTION_BY_WIRE:
+            return ControllerAuthResult(collection=_COLLECTION_BY_WIRE[value])
         raise ValueError("Controller auth result coordinate is invalid")
 
     def _terminal_cleanup(
@@ -700,7 +854,7 @@ class ControllerAuthDiagnosticSession:
         try:
             cleanup_match = self._wait(
                 rb"(?:^|\n)" + re.escape(cleanup_marker)
-                + rb"(ok|absence-unproved)\s*(?:\n|$)",
+                + rb"(ok|[a-z-]+)\s*(?:\n|$)",
                 label)
         except BaseException:
             self._state = "poisoned"
@@ -708,16 +862,21 @@ class ControllerAuthDiagnosticSession:
                 ControllerAuthResult(
                     code=result.code,
                     collection=result.collection,
-                    cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+                    cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
                 ),
                 False,
             )
-        cleanup_proved = cleanup_match.group(1) == b"ok"
+        cleanup_value = cleanup_match.group(1)
+        cleanup_proved = cleanup_value == b"ok"
         if not cleanup_proved:
+            cleanup = _CLEANUP_BY_WIRE.get(cleanup_value)
+            if cleanup is None:
+                self._state = "poisoned"
+                cleanup = ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
             result = ControllerAuthResult(
                 code=result.code,
                 collection=result.collection,
-                cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
+                cleanup=cleanup,
             )
         self._result = result
         self._state = "finished"
@@ -730,6 +889,7 @@ class ControllerAuthDiagnosticSession:
             "account": self.expectation.account,
             "domain": self.expectation.domain,
             "workstation_ip": self.expectation.workstation_ip,
+            "observation_seconds": self._observation_seconds,
             **self._tokens,
         }
         encoded = base64.b64encode(json.dumps(
@@ -771,6 +931,12 @@ class ControllerAuthDiagnosticSession:
             if match.group(1) in {b"code", b"collection"}:
                 result = self._closed_result(
                     match.group(1), match.group(2))
+                if (
+                    result.code is not None
+                    or result.collection not in _PREARM_COLLECTIONS
+                ):
+                    raise ValueError(
+                        "Controller auth pre-arm coordinate is invalid")
                 result, cleanup_proved = self._terminal_cleanup(
                     result, "controller-auth-prearm-cleanup")
                 raise ControllerAuthDiagnosticError(
@@ -800,28 +966,20 @@ class ControllerAuthDiagnosticSession:
         except BaseException:
             raise ControllerAuthDiagnosticError(
                 cleanup_proved=self._recover_cleanup()) from None
-        kind = match.group(1).decode()
-        value = match.group(2).decode()
-        if kind == "code":
-            result = ControllerAuthResult(code=ControllerAuthCode(value))
-        else:
-            result = ControllerAuthResult(
-                collection=ControllerAuthCollection(value))
-        cleanup_marker = (
-            f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
-        cleanup_match = self._wait(
-            rb"(?:^|\n)" + re.escape(cleanup_marker)
-            + rb"(ok|absence-unproved)\s*(?:\n|$)",
-            "controller-auth-cleanup")
-        if cleanup_match.group(1) != b"ok":
-            result = ControllerAuthResult(
-                code=result.code,
-                collection=result.collection,
-                cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED,
-            )
-        self._result = result
-        self._state = "finished"
-        return result
+        try:
+            result = self._closed_result(match.group(1), match.group(2))
+            result, cleanup_proved = self._terminal_cleanup(
+                result, "controller-auth-cleanup")
+            if not cleanup_proved:
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=result,
+                    cleanup_proved=False)
+            return result
+        except ControllerAuthDiagnosticError:
+            raise
+        except BaseException:
+            raise ControllerAuthDiagnosticError(
+                cleanup_proved=self._recover_cleanup()) from None
 
     def cancel(self) -> ControllerAuthResult:
         if self._state != "armed":
@@ -831,26 +989,26 @@ class ControllerAuthDiagnosticSession:
             "controller-auth-cancelled")
         result_marker = (
             f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
-        self._wait(
-            rb"(?:^|\n)" + re.escape(result_marker)
-            + rb"collection:cancelled\s*(?:\n|$)",
-            "controller-auth-cancel-result")
-        cleanup_marker = (
-            f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
-        cleanup_match = self._wait(
-            rb"(?:^|\n)" + re.escape(cleanup_marker)
-            + rb"(ok|absence-unproved)\s*(?:\n|$)",
-            "controller-auth-cancel-cleanup")
-        result = ControllerAuthResult(
-            collection=ControllerAuthCollection.CANCELLED,
-            cleanup=(
-                None if cleanup_match.group(1) == b"ok"
-                else ControllerAuthCleanup.ABSENCE_UNPROVED
-            ),
-        )
-        self._result = result
-        self._state = "finished"
-        return result
+        try:
+            self._wait(
+                rb"(?:^|\n)" + re.escape(result_marker)
+                + rb"collection:cancelled\s*(?:\n|$)",
+                "controller-auth-cancel-result")
+            result = ControllerAuthResult(
+                collection=ControllerAuthCollection.CANCELLED,
+            )
+            result, cleanup_proved = self._terminal_cleanup(
+                result, "controller-auth-cancel-cleanup")
+            if not cleanup_proved:
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=result,
+                    cleanup_proved=False)
+            return result
+        except ControllerAuthDiagnosticError:
+            raise
+        except BaseException:
+            raise ControllerAuthDiagnosticError(
+                cleanup_proved=self._recover_cleanup()) from None
 
 
 def main() -> int:

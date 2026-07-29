@@ -555,6 +555,9 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
                 type(controller_auth_result) is not ControllerAuthResult
                 or operation not in {
                     "controller-auth-arm",
+                    "diagnostic-arm",
+                    "type-secret",
+                    "submit",
                     "desktop", "desktop-near-reference",
                     "desktop-sign-in-persisted",
                     "desktop-sign-in-near-reference",

@@ -124,14 +124,19 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         console = mock.Mock(password=None)
         console._wait.side_effect = [
             mock.Mock(), mock.Mock(), mock.Mock(),
-            re.match(rb"(ok|absence-unproved)", b"absence-unproved"),
+            re.match(
+                rb"(ok|[a-z-]+)", b"sink-absence-unproved"),
         ]
         session = ControllerAuthDiagnosticSession(console, self.expected)
         session.arm()
-        result = session.cancel()
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.cancel()
+        result = caught.exception.controller_auth_result
         self.assertEqual(
             result.collection, ControllerAuthCollection.CANCELLED)
-        self.assertIsNotNone(result.cleanup)
+        self.assertEqual(
+            result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
 
     def test_serial_uses_one_immutable_deadline(self):
         now = [0.0]
@@ -145,10 +150,24 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=10, clock=lambda: now[0])
+            console, self.expected, timeout=20, clock=lambda: now[0])
         session.arm()
-        self.assertEqual(observed, [10.0, 8.0])
+        self.assertEqual(observed, [20.0, 18.0])
         self.assertEqual(console.timeout, 99.0)
+        command = console._send.call_args_list[1].args[0]
+        encoded = command.rsplit(b" ", 1)[1]
+        payload = json.loads(base64.b64decode(encoded))
+        self.assertEqual(payload["observation_seconds"], 4)
+
+    def test_timeout_reserves_worst_case_cleanup_margin(self):
+        with self.assertRaises(ValueError):
+            ControllerAuthDiagnosticSession(
+                mock.Mock(), self.expected,
+                timeout=subject.CLEANUP_MARGIN_SECONDS)
+        session = ControllerAuthDiagnosticSession(
+            mock.Mock(), self.expected,
+            timeout=subject.CLEANUP_MARGIN_SECONDS + 1)
+        self.assertEqual(session._observation_seconds, 1)
 
     def test_partial_arm_failure_proves_cleanup_before_reporting(self):
         console = mock.Mock(password=None, timeout=99.0)
@@ -158,7 +177,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             re.match(rb"(ok|absence-unproved)", b"ok"),
         ]
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=10, clock=lambda: 0)
+            console, self.expected, timeout=20, clock=lambda: 0)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertTrue(caught.exception.cleanup_proved)
@@ -189,6 +208,24 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             [call.args[1] for call in console._send.call_args_list],
         )
 
+    def test_prearm_rejects_postarm_coordinate_and_recovers_cleanup(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            re.search(
+                rb"(code|collection):([a-z-]+)",
+                b"collection:cancelled"),
+            re.match(rb"(ok|[a-z-]+)", b"ok"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIn(
+            "controller-auth-abort-sent",
+            [call.args[1] for call in console._send.call_args_list],
+        )
+
     def test_sink_failure_reports_unproved_terminal_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)
         console._wait.side_effect = [
@@ -196,7 +233,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             re.search(
                 rb"(code|collection):([a-z-]+)",
                 b"collection:sink-invalid"),
-            re.match(rb"(ok|absence-unproved)", b"absence-unproved"),
+            re.match(
+                rb"(ok|[a-z-]+)", b"sink-absence-unproved"),
         ]
         session = ControllerAuthDiagnosticSession(console, self.expected)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
@@ -207,7 +245,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         )
         self.assertEqual(
             caught.exception.controller_auth_result.cleanup,
-            subject.ControllerAuthCleanup.ABSENCE_UNPROVED,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
         )
         self.assertFalse(caught.exception.cleanup_proved)
 
@@ -316,6 +354,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n"
             + subject.AUTH_JSON_CONFIG_LINE + "\n",
             "[global]\n " + subject.AUTH_JSON_CONFIG_LINE.lstrip() + "\n",
+            "[global]\n" + subject.AUTH_JSON_CONFIG_LINE
+            + "\n\tlog level = auth_json_audit:3@/tmp/other\n",
         )
         with tempfile.TemporaryDirectory() as name:
             config = Path(name) / "smb.conf"
@@ -340,6 +380,40 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ):
                 self.assertFalse(subject._effective_configuration())
                 self.assertEqual(run.call_count, 1)
+
+    def test_persistent_route_removal_validates_candidate_and_fsyncs(self):
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            config.write_text(
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n")
+            config.chmod(0o600)
+            completed = mock.Mock(returncode=0)
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(
+                    subject.subprocess, "run", return_value=completed) as run,
+            ):
+                self.assertTrue(subject._remove_persistent_route())
+            self.assertEqual(config.read_text(), "[global]\n")
+            candidate = run.call_args.args[0][2]
+            self.assertNotEqual(candidate, str(config))
+            self.assertEqual(run.call_args.args[0][:2], ["testparm", "-s"])
+
+    def test_persistent_route_removal_rejects_conflict_without_mutation(self):
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            original = (
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE
+                + "\n\tlog level = auth_json_audit:3@/tmp/other\n"
+            )
+            config.write_text(original)
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(subject.subprocess, "run") as run,
+            ):
+                self.assertFalse(subject._remove_persistent_route())
+            self.assertEqual(config.read_text(), original)
+            run.assert_not_called()
 
     def test_effective_configuration_rejects_adversarial_live_routes(self):
         outputs = (
@@ -406,8 +480,10 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 mock.patch.object(
                     subject.subprocess, "run", return_value=completed),
             ):
-                self.assertFalse(subject._disable_and_destroy_sink(
-                    descriptor, (info.st_dev, info.st_ino)))
+                self.assertEqual(
+                    subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+                    subject._disable_and_destroy_sink(
+                        descriptor, (info.st_dev, info.st_ino)))
             self.assertTrue(path.exists())
 
             hardlink.unlink()
@@ -420,8 +496,10 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 mock.patch.object(
                     subject.subprocess, "run", return_value=completed),
             ):
-                self.assertFalse(subject._disable_and_destroy_sink(
-                    descriptor, (info.st_dev, info.st_ino)))
+                self.assertEqual(
+                    subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+                    subject._disable_and_destroy_sink(
+                        descriptor, (info.st_dev, info.st_ino)))
             self.assertEqual(path.read_bytes(), b"replacement")
 
     def test_cleanup_queries_live_debuglevel_after_disabling_route(self):
@@ -436,7 +514,9 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         with mock.patch.object(
                 subject.subprocess, "run",
                 side_effect=(disabled, verified)) as run:
-            self.assertFalse(subject._disable_and_destroy_sink(None, None))
+            self.assertEqual(
+                subject.ControllerAuthCleanup.CONFIGURATION_UNPROVED,
+                subject._disable_and_destroy_sink(None, None))
         self.assertEqual(
             run.call_args_list[0].args[0],
             ["smbcontrol", "all", "debug", "0 auth_json_audit:0"],
@@ -488,8 +568,10 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 mock.patch.object(Path, "lstat", root_lstat),
                 mock.patch.object(Path, "rename", racing_rename),
             ):
-                self.assertFalse(subject._disable_and_destroy_sink(
-                    descriptor, (info.st_dev, info.st_ino)))
+                self.assertEqual(
+                    subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+                    subject._disable_and_destroy_sink(
+                        descriptor, (info.st_dev, info.st_ino)))
             self.assertEqual(path.read_bytes(), b"replacement")
 
 

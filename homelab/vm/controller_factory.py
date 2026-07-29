@@ -206,6 +206,7 @@ install -o root -g root -m 0600 /dev/null \
   /run/telos-factory-auth-audit/auth.jsonl
 echo 'TELOS FACTORY STEP auth-audit-config-write'
 test "$(grep -c '^\\[global\\]$' /etc/samba/smb.conf)" == 1
+! grep -Eq '^[[:space:]]*[^#;].*auth_json_audit' /etc/samba/smb.conf
 sed -i \
   '/^\\[global\\]$/a\\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
   /etc/samba/smb.conf

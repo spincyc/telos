@@ -147,7 +147,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 ControllerAuthDiagnosticError(
                     controller_auth_result=ControllerAuthResult(
                         collection=ControllerAuthCollection.SINK_INVALID,
-                        cleanup=ControllerAuthCleanup.ABSENCE_UNPROVED),
+                        cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
                     cleanup_proved=False))
             adapter = self.adapter(rotation_plan=plan)
             with self.assertRaises(
@@ -161,7 +161,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             ControllerAuthCollection.SINK_INVALID)
         self.assertEqual(
             caught.exception.controller_auth_result.cleanup,
-            ControllerAuthCleanup.ABSENCE_UNPROVED)
+            ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
         interaction_type.return_value.type_secret.assert_not_called()
 
     def test_controller_collection_unavailable_cannot_veto_gui(self):
@@ -191,7 +191,106 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "receipt-unavailable")
         self.assertEqual(
             adapter.controller_auth_result.cleanup.value,
-            "absence-unproved")
+            "sink-absence-unproved")
+
+    def test_controller_cancel_result_survives_secret_and_submit_failures(self):
+        for failure_operation in ("type-secret", "submit"):
+            with self.subTest(failure_operation=failure_operation):
+                sign_in, desktop, plan = (
+                    self._domain_reauthentication_fixture())
+                with (
+                    mock.patch.object(
+                        subject, "_load_references",
+                        return_value=(
+                            sign_in, desktop, mock.sentinel.security,
+                            mock.sentinel.change)),
+                    mock.patch.object(
+                        subject, "_private_evidence_root",
+                        return_value=self.root / "reauth-evidence"),
+                    mock.patch.object(
+                        subject, "_GuiInteraction") as interaction_type,
+                    mock.patch.object(
+                        subject, "_prove_secret_entry_departure"),
+                    mock.patch.object(
+                        subject, "ControllerAuthDiagnosticSession",
+                    ) as controller_type,
+                ):
+                    interaction = interaction_type.return_value
+                    if failure_operation == "type-secret":
+                        interaction.type_secret.side_effect = RuntimeError(
+                            "private backend detail")
+                    else:
+                        interaction.key.side_effect = lambda key, **_kwargs: (
+                            (_ for _ in ()).throw(
+                                RuntimeError("private backend detail"))
+                            if key == "ret" else None
+                        )
+                    controller = controller_type.return_value
+                    controller.armed = True
+                    cancel_result = ControllerAuthResult(
+                        collection=ControllerAuthCollection.CANCELLED)
+                    controller.cancel.return_value = cancel_result
+                    adapter = self.adapter(rotation_plan=plan)
+                    with self.assertRaises(
+                            subject.WindowsLocalReauthenticationError
+                    ) as caught:
+                        adapter.reauthenticate_domain_operator(
+                            "operator@FACTORY.TEST", "private", "a" * 32)
+
+                self.assertEqual(
+                    failure_operation, caught.exception.reauth_operation)
+                self.assertIs(
+                    cancel_result,
+                    caught.exception.controller_auth_result,
+                )
+                controller.cancel.assert_called_once_with()
+                self.assertNotIn(
+                    "private backend detail", str(caught.exception))
+
+    def test_controller_cancel_result_survives_windows_diagnostic_arm_failure(
+        self,
+    ):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        diagnostic.arm.side_effect = RuntimeError("private watcher detail")
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction"),
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            controller = controller_type.return_value
+            controller.armed = True
+            cancel_result = ControllerAuthResult(
+                collection=ControllerAuthCollection.CANCELLED,
+                cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+            )
+            controller.cancel.return_value = cancel_result
+            adapter = self.adapter(
+                post_submit_diagnostic=diagnostic_factory,
+                rotation_plan=plan,
+            )
+            with self.assertRaises(
+                    subject.WindowsLocalReauthenticationError) as caught:
+                adapter.reauthenticate_domain_operator(
+                    "operator@FACTORY.TEST", "private", "a" * 32)
+
+        self.assertEqual("diagnostic-arm", caught.exception.reauth_operation)
+        self.assertIs(
+            cancel_result, caught.exception.controller_auth_result)
+        controller.cancel.assert_called_once_with()
+        self.assertNotIn("private watcher detail", str(caught.exception))
 
     def test_secret_entry_departure_is_ephemeral_and_requires_two_frames(self):
         evidence = self.root / "evidence"
