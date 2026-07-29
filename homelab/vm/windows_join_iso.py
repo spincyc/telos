@@ -25,6 +25,8 @@ from .windows_identity_contract import (
 )
 from .windows_public_command import bounded_media_launch_command
 
+UAC_CONSENT_SETTLE_DELAY = 3.0
+
 
 @dataclass(frozen=True)
 class WindowsJoinFailureCoordinate:
@@ -699,8 +701,11 @@ def execute_join_channel(
     serial: DuplexJoinSerial,
     launch_guest: Callable[[str], None],
     await_device_deleted: Callable[[str], None],
+    pause: Callable[[float], None] | None = None,
 ) -> None:
     """Run the production handoff over one exclusive duplex COM1 session."""
+    if pause is None:
+        pause = time.sleep
     try:
         channel.attach()
     except BaseException as error:
@@ -708,6 +713,10 @@ def execute_join_channel(
     try:
         try:
             launch_guest(launch_join_command())
+            # RunAs switches to the secure desktop asynchronously after the
+            # public launcher departs. Give that fixed transition a bounded
+            # settle interval before sending the single public consent chord.
+            pause(UAC_CONSENT_SETTLE_DELAY)
             channel.qmp.execute("send-key", {
                 "keys": [
                     {"type": "qcode", "data": "alt"},
@@ -781,6 +790,7 @@ def execute_join_and_prove(
     await_device_deleted: Callable[[str], None],
     probe_after_reboot: Callable[[], Mapping[str, object]],
     expected_domain: str,
+    pause: Callable[[float], None] | None = None,
 ) -> dict[str, object]:
     """Serialize private COM1 handoff before the public reboot proof."""
     execute_join_channel(
@@ -788,6 +798,7 @@ def execute_join_and_prove(
         serial=serial,
         launch_guest=launch_guest,
         await_device_deleted=await_device_deleted,
+        pause=pause,
     )
     if not serial.closed:
         raise WindowsJoinIsoError(

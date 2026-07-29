@@ -54,6 +54,12 @@ class FakeQmp:
 
 
 class WindowsJoinIsoTests(unittest.TestCase):
+    def setUp(self):
+        sleep_patcher = mock.patch(
+            "homelab.vm.windows_join_iso.time.sleep")
+        self.sleep = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
     def private_root(self, temporary):
         root = Path(temporary) / "private"
         root.mkdir(mode=0o700)
@@ -388,6 +394,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
             )
+            self.sleep.assert_called_once_with(3.0)
             guest_thread.join(timeout=1)
             self.assertFalse(guest_thread.is_alive())
             self.assertFalse(guest_errors)
