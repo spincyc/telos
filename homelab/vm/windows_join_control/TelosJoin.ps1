@@ -112,7 +112,7 @@ try {
 # SID to the built-in local Administrators group, and prove the assignment
 # before reboot.  Any resolution, mutation, or verification failure stops the
 # join path; this script never grants any domain-wide privileged group.
-    $failurePhase = 'operator-assignment'
+    $failurePhase = 'operator-resolution'
     $operatorSid = ([Security.Principal.NTAccount]::new($operator)).Translate(
     [Security.Principal.SecurityIdentifier]
 )
@@ -124,9 +124,11 @@ $operatorAssigned = @(
         Where-Object { $_.SID.Value -ceq $operatorSid.Value }
 )
 if ($operatorAssigned.Count -eq 0) {
+    $failurePhase = 'operator-mutation'
     Add-LocalGroupMember -SID $administratorsSid -Member $operatorSid `
         -ErrorAction Stop
 }
+$failurePhase = 'operator-verification'
 $operatorAssigned = @(
     Get-LocalGroupMember -SID $administratorsSid |
         Where-Object { $_.SID.Value -ceq $operatorSid.Value }

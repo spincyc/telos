@@ -43,7 +43,9 @@ class WindowsJoinFailureCoordinate:
         "result-ack", "accepted-receive", "accepted-parse",
         "result", "reboot-reauth",
         "reboot-probe", "cleanup",
-        "result-guest-add-computer", "result-guest-operator-assignment",
+        "result-guest-add-computer", "result-guest-operator-resolution",
+        "result-guest-operator-mutation",
+        "result-guest-operator-verification",
         "result-guest-join-authorization",
         "result-guest-join-authentication",
         "result-guest-join-domain-discovery",
@@ -656,7 +658,8 @@ class JoinMediaChannel:
             set(result) == {*guest_failure, "phase"}
             and all(result[name] == value for name, value in guest_failure.items())
             and phase in {
-                "add-computer", "operator-assignment", "policy-mutation",
+                "add-computer", "operator-resolution", "operator-mutation",
+                "operator-verification", "policy-mutation",
                 "policy-readback", "policy-verification",
                 "join-authorization", "join-authentication",
                 "join-domain-discovery", "join-account-conflict",
