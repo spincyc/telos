@@ -63,6 +63,7 @@ class IdentityFailureDiagnostic:
         ("windows-daily-admin", "managed-identity-state"),
         ("domain-admin-separate", "managed-identity-state"),
         ("windows-rebooted-joined", "domain-state"),
+        ("windows-rebooted-joined", "interactive-operator"),
         ("windows-cached-policy", "cached-logon-policy"),
         ("windows-cached-policy", "managed-identity-state"),
         ("controller-offline", "service-reachability"),
@@ -532,6 +533,12 @@ class NativeProcessBoundary:
                 "Controller convergence media destruction failed")
 
     def _validate(self) -> None:
+        for terminal_name in (
+                "attempt-consumed.json", "terminal-teardown.json"):
+            terminal = self.attempt / terminal_name
+            if terminal.exists() or terminal.is_symlink():
+                raise WindowsIdentityRunError(
+                    "identity attempt was already consumed")
         if (self.attempt.is_symlink() or not self.attempt.is_dir()
                 or self.attempt.stat().st_mode & 0o077):
             raise WindowsIdentityRunError(
@@ -1396,21 +1403,22 @@ class NativeProcessBoundary:
             except BaseException as error:
                 resume_failures.append(
                     f"{role} resume before teardown: {type(error).__name__}")
-        if resume_failures:
-            raise WindowsIdentityRunError("; ".join(resume_failures))
         selected = [
             (role, self.processes[role]) for role in roles
             if role in self.processes
         ]
         children = [process for _, process in selected]
         failures = terminate_children(children)
-        if failures:
-            raise WindowsIdentityRunError("; ".join(failures))
+        teardown_failures = resume_failures + failures
         for role, process in selected:
             if process.poll() is None:
-                raise WindowsIdentityRunError(
+                teardown_failures.append(
                     f"{role} process remained live after teardown")
-            self.processes.pop(role, None)
+            else:
+                self.processes.pop(role, None)
+                self.suspended_processes.discard(role)
+        if teardown_failures:
+            raise WindowsIdentityRunError("; ".join(teardown_failures))
 
     def _set_process_available(self, role: str, available: bool) -> None:
         """Suspend or resume one separately owned dependency process.
@@ -1476,13 +1484,13 @@ class NativeProcessBoundary:
         failures = []
         windows = self.processes.get("windows")
         if self.control_iso_fd is not None:
+            descriptor = self.control_iso_fd
+            self.control_iso_fd = None
             try:
-                os.close(self.control_iso_fd)
+                os.close(descriptor)
             except OSError as error:
                 failures.append(
                     f"control ISO ownership: {type(error).__name__}")
-            else:
-                self.control_iso_fd = None
         if {
             "optional-storage", "update-source"
         }.intersection(self.processes):
@@ -1532,8 +1540,14 @@ class NativeProcessBoundary:
     def stop_controller(self) -> None:
         failures = []
         if self.controller_console is not None:
-            self.controller_console.release_password()
-        self.controller_console = None
+            try:
+                self.controller_console.release_password()
+            except BaseException as error:
+                failures.append(
+                    f"Controller console credential release: "
+                    f"{type(error).__name__}")
+            else:
+                self.controller_console = None
         if self.controller_qmp is not None:
             try:
                 self.controller_qmp.close()
@@ -1549,14 +1563,15 @@ class NativeProcessBoundary:
         if "controller" not in self.processes and self.controller_factory_bundle is not None:
             try:
                 if self.controller_factory_fd is not None:
+                    descriptor = self.controller_factory_fd
+                    self.controller_factory_fd = None
                     try:
                         self._destroy_owned_inode(
-                            self.controller_factory_fd,
+                            descriptor,
                             self.controller_factory_bundle.output,
                         )
                     finally:
-                        os.close(self.controller_factory_fd)
-                        self.controller_factory_fd = None
+                        os.close(descriptor)
                 else:
                     self.controller_factory_bundle.close()
             except BaseException as error:
@@ -1620,6 +1635,25 @@ class NativeProcessBoundary:
             "optional-storage", "update-source"
         }.intersection(self.processes):
             self.dependency_endpoints.clear()
+
+    def audit_teardown(self) -> dict[str, bool]:
+        """Return fixed, secret-free facts derived after teardown attempts."""
+        runtime_sockets = (
+            tuple(self.runtime.rglob("*.qmp"))
+            + tuple(self.runtime.rglob("*.serial"))
+        ) if self.runtime.exists() else ()
+        return {
+            "processes_reaped": not self.processes
+            and not self.suspended_processes,
+            "qmp_closed": self.qmp is None and self.controller_qmp is None
+            and self.qmp_root is None and self.controller_qmp_root is None,
+            "runtime_quiescent": not runtime_sockets,
+            "owned_media_closed": self.control_iso_fd is None
+            and self.controller_factory_fd is None
+            and self.controller_factory_bundle is None
+            and self.controller_overlay is None,
+            "dependencies_released": not self.dependency_endpoints,
+        }
 
 
 class PrivateIdentityMaterial:

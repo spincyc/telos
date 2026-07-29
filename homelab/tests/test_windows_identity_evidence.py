@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 import tempfile
@@ -146,6 +147,21 @@ class WindowsIdentityEvidenceTests(unittest.TestCase):
             collector.record(first["check"], observation)
         self.assertEqual("controller-ready", collector.next_check)
         self.assertFalse(self.destination.parent.exists())
+
+    def test_collector_rejects_base64_wrapped_secret(self):
+        secret = "Reusable-Private-Credential-47!"
+        collector = self.collector(known_secrets=(secret,))
+        first = self.events[0]
+        observation = {
+            field: first[field]
+            for field in acceptance.FIELD_SETS[first["check"]]
+        }
+        observation["samba_ad"] = base64.urlsafe_b64encode(
+            json.dumps({"password": secret}).encode()).decode().rstrip("=")
+        with self.assertRaisesRegex(
+                EvidencePublicationError, "known secret"):
+            collector.record(first["check"], observation)
+        self.assertEqual("controller-ready", collector.next_check)
 
     def test_collector_copies_mutable_observation_values(self):
         collector = self.collector()

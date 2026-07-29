@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping
 import uuid
 
 from homelab.vm.simulation_evidence import private_directory
+from homelab.vm.secret_scan import count_secret_occurrences, secret_needles
 from homelab.workstations.windows_identity_acceptance import (
     CONTRACT,
     FIELD_SETS,
@@ -52,8 +53,9 @@ class StrictIdentityEvidenceCollector:
         self.run_id = run_id or str(uuid.uuid4())
         if not RUN_ID.fullmatch(self.run_id):
             raise ValueError("run_id must be a lowercase UUID")
-        self._known_secrets = tuple(
-            _encoded_secret(secret) for secret in known_secrets)
+        supplied_secrets = tuple(known_secrets)
+        self._known_secrets = (
+            secret_needles(supplied_secrets) if supplied_secrets else ())
         self._observed_at = observed_at
         self._checks = tuple(FIELD_SETS)
         self._events: list[dict[str, Any]] = []
@@ -111,7 +113,8 @@ class StrictIdentityEvidenceCollector:
         except (TypeError, ValueError, UnicodeError):
             raise EvidencePublicationError(
                 f"{check} observation is not JSON-safe") from None
-        if any(secret and secret in encoded for secret in self._known_secrets):
+        if self._known_secrets and count_secret_occurrences(
+                (encoded,), self._known_secrets):
             raise EvidencePublicationError(
                 f"{check} observation contains a known secret")
         self._events.append(retained)
@@ -204,11 +207,11 @@ def publish_acceptance_evidence(
             "utf-8") + b"\n"
         for event in materialized
     )
-    for secret in known_secrets:
-        encoded = _encoded_secret(secret)
-        if encoded and encoded in payload:
-            raise EvidencePublicationError(
-                "Windows identity evidence contains a known secret")
+    supplied_secrets = tuple(known_secrets)
+    if supplied_secrets and count_secret_occurrences(
+            (payload,), secret_needles(supplied_secrets)):
+        raise EvidencePublicationError(
+            "Windows identity evidence contains a known secret")
 
     _publish_once(destination, payload)
     if destination.stat().st_mode & 0o077:

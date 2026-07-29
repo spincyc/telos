@@ -211,8 +211,11 @@ class WindowsGuiTests(unittest.TestCase):
     def test_qmp_text_typing_uses_key_events_without_echoing_failures(self):
         client = object.__new__(windows_gui.QmpClient)
         requests = []
-        client.execute = lambda command, arguments=None: requests.append(
-            (command, arguments))
+        client._clock = lambda: 0.0
+        client.execute = (
+            lambda command, arguments=None, timeout=None:
+            requests.append((command, arguments))
+        )
         client.type_text("Aa1-_! .")
         keys = [
             tuple(key["data"] for key in arguments["keys"])
@@ -230,6 +233,62 @@ class WindowsGuiTests(unittest.TestCase):
                 WindowsGuiError, "offset 1") as failure:
             client.type_text("x\nsecret")
         self.assertNotIn("secret", str(failure.exception))
+        self.assertEqual(8, len(requests))
+
+    def test_qmp_text_typing_shares_one_aggregate_timeout(self):
+        client = object.__new__(windows_gui.QmpClient)
+        now = [10.0]
+        client._clock = lambda: now[0]
+        requests = []
+
+        def execute(command, arguments=None, *, timeout=None):
+            requests.append((command, arguments, timeout))
+            now[0] += 0.6
+
+        client.execute = execute
+        with self.assertRaisesRegex(
+                WindowsGuiError, "timed out") as failure:
+            client.type_text("abc", timeout=1.0)
+
+        self.assertEqual(2, len(requests))
+        self.assertEqual([1.0, 0.4], [
+            round(request[2], 1) for request in requests])
+        self.assertNotIn("abc", str(failure.exception))
+
+    def test_qmp_text_prevalidates_before_sending_any_key(self):
+        client = object.__new__(windows_gui.QmpClient)
+        client._clock = lambda: 0.0
+        client.execute = mock.Mock()
+
+        with self.assertRaisesRegex(WindowsGuiError, "offset 2"):
+            client.type_text("ab\nsecret", timeout=1.0)
+
+        client.execute.assert_not_called()
+
+    def test_qmp_execute_clamps_and_restores_socket_timeout(self):
+        client = object.__new__(windows_gui.QmpClient)
+        connection = mock.Mock()
+        connection.gettimeout.return_value = 5.0
+        reader = mock.Mock()
+        reader.readline.side_effect = socket.timeout("private backend detail")
+        client.connection = connection
+        client.reader = reader
+        client.sequence = 0
+        client._events = []
+        client._responses = {}
+        client._event_limit = 256
+        client._response_limit = 256
+        ticks = iter((20.0, 20.25, 20.5))
+        client._clock = lambda: next(ticks)
+
+        with self.assertRaisesRegex(
+                WindowsGuiError, "^QMP command timed out$"):
+            client.execute("send-key", timeout=1.0)
+
+        self.assertEqual(
+            [mock.call(0.75), mock.call(0.5), mock.call(5.0)],
+            connection.settimeout.call_args_list,
+        )
 
     def test_qmp_awaits_exact_device_deleted_and_retains_other_events(self):
         client, peer = self.qmp_pair()

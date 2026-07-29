@@ -195,6 +195,7 @@ class ProgressiveRotationPlan:
     change_password_keys: tuple[str, ...] = ()
     wake_after_lock_keys: tuple[str, ...] = ("spc",)
     post_join_local_account_keys: tuple[str, ...] = ()
+    post_join_operator_account_keys: tuple[str, ...] = ()
     post_join_local_account_calibrated: bool = False
     post_join_sign_in_manifest: Path | None = None
     post_join_operator_account_calibrated: bool = False
@@ -403,15 +404,17 @@ class _GuiInteraction:
         raise WindowsIdentityGuiError(
             f"timed out proving departure from {reference.state_kind}")
 
-    def type_secret(self, value: str) -> None:
+    def type_secret(
+            self, value: str, *, timeout: float | None = None) -> None:
         self._driver._validate_secret(value)
-        self._qmp.type_text(value)
+        self._qmp.type_text(value, timeout=timeout)
 
-    def key(self, name: str) -> None:
-        self._qmp.key(name)
+    def key(self, name: str, *, timeout: float | None = None) -> None:
+        self._qmp.key(name, timeout=timeout)
 
-    def chord(self, *names: str) -> None:
-        self._qmp.chord(*names)
+    def chord(
+            self, *names: str, timeout: float | None = None) -> None:
+        self._qmp.chord(*names, timeout=timeout)
 
 
 class WindowsIdentityGuiAlternateState(WindowsIdentityGuiError):
@@ -500,6 +503,7 @@ def execute_progressive_rotation(
                 plan.change_password_keys,
                 plan.wake_after_lock_keys,
                 plan.post_join_local_account_keys,
+                plan.post_join_operator_account_keys,
             )
             for key in keys
         )

@@ -423,13 +423,26 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     "action": action,
                     "result": "pass",
                     "observed_at": "2026-07-28T15:00:00Z",
-                    "observation": {
+                    "observation": ({
+                        "principal": r"FACTORY\operator",
+                        "principal_sid": "S-1-5-21-1-2-3-1104",
+                        "operator": "operator@FACTORY.TEST",
+                        "operator_sid": "S-1-5-21-1-2-3-1104",
+                        "console_principal": r"FACTORY\operator",
+                        "console_sid": "S-1-5-21-1-2-3-1104",
+                        "authenticated": True,
+                        "authentication_type": "Kerberos",
+                        "session_id": 1,
+                        "profile_sid": "S-1-5-21-1-2-3-1104",
+                        "profile_loaded": True,
+                        "local_profile": True,
+                    } if action == "interactive-operator" else {
                         "part_of_domain": True,
                         "domain": "FACTORY.TEST",
                         "secure_channel": True,
                         "operator": "operator@FACTORY.TEST",
                         "operator_local_administrator": True,
-                    },
+                    }),
                 },
             }
         )
@@ -507,7 +520,8 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         callbacks = subject.AcceptanceCallbacks(**integer_boolean)
         with self.assertRaisesRegex(
                 subject.WindowsIdentityOrchestratorError, "probe is invalid"):
-            subject._post_reboot_proof(callbacks)
+            subject._post_reboot_proof(
+                callbacks, "operator@FACTORY.TEST")
 
     def test_post_reboot_probe_rebinds_receive_and_parse_failures(self):
         secret = "post-reboot-private-message"
@@ -516,7 +530,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 failure = subject.WindowsIdentityRunError(secret)
                 failure.diagnostic = (
                     subject.IdentityFailureDiagnostic.adapter_static_probe(
-                        "domain-state", phase, failure))
+                        "interactive-operator", phase, failure))
                 callbacks = self.callbacks([])
                 callbacks = subject.AcceptanceCallbacks(**{
                     **callbacks.__dict__,
@@ -526,12 +540,13 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 with self.assertRaises(
                     subject.WindowsIdentityOrchestratorError,
                 ) as caught:
-                    subject._post_reboot_proof(callbacks)
+                    subject._post_reboot_proof(
+                        callbacks, "operator@FACTORY.TEST")
                 error = caught.exception
                 self.assertEqual(
                     "windows-rebooted-joined", error.diagnostic.check)
                 self.assertEqual(
-                    "static-probe.domain-state." + phase,
+                    "static-probe.interactive-operator." + phase,
                     error.diagnostic.operation,
                 )
                 self.assertEqual("UnexpectedError",
@@ -539,6 +554,61 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 self.assertNotIn(secret, str(error))
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
+
+    def test_post_reboot_probe_rejects_unbound_interactive_operator(self):
+        identity = {
+            "principal": r"FACTORY\operator",
+            "principal_sid": "S-1-5-21-1-2-3-1104",
+            "operator": "operator@FACTORY.TEST",
+            "operator_sid": "S-1-5-21-1-2-3-1104",
+            "console_principal": r"FACTORY\operator",
+            "console_sid": "S-1-5-21-1-2-3-1104",
+            "authenticated": True,
+            "authentication_type": "Kerberos",
+            "session_id": 1,
+            "profile_sid": "S-1-5-21-1-2-3-1104",
+            "profile_loaded": True,
+            "local_profile": True,
+        }
+        mutations = {
+            "wrong operator": {"operator": "operator@OTHER.TEST"},
+            "wrong principal": {"principal": r"FACTORY\student"},
+            "wrong console name": {
+                "console_principal": r"FACTORY\student"},
+            "wrong token": {"principal_sid": "S-1-5-21-1-2-3-1105"},
+            "wrong console": {"console_sid": "S-1-5-21-1-2-3-1105"},
+            "wrong profile": {"profile_sid": "S-1-5-21-1-2-3-1105"},
+            "unauthenticated": {"authenticated": False},
+            "session zero": {"session_id": 0},
+            "profile unloaded": {"profile_loaded": False},
+            "nonlocal profile": {"local_profile": False},
+            "empty authentication type": {"authentication_type": ""},
+        }
+        for label, changes in mutations.items():
+            with self.subTest(label=label):
+                candidate = {**identity, **changes}
+                observed = []
+
+                def static_probe(action):
+                    observed.append(action)
+                    return {
+                        "schema_version": 1,
+                        "action": action,
+                        "result": "pass",
+                        "observation": candidate,
+                    }
+
+                callbacks = self.callbacks([])
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": static_probe,
+                })
+                with self.assertRaisesRegex(
+                        subject.WindowsIdentityOrchestratorError,
+                        "interactive operator"):
+                    subject._post_reboot_proof(
+                        callbacks, "operator@FACTORY.TEST")
+                self.assertEqual(["interactive-operator"], observed)
 
     def test_static_probe_rebind_preserves_only_normalized_error_type(self):
         for supplied, expected in (

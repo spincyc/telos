@@ -660,6 +660,20 @@ class ProgressiveRotationTests(unittest.TestCase):
                 recovery=Recovery("secret", events, "recovery"),
                 generate_credential=lambda: "different-secret",
                 after_rotation=lambda _replacement: None)
+        invalid = self.plan()
+        invalid = type(invalid)(**{
+            **invalid.__dict__,
+            "post_join_operator_account_keys": ("unsafe",),
+        })
+        with self.assertRaisesRegex(
+            WindowsIdentityProgressiveError, "invalid progressive plan"
+        ):
+            execute_progressive_rotation(
+                plan=invalid,
+                session=Context(object(), events, "session"),
+                recovery=Recovery("secret", events, "recovery"),
+                generate_credential=lambda: "different-secret",
+                after_rotation=lambda _replacement: None)
         self.assertEqual([], events)
 
     def test_native_session_starts_and_tears_down_in_reverse_order(self):

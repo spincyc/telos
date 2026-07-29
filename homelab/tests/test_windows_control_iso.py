@@ -30,6 +30,7 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("dependency-reachability", manifest["actions"])
         self.assertIn("controller-readiness", manifest["actions"])
         self.assertIn("current-session-state", manifest["actions"])
+        self.assertIn("interactive-operator", manifest["actions"])
         self.assertIn("managed-identity-state", manifest["actions"])
         self.assertIn("'10.1.31.1')) 31337", script)
         self.assertIn("'sim-ok:health'", script)

@@ -16,6 +16,7 @@
     "gateway-reachability",
     "dependency-reachability",
     "service-reachability",
-    "update-policy"
+    "update-policy",
+    "interactive-operator"
   ]
 }

@@ -55,6 +55,20 @@ _OBSERVATION_KEYS = {
         "local_administrator": bool,
         "domain_administrator": bool,
     },
+    "interactive-operator": {
+        "principal": str,
+        "principal_sid": str,
+        "operator": str,
+        "operator_sid": str,
+        "console_principal": str,
+        "console_sid": str,
+        "authenticated": bool,
+        "authentication_type": str,
+        "session_id": int,
+        "profile_sid": str,
+        "profile_loaded": bool,
+        "local_profile": bool,
+    },
     "controller-readiness": {
         "samba_ad": bool,
         "dns": bool,
@@ -219,7 +233,10 @@ def parse_probe_record(line: bytes, expected_action: str) -> dict[str, object]:
     for key, expected_type in schema.items():
         value = observation[key]
         # bool is a subclass of int; an integer field must reject booleans.
-        if (expected_type == (int, type(None)) and isinstance(value, bool)
+        if ((
+                expected_type is int
+                or expected_type == (int, type(None))
+            ) and isinstance(value, bool)
                 or not isinstance(value, expected_type)):
             raise WindowsControlSerialError(
                 "probe observation schema is invalid")

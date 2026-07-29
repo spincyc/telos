@@ -16,6 +16,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from homelab.workstations.layout import GIB, build_record
+from homelab.vm.secret_scan import count_secret_occurrences, secret_needles
 from homelab.vm.simulated_topology import MACS, _base, audit_qemu_argv
 
 
@@ -567,10 +568,10 @@ class PrivateRun(AbstractContextManager["PrivateRun"]):
 
     def assert_secret_free(self, evidence: Path) -> None:
         raw = Path(evidence).read_bytes()
-        for value in self.known_secrets:
-            if value.encode() in raw:
-                raise WindowsInstallContractError(
-                    "retained evidence contains a known secret")
+        if count_secret_occurrences(
+                (raw,), secret_needles(self.known_secrets)):
+            raise WindowsInstallContractError(
+                "retained evidence contains a known secret")
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         if self.path is not None:

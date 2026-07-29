@@ -10,7 +10,7 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 
-from .windows_identity_evidence import _encoded_secret
+from .secret_scan import count_secret_occurrences, secret_needles
 
 
 class WindowsIdentityDiagnosticError(RuntimeError):
@@ -104,14 +104,11 @@ def _relative_path(value: str | PurePosixPath) -> PurePosixPath:
 
 
 def _secret_encodings(secret: str | bytes) -> tuple[bytes, ...]:
-    encoded = _encoded_secret(secret)
-    if not encoded:
+    try:
+        return secret_needles((secret,))
+    except ValueError:
         raise WindowsIdentityDiagnosticError(
-            "empty values cannot be used as known secrets")
-    variants = {encoded}
-    if isinstance(secret, str):
-        variants.update((secret.encode("utf-16-le"), secret.encode("utf-16-be")))
-    return tuple(sorted(variants, key=len, reverse=True))
+            "empty values cannot be used as known secrets") from None
 
 
 def _inventory_files(
@@ -224,14 +221,11 @@ def _scan_regular_file(path: Path, needles: tuple[bytes, ...]) -> int:
         if not stat.S_ISREG(before.st_mode):
             raise WindowsIdentityDiagnosticError(
                 f"diagnostic source is not a regular file: {path}")
-        tails = [b""] * len(needles)
-        found = 0
-        while block := os.read(descriptor, 1024 * 1024):
-            for index, needle in enumerate(needles):
-                window = tails[index] + block
-                found += window.count(needle)
-                overlap = len(needle) - 1
-                tails[index] = window[-overlap:] if overlap else b""
+        def blocks() -> Iterable[bytes]:
+            while block := os.read(descriptor, 1024 * 1024):
+                yield block
+
+        found = count_secret_occurrences(blocks(), needles)
         after = os.fstat(descriptor)
         if _metadata_identity(before) != _metadata_identity(after):
             raise WindowsIdentityDiagnosticError(
@@ -311,7 +305,7 @@ class ProductionSecretScanner:
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
-        qemu_hits = sum(qemu_payload.count(needle) for needle in needles)
+        qemu_hits = count_secret_occurrences((qemu_payload,), needles)
         ownership = self.credential_ownership
         if (
             type(ownership.acceptance_scope_active) is not bool

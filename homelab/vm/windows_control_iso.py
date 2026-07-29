@@ -33,6 +33,7 @@ _LAUNCH_MARKERS = {
         "dependency-reachability",
         "service-reachability",
         "update-policy",
+        "interactive-operator",
     ), start=1)
 }
 

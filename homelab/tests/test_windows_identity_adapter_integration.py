@@ -237,13 +237,13 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                mock.call.key("spc"),
-                mock.call.key("tab"),
+                mock.call.key("spc", timeout=mock.ANY),
+                mock.call.key("tab", timeout=mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.disable_durable_capture(),
-                mock.call.type_secret("private"),
-                mock.call.key("ret"),
+                mock.call.type_secret("private", timeout=mock.ANY),
+                mock.call.key("ret", timeout=mock.ANY),
                 mock.call.observe_ephemeral(
                     desktop,
                     mock.ANY,
@@ -260,7 +260,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             call.args[1] for call in interaction.observe.call_args_list]
         self.assertGreaterEqual(observe_timeouts[0], observe_timeouts[1])
         self.assertGreaterEqual(observe_timeouts[1], final_timeout)
-        self.qmp.type_text.assert_called_once_with(".\\telosadmin")
+        self.qmp.type_text.assert_called_once_with(
+            ".\\telosadmin", timeout=mock.ANY)
         self.assertEqual([mock.call(2)], sleep.call_args_list)
 
     @mock.patch.object(subject, "_GuiInteraction")
@@ -383,6 +384,76 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    def test_local_and_operator_public_text_receive_remaining_deadline(
+        self, load_references, private_evidence_root, interaction_type,
+    ):
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        desktop = mock.sentinel.desktop
+        plan = mock.Mock(
+            expected_guest=mock.sentinel.guest,
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=(),
+            post_join_local_account_keys=("down",),
+            post_join_operator_account_keys=("up",),
+            post_join_local_account_calibrated=True,
+            post_join_operator_account_calibrated=True,
+            post_join_sign_in_manifest=None,
+            post_join_operator_sign_in_manifest=None,
+            checkpoint_timeout=20,
+        )
+
+        for domain_operator, principal, state in (
+            (False, ".\\telosadmin",
+             "focused password field for local account telosadmin"),
+            (True, "operator@FACTORY.TEST",
+             "focused password field for domain account "
+             "operator@FACTORY.TEST"),
+        ):
+            with self.subTest(domain_operator=domain_operator):
+                self.qmp.reset_mock()
+                interaction_type.return_value.reset_mock()
+                load_references.return_value = (
+                    mock.Mock(state_kind="sign-in", state=state),
+                    desktop,
+                    mock.sentinel.security,
+                    mock.sentinel.change,
+                )
+                self.qmp.type_text.side_effect = RuntimeError(
+                    "private backend detail")
+                adapter = self.adapter(rotation_plan=plan)
+
+                with self.assertRaises(
+                        subject.WindowsLocalReauthenticationError) as caught:
+                    if domain_operator:
+                        adapter.reauthenticate_domain_operator(
+                            principal, "private")
+                    else:
+                        adapter.reauthenticate_local("private")
+
+                self.assertEqual(
+                    "type-public-username",
+                    caught.exception.reauth_operation,
+                )
+                self.assertNotIn(
+                    "private backend detail", str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+                timeout = self.qmp.type_text.call_args.kwargs["timeout"]
+                self.assertGreater(timeout, 0)
+                self.assertLessEqual(timeout, 7)
+                self.assertEqual(
+                    [mock.call(
+                        "up" if domain_operator else "down",
+                        timeout=mock.ANY,
+                    )],
+                    interaction_type.return_value.key.call_args_list,
+                )
+                interaction_type.return_value.type_secret.assert_not_called()
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     @mock.patch.object(subject, "retain_post_join_calibration")
     @mock.patch.object(subject, "sample_post_join_calibration")
     @mock.patch.object(subject.time, "sleep")
@@ -450,16 +521,20 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             interaction_type.return_value.key.call_args_list,
-            [mock.call("spc"), mock.call("tab")],
+            [
+                mock.call("spc", timeout=mock.ANY),
+                mock.call("tab", timeout=mock.ANY),
+            ],
         )
         interaction_type.return_value.type_secret.assert_not_called()
-        self.qmp.type_text.assert_called_once_with(".\\telosadmin")
+        self.qmp.type_text.assert_called_once_with(
+            ".\\telosadmin", timeout=mock.ANY)
         self.assertEqual(
             [
                 mock.call.sleep(5),
                 mock.call.sample(
                     self.qmp, self.root / "reauth-evidence"),
-                mock.call.key("spc"),
+                mock.call.key("spc", timeout=mock.ANY),
                 mock.call.sample(
                     self.qmp, self.root / "reauth-evidence"),
             ],

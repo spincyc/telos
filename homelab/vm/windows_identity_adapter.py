@@ -403,7 +403,11 @@ class NativeWindowsAcceptanceAdapter:
                 "prove-password-target") from None
         selection_failure = False
         try:
-            selection_keys = tuple(plan.post_join_local_account_keys)
+            selection_keys = tuple(
+                plan.post_join_operator_account_keys
+                if domain_operator
+                else plan.post_join_local_account_keys
+            )
             wake_keys = tuple(plan.wake_after_lock_keys)
             initial_delay = float(plan.initial_sign_in_delay)
             lock_settle_delay = float(plan.lock_settle_delay)
@@ -442,8 +446,7 @@ class NativeWindowsAcceptanceAdapter:
                     raise WindowsLocalReauthenticationError(
                         "calibration-capture") from None
             for key in wake_keys:
-                remaining("wake")
-                interaction.key(key)
+                interaction.key(key, timeout=remaining("wake"))
 
         _run_local_reauthentication_operation("wake", wake)
 
@@ -493,9 +496,10 @@ class NativeWindowsAcceptanceAdapter:
                     ),
                 )
                 remaining("calibration-capture")
-                self._qmp().type_text(principal)
-                remaining("calibration-capture")
-                interaction.key("tab")
+                self._qmp().type_text(
+                    principal, timeout=remaining("calibration-capture"))
+                interaction.key(
+                    "tab", timeout=remaining("calibration-capture"))
                 observe_transition(
                     generic,
                     (
@@ -523,8 +527,8 @@ class NativeWindowsAcceptanceAdapter:
 
         def select_local_account() -> None:
             for key in selection_keys:
-                remaining("select-local-account")
-                interaction.key(key)
+                interaction.key(
+                    key, timeout=remaining("select-local-account"))
 
         _run_local_reauthentication_operation(
             "select-local-account", select_local_account)
@@ -534,15 +538,13 @@ class NativeWindowsAcceptanceAdapter:
         # closed without disclosing the credential.
         _run_local_reauthentication_operation(
             "type-public-username",
-            lambda: (
-                remaining("type-public-username"),
-                self._qmp().type_text(principal),
-            ),
+            lambda: self._qmp().type_text(
+                principal, timeout=remaining("type-public-username")),
         )
 
         def prove_password_target() -> None:
-            remaining("prove-password-target")
-            interaction.key("tab")
+            interaction.key(
+                "tab", timeout=remaining("prove-password-target"))
             interaction.observe(
                 sign_in,
                 min(checkpoint_timeout, remaining("prove-password-target")),
@@ -557,10 +559,8 @@ class NativeWindowsAcceptanceAdapter:
         _run_local_reauthentication_operation(
             "type-secret", interaction.disable_durable_capture)
         _run_local_reauthentication_operation(
-            "type-secret", lambda: (
-                remaining("type-secret"),
-                interaction.type_secret(credential),
-            ))
+            "type-secret", lambda: interaction.type_secret(
+                credential, timeout=remaining("type-secret")))
 
         def settle_secret_input() -> None:
             if lock_settle_delay:
@@ -571,10 +571,8 @@ class NativeWindowsAcceptanceAdapter:
         _run_local_reauthentication_operation(
             "submit", settle_secret_input)
         _run_local_reauthentication_operation(
-            "submit", lambda: (
-                remaining("submit"),
-                interaction.key("ret"),
-            ))
+            "submit", lambda: interaction.key(
+                "ret", timeout=remaining("submit")))
         def prove_desktop() -> None:
             try:
                 interaction.observe_ephemeral(

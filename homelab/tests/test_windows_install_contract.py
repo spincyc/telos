@@ -222,6 +222,12 @@ class WindowsInstallContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                         WindowsInstallContractError, "known secret"):
                     run.assert_secret_free(evidence)
+                evidence.write_bytes(base64.b64encode(json.dumps({
+                    "password": password,
+                }).encode()))
+                with self.assertRaisesRegex(
+                        WindowsInstallContractError, "known secret"):
+                    run.assert_secret_free(evidence)
 
     def test_diskpart_reserves_arch_gap_and_never_selects_another_disk(self):
         script = render_diskpart(self.authorization())
@@ -327,3 +333,4 @@ class WindowsInstallContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+import base64

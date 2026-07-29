@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -80,6 +82,40 @@ class ProductionSecretScannerTests(unittest.TestCase):
             scanner.retained[0].root.joinpath(
                 "logs/windows-qemu.log").write_bytes(
                     b"x" * (1024 * 1024 - 4) + self.secret.encode())
+            result = scanner((self.secret,))
+            self.assertEqual(result["secrets_found"], 1)
+            self.assertFalse(result["logs_secret_free"])
+
+    def test_counts_base64_wrapped_json_secret_by_surface(self):
+        wire = base64.urlsafe_b64encode(json.dumps({
+            "prefix": "x",
+            "password": self.secret,
+        }, separators=(",", ":")).encode()).rstrip(b"=")
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            scanner = self.scanner(
+                root, qemu_arguments=("qemu-system-x86_64", wire.decode()))
+            (root / "artifacts/authorization.json").write_bytes(wire)
+            (root / "logs/windows-qemu.log").write_bytes(wire)
+            self.assertEqual(scanner((self.secret,)), {
+                "secrets_found": 3,
+                "reusable_credentials_retained": False,
+                "qemu_arguments_secret_free": False,
+                "tracked_artifacts_secret_free": False,
+                "logs_secret_free": False,
+            })
+
+    def test_base64_wrapped_secret_split_across_blocks_is_detected(self):
+        wire = base64.b64encode(json.dumps({
+            "padding": "xx",
+            "password": self.secret,
+        }).encode())
+        with tempfile.TemporaryDirectory() as name:
+            scanner = self.scanner(Path(name))
+            scanner.retained[0].root.joinpath(
+                "logs/windows-qemu.log").write_bytes(
+                    b"!" * (1024 * 1024 - len(wire) // 2)
+                    + wire + b"!")
             result = scanner((self.secret,))
             self.assertEqual(result["secrets_found"], 1)
             self.assertFalse(result["logs_secret_free"])

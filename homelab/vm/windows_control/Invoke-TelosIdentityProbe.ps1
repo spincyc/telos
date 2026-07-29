@@ -4,6 +4,7 @@ param(
     [ValidateSet(
         'current-principal',
         'current-session-state',
+        'interactive-operator',
         'controller-readiness',
         'domain-state',
         'managed-identity-state',
@@ -197,6 +198,65 @@ function Get-Probe {
                     $null -ne $domainAdmins -and
                     $principal.IsInRole($domainAdmins)
                 )
+            }
+        }
+        'interactive-operator' {
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $computer = Get-CimInstance Win32_ComputerSystem
+            $operator = 'operator@' + $ControllerDomain.ToUpperInvariant()
+            $operatorSid = Resolve-AccountSid $operator
+            $consolePrincipal = [string]$computer.UserName
+            $consoleSid = Resolve-AccountSid $consolePrincipal
+            $sessionId = [Diagnostics.Process]::GetCurrentProcess().SessionId
+            $profilePath = [Environment]::GetFolderPath('UserProfile')
+            $profiles = @(
+                Get-CimInstance Win32_UserProfile |
+                    Where-Object {
+                        $_.SID -ceq $identity.User.Value
+                    }
+            )
+            $profileSid = if ($profiles.Count -eq 1) {
+                [string]$profiles[0].SID
+            } else {
+                ''
+            }
+            $profileLoaded = (
+                $profiles.Count -eq 1 -and
+                [bool]$profiles[0].Loaded -and
+                -not [bool]$profiles[0].Special -and
+                ([uint32]$profiles[0].Status -band 15) -eq 0
+            )
+            $localProfile = $false
+            if ($profileLoaded -and
+                    -not [string]::IsNullOrWhiteSpace($profilePath) -and
+                    -not $profilePath.StartsWith('\\') -and
+                    [IO.Path]::IsPathRooted($profilePath) -and
+                    (Test-Path -LiteralPath $profilePath -PathType Container)) {
+                $environmentPath = [IO.Path]::GetFullPath(
+                    $profilePath).TrimEnd('\')
+                $registeredPath = [IO.Path]::GetFullPath(
+                    [Environment]::ExpandEnvironmentVariables(
+                        [string]$profiles[0].LocalPath
+                    )
+                ).TrimEnd('\')
+                $localProfile = $environmentPath.Equals(
+                    $registeredPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            }
+            return [ordered]@{
+                principal = [string]$identity.Name
+                principal_sid = [string]$identity.User.Value
+                operator = [string]$operator
+                operator_sid = [string]$operatorSid.Value
+                console_principal = [string]$consolePrincipal
+                console_sid = [string]$consoleSid.Value
+                authenticated = [bool]$identity.IsAuthenticated
+                authentication_type = [string]$identity.AuthenticationType
+                session_id = [int]$sessionId
+                profile_sid = [string]$profileSid
+                profile_loaded = [bool]$profileLoaded
+                local_profile = [bool]$localProfile
             }
         }
         'controller-readiness' {

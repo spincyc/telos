@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 import struct
@@ -132,6 +133,7 @@ class QmpClient:
             *,
             event_limit: int = 256,
             response_limit: int = 256,
+            clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if event_limit < 1 or response_limit < 1:
             raise ValueError("QMP queue limits must be positive")
@@ -142,6 +144,7 @@ class QmpClient:
         self._responses: dict[object, dict] = {}
         self._event_limit = event_limit
         self._response_limit = response_limit
+        self._clock = clock
 
     @classmethod
     def connect(
@@ -209,33 +212,77 @@ class QmpClient:
             raise WindowsGuiError("QMP response queue limit exceeded")
         self._responses[identifier] = message
 
-    def _message(self) -> dict:
+    def _remaining_timeout(
+            self, deadline: float, previous_timeout: float | None) -> float:
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise WindowsGuiError("QMP command timed out")
+        if previous_timeout is not None:
+            return min(previous_timeout, remaining)
+        return remaining
+
+    def _message(
+            self,
+            *,
+            deadline: float | None = None,
+            previous_timeout: float | None = None,
+    ) -> dict:
         while True:
+            if deadline is not None:
+                self.connection.settimeout(
+                    self._remaining_timeout(deadline, previous_timeout))
             message = self._read_message()
             if "event" in message:
                 self._queue_event(message)
                 continue
             return message
 
-    def execute(self, command: str, arguments: dict | None = None) -> dict:
+    def execute(
+            self,
+            command: str,
+            arguments: dict | None = None,
+            *,
+            timeout: float | None = None,
+    ) -> dict:
+        if timeout is not None and (
+            type(timeout) not in (int, float)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise WindowsGuiError("QMP command timeout is invalid")
         self.sequence += 1
         identifier = f"windows-gui-{self.sequence}"
         request = {"execute": command, "id": identifier}
         if arguments:
             request["arguments"] = arguments
-        self.connection.sendall(
-            json.dumps(request, separators=(",", ":")).encode() + b"\r\n")
-        while True:
-            response = self._responses.pop(identifier, None)
-            if response is None:
-                response = self._message()
-            if response.get("id") != identifier:
-                self._queue_response(response)
-                continue
-            if "error" in response:
-                raise WindowsGuiError(
-                    f"QMP {command} failed: {response['error']}")
-            return response.get("return", {})
+        deadline = None if timeout is None else self._clock() + timeout
+        previous_timeout = self.connection.gettimeout()
+        try:
+            if deadline is not None:
+                self.connection.settimeout(
+                    self._remaining_timeout(deadline, previous_timeout))
+            self.connection.sendall(
+                json.dumps(request, separators=(",", ":")).encode()
+                + b"\r\n")
+            while True:
+                response = self._responses.pop(identifier, None)
+                if response is None:
+                    response = self._message(
+                        deadline=deadline,
+                        previous_timeout=previous_timeout,
+                    )
+                if response.get("id") != identifier:
+                    self._queue_response(response)
+                    continue
+                if "error" in response:
+                    raise WindowsGuiError(
+                        f"QMP {command} failed: {response['error']}")
+                return response.get("return", {})
+        except (socket.timeout, TimeoutError) as error:
+            raise WindowsGuiError("QMP command timed out") from error
+        finally:
+            if deadline is not None:
+                self.connection.settimeout(previous_timeout)
 
     def await_device_deleted(
             self, device_id: str, *, timeout: float = 5.0) -> dict:
@@ -280,26 +327,28 @@ class QmpClient:
     def screenshot(self, path: Path) -> None:
         self.execute("screendump", {"filename": str(path)})
 
-    def key(self, name: str) -> None:
+    def key(self, name: str, *, timeout: float | None = None) -> None:
         if name not in SAFE_KEYS:
             raise WindowsGuiError(f"unsafe GUI key: {name}")
         self.execute("send-key", {
             "keys": [{"type": "qcode", "data": name}],
             "hold-time": 60,
-        })
+        }, timeout=timeout)
 
-    def chord(self, *names: str) -> None:
+    def chord(
+            self, *names: str, timeout: float | None = None) -> None:
         if not names or any(not isinstance(name, str) or not name for name in names):
             raise WindowsGuiError("invalid GUI key chord")
         self.execute("send-key", {
             "keys": [{"type": "qcode", "data": name} for name in names],
             "hold-time": 60,
-        })
+        }, timeout=timeout)
 
-    def type_text(self, value: str) -> None:
+    def type_text(self, value: str, *, timeout: float | None = None) -> None:
         """Type bounded ASCII without placing its value in an error message."""
         if not isinstance(value, str) or not 1 <= len(value) <= 512:
             raise WindowsGuiError("GUI text length is invalid")
+        encoded: list[tuple[str, ...]] = []
         for offset, character in enumerate(value):
             if "a" <= character <= "z" or "0" <= character <= "9":
                 keys = (character,)
@@ -312,7 +361,20 @@ class QmpClient:
             else:
                 raise WindowsGuiError(
                     f"GUI text has unsupported character at offset {offset}")
-            self.chord(*keys)
+            encoded.append(keys)
+        if timeout is not None and (
+            type(timeout) not in (int, float)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise WindowsGuiError("QMP text timeout is invalid")
+        deadline = None if timeout is None else self._clock() + timeout
+        for keys in encoded:
+            remaining = (
+                None if deadline is None
+                else self._remaining_timeout(deadline, None)
+            )
+            self.chord(*keys, timeout=remaining)
 
 
 class WindowsSetupDriver:

@@ -36,6 +36,20 @@ def record(action="domain-state"):
             "local_administrator": False,
             "domain_administrator": False,
         },
+        "interactive-operator": {
+            "principal": r"FACTORY\operator",
+            "principal_sid": "S-1-5-21-1-2-3-1104",
+            "operator": "operator@AD.FACTORY.TEST",
+            "operator_sid": "S-1-5-21-1-2-3-1104",
+            "console_principal": r"FACTORY\operator",
+            "console_sid": "S-1-5-21-1-2-3-1104",
+            "authenticated": True,
+            "authentication_type": "Kerberos",
+            "session_id": 1,
+            "profile_sid": "S-1-5-21-1-2-3-1104",
+            "profile_loaded": True,
+            "local_profile": True,
+        },
         "controller-readiness": {
             "samba_ad": True,
             "dns": True,
@@ -227,6 +241,7 @@ class WindowsControlSerialTests(unittest.TestCase):
     def test_identity_probe_records_have_exact_secret_free_schemas(self):
         for action in (
             "current-session-state",
+            "interactive-operator",
             "controller-readiness",
             "managed-identity-state",
             "gateway-reachability",
@@ -235,11 +250,20 @@ class WindowsControlSerialTests(unittest.TestCase):
             parsed = parse_probe_record(
                 json.dumps(candidate).encode() + b"\n", action)
             self.assertEqual(candidate["observation"], parsed["observation"])
-            candidate["observation"]["principal"] = "FACTORY\\student"
+            candidate["observation"]["unexpected"] = "public"
             with self.assertRaisesRegex(
                     WindowsControlSerialError, "schema"):
                 parse_probe_record(
                     json.dumps(candidate).encode() + b"\n", action)
+
+    def test_interactive_operator_rejects_boolean_session_identifier(self):
+        candidate = record("interactive-operator")
+        candidate["observation"]["session_id"] = True
+        with self.assertRaisesRegex(
+                WindowsControlSerialError, "schema"):
+            parse_probe_record(
+                json.dumps(candidate).encode() + b"\n",
+                "interactive-operator")
 
     def test_gateway_probe_has_one_strict_guest_visible_fact(self):
         candidate = record("gateway-reachability")

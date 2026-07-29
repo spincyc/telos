@@ -291,7 +291,59 @@ def _record(
 
 def _post_reboot_proof(
     callbacks: AcceptanceCallbacks,
+    expected_operator: str,
 ) -> Mapping[str, object]:
+    identity_record = _call_static_probe(
+        callbacks, "windows-rebooted-joined", "interactive-operator")
+    identity = identity_record.get("observation")
+    identity_keys = {
+        "principal", "principal_sid", "operator", "operator_sid",
+        "console_principal", "console_sid", "authenticated",
+        "authentication_type", "session_id", "profile_sid",
+        "profile_loaded", "local_profile",
+    }
+    sid_fields = (
+        "principal_sid", "operator_sid", "console_sid", "profile_sid")
+    expected_account = expected_operator.partition("@")[0]
+    if (
+        identity_record.get("schema_version") != 1
+        or identity_record.get("action") != "interactive-operator"
+        or identity_record.get("result") != "pass"
+        or not isinstance(identity, dict)
+        or set(identity) != identity_keys
+        or any(
+            not isinstance(identity[field], str) or not identity[field]
+            for field in (
+                "principal", "operator", "console_principal",
+                "authentication_type", *sid_fields,
+            )
+        )
+        or any(
+            not identity[field].startswith("S-1-")
+            for field in sid_fields
+        )
+        or type(identity.get("authenticated")) is not bool
+        or type(identity.get("profile_loaded")) is not bool
+        or type(identity.get("local_profile")) is not bool
+        or type(identity.get("session_id")) is not int
+        or identity["session_id"] <= 0
+        or identity["operator"] != expected_operator
+        or (
+            identity["principal"].casefold()
+            != identity["console_principal"].casefold()
+        )
+        or (
+            identity["principal"].rpartition("\\")[0] == ""
+            or identity["principal"].rpartition("\\")[2].casefold()
+            != expected_account.casefold()
+        )
+        or len({identity[field] for field in sid_fields}) != 1
+        or not identity["authenticated"]
+        or not identity["profile_loaded"]
+        or not identity["local_profile"]
+    ):
+        raise WindowsIdentityOrchestratorError(
+            "post-reboot interactive operator probe is invalid")
     record = _call_static_probe(
         callbacks, "windows-rebooted-joined", "domain-state")
     observation = record.get("observation")
@@ -436,7 +488,8 @@ def _execute_join(
                     coordinate=_local_reauthentication_coordinate(error),
                 ) from None
             try:
-                return _post_reboot_proof(callbacks)
+                return _post_reboot_proof(
+                    callbacks, f"operator@{realm.upper()}")
             except BaseException as error:
                 raise WindowsJoinIsoError(
                     "post-reboot probe failed",

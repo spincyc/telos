@@ -18,6 +18,7 @@ from .windows_identity_orchestrator import (
     execute_windows_identity_acceptance,
 )
 from .windows_identity_progressive import ProgressiveRotationPlan
+from .windows_identity_attempt import claim, terminalize
 from .windows_identity_run import (
     NativeProcessBoundary,
     WindowsIdentityRunError,
@@ -73,21 +74,53 @@ def run(
     if acceptance_factory is None:
         from .windows_identity_factory import default_acceptance_factory
         acceptance_factory = default_acceptance_factory
-    configuration = acceptance_factory(boundary)
     with SignalGuard():
-        execute_windows_identity_acceptance(
-            boundary=boundary,
-            rotation_plan=configuration.rotation_plan,
-            publication=configuration.publication,
-            private_root=configuration.private_root,
-            evidence=configuration.evidence,
-            realm=configuration.realm,
-            callbacks=configuration.callbacks,
-            stage_principals=configuration.stage_principals,
-            destroy_principals=configuration.destroy_principals,
-            stage_join_principal=configuration.stage_join_principal,
-            destroy_join_principal=configuration.destroy_join_principal,
-        )
+        configuration = acceptance_factory(boundary)
+        try:
+            claim_sha256 = claim(boundary.attempt)
+        except (OSError, RuntimeError) as error:
+            raise WindowsIdentityRunError(
+                "identity attempt claim failed: "
+                f"{type(error).__name__}") from None
+        outcome = "failed"
+        primary: BaseException | None = None
+        try:
+            execute_windows_identity_acceptance(
+                boundary=boundary,
+                rotation_plan=configuration.rotation_plan,
+                publication=configuration.publication,
+                private_root=configuration.private_root,
+                evidence=configuration.evidence,
+                realm=configuration.realm,
+                callbacks=configuration.callbacks,
+                stage_principals=configuration.stage_principals,
+                destroy_principals=configuration.destroy_principals,
+                stage_join_principal=configuration.stage_join_principal,
+                destroy_join_principal=configuration.destroy_join_principal,
+            )
+            outcome = "succeeded"
+        except BaseException as error:
+            primary = error
+            if isinstance(error, (
+                    RunInterrupted, KeyboardInterrupt, SystemExit)):
+                outcome = "interrupted"
+        try:
+            terminalize(
+                boundary.attempt,
+                claim_sha256=claim_sha256,
+                outcome=outcome,
+                teardown=boundary.audit_teardown(),
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            lifecycle = (
+                f"; lifecycle={type(primary).__name__}"
+                if primary is not None else ""
+            )
+            raise WindowsIdentityRunError(
+                "terminal teardown receipt persistence failed: "
+                f"{type(error).__name__}{lifecycle}") from None
+        if primary is not None:
+            raise primary
     return 0
 
 

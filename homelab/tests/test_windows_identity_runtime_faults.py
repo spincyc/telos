@@ -130,19 +130,23 @@ class WindowsIdentityRuntimeFaultTests(unittest.TestCase):
         "homelab.vm.windows_identity_run.os.kill",
         side_effect=ProcessLookupError,
     )
-    def test_failed_resume_retains_process_ownership(self, kill, terminate):
+    def test_failed_resume_still_terminates_and_reaps_process(self, kill, terminate):
         boundary = self.boundary()
-        boundary.processes["controller"] = Process()
+        process = Process()
+        boundary.processes["controller"] = process
         boundary.suspended_processes.add("controller")
+        terminate.side_effect = lambda _children: (
+            setattr(process, "returncode", 0) or []
+        )
 
         with self.assertRaisesRegex(
             WindowsIdentityRunError, "resume before teardown"
         ):
             boundary._stop("controller")
 
-        terminate.assert_not_called()
-        self.assertIn("controller", boundary.processes)
-        self.assertIn("controller", boundary.suspended_processes)
+        terminate.assert_called_once_with([process])
+        self.assertNotIn("controller", boundary.processes)
+        self.assertNotIn("controller", boundary.suspended_processes)
 
     @mock.patch("homelab.vm.windows_identity_run.terminate_children")
     @mock.patch("homelab.vm.windows_identity_run.os.kill")
@@ -161,6 +165,69 @@ class WindowsIdentityRuntimeFaultTests(unittest.TestCase):
         terminate.assert_called_once_with([process])
         self.assertNotIn("controller", boundary.processes)
         self.assertNotIn("controller", boundary.suspended_processes)
+
+    @mock.patch("homelab.vm.windows_identity_run.terminate_children")
+    def test_console_release_failure_does_not_skip_controller_cleanup(
+        self, terminate,
+    ):
+        process = Process()
+        terminate.side_effect = lambda _children: (
+            setattr(process, "returncode", 0) or []
+        )
+        boundary = self.boundary()
+        boundary.processes["controller"] = process
+        boundary.controller_console = mock.Mock()
+        boundary.controller_console.release_password.side_effect = (
+            KeyboardInterrupt())
+        controller_qmp = mock.Mock()
+        controller_overlay = mock.Mock()
+        boundary.controller_qmp = controller_qmp
+        boundary.controller_overlay = controller_overlay
+
+        with self.assertRaisesRegex(
+            WindowsIdentityRunError, "credential release: KeyboardInterrupt"
+        ):
+            boundary.stop_controller()
+
+        controller_qmp.close.assert_called_once()
+        controller_overlay.close.assert_called_once()
+        terminate.assert_called_once_with([process])
+        self.assertNotIn("controller", boundary.processes)
+
+    @mock.patch(
+        "homelab.vm.windows_identity_run.os.close",
+        side_effect=OSError("private"),
+    )
+    def test_failed_control_fd_close_drops_stale_descriptor(self, close):
+        boundary = self.boundary()
+        boundary.control_iso_fd = 91
+        with self.assertRaisesRegex(
+            WindowsIdentityRunError, "control ISO ownership"
+        ):
+            boundary.stop_windows()
+        self.assertIsNone(boundary.control_iso_fd)
+        close.assert_called_once_with(91)
+
+    @mock.patch(
+        "homelab.vm.windows_identity_run.os.close",
+        side_effect=OSError("private"),
+    )
+    def test_failed_controller_media_fd_close_drops_stale_descriptor(
+        self, close,
+    ):
+        boundary = self.boundary()
+        boundary.controller_factory_fd = 92
+        boundary.controller_factory_bundle = mock.Mock()
+        with mock.patch.object(
+            boundary, "_destroy_owned_inode",
+        ) as destroy:
+            with self.assertRaisesRegex(
+                WindowsIdentityRunError, "Controller convergence media"
+            ):
+                boundary.stop_controller()
+        destroy.assert_called_once()
+        self.assertIsNone(boundary.controller_factory_fd)
+        close.assert_called_once_with(92)
 
 
 if __name__ == "__main__":
