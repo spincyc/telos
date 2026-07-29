@@ -281,6 +281,7 @@ class _GuiInteraction:
             (),
             timeout=timeout,
             crop=reference.crop,
+            expected_geometry=reference.geometry,
         )
         self._driver._observe(checkpoint)
 
@@ -314,6 +315,12 @@ class _GuiInteraction:
                 self._qmp.screenshot(path)
                 os.chmod(path, 0o600)
                 full_actual = read_ppm(path)
+                if (
+                    (full_actual.width, full_actual.height)
+                    != reference.geometry
+                ):
+                    raise WindowsIdentityGuiError(
+                        "live screenshot geometry differs from reference")
                 actual = crop_image(full_actual, reference.crop)
                 distance = image_distance(actual, expected)
             finally:
@@ -329,6 +336,12 @@ class _GuiInteraction:
             else:
                 near_consecutive = 0
             for name, alternative in alternatives:
+                if (
+                    (full_actual.width, full_actual.height)
+                    != alternative.geometry
+                ):
+                    raise WindowsIdentityGuiError(
+                        "live screenshot geometry differs from reference")
                 alternative_actual = crop_image(
                     full_actual, alternative.crop)
                 alternative_distance = image_distance(

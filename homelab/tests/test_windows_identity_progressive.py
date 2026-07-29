@@ -112,7 +112,7 @@ class ProgressiveRotationTests(unittest.TestCase):
             ),
             mock.patch.object(
                 progressive_subject, "read_ppm",
-                return_value=SimpleNamespace(width=16, height=16),
+                return_value=SimpleNamespace(width=1280, height=800),
             ),
             mock.patch.object(
                 progressive_subject, "crop_image",
@@ -136,6 +136,37 @@ class ProgressiveRotationTests(unittest.TestCase):
         self.assertEqual(2, qmp.screenshot.call_count)
         self.assertEqual([], list(evidence.iterdir()))
 
+    def test_ephemeral_observation_rejects_wrong_full_frame_geometry(self):
+        evidence = Path(self.temporary.name) / "wrong-geometry"
+        evidence.mkdir(mode=0o700)
+        qmp = mock.Mock()
+        qmp.screenshot.side_effect = (
+            lambda path: path.write_bytes(b"ephemeral-pixels"))
+        driver = mock.Mock(
+            sequence=0,
+            observer=SimpleNamespace(root=evidence),
+            clock=mock.Mock(side_effect=(0.0, 0.0)),
+            pause=mock.Mock(),
+            interval=1.0,
+        )
+        with (
+            mock.patch.object(
+                progressive_subject,
+                "WindowsCredentialRotationDriver",
+                return_value=driver,
+            ),
+            mock.patch.object(
+                progressive_subject, "read_ppm",
+                return_value=SimpleNamespace(width=640, height=400),
+            ),
+        ):
+            interaction = progressive_subject._GuiInteraction(qmp, evidence)
+            with self.assertRaisesRegex(
+                    progressive_subject.WindowsIdentityGuiError,
+                    "geometry differs"):
+                interaction.observe_ephemeral(reference("desktop"), 1.0)
+        self.assertEqual([], list(evidence.iterdir()))
+
     def test_concrete_interaction_classifies_ephemeral_sign_in_twice(self):
         evidence = Path(self.temporary.name) / "alternate-evidence"
         evidence.mkdir(mode=0o700)
@@ -157,7 +188,7 @@ class ProgressiveRotationTests(unittest.TestCase):
             ),
             mock.patch.object(
                 progressive_subject, "read_ppm",
-                return_value=SimpleNamespace(width=16, height=16),
+                return_value=SimpleNamespace(width=1280, height=800),
             ),
             mock.patch.object(
                 progressive_subject, "crop_image",
@@ -215,7 +246,7 @@ class ProgressiveRotationTests(unittest.TestCase):
                     ),
                     mock.patch.object(
                         progressive_subject, "read_ppm",
-                        return_value=SimpleNamespace(width=16, height=16),
+                        return_value=SimpleNamespace(width=1280, height=800),
                     ),
                     mock.patch.object(
                         progressive_subject, "crop_image",

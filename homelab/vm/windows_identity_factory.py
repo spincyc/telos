@@ -167,7 +167,12 @@ def _references(
         loaded = {
             name: load_identity_reference(
                 REFERENCE_ROOT / f"{name}.json", expected_guest=guest)
-            for name in (*REFERENCE_NAMES, "run-dialog")
+            for name in (
+                *REFERENCE_NAMES,
+                "run-dialog",
+                "post-join-sign-in",
+                "post-join-operator-sign-in",
+            )
         }
     except (
         KeyError,

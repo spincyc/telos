@@ -226,6 +226,34 @@ class WindowsIdentityGuiTests(unittest.TestCase):
         self.assertEqual(2, len([
             action for action in qmp.actions if action[0] == "screenshot"]))
 
+    def test_rejects_matching_crop_from_wrong_full_frame_geometry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = root / "reference.ppm"
+            pattern = bytes([20, 40, 60]) * 320 * 200
+            reference.write_bytes(b"P6\n320 200\n255\n" + pattern)
+            rows = []
+            for row in range(400):
+                if row < 200:
+                    rows.append(
+                        pattern[row * 320 * 3:(row + 1) * 320 * 3]
+                        + bytes([1, 2, 3]) * 320)
+                else:
+                    rows.append(bytes([1, 2, 3]) * 640)
+            frame = b"P6\n640 400\n255\n" + b"".join(rows)
+            qmp = FakeQmp()
+            qmp.screenshot = lambda path: path.write_bytes(frame)
+            ticks = iter(range(10))
+            driver = WindowsCredentialRotationDriver(
+                qmp, root, interval=0, clock=lambda: next(ticks),
+                pause=lambda _: None)
+            with self.assertRaisesRegex(
+                    WindowsIdentityGuiError, "best image distance inf"):
+                driver._observe(Checkpoint(
+                    "sign-in", reference, (), timeout=3, threshold=0,
+                    crop=(0, 0, 320, 200),
+                    expected_geometry=(1280, 800)))
+
 
 if __name__ == "__main__":
     unittest.main()

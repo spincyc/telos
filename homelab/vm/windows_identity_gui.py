@@ -96,8 +96,17 @@ class WindowsCredentialRotationDriver:
                 f"identity-{self.sequence:04d}-{checkpoint.name}.ppm")
             self.qmp.screenshot(path)
             os.chmod(path, 0o600)
-            actual = crop_image(read_ppm(path), checkpoint.crop)
-            distance = image_distance(actual, reference)
+            full_actual = read_ppm(path)
+            if (
+                checkpoint.expected_geometry is not None
+                and (full_actual.width, full_actual.height)
+                != checkpoint.expected_geometry
+            ):
+                actual = full_actual
+                distance = float("inf")
+            else:
+                actual = crop_image(full_actual, checkpoint.crop)
+                distance = image_distance(actual, reference)
             best = min(best, distance)
             if useful_frame(actual) and distance <= checkpoint.threshold:
                 consecutive += 1

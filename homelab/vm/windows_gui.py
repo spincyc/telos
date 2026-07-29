@@ -52,6 +52,7 @@ class Checkpoint:
     timeout: float = 90.0
     threshold: float = 6.0
     crop: tuple[int, int, int, int] | None = None
+    expected_geometry: tuple[int, int] | None = None
 
 
 def read_ppm(path: Path) -> Image:

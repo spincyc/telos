@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from homelab.vm import windows_identity_factory as factory_subject
 from homelab.tests.windows_identity_fixture import (
     write_prepared_authorization,
 )
@@ -153,6 +154,25 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                       for index in range(4)))
             self.assertEqual(0, scan["secrets_found"])
             self.assertTrue(scan["logs_secret_free"])
+
+    def test_rejects_invalid_enabled_operator_reference_before_runtime(self):
+        original = factory_subject.load_identity_reference
+
+        def load(path, **kwargs):
+            if path.name == "post-join-operator-sign-in.json":
+                raise factory_subject.WindowsIdentityReferenceError(
+                    "invalid operator reference")
+            return original(path, **kwargs)
+
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            with mock.patch.object(
+                    factory_subject, "load_identity_reference",
+                    side_effect=load):
+                with self.assertRaisesRegex(
+                        WindowsIdentityFactoryError,
+                        "trusted Windows references"):
+                    self.factory(boundary, bundle)
 
     def test_scanner_detects_attempt_runtime_and_gui_evidence_leaks(self):
         secret = "Synthetic-Runtime-Leak-47!"
