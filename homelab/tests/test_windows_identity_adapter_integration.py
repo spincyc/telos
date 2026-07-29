@@ -311,6 +311,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 ),
                 mock.call.sleep(2),
                 mock.call.key("ret", timeout=mock.ANY),
+                mock.call.sleep(2),
                 mock.call.observe_ephemeral(
                     desktop,
                     mock.ANY,
@@ -329,7 +330,10 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertEqual(11, final_timeout)
         self.qmp.type_text.assert_called_once_with(
             ".\\telosadmin", timeout=mock.ANY)
-        self.assertEqual([mock.call(2), mock.call(2)], sleep.call_args_list)
+        self.assertEqual(
+            [mock.call(2), mock.call(2), mock.call(2)],
+            sleep.call_args_list,
+        )
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
@@ -809,7 +813,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         adapter.reauthenticate_local("private")
 
         self.assertEqual(
-            [mock.call(5), mock.call(2), mock.call(2)],
+            [mock.call(5), mock.call(2), mock.call(2), mock.call(2)],
             sleep.call_args_list,
         )
         self.assertEqual(

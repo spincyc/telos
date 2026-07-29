@@ -702,6 +702,20 @@ class NativeWindowsAcceptanceAdapter:
                 "submit", lambda: interaction.key(
                     "ret", timeout=remaining("submit")))
 
+            def settle_submission_input() -> None:
+                # QMP acknowledges the Enter key event before Windows has
+                # necessarily consumed it.  Let the queued submission drain
+                # before releasing the already-armed watcher.  Its baseline
+                # predates secret entry, so an event produced during this
+                # bounded interval remains in scope.
+                if lock_settle_delay:
+                    budget = remaining("submit")
+                    time.sleep(min(lock_settle_delay, budget))
+                    remaining("submit")
+
+            _run_local_reauthentication_operation(
+                "submit", settle_submission_input)
+
         diagnostic_factory = self.post_submit_diagnostic
         self._post_submit_diagnostic_code = None
         self._post_submit_diagnostic_collection = None
