@@ -101,7 +101,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.rotation_plan.
                 post_join_sign_in_manifest.name,
             )
-            self.assertFalse(
+            self.assertTrue(
                 configuration.rotation_plan.
                 post_join_operator_account_calibrated,
             )

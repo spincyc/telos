@@ -384,7 +384,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         change_password_keys=("down", "down", "down", "ret"),
         post_join_local_account_calibrated=True,
         post_join_sign_in_manifest=REFERENCE_ROOT / "post-join-sign-in.json",
-        post_join_operator_account_calibrated=False,
+        post_join_operator_account_calibrated=True,
         post_join_operator_sign_in_manifest=(
             REFERENCE_ROOT / "post-join-operator-sign-in.json"
         ),
