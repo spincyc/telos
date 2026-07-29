@@ -197,7 +197,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             "audit-disabled",
             "event-log-reset",
             "event-gap",
-            "no-correlated-event",
+            "no-logon-event",
+            "uncorrelated-logon-event",
             "ambiguous",
             "watcher-error",
         )
@@ -223,6 +224,20 @@ class WindowsJoinIsoTests(unittest.TestCase):
         )
         self.assertIn("LogonType", diagnostic)
         self.assertIn("'2'", diagnostic)
+        self.assertIn(
+            "$sawInteractiveLogon = $false", diagnostic)
+        self.assertIn(
+            "if ([string]$data.LogonType -cne '2')", diagnostic)
+        self.assertIn(
+            "$sawInteractiveLogon = $true", diagnostic)
+        self.assertLess(
+            diagnostic.index(
+                "if ([string]$data.LogonType -cne '2')"),
+            diagnostic.index(
+                "$targetName = [string]$data.TargetUserName"),
+        )
+        self.assertIn(
+            "if ($sawInteractiveLogon)", diagnostic)
         self.assertNotIn("Format-List", diagnostic)
         self.assertNotIn("Format-Table", diagnostic)
         self.assertNotIn("$targetName -like", diagnostic)

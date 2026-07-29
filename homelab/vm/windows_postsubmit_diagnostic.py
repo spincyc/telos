@@ -40,7 +40,8 @@ class PostSubmitDiagnosticCode(Enum):
     AUDIT_DISABLED = "audit-disabled"
     EVENT_LOG_RESET = "event-log-reset"
     EVENT_GAP = "event-gap"
-    NO_CORRELATED_EVENT = "no-correlated-event"
+    NO_LOGON_EVENT = "no-logon-event"
+    UNCORRELATED_LOGON_EVENT = "uncorrelated-logon-event"
     AMBIGUOUS = "ambiguous"
     WATCHER_ERROR = "watcher-error"
 

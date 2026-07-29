@@ -238,6 +238,7 @@ public static class TelosAuditPolicy {
     # Finish before the host's independently enforced 15-second diagnostic
     # budget so terminal cleanup and COM1 handoff retain time to complete.
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $sawInteractiveLogon = $false
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($serial.BytesToRead -gt 0) {
             [void](Read-ExactCommand @('cancel') $nonce)
@@ -285,6 +286,10 @@ public static class TelosAuditPolicy {
         $matches = @()
         foreach ($eventRecord in $events) {
             $data = Get-EventData $eventRecord
+            if ([string]$data.LogonType -cne '2') {
+                continue
+            }
+            $sawInteractiveLogon = $true
             $domain = [string]$data.TargetDomainName
             $isOperator = if ($eventRecord.Id -eq 4624) {
                 [string]$data.TargetUserSid -ceq
@@ -307,7 +312,7 @@ public static class TelosAuditPolicy {
                     (-not $domain -or $realmDomain))
                 $splitIdentity -or $upnIdentity
             }
-            if ($isOperator -and [string]$data.LogonType -eq '2') {
+            if ($isOperator) {
                 $matches += ,@($eventRecord, $data)
             }
         }
@@ -325,7 +330,13 @@ public static class TelosAuditPolicy {
         }
         Start-Sleep -Milliseconds 250
     }
-    if (-not $code) { $code = 'no-correlated-event' }
+    if (-not $code) {
+        $code = if ($sawInteractiveLogon) {
+            'uncorrelated-logon-event'
+        } else {
+            'no-logon-event'
+        }
+    }
     Complete-Diagnostic 'result' $nonce $code
 }
 catch {
