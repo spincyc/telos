@@ -226,6 +226,45 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
                 with self.assertRaises(PostSubmitDiagnosticError):
                     session.submitted()
 
+    def test_submission_and_cleanup_have_fresh_bounded_phase_deadlines(self):
+        host, guest = socket.socketpair()
+        self.addCleanup(host.close)
+        self.addCleanup(guest.close)
+        elapsed = [0.0]
+        session = PostSubmitDiagnosticSession(
+            host,
+            NONCE,
+            PRINCIPAL,
+            timeout=5,
+            clock=lambda: elapsed[0],
+            pause=lambda _delay: None,
+        )
+        session._state = "armed"
+
+        # Secret entry consumed more than the arm phase's entire budget.
+        elapsed[0] = 9
+        guest.sendall(record({
+            "schema_version": 1, "event": "submitted", "nonce": NONCE,
+        }))
+        self.assertIsNone(session.submitted())
+        self.assertEqual(14, session._deadline)
+        self.assertEqual({
+            "schema_version": 1, "command": "submitted", "nonce": NONCE,
+        }, json.loads(guest.recv(1024)))
+
+        # A failed result phase can likewise exhaust its deadline without
+        # preventing the independently bounded cleanup command.
+        elapsed[0] = 20
+        guest.sendall(record({
+            "schema_version": 1, "event": "cancelled", "nonce": NONCE,
+            "cleanup_complete": True,
+        }))
+        session.cancel()
+        self.assertEqual(25, session._deadline)
+        self.assertEqual({
+            "schema_version": 1, "command": "cancel", "nonce": NONCE,
+        }, json.loads(guest.recv(1024)))
+
     def test_terminal_state_rejects_duplicate_result_and_cancel(self):
         session, guest = self.session()
         session._state = "submitted"

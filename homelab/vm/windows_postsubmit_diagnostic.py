@@ -95,6 +95,7 @@ class PostSubmitDiagnosticSession:
         self._clock = clock
         self._pause = pause
         self._quiescence_delay = quiescence_delay
+        self._timeout = timeout
         self._deadline = clock() + timeout
         self._state = "connected"
         self.closed = False
@@ -242,6 +243,11 @@ class PostSubmitDiagnosticSession:
         if self._state != "armed":
             raise PostSubmitDiagnosticError(
                 "diagnostic submission is out of order")
+        # GUI secret entry occurs between arm and submission and has its own
+        # independently bounded acceptance budget. Start a fresh diagnostic
+        # phase here so that time cannot expire this transport before it sends
+        # the submitted fence or receives the watcher's bounded result.
+        self._deadline = self._clock() + self._timeout
         self._send("submitted")
         record = self._read()
         expected = {
@@ -268,6 +274,9 @@ class PostSubmitDiagnosticSession:
         if self._state not in {"armed", "submitted"}:
             raise PostSubmitDiagnosticError(
                 "diagnostic cancellation is out of order")
+        # Cleanup gets a fresh bounded phase even when the preceding receive
+        # exhausted its own diagnostic deadline.
+        self._deadline = self._clock() + self._timeout
         self._send("cancel")
         record = self._read()
         expected = {
