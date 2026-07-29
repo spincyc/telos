@@ -128,6 +128,51 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "receipt-unavailable")
 
     def test_controller_arm_unproved_cleanup_aborts_before_secret(self):
+        for collection in (
+            ControllerAuthCollection.SINK_INVALID,
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+        ):
+            with self.subTest(collection=collection):
+                sign_in, desktop, plan = (
+                    self._domain_reauthentication_fixture())
+                result = ControllerAuthResult(
+                    collection=collection,
+                    cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+                )
+                with (
+                    mock.patch.object(
+                        subject, "_load_references",
+                        return_value=(
+                            sign_in, desktop, mock.sentinel.security,
+                            mock.sentinel.change)),
+                    mock.patch.object(
+                        subject, "_private_evidence_root",
+                        return_value=self.root / "reauth-evidence"),
+                    mock.patch.object(
+                        subject, "_GuiInteraction") as interaction_type,
+                    mock.patch.object(subject, "_prove_secret_entry_departure"),
+                    mock.patch.object(
+                        subject, "ControllerAuthDiagnosticSession",
+                    ) as controller_type,
+                ):
+                    controller_type.return_value.arm.side_effect = (
+                        ControllerAuthDiagnosticError(
+                            controller_auth_result=result,
+                            cleanup_proved=False,
+                        ))
+                    adapter = self.adapter(rotation_plan=plan)
+                    with self.assertRaises(
+                            subject.WindowsLocalReauthenticationError
+                    ) as caught:
+                        adapter.reauthenticate_domain_operator(
+                            "operator@FACTORY.TEST", "private", "a" * 32)
+                self.assertEqual(
+                    caught.exception.reauth_operation, "controller-auth-arm")
+                self.assertIs(
+                    caught.exception.controller_auth_result, result)
+                interaction_type.return_value.type_secret.assert_not_called()
+
+    def test_controller_arm_generic_failure_closes_before_secret(self):
         sign_in, desktop, plan = self._domain_reauthentication_fixture()
         with (
             mock.patch.object(
@@ -143,12 +188,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             mock.patch.object(
                 subject, "ControllerAuthDiagnosticSession") as controller_type,
         ):
-            controller_type.return_value.arm.side_effect = (
-                ControllerAuthDiagnosticError(
-                    controller_auth_result=ControllerAuthResult(
-                        collection=ControllerAuthCollection.SINK_INVALID,
-                        cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
-                    cleanup_proved=False))
+            controller_type.return_value.arm.side_effect = RuntimeError(
+                "private Controller detail")
             adapter = self.adapter(rotation_plan=plan)
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
@@ -158,7 +199,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             caught.exception.reauth_operation, "controller-auth-arm")
         self.assertEqual(
             caught.exception.controller_auth_result.collection,
-            ControllerAuthCollection.SINK_INVALID)
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE)
         self.assertEqual(
             caught.exception.controller_auth_result.cleanup,
             ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)

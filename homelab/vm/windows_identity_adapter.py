@@ -914,29 +914,34 @@ class NativeWindowsAcceptanceAdapter:
                         str(LEASE_IP)),
                     timeout=min(45.0, remaining("diagnostic-arm")),
                 )
-                controller_auth.arm()
+            except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                raise
+            except BaseException:
+                self._controller_auth_result = ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                controller_auth = None
+            try:
+                if controller_auth is not None:
+                    controller_auth.arm()
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
             except ControllerAuthDiagnosticError as error:
                 self._controller_auth_result = error.controller_auth_result
                 if not error.cleanup_proved:
-                    operation = (
-                        "controller-auth-arm"
-                        if self._controller_auth_result.collection in {
-                            ControllerAuthCollection.CONFIGURATION_INVALID,
-                            ControllerAuthCollection.SINK_INVALID,
-                        }
-                        else "diagnostic-arm"
-                    )
                     raise WindowsLocalReauthenticationError(
-                        operation,
+                        "controller-auth-arm",
                         controller_auth_result=(
                             self._controller_auth_result)) from None
                 controller_auth = None
             except BaseException:
                 self._controller_auth_result = ControllerAuthResult(
-                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
-                controller_auth = None
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+                )
+                raise WindowsLocalReauthenticationError(
+                    "controller-auth-arm",
+                    controller_auth_result=self._controller_auth_result,
+                ) from None
         if diagnostic_factory is None or not domain_operator:
             try:
                 submit_secret()

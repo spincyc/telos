@@ -8,6 +8,38 @@ from homelab.vm import windows_identity_adapter as subject
 
 
 class WindowsIdentityAdapterTests(unittest.TestCase):
+    def test_diagnostic_arm_subphase_is_exact_and_forgery_resistant(self):
+        for subphase in sorted(
+            subject.PostSubmitDiagnosticError._ARM_SUBPHASES
+        ):
+            error = subject.PostSubmitDiagnosticError(
+                "private detail", arm_subphase=subphase)
+            self.assertEqual(
+                f"diagnostic-arm-{subphase}",
+                subject._diagnostic_arm_failure_operation(
+                    error, fallback="launch"),
+            )
+        forged = subject.PostSubmitDiagnosticError(
+            "diagnostic-arm-secret-value",
+            arm_subphase="secret-value")
+        forged.arm_subphase = "parse-secret-value"
+        self.assertEqual(
+            "diagnostic-arm-connect",
+            subject._diagnostic_arm_failure_operation(
+                forged, fallback="connect"),
+        )
+        self.assertEqual(
+            "diagnostic-arm-launch",
+            subject._diagnostic_arm_failure_operation(
+                RuntimeError("diagnostic-arm-parse"), fallback="launch"),
+        )
+        forged.arm_subphase = []
+        self.assertEqual(
+            "diagnostic-arm-connect",
+            subject._diagnostic_arm_failure_operation(
+                forged, fallback="connect"),
+        )
+
     def test_local_reauthentication_operations_drop_backend_context(self):
         for operation in sorted(
             subject.WindowsLocalReauthenticationError._OPERATIONS
