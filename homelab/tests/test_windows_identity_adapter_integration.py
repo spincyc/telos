@@ -707,7 +707,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             mock.sentinel.security,
             mock.sentinel.change,
         )
-        adapter = self.adapter(rotation_plan=mock.Mock())
+        adapter = self.adapter(rotation_plan=mock.Mock(
+            post_join_local_account_calibrated=True))
 
         with self.assertRaisesRegex(
                 subject.WindowsLocalReauthenticationError,
