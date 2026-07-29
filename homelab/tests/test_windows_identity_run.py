@@ -99,6 +99,7 @@ class WindowsIdentityRunTests(unittest.TestCase):
             old, new = events[0][1:]
             self.assertEqual("old-private-value", old)
             self.assertNotEqual(old, new)
+            self.assertRegex(new, r"^T7a[a-f0-9]{32}$")
             material.destroy_private_publication()
             recovery.destroy_publication.assert_called_once_with()
             self.assertIsNone(material._old_local)

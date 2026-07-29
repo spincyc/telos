@@ -1646,7 +1646,10 @@ class PrivateIdentityMaterial:
 
     @staticmethod
     def _credential() -> str:
-        return "Synthetic-" + secrets.token_urlsafe(24) + "-47!"
+        # Keep interactive Windows credentials independent of input-locale
+        # punctuation while retaining 128 bits of entropy and three password
+        # complexity categories.
+        return "T7a" + secrets.token_hex(16)
 
     def rotate_local_credential(self) -> None:
         if self._recovery_context is not None:
