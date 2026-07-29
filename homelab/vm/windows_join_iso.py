@@ -26,6 +26,7 @@ from .windows_identity_contract import (
 from .windows_public_command import bounded_media_launch_command
 
 UAC_CONSENT_SETTLE_DELAY = 3.0
+UAC_NAVIGATION_SETTLE_DELAY = 0.25
 
 
 @dataclass(frozen=True)
@@ -715,13 +716,17 @@ def execute_join_channel(
             launch_guest(launch_join_command())
             # RunAs switches to the secure desktop asynchronously after the
             # public launcher departs. Give that fixed transition a bounded
-            # settle interval before sending the single public consent chord.
+            # settle interval before navigating from the default No button to
+            # Yes. Separate public key events avoid relying on a localized
+            # Alt+Y mnemonic while the private marker remains the proof.
             pause(UAC_CONSENT_SETTLE_DELAY)
             channel.qmp.execute("send-key", {
-                "keys": [
-                    {"type": "qcode", "data": "alt"},
-                    {"type": "qcode", "data": "y"},
-                ],
+                "keys": [{"type": "qcode", "data": "left"}],
+                "hold-time": 60,
+            })
+            pause(UAC_NAVIGATION_SETTLE_DELAY)
+            channel.qmp.execute("send-key", {
+                "keys": [{"type": "qcode", "data": "ret"}],
                 "hold-time": 60,
             })
         except BaseException as error:

@@ -394,7 +394,10 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
             )
-            self.sleep.assert_called_once_with(3.0)
+            self.assertEqual(
+                [mock.call(3.0), mock.call(0.25)],
+                self.sleep.call_args_list,
+            )
             guest_thread.join(timeout=1)
             self.assertFalse(guest_thread.is_alive())
             self.assertFalse(guest_errors)
