@@ -196,6 +196,7 @@ class ProgressiveRotationPlan:
     wake_after_lock_keys: tuple[str, ...] = ("spc",)
     post_join_local_account_keys: tuple[str, ...] = ()
     post_join_local_account_calibrated: bool = False
+    post_join_sign_in_manifest: Path | None = None
     initial_sign_in_delay: float = 60.0
     lock_settle_delay: float = 2.0
     timeout: float = 360.0

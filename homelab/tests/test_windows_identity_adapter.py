@@ -514,6 +514,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         private_evidence_root.return_value = mock.sentinel.evidence
 
         class HostilePlan:
+            post_join_sign_in_manifest = None
+
             @property
             def post_join_local_account_keys(self):
                 raise RuntimeError("backend-private")

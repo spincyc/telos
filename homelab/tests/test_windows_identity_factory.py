@@ -92,6 +92,15 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 ("down", "down", "down", "ret"),
                 configuration.rotation_plan.change_password_keys,
             )
+            self.assertTrue(
+                configuration.rotation_plan.
+                post_join_local_account_calibrated,
+            )
+            self.assertEqual(
+                "post-join-sign-in.json",
+                configuration.rotation_plan.
+                post_join_sign_in_manifest.name,
+            )
             runtime = boundary.attempt / "runtime"
             (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
             for relative in (

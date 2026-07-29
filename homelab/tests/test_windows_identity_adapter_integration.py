@@ -228,6 +228,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=(),
             post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
             checkpoint_timeout=11,
         )
         adapter = self.adapter(rotation_plan=plan)
@@ -298,6 +299,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=(),
             post_join_local_account_calibrated=False,
+            post_join_sign_in_manifest=None,
             expected_guest=mock.sentinel.guest,
         ))
 
@@ -382,6 +384,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=(),
                 post_join_local_account_calibrated=False,
+                post_join_sign_in_manifest=None,
                 expected_guest=mock.sentinel.guest,
             ),
         )
@@ -437,6 +440,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=(),
                 post_join_local_account_calibrated=False,
+                post_join_sign_in_manifest=None,
                 expected_guest=mock.sentinel.guest,
             ),
         )
@@ -475,6 +479,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=("end", "ret"),
                 post_join_local_account_calibrated=True,
+                post_join_sign_in_manifest=None,
                 checkpoint_timeout=11,
             ),
             clock=lambda: next(ticks),
@@ -512,6 +517,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
             post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
             checkpoint_timeout=11,
         ))
 
@@ -546,6 +552,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
             post_join_local_account_calibrated=True,
+            post_join_sign_in_manifest=None,
             checkpoint_timeout=11,
         )
         for interruption in (

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "state": "focused password field for local account telosadmin",
+  "credential_entered": false,
+  "guest": {
+    "release": "Windows 11 25H2",
+    "language": "en-US",
+    "architecture": "x86_64",
+    "installer_iso_sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3",
+    "source_disk_sha256": "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+  },
+  "capture": {
+    "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+    "attempt": "attempt-20260729T122654Z-19b26e9347db",
+    "geometry": [1280, 800],
+    "crop": [460, 150, 360, 360],
+    "stable_source_frame_sha256": [
+      "818c1347acde03cfdc5413af9dba24653e6a9efae86c1c33e69cbe0b10446eca",
+      "818c1347acde03cfdc5413af9dba24653e6a9efae86c1c33e69cbe0b10446eca",
+      "818c1347acde03cfdc5413af9dba24653e6a9efae86c1c33e69cbe0b10446eca"
+    ]
+  },
+  "reference": {
+    "file": "post-join-sign-in.ppm",
+    "sha256": "e5249bbbf231ebe31488d11046a34081178e92f8905a307a7b94d3f63d5bf30d"
+  }
+}

@@ -47,6 +47,7 @@ from .windows_identity_run import (
     WindowsLocalReauthenticationError,
     WindowsIdentityRunError,
 )
+from .windows_identity_reference import load_identity_reference
 from .windows_join_iso import DuplexJoinSerial
 from .windows_public_command import (
     PublicPowerShellLaunchPlan,
@@ -318,6 +319,14 @@ class NativeWindowsAcceptanceAdapter:
         reference_failure = False
         try:
             references = _load_references(plan)
+            if plan.post_join_sign_in_manifest is not None:
+                references = (
+                    load_identity_reference(
+                        plan.post_join_sign_in_manifest,
+                        expected_guest=plan.expected_guest,
+                    ),
+                    *references[1:],
+                )
         except (KeyboardInterrupt, SystemExit, RunInterrupted):
             raise
         except BaseException:
