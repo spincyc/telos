@@ -264,6 +264,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         manager.attach_mock(interaction.type_secret, "type_secret")
         manager.attach_mock(interaction.key, "key")
         manager.attach_mock(interaction.chord, "chord")
+        manager.attach_mock(self.qmp.type_text, "type_text")
+        manager.attach_mock(sleep, "sleep")
         manager.attach_mock(prove_departure, "prove_departure")
         plan = mock.Mock(
             initial_sign_in_delay=0,
@@ -289,6 +291,9 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.key("spc", timeout=mock.ANY),
                 mock.call.chord("ctrl", "a", timeout=mock.ANY),
                 mock.call.key("backspace", timeout=mock.ANY),
+                mock.call.type_text(
+                    ".\\telosadmin", timeout=mock.ANY),
+                mock.call.sleep(2),
                 mock.call.key("tab", timeout=mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
@@ -301,6 +306,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     timeout=mock.ANY,
                     clock=adapter.clock,
                 ),
+                mock.call.sleep(2),
                 mock.call.key("ret", timeout=mock.ANY),
                 mock.call.observe_ephemeral(
                     desktop,
@@ -320,7 +326,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(observe_timeouts[1], final_timeout)
         self.qmp.type_text.assert_called_once_with(
             ".\\telosadmin", timeout=mock.ANY)
-        self.assertEqual([mock.call(2)], sleep.call_args_list)
+        self.assertEqual([mock.call(2), mock.call(2)], sleep.call_args_list)
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
@@ -659,7 +665,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             clock=lambda: elapsed[0],
             rotation_plan=mock.Mock(
                 initial_sign_in_delay=5,
-                lock_settle_delay=0,
+                lock_settle_delay=2,
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=(),
                 post_join_local_account_calibrated=True,
@@ -670,13 +676,16 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
         adapter.reauthenticate_local("private")
 
-        self.assertEqual([mock.call(5)], sleep.call_args_list)
         self.assertEqual(
-            10,
+            [mock.call(5), mock.call(2), mock.call(2)],
+            sleep.call_args_list,
+        )
+        self.assertEqual(
+            8,
             interaction_type.return_value.observe.call_args_list[0].args[1],
         )
         self.assertEqual(
-            10,
+            6,
             interaction_type.return_value.observe_ephemeral.call_args.args[1],
         )
 

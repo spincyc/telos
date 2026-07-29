@@ -624,6 +624,15 @@ class NativeWindowsAcceptanceAdapter:
         )
 
         def prove_password_target() -> None:
+            # QMP acknowledges queued key events before the guest has
+            # necessarily consumed them. Give the public UPN the same bounded
+            # drain interval used for secret input so Tab cannot overtake the
+            # final characters. This remains charged to the single
+            # reauthentication deadline.
+            if lock_settle_delay:
+                budget = remaining("prove-password-target")
+                time.sleep(min(lock_settle_delay, budget))
+                remaining("prove-password-target")
             interaction.key(
                 "tab", timeout=remaining("prove-password-target"))
             interaction.observe(
