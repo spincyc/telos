@@ -555,9 +555,9 @@ def _execute_join(
                 diagnostic = (
                     error.diagnostic
                     if (
-                        isinstance(error, WindowsIdentityRunError)
-                        and isinstance(
-                            error.diagnostic, IdentityFailureDiagnostic)
+                        type(error) is WindowsIdentityOrchestratorError
+                        and type(error.diagnostic)
+                        is IdentityFailureDiagnostic
                     )
                     else None
                 )

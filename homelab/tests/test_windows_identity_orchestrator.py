@@ -949,7 +949,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "connect",
             OSError("private-connect-detail"),
         )
-        static_failure = subject.WindowsIdentityRunError(
+        static_failure = subject.WindowsIdentityOrchestratorError(
             "private-static-probe-detail",
             diagnostic=diagnostic,
         )
