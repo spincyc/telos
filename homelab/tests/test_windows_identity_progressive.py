@@ -145,7 +145,7 @@ class ProgressiveRotationTests(unittest.TestCase):
         driver = mock.Mock(
             sequence=0,
             observer=SimpleNamespace(root=evidence),
-            clock=mock.Mock(side_effect=(0.0, 0.0, 0.0)),
+            clock=mock.Mock(side_effect=(0.0, 0.0, 0.0, 2.0)),
             pause=mock.Mock(),
             interval=1.0,
         )

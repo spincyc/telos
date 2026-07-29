@@ -328,11 +328,12 @@ class _GuiInteraction:
                         alternative_actual, alternative.image) <= 6.0
                 ):
                     alternative_consecutive[name] += 1
-                    if alternative_consecutive[name] == 2:
-                        raise WindowsIdentityGuiAlternateState(name)
                 else:
                     alternative_consecutive[name] = 0
             self._driver.pause(self._driver.interval)
+        for name, matches in alternative_consecutive.items():
+            if matches >= 2:
+                raise WindowsIdentityGuiAlternateState(name)
         raise WindowsIdentityGuiError(
             f"timed out proving {reference.state_kind}")
 
