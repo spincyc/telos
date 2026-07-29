@@ -197,9 +197,11 @@ if (@($operatorAssigned).Count -ne 1) {
         -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $diagnosticRoot -Recurse -Force `
         -ErrorAction SilentlyContinue
-    if (Get-ScheduledTask -TaskName 'TelosPostSubmitDiagnostic' `
-            -ErrorAction SilentlyContinue -or
-        Test-Path -LiteralPath $diagnosticRoot) {
+    $staleDiagnosticTask = Get-ScheduledTask `
+        -TaskName 'TelosPostSubmitDiagnostic' `
+        -ErrorAction SilentlyContinue
+    $staleDiagnosticRoot = Test-Path -LiteralPath $diagnosticRoot
+    if ($null -ne $staleDiagnosticTask -or $staleDiagnosticRoot) {
         throw 'stale diagnostic cleanup failed'
     }
     New-Item -ItemType Directory -Path $diagnosticRoot -Force |

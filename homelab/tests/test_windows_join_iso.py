@@ -125,6 +125,13 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("-RunLevel Highest", join_script)
         self.assertIn("New-ScheduledTaskTrigger -AtStartup", join_script)
         self.assertIn("diagnostic-staging", join_script)
+        self.assertIn(
+            "$staleDiagnosticTask = Get-ScheduledTask", join_script)
+        self.assertIn(
+            "if ($null -ne $staleDiagnosticTask -or "
+            "$staleDiagnosticRoot)", join_script)
+        self.assertNotIn(
+            "-ErrorAction SilentlyContinue -or", join_script)
         diagnostic_load = "$diagnosticSource = Get-Content"
         self.assertEqual(1, join_script.count(diagnostic_load))
         protected_order = [
