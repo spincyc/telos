@@ -515,6 +515,7 @@ def _execute_join(
         stage=stage_join_principal,
         destroy=destroy_join_principal,
     )
+    guest_cleanup_diagnostic: IdentityFailureDiagnostic | None = None
 
     def guest_failure(
         coordinate: WindowsJoinFailureCoordinate,
@@ -537,6 +538,7 @@ def _execute_join(
             "; ".join(details), diagnostic=diagnostic)
 
     def consume(material: Mapping[str, str]) -> Mapping[str, object]:
+        nonlocal guest_cleanup_diagnostic
         nonce = uuid.uuid4().hex
         iso = private_root / f"windows-join-{nonce}.iso"
         try:
@@ -656,8 +658,8 @@ def _execute_join(
                 primary.diagnostic
                 if (
                     isinstance(primary, WindowsJoinIsoError)
-                    and isinstance(
-                        primary.diagnostic, IdentityFailureDiagnostic)
+                    and type(primary.diagnostic)
+                    is IdentityFailureDiagnostic
                 )
                 else None
             )
@@ -683,13 +685,16 @@ def _execute_join(
                         "cleanup", "UnexpectedError")
                 )
                 if carried_diagnostic is not None:
+                    guest_cleanup_diagnostic = (
+                        IdentityFailureDiagnostic.join_guest(
+                            cleanup_coordinate.phase,
+                            cleanup_coordinate.error_type,
+                        )
+                    )
                     details = [
                         "domain join guest protocol failed",
                         carried_diagnostic.render(),
-                        "cleanup-" + IdentityFailureDiagnostic.join_guest(
-                            cleanup_coordinate.phase,
-                            cleanup_coordinate.error_type,
-                        ).render(),
+                        "cleanup-" + guest_cleanup_diagnostic.render(),
                     ]
                     raise WindowsIdentityOrchestratorError(
                         "; ".join(details),
@@ -712,9 +717,12 @@ def _execute_join(
         proof, destruction = owner.use(consume)
     except ControllerJoinMaterialError as error:
         carried = getattr(error, "diagnostic", None)
-        if isinstance(carried, IdentityFailureDiagnostic):
+        if type(carried) is IdentityFailureDiagnostic:
             details = [
                 "domain join guest protocol failed", carried.render()]
+            if guest_cleanup_diagnostic is not None:
+                details.append(
+                    "cleanup-" + guest_cleanup_diagnostic.render())
             if error.cleanup_coordinate is not None:
                 cleanup = error.cleanup_coordinate
                 cleanup_diagnostic = IdentityFailureDiagnostic.join_material(

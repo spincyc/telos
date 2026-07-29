@@ -1267,6 +1267,168 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 self.assertNotIn("private", str(error))
                 self.assertIsNone(error.__cause__)
 
+    def test_execute_join_consumes_exact_join_iso_diagnostic(self):
+        staged = ControllerJoinResult(
+            "stage", "tj-0123456789abcdef", False, ())
+        destroyed = ControllerJoinResult(
+            "destroy", "tj-0123456789abcdef", True, ())
+        diagnostic = subject.IdentityFailureDiagnostic.adapter_static_probe(
+            "interactive-operator",
+            "connect",
+            OSError("private-connect-detail"),
+        )
+        channel = mock.Mock()
+
+        def fake_build(path, _material):
+            path.write_bytes(b"private")
+            path.chmod(0o600)
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject, "build_join_iso", side_effect=fake_build,
+        ), mock.patch.object(
+            subject, "JoinMediaChannel", return_value=channel,
+        ), mock.patch.object(
+            subject,
+            "execute_join_and_prove",
+            side_effect=subject.WindowsJoinIsoError(
+                "private-wrapper", diagnostic=diagnostic),
+        ):
+            root = Path(name)
+            root.chmod(0o700)
+            with self.assertRaises(
+                subject.WindowsIdentityOrchestratorError,
+            ) as caught:
+                subject._execute_join(
+                    realm="FACTORY.TEST",
+                    private_root=root,
+                    operator_credential="Operator-Secret-47!",
+                    callbacks=self.callbacks([]),
+                    stage_join_principal=mock.Mock(return_value=staged),
+                    destroy_join_principal=mock.Mock(return_value=destroyed),
+                )
+
+        error = caught.exception
+        self.assertIs(diagnostic, error.diagnostic)
+        self.assertIn(diagnostic.render(), str(error))
+        self.assertNotIn("private", str(error))
+        self.assertIsNone(error.__cause__)
+        channel.cleanup.assert_called_once()
+
+    def test_execute_join_keeps_diagnostic_primary_on_cleanup_failure(self):
+        staged = ControllerJoinResult(
+            "stage", "tj-0123456789abcdef", False, ())
+        destroyed = ControllerJoinResult(
+            "destroy", "tj-0123456789abcdef", True, ())
+        diagnostic = subject.IdentityFailureDiagnostic.adapter_static_probe(
+            "interactive-operator",
+            "connect",
+            OSError("private-connect-detail"),
+        )
+        channel = mock.Mock()
+        channel.cleanup.side_effect = subject.WindowsJoinIsoError(
+            "private-cleanup",
+            coordinate=subject.WindowsJoinFailureCoordinate(
+                "cleanup", "OSError"),
+        )
+
+        def fake_build(path, _material):
+            path.write_bytes(b"private")
+            path.chmod(0o600)
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject, "build_join_iso", side_effect=fake_build,
+        ), mock.patch.object(
+            subject, "JoinMediaChannel", return_value=channel,
+        ), mock.patch.object(
+            subject,
+            "execute_join_and_prove",
+            side_effect=subject.WindowsJoinIsoError(
+                "private-wrapper", diagnostic=diagnostic),
+        ):
+            root = Path(name)
+            root.chmod(0o700)
+            with self.assertRaises(
+                subject.WindowsIdentityOrchestratorError,
+            ) as caught:
+                subject._execute_join(
+                    realm="FACTORY.TEST",
+                    private_root=root,
+                    operator_credential="Operator-Secret-47!",
+                    callbacks=self.callbacks([]),
+                    stage_join_principal=mock.Mock(return_value=staged),
+                    destroy_join_principal=mock.Mock(return_value=destroyed),
+                )
+
+        error = caught.exception
+        self.assertIs(diagnostic, error.diagnostic)
+        self.assertIn(diagnostic.render(), str(error))
+        self.assertIn(
+            "cleanup-check=windows-joined; "
+            "operation=join-guest.cleanup; error=OSError",
+            str(error),
+        )
+        self.assertNotIn("private", str(error))
+        self.assertIsNone(error.__cause__)
+
+    def test_execute_join_rejects_forged_join_iso_diagnostics(self):
+        staged = ControllerJoinResult(
+            "stage", "tj-0123456789abcdef", False, ())
+        destroyed = ControllerJoinResult(
+            "destroy", "tj-0123456789abcdef", True, ())
+        trusted = subject.IdentityFailureDiagnostic.adapter_static_probe(
+            "interactive-operator",
+            "connect",
+            OSError("private-connect-detail"),
+        )
+
+        class ForgedDiagnostic(subject.IdentityFailureDiagnostic):
+            pass
+
+        forged = ForgedDiagnostic(
+            trusted.check, trusted.operation, trusted.error_type)
+        for candidate in (forged, object()):
+            with self.subTest(candidate=type(candidate).__name__):
+                channel = mock.Mock()
+
+                def fake_build(path, _material):
+                    path.write_bytes(b"private")
+                    path.chmod(0o600)
+
+                with tempfile.TemporaryDirectory() as name, mock.patch.object(
+                    subject, "build_join_iso", side_effect=fake_build,
+                ), mock.patch.object(
+                    subject, "JoinMediaChannel", return_value=channel,
+                ), mock.patch.object(
+                    subject,
+                    "execute_join_and_prove",
+                    side_effect=subject.WindowsJoinIsoError(
+                        "private-wrapper", diagnostic=candidate),
+                ):
+                    root = Path(name)
+                    root.chmod(0o700)
+                    with self.assertRaises(
+                        subject.WindowsIdentityOrchestratorError,
+                    ) as caught:
+                        subject._execute_join(
+                            realm="FACTORY.TEST",
+                            private_root=root,
+                            operator_credential="Operator-Secret-47!",
+                            callbacks=self.callbacks([]),
+                            stage_join_principal=mock.Mock(
+                                return_value=staged),
+                            destroy_join_principal=mock.Mock(
+                                return_value=destroyed),
+                        )
+
+                error = caught.exception
+                self.assertEqual("windows-joined", error.diagnostic.check)
+                self.assertEqual(
+                    "join-guest.result", error.diagnostic.operation)
+                self.assertEqual(
+                    "UnexpectedError", error.diagnostic.error_type)
+                self.assertIsNot(candidate, error.diagnostic)
+                self.assertNotIn("private", str(error))
+
     def test_post_reboot_probe_rejects_unbound_interactive_operator(self):
         identity = {
             "principal": r"FACTORY\operator",
