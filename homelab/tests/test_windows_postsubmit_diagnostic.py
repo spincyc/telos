@@ -132,10 +132,10 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
             session.result()
 
     def test_line_framing_is_strict_and_bounded(self):
-        for payload, message in (
-            (b"{}\r\n", "contains CR"),
-            (b"\xff\n", "canonical JSON"),
-            (b"x" * 129, "exceeds bound"),
+        for payload, message, subphase in (
+            (b"{}\r\n", "contains CR", "parse"),
+            (b"\xff\n", "canonical JSON", "parse"),
+            (b"x" * 129, "exceeds bound", "parse"),
         ):
             with self.subTest(message=message):
                 host, guest = socket.socketpair()
@@ -145,8 +145,9 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
                     host, NONCE, PRINCIPAL, timeout=5, maximum_line=128)
                 guest.sendall(payload)
                 with self.assertRaisesRegex(
-                        PostSubmitDiagnosticError, message):
+                        PostSubmitDiagnosticError, message) as caught:
                     session._read()
+                self.assertEqual(subphase, caught.exception.arm_subphase)
 
     def test_context_manager_closes_exclusive_connection(self):
         session, _ = self.session()
@@ -181,8 +182,9 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
             "nonce": "cd" * 16,
         }))
         with self.assertRaisesRegex(
-                PostSubmitDiagnosticError, "armed receipt"):
+                PostSubmitDiagnosticError, "armed receipt") as caught:
             session.arm()
+        self.assertEqual("guest", caught.exception.arm_subphase)
         self.assertEqual({
             "schema_version": 1, "command": "arm", "nonce": NONCE,
             "principal": PRINCIPAL,

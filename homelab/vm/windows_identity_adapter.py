@@ -82,6 +82,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCleanup,
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
+    PostSubmitDiagnosticError,
 )
 
 
@@ -154,6 +155,26 @@ def _with_controller_auth_result(
             else error.controller_auth_result
         ),
     )
+
+
+def _diagnostic_arm_failure_operation(
+    error: BaseException, *, fallback: str,
+) -> str:
+    """Return one fixed arm coordinate without consulting exception text."""
+    subphase = None
+    if type(error) is PostSubmitDiagnosticError:
+        try:
+            candidate = error.arm_subphase
+            if (
+                type(candidate) is str
+                and candidate in PostSubmitDiagnosticError._ARM_SUBPHASES
+            ):
+                subphase = candidate
+        except BaseException:
+            pass
+    if subphase is None:
+        subphase = fallback if fallback in {"connect", "launch"} else "launch"
+    return f"diagnostic-arm-{subphase}"
 
 
 _ACTIONS = {
@@ -982,16 +1003,30 @@ class NativeWindowsAcceptanceAdapter:
                             for character in diagnostic_nonce
                         )
                     ):
-                        raise WindowsIdentityAdapterError(
-                            "post-submit diagnostic nonce is invalid")
-                    manager = diagnostic_factory(
-                        nonce=diagnostic_nonce,
-                        principal=principal,
-                        timeout=min(
-                            15.0, remaining("prove-password-target")),
-                    )
-                    session = manager.__enter__()
-                    session.arm()
+                        raise WindowsLocalReauthenticationError(
+                            "diagnostic-arm-preflight")
+                    try:
+                        manager = diagnostic_factory(
+                            nonce=diagnostic_nonce,
+                            principal=principal,
+                            timeout=min(
+                                15.0, remaining("prove-password-target")),
+                        )
+                    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                        raise
+                    except BaseException as error:
+                        raise WindowsLocalReauthenticationError(
+                            _diagnostic_arm_failure_operation(
+                                error, fallback="connect")) from None
+                    try:
+                        session = manager.__enter__()
+                        session.arm()
+                    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                        raise
+                    except BaseException as error:
+                        raise WindowsLocalReauthenticationError(
+                            _diagnostic_arm_failure_operation(
+                                error, fallback="launch")) from None
                     armed = True
                     submit_secret()
                     try:
@@ -1102,6 +1137,9 @@ class NativeWindowsAcceptanceAdapter:
                             elif armed:
                                 diagnostic_cleanup_failed = True
             if primary is not None:
+                if type(primary) is WindowsLocalReauthenticationError:
+                    raise _with_controller_auth_result(
+                        primary, self._controller_auth_result) from None
                 if not armed:
                     self._static_probe_poisoned = True
                     raise WindowsLocalReauthenticationError(
@@ -1109,9 +1147,6 @@ class NativeWindowsAcceptanceAdapter:
                         controller_auth_result=(
                             self._controller_auth_result),
                     ) from None
-                if type(primary) is WindowsLocalReauthenticationError:
-                    raise _with_controller_auth_result(
-                        primary, self._controller_auth_result) from None
                 raise primary from None
 
         def prove_desktop() -> None:

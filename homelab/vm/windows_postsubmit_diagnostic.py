@@ -27,6 +27,15 @@ _UPN_REALM = re.compile(
 class PostSubmitDiagnosticError(RuntimeError):
     """The diagnostic transport or protocol failed closed."""
 
+    _ARM_SUBPHASES = frozenset({
+        "preflight", "connect", "launch", "receive", "parse", "guest",
+    })
+
+    def __init__(self, message: str, *, arm_subphase: str | None = None) -> None:
+        super().__init__(message)
+        self.arm_subphase = (
+            arm_subphase if arm_subphase in self._ARM_SUBPHASES else None)
+
 
 class PostSubmitDiagnosticCode(Enum):
     """The complete, non-authoritative result vocabulary."""
@@ -129,7 +138,8 @@ class PostSubmitDiagnosticSession:
         except BaseException:
             connection.close()
             raise PostSubmitDiagnosticError(
-                "diagnostic serial connection failed") from None
+                "diagnostic serial connection failed",
+                arm_subphase="connect") from None
 
     def _set_operation_timeout(self) -> None:
         remaining = self._deadline - self._clock()
@@ -171,44 +181,59 @@ class PostSubmitDiagnosticSession:
                 octet = self.connection.recv(1)
                 if not octet:
                     raise PostSubmitDiagnosticError(
-                        "diagnostic serial closed before record")
+                        "diagnostic serial closed before record",
+                        arm_subphase="receive")
                 if octet == b"\n":
                     break
                 if octet == b"\r":
                     raise PostSubmitDiagnosticError(
-                        "diagnostic serial record contains CR")
+                        "diagnostic serial record contains CR",
+                        arm_subphase="parse")
                 data.extend(octet)
             else:
                 raise PostSubmitDiagnosticError(
-                    "diagnostic serial record exceeds bound")
+                    "diagnostic serial record exceeds bound",
+                    arm_subphase="parse")
         except PostSubmitDiagnosticError:
             raise
         except (OSError, TimeoutError):
             raise PostSubmitDiagnosticError(
-                "diagnostic serial receive failed") from None
+                "diagnostic serial receive failed",
+                arm_subphase="receive") from None
         try:
             record = json.loads(data.decode("ascii"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise PostSubmitDiagnosticError(
-                "diagnostic serial record is not canonical JSON") from None
+                "diagnostic serial record is not canonical JSON",
+                arm_subphase="parse") from None
         if not isinstance(record, dict):
             raise PostSubmitDiagnosticError(
-                "diagnostic serial record is not an object")
+                "diagnostic serial record is not an object",
+                arm_subphase="parse")
         canonical = json.dumps(
             record, sort_keys=True, separators=(",", ":")).encode("ascii")
         if canonical != bytes(data):
             raise PostSubmitDiagnosticError(
-                "diagnostic serial record is not canonical JSON")
+                "diagnostic serial record is not canonical JSON",
+                arm_subphase="parse")
         return record
 
     def arm(self) -> None:
         if self._state != "connected":
             raise PostSubmitDiagnosticError(
                 "diagnostic session cannot be armed")
+        if self.closed:
+            raise PostSubmitDiagnosticError(
+                "diagnostic serial is closed", arm_subphase="launch")
         # The startup watcher predates this host connection. A wait=off QEMU
         # socket chardev cannot replay guest output produced during that gap,
         # so the nonce-bound host command initiates the handshake.
-        self._send("arm", include_principal=True)
+        try:
+            self._send("arm", include_principal=True)
+        except PostSubmitDiagnosticError:
+            raise PostSubmitDiagnosticError(
+                "diagnostic launch request failed",
+                arm_subphase="launch") from None
         record = self._read()
         expected = {
             "schema_version": SCHEMA_VERSION,
@@ -217,7 +242,8 @@ class PostSubmitDiagnosticSession:
         }
         if record != expected:
             raise PostSubmitDiagnosticError(
-                "diagnostic armed receipt is invalid")
+                "diagnostic armed receipt is invalid",
+                arm_subphase="guest")
         self._state = "armed"
 
     def _accept_result_record(

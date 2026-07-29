@@ -286,7 +286,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 adapter.reauthenticate_domain_operator(
                     "operator@FACTORY.TEST", "private", "a" * 32)
 
-        self.assertEqual("diagnostic-arm", caught.exception.reauth_operation)
+        self.assertEqual(
+            "diagnostic-arm-launch", caught.exception.reauth_operation)
         self.assertIs(
             cancel_result, caught.exception.controller_auth_result)
         controller.cancel.assert_called_once_with()
@@ -1020,7 +1021,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 "operator@FACTORY.TEST", "private", "a" * 32)
 
         self.assertEqual(
-            "diagnostic-arm", caught.exception.reauth_operation)
+            "diagnostic-arm-launch", caught.exception.reauth_operation)
         self.assertNotIn("private watcher detail", str(caught.exception))
         interaction.disable_durable_capture.assert_not_called()
         interaction.type_secret.assert_not_called()
