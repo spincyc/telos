@@ -37,7 +37,8 @@ class WindowsJoinFailureCoordinate:
     error_type: str
 
     _PHASES = frozenset({
-        "serial-connect", "prepare", "attach", "launch", "marker-receive",
+        "serial-connect", "prepare", "attach", "launch",
+        "elevation-receive", "elevation-parse", "marker-receive",
         "media-destroy", "release", "result-receive", "result-parse",
         "result-ack", "accepted-receive", "accepted-parse",
         "result", "reboot-reauth",
@@ -517,6 +518,20 @@ class JoinMediaChannel:
                 f"join ISO destruction failed: {type(error).__name__}"
             ) from None
 
+    def accept_elevation_requested(self, line: str) -> None:
+        """Bind public UAC input to the exact non-elevated bootstrap."""
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise WindowsJoinIsoError(
+                "join elevation request is invalid") from error
+        if event != {
+            "schema_version": 1,
+            "event": "join-elevation-requested",
+            "nonce": self.nonce,
+        } or not self.attached:
+            raise WindowsJoinIsoError("join elevation request is invalid")
+
     def retry_release(self, send_release: Callable[[str], None]) -> None:
         """Idempotently retry only the public release after exact destruction."""
         if self.state is JoinMediaState.RELEASED:
@@ -714,11 +729,20 @@ def execute_join_channel(
     try:
         try:
             launch_guest(launch_join_command())
+        except BaseException as error:
+            raise _join_error("launch", error) from None
+        try:
+            elevation = serial.read_marker()
+        except BaseException as error:
+            raise _join_error("elevation-receive", error) from None
+        try:
+            channel.accept_elevation_requested(elevation)
+        except BaseException as error:
+            raise _join_error("elevation-parse", error) from None
+        try:
             # RunAs switches to the secure desktop asynchronously after the
-            # public launcher departs. Give that fixed transition a bounded
-            # settle interval before navigating from the default No button to
-            # Yes. Separate public key events avoid relying on a localized
-            # Alt+Y mnemonic while the private marker remains the proof.
+            # exact bootstrap receipt. Give that transition a bounded settle
+            # interval before navigating from the default No button to Yes.
             pause(UAC_CONSENT_SETTLE_DELAY)
             channel.qmp.execute("send-key", {
                 "keys": [{"type": "qcode", "data": "left"}],

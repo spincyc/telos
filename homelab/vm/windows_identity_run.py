@@ -234,6 +234,7 @@ class IdentityFailureDiagnostic:
                 and self.operation.startswith("join-guest.")
                 and self.operation.removeprefix("join-guest.") in {
                     "serial-connect", "prepare", "attach", "launch", "marker-receive",
+                    "elevation-receive", "elevation-parse",
                     "media-destroy", "release", "result-receive",
                     "result-parse", "result-ack", "accepted-receive",
                     "accepted-parse", "result", "reboot-reauth",

@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -31,6 +32,11 @@ MATERIAL = {
     "password": "private value",
     "operator": "operator@AD.EXAMPLE.TEST",
 }
+ELEVATION = json.dumps({
+    "schema_version": 1,
+    "event": "join-elevation-requested",
+    "nonce": NONCE,
+})
 
 
 class FakeQmp:
@@ -88,6 +94,11 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 self.assertNotIn(value, argv)
             self.assertEqual(MATERIAL["password"], observed["join"]["password"])
             self.assertIn("-Verb RunAs", observed["elevate"])
+            self.assertIn("join-elevation-requested", observed["elevate"])
+            self.assertLess(
+                observed["elevate"].index("join-elevation-requested"),
+                observed["elevate"].index("-Verb RunAs"),
+            )
             self.assertEqual(0o600, output.stat().st_mode & 0o777)
             self.assertFalse(any(
                 item.name.startswith(".windows-join-")
@@ -362,9 +373,30 @@ class WindowsJoinIsoTests(unittest.TestCase):
             def launch(command):
                 nonlocal guest_thread
                 launched.append(command)
-                guest.sendall((marker + "\n").encode("ascii"))
                 def complete_join():
                     try:
+                        self.assertFalse(any(
+                            call[0] == "send-key"
+                            for call in channel.qmp.calls
+                        ))
+                        guest.sendall((ELEVATION + "\n").encode("ascii"))
+                        deadline = time.monotonic() + 1
+                        while (
+                            sum(
+                                call[0] == "send-key"
+                                for call in channel.qmp.calls
+                            ) < 2
+                            and time.monotonic() < deadline
+                        ):
+                            threading.Event().wait(0.01)
+                        self.assertEqual(
+                            2,
+                            sum(
+                                call[0] == "send-key"
+                                for call in channel.qmp.calls
+                            ),
+                        )
+                        guest.sendall((marker + "\n").encode("ascii"))
                         release = guest.recv(256).decode("ascii")
                         self.assertEqual(
                             f"TELOS_JOIN_MEDIA_DESTROYED {NONCE}\n", release)
@@ -422,7 +454,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             })
 
             def launch(_command):
-                guest.sendall((marker + "\n").encode("ascii"))
+                guest.sendall(
+                    (ELEVATION + "\n" + marker + "\n").encode("ascii"))
                 def complete_join():
                     guest.recv(256)
                     guest.sendall((json.dumps({
@@ -609,7 +642,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             })
 
             def launch(_command):
-                guest.sendall((marker + "\n").encode("ascii"))
+                guest.sendall(
+                    (ELEVATION + "\n" + marker + "\n").encode("ascii"))
                 def reject():
                     guest.recv(256)
                     guest.sendall(b'{"event":"unexpected"}\n')
@@ -648,7 +682,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             })
 
             def launch(_command):
-                guest.sendall((marker + "\n").encode("ascii"))
+                guest.sendall(
+                    (ELEVATION + "\n" + marker + "\n").encode("ascii"))
                 threading.Thread(
                     target=lambda: guest.recv(256), daemon=True).start()
 
@@ -678,12 +713,15 @@ class WindowsJoinIsoTests(unittest.TestCase):
             class AckFailureSerial:
                 closed = False
 
-                def read_marker(self):
-                    return json.dumps({
+                def __init__(self):
+                    self.markers = iter((ELEVATION, json.dumps({
                         "schema_version": 1,
                         "event": "join-material-loaded",
                         "nonce": NONCE,
-                    })
+                    })))
+
+                def read_marker(self):
+                    return next(self.markers)
 
                 def send_release(self, _line):
                     return None
@@ -725,6 +763,11 @@ class WindowsJoinIsoTests(unittest.TestCase):
 
             class GuestAckFailureSerial:
                 closed = False
+                markers = iter((ELEVATION, json.dumps({
+                    "schema_version": 1,
+                    "event": "join-material-loaded",
+                    "nonce": NONCE,
+                })))
                 results = iter((
                     {
                         "schema_version": 1,
@@ -740,11 +783,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 ))
 
                 def read_marker(self):
-                    return json.dumps({
-                        "schema_version": 1,
-                        "event": "join-material-loaded",
-                        "nonce": NONCE,
-                    })
+                    return next(self.markers)
 
                 def send_release(self, _line):
                     return None
@@ -811,14 +850,15 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     closed = False
 
                     def __init__(self):
-                        self.results = iter((ready, final_result))
-
-                    def read_marker(self):
-                        return json.dumps({
+                        self.markers = iter((ELEVATION, json.dumps({
                             "schema_version": 1,
                             "event": "join-material-loaded",
                             "nonce": NONCE,
-                        })
+                        })))
+                        self.results = iter((ready, final_result))
+
+                    def read_marker(self):
+                        return next(self.markers)
 
                     def send_release(self, _line):
                         return None
