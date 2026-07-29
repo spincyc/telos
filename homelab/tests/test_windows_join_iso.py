@@ -158,6 +158,12 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("diagnostic-ready", diagnostic)
         self.assertIn("ConvertFrom-Json", diagnostic)
         self.assertIn(
+            "$remainingTask = Get-ScheduledTask", diagnostic)
+        self.assertIn(
+            "$remainingConfig = Test-Path", diagnostic)
+        self.assertNotIn(
+            "-PathType Leaf -or", diagnostic)
+        self.assertIn(
             "$expectedCount = if ($ExpectedPrincipal) { 4 } else { 3 }",
             diagnostic,
         )

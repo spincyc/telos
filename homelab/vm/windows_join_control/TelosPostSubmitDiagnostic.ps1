@@ -72,12 +72,15 @@ function Remove-Diagnostic {
     Remove-Item -LiteralPath $PSCommandPath -Force `
         -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
-    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+    $remainingTask = Get-ScheduledTask -TaskName $taskName `
+        -ErrorAction SilentlyContinue
+    if ($null -ne $remainingTask) {
         throw 'diagnostic task cleanup failed'
     }
-    if (Test-Path -LiteralPath $configPath -PathType Leaf -or
-        Test-Path -LiteralPath $PSCommandPath -PathType Leaf -or
-        Test-Path -LiteralPath $root) {
+    $remainingConfig = Test-Path -LiteralPath $configPath -PathType Leaf
+    $remainingScript = Test-Path -LiteralPath $PSCommandPath -PathType Leaf
+    $remainingRoot = Test-Path -LiteralPath $root
+    if ($remainingConfig -or $remainingScript -or $remainingRoot) {
         throw 'diagnostic file cleanup failed'
     }
     $script:cleanupComplete = $true
