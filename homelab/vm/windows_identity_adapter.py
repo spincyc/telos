@@ -383,6 +383,20 @@ class NativeWindowsAcceptanceAdapter:
         finally:
             self._release_com1()
 
+    @contextmanager
+    def _static_probe_com1(self, action: str):
+        failure: BaseException | None = None
+        try:
+            self._claim_com1()
+        except BaseException as error:
+            failure = error
+        if failure is not None:
+            self._raise_static_probe_failure(action, "lease", failure)
+        try:
+            yield
+        finally:
+            self._release_com1()
+
     def launch_guest(self, command: str) -> None:
         plan = self.command_plan
         if plan is None:
@@ -1173,8 +1187,17 @@ class NativeWindowsAcceptanceAdapter:
 
     def static_probe(self, action: str) -> Mapping[str, object]:
         if self._static_probe_poisoned:
+            diagnostic = IdentityFailureDiagnostic.adapter_static_probe(
+                action,
+                "preflight",
+                WindowsIdentityAdapterError(
+                    "static probe session requires VM teardown"),
+            )
             raise WindowsIdentityAdapterError(
-                "static probe session requires VM teardown")
+                "static probe session requires VM teardown; "
+                + diagnostic.render(),
+                diagnostic=diagnostic,
+            ) from None
         request = control_probe(action)
         data = bytearray()
         received = 0
@@ -1205,7 +1228,7 @@ class NativeWindowsAcceptanceAdapter:
             del data[:newline]
             return line
 
-        with self._com1():
+        with self._static_probe_com1(request.action):
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
                 failure: BaseException | None = None
                 try:

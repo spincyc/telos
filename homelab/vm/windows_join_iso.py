@@ -174,10 +174,12 @@ class WindowsJoinIsoError(RuntimeError):
         *,
         coordinate: WindowsJoinFailureCoordinate | None = None,
         cleanup_coordinate: WindowsJoinFailureCoordinate | None = None,
+        diagnostic: object | None = None,
     ) -> None:
         super().__init__(message)
         self.coordinate = coordinate
         self.cleanup_coordinate = cleanup_coordinate
+        self.diagnostic = diagnostic
 
 
 def _join_error(phase: str, error: BaseException) -> WindowsJoinIsoError:
@@ -714,7 +716,10 @@ class JoinMediaChannel:
         except BaseException as error:
             if (
                 isinstance(error, WindowsJoinIsoError)
-                and error.coordinate is not None
+                and (
+                    error.coordinate is not None
+                    or error.diagnostic is not None
+                )
             ):
                 raise error from None
             raise _join_error("reboot-probe", error) from None
@@ -949,7 +954,10 @@ def execute_join_and_prove(
     except BaseException as error:
         if (
             isinstance(error, WindowsJoinIsoError)
-            and error.coordinate is not None
+            and (
+                error.coordinate is not None
+                or error.diagnostic is not None
+            )
         ):
             raise error from None
         phase = "reboot-probe"

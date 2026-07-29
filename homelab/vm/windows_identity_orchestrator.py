@@ -534,6 +534,20 @@ def _execute_join(
                 return _post_reboot_proof(
                     callbacks, f"operator@{realm.upper()}")
             except BaseException as error:
+                diagnostic = (
+                    error.diagnostic
+                    if (
+                        isinstance(error, WindowsIdentityRunError)
+                        and isinstance(
+                            error.diagnostic, IdentityFailureDiagnostic)
+                    )
+                    else None
+                )
+                if diagnostic is not None:
+                    raise WindowsJoinIsoError(
+                        "post-reboot static probe failed",
+                        diagnostic=diagnostic,
+                    ) from None
                 raise WindowsJoinIsoError(
                     "post-reboot probe failed",
                     coordinate=WindowsJoinFailureCoordinate(
@@ -558,13 +572,25 @@ def _execute_join(
             )
         except BaseException as primary:
             serial.close()
-            coordinate = (
-                primary.coordinate
-                if isinstance(primary, WindowsJoinIsoError)
-                and primary.coordinate is not None
-                else WindowsJoinFailureCoordinate(
-                    "result", "UnexpectedError")
+            carried_diagnostic = (
+                primary.diagnostic
+                if (
+                    isinstance(primary, WindowsJoinIsoError)
+                    and isinstance(
+                        primary.diagnostic, IdentityFailureDiagnostic)
+                )
+                else None
             )
+            if carried_diagnostic is not None:
+                coordinate = None
+            else:
+                coordinate = (
+                    primary.coordinate
+                    if isinstance(primary, WindowsJoinIsoError)
+                    and primary.coordinate is not None
+                    else WindowsJoinFailureCoordinate(
+                        "result", "UnexpectedError")
+                )
             try:
                 channel.cleanup(
                     await_device_deleted=callbacks.await_device_deleted)
@@ -576,8 +602,29 @@ def _execute_join(
                     else WindowsJoinFailureCoordinate(
                         "cleanup", "UnexpectedError")
                 )
+                if carried_diagnostic is not None:
+                    details = [
+                        "domain join guest protocol failed",
+                        carried_diagnostic.render(),
+                        "cleanup-" + IdentityFailureDiagnostic.join_guest(
+                            cleanup_coordinate.phase,
+                            cleanup_coordinate.error_type,
+                        ).render(),
+                    ]
+                    raise WindowsIdentityOrchestratorError(
+                        "; ".join(details),
+                        diagnostic=carried_diagnostic,
+                    ) from None
+                assert coordinate is not None
                 raise guest_failure(
                     coordinate, cleanup_coordinate) from None
+            if carried_diagnostic is not None:
+                raise WindowsIdentityOrchestratorError(
+                    "domain join guest protocol failed; "
+                    + carried_diagnostic.render(),
+                    diagnostic=carried_diagnostic,
+                ) from None
+            assert coordinate is not None
             raise guest_failure(coordinate) from None
 
     join_failure: ControllerJoinMaterialError | None = None

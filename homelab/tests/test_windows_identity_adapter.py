@@ -153,8 +153,41 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
     def test_static_probe_never_connects_after_unproved_gui_transition(self):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))
-            with self.assertRaises(subject.WindowsIdentityAdapterError):
+            adapter._static_probe_poisoned = True
+            with self.assertRaises(
+                subject.WindowsIdentityAdapterError,
+            ) as caught:
                 adapter.static_probe("domain-state")
+        self.assertEqual(
+            "static-probe.domain-state.preflight",
+            caught.exception.diagnostic.operation,
+        )
+        self.assertEqual(
+            "WindowsIdentityAdapterError",
+            caught.exception.diagnostic.error_type,
+        )
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+    def test_static_probe_reports_com1_lease_acquisition_failure(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._static_probe_poisoned = False
+            adapter._com1_owned = True
+            with self.assertRaises(
+                subject.WindowsIdentityAdapterError,
+            ) as caught:
+                adapter.static_probe("interactive-operator")
+        self.assertEqual(
+            "static-probe.interactive-operator.lease",
+            caught.exception.diagnostic.operation,
+        )
+        self.assertEqual(
+            "WindowsIdentityAdapterError",
+            caught.exception.diagnostic.error_type,
+        )
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
 
     @staticmethod
     def launcher():
