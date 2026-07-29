@@ -150,7 +150,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
             script.index("TELOS_JOIN_MEDIA_DESTROYED"),
             script.index("Get-CimInstance"),
             script.index("Invoke-CimMethod"),
-            script.index("Add-LocalGroupMember"),
+            script.index("NetLocalGroupAddMembers"),
             script.rindex("Get-LocalGroupMember"),
             script.index("New-ItemProperty"),
             script.index("Get-ItemPropertyValue"),
@@ -176,7 +176,27 @@ class WindowsJoinIsoTests(unittest.TestCase):
         )
         self.assertNotIn("Domain Admins", script)
         self.assertNotIn("Add-ADGroupMember", script)
+        self.assertNotIn("Add-LocalGroupMember", script)
         self.assertIn("'S-1-5-32-544'", script)
+        self.assertIn("Get-LocalGroup -SID $administratorsSid", script)
+        self.assertIn("public IntPtr lgrmi0_sid;", script)
+        self.assertIn(
+            "$operatorSid.GetBinaryForm($operatorSidBytes, 0)",
+            script,
+        )
+        self.assertIn(
+            "$null, $administratorGroups[0].Name, 0, [ref]$member, 1",
+            script,
+        )
+        self.assertIn("$addStatus -ne 0 -and $addStatus -ne 1378", script)
+        self.assertLess(
+            script.index("$failurePhase = 'operator-mutation'"),
+            script.index("NetLocalGroupAddMembers"),
+        )
+        self.assertLess(
+            script.index("NetLocalGroupAddMembers"),
+            script.index("$failurePhase = 'operator-verification'"),
+        )
         self.assertIn(
             "'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System'",
             script,
@@ -212,6 +232,40 @@ class WindowsJoinIsoTests(unittest.TestCase):
         )
         for value in MATERIAL.values():
             self.assertNotIn(value, command)
+
+    def test_script_mutates_operator_membership_by_raw_sid(self):
+        script = Path(
+            "homelab/vm/windows_join_control/"
+            "TelosJoin.ps1"
+        ).read_text(encoding="utf-8")
+        mutation = script.index("$failurePhase = 'operator-mutation'")
+        native_add = script.index("NetLocalGroupAddMembers", mutation)
+        verification = script.index(
+            "$failurePhase = 'operator-verification'", native_add)
+        membership_reads = [
+            index for index in range(len(script))
+            if script.startswith("Get-LocalGroupMember", index)
+        ]
+        self.assertEqual(2, len(membership_reads))
+        self.assertLess(membership_reads[0], mutation)
+        self.assertLess(mutation, native_add)
+        self.assertLess(native_add, verification)
+        self.assertLess(verification, membership_reads[1])
+        self.assertNotIn("Add-LocalGroupMember", script)
+        self.assertIn("public IntPtr lgrmi0_sid;", script)
+        self.assertIn(
+            "$operatorSid.GetBinaryForm($operatorSidBytes, 0)",
+            script,
+        )
+        self.assertIn(
+            "$null, $administratorGroups[0].Name, 0, [ref]$member, 1",
+            script,
+        )
+        self.assertIn("$addStatus -ne 0 -and $addStatus -ne 1378", script)
+        self.assertIn(
+            "FreeHGlobal($operatorSidPointer)",
+            script,
+        )
 
     def test_host_destroys_exact_media_before_releasing_guest(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -125,8 +125,50 @@ $operatorAssigned = @(
 )
 if ($operatorAssigned.Count -eq 0) {
     $failurePhase = 'operator-mutation'
-    Add-LocalGroupMember -SID $administratorsSid -Member $operatorSid `
-        -ErrorAction Stop
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class TelosLocalGroup {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LOCALGROUP_MEMBERS_INFO_0 {
+        public IntPtr lgrmi0_sid;
+    }
+
+    [DllImport("Netapi32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint NetLocalGroupAddMembers(
+        string servername,
+        string groupname,
+        uint level,
+        ref LOCALGROUP_MEMBERS_INFO_0 buffer,
+        uint totalentries);
+}
+'@
+    $administratorGroups = @(Get-LocalGroup -SID $administratorsSid)
+    if ($administratorGroups.Count -ne 1 -or
+        $administratorGroups[0].SID.Value -cne $administratorsSid.Value) {
+        throw 'built-in local Administrators group resolution failed'
+    }
+    $operatorSidBytes = [byte[]]::new($operatorSid.BinaryLength)
+    $operatorSid.GetBinaryForm($operatorSidBytes, 0)
+    $operatorSidPointer = [Runtime.InteropServices.Marshal]::AllocHGlobal(
+        $operatorSidBytes.Length)
+    try {
+        [Runtime.InteropServices.Marshal]::Copy(
+            $operatorSidBytes, 0, $operatorSidPointer,
+            $operatorSidBytes.Length)
+        $member = [TelosLocalGroup+LOCALGROUP_MEMBERS_INFO_0]::new()
+        $member.lgrmi0_sid = $operatorSidPointer
+        $addStatus = [TelosLocalGroup]::NetLocalGroupAddMembers(
+            $null, $administratorGroups[0].Name, 0, [ref]$member, 1)
+        if ($addStatus -ne 0 -and $addStatus -ne 1378) {
+            throw ('raw-SID local Administrators mutation failed: ' +
+                $addStatus)
+        }
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::FreeHGlobal($operatorSidPointer)
+    }
 }
 $failurePhase = 'operator-verification'
 $operatorAssigned = @(
