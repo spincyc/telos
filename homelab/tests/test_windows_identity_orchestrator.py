@@ -792,6 +792,206 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 )
                 self.assertNotIn("authenticated", str(error))
 
+    def test_post_reboot_rejects_active_observation_containers_without_use(self):
+        secret = "private-active-observation-detail"
+
+        class ActiveObservation(dict):
+            def __iter__(self):
+                raise RuntimeError(secret)
+
+            def __getitem__(self, _key):
+                raise RuntimeError(secret)
+
+        interactive = {
+            "schema_version": 1,
+            "action": "interactive-operator",
+            "result": "pass",
+            "observation": ActiveObservation(),
+        }
+        domain = {
+            "schema_version": 1,
+            "action": "domain-state",
+            "result": "pass",
+            "observation": ActiveObservation(),
+        }
+        for action in ("interactive-operator", "domain-state"):
+            with self.subTest(action=action):
+                callbacks = self.callbacks([])
+
+                def static_probe(requested, action=action):
+                    if requested == action:
+                        return {
+                            "interactive-operator": interactive,
+                            "domain-state": domain,
+                        }[action]
+                    return {
+                        "interactive-operator": {
+                            "schema_version": 1,
+                            "action": "interactive-operator",
+                            "result": "pass",
+                            "observation": {
+                                "principal": r"FACTORY\operator",
+                                "principal_sid": "S-1-5-21-1-2-3-1104",
+                                "operator": "operator@FACTORY.TEST",
+                                "operator_sid": "S-1-5-21-1-2-3-1104",
+                                "console_principal": r"FACTORY\operator",
+                                "console_sid": "S-1-5-21-1-2-3-1104",
+                                "authenticated": True,
+                                "authentication_type": "Kerberos",
+                                "session_id": 1,
+                                "profile_sid": "S-1-5-21-1-2-3-1104",
+                                "profile_loaded": True,
+                                "local_profile": True,
+                            },
+                        },
+                        "domain-state": {
+                            "schema_version": 1,
+                            "action": "domain-state",
+                            "result": "pass",
+                            "observation": {
+                                "part_of_domain": True,
+                                "domain": "FACTORY.TEST",
+                                "secure_channel": True,
+                                "operator": "operator@FACTORY.TEST",
+                                "operator_local_administrator": True,
+                            },
+                        },
+                    }[requested]
+
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": static_probe,
+                })
+                with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError,
+                ) as caught:
+                    subject._post_reboot_proof(
+                        callbacks, "operator@FACTORY.TEST")
+                error = caught.exception
+                self.assertEqual(
+                    f"static-probe.{action}.validate",
+                    error.diagnostic.operation,
+                )
+                self.assertNotIn(secret, str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
+    def test_post_reboot_internal_validation_failures_have_fixed_stage(self):
+        secret = "private-internal-validation-detail"
+        valid_observations = {
+            "interactive-operator": {
+                "principal": r"FACTORY\operator",
+                "principal_sid": "S-1-5-21-1-2-3-1104",
+                "operator": "operator@FACTORY.TEST",
+                "operator_sid": "S-1-5-21-1-2-3-1104",
+                "console_principal": r"FACTORY\operator",
+                "console_sid": "S-1-5-21-1-2-3-1104",
+                "authenticated": True,
+                "authentication_type": "Kerberos",
+                "session_id": 1,
+                "profile_sid": "S-1-5-21-1-2-3-1104",
+                "profile_loaded": True,
+                "local_profile": True,
+            },
+            "domain-state": {
+                "part_of_domain": True,
+                "domain": "FACTORY.TEST",
+                "secure_channel": True,
+                "operator": "operator@FACTORY.TEST",
+                "operator_local_administrator": True,
+            },
+        }
+
+        class ActiveExpectedOperator(str):
+            def partition(self, _separator):
+                raise RuntimeError(secret)
+
+        callbacks = self.callbacks([])
+        callbacks = subject.AcceptanceCallbacks(**{
+            **callbacks.__dict__,
+            "static_probe": lambda action: {
+                "schema_version": 1,
+                "action": action,
+                "result": "pass",
+                "observation": valid_observations[action],
+            },
+        })
+        with self.assertRaises(
+            subject.WindowsIdentityOrchestratorError,
+        ) as caught:
+            subject._post_reboot_proof(
+                callbacks,
+                ActiveExpectedOperator("operator@FACTORY.TEST"),
+            )
+        error = caught.exception
+        self.assertEqual(
+            "static-probe.interactive-operator.validate",
+            error.diagnostic.operation,
+        )
+        self.assertEqual("UnexpectedError", error.diagnostic.error_type)
+        self.assertNotIn(secret, str(error))
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+
+        class UntypedProbeFailure(BaseException):
+            pass
+
+        for action in ("interactive-operator", "domain-state"):
+            with self.subTest(untyped_probe_action=action):
+                def static_probe(requested, action=action):
+                    if requested == action:
+                        raise UntypedProbeFailure(secret)
+                    return {
+                        "schema_version": 1,
+                        "action": requested,
+                        "result": "pass",
+                        "observation": valid_observations[requested],
+                    }
+
+                staged_callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": static_probe,
+                })
+                with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError,
+                ) as caught:
+                    subject._post_reboot_proof(
+                        staged_callbacks, "operator@FACTORY.TEST")
+                error = caught.exception
+                self.assertEqual(
+                    f"static-probe.{action}.validate",
+                    error.diagnostic.operation,
+                )
+                self.assertEqual(
+                    "UnexpectedError", error.diagnostic.error_type)
+                self.assertNotIn(secret, str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
+        original_set = set
+
+        def fail_for_domain_observation(values):
+            materialized = original_set(values)
+            if "part_of_domain" in materialized:
+                raise OSError(secret)
+            return materialized
+
+        with mock.patch("builtins.set", side_effect=fail_for_domain_observation):
+            with self.assertRaises(
+                subject.WindowsIdentityOrchestratorError,
+            ) as caught:
+                subject._post_reboot_proof(
+                    callbacks, "operator@FACTORY.TEST")
+        error = caught.exception
+        self.assertEqual(
+            "static-probe.domain-state.validate",
+            error.diagnostic.operation,
+        )
+        self.assertEqual("OSError", error.diagnostic.error_type)
+        self.assertNotIn(secret, str(error))
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+
     def test_execute_join_preserves_post_reboot_validation_coordinate(self):
         staged = ControllerJoinResult(
             "stage", "tj-0123456789abcdef", False, ())
