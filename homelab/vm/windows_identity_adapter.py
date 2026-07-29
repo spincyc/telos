@@ -83,6 +83,11 @@ def _run_local_reauthentication_operation(
     except (KeyboardInterrupt, SystemExit, RunInterrupted):
         raise
     except BaseException as error:
+        post_submit_diagnostic = (
+            error.post_submit_diagnostic
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -94,7 +99,9 @@ def _run_local_reauthentication_operation(
         )
     if failure_operation is not None:
         raise WindowsLocalReauthenticationError(
-            failure_operation) from None
+            failure_operation,
+            post_submit_diagnostic=post_submit_diagnostic,
+        ) from None
 
 
 _ACTIONS = {
@@ -747,24 +754,42 @@ class NativeWindowsAcceptanceAdapter:
             try:
                 interaction.observe_ephemeral(
                     desktop,
-                    min(checkpoint_timeout, remaining("desktop")),
+                    checkpoint_timeout,
                     alternatives=(("sign-in", sign_in),),
                 )
             except WindowsIdentityGuiAlternateState as error:
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
-                        "desktop-sign-in-persisted") from None
+                        "desktop-sign-in-persisted",
+                        post_submit_diagnostic=(
+                            self._post_submit_diagnostic_code),
+                    ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
                 if error.state == "desktop":
                     raise WindowsLocalReauthenticationError(
-                        "desktop-near-reference") from None
+                        "desktop-near-reference",
+                        post_submit_diagnostic=(
+                            self._post_submit_diagnostic_code),
+                    ) from None
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
-                        "desktop-sign-in-near-reference") from None
+                        "desktop-sign-in-near-reference",
+                        post_submit_diagnostic=(
+                            self._post_submit_diagnostic_code),
+                    ) from None
                 raise
 
-        _run_local_reauthentication_operation("desktop", prove_desktop)
+        desktop_failure = None
+        try:
+            _run_local_reauthentication_operation("desktop", prove_desktop)
+        except WindowsLocalReauthenticationError as error:
+            desktop_failure = error.reauth_operation
+        if desktop_failure is not None:
+            raise WindowsLocalReauthenticationError(
+                desktop_failure,
+                post_submit_diagnostic=self._post_submit_diagnostic_code,
+            ) from None
 
     def static_probe(self, action: str) -> Mapping[str, object]:
         if self._static_probe_poisoned:

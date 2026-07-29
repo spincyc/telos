@@ -43,6 +43,7 @@ from .windows_identity_contract import qemu_identity_command
 from .windows_identity_prepare import CONTROL_ISO_NAME
 from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
+from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCode
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 WINDOWS_OS_READINESS_TIMEOUT = 300.0
@@ -55,6 +56,7 @@ class IdentityFailureDiagnostic:
     check: str
     operation: str
     error_type: str
+    post_submit_diagnostic: str | None = None
 
     _STATIC_PROBE_PAIRS = frozenset({
         ("controller-ready", "controller-readiness"),
@@ -126,6 +128,7 @@ class IdentityFailureDiagnostic:
     @classmethod
     def join_guest(
         cls, phase: str, error_type: str,
+        post_submit_diagnostic: str | None = None,
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
@@ -164,7 +167,10 @@ class IdentityFailureDiagnostic:
             return cls("unknown-check", "unknown-operation", "UnexpectedError")
         if error_type not in cls._ERROR_TYPES:
             error_type = "UnexpectedError"
-        return cls("windows-joined", candidate, error_type)
+        return cls(
+            "windows-joined", candidate, error_type,
+            post_submit_diagnostic,
+        )
 
     @classmethod
     def static_probe(
@@ -224,6 +230,24 @@ class IdentityFailureDiagnostic:
         return cls(check, operation, diagnostic.error_type)
 
     def __post_init__(self) -> None:
+        if (
+            self.post_submit_diagnostic is not None
+            and (
+                type(self.post_submit_diagnostic) is not str
+                or self.post_submit_diagnostic not in {
+                    code.value for code in PostSubmitDiagnosticCode
+                }
+                or self.operation not in {
+                    "join-guest.reboot-reauth-desktop",
+                    "join-guest.reboot-reauth-desktop-near-reference",
+                    "join-guest.reboot-reauth-desktop-sign-in-persisted",
+                    "join-guest.reboot-reauth-desktop-sign-in-near-reference",
+                }
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("post-submit diagnostic is invalid")
         if (
             (self.check, self.operation) not in self._STATIC_PROBES
             and not (
@@ -286,10 +310,16 @@ class IdentityFailureDiagnostic:
             raise ValueError("identity failure type is invalid")
 
     def render(self) -> str:
-        return (
+        rendered = (
             f"check={self.check}; operation={self.operation}; "
             f"error={self.error_type}"
         )
+        if self.post_submit_diagnostic is not None:
+            rendered += (
+                "; post-submit-diagnostic="
+                f"{self.post_submit_diagnostic}"
+            )
+        return rendered
 
 
 class WindowsIdentityRunError(RuntimeError):
@@ -324,10 +354,28 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         "desktop-sign-in-near-reference",
     })
 
-    def __init__(self, operation: str) -> None:
+    def __init__(
+        self,
+        operation: str,
+        *,
+        post_submit_diagnostic: PostSubmitDiagnosticCode | None = None,
+    ) -> None:
         if operation not in self._OPERATIONS:
             operation = "prove-password-target"
+        if (
+            post_submit_diagnostic is not None
+            and (
+                type(post_submit_diagnostic) is not PostSubmitDiagnosticCode
+                or operation not in {
+                    "desktop", "desktop-near-reference",
+                    "desktop-sign-in-persisted",
+                    "desktop-sign-in-near-reference",
+                }
+            )
+        ):
+            post_submit_diagnostic = None
         self.reauth_operation = operation
+        self.post_submit_diagnostic = post_submit_diagnostic
         super().__init__(
             f"post-join local reauthentication failed at {operation}")
 

@@ -13,6 +13,9 @@ from unittest import mock
 
 from homelab.vm import windows_identity_adapter as subject
 from homelab.vm.windows_gui import Image
+from homelab.vm.windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCode,
+)
 
 
 class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
@@ -323,7 +326,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         observe_timeouts = [
             call.args[1] for call in interaction.observe.call_args_list]
         self.assertGreaterEqual(observe_timeouts[0], observe_timeouts[1])
-        self.assertGreaterEqual(observe_timeouts[1], final_timeout)
+        self.assertEqual(11, final_timeout)
         self.qmp.type_text.assert_called_once_with(
             ".\\telosadmin", timeout=mock.ANY)
         self.assertEqual([mock.call(2), mock.call(2)], sleep.call_args_list)
@@ -570,11 +573,17 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         diagnostic_factory = mock.Mock()
         diagnostic = diagnostic_factory.return_value
         diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
-        diagnostic.__exit__ = mock.Mock(return_value=False)
-        diagnostic.result.return_value = "interactive-logon-success"
+        elapsed = [0.0]
+        diagnostic.result.side_effect = lambda: (
+            elapsed.__setitem__(0, elapsed[0] + 20)
+            or PostSubmitDiagnosticCode.INTERACTIVE_LOGON_SUCCESS
+        )
+        diagnostic.__exit__ = mock.Mock(side_effect=lambda *_args: (
+            elapsed.__setitem__(0, elapsed[0] + 20) or False))
         interaction_type.return_value.observe_ephemeral.side_effect = (
             subject.WindowsIdentityGuiNearReference("sign-in"))
         adapter = self.adapter(
+            clock=lambda: elapsed[0],
             post_submit_diagnostic=diagnostic_factory,
             rotation_plan=mock.Mock(
                 initial_sign_in_delay=0,
@@ -596,9 +605,83 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "desktop-sign-in-near-reference",
             caught.exception.reauth_operation,
         )
+        self.assertIs(
+            PostSubmitDiagnosticCode.INTERACTIVE_LOGON_SUCCESS,
+            caught.exception.post_submit_diagnostic,
+        )
+        self.assertNotIn("private", str(caught.exception))
         diagnostic.result.assert_called_once_with()
         diagnostic.__exit__.assert_called_once()
+        self.assertEqual(
+            11,
+            interaction_type.return_value.observe_ephemeral.call_args.args[1],
+        )
         self.assertFalse(adapter._com1_owned)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_bad_credential_diagnostic_cannot_veto_exact_gui_desktop(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        desktop = mock.sentinel.desktop
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        diagnostic.result.return_value = (
+            PostSubmitDiagnosticCode.BAD_CREDENTIAL)
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        adapter.reauthenticate_domain_operator(
+            "operator@FACTORY.TEST", "private", "a" * 32)
+
+        interaction_type.return_value.observe_ephemeral.assert_called_once_with(
+            desktop, 11, alternatives=(("sign-in", sign_in),))
+        self.assertIs(
+            PostSubmitDiagnosticCode.BAD_CREDENTIAL,
+            adapter._post_submit_diagnostic_code,
+        )
+
+        interaction_type.return_value.observe_ephemeral.side_effect = (
+            RuntimeError("private desktop backend detail"))
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=adapter.rotation_plan,
+        )
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "b" * 32)
+        self.assertEqual("desktop", caught.exception.reauth_operation)
+        self.assertIs(
+            PostSubmitDiagnosticCode.BAD_CREDENTIAL,
+            caught.exception.post_submit_diagnostic,
+        )
+        self.assertNotIn("private desktop", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
@@ -685,7 +768,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             interaction_type.return_value.observe.call_args_list[0].args[1],
         )
         self.assertEqual(
-            6,
+            20,
             interaction_type.return_value.observe_ephemeral.call_args.args[1],
         )
 

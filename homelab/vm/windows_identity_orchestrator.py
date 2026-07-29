@@ -46,6 +46,7 @@ from .windows_join_iso import (
     build_join_iso,
     execute_join_and_prove,
 )
+from .windows_postsubmit_diagnostic import PostSubmitDiagnosticCode
 
 
 class WindowsIdentityOrchestratorError(WindowsIdentityRunError):
@@ -140,9 +141,18 @@ def _local_reauthentication_coordinate(
     """Map only the fixed adapter carrier to a public reauthentication phase."""
     error_type = type(error).__name__
     phase = "reboot-reauth"
-    operation = getattr(error, "reauth_operation", None)
+    operation = None
+    post_submit_diagnostic = None
+    if type(error) is WindowsLocalReauthenticationError:
+        operation = error.reauth_operation
+        post_submit_diagnostic = error.post_submit_diagnostic
+    diagnostic_value = (
+        post_submit_diagnostic.value
+        if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
+        else None
+    )
     if (
-        isinstance(error, WindowsLocalReauthenticationError)
+        type(error) is WindowsLocalReauthenticationError
         and operation in _LOCAL_REAUTH_OPERATIONS
     ):
         phase = f"reboot-reauth-{operation}"
@@ -153,7 +163,8 @@ def _local_reauthentication_coordinate(
         error_type = "UnexpectedError"
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
-    return WindowsJoinFailureCoordinate(phase, error_type)
+    return WindowsJoinFailureCoordinate(
+        phase, error_type, diagnostic_value)
 
 
 _CREDENTIAL_ROLES = {
@@ -408,7 +419,10 @@ def _execute_join(
         cleanup: WindowsJoinFailureCoordinate | None = None,
     ) -> WindowsIdentityOrchestratorError:
         diagnostic = IdentityFailureDiagnostic.join_guest(
-            coordinate.phase, coordinate.error_type)
+            coordinate.phase,
+            coordinate.error_type,
+            coordinate.post_submit_diagnostic,
+        )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:
             cleanup_diagnostic = IdentityFailureDiagnostic.join_guest(

@@ -11,6 +11,9 @@ from homelab.vm.controller_join_material import (
 )
 from homelab.vm.windows_identity_operations import ProductionIdentityReceipt
 from homelab.vm.windows_identity_progressive import ProgressiveRotationReceipt
+from homelab.vm.windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticCode,
+)
 
 from homelab.tests.test_windows_identity_acceptance import details
 
@@ -63,11 +66,38 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             diagnostic.operation,
         )
 
+        supplemental = subject.WindowsLocalReauthenticationError(
+            "desktop-sign-in-persisted",
+            post_submit_diagnostic=PostSubmitDiagnosticCode.BAD_CREDENTIAL,
+        )
+        coordinate = subject._local_reauthentication_coordinate(supplemental)
+        diagnostic = subject.IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            coordinate.post_submit_diagnostic,
+        )
+        self.assertEqual(
+            "reboot-reauth-desktop-sign-in-persisted",
+            coordinate.phase,
+        )
+        self.assertEqual("bad-credential", coordinate.post_submit_diagnostic)
+        self.assertEqual(
+            "join-guest.reboot-reauth-desktop-sign-in-persisted",
+            diagnostic.operation,
+        )
+        self.assertIn(
+            "post-submit-diagnostic=bad-credential",
+            diagnostic.render(),
+        )
+        self.assertNotIn("private", diagnostic.render())
+
         forged = forged_error_type("private")
         forged.reauth_operation = "private-arbitrary-value"
+        forged.post_submit_diagnostic = "private-raw-result"
         coordinate = subject._local_reauthentication_coordinate(forged)
         self.assertEqual("reboot-reauth", coordinate.phase)
         self.assertEqual("UnexpectedError", coordinate.error_type)
+        self.assertIsNone(coordinate.post_submit_diagnostic)
 
         unrelated = RuntimeError("private")
         unrelated.reauth_operation = "wake"
@@ -80,6 +110,44 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         coordinate = subject._local_reauthentication_coordinate(forged)
         self.assertEqual("reboot-reauth", coordinate.phase)
         self.assertEqual("UnexpectedError", coordinate.error_type)
+
+        class Hostile(RuntimeError):
+            @property
+            def reauth_operation(self):
+                raise AssertionError("hostile property was evaluated")
+
+            @property
+            def post_submit_diagnostic(self):
+                raise AssertionError("hostile property was evaluated")
+
+        coordinate = subject._local_reauthentication_coordinate(Hostile())
+        self.assertEqual("reboot-reauth", coordinate.phase)
+        self.assertEqual("UnexpectedError", coordinate.error_type)
+
+        class StringSubclass(str):
+            pass
+
+        for phase, error_type, value in (
+            ("reboot-reauth-wake",
+             "WindowsLocalReauthenticationError", "bad-credential"),
+            ("reboot-reauth-desktop", "UnexpectedError", "bad-credential"),
+            ("reboot-reauth-desktop",
+             "WindowsLocalReauthenticationError",
+             StringSubclass("bad-credential")),
+        ):
+            with self.subTest(
+                    phase=phase, error_type=error_type, value=value):
+                with self.assertRaises(ValueError):
+                    subject.WindowsJoinFailureCoordinate(
+                        phase, error_type, value)
+
+        with self.assertRaises(ValueError):
+            subject.IdentityFailureDiagnostic(
+                "windows-joined",
+                "join-guest.reboot-reauth-wake",
+                "WindowsLocalReauthenticationError",
+                "bad-credential",
+            )
 
     def test_join_stage_failure_is_rebound_to_secret_free_acceptance_coordinate(
         self,
