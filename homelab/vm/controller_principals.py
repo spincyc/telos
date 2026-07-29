@@ -36,6 +36,7 @@ _STAGE_PROGRAM = r"""
 import json
 import sys
 
+from ldb import FLAG_MOD_REPLACE, Message, MessageElement
 from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
@@ -48,6 +49,22 @@ lp = LoadParm()
 lp.load_default()
 samdb = SamDB(session_info=system_session(), lp=lp)
 created = []
+realm = str(lp.get("realm")).upper()
+attributes = [
+    "sAMAccountName",
+    "userPrincipalName",
+    "userAccountControl",
+    "msDS-User-Account-Control-Computed",
+    "accountExpires",
+    "lockoutTime",
+    "badPwdCount",
+    "pwdLastSet",
+    "objectSid",
+]
+
+def integers(record, attribute):
+    return [int(str(value)) for value in record.get(attribute, [])]
+
 try:
     for name in ("student", "operator", "directory-admin"):
         samdb.newuser(
@@ -55,15 +72,86 @@ try:
             force_password_change_at_next_login_req=False,
         )
         created.append(name)
+        expression = "(sAMAccountName=" + name + ")"
+        results = samdb.search(expression=expression, attrs=attributes)
+        if len(results) != 1:
+            raise RuntimeError("staged principal was not stored exactly once")
+        expected_upn = name + "@" + realm
+        observed_upns = [
+            str(value) for value in results[0].get("userPrincipalName", [])
+        ]
+        if observed_upns != [expected_upn]:
+            update = Message()
+            update.dn = results[0].dn
+            update["userPrincipalName"] = MessageElement(
+                expected_upn, FLAG_MOD_REPLACE, "userPrincipalName")
+            samdb.modify(update)
     samdb.add_remove_group_members(
         "Domain Admins", ["directory-admin"], add_members_operation=True,
     )
+    sids = set()
+    for name in ("student", "operator", "directory-admin"):
+        expected_upn = name + "@" + realm
+        results = samdb.search(
+            expression="(sAMAccountName=" + name + ")",
+            attrs=attributes,
+        )
+        if len(results) != 1:
+            raise RuntimeError("staged principal was not stored exactly once")
+        record = results[0]
+        if [str(value) for value in record.get("sAMAccountName", [])] != [name]:
+            raise RuntimeError("staged principal name is invalid")
+        if [
+            str(value) for value in record.get("userPrincipalName", [])
+        ] != [expected_upn]:
+            raise RuntimeError("staged principal UPN is invalid")
+        controls = integers(record, "userAccountControl")
+        computed = integers(record, "msDS-User-Account-Control-Computed")
+        if (
+            len(controls) != 1
+            or controls[0] & 0x0200 == 0
+            or controls[0] & (0x0002 | 0x0020 | 0x800000) != 0
+            or len(computed) != 1
+            or computed[0] & (0x0010 | 0x800000) != 0
+        ):
+            raise RuntimeError("staged principal account control is invalid")
+        expires = integers(record, "accountExpires")
+        if expires not in ([], [0], [9223372036854775807]):
+            raise RuntimeError("staged principal account expiry is invalid")
+        lockout = integers(record, "lockoutTime")
+        if lockout not in ([], [0]):
+            raise RuntimeError("staged principal is locked out")
+        bad_passwords = integers(record, "badPwdCount")
+        if bad_passwords not in ([], [0]):
+            raise RuntimeError("staged principal bad-password count is invalid")
+        password_set = integers(record, "pwdLastSet")
+        if len(password_set) != 1 or password_set[0] <= 0:
+            raise RuntimeError("staged principal password state is invalid")
+        sid_values = [bytes(value) for value in record.get("objectSid", [])]
+        if len(sid_values) != 1 or not sid_values[0] or sid_values[0] in sids:
+            raise RuntimeError("staged principal SID is invalid")
+        sids.add(sid_values[0])
 except BaseException:
+    rollback_failures = []
     for name in reversed(created):
         try:
             samdb.deleteuser(name)
-        except BaseException:
-            pass
+        except BaseException as error:
+            rollback_failures.append(type(error).__name__)
+    for name in created:
+        try:
+            results = samdb.search(
+                expression="(sAMAccountName=" + name + ")",
+                attrs=["sAMAccountName"],
+            )
+            if results:
+                rollback_failures.append("PrincipalRemains")
+        except BaseException as error:
+            rollback_failures.append(type(error).__name__)
+    if rollback_failures:
+        raise RuntimeError(
+            "staged principal rollback failed: "
+            + ",".join(rollback_failures))
     raise
 """
 
@@ -88,6 +176,13 @@ for name in reversed(names):
         samdb.deleteuser(name)
     except BaseException as error:
         failures.append(type(error).__name__)
+for name in names:
+    results = samdb.search(
+        expression="(sAMAccountName=" + name + ")",
+        attrs=["sAMAccountName"],
+    )
+    if results:
+        failures.append("PrincipalRemains")
 if failures:
     raise RuntimeError("principal destruction failed: " + ",".join(failures))
 """

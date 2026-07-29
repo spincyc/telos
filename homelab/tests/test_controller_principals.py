@@ -6,6 +6,7 @@ import shlex
 import threading
 import unittest
 
+from homelab.vm import controller_principals
 from homelab.vm.controller_principals import (
     ControllerPrincipalError,
     ControllerPrincipalResult,
@@ -106,6 +107,32 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertFalse(any(
             secret.encode() in b"".join(observed)
             for secret in VALUES.values()))
+
+    def test_stage_program_verifies_public_identity_and_account_state(self):
+        program = controller_principals._STAGE_PROGRAM
+        for attribute in (
+                "sAMAccountName", "userPrincipalName", "userAccountControl",
+                "msDS-User-Account-Control-Computed", "accountExpires",
+                "lockoutTime", "badPwdCount", "pwdLastSet", "objectSid"):
+            self.assertIn(f'"{attribute}"', program)
+        self.assertIn("expected_upn = name + \"@\" + realm", program)
+        self.assertIn("FLAG_MOD_REPLACE", program)
+        self.assertIn("controls[0] & 0x0200 == 0", program)
+        self.assertIn("controls[0] & (0x0002 | 0x0020 | 0x800000)", program)
+        self.assertIn("expires not in ([], [0], [9223372036854775807])",
+                      program)
+        self.assertIn("lockout not in ([], [0])", program)
+        self.assertIn("bad_passwords not in ([], [0])", program)
+        self.assertIn("password_set[0] <= 0", program)
+        self.assertIn("sid_values[0] in sids", program)
+        self.assertIn("rollback_failures = []", program)
+        self.assertIn('"staged principal rollback failed: "', program)
+
+    def test_destroy_program_proves_every_principal_absent(self):
+        program = controller_principals._DESTROY_PROGRAM
+        self.assertIn('expression="(sAMAccountName=" + name + ")"', program)
+        self.assertIn('attrs=["sAMAccountName"]', program)
+        self.assertIn('failures.append("PrincipalRemains")', program)
 
     def test_password_authenticated_sudo_is_secret_safe(self):
         password = b"Controller-private-47!"
