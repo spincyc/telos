@@ -378,6 +378,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         expected_guest=references["sign-in"].guest,
         evidence_root=boundary.attempt / "rotation-evidence",
         change_password_keys=("down", "down", "down", "ret"),
+        post_join_local_account_calibrated=True,
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],

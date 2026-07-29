@@ -226,7 +226,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             initial_sign_in_delay=0,
             lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
-            post_join_local_account_keys=("esc", "end", "ret"),
+            post_join_local_account_keys=(),
+            post_join_local_account_calibrated=True,
             checkpoint_timeout=11,
         )
         adapter = self.adapter(rotation_plan=plan)
@@ -236,9 +237,6 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertEqual(
             [
                 mock.call.key("spc"),
-                mock.call.key("esc"),
-                mock.call.key("end"),
-                mock.call.key("ret"),
                 mock.call.key("tab"),
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
@@ -299,6 +297,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             lock_settle_delay=2,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=(),
+            post_join_local_account_calibrated=False,
             expected_guest=mock.sentinel.guest,
         ))
 
@@ -382,6 +381,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 lock_settle_delay=2,
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=(),
+                post_join_local_account_calibrated=False,
                 expected_guest=mock.sentinel.guest,
             ),
         )
@@ -436,6 +436,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 lock_settle_delay=1,
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=(),
+                post_join_local_account_calibrated=False,
                 expected_guest=mock.sentinel.guest,
             ),
         )
@@ -473,6 +474,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 lock_settle_delay=0,
                 wake_after_lock_keys=("spc",),
                 post_join_local_account_keys=("end", "ret"),
+                post_join_local_account_calibrated=True,
                 checkpoint_timeout=11,
             ),
             clock=lambda: next(ticks),
@@ -509,6 +511,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
+            post_join_local_account_calibrated=True,
             checkpoint_timeout=11,
         ))
 
@@ -542,6 +545,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             lock_settle_delay=0,
             wake_after_lock_keys=("spc",),
             post_join_local_account_keys=("end",),
+            post_join_local_account_calibrated=True,
             checkpoint_timeout=11,
         )
         for interruption in (

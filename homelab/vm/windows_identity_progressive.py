@@ -195,6 +195,7 @@ class ProgressiveRotationPlan:
     change_password_keys: tuple[str, ...] = ()
     wake_after_lock_keys: tuple[str, ...] = ("spc",)
     post_join_local_account_keys: tuple[str, ...] = ()
+    post_join_local_account_calibrated: bool = False
     initial_sign_in_delay: float = 60.0
     lock_settle_delay: float = 2.0
     timeout: float = 360.0
@@ -417,6 +418,7 @@ def execute_progressive_rotation(
         or plan.checkpoint_timeout > plan.timeout
         or plan.initial_sign_in_delay < 0
         or plan.lock_settle_delay < 0
+        or type(plan.post_join_local_account_calibrated) is not bool
         or any(
             key not in SAFE_KEYS
             for keys in (

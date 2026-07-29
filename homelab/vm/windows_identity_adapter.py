@@ -356,12 +356,15 @@ class NativeWindowsAcceptanceAdapter:
         selection_failure = False
         try:
             selection_keys = tuple(plan.post_join_local_account_keys)
+            selection_calibrated = bool(
+                plan.post_join_local_account_calibrated)
             wake_keys = tuple(plan.wake_after_lock_keys)
             initial_delay = float(plan.initial_sign_in_delay)
             lock_settle_delay = float(plan.lock_settle_delay)
             if (
                 initial_delay < 0
                 or lock_settle_delay < 0
+                or type(plan.post_join_local_account_calibrated) is not bool
                 or any(key not in SAFE_KEYS for key in selection_keys)
                 or any(key not in SAFE_KEYS for key in wake_keys)
             ):
@@ -381,7 +384,7 @@ class NativeWindowsAcceptanceAdapter:
                 budget = remaining("wake")
                 time.sleep(min(initial_delay, budget))
                 remaining("wake")
-            if not selection_keys:
+            if not selection_calibrated:
                 try:
                     remaining("calibration-capture")
                     calibration_baselines.append(
