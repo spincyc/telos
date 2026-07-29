@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -84,6 +85,116 @@ class WindowsIdentityCliTests(unittest.TestCase):
             stage_join_principal=configuration.stage_join_principal,
             destroy_join_principal=configuration.destroy_join_principal,
         )
+
+    def test_claim_owner_can_revalidate_during_real_cli_composition(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            configuration = mock.Mock()
+            for field in (
+                "rotation_plan", "publication", "private_root", "evidence",
+                "realm", "callbacks", "stage_principals",
+                "destroy_principals", "stage_join_principal",
+                "destroy_join_principal",
+            ):
+                setattr(configuration, field, mock.sentinel.configuration)
+
+            def acceptance(**arguments):
+                # Production start_switch begins by validating again after the
+                # CLI has published its one-use claim.
+                arguments["boundary"]._validate()
+
+            with mock.patch.object(
+                windows_identity_cli,
+                "execute_windows_identity_acceptance",
+                side_effect=acceptance,
+            ):
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=lambda _boundary: configuration,
+                )
+            receipt = json.loads(
+                (attempt / "terminal-teardown.json").read_text(
+                    encoding="utf-8"))
+        self.assertEqual(0, result)
+        self.assertTrue(receipt["teardown"]["owned_media_closed"])
+        self.assertTrue(receipt["teardown_complete"])
+
+    def test_prestart_failure_releases_validation_media_before_receipt(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            configuration = mock.Mock()
+            for field in (
+                "rotation_plan", "publication", "private_root", "evidence",
+                "realm", "callbacks", "stage_principals",
+                "destroy_principals", "stage_join_principal",
+                "destroy_join_principal",
+            ):
+                setattr(configuration, field, mock.sentinel.configuration)
+            with mock.patch.object(
+                windows_identity_cli,
+                "execute_windows_identity_acceptance",
+                side_effect=(
+                    windows_identity_cli.WindowsIdentityOrchestratorError(
+                        "pre-start")),
+            ):
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=lambda _boundary: configuration,
+                )
+            receipt = json.loads(
+                (attempt / "terminal-teardown.json").read_text(
+                    encoding="utf-8"))
+        self.assertEqual(2, result)
+        self.assertEqual("failed", receipt["outcome"])
+        self.assertTrue(receipt["teardown"]["owned_media_closed"])
+        self.assertTrue(receipt["teardown_complete"])
+
+    def test_incomplete_teardown_receipt_cannot_return_success(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            configuration = mock.Mock()
+            for field in (
+                "rotation_plan", "publication", "private_root", "evidence",
+                "realm", "callbacks", "stage_principals",
+                "destroy_principals", "stage_join_principal",
+                "destroy_join_principal",
+            ):
+                setattr(configuration, field, mock.sentinel.configuration)
+            incomplete = {
+                "processes_reaped": True,
+                "qmp_closed": True,
+                "runtime_quiescent": True,
+                "owned_media_closed": False,
+                "dependencies_released": True,
+            }
+            with mock.patch.object(
+                windows_identity_cli, "execute_windows_identity_acceptance",
+            ), mock.patch.object(
+                windows_identity_cli.NativeProcessBoundary,
+                "audit_teardown",
+                return_value=incomplete,
+            ):
+                result = windows_identity_cli.main(
+                    [
+                        "--attempt", str(attempt),
+                        "--controller-state", str(controller),
+                        "--apply",
+                    ],
+                    acceptance_factory=lambda _boundary: configuration,
+                )
+            receipt = json.loads(
+                (attempt / "terminal-teardown.json").read_text(
+                    encoding="utf-8"))
+        self.assertEqual(2, result)
+        self.assertFalse(receipt["teardown_complete"])
 
     def test_apply_without_live_adapter_fails_closed(self):
         with tempfile.TemporaryDirectory() as name:

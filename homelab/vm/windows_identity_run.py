@@ -388,6 +388,8 @@ class NativeProcessBoundary:
         self.controller_qmp: QmpClient | None = None
         self.controller_qmp_root: Path | None = None
         self.controller_factory_fd: int | None = None
+        self.attempt_claim: object | None = None
+        self.ownership_close_failed = False
 
     @staticmethod
     def _normalized_command(command: list[str]) -> list[str]:
@@ -533,10 +535,16 @@ class NativeProcessBoundary:
                 "Controller convergence media destruction failed")
 
     def _validate(self) -> None:
-        for terminal_name in (
-                "attempt-consumed.json", "terminal-teardown.json"):
-            terminal = self.attempt / terminal_name
-            if terminal.exists() or terminal.is_symlink():
+        terminal = self.attempt / "terminal-teardown.json"
+        if terminal.exists() or terminal.is_symlink():
+            raise WindowsIdentityRunError(
+                "identity attempt was already consumed")
+        consumed = self.attempt / "attempt-consumed.json"
+        if consumed.exists() or consumed.is_symlink():
+            if (
+                self.attempt_claim is None
+                or not self.attempt_claim.verify(self.attempt)
+            ):
                 raise WindowsIdentityRunError(
                     "identity attempt was already consumed")
         if (self.attempt.is_symlink() or not self.attempt.is_dir()
@@ -1636,6 +1644,50 @@ class NativeProcessBoundary:
         }.intersection(self.processes):
             self.dependency_endpoints.clear()
 
+    def claim_attempt(self) -> None:
+        """Publish and retain this boundary's exclusive claim capability."""
+        if self.attempt_claim is not None:
+            raise WindowsIdentityRunError(
+                "identity attempt claim ownership is invalid")
+        from .windows_identity_attempt import claim
+        try:
+            self.attempt_claim = claim(self.attempt)
+        except BaseException as error:
+            from .windows_identity_attempt import _ClaimPublicationError
+            if isinstance(error, _ClaimPublicationError):
+                self.attempt_claim = error.claim
+            raise
+
+    def terminalize_attempt(
+        self, *, outcome: str, teardown: Mapping[str, bool],
+    ) -> None:
+        """Publish terminal state while the original claim inode stays open."""
+        if self.attempt_claim is None:
+            raise WindowsIdentityRunError(
+                "identity attempt claim ownership is unavailable")
+        from .windows_identity_attempt import terminalize
+        try:
+            terminalize(
+                self.attempt,
+                claim=self.attempt_claim,
+                outcome=outcome,
+                teardown=teardown,
+            )
+        finally:
+            self.attempt_claim.close()
+            self.attempt_claim = None
+
+    def release_prestart_ownership(self) -> None:
+        """Release validation-only ownership when Windows never started."""
+        if "windows" in self.processes or self.control_iso_fd is None:
+            return
+        descriptor = self.control_iso_fd
+        self.control_iso_fd = None
+        try:
+            os.close(descriptor)
+        except OSError:
+            self.ownership_close_failed = True
+
     def audit_teardown(self) -> dict[str, bool]:
         """Return fixed, secret-free facts derived after teardown attempts."""
         runtime_sockets = (
@@ -1649,6 +1701,7 @@ class NativeProcessBoundary:
             and self.qmp_root is None and self.controller_qmp_root is None,
             "runtime_quiescent": not runtime_sockets,
             "owned_media_closed": self.control_iso_fd is None
+            and not self.ownership_close_failed
             and self.controller_factory_fd is None
             and self.controller_factory_bundle is None
             and self.controller_overlay is None,

@@ -18,7 +18,6 @@ from .windows_identity_orchestrator import (
     execute_windows_identity_acceptance,
 )
 from .windows_identity_progressive import ProgressiveRotationPlan
-from .windows_identity_attempt import claim, terminalize
 from .windows_identity_run import (
     NativeProcessBoundary,
     WindowsIdentityRunError,
@@ -77,8 +76,17 @@ def run(
     with SignalGuard():
         configuration = acceptance_factory(boundary)
         try:
-            claim_sha256 = claim(boundary.attempt)
+            boundary.claim_attempt()
         except (OSError, RuntimeError) as error:
+            if boundary.attempt_claim is not None:
+                boundary.release_prestart_ownership()
+                try:
+                    boundary.terminalize_attempt(
+                        outcome="failed",
+                        teardown=boundary.audit_teardown(),
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    pass
             raise WindowsIdentityRunError(
                 "identity attempt claim failed: "
                 f"{type(error).__name__}") from None
@@ -105,11 +113,11 @@ def run(
                     RunInterrupted, KeyboardInterrupt, SystemExit)):
                 outcome = "interrupted"
         try:
-            terminalize(
-                boundary.attempt,
-                claim_sha256=claim_sha256,
+            boundary.release_prestart_ownership()
+            teardown = boundary.audit_teardown()
+            boundary.terminalize_attempt(
                 outcome=outcome,
-                teardown=boundary.audit_teardown(),
+                teardown=teardown,
             )
         except (OSError, RuntimeError, ValueError) as error:
             lifecycle = (
@@ -119,6 +127,9 @@ def run(
             raise WindowsIdentityRunError(
                 "terminal teardown receipt persistence failed: "
                 f"{type(error).__name__}{lifecycle}") from None
+        if not all(teardown.values()) and primary is None:
+            raise WindowsIdentityRunError(
+                "native identity teardown audit was incomplete")
         if primary is not None:
             raise primary
     return 0
