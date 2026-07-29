@@ -436,10 +436,13 @@ def execute_progressive_rotation(
         raise WindowsIdentityProgressiveError(
             "trusted identity reference validation failed") from None
 
-    deadline = clock() + plan.timeout
+    deadline: float | None = None
     phases: list[str] = []
 
     def remaining() -> float:
+        if deadline is None:
+            raise WindowsIdentityProgressiveError(
+                "progressive rotation deadline is unavailable")
         value = min(plan.checkpoint_timeout, deadline - clock())
         if value <= 0:
             raise _ProgressiveDeadlineError
@@ -450,6 +453,10 @@ def execute_progressive_rotation(
         # recovery and guest-session context managers have both torn down.
         with SignalGuard():
             with recovery as old_credential, session as qmp:
+                # Native acquisition has its own bounded Controller, Windows
+                # boot, retry, and QMP gates. Start the rotation budget only
+                # after those gates have produced the authenticated session.
+                deadline = clock() + plan.timeout
                 WindowsCredentialRotationDriver._validate_secret(old_credential)
 
                 sign_in, desktop, security_options, change_password = references

@@ -458,6 +458,35 @@ class ProgressiveRotationTests(unittest.TestCase):
         ):
             self.execute(clock=lambda: next(times))
 
+    def test_rotation_deadline_starts_after_session_acquisition(self):
+        now = [0.0]
+        events = []
+
+        class DelayedSession(Context):
+            def __enter__(self):
+                now[0] = 500.0
+                return super().__enter__()
+
+        references = [
+            reference(kind) for kind in (
+                "sign-in", "desktop", "security-options", "change-password")]
+        with mock.patch(
+            "homelab.vm.windows_identity_progressive.load_identity_reference",
+            side_effect=references,
+        ):
+            receipt = execute_progressive_rotation(
+                plan=self.plan(),
+                session=DelayedSession(object(), events, "session"),
+                recovery=Recovery("Old-private-47!", events, "recovery"),
+                generate_credential=lambda: "New-private-83!",
+                after_rotation=lambda _replacement: None,
+                clock=lambda: now[0],
+                pause=lambda _: None,
+                interaction_factory=lambda _qmp, _root: Interaction(events),
+            )
+        self.assertTrue(receipt.replacement_sign_in_proved)
+        self.assertIn("observe:sign-in", events)
+
     def test_manifest_validation_happens_before_opening_private_contexts(self):
         events = []
         with mock.patch(
