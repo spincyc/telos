@@ -301,6 +301,50 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject.time, "sleep")
+    def test_reauthentication_deadline_starts_after_boot_settle(
+        self, sleep, load_references, private_evidence_root, interaction_type,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for local account telosadmin",
+        )
+        desktop = mock.sentinel.desktop
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        elapsed = [0.0]
+        sleep.side_effect = lambda delay: elapsed.__setitem__(
+            0, elapsed[0] + delay)
+        adapter = self.adapter(
+            timeout=10,
+            clock=lambda: elapsed[0],
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=5,
+                lock_settle_delay=0,
+                wake_after_lock_keys=("spc",),
+                post_join_local_account_keys=(),
+                post_join_local_account_calibrated=True,
+                post_join_sign_in_manifest=None,
+                checkpoint_timeout=20,
+            ),
+        )
+
+        adapter.reauthenticate_local("private")
+
+        self.assertEqual([mock.call(5)], sleep.call_args_list)
+        self.assertEqual(
+            10,
+            interaction_type.return_value.observe.call_args_list[0].args[1],
+        )
+        self.assertEqual(
+            10,
+            interaction_type.return_value.observe_ephemeral.call_args.args[1],
+        )
+
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     @mock.patch.object(subject, "retain_post_join_calibration")
     @mock.patch.object(subject, "sample_post_join_calibration")
     @mock.patch.object(subject.time, "sleep")

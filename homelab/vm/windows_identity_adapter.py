@@ -390,10 +390,12 @@ class NativeWindowsAcceptanceAdapter:
         calibration_baselines: list[PostJoinCalibrationFrame] = []
 
         def wake() -> None:
+            nonlocal deadline
             if initial_delay:
                 budget = remaining("wake")
                 time.sleep(min(initial_delay, budget))
                 remaining("wake")
+                deadline = self.clock() + self.timeout
             if not selection_calibrated:
                 try:
                     remaining("calibration-capture")
