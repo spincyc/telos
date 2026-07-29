@@ -110,6 +110,42 @@ class ControllerFactoryBundleTests(unittest.TestCase):
                 "log file = /run/telos-factory-auth-audit", script)
             self.assertIn(
                 "testparm -s --parameter-name='log level'", script)
+            self.assertIn("smbd -b | awk", script)
+            self.assertIn(
+                '$1 == "HAVE_JSON_OBJECT" && NF == 1', script)
+            self.assertIn(
+                "read -r -d '' -a auth_audit_tokens", script)
+            self.assertIn(
+                '[[ ${#auth_audit_tokens[@]} -eq 2 ]]', script)
+            self.assertIn(
+                '[[ "${auth_audit_tokens[0]}" == 0 ]]', script)
+            self.assertNotIn(
+                "'0 auth_json_audit:3@"
+                "/run/telos-factory-auth-audit/auth.jsonl' ]]",
+                script,
+            )
+            self.assertIn(
+                "test -d /run/telos-factory-auth-audit", script)
+            self.assertIn(
+                "test -f /run/telos-factory-auth-audit/auth.jsonl", script)
+            self.assertIn(
+                "stat -c '%u:%g:%a:%h'", script)
+            self.assertNotIn("stat -Lc '%U:%G:%a:%F:%h'", script)
+            auth_markers = (
+                "auth-audit-preflight",
+                "auth-audit-sink-create",
+                "auth-audit-config-write",
+                "auth-audit-config-verify",
+                "auth-audit-restart",
+                "auth-audit-sink-verify",
+            )
+            for marker in auth_markers:
+                self.assertIn(f"TELOS FACTORY STEP {marker}", script)
+            for before, after in zip(auth_markers, auth_markers[1:]):
+                self.assertLess(
+                    script.index(f"TELOS FACTORY STEP {before}"),
+                    script.index(f"TELOS FACTORY STEP {after}"),
+                )
             self.assertIn(
                 "/usr/share/ipxe/x86_64/ipxe.efi", script)
             self.assertLess(

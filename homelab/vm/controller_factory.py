@@ -195,28 +195,42 @@ systemctl restart samba.service ntpd.service
 systemctl restart telos-factory-tftp.service
 nginx -c /etc/homelab/factory-nginx.conf
 echo 'TELOS FACTORY STEP auth-audit'
+echo 'TELOS FACTORY STEP auth-audit-preflight'
+smbd -b | awk '
+  $1 == "HAVE_JSON_OBJECT" && NF == 1 {{ found++ }}
+  END {{ exit found == 1 ? 0 : 1 }}
+'
+echo 'TELOS FACTORY STEP auth-audit-sink-create'
 install -d -o root -g root -m 0700 /run/telos-factory-auth-audit
 install -o root -g root -m 0600 /dev/null \
   /run/telos-factory-auth-audit/auth.jsonl
+echo 'TELOS FACTORY STEP auth-audit-config-write'
 test "$(grep -c '^\\[global\\]$' /etc/samba/smb.conf)" == 1
 sed -i \
   '/^\\[global\\]$/a\\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
   /etc/samba/smb.conf
 chmod 0600 /etc/samba/smb.conf
+echo 'TELOS FACTORY STEP auth-audit-config-verify'
 auth_audit_config=$(
   testparm -s --parameter-name='log level' 2>/dev/null
 )
-[[ "$auth_audit_config" == \
-  '0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' ]]
+IFS=$' \\t\\r\\n' read -r -d '' -a auth_audit_tokens < <(
+  printf '%s\\0' "$auth_audit_config"
+)
+[[ ${{#auth_audit_tokens[@]}} -eq 2 ]]
+[[ "${{auth_audit_tokens[0]}}" == 0 ]]
+[[ "${{auth_audit_tokens[1]}}" == \
+  'auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' ]]
+echo 'TELOS FACTORY STEP auth-audit-restart'
 systemctl restart samba.service
-test "$(stat -Lc '%U:%G:%a:%F:%h' \
-  /run/telos-factory-auth-audit)" == 'root:root:700:directory:2'
-test "$(stat -Lc '%U:%G:%a:%F:%h' \
-  /run/telos-factory-auth-audit/auth.jsonl)" == \
-  'root:root:600:regular empty file:1' ||
-test "$(stat -Lc '%U:%G:%a:%F:%h' \
-  /run/telos-factory-auth-audit/auth.jsonl)" == \
-  'root:root:600:regular file:1'
+echo 'TELOS FACTORY STEP auth-audit-sink-verify'
+test -d /run/telos-factory-auth-audit
+test ! -L /run/telos-factory-auth-audit
+test "$(stat -c '%u:%g:%a' /run/telos-factory-auth-audit)" == '0:0:700'
+test -f /run/telos-factory-auth-audit/auth.jsonl
+test ! -L /run/telos-factory-auth-audit/auth.jsonl
+test "$(stat -c '%u:%g:%a:%h' \
+  /run/telos-factory-auth-audit/auth.jsonl)" == '0:0:600:1'
 echo 'TELOS FACTORY STEP verify'
 check() {{
   echo "TELOS FACTORY STEP $1"

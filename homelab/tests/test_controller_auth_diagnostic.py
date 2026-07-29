@@ -219,6 +219,34 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             self.assertEqual(subject._controller_session(encoded), 2)
         cleanup.assert_called_once_with(None, None)
 
+    def test_effective_configuration_accepts_semantic_token_spacing(self):
+        completed = mock.Mock(
+            returncode=0,
+            stdout=(
+                "  0   auth_json_audit:3@"
+                "/run/telos-factory-auth-audit/auth.jsonl\n"
+            ),
+        )
+        with mock.patch.object(
+                subject.subprocess, "run", return_value=completed):
+            self.assertTrue(subject._effective_configuration())
+
+    def test_effective_configuration_rejects_extra_or_duplicate_tokens(self):
+        exact = (
+            "0 auth_json_audit:3@"
+            "/run/telos-factory-auth-audit/auth.jsonl"
+        )
+        for output in (
+            f"{exact} auth:1\n",
+            f"{exact} auth_json_audit:3@"
+            "/run/telos-factory-auth-audit/auth.jsonl\n",
+            f"1 {exact.split(' ', 1)[1]}\n",
+        ):
+            with self.subTest(output=output), mock.patch.object(
+                    subject.subprocess, "run",
+                    return_value=mock.Mock(returncode=0, stdout=output)):
+                self.assertFalse(subject._effective_configuration())
+
     def test_cleanup_never_unlinks_hardlink_or_replacement(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

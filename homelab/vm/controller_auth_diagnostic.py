@@ -310,8 +310,8 @@ def _effective_configuration() -> bool:
     )
     return (
         result.returncode == 0
-        and result.stdout.strip()
-        == f"0 auth_json_audit:3@{AUDIT_PATH}"
+        and result.stdout.split()
+        == ["0", f"auth_json_audit:3@{AUDIT_PATH}"]
     )
 
 
