@@ -53,6 +53,8 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("WINDOWS_RUN", text)
         self.assertIn("APPLY", text)
         self.assertIn("--apply", text)
+        self.assertEqual(4, text.count("FACTORY_CONTROLLER_STATE"))
+        self.assertEqual(2, text.count("--controller-state"))
 
     def test_windows_identity_run_requires_attempt_and_is_apply_gated(self):
         text = recipe("homelab-windows-identity-run")
@@ -60,6 +62,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("homelab-windows-identity-run", text)
         self.assertIn("APPLY", text)
         self.assertEqual(1, text.count("--apply"))
+        self.assertIn("WINDOWS_SUBMIT_FOCUS_TABS", text)
 
     def test_offline_check_cannot_invoke_acquisition(self):
         declaration = re.search(

@@ -96,8 +96,17 @@ def inspect_candidate(bundle: Path) -> dict:
 
 
 def prepare(
-    bundle: Path, controller_state: Path, switch_port: int = 31415,
+    bundle: Path,
+    controller_state: Path,
+    switch_port: int = 31415,
+    calibrate_submit_focus_tabs: int = 0,
 ) -> Path:
+    if (
+        type(calibrate_submit_focus_tabs) is not int
+        or not 0 <= calibrate_submit_focus_tabs <= 4
+    ):
+        raise WindowsIdentityPrepareError(
+            "submit-focus calibration count must be between 0 and 4")
     bundle = bundle.resolve(strict=True)
     source = inspect_candidate(bundle)
     identity_root = bundle / "identity"
@@ -163,6 +172,10 @@ def prepare(
             },
             "installation_media_attached": False,
             "pxe_boot_enabled": False,
+            "post_join_submit_focus_calibration": {
+                "enabled": calibrate_submit_focus_tabs > 0,
+                "tabs": calibrate_submit_focus_tabs,
+            },
         }
         private_file(
             attempt / "authorization.json",
@@ -182,6 +195,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
     result.add_argument("--switch-port", type=int, default=31415)
+    result.add_argument(
+        "--calibrate-submit-focus-tabs",
+        type=int,
+        choices=range(1, 5),
+        default=0,
+        metavar="{1,2,3,4}",
+    )
     result.add_argument("--apply", action="store_true")
     return result
 
@@ -195,7 +215,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.apply:
         print("dry run; repeat with --apply to prepare a private identity attempt")
         return 0
-    print(prepare(args.bundle, args.controller_state, args.switch_port))
+    print(prepare(
+        args.bundle,
+        args.controller_state,
+        args.switch_port,
+        args.calibrate_submit_focus_tabs,
+    ))
     return 0
 
 

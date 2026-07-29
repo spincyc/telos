@@ -79,6 +79,10 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
             self.assertFalse(plan["installation_media_attached"])
             self.assertFalse(plan["pxe_boot_enabled"])
             self.assertEqual(
+                {"enabled": False, "tabs": 0},
+                plan["post_join_submit_focus_calibration"],
+            )
+            self.assertEqual(
                 str((attempt / "control.iso").resolve()),
                 plan["control_media"]["path"])
             self.assertTrue(plan["control_media"]["read_only"])
@@ -111,6 +115,33 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 f"file={(attempt / 'control.iso').resolve()}",
                 " ".join(command))
 
+    def test_prepare_binds_explicit_submit_focus_calibration(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = self.candidate(root)
+            controller = root / "controller"
+            controller.mkdir()
+            with (
+                mock.patch.object(
+                    prepare.subprocess, "run", side_effect=self.qemu),
+                mock.patch.object(
+                    prepare, "build_control_iso",
+                    side_effect=self.control_iso),
+            ):
+                attempt = prepare.prepare(
+                    bundle, controller, calibrate_submit_focus_tabs=2)
+            authorization = json.loads(
+                (attempt / "authorization.json").read_text())
+            self.assertEqual(
+                {"enabled": True, "tabs": 2},
+                authorization["post_join_submit_focus_calibration"],
+            )
+
+    def test_cli_rejects_invalid_submit_focus_counts(self):
+        for value in ("0", "5", "not-a-number"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                prepare.parser().parse_args([
+                    "--calibrate-submit-focus-tabs", value])
     def test_candidate_requires_native_marker_private_files_and_clean_qcow2(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

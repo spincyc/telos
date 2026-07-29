@@ -42,6 +42,35 @@ class WindowsIdentityCliTests(unittest.TestCase):
             " ".join(str(call) for call in output.call_args_list),
         )
 
+    def test_calibration_flag_must_match_prepared_authority(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            self.assertEqual(2, windows_identity_cli.main([
+                "--attempt", str(attempt),
+                "--controller-state", str(controller),
+                "--calibrate-submit-focus-tabs", "1",
+            ]))
+
+            authorization_path = attempt / "authorization.json"
+            authorization = json.loads(authorization_path.read_text())
+            authorization["post_join_submit_focus_calibration"] = {
+                "enabled": True, "tabs": 1}
+            authorization_path.write_text(json.dumps(authorization))
+            authorization_path.chmod(0o600)
+            self.assertEqual(0, windows_identity_cli.main([
+                "--attempt", str(attempt),
+                "--controller-state", str(controller),
+                "--calibrate-submit-focus-tabs", "1",
+            ]))
+
+    def test_cli_rejects_invalid_submit_focus_counts(self):
+        for value in ("0", "5", "not-a-number"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                windows_identity_cli.parser().parse_args([
+                    "--attempt", "/private/attempt",
+                    "--calibrate-submit-focus-tabs", value,
+                ])
+
     def test_apply_delegates_to_strict_production_acceptance(self):
         with tempfile.TemporaryDirectory() as name:
             attempt, controller = self.private_attempt(Path(name))

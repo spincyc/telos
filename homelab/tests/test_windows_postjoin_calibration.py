@@ -16,6 +16,7 @@ from homelab.vm.windows_postjoin_calibration import (
     WindowsPostJoinCalibrationError,
     capture_post_join_calibration,
     retain_post_join_calibration,
+    retain_submit_focus_calibration,
     sample_post_join_calibration,
 )
 
@@ -229,6 +230,34 @@ class PostJoinCalibrationTests(unittest.TestCase):
             )
 
         self.assertEqual(tuple(self.root.iterdir()), ())
+
+    def test_submit_focus_manifest_is_public_and_non_submitting(self):
+        sampled = sample_post_join_calibration(FakeQmp(), self.root)
+
+        manifest = retain_submit_focus_calibration(
+            (sampled, sampled), self.root, self.guest)
+
+        document = json.loads(manifest.read_text())
+        self.assertEqual(document["state"], "operator-submit-focus")
+        self.assertEqual(document["navigation"], ["tab", "tab"])
+        self.assertEqual(document["stability_samples_per_step"], 3)
+        self.assertFalse(document["submission_attempted"])
+        self.assertFalse(document["secret_input_since_post_join_reboot"])
+        self.assertFalse(document["reference_promotion_authorized"])
+        self.assertEqual(
+            document["dummy_input_class"],
+            "fixed-public-calibration-text",
+        )
+        self.assertNotIn("TelosPublicCalibration1", manifest.read_text())
+        self.assertEqual(len(document["frames"]), 2)
+        self.assertEqual(
+            {path.name for path in self.root.iterdir()},
+            {
+                "post-join-operator-submit-focus.json",
+                "post-join-operator-submit-focus-tab-1.ppm",
+                "post-join-operator-submit-focus-tab-2.ppm",
+            },
+        )
 
     def test_requires_exact_private_real_directory(self):
         os.chmod(self.root, 0o755)

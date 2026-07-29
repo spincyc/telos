@@ -94,6 +94,25 @@ def _authorization(boundary: NativeProcessBoundary) -> dict[str, object]:
     return value
 
 
+def authorized_submit_focus_tabs(boundary: NativeProcessBoundary) -> int:
+    """Return the immutable prepared calibration mode for this attempt."""
+    value = _authorization(boundary).get(
+        "post_join_submit_focus_calibration")
+    if value is None:
+        return 0
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"enabled", "tabs"}
+        or type(value["enabled"]) is not bool
+        or type(value["tabs"]) is not int
+        or not 0 <= value["tabs"] <= 4
+        or value["enabled"] is not (value["tabs"] > 0)
+    ):
+        raise WindowsIdentityFactoryError(
+            "prepared submit-focus calibration authority is invalid")
+    return value["tabs"]
+
+
 def _source_bundle(
     boundary: NativeProcessBoundary, authorization: dict[str, object],
 ) -> Path:
@@ -295,6 +314,11 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
                 "post-join-operator-generic-prompt.json",
                 "post-join-operator-password-target.ppm",
                 "post-join-operator-password-target.json",
+                "post-join-operator-submit-focus.json",
+                "post-join-operator-submit-focus-tab-1.ppm",
+                "post-join-operator-submit-focus-tab-2.ppm",
+                "post-join-operator-submit-focus-tab-3.ppm",
+                "post-join-operator-submit-focus-tab-4.ppm",
             }
             if any(
                 path.is_symlink()
@@ -349,6 +373,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
     from .windows_identity_cli import AcceptanceConfiguration
 
     authorization = _authorization(boundary)
+    submit_focus_tabs = authorized_submit_focus_tabs(boundary)
     for relative in (
         "runtime",
         "rotation-evidence",
@@ -394,6 +419,8 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         post_join_operator_sign_in_manifest=(
             REFERENCE_ROOT / "post-join-operator-sign-in.json"
         ),
+        post_join_operator_submit_focus_calibration=submit_focus_tabs > 0,
+        post_join_operator_submit_focus_tabs=submit_focus_tabs,
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],

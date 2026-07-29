@@ -49,6 +49,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--attempt", type=Path, required=True)
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
+    result.add_argument(
+        "--calibrate-submit-focus-tabs",
+        type=int,
+        choices=range(1, 5),
+        default=0,
+        metavar="{1,2,3,4}",
+    )
     result.add_argument("--apply", action="store_true")
     return result
 
@@ -58,11 +65,19 @@ def run(
     *,
     controller_state: Path,
     apply: bool,
+    calibrate_submit_focus_tabs: int = 0,
     acceptance_factory: AcceptanceFactory | None = None,
 ) -> int:
     """Validate the boundary, then enter strict production acceptance."""
     boundary = NativeProcessBoundary(attempt, controller_state)
     boundary._validate()
+    from .windows_identity_factory import authorized_submit_focus_tabs
+    if (
+        calibrate_submit_focus_tabs
+        != authorized_submit_focus_tabs(boundary)
+    ):
+        raise WindowsIdentityRunError(
+            "submit-focus calibration mode differs from prepared authority")
     print("Boundary: loopback-only native Windows identity acceptance")
     print(f"Attempt: {boundary.attempt}")
     print(f"Controller state: {boundary.controller_state}")
@@ -146,6 +161,7 @@ def main(
             args.attempt,
             controller_state=args.controller_state,
             apply=args.apply,
+            calibrate_submit_focus_tabs=args.calibrate_submit_focus_tabs,
             acceptance_factory=acceptance_factory,
         )
     except RunInterrupted as error:

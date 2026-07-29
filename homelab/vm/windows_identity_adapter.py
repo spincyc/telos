@@ -65,6 +65,7 @@ from .windows_public_command import (
 from .windows_postjoin_calibration import (
     PostJoinCalibrationFrame,
     retain_post_join_calibration,
+    retain_submit_focus_calibration,
     sample_post_join_calibration,
 )
 from .windows_postsubmit_diagnostic import (
@@ -511,9 +512,22 @@ class NativeWindowsAcceptanceAdapter:
             wake_keys = tuple(plan.wake_after_lock_keys)
             initial_delay = float(plan.initial_sign_in_delay)
             lock_settle_delay = float(plan.lock_settle_delay)
+            submit_focus_calibration = (
+                getattr(
+                    plan,
+                    "post_join_operator_submit_focus_calibration",
+                    False,
+                ) is True
+            )
+            submit_focus_tabs = (
+                getattr(plan, "post_join_operator_submit_focus_tabs", 0)
+                if submit_focus_calibration else 0
+            )
             if (
                 initial_delay < 0
                 or lock_settle_delay < 0
+                or type(submit_focus_tabs) is not int
+                or not 0 <= submit_focus_tabs <= 4
                 or any(key not in SAFE_KEYS for key in selection_keys)
                 or any(key not in SAFE_KEYS for key in wake_keys)
             ):
@@ -672,6 +686,54 @@ class NativeWindowsAcceptanceAdapter:
 
         _run_local_reauthentication_operation(
             "prove-password-target", prove_password_target)
+
+        if submit_focus_calibration:
+            if (
+                not domain_operator
+                or not selection_calibrated
+                or plan.post_join_operator_sign_in_manifest is None
+                or not 1 <= submit_focus_tabs <= 4
+            ):
+                raise WindowsLocalReauthenticationError(
+                    "submit-focus-calibration")
+
+            def capture_submit_focus() -> None:
+                # This literal is public test material, never a credential.
+                self._qmp().type_text(
+                    "TelosPublicCalibration1",
+                    timeout=remaining("submit-focus-calibration"),
+                )
+                if lock_settle_delay:
+                    budget = remaining("submit-focus-calibration")
+                    time.sleep(min(lock_settle_delay, budget))
+                    remaining("submit-focus-calibration")
+                frames: list[PostJoinCalibrationFrame] = []
+                for _ in range(submit_focus_tabs):
+                    interaction.key(
+                        "tab",
+                        timeout=remaining("submit-focus-calibration"),
+                    )
+                    stable: list[PostJoinCalibrationFrame] = []
+                    while len(stable) < 3:
+                        budget = remaining("submit-focus-calibration")
+                        if lock_settle_delay:
+                            time.sleep(min(lock_settle_delay, budget))
+                            remaining("submit-focus-calibration")
+                        candidate = sample_post_join_calibration(
+                            self._qmp(), evidence)
+                        if (
+                            stable
+                            and stable[-1].content != candidate.content
+                        ):
+                            stable.clear()
+                        stable.append(candidate)
+                    frames.append(stable[-1])
+                retain_submit_focus_calibration(
+                    tuple(frames), evidence, plan.expected_guest)
+
+            _run_local_reauthentication_operation(
+                "submit-focus-calibration", capture_submit_focus)
+            raise WindowsLocalReauthenticationError("calibration-required")
 
         def submit_secret() -> None:
             _run_local_reauthentication_operation(

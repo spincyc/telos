@@ -676,6 +676,25 @@ class ProgressiveRotationTests(unittest.TestCase):
                 after_rotation=lambda _replacement: None)
         self.assertEqual([], events)
 
+    def test_inconsistent_submit_focus_calibration_is_rejected(self):
+        for enabled, tabs in ((False, 1), (True, 0)):
+            invalid = self.plan()
+            invalid = type(invalid)(**{
+                **invalid.__dict__,
+                "post_join_operator_submit_focus_calibration": enabled,
+                "post_join_operator_submit_focus_tabs": tabs,
+            })
+            with self.assertRaisesRegex(
+                WindowsIdentityProgressiveError, "invalid progressive plan"
+            ):
+                execute_progressive_rotation(
+                    plan=invalid,
+                    session=Context(object(), [], "session"),
+                    recovery=Recovery("secret", [], "recovery"),
+                    generate_credential=lambda: "different-secret",
+                    after_rotation=lambda _replacement: None,
+                )
+
     def test_native_session_starts_and_tears_down_in_reverse_order(self):
         events = []
         boundary = mock.Mock()

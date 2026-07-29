@@ -574,10 +574,10 @@ homelab-windows-identity-prepare:
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-identity-prepare \
-			--bundle '$(WINDOWS_RUN)'; \
+			--bundle '$(WINDOWS_RUN)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WINDOWS_SUBMIT_FOCUS_TABS),--calibrate-submit-focus-tabs '$(WINDOWS_SUBMIT_FOCUS_TABS)'); \
 	else \
 		$(PYTHON) homelab/bin/homelab-windows-identity-prepare \
-			--bundle '$(WINDOWS_RUN)' --apply; \
+			--bundle '$(WINDOWS_RUN)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WINDOWS_SUBMIT_FOCUS_TABS),--calibrate-submit-focus-tabs '$(WINDOWS_SUBMIT_FOCUS_TABS)') --apply; \
 	fi
 
 homelab-windows-identity-run:
@@ -587,11 +587,12 @@ homelab-windows-identity-run:
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-identity-run \
-			--attempt '$(WINDOWS_IDENTITY_ATTEMPT)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)'); \
+			--attempt '$(WINDOWS_IDENTITY_ATTEMPT)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WINDOWS_SUBMIT_FOCUS_TABS),--calibrate-submit-focus-tabs '$(WINDOWS_SUBMIT_FOCUS_TABS)'); \
 	else \
 		$(PYTHON) homelab/bin/homelab-windows-identity-run \
 			--attempt '$(WINDOWS_IDENTITY_ATTEMPT)' \
 			$(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') \
+			$(if $(WINDOWS_SUBMIT_FOCUS_TABS),--calibrate-submit-focus-tabs '$(WINDOWS_SUBMIT_FOCUS_TABS)') \
 			--apply; \
 	fi
 

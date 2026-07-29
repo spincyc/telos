@@ -239,6 +239,86 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "Write-Output 'public'", plan)
         self.assertEqual(0o700, evidence.stat().st_mode & 0o777)
 
+    @mock.patch.object(subject, "retain_submit_focus_calibration")
+    @mock.patch.object(subject, "sample_post_join_calibration")
+    @mock.patch.object(subject, "load_identity_reference")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_operator_submit_focus_calibration_never_submits(
+        self, load_references, private_evidence_root, interaction_type,
+        load_identity_reference, sample_calibration, retain_calibration,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        load_identity_reference.return_value = sign_in
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        frames = tuple(
+            subject.PostJoinCalibrationFrame(
+                f"frame-{offset}".encode(),
+                mock.Mock(width=1280, height=800),
+            )
+            for offset in range(2)
+        )
+        sample_calibration.side_effect = (
+            frames[0], frames[0], frames[0],
+            frames[1], frames[1], frames[1],
+        )
+        diagnostic_factory = mock.Mock()
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=Path("reviewed.json"),
+                post_join_operator_submit_focus_calibration=True,
+                post_join_operator_submit_focus_tabs=2,
+                expected_guest=mock.sentinel.guest,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            subject.WindowsLocalReauthenticationError,
+            "calibration-required",
+        ):
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+
+        self.qmp.type_text.assert_any_call(
+            "TelosPublicCalibration1", timeout=mock.ANY)
+        self.assertEqual(
+            interaction_type.return_value.key.call_args_list,
+            [
+                mock.call("backspace", timeout=mock.ANY),
+                mock.call("tab", timeout=mock.ANY),
+                mock.call("tab", timeout=mock.ANY),
+                mock.call("tab", timeout=mock.ANY),
+            ],
+        )
+        self.assertNotIn(
+            mock.call("ret", timeout=mock.ANY),
+            interaction_type.return_value.key.call_args_list,
+        )
+        interaction_type.return_value.type_secret.assert_not_called()
+        interaction_type.return_value.disable_durable_capture.assert_not_called()
+        diagnostic_factory.assert_not_called()
+        retain_calibration.assert_called_once_with(
+            frames,
+            self.root / "reauth-evidence",
+            mock.sentinel.guest,
+        )
+
     @mock.patch.object(subject.time, "sleep")
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")

@@ -111,6 +111,15 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.rotation_plan.
                 post_join_operator_sign_in_manifest.name,
             )
+            self.assertFalse(
+                configuration.rotation_plan.
+                post_join_operator_submit_focus_calibration,
+            )
+            self.assertEqual(
+                0,
+                configuration.rotation_plan.
+                post_join_operator_submit_focus_tabs,
+            )
             adapter = configuration.callbacks.launch_guest.__self__
             with self.assertRaisesRegex(
                 WindowsIdentityFactoryError, "serial endpoint"
@@ -120,6 +129,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                     principal="operator@AD.FACTORY.TEST",
                     timeout=47.0,
                 )
+
             boundary.serial_socket = Path(name) / "live-windows.serial"
             diagnostic = object()
             with mock.patch.object(
@@ -184,6 +194,27 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                       for index in range(4)))
             self.assertEqual(0, scan["secrets_found"])
             self.assertTrue(scan["logs_secret_free"])
+
+    def test_prepared_calibration_authority_configures_exact_count(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            path = boundary.attempt / "authorization.json"
+            authorization = json.loads(path.read_text())
+            authorization["post_join_submit_focus_calibration"] = {
+                "enabled": True,
+                "tabs": 3,
+            }
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+
+            configuration = self.factory(boundary, bundle)
+
+        self.assertTrue(
+            configuration.rotation_plan.
+            post_join_operator_submit_focus_calibration)
+        self.assertEqual(
+            3,
+            configuration.rotation_plan.post_join_operator_submit_focus_tabs)
 
     def test_rejects_invalid_enabled_operator_reference_before_runtime(self):
         original = factory_subject.load_identity_reference

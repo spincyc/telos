@@ -200,6 +200,8 @@ class ProgressiveRotationPlan:
     post_join_sign_in_manifest: Path | None = None
     post_join_operator_account_calibrated: bool = False
     post_join_operator_sign_in_manifest: Path | None = None
+    post_join_operator_submit_focus_calibration: bool = False
+    post_join_operator_submit_focus_tabs: int = 0
     initial_sign_in_delay: float = 60.0
     lock_settle_delay: float = 2.0
     timeout: float = 360.0
@@ -496,6 +498,13 @@ def execute_progressive_rotation(
         or plan.lock_settle_delay < 0
         or type(plan.post_join_local_account_calibrated) is not bool
         or type(plan.post_join_operator_account_calibrated) is not bool
+        or type(plan.post_join_operator_submit_focus_calibration) is not bool
+        or type(plan.post_join_operator_submit_focus_tabs) is not int
+        or not 0 <= plan.post_join_operator_submit_focus_tabs <= 4
+        or (
+            plan.post_join_operator_submit_focus_calibration
+            != (plan.post_join_operator_submit_focus_tabs > 0)
+        )
         or any(
             key not in SAFE_KEYS
             for keys in (

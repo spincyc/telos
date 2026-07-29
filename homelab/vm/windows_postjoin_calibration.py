@@ -25,6 +25,7 @@ CALIBRATION_STATES = frozenset({
 })
 CALIBRATION_FRAME_NAME = "post-join-generic-prompt.ppm"
 CALIBRATION_RECORD_NAME = "post-join-generic-prompt.json"
+SUBMIT_FOCUS_MANIFEST_NAME = "post-join-operator-submit-focus.json"
 
 
 class WindowsPostJoinCalibrationError(RuntimeError):
@@ -291,3 +292,89 @@ def capture_post_join_calibration(
         state=state,
         stability_samples=1,
     )
+
+
+def retain_submit_focus_calibration(
+    frames: tuple[PostJoinCalibrationFrame, ...],
+    evidence_root: Path,
+    guest: GuestProvenance,
+) -> Path:
+    """Retain a public, non-submitting Tab sequence for forensic review."""
+    root = Path(evidence_root).absolute()
+    if (
+        root.is_symlink()
+        or not root.is_dir()
+        or stat.S_IMODE(root.stat().st_mode) != 0o700
+        or not 1 <= len(frames) <= 4
+    ):
+        raise WindowsPostJoinCalibrationError(
+            "submit-focus calibration inputs are invalid")
+    manifest = root / SUBMIT_FOCUS_MANIFEST_NAME
+    if manifest.exists() or manifest.is_symlink():
+        raise WindowsPostJoinCalibrationError(
+            "calibration evidence already exists")
+    retained: list[Path] = []
+    records: list[dict[str, object]] = []
+    try:
+        for offset, frame in enumerate(frames, 1):
+            name = f"post-join-operator-submit-focus-tab-{offset}.ppm"
+            path = root / name
+            if path.exists() or path.is_symlink():
+                raise WindowsPostJoinCalibrationError(
+                    "calibration evidence already exists")
+            _exclusive_write(path, frame.content)
+            retained.append(path)
+            records.append({
+                "tab_index": offset,
+                "name": name,
+                "bytes": len(frame.content),
+                "sha256": hashlib.sha256(frame.content).hexdigest(),
+                "width": frame.image.width,
+                "height": frame.image.height,
+            })
+        document = {
+            "schema": 1,
+            "phase": (
+                "post-join-reauthentication.calibration-required."
+                "operator-submit-focus"
+            ),
+            "state": "operator-submit-focus",
+            "purpose": "forensic-review-only",
+            "reference_promotion_authorized": False,
+            "secret_input_since_post_join_reboot": False,
+            "submission_attempted": False,
+            "dummy_input_class": "fixed-public-calibration-text",
+            "navigation": ["tab"] * len(frames),
+            "stability_samples_per_step": 3,
+            "frames": records,
+            "guest": {
+                "release": guest.release,
+                "language": guest.language,
+                "architecture": guest.architecture,
+                "installer_iso_sha256": guest.installer_iso_sha256,
+                "source_disk_sha256": guest.source_disk_sha256,
+            },
+        }
+        _exclusive_write(
+            manifest,
+            (json.dumps(
+                document, sort_keys=True, separators=(",", ":")
+            ) + "\n").encode("utf-8"),
+        )
+        directory = os.open(root, os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return manifest
+    except WindowsPostJoinCalibrationError:
+        for path in retained:
+            path.unlink(missing_ok=True)
+        manifest.unlink(missing_ok=True)
+        raise
+    except BaseException:
+        for path in retained:
+            path.unlink(missing_ok=True)
+        manifest.unlink(missing_ok=True)
+        raise WindowsPostJoinCalibrationError(
+            "post-join calibration capture failed") from None

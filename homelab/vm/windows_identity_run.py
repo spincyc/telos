@@ -165,7 +165,8 @@ class IdentityFailureDiagnostic:
             for operation in (
                 "wake", "calibration-capture", "calibration-required",
                 "select-local-account", "type-public-username",
-                "prove-password-target", "diagnostic-arm", "type-secret",
+                "prove-password-target", "submit-focus-calibration",
+                "diagnostic-arm", "type-secret",
                 "submit", "desktop",
                 "desktop-near-reference",
                 "desktop-sign-in-persisted",
@@ -401,6 +402,7 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         "select-local-account",
         "type-public-username",
         "prove-password-target",
+        "submit-focus-calibration",
         "diagnostic-arm",
         "type-secret",
         "submit",
