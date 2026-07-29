@@ -209,10 +209,24 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("EventData", diagnostic)
         self.assertIn("TargetUserName", diagnostic)
         self.assertIn("TargetDomainName", diagnostic)
+        self.assertIn(
+            "$targetName -ceq $operatorPrincipal", diagnostic)
+        self.assertIn(
+            "(-not $domain -or $realmDomain)", diagnostic)
+        self.assertIn(
+            "$targetName -ceq [string]$config.operator_name", diagnostic)
+        self.assertIn(
+            "$domain -ceq [string]$config.operator_realm", diagnostic)
+        self.assertIn(
+            "([string]$config.operator_realm).Split('.')[0]",
+            diagnostic,
+        )
         self.assertIn("LogonType", diagnostic)
         self.assertIn("'2'", diagnostic)
         self.assertNotIn("Format-List", diagnostic)
         self.assertNotIn("Format-Table", diagnostic)
+        self.assertNotIn("$targetName -like", diagnostic)
+        self.assertNotIn("$targetName -match", diagnostic)
 
     def test_post_submit_diagnostic_self_cleans_task_and_payload(self):
         diagnostic = Path(

@@ -290,11 +290,22 @@ public static class TelosAuditPolicy {
                 [string]$data.TargetUserSid -ceq
                     [string]$config.operator_sid
             } else {
-                ([string]$data.TargetUserName -ceq
-                    [string]$config.operator_name) -and
-                ($domain -ceq [string]$config.operator_realm -or
-                 $domain -ceq
-                    ([string]$config.operator_realm).Split('.')[0])
+                $targetName = [string]$data.TargetUserName
+                $realmDomain = (
+                    $domain -ceq [string]$config.operator_realm -or
+                    $domain -ceq
+                        ([string]$config.operator_realm).Split('.')[0])
+                $splitIdentity = (
+                    $targetName -ceq [string]$config.operator_name -and
+                    $realmDomain)
+                # Windows may preserve an interactively typed UPN in
+                # TargetUserName and leave TargetDomainName blank. Accept only
+                # the exact public UPN and finite domain forms for that same
+                # identity.
+                $upnIdentity = (
+                    $targetName -ceq $operatorPrincipal -and
+                    (-not $domain -or $realmDomain))
+                $splitIdentity -or $upnIdentity
             }
             if ($isOperator -and [string]$data.LogonType -eq '2') {
                 $matches += ,@($eventRecord, $data)
