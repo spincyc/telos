@@ -45,7 +45,7 @@ from .windows_identity_recovery import RecoveredLocalCredential
 from .windows_identity_dependency import DEPENDENCIES
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
-WINDOWS_OS_READINESS_TIMEOUT = 90.0
+WINDOWS_OS_READINESS_TIMEOUT = 300.0
 
 
 @dataclass(frozen=True)

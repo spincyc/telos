@@ -653,14 +653,14 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 boundary.runtime / "switch.jsonl",
                 "workstation",
                 windows_identity_run.MACS["client"],
-                timeout=90.0,
+                timeout=300.0,
                 after=cursor,
             )
             dhcp.assert_called_once_with(
                 boundary.runtime / "switch.jsonl",
                 "workstation",
                 windows_identity_run.MACS["client"],
-                timeout=65.0,
+                timeout=275.0,
                 after=cursor,
                 generation=7,
                 gateway_generation=3,
@@ -681,7 +681,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                     "wait_for_plain_dhcp_transaction") as dhcp,
                 mock.patch.object(
                     windows_identity_run.time, "monotonic",
-                    side_effect=(100.0, 100.0, 190.0)),
+                    side_effect=(100.0, 100.0, 400.0)),
             ):
                 with self.assertRaisesRegex(
                         RuntimeError, "readiness deadline expired"):
