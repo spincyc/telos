@@ -32,6 +32,10 @@ QUEUE_DEPTH = 128
 MAX_EVIDENCE_EVENTS = 20_000
 
 
+class PeerAbandonedBeforeAuthentication(RuntimeError):
+    """A candidate socket closed without presenting an Ethernet identity."""
+
+
 def receive_exact(connection: socket.socket, size: int) -> bytes | None:
     """Read one bounded field while tolerating ordinary socket timeouts."""
     chunks = bytearray()
@@ -193,6 +197,12 @@ class ConcurrentSwitch:
             try:
                 frame = self._authentication_frame(
                     connection, authentication_deadline)
+            except PeerAbandonedBeforeAuthentication:
+                connection.close()
+                self.evidence.write({
+                    "event": "peer-abandoned-before-authentication",
+                })
+                continue
             except BaseException:
                 connection.close()
                 raise
@@ -272,7 +282,8 @@ class ConcurrentSwitch:
 
         header = receive_before_deadline(4)
         if header is None:
-            raise RuntimeError("switch peer closed before authentication")
+            raise PeerAbandonedBeforeAuthentication(
+                "switch peer closed before authentication")
         size = struct.unpack("!I", header)[0]
         if not 14 <= size <= MAX_FRAME:
             raise RuntimeError(

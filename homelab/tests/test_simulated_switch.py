@@ -266,6 +266,44 @@ class SimulatedSwitchTests(unittest.TestCase):
             thread.join(5)
             self.assertFalse(thread.is_alive())
 
+    def test_pre_authentication_disconnect_preserves_live_fabric(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp) / "switch.jsonl"
+            fabric = switch.ConcurrentSwitch(listener, [
+                switch.Port(1, "client", CLIENT),
+                switch.Port(2, "controller", CONTROLLER),
+            ], evidence_path=evidence, accept_timeout=2, idle_timeout=5)
+            thread = threading.Thread(target=fabric.run)
+            thread.start()
+            self.addCleanup(thread.join, 5)
+            controller = socket.create_connection(address)
+            self.addCleanup(controller.close)
+            controller.sendall(framed(
+                gateway.identity_announcement(CONTROLLER, "controller")))
+            abandoned = socket.create_connection(address)
+            abandoned.close()
+            client = socket.create_connection(address)
+            self.addCleanup(client.close)
+            announcement = gateway.identity_announcement(CLIENT, "client")
+            client.sendall(framed(announcement))
+            self.assertEqual(receive(controller), announcement)
+            records = [
+                json.loads(line) for line in evidence.read_text().splitlines()
+            ]
+            self.assertIn(
+                {"event": "peer-abandoned-before-authentication"}, records)
+            self.assertTrue(any(
+                item.get("event") == "port-connected"
+                and item.get("port") == "client"
+                for item in records
+            ))
+            client.close()
+            controller.close()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+
     def test_authenticated_peers_forward_before_complete_peer_set(self):
         listener = self.listener()
         address = listener.getsockname()
