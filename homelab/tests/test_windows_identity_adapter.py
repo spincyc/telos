@@ -74,6 +74,34 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter.reauthenticate_local,
                 callbacks.reauthenticate_local,
             )
+            self.assertEqual(
+                adapter.reauthenticate_domain_operator,
+                callbacks.reauthenticate_domain_operator,
+            )
+
+    def test_domain_operator_reauthentication_is_exactly_allowlisted(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._reauthenticate = mock.Mock()
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private")
+            adapter._reauthenticate.assert_called_once_with(
+                "operator@FACTORY.TEST", "private", domain_operator=True)
+            adapter._reauthenticate.reset_mock()
+            with self.assertRaisesRegex(
+                    subject.WindowsLocalReauthenticationError,
+                    "prove-password-target"):
+                adapter.reauthenticate_domain_operator(
+                    "other@FACTORY.TEST", "private")
+            adapter._reauthenticate.assert_not_called()
+
+    def test_local_reauthentication_remains_a_distinct_wrapper(self):
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            adapter._reauthenticate = mock.Mock()
+            adapter.reauthenticate_local("private")
+            adapter._reauthenticate.assert_called_once_with(
+                r".\telosadmin", "private", domain_operator=False)
 
     def test_guest_launch_fails_closed_without_run_dialog_reference(self):
         with tempfile.TemporaryDirectory() as name:
@@ -459,7 +487,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         load_references.side_effect = RuntimeError("backend-private")
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))
-            adapter.rotation_plan = mock.Mock()
+            adapter.rotation_plan = mock.Mock(
+                post_join_local_account_calibrated=True)
             with self.assertRaises(
                 subject.WindowsLocalReauthenticationError,
             ) as caught:
@@ -486,7 +515,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))
-            adapter.rotation_plan = mock.Mock()
+            adapter.rotation_plan = mock.Mock(
+                post_join_local_account_calibrated=True)
             with self.assertRaises(
                 subject.WindowsLocalReauthenticationError,
             ) as caught:
@@ -515,6 +545,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
 
         class HostilePlan:
             post_join_sign_in_manifest = None
+            post_join_local_account_calibrated = True
 
             @property
             def post_join_local_account_keys(self):
@@ -552,7 +583,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         private_evidence_root.side_effect = RuntimeError("backend-private")
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))
-            adapter.rotation_plan = mock.Mock()
+            adapter.rotation_plan = mock.Mock(
+                post_join_local_account_calibrated=True)
             with self.assertRaises(
                 subject.WindowsLocalReauthenticationError,
             ) as caught:

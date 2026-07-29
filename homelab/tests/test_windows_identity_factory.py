@@ -101,6 +101,15 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.rotation_plan.
                 post_join_sign_in_manifest.name,
             )
+            self.assertFalse(
+                configuration.rotation_plan.
+                post_join_operator_account_calibrated,
+            )
+            self.assertEqual(
+                "post-join-operator-sign-in.json",
+                configuration.rotation_plan.
+                post_join_operator_sign_in_manifest.name,
+            )
             runtime = boundary.attempt / "runtime"
             (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
             for relative in (
@@ -123,6 +132,14 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                     (
                         evidence / "post-join-generic-prompt.json"
                     ).write_text('{"secret_input_since_post_join_reboot":false}')
+                    for state in (
+                        "operator-generic-prompt",
+                        "operator-password-target",
+                    ):
+                        (evidence / f"post-join-{state}.ppm").write_bytes(
+                            b"public frame")
+                        (evidence / f"post-join-{state}.json").write_text(
+                            '{"secret_input_since_post_join_reboot":false}')
                 else:
                     (evidence / "proof.ppm").write_bytes(b"public frame")
             boundary.qmp_root = Path(name) / "runtime-qmp"

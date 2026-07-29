@@ -94,7 +94,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             subject._execute_join(
                 realm="FACTORY.TEST",
                 private_root=Path(name),
-                local_credential="private-local",
+                operator_credential="private-operator",
                 callbacks=self.callbacks([]),
                 stage_join_principal=mock.Mock(side_effect=(
                     ControllerJoinMaterialError(
@@ -133,7 +133,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             subject._execute_join(
                 realm="FACTORY.TEST",
                 private_root=Path(name),
-                local_credential="private-local",
+                operator_credential="private-operator",
                 callbacks=self.callbacks([]),
                 stage_join_principal=mock.Mock(),
                 destroy_join_principal=mock.Mock(),
@@ -173,7 +173,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             subject._execute_join(
                 realm="FACTORY.TEST",
                 private_root=Path(name),
-                local_credential="private-local",
+                operator_credential="private-operator",
                 callbacks=self.callbacks([]),
                 stage_join_principal=mock.Mock(),
                 destroy_join_principal=mock.Mock(),
@@ -224,6 +224,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             await_device_deleted=mock.Mock(),
             open_join_serial=mock.Mock(),
             reauthenticate_local=mock.Mock(),
+            reauthenticate_domain_operator=mock.Mock(),
             static_probe=lambda action: {
                 "schema_version": 1,
                 "action": action,
@@ -460,7 +461,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             proof, destroyed_flag = subject._execute_join(
                 realm="FACTORY.TEST",
                 private_root=root,
-                local_credential="Local-Secret-47!",
+                operator_credential="Operator-Secret-47!",
                 callbacks=callbacks,
                 stage_join_principal=mock.Mock(return_value=staged),
                 destroy_join_principal=mock.Mock(return_value=destroyed),
@@ -480,11 +481,12 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "operator": "operator@FACTORY.TEST",
             "operator_local_administrator": True,
         }, execute.call_args.kwargs["probe_after_reboot"]())
-        callbacks.reauthenticate_local.assert_called_once_with(
-            "Local-Secret-47!")
+        callbacks.reauthenticate_domain_operator.assert_called_once_with(
+            "operator@FACTORY.TEST", "Operator-Secret-47!")
+        callbacks.reauthenticate_local.assert_not_called()
         with self.assertRaisesRegex(
                 subject.WindowsIdentityOrchestratorError,
-                "already authenticated"):
+                "already attempted"):
             execute.call_args.kwargs["probe_after_reboot"]()
 
         integer_boolean = {
@@ -626,7 +628,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 subject._execute_join(
                     realm="FACTORY.TEST",
                     private_root=root,
-                    local_credential="Local-Secret-47!",
+                    operator_credential="Operator-Secret-47!",
                     callbacks=callbacks,
                     stage_join_principal=mock.Mock(return_value=staged),
                     destroy_join_principal=mock.Mock(return_value=destroyed),

@@ -17,7 +17,12 @@ from .windows_identity_reference import GuestProvenance
 
 MAX_CALIBRATION_FRAME_BYTES = 16 * 1024 * 1024
 CALIBRATION_SAMPLE_COUNT = 1
-CALIBRATION_STATES = frozenset({"generic-prompt", "password-target"})
+CALIBRATION_STATES = frozenset({
+    "generic-prompt",
+    "password-target",
+    "operator-generic-prompt",
+    "operator-password-target",
+})
 CALIBRATION_FRAME_NAME = "post-join-generic-prompt.ppm"
 CALIBRATION_RECORD_NAME = "post-join-generic-prompt.json"
 

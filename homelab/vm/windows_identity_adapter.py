@@ -306,10 +306,39 @@ class NativeWindowsAcceptanceAdapter:
 
     def reauthenticate_local(self, credential: str) -> None:
         """Re-establish only the exact calibrated local-account session."""
+        self._reauthenticate(
+            f".\\{self.local_principal}", credential, domain_operator=False)
+
+    def reauthenticate_domain_operator(
+        self, principal: str, credential: str,
+    ) -> None:
+        """Re-establish the exact staged domain-operator session."""
+        if principal != f"operator@{self.realm}":
+            raise WindowsLocalReauthenticationError(
+                "prove-password-target")
+        self._reauthenticate(principal, credential, domain_operator=True)
+
+    def _reauthenticate(
+        self, principal: str, credential: str, *, domain_operator: bool,
+    ) -> None:
         plan = self.rotation_plan
         if plan is None:
             raise WindowsLocalReauthenticationError(
                 "prove-password-target")
+        try:
+            calibration_value = (
+                plan.post_join_operator_account_calibrated
+                if domain_operator
+                else plan.post_join_local_account_calibrated
+            )
+            selection_calibrated = bool(calibration_value)
+            if type(calibration_value) is not bool:
+                raise TypeError
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException:
+            raise WindowsLocalReauthenticationError(
+                "select-local-account") from None
         deadline = self.clock() + self.timeout
 
         def remaining(operation: str) -> float:
@@ -321,10 +350,15 @@ class NativeWindowsAcceptanceAdapter:
         reference_failure = False
         try:
             references = _load_references(plan)
-            if plan.post_join_sign_in_manifest is not None:
+            manifest = (
+                plan.post_join_operator_sign_in_manifest
+                if domain_operator
+                else plan.post_join_sign_in_manifest
+            )
+            if selection_calibrated and manifest is not None:
                 references = (
                     load_identity_reference(
-                        plan.post_join_sign_in_manifest,
+                        manifest,
                         expected_guest=plan.expected_guest,
                     ),
                     *references[1:],
@@ -338,10 +372,13 @@ class NativeWindowsAcceptanceAdapter:
                 "prove-password-target") from None
         try:
             sign_in, desktop = references[:2]
-            reference_valid = (
+            reference_valid = not selection_calibrated or (
                 sign_in.state_kind == "sign-in"
                 and sign_in.state == (
-                    "focused password field for local account "
+                    "focused password field for domain account "
+                    f"{principal}"
+                    if domain_operator
+                    else "focused password field for local account "
                     f"{self.local_principal}"
                 )
             )
@@ -367,15 +404,12 @@ class NativeWindowsAcceptanceAdapter:
         selection_failure = False
         try:
             selection_keys = tuple(plan.post_join_local_account_keys)
-            selection_calibrated = bool(
-                plan.post_join_local_account_calibrated)
             wake_keys = tuple(plan.wake_after_lock_keys)
             initial_delay = float(plan.initial_sign_in_delay)
             lock_settle_delay = float(plan.lock_settle_delay)
             if (
                 initial_delay < 0
                 or lock_settle_delay < 0
-                or type(plan.post_join_local_account_calibrated) is not bool
                 or any(key not in SAFE_KEYS for key in selection_keys)
                 or any(key not in SAFE_KEYS for key in wake_keys)
             ):
@@ -452,12 +486,23 @@ class NativeWindowsAcceptanceAdapter:
 
             def capture_calibration() -> None:
                 generic = observe_transition(
-                    calibration_baselines[0], "generic-prompt")
+                    calibration_baselines[0],
+                    (
+                        "operator-generic-prompt"
+                        if domain_operator else "generic-prompt"
+                    ),
+                )
                 remaining("calibration-capture")
-                self._qmp().type_text(f".\\{self.local_principal}")
+                self._qmp().type_text(principal)
                 remaining("calibration-capture")
                 interaction.key("tab")
-                observe_transition(generic, "password-target")
+                observe_transition(
+                    generic,
+                    (
+                        "operator-password-target"
+                        if domain_operator else "password-target"
+                    ),
+                )
 
             _run_local_reauthentication_operation(
                 "calibration-capture", capture_calibration)
@@ -491,7 +536,7 @@ class NativeWindowsAcceptanceAdapter:
             "type-public-username",
             lambda: (
                 remaining("type-public-username"),
-                self._qmp().type_text(f".\\{self.local_principal}"),
+                self._qmp().type_text(principal),
             ),
         )
 
@@ -853,6 +898,8 @@ class NativeWindowsAcceptanceAdapter:
             await_device_deleted=self.await_device_deleted,
             open_join_serial=self.open_join_serial,
             reauthenticate_local=self.reauthenticate_local,
+            reauthenticate_domain_operator=(
+                self.reauthenticate_domain_operator),
             static_probe=self.static_probe,
             credential_action=self.credential_action,
             scan_secrets=self.scan_secrets,

@@ -192,6 +192,44 @@ class PostJoinCalibrationTests(unittest.TestCase):
         self.assertEqual(record.name, "post-join-password-target.json")
         self.assertEqual(json.loads(record.read_text())["state"], "password-target")
 
+    def test_operator_targets_use_distinct_exclusive_evidence_names(self):
+        for state in (
+            "operator-generic-prompt",
+            "operator-password-target",
+        ):
+            with self.subTest(state=state):
+                state_root = self.root / state
+                state_root.mkdir(mode=0o700)
+                frame, record = capture_post_join_calibration(
+                    FakeQmp(), state_root, self.guest, state=state)
+                self.assertEqual(frame.name, f"post-join-{state}.ppm")
+                self.assertEqual(record.name, f"post-join-{state}.json")
+                document = json.loads(record.read_text())
+                self.assertEqual(document["state"], state)
+                self.assertEqual(
+                    document["phase"],
+                    "post-join-reauthentication.calibration-required."
+                    f"{state}",
+                )
+                self.assertFalse(
+                    document["secret_input_since_post_join_reboot"])
+
+    def test_rejects_unallowlisted_state_before_retention(self):
+        sampled = sample_post_join_calibration(FakeQmp(), self.root)
+
+        with self.assertRaisesRegex(
+            WindowsPostJoinCalibrationError,
+            "calibration state is not allowlisted",
+        ):
+            retain_post_join_calibration(
+                sampled,
+                self.root,
+                self.guest,
+                state="operator-arbitrary-target",
+            )
+
+        self.assertEqual(tuple(self.root.iterdir()), ())
+
     def test_requires_exact_private_real_directory(self):
         os.chmod(self.root, 0o755)
         with self.assertRaisesRegex(

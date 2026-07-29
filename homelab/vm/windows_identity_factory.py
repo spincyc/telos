@@ -285,6 +285,10 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
                 "post-join-generic-prompt.json",
                 "post-join-password-target.ppm",
                 "post-join-password-target.json",
+                "post-join-operator-generic-prompt.ppm",
+                "post-join-operator-generic-prompt.json",
+                "post-join-operator-password-target.ppm",
+                "post-join-operator-password-target.json",
             }
             if any(
                 path.is_symlink()
@@ -380,6 +384,10 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         change_password_keys=("down", "down", "down", "ret"),
         post_join_local_account_calibrated=True,
         post_join_sign_in_manifest=REFERENCE_ROOT / "post-join-sign-in.json",
+        post_join_operator_account_calibrated=False,
+        post_join_operator_sign_in_manifest=(
+            REFERENCE_ROOT / "post-join-operator-sign-in.json"
+        ),
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],

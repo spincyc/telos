@@ -72,6 +72,7 @@ class AcceptanceCallbacks:
     await_device_deleted: Callable[[str], None]
     open_join_serial: Callable[[], DuplexJoinSerial]
     reauthenticate_local: Callable[[str], None]
+    reauthenticate_domain_operator: Callable[[str, str], None]
     static_probe: Callable[[str], Mapping[str, object]]
     credential_action: Callable[
         [str, str, str], Mapping[str, object]
@@ -338,7 +339,7 @@ def _execute_join(
     *,
     realm: str,
     private_root: Path,
-    local_credential: str,
+    operator_credential: str,
     callbacks: AcceptanceCallbacks,
     stage_join_principal: Callable[[str], ControllerJoinResult],
     destroy_join_principal: Callable[[], ControllerJoinResult],
@@ -418,21 +419,22 @@ def _execute_join(
                 raise guest_failure(
                     coordinate, cleanup_coordinate) from None
             raise guest_failure(coordinate) from None
-        reauthenticated = False
+        reauthentication_attempted = False
 
         def probe_after_reboot() -> Mapping[str, object]:
-            nonlocal reauthenticated
-            if reauthenticated:
+            nonlocal reauthentication_attempted
+            if reauthentication_attempted:
                 raise WindowsIdentityOrchestratorError(
-                    "post-reboot local session was already authenticated")
+                    "post-reboot operator authentication was already attempted")
+            reauthentication_attempted = True
             try:
-                callbacks.reauthenticate_local(local_credential)
+                callbacks.reauthenticate_domain_operator(
+                    f"operator@{realm.upper()}", operator_credential)
             except BaseException as error:
                 raise WindowsJoinIsoError(
                     "post-reboot authentication failed",
                     coordinate=_local_reauthentication_coordinate(error),
                 ) from None
-            reauthenticated = True
             try:
                 return _post_reboot_proof(callbacks)
             except BaseException as error:
@@ -547,7 +549,7 @@ def _run_acceptance_checks(
     join_proof, join_destroyed = _execute_join(
         realm=realm,
         private_root=private_root,
-        local_credential=local_credential,
+        operator_credential=principals["operator"],
         callbacks=callbacks,
         stage_join_principal=stage_join_principal,
         destroy_join_principal=destroy_join_principal,
