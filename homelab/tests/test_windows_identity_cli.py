@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -69,6 +70,54 @@ class WindowsIdentityCliTests(unittest.TestCase):
                 windows_identity_cli.parser().parse_args([
                     "--attempt", "/private/attempt",
                     "--calibrate-submit-focus-tabs", value,
+                ])
+
+    def test_reviewed_activation_flag_must_match_distinct_authority(self):
+        with tempfile.TemporaryDirectory() as name:
+            attempt, controller = self.private_attempt(Path(name))
+            self.assertEqual(2, windows_identity_cli.main([
+                "--attempt", str(attempt),
+                "--controller-state", str(controller),
+                "--authorize-reviewed-submit-focus",
+            ]))
+            path = attempt / "authorization.json"
+            authorization = json.loads(path.read_text())
+            authorization["post_join_submit_focus_activation"] = {
+                "enabled": True,
+                "reference": "post-join-operator-submit-focus.json",
+                "sha256": hashlib.sha256((
+                    Path(windows_identity_cli.__file__).with_name(
+                        "windows_identity_references")
+                    / "windows-11-25h2-en-us-1280x800"
+                    / "post-join-operator-submit-focus.json"
+                ).read_bytes()).hexdigest(),
+            }
+            authorization["source"] = {"disk": {
+                "sha256": (
+                    "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad"
+                    "9de9c942dc11977d"),
+            }}
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+            self.assertEqual(0, windows_identity_cli.main([
+                "--attempt", str(attempt),
+                "--controller-state", str(controller),
+                "--authorize-reviewed-submit-focus",
+            ]))
+            authorization["post_join_submit_focus_activation"]["sha256"] = (
+                "0" * 64)
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+            self.assertEqual(2, windows_identity_cli.main([
+                "--attempt", str(attempt),
+                "--controller-state", str(controller),
+                "--authorize-reviewed-submit-focus",
+            ]))
+            with self.assertRaises(SystemExit):
+                windows_identity_cli.parser().parse_args([
+                    "--attempt", str(attempt),
+                    "--authorize-reviewed-submit-focus",
+                    "--calibrate-submit-focus-tabs", "1",
                 ])
 
     def test_apply_delegates_to_strict_production_acceptance(self):

@@ -49,12 +49,17 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--attempt", type=Path, required=True)
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
-    result.add_argument(
+    focus = result.add_mutually_exclusive_group()
+    focus.add_argument(
         "--calibrate-submit-focus-tabs",
         type=int,
         choices=range(1, 5),
         default=0,
         metavar="{1,2,3,4}",
+    )
+    focus.add_argument(
+        "--authorize-reviewed-submit-focus",
+        action="store_true",
     )
     result.add_argument("--apply", action="store_true")
     return result
@@ -66,18 +71,28 @@ def run(
     controller_state: Path,
     apply: bool,
     calibrate_submit_focus_tabs: int = 0,
+    authorize_reviewed_submit_focus: bool = False,
     acceptance_factory: AcceptanceFactory | None = None,
 ) -> int:
     """Validate the boundary, then enter strict production acceptance."""
     boundary = NativeProcessBoundary(attempt, controller_state)
     boundary._validate()
-    from .windows_identity_factory import authorized_submit_focus_tabs
+    from .windows_identity_factory import (
+        authorized_reviewed_submit_focus,
+        authorized_submit_focus_tabs,
+    )
     if (
         calibrate_submit_focus_tabs
         != authorized_submit_focus_tabs(boundary)
     ):
         raise WindowsIdentityRunError(
             "submit-focus calibration mode differs from prepared authority")
+    if (
+        authorize_reviewed_submit_focus
+        != authorized_reviewed_submit_focus(boundary)
+    ):
+        raise WindowsIdentityRunError(
+            "reviewed submit-focus mode differs from prepared authority")
     print("Boundary: loopback-only native Windows identity acceptance")
     print(f"Attempt: {boundary.attempt}")
     print(f"Controller state: {boundary.controller_state}")
@@ -162,6 +177,8 @@ def main(
             controller_state=args.controller_state,
             apply=args.apply,
             calibrate_submit_focus_tabs=args.calibrate_submit_focus_tabs,
+            authorize_reviewed_submit_focus=(
+                args.authorize_reviewed_submit_focus),
             acceptance_factory=acceptance_factory,
         )
     except RunInterrupted as error:

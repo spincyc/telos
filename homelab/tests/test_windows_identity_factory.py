@@ -120,6 +120,14 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.rotation_plan.
                 post_join_operator_submit_focus_tabs,
             )
+            self.assertFalse(
+                configuration.rotation_plan.
+                post_join_operator_submit_focus_authorized,
+            )
+            self.assertIsNone(
+                configuration.rotation_plan.
+                post_join_operator_submit_focus_reference,
+            )
             adapter = configuration.callbacks.launch_guest.__self__
             with self.assertRaisesRegex(
                 WindowsIdentityFactoryError, "serial endpoint"
@@ -215,6 +223,87 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
         self.assertEqual(
             3,
             configuration.rotation_plan.post_join_operator_submit_focus_tabs)
+
+    def test_reviewed_activation_authority_loads_tracked_reference(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            path = boundary.attempt / "authorization.json"
+            authorization = json.loads(path.read_text())
+            authorization["post_join_submit_focus_activation"] = {
+                "enabled": True,
+                "reference": "post-join-operator-submit-focus.json",
+                "sha256": factory_subject._trusted_reference_sha256(
+                    factory_subject.REFERENCE_ROOT
+                    / "post-join-operator-submit-focus.json"),
+            }
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+
+            configuration = self.factory(boundary, bundle)
+
+        plan = configuration.rotation_plan
+        self.assertTrue(plan.post_join_operator_submit_focus_authorized)
+        self.assertEqual(
+            "post-join-operator-submit-focus.json",
+            plan.post_join_operator_submit_focus_reference.name,
+        )
+
+    def test_rejects_overlapping_submit_focus_authorities(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            path = boundary.attempt / "authorization.json"
+            authorization = json.loads(path.read_text())
+            authorization["post_join_submit_focus_calibration"] = {
+                "enabled": True, "tabs": 1}
+            authorization["post_join_submit_focus_activation"] = {
+                "enabled": True,
+                "reference": "post-join-operator-submit-focus.json",
+                "sha256": factory_subject._trusted_reference_sha256(
+                    factory_subject.REFERENCE_ROOT
+                    / "post-join-operator-submit-focus.json"),
+            }
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "mutually exclusive"
+            ):
+                self.factory(boundary, bundle)
+
+    def test_rejects_reviewed_reference_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            path = boundary.attempt / "authorization.json"
+            authorization = json.loads(path.read_text())
+            authorization["post_join_submit_focus_activation"] = {
+                "enabled": True,
+                "reference": "post-join-operator-submit-focus.json",
+                "sha256": "0" * 64,
+            }
+            path.write_text(json.dumps(authorization))
+            path.chmod(0o600)
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "digest does not match"
+            ):
+                self.factory(boundary, bundle)
+
+    def test_rejects_schema_tampered_reviewed_reference(self):
+        source = (
+            factory_subject.REFERENCE_ROOT
+            / "post-join-operator-submit-focus.json")
+        document = json.loads(source.read_text())
+        document["activation"]["fallback_authorized"] = True
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / source.name).write_text(json.dumps(document))
+            guest = factory_subject.GuestProvenance(**document["guest"])
+            with (
+                mock.patch.object(factory_subject, "REFERENCE_ROOT", root),
+                self.assertRaisesRegex(
+                    WindowsIdentityFactoryError,
+                    "reviewed submit-focus reference is invalid",
+                ),
+            ):
+                factory_subject._reviewed_submit_focus_reference(guest)
 
     def test_rejects_invalid_enabled_operator_reference_before_runtime(self):
         original = factory_subject.load_identity_reference

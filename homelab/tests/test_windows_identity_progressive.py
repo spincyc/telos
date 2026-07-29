@@ -695,6 +695,32 @@ class ProgressiveRotationTests(unittest.TestCase):
                     after_rotation=lambda _replacement: None,
                 )
 
+    def test_submit_focus_activation_requires_reference_and_excludes_calibration(self):
+        for changes in (
+            {"post_join_operator_submit_focus_authorized": True},
+            {
+                "post_join_operator_submit_focus_reference": Path("reviewed.json"),
+            },
+            {
+                "post_join_operator_submit_focus_calibration": True,
+                "post_join_operator_submit_focus_tabs": 1,
+                "post_join_operator_submit_focus_authorized": True,
+                "post_join_operator_submit_focus_reference": Path("reviewed.json"),
+            },
+        ):
+            invalid = self.plan()
+            invalid = type(invalid)(**{**invalid.__dict__, **changes})
+            with self.assertRaisesRegex(
+                WindowsIdentityProgressiveError, "invalid progressive plan"
+            ):
+                execute_progressive_rotation(
+                    plan=invalid,
+                    session=Context(object(), [], "session"),
+                    recovery=Recovery("secret", [], "recovery"),
+                    generate_credential=lambda: "different-secret",
+                    after_rotation=lambda _replacement: None,
+                )
+
     def test_native_session_starts_and_tears_down_in_reverse_order(self):
         events = []
         boundary = mock.Mock()

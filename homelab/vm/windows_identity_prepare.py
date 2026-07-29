@@ -26,6 +26,11 @@ DISK_NAME = "windows.qcow2"
 VARS_NAME = "OVMF_VARS.fd"
 CONTROL_ISO_NAME = "control.iso"
 NATIVE_MARKER = "TELOS WINDOWS NATIVE READY"
+SUBMIT_FOCUS_REFERENCE = (
+    Path(__file__).with_name("windows_identity_references")
+    / "windows-11-25h2-en-us-1280x800"
+    / "post-join-operator-submit-focus.json"
+)
 
 
 class WindowsIdentityPrepareError(RuntimeError):
@@ -100,6 +105,7 @@ def prepare(
     controller_state: Path,
     switch_port: int = 31415,
     calibrate_submit_focus_tabs: int = 0,
+    authorize_reviewed_submit_focus: bool = False,
 ) -> Path:
     if (
         type(calibrate_submit_focus_tabs) is not int
@@ -107,6 +113,12 @@ def prepare(
     ):
         raise WindowsIdentityPrepareError(
             "submit-focus calibration count must be between 0 and 4")
+    if type(authorize_reviewed_submit_focus) is not bool:
+        raise WindowsIdentityPrepareError(
+            "reviewed submit-focus authority must be boolean")
+    if calibrate_submit_focus_tabs and authorize_reviewed_submit_focus:
+        raise WindowsIdentityPrepareError(
+            "submit-focus calibration and activation are mutually exclusive")
     bundle = bundle.resolve(strict=True)
     source = inspect_candidate(bundle)
     identity_root = bundle / "identity"
@@ -176,6 +188,17 @@ def prepare(
                 "enabled": calibrate_submit_focus_tabs > 0,
                 "tabs": calibrate_submit_focus_tabs,
             },
+            "post_join_submit_focus_activation": {
+                "enabled": authorize_reviewed_submit_focus,
+                "reference": (
+                    "post-join-operator-submit-focus.json"
+                    if authorize_reviewed_submit_focus else None
+                ),
+                "sha256": (
+                    sha256(SUBMIT_FOCUS_REFERENCE)
+                    if authorize_reviewed_submit_focus else None
+                ),
+            },
         }
         private_file(
             attempt / "authorization.json",
@@ -195,12 +218,17 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
     result.add_argument("--switch-port", type=int, default=31415)
-    result.add_argument(
+    focus = result.add_mutually_exclusive_group()
+    focus.add_argument(
         "--calibrate-submit-focus-tabs",
         type=int,
         choices=range(1, 5),
         default=0,
         metavar="{1,2,3,4}",
+    )
+    focus.add_argument(
+        "--authorize-reviewed-submit-focus",
+        action="store_true",
     )
     result.add_argument("--apply", action="store_true")
     return result
@@ -220,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         args.controller_state,
         args.switch_port,
         args.calibrate_submit_focus_tabs,
+        args.authorize_reviewed_submit_focus,
     ))
     return 0
 

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "state": "domain operator password submit arrow focused after one Tab",
+  "state_kind": "operator-submit-focus",
+  "reviewed": true,
+  "activation": {
+    "navigation": ["tab"],
+    "key": "ret",
+    "fallback_authorized": false
+  },
+  "guest": {
+    "release": "Windows 11 25H2",
+    "language": "en-US",
+    "architecture": "x86_64",
+    "installer_iso_sha256": "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3",
+    "source_disk_sha256": "eb002be58d216908e5724512682523f70f4f1afeaa6d93ad9de9c942dc11977d"
+  },
+  "review": {
+    "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+    "attempt": "attempt-20260729T191356Z-d9eef2168fcb",
+    "geometry": [1280, 800],
+    "tab_index": 1,
+    "stability_samples": 3,
+    "stable_source_frame_sha256": "c307c9970edf35a44f96a256bf5f82d5acce2b45b05e64babbed7ac5fbeb486f",
+    "secret_input_since_post_join_reboot": false,
+    "submission_attempted": false
+  }
+}

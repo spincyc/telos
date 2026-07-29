@@ -583,6 +583,143 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    def test_reviewed_domain_submit_focus_uses_exactly_one_tab_and_return(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        interaction = interaction_type.return_value
+        ordering = mock.Mock()
+        ordering.attach_mock(interaction.type_secret, "type_secret")
+        ordering.attach_mock(prove_departure, "prove_departure")
+        ordering.attach_mock(interaction.key, "key")
+        ordering.attach_mock(diagnostic.submitted, "submitted")
+        with mock.patch.object(subject.time, "sleep") as sleep:
+            ordering.attach_mock(sleep, "sleep")
+            adapter = self.adapter(
+                post_submit_diagnostic=diagnostic_factory,
+                rotation_plan=mock.Mock(
+                    initial_sign_in_delay=0,
+                    lock_settle_delay=2,
+                    wake_after_lock_keys=(),
+                    post_join_operator_account_keys=(),
+                    post_join_operator_account_calibrated=True,
+                    post_join_operator_sign_in_manifest=None,
+                    post_join_operator_submit_focus_calibration=False,
+                    post_join_operator_submit_focus_tabs=0,
+                    post_join_operator_submit_focus_authorized=True,
+                    post_join_operator_submit_focus_reference=Path(
+                        "tracked-reviewed-reference.json"),
+                    checkpoint_timeout=11,
+                ),
+            )
+
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "b" * 32)
+
+        secret_index = ordering.mock_calls.index(
+            mock.call.type_secret("private", timeout=mock.ANY))
+        submitted_index = ordering.mock_calls.index(mock.call.submitted())
+        submission_calls = ordering.mock_calls[secret_index + 1:submitted_index]
+        self.assertEqual(
+            [
+                mock.call.prove_departure(
+                    self.qmp,
+                    self.root / "reauth-evidence",
+                    sign_in,
+                    timeout=mock.ANY,
+                    clock=adapter.clock,
+                ),
+                mock.call.sleep(2),
+                mock.call.key("tab", timeout=mock.ANY),
+                mock.call.sleep(2),
+                mock.call.key("ret", timeout=mock.ANY),
+                mock.call.sleep(2),
+            ],
+            submission_calls,
+        )
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_reviewed_submit_focus_timeout_never_issues_return(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic = mock.Mock()
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        now = {"value": 0.0}
+        sleeps = {"count": 0}
+
+        def sleep(_delay):
+            sleeps["count"] += 1
+            # The third drain follows the authorized Tab and deliberately
+            # exhausts the deadline. Earlier drains settle public username
+            # entry and secret entry respectively.
+            if sleeps["count"] == 3:
+                now["value"] = 8.0
+
+        adapter = self.adapter(
+            clock=lambda: now["value"],
+            post_submit_diagnostic=mock.Mock(return_value=diagnostic),
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=2,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                post_join_operator_submit_focus_calibration=False,
+                post_join_operator_submit_focus_tabs=0,
+                post_join_operator_submit_focus_authorized=True,
+                post_join_operator_submit_focus_reference=Path(
+                    "tracked-reviewed-reference.json"),
+                checkpoint_timeout=11,
+            ),
+        )
+        with (
+            mock.patch.object(subject.time, "sleep", side_effect=sleep),
+            self.assertRaises(
+                subject.WindowsLocalReauthenticationError
+            ) as caught,
+        ):
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "c" * 32)
+
+        self.assertEqual("submit", caught.exception.reauth_operation)
+        keys = interaction_type.return_value.key.call_args_list
+        self.assertEqual(2, sum(call.args[0] == "tab" for call in keys))
+        self.assertEqual(0, sum(call.args[0] == "ret" for call in keys))
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     def test_post_submit_diagnostic_arm_failure_precedes_secret_entry(
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,

@@ -523,11 +523,35 @@ class NativeWindowsAcceptanceAdapter:
                 getattr(plan, "post_join_operator_submit_focus_tabs", 0)
                 if submit_focus_calibration else 0
             )
+            submit_focus_authorized = (
+                getattr(
+                    plan,
+                    "post_join_operator_submit_focus_authorized",
+                    False,
+                ) is True
+            )
+            submit_focus_reference = (
+                getattr(
+                    plan,
+                    "post_join_operator_submit_focus_reference",
+                    None,
+                )
+                if submit_focus_authorized else None
+            )
             if (
                 initial_delay < 0
                 or lock_settle_delay < 0
                 or type(submit_focus_tabs) is not int
                 or not 0 <= submit_focus_tabs <= 4
+                or (
+                    submit_focus_authorized
+                    != (submit_focus_reference is not None)
+                )
+                or (
+                    submit_focus_calibration
+                    and submit_focus_authorized
+                )
+                or (submit_focus_authorized and not domain_operator)
                 or any(key not in SAFE_KEYS for key in selection_keys)
                 or any(key not in SAFE_KEYS for key in wake_keys)
             ):
@@ -761,8 +785,29 @@ class NativeWindowsAcceptanceAdapter:
             _run_local_reauthentication_operation(
                 "submit", settle_secret_input)
             _run_local_reauthentication_operation(
-                "submit", lambda: interaction.key(
-                    "ret", timeout=remaining("submit")))
+                "submit",
+                lambda: interaction.key(
+                    "tab" if submit_focus_authorized else "ret",
+                    timeout=remaining("submit"),
+                ),
+            )
+            if submit_focus_authorized:
+                # The reviewed, guest-bound production authority is exactly
+                # one Tab to the submit arrow followed by one activation.
+                # There is deliberately no Enter fallback or retry.
+                def settle_submit_focus() -> None:
+                    if lock_settle_delay:
+                        budget = remaining("submit")
+                        time.sleep(min(lock_settle_delay, budget))
+                        remaining("submit")
+
+                _run_local_reauthentication_operation(
+                    "submit", settle_submit_focus)
+                _run_local_reauthentication_operation(
+                    "submit",
+                    lambda: interaction.key(
+                        "ret", timeout=remaining("submit")),
+                )
 
             def settle_submission_input() -> None:
                 # QMP acknowledges the Enter key event before Windows has

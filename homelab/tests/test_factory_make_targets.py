@@ -63,6 +63,8 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("APPLY", text)
         self.assertEqual(1, text.count("--apply"))
         self.assertIn("WINDOWS_SUBMIT_FOCUS_TABS", text)
+        self.assertIn("WINDOWS_REVIEWED_SUBMIT_FOCUS", text)
+        self.assertIn("--authorize-reviewed-submit-focus", text)
 
     def test_offline_check_cannot_invoke_acquisition(self):
         declaration = re.search(

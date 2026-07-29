@@ -54,6 +54,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _trusted_reference_sha256(path: Path) -> str:
+    """Hash a tracked reference independently of source-disk test seams."""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+    except OSError as error:
+        raise WindowsIdentityFactoryError(
+            "reviewed submit-focus reference is unavailable") from error
+    return digest.hexdigest()
+
+
 def _actual_overlay_backing(overlay: Path) -> Path:
     try:
         result = subprocess.run(
@@ -111,6 +124,122 @@ def authorized_submit_focus_tabs(boundary: NativeProcessBoundary) -> int:
         raise WindowsIdentityFactoryError(
             "prepared submit-focus calibration authority is invalid")
     return value["tabs"]
+
+
+def authorized_reviewed_submit_focus(
+    boundary: NativeProcessBoundary,
+) -> bool:
+    """Return the immutable, distinct production activation authority."""
+    value = _authorization(boundary).get(
+        "post_join_submit_focus_activation")
+    if value is None:
+        return False
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"enabled", "reference", "sha256"}
+        or type(value["enabled"]) is not bool
+        or (
+            value["reference"]
+            != (
+                "post-join-operator-submit-focus.json"
+                if value["enabled"] else None
+            )
+        )
+        or (
+            value["sha256"] is not None
+            and (
+                not isinstance(value["sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"])
+            )
+        )
+        or (
+            value["enabled"]
+            != (value["sha256"] is not None)
+        )
+    ):
+        raise WindowsIdentityFactoryError(
+            "prepared reviewed submit-focus authority is invalid")
+    if value["enabled"] and authorized_submit_focus_tabs(boundary):
+        raise WindowsIdentityFactoryError(
+            "prepared submit-focus authorities are mutually exclusive")
+    if value["enabled"]:
+        authorization = _authorization(boundary)
+        source = authorization.get("source")
+        disk = source.get("disk") if isinstance(source, dict) else None
+        source_sha256 = (
+            disk.get("sha256") if isinstance(disk, dict) else None
+        )
+        if (
+            not isinstance(source_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", source_sha256)
+            or _trusted_reference_sha256(
+                REFERENCE_ROOT / "post-join-operator-submit-focus.json"
+            ) != value["sha256"]
+        ):
+            raise WindowsIdentityFactoryError(
+                "prepared reviewed submit-focus digest does not match")
+        _reviewed_submit_focus_reference(GuestProvenance(
+            release="Windows 11 25H2",
+            language="en-US",
+            architecture="x86_64",
+            installer_iso_sha256=(
+                "768984706b909479417b2368438909440f2967ff05c6a9195ed2667254e465e3"
+            ),
+            source_disk_sha256=source_sha256,
+        ))
+    return value["enabled"]
+
+
+def _reviewed_submit_focus_reference(expected_guest) -> Path:
+    """Validate the tracked one-Tab/one-Return review, never private output."""
+    path = REFERENCE_ROOT / "post-join-operator-submit-focus.json"
+    try:
+        info = path.lstat()
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise WindowsIdentityFactoryError(
+            "reviewed submit-focus reference is unavailable") from error
+    expected_guest_document = {
+        "release": expected_guest.release,
+        "language": expected_guest.language,
+        "architecture": expected_guest.architecture,
+        "installer_iso_sha256": expected_guest.installer_iso_sha256,
+        "source_disk_sha256": expected_guest.source_disk_sha256,
+    }
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or not isinstance(document, dict)
+        or set(document) != {
+            "schema", "state", "state_kind", "reviewed", "activation",
+            "guest", "review",
+        }
+        or document["schema"] != 1
+        or document["state_kind"] != "operator-submit-focus"
+        or document["reviewed"] is not True
+        or document["guest"] != expected_guest_document
+        or document["activation"] != {
+            "navigation": ["tab"],
+            "key": "ret",
+            "fallback_authorized": False,
+        }
+        or document["review"] != {
+            "source_bundle": "run-20260728T114233Z-afecdf7cc9d0",
+            "attempt": "attempt-20260729T191356Z-d9eef2168fcb",
+            "geometry": [1280, 800],
+            "tab_index": 1,
+            "stability_samples": 3,
+            "stable_source_frame_sha256": (
+                "c307c9970edf35a44f96a256bf5f82d5acce2b45b05e64ba"
+                "bbed7ac5fbeb486f"
+            ),
+            "secret_input_since_post_join_reboot": False,
+            "submission_attempted": False,
+        }
+    ):
+        raise WindowsIdentityFactoryError(
+            "reviewed submit-focus reference is invalid")
+    return path
 
 
 def _source_bundle(
@@ -374,6 +503,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
 
     authorization = _authorization(boundary)
     submit_focus_tabs = authorized_submit_focus_tabs(boundary)
+    reviewed_submit_focus = authorized_reviewed_submit_focus(boundary)
     for relative in (
         "runtime",
         "rotation-evidence",
@@ -421,6 +551,11 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         ),
         post_join_operator_submit_focus_calibration=submit_focus_tabs > 0,
         post_join_operator_submit_focus_tabs=submit_focus_tabs,
+        post_join_operator_submit_focus_authorized=reviewed_submit_focus,
+        post_join_operator_submit_focus_reference=(
+            _reviewed_submit_focus_reference(references["sign-in"].guest)
+            if reviewed_submit_focus else None
+        ),
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],

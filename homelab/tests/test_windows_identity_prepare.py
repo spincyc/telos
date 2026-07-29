@@ -83,6 +83,10 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 plan["post_join_submit_focus_calibration"],
             )
             self.assertEqual(
+                {"enabled": False, "reference": None, "sha256": None},
+                plan["post_join_submit_focus_activation"],
+            )
+            self.assertEqual(
                 str((attempt / "control.iso").resolve()),
                 plan["control_media"]["path"])
             self.assertTrue(plan["control_media"]["read_only"])
@@ -137,11 +141,55 @@ class WindowsIdentityPrepareTests(unittest.TestCase):
                 authorization["post_join_submit_focus_calibration"],
             )
 
+    def test_prepare_binds_exact_reviewed_reference_digest(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = self.candidate(root)
+            controller = root / "controller"
+            controller.mkdir()
+            with (
+                mock.patch.object(
+                    prepare.subprocess, "run", side_effect=self.qemu),
+                mock.patch.object(
+                    prepare, "build_control_iso",
+                    side_effect=self.control_iso),
+            ):
+                attempt = prepare.prepare(
+                    bundle, controller,
+                    authorize_reviewed_submit_focus=True,
+                )
+            authorization = json.loads(
+                (attempt / "authorization.json").read_text())
+            self.assertEqual(
+                {
+                    "enabled": True,
+                    "reference": "post-join-operator-submit-focus.json",
+                    "sha256": prepare.sha256(
+                        prepare.SUBMIT_FOCUS_REFERENCE),
+                },
+                authorization["post_join_submit_focus_activation"],
+            )
+
     def test_cli_rejects_invalid_submit_focus_counts(self):
         for value in ("0", "5", "not-a-number"):
             with self.subTest(value=value), self.assertRaises(SystemExit):
                 prepare.parser().parse_args([
                     "--calibrate-submit-focus-tabs", value])
+
+    def test_submit_focus_modes_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            prepare.parser().parse_args([
+                "--calibrate-submit-focus-tabs", "1",
+                "--authorize-reviewed-submit-focus",
+            ])
+        with self.assertRaisesRegex(
+            prepare.WindowsIdentityPrepareError, "mutually exclusive"
+        ):
+            prepare.prepare(
+                Path("/not-used"), Path("/not-used"),
+                calibrate_submit_focus_tabs=1,
+                authorize_reviewed_submit_focus=True,
+            )
     def test_candidate_requires_native_marker_private_files_and_clean_qcow2(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
