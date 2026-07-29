@@ -112,6 +112,13 @@ class ControllerJoinSerialTests(unittest.TestCase):
         self.assertIn("if results:", stage)
         self.assertIn("descriptions != [marker]", stage)
         self.assertIn("description=marker", stage)
+        self.assertIn(
+            'expected_upn = values["principal"] + "@" + '
+            'str(lp.get("realm")).upper()',
+            stage,
+        )
+        self.assertIn("FLAG_MOD_REPLACE", stage)
+        self.assertIn("upns != [expected_upn]", stage)
         self.assertLess(
             destroy.index("descriptions != [marker]"),
             destroy.index("samdb.deleteuser"))

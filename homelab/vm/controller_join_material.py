@@ -93,6 +93,7 @@ import json
 import re
 import sys
 
+from ldb import FLAG_MOD_REPLACE, Message, MessageElement
 from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
@@ -109,7 +110,8 @@ lp = LoadParm()
 lp.load_default()
 samdb = SamDB(session_info=system_session(), lp=lp)
 expression = "(sAMAccountName=" + values["principal"] + ")"
-results = samdb.search(expression=expression, attrs=["description"])
+results = samdb.search(
+    expression=expression, attrs=["description", "userPrincipalName"])
 if results:
     descriptions = [str(value) for value in results[0].get("description", [])]
     if descriptions != [marker]:
@@ -124,15 +126,33 @@ try:
             description=marker,
         )
         created = True
+    results = samdb.search(
+        expression=expression, attrs=["description", "userPrincipalName"])
+    if len(results) != 1:
+        raise RuntimeError("join principal was not stored")
+    expected_upn = values["principal"] + "@" + str(lp.get("realm")).upper()
+    observed_upns = [
+        str(value) for value in results[0].get("userPrincipalName", [])
+    ]
+    if observed_upns != [expected_upn]:
+        update = Message()
+        update.dn = results[0].dn
+        update["userPrincipalName"] = MessageElement(
+            expected_upn, FLAG_MOD_REPLACE, "userPrincipalName")
+        samdb.modify(update)
     samdb.add_remove_group_members(
         "Domain Admins", [values["principal"]], add_members_operation=True,
     )
-    results = samdb.search(expression=expression, attrs=["description"])
+    results = samdb.search(
+        expression=expression, attrs=["description", "userPrincipalName"])
     if len(results) != 1:
         raise RuntimeError("join principal was not stored")
     descriptions = [str(value) for value in results[0].get("description", [])]
     if descriptions != [marker]:
         raise RuntimeError("join principal ownership was not stored")
+    upns = [str(value) for value in results[0].get("userPrincipalName", [])]
+    if upns != [expected_upn]:
+        raise RuntimeError("join principal UPN was not stored")
 except BaseException:
     if created:
         try:
