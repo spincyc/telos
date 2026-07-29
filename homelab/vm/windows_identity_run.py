@@ -95,7 +95,7 @@ class IdentityFailureDiagnostic:
         for suffix in (
             "", ".preflight", ".lease", ".connect", ".launch", ".launcher-receive",
             ".launcher-parse", ".start-receive", ".start-parse",
-            ".outcome-receive", ".outcome-parse", ".guest",
+            ".outcome-receive", ".outcome-parse", ".guest", ".validate",
         )
     )
     _CONTROLLER_CONVERGENCE_STAGES = frozenset({
@@ -282,7 +282,7 @@ class IdentityFailureDiagnostic:
             "preflight", "lease", "connect", "launch",
             "launcher-receive", "launcher-parse",
             "start-receive", "start-parse",
-            "outcome-receive", "outcome-parse", "guest",
+            "outcome-receive", "outcome-parse", "guest", "validate",
         }:
             return None
         operation = f"static-probe.{action}.{phase}"

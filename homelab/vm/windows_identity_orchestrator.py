@@ -376,8 +376,17 @@ def _post_reboot_proof(
         or not identity["profile_loaded"]
         or not identity["local_profile"]
     ):
+        diagnostic = IdentityFailureDiagnostic.static_probe(
+            "windows-rebooted-joined",
+            "interactive-operator",
+            WindowsIdentityOrchestratorError(
+                "post-reboot interactive operator probe is invalid"),
+            phase="validate",
+        )
         raise WindowsIdentityOrchestratorError(
-            "post-reboot interactive operator probe is invalid")
+            "post-reboot interactive operator probe is invalid",
+            diagnostic=diagnostic,
+        )
     record = _call_static_probe(
         callbacks, "windows-rebooted-joined", "domain-state")
     observation = record.get("observation")
@@ -403,8 +412,17 @@ def _post_reboot_proof(
             for field in ("domain", "operator")
         )
     ):
+        diagnostic = IdentityFailureDiagnostic.static_probe(
+            "windows-rebooted-joined",
+            "domain-state",
+            WindowsIdentityOrchestratorError(
+                "post-reboot domain-state probe is invalid"),
+            phase="validate",
+        )
         raise WindowsIdentityOrchestratorError(
-            "post-reboot domain-state probe is invalid")
+            "post-reboot domain-state probe is invalid",
+            diagnostic=diagnostic,
+        )
     return {
         "schema_version": 2,
         # Receiving the static guest probe after Restart-Computer is the

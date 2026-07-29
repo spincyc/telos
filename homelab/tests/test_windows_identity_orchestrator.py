@@ -709,6 +709,176 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 self.assertIsNone(error.__cause__)
                 self.assertIsNone(error.__context__)
 
+    def test_post_reboot_semantic_validation_has_static_probe_coordinate(self):
+        interactive = {
+            "schema_version": 1,
+            "action": "interactive-operator",
+            "result": "pass",
+            "observation": {
+                "principal": r"FACTORY\operator",
+                "principal_sid": "S-1-5-21-1-2-3-1104",
+                "operator": "operator@FACTORY.TEST",
+                "operator_sid": "S-1-5-21-1-2-3-1104",
+                "console_principal": r"FACTORY\operator",
+                "console_sid": "S-1-5-21-1-2-3-1104",
+                "authenticated": True,
+                "authentication_type": "Kerberos",
+                "session_id": 1,
+                "profile_sid": "S-1-5-21-1-2-3-1104",
+                "profile_loaded": True,
+                "local_profile": True,
+            },
+        }
+        domain = {
+            "schema_version": 1,
+            "action": "domain-state",
+            "result": "pass",
+            "observation": {
+                "part_of_domain": True,
+                "domain": "FACTORY.TEST",
+                "secure_channel": True,
+                "operator": "operator@FACTORY.TEST",
+                "operator_local_administrator": True,
+            },
+        }
+        invalid_by_action = {
+            "interactive-operator": {
+                **interactive,
+                "observation": {
+                    **interactive["observation"],
+                    "authenticated": False,
+                },
+            },
+            "domain-state": {
+                **domain,
+                "observation": {
+                    **domain["observation"],
+                    "part_of_domain": 1,
+                },
+            },
+        }
+        for action, invalid in invalid_by_action.items():
+            with self.subTest(action=action):
+                callbacks = self.callbacks([])
+
+                def static_probe(requested, action=action, invalid=invalid):
+                    if requested == action:
+                        return invalid
+                    return (
+                        interactive
+                        if requested == "interactive-operator"
+                        else domain
+                    )
+
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": static_probe,
+                })
+                with self.assertRaises(
+                    subject.WindowsIdentityOrchestratorError,
+                ) as caught:
+                    subject._post_reboot_proof(
+                        callbacks, "operator@FACTORY.TEST")
+                error = caught.exception
+                self.assertEqual(
+                    "windows-rebooted-joined", error.diagnostic.check)
+                self.assertEqual(
+                    f"static-probe.{action}.validate",
+                    error.diagnostic.operation,
+                )
+                self.assertEqual(
+                    "WindowsIdentityOrchestratorError",
+                    error.diagnostic.error_type,
+                )
+                self.assertNotIn("authenticated", str(error))
+
+    def test_execute_join_preserves_post_reboot_validation_coordinate(self):
+        staged = ControllerJoinResult(
+            "stage", "tj-0123456789abcdef", False, ())
+        destroyed = ControllerJoinResult(
+            "destroy", "tj-0123456789abcdef", True, ())
+        interactive = {
+            "schema_version": 1,
+            "action": "interactive-operator",
+            "result": "pass",
+            "observation": {
+                "principal": r"FACTORY\operator",
+                "principal_sid": "S-1-5-21-1-2-3-1104",
+                "operator": "operator@FACTORY.TEST",
+                "operator_sid": "S-1-5-21-1-2-3-1104",
+                "console_principal": r"FACTORY\operator",
+                "console_sid": "S-1-5-21-1-2-3-1104",
+                "authenticated": True,
+                "authentication_type": "Kerberos",
+                "session_id": 1,
+                "profile_sid": "S-1-5-21-1-2-3-1104",
+                "profile_loaded": True,
+                "local_profile": True,
+            },
+        }
+
+        def execute(**kwargs):
+            return kwargs["probe_after_reboot"]()
+
+        def fake_build(path, _material):
+            path.write_bytes(b"private")
+            path.chmod(0o600)
+
+        for action in ("interactive-operator", "domain-state"):
+            with self.subTest(action=action):
+                callbacks = self.callbacks([])
+
+                def static_probe(requested, action=action):
+                    if requested == action:
+                        return {
+                            "schema_version": 1,
+                            "action": requested,
+                            "result": "pass",
+                            "observation": {},
+                        }
+                    return interactive
+
+                callbacks = subject.AcceptanceCallbacks(**{
+                    **callbacks.__dict__,
+                    "static_probe": static_probe,
+                })
+                channel = mock.Mock()
+                with tempfile.TemporaryDirectory() as name, mock.patch.object(
+                    subject, "build_join_iso", side_effect=fake_build,
+                ), mock.patch.object(
+                    subject, "JoinMediaChannel", return_value=channel,
+                ), mock.patch.object(
+                    subject, "execute_join_and_prove", side_effect=execute,
+                ):
+                    root = Path(name)
+                    root.chmod(0o700)
+                    with self.assertRaises(
+                        subject.WindowsIdentityOrchestratorError,
+                    ) as caught:
+                        subject._execute_join(
+                            realm="FACTORY.TEST",
+                            private_root=root,
+                            operator_credential="Operator-Secret-47!",
+                            callbacks=callbacks,
+                            stage_join_principal=mock.Mock(
+                                return_value=staged),
+                            destroy_join_principal=mock.Mock(
+                                return_value=destroyed),
+                        )
+                error = caught.exception
+                self.assertEqual(
+                    "windows-rebooted-joined", error.diagnostic.check)
+                self.assertEqual(
+                    f"static-probe.{action}.validate",
+                    error.diagnostic.operation,
+                )
+                self.assertEqual(
+                    "WindowsIdentityOrchestratorError",
+                    error.diagnostic.error_type,
+                )
+                self.assertNotIn("private", str(error))
+                self.assertIsNone(error.__cause__)
+
     def test_post_reboot_preserves_preflight_lease_and_connect_coordinates(self):
         interactive = {
             "schema_version": 1,
