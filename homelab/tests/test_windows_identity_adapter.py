@@ -84,15 +84,19 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             adapter = self.adapter(Path(name))
             adapter._reauthenticate = mock.Mock()
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private")
+                "operator@FACTORY.TEST", "private", "ab" * 16)
             adapter._reauthenticate.assert_called_once_with(
-                "operator@FACTORY.TEST", "private", domain_operator=True)
+                "operator@FACTORY.TEST",
+                "private",
+                domain_operator=True,
+                diagnostic_nonce="ab" * 16,
+            )
             adapter._reauthenticate.reset_mock()
             with self.assertRaisesRegex(
                     subject.WindowsLocalReauthenticationError,
                     "prove-password-target"):
                 adapter.reauthenticate_domain_operator(
-                    "other@FACTORY.TEST", "private")
+                    "other@FACTORY.TEST", "private", "ab" * 16)
             adapter._reauthenticate.assert_not_called()
 
     def test_local_reauthentication_remains_a_distinct_wrapper(self):

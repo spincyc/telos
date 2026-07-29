@@ -72,7 +72,7 @@ class AcceptanceCallbacks:
     await_device_deleted: Callable[[str], None]
     open_join_serial: Callable[[], DuplexJoinSerial]
     reauthenticate_local: Callable[[str], None]
-    reauthenticate_domain_operator: Callable[[str, str], None]
+    reauthenticate_domain_operator: Callable[[str, str, str], None]
     static_probe: Callable[[str], Mapping[str, object]]
     credential_action: Callable[
         [str, str, str], Mapping[str, object]
@@ -124,6 +124,7 @@ _LOCAL_REAUTH_OPERATIONS = frozenset({
     "select-local-account",
     "type-public-username",
     "prove-password-target",
+    "diagnostic-arm",
     "type-secret",
     "submit",
     "desktop",
@@ -481,7 +482,10 @@ def _execute_join(
             reauthentication_attempted = True
             try:
                 callbacks.reauthenticate_domain_operator(
-                    f"operator@{realm.upper()}", operator_credential)
+                    f"operator@{realm.upper()}",
+                    operator_credential,
+                    nonce,
+                )
             except BaseException as error:
                 raise WindowsJoinIsoError(
                     "post-reboot authentication failed",

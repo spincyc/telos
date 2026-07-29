@@ -207,6 +207,7 @@ class NativeWindowsAcceptanceAdapter:
         ],
         rotation_plan: ProgressiveRotationPlan | None = None,
         command_plan: PublicPowerShellLaunchPlan | None = None,
+        post_submit_diagnostic: Callable[..., object] | None = None,
         timeout: float = 120.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -218,6 +219,7 @@ class NativeWindowsAcceptanceAdapter:
         self.scan_secrets = scan_secrets
         self.rotation_plan = rotation_plan
         self.command_plan = command_plan
+        self.post_submit_diagnostic = post_submit_diagnostic
         self.timeout = timeout
         self.clock = clock
         self._principal_serial: ControllerPrincipalSerial | None = None
@@ -225,6 +227,7 @@ class NativeWindowsAcceptanceAdapter:
         self._controller_console: SerialAutomation | None = None
         self._com1_owned = False
         self._static_probe_poisoned = False
+        self._post_submit_diagnostic_code: object | None = None
         self._audit_configuration()
 
     def _audit_configuration(self) -> None:
@@ -371,16 +374,26 @@ class NativeWindowsAcceptanceAdapter:
             f".\\{self.local_principal}", credential, domain_operator=False)
 
     def reauthenticate_domain_operator(
-        self, principal: str, credential: str,
+        self, principal: str, credential: str, diagnostic_nonce: str,
     ) -> None:
         """Re-establish the exact staged domain-operator session."""
         if principal != f"operator@{self.realm}":
             raise WindowsLocalReauthenticationError(
                 "prove-password-target")
-        self._reauthenticate(principal, credential, domain_operator=True)
+        self._reauthenticate(
+            principal,
+            credential,
+            domain_operator=True,
+            diagnostic_nonce=diagnostic_nonce,
+        )
 
     def _reauthenticate(
-        self, principal: str, credential: str, *, domain_operator: bool,
+        self,
+        principal: str,
+        credential: str,
+        *,
+        domain_operator: bool,
+        diagnostic_nonce: str | None = None,
     ) -> None:
         plan = self.rotation_plan
         if plan is None:
@@ -624,33 +637,103 @@ class NativeWindowsAcceptanceAdapter:
 
         _run_local_reauthentication_operation(
             "prove-password-target", prove_password_target)
-        _run_local_reauthentication_operation(
-            "type-secret", interaction.disable_durable_capture)
-        _run_local_reauthentication_operation(
-            "type-secret", lambda: interaction.type_secret(
-                credential, timeout=remaining("type-secret")))
-        _run_local_reauthentication_operation(
-            "type-secret",
-            lambda: _prove_secret_entry_departure(
-                self._qmp(),
-                evidence,
-                sign_in,
-                timeout=remaining("type-secret"),
-                clock=self.clock,
-            ),
-        )
 
-        def settle_secret_input() -> None:
-            if lock_settle_delay:
-                budget = remaining("submit")
-                time.sleep(min(lock_settle_delay, budget))
-                remaining("submit")
+        def submit_secret() -> None:
+            _run_local_reauthentication_operation(
+                "type-secret", interaction.disable_durable_capture)
+            _run_local_reauthentication_operation(
+                "type-secret", lambda: interaction.type_secret(
+                    credential, timeout=remaining("type-secret")))
+            _run_local_reauthentication_operation(
+                "type-secret",
+                lambda: _prove_secret_entry_departure(
+                    self._qmp(),
+                    evidence,
+                    sign_in,
+                    timeout=remaining("type-secret"),
+                    clock=self.clock,
+                ),
+            )
 
-        _run_local_reauthentication_operation(
-            "submit", settle_secret_input)
-        _run_local_reauthentication_operation(
-            "submit", lambda: interaction.key(
-                "ret", timeout=remaining("submit")))
+            def settle_secret_input() -> None:
+                if lock_settle_delay:
+                    budget = remaining("submit")
+                    time.sleep(min(lock_settle_delay, budget))
+                    remaining("submit")
+
+            _run_local_reauthentication_operation(
+                "submit", settle_secret_input)
+            _run_local_reauthentication_operation(
+                "submit", lambda: interaction.key(
+                    "ret", timeout=remaining("submit")))
+
+        diagnostic_factory = self.post_submit_diagnostic
+        self._post_submit_diagnostic_code = None
+        if diagnostic_factory is None or not domain_operator:
+            submit_secret()
+        else:
+            manager = None
+            session = None
+            armed = False
+            primary: BaseException | None = None
+            with self._com1():
+                try:
+                    if (
+                        not isinstance(diagnostic_nonce, str)
+                        or len(diagnostic_nonce) != 32
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in diagnostic_nonce
+                        )
+                    ):
+                        raise WindowsIdentityAdapterError(
+                            "post-submit diagnostic nonce is invalid")
+                    manager = diagnostic_factory(
+                        nonce=diagnostic_nonce,
+                        principal=principal,
+                        timeout=min(
+                            15.0, remaining("prove-password-target")),
+                    )
+                    session = manager.__enter__()
+                    session.arm()
+                    armed = True
+                    submit_secret()
+                    try:
+                        session.submitted()
+                        self._post_submit_diagnostic_code = session.result()
+                    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                        raise
+                    except BaseException:
+                        # This evidence is diagnostic only.  Transport,
+                        # watcher, and classification failures cannot replace
+                        # the authoritative GUI desktop result.
+                        self._post_submit_diagnostic_code = None
+                except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                    raise
+                except BaseException as error:
+                    primary = error
+                finally:
+                    if manager is not None:
+                        try:
+                            manager.__exit__(
+                                type(primary) if primary is not None else None,
+                                primary,
+                                primary.__traceback__
+                                if primary is not None else None,
+                            )
+                        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                            raise
+                        except BaseException as error:
+                            self._static_probe_poisoned = True
+                            if primary is None and not armed:
+                                primary = error
+            if primary is not None:
+                if not armed:
+                    self._static_probe_poisoned = True
+                    raise WindowsLocalReauthenticationError(
+                        "diagnostic-arm") from None
+                raise primary from None
+
         def prove_desktop() -> None:
             try:
                 interaction.observe_ephemeral(

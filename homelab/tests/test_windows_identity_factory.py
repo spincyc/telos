@@ -111,6 +111,36 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.rotation_plan.
                 post_join_operator_sign_in_manifest.name,
             )
+            adapter = configuration.callbacks.launch_guest.__self__
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "serial endpoint"
+            ):
+                adapter.post_submit_diagnostic(
+                    nonce="a" * 64,
+                    principal="operator@AD.FACTORY.TEST",
+                    timeout=47.0,
+                )
+            boundary.serial_socket = Path(name) / "live-windows.serial"
+            diagnostic = object()
+            with mock.patch.object(
+                factory_subject.PostSubmitDiagnosticSession,
+                "connect",
+                return_value=diagnostic,
+            ) as connect:
+                self.assertIs(
+                    diagnostic,
+                    adapter.post_submit_diagnostic(
+                        nonce="b" * 64,
+                        principal="operator@AD.FACTORY.TEST",
+                        timeout=47.0,
+                    ),
+                )
+            connect.assert_called_once_with(
+                boundary.serial_socket,
+                nonce="b" * 64,
+                principal="operator@AD.FACTORY.TEST",
+                timeout=47.0,
+            )
             runtime = boundary.attempt / "runtime"
             (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
             for relative in (

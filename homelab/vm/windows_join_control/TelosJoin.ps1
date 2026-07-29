@@ -12,6 +12,8 @@ $volume = $volumes[0]
 $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'join.json') -Raw |
     ConvertFrom-Json
+$diagnosticSource = Get-Content -LiteralPath (
+    $root + 'TelosPostSubmitDiagnostic.ps1') -Raw
 $usernameParts = @(([string]$document.username).Split('@'))
 if ($document.schema_version -ne 2 -or
     $document.nonce -notmatch '^[a-f0-9]{32}$' -or
@@ -178,6 +180,67 @@ $operatorAssigned = @(
 if (@($operatorAssigned).Count -ne 1) {
     throw 'daily operator local Administrators assignment was not proved'
 }
+
+# Stage a one-shot diagnostic from the source preloaded before the private
+# medium was destroyed. No join credential is written to persistent storage.
+    $failurePhase = 'diagnostic-staging'
+    $diagnosticRoot = Join-Path $env:ProgramData 'Telos\PostSubmitDiagnostic'
+    $diagnosticScript = Join-Path $diagnosticRoot `
+        'TelosPostSubmitDiagnostic.ps1'
+    $diagnosticConfig = Join-Path $diagnosticRoot 'config.json'
+    Unregister-ScheduledTask -TaskName 'TelosPostSubmitDiagnostic' `
+        -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $diagnosticRoot -Recurse -Force `
+        -ErrorAction SilentlyContinue
+    if (Get-ScheduledTask -TaskName 'TelosPostSubmitDiagnostic' `
+            -ErrorAction SilentlyContinue -or
+        Test-Path -LiteralPath $diagnosticRoot) {
+        throw 'stale diagnostic cleanup failed'
+    }
+    New-Item -ItemType Directory -Path $diagnosticRoot -Force |
+        Out-Null
+    Set-Content -LiteralPath $diagnosticScript -Value $diagnosticSource `
+        -Encoding UTF8 -NoNewline
+    $diagnosticSource = $null
+    @{
+        schema_version = 1
+        nonce = $nonce
+        operator_sid = $operatorSid.Value
+        operator_name = $operator.Split('@')[0]
+        operator_realm = $operator.Split('@')[1]
+    } | ConvertTo-Json -Compress | Set-Content `
+        -LiteralPath $diagnosticConfig -Encoding ASCII -NoNewline
+    & icacls.exe $diagnosticRoot /inheritance:r `
+        /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' |
+        Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'diagnostic staging ACL failed'
+    }
+    $diagnosticAction = New-ScheduledTaskAction `
+        -Execute 'powershell.exe' -Argument (
+            '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+            $diagnosticScript + '"')
+    $diagnosticTrigger = New-ScheduledTaskTrigger -AtStartup
+    $diagnosticPrincipal = New-ScheduledTaskPrincipal `
+        -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName 'TelosPostSubmitDiagnostic' `
+        -Action $diagnosticAction -Trigger $diagnosticTrigger `
+        -Principal $diagnosticPrincipal -Force | Out-Null
+    $registeredDiagnostic = Get-ScheduledTask `
+        -TaskName 'TelosPostSubmitDiagnostic' -ErrorAction Stop
+    if (@($registeredDiagnostic.Actions).Count -ne 1 -or
+        $registeredDiagnostic.Actions[0].Execute -cne 'powershell.exe' -or
+        $registeredDiagnostic.Actions[0].Arguments -cne (
+            '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+            $diagnosticScript + '"') -or
+        @($registeredDiagnostic.Triggers).Count -ne 1 -or
+        $registeredDiagnostic.Triggers[0].CimClass.CimClassName -cne `
+            'MSFT_TaskBootTrigger' -or
+        $registeredDiagnostic.Principal.UserId -notin @(
+            'SYSTEM', 'S-1-5-18') -or
+        $registeredDiagnostic.Principal.RunLevel -cne 'Highest') {
+        throw 'diagnostic scheduled task verification failed'
+    }
 
 # Force the post-join sign-in surface to request an explicit qualified
 # principal instead of exposing or selecting the last interactive user.

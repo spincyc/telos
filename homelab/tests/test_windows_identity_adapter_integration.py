@@ -274,10 +274,16 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             post_join_sign_in_manifest=None,
             checkpoint_timeout=11,
         )
-        adapter = self.adapter(rotation_plan=plan)
+        diagnostic_factory = mock.Mock()
+        adapter = self.adapter(
+            rotation_plan=plan,
+            post_submit_diagnostic=diagnostic_factory,
+        )
 
         adapter.reauthenticate_local("private")
 
+        diagnostic_factory.assert_not_called()
+        self.assertFalse(adapter._com1_owned)
         self.assertEqual(
             [
                 mock.call.key("spc", timeout=mock.ANY),
@@ -392,6 +398,201 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "desktop-sign-in-persisted",
             caught.exception.reauth_operation,
         )
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_post_submit_diagnostic_lifecycle_surrounds_gui_submission(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        desktop = mock.sentinel.desktop
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        interaction = interaction_type.return_value
+        ordering = mock.Mock()
+        ordering.attach_mock(interaction.observe, "observe")
+        ordering.attach_mock(diagnostic.arm, "arm")
+        ordering.attach_mock(interaction.disable_durable_capture, "disable")
+        ordering.attach_mock(interaction.type_secret, "type_secret")
+        ordering.attach_mock(prove_departure, "prove_departure")
+        ordering.attach_mock(interaction.key, "key")
+        ordering.attach_mock(diagnostic.submitted, "submitted")
+        ordering.attach_mock(diagnostic.result, "result")
+        ordering.attach_mock(
+            interaction.observe_ephemeral, "observe_ephemeral")
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        adapter.reauthenticate_domain_operator(
+            "operator@FACTORY.TEST", "private", "a" * 32)
+
+        diagnostic_factory.assert_called_once()
+        diagnostic_arguments = diagnostic_factory.call_args.kwargs
+        self.assertEqual(
+            "operator@FACTORY.TEST", diagnostic_arguments["principal"])
+        self.assertGreater(diagnostic_arguments["timeout"], 0)
+        self.assertLessEqual(diagnostic_arguments["timeout"], 7)
+        self.assertEqual("a" * 32, diagnostic_arguments["nonce"])
+        self.assertEqual(
+            [
+                mock.call.key("backspace", timeout=mock.ANY),
+                mock.call.key("tab", timeout=mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
+                mock.call.arm(),
+                mock.call.disable(),
+                mock.call.type_secret("private", timeout=mock.ANY),
+                mock.call.prove_departure(
+                    self.qmp,
+                    self.root / "reauth-evidence",
+                    sign_in,
+                    timeout=mock.ANY,
+                    clock=adapter.clock,
+                ),
+                mock.call.key("ret", timeout=mock.ANY),
+                mock.call.submitted(),
+                mock.call.result(),
+                mock.call.observe_ephemeral(
+                    desktop,
+                    mock.ANY,
+                    alternatives=(("sign-in", sign_in),),
+                ),
+            ],
+            ordering.mock_calls,
+        )
+        diagnostic.__enter__.assert_called_once_with()
+        diagnostic.__exit__.assert_called_once_with(None, None, None)
+        self.assertFalse(adapter._com1_owned)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_post_submit_diagnostic_arm_failure_precedes_secret_entry(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        diagnostic.arm.side_effect = RuntimeError("private watcher detail")
+        interaction = interaction_type.return_value
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+
+        self.assertEqual(
+            "diagnostic-arm", caught.exception.reauth_operation)
+        self.assertNotIn("private watcher detail", str(caught.exception))
+        interaction.disable_durable_capture.assert_not_called()
+        interaction.type_secret.assert_not_called()
+        prove_departure.assert_not_called()
+        self.assertNotIn(
+            mock.call("ret", timeout=mock.ANY),
+            interaction.key.call_args_list,
+        )
+        diagnostic.submitted.assert_not_called()
+        diagnostic.result.assert_not_called()
+        diagnostic.__exit__.assert_called_once()
+        self.assertFalse(adapter._com1_owned)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    def test_post_submit_diagnostic_result_cannot_authorize_acceptance(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        diagnostic_factory = mock.Mock()
+        diagnostic = diagnostic_factory.return_value
+        diagnostic.__enter__ = mock.Mock(return_value=diagnostic)
+        diagnostic.__exit__ = mock.Mock(return_value=False)
+        diagnostic.result.return_value = "interactive-logon-success"
+        interaction_type.return_value.observe_ephemeral.side_effect = (
+            subject.WindowsIdentityGuiNearReference("sign-in"))
+        adapter = self.adapter(
+            post_submit_diagnostic=diagnostic_factory,
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                wake_after_lock_keys=(),
+                post_join_operator_account_keys=(),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "a" * 32)
+
+        self.assertEqual(
+            "desktop-sign-in-near-reference",
+            caught.exception.reauth_operation,
+        )
+        diagnostic.result.assert_called_once_with()
+        diagnostic.__exit__.assert_called_once()
+        self.assertFalse(adapter._com1_owned)
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
@@ -525,7 +726,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                         subject.WindowsLocalReauthenticationError) as caught:
                     if domain_operator:
                         adapter.reauthenticate_domain_operator(
-                            principal, "private")
+                            principal, "private", "a" * 32)
                     else:
                         adapter.reauthenticate_local("private")
 

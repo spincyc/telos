@@ -86,6 +86,9 @@ class WindowsJoinIsoTests(unittest.TestCase):
                 observed["script"] = (
                     stage / "TelosJoin.ps1"
                 ).read_text(encoding="utf-8")
+                observed["diagnostic"] = (
+                    stage / "TelosPostSubmitDiagnostic.ps1"
+                ).read_text(encoding="utf-8")
                 Path(command[command.index("-o") + 1]).write_bytes(b"iso")
 
             build_join_iso(output, MATERIAL, runner=runner)
@@ -95,6 +98,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertEqual(MATERIAL["password"], observed["join"]["password"])
             self.assertIn("-Verb RunAs", observed["script"])
             self.assertIn("join-elevation-requested", observed["script"])
+            self.assertIn(
+                "diagnostic-ready", observed["diagnostic"])
             self.assertLess(
                 observed["script"].index("join-elevation-requested"),
                 observed["script"].index("-Verb RunAs"),
@@ -103,6 +108,105 @@ class WindowsJoinIsoTests(unittest.TestCase):
             self.assertFalse(any(
                 item.name.startswith(".windows-join-")
                 for item in root.iterdir()))
+
+    def test_post_submit_diagnostic_is_prearmed_and_secret_free(self):
+        join_script = Path(
+            "homelab/vm/windows_join_control/TelosJoin.ps1"
+        ).read_text(encoding="utf-8")
+        diagnostic = Path(
+            "homelab/vm/windows_join_control/"
+            "TelosPostSubmitDiagnostic.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("TelosPostSubmitDiagnostic.ps1", join_script)
+        self.assertIn("TelosPostSubmitDiagnostic", join_script)
+        self.assertIn("-UserId 'SYSTEM'", join_script)
+        self.assertIn("-LogonType ServiceAccount", join_script)
+        self.assertIn("-RunLevel Highest", join_script)
+        self.assertIn("New-ScheduledTaskTrigger -AtStartup", join_script)
+        self.assertIn("diagnostic-staging", join_script)
+        self.assertLess(
+            join_script.index("TelosPostSubmitDiagnostic.ps1"),
+            join_script.index('"join-reboot-ready"'),
+        )
+
+        for forbidden in (
+            "$config.password", "$document.password", "join.json",
+            "telos_join",
+        ):
+            self.assertNotIn(forbidden, diagnostic.lower())
+        self.assertIn("'COM1'", diagnostic)
+        self.assertIn("diagnostic-ready", diagnostic)
+        self.assertIn("ConvertFrom-Json", diagnostic)
+        self.assertIn(
+            "$expectedCount = if ($ExpectedPrincipal) { 4 } else { 3 }",
+            diagnostic,
+        )
+        self.assertIn("'schema_version' -notin $properties", diagnostic)
+        self.assertIn("'command' -notin $properties", diagnostic)
+        self.assertIn("'nonce' -notin $properties", diagnostic)
+        self.assertIn("Read-ExactCommand @('arm')", diagnostic)
+        self.assertIn("Write-DiagnosticEvent 'armed'", diagnostic)
+        self.assertIn(
+            "Read-ExactCommand @('submitted', 'cancel')", diagnostic)
+        self.assertIn("Write-DiagnosticEvent 'submitted'", diagnostic)
+        self.assertIn(
+            "Read-ExactCommand @('cancel')", diagnostic)
+        self.assertIn("Complete-Diagnostic 'cancelled'", diagnostic)
+        self.assertIn("Complete-Diagnostic 'result'", diagnostic)
+
+    def test_post_submit_diagnostic_has_fixed_event_classifier(self):
+        diagnostic = Path(
+            "homelab/vm/windows_join_control/"
+            "TelosPostSubmitDiagnostic.ps1"
+        ).read_text(encoding="utf-8")
+        codes = (
+            "interactive-logon-success",
+            "bad-credential",
+            "account-disabled",
+            "account-locked",
+            "account-expired",
+            "password-expired",
+            "logon-restriction",
+            "other-rejection",
+            "audit-disabled",
+            "event-log-reset",
+            "event-gap",
+            "no-correlated-event",
+            "ambiguous",
+            "watcher-error",
+        )
+        for code in codes:
+            with self.subTest(code=code):
+                self.assertIn(code, diagnostic)
+        self.assertIn("4624", diagnostic)
+        self.assertIn("4625", diagnostic)
+        self.assertIn("EventData", diagnostic)
+        self.assertIn("TargetUserName", diagnostic)
+        self.assertIn("TargetDomainName", diagnostic)
+        self.assertIn("LogonType", diagnostic)
+        self.assertIn("'2'", diagnostic)
+        self.assertNotIn("Format-List", diagnostic)
+        self.assertNotIn("Format-Table", diagnostic)
+
+    def test_post_submit_diagnostic_self_cleans_task_and_payload(self):
+        diagnostic = Path(
+            "homelab/vm/windows_join_control/"
+            "TelosPostSubmitDiagnostic.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Unregister-ScheduledTask", diagnostic)
+        self.assertIn("TelosPostSubmitDiagnostic", diagnostic)
+        self.assertIn("$PSCommandPath", diagnostic)
+        self.assertIn("Remove-Item", diagnostic)
+        self.assertIn("Get-ScheduledTask", diagnostic)
+        self.assertIn("Test-Path", diagnostic)
+        self.assertIn('"cleanup_complete":true', diagnostic)
+        self.assertIn("Complete-Diagnostic 'result'", diagnostic)
+        self.assertIn("Complete-Diagnostic 'cancelled'", diagnostic)
+        self.assertLess(
+            diagnostic.index("function Remove-Diagnostic"),
+            diagnostic.index("function Complete-Diagnostic"),
+        )
 
     def test_builder_rejects_public_parent_links_and_bad_material(self):
         with tempfile.TemporaryDirectory() as temporary:

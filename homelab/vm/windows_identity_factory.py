@@ -25,6 +25,7 @@ from .windows_identity_reference import (
     load_identity_reference,
 )
 from .windows_identity_run import NativeProcessBoundary
+from .windows_postsubmit_diagnostic import PostSubmitDiagnosticSession
 from .windows_public_command import PublicPowerShellLaunchPlan
 
 
@@ -450,6 +451,16 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
             ),
         )(scoped_secrets)
 
+    def post_submit_diagnostic(**kwargs: object) -> PostSubmitDiagnosticSession:
+        serial_socket = boundary.serial_socket
+        if serial_socket is None:
+            raise WindowsIdentityFactoryError(
+                "live Windows serial endpoint is unavailable for diagnostics")
+        return PostSubmitDiagnosticSession.connect(
+            serial_socket,
+            **kwargs,
+        )
+
     adapter = NativeWindowsAcceptanceAdapter(
         boundary,
         boundary.attempt,
@@ -458,6 +469,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
         scan_secrets=scan_secrets,
         rotation_plan=rotation,
         command_plan=command,
+        post_submit_diagnostic=post_submit_diagnostic,
     )
     return AcceptanceConfiguration(
         rotation_plan=rotation,

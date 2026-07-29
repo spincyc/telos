@@ -494,8 +494,14 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "operator": "operator@FACTORY.TEST",
             "operator_local_administrator": True,
         }, execute.call_args.kwargs["probe_after_reboot"]())
-        callbacks.reauthenticate_domain_operator.assert_called_once_with(
-            "operator@FACTORY.TEST", "Operator-Secret-47!")
+        callbacks.reauthenticate_domain_operator.assert_called_once()
+        reauth_args = (
+            callbacks.reauthenticate_domain_operator.call_args.args)
+        self.assertEqual(
+            ("operator@FACTORY.TEST", "Operator-Secret-47!"),
+            reauth_args[:2],
+        )
+        self.assertRegex(reauth_args[2], r"^[a-f0-9]{32}$")
         callbacks.reauthenticate_local.assert_not_called()
         with self.assertRaisesRegex(
                 subject.WindowsIdentityOrchestratorError,

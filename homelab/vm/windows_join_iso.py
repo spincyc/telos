@@ -58,7 +58,8 @@ class WindowsJoinFailureCoordinate:
         for operation in (
             "wake", "calibration-capture", "calibration-required",
             "select-local-account", "type-public-username",
-            "prove-password-target", "type-secret", "submit", "desktop",
+            "prove-password-target", "diagnostic-arm", "type-secret",
+            "submit", "desktop",
             "desktop-near-reference",
             "desktop-sign-in-persisted",
             "desktop-sign-in-near-reference",
@@ -107,9 +108,10 @@ def _join_error(phase: str, error: BaseException) -> WindowsJoinIsoError:
     )
 
 
-SCRIPT = (
-    Path(__file__).with_name("windows_join_control")
-    / "TelosJoin.ps1"
+CONTROL_ROOT = Path(__file__).with_name("windows_join_control")
+SCRIPT = CONTROL_ROOT / "TelosJoin.ps1"
+POST_SUBMIT_DIAGNOSTIC_SCRIPT = (
+    CONTROL_ROOT / "TelosPostSubmitDiagnostic.ps1"
 )
 NONCE = re.compile(r"[a-f0-9]{32}")
 DOMAIN = re.compile(
@@ -286,16 +288,18 @@ def build_join_iso(
         raise WindowsJoinIsoError("join ISO destination must be absent")
     parent = _regular_private_parent(output.parent)
     values = _validate_material(material)
-    if SCRIPT.is_symlink() or not SCRIPT.is_file():
-        raise WindowsJoinIsoError("join script is unavailable")
+    assets = (SCRIPT, POST_SUBMIT_DIAGNOSTIC_SCRIPT)
+    if any(asset.is_symlink() or not asset.is_file() for asset in assets):
+        raise WindowsJoinIsoError("join script assets are unavailable")
     with tempfile.TemporaryDirectory(
             prefix=".windows-join-", dir=parent) as temporary:
         temporary_root = Path(temporary)
         temporary_root.chmod(0o700)
         stage = temporary_root / "payload"
         stage.mkdir(mode=0o700)
-        shutil.copyfile(SCRIPT, stage / SCRIPT.name)
-        (stage / SCRIPT.name).chmod(0o400)
+        for asset in assets:
+            shutil.copyfile(asset, stage / asset.name)
+            (stage / asset.name).chmod(0o400)
         join = stage / "join.json"
         descriptor = os.open(
             join, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
@@ -662,7 +666,8 @@ class JoinMediaChannel:
             and all(result[name] == value for name, value in guest_failure.items())
             and phase in {
                 "add-computer", "operator-resolution", "operator-mutation",
-                "operator-verification", "policy-mutation",
+                "operator-verification", "diagnostic-staging",
+                "policy-mutation",
                 "policy-readback", "policy-verification",
                 "join-authorization", "join-authentication",
                 "join-domain-discovery", "join-account-conflict",
