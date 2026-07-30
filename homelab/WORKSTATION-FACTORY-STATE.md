@@ -200,10 +200,13 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   rotation evidence, and tore down completely. That is earlier than the first
   three attempts, which all reached the desktop, and it is before any
   controller-auth code runs, so the receipt-origin work is not implicated.
-  Two open questions: why the boot path can lose every coordinate, and whether
-  repeated runs drift the shared Controller state at
-  `build/homelab/vm/bootstrap-dc`, which unlike the Windows overlay is not
-  recreated per attempt. Do not read a fourth failure as four of a kind.
+  Both questions it raised are now closed. The boot path lost its coordinates
+  because both boot raises passed `diagnostic=None`; fixed. Controller-state
+  drift was checked and disproven: `build/homelab/vm/bootstrap-dc` still dates
+  from 2026-07-27 and the paired `windows.qcow2` from 2026-07-28, while each
+  attempt writes only its own overlay, so four runs mutated neither. Do not
+  read a fourth failure as four of a kind, and do not re-derive the drift
+  hypothesis.
 - Three authorized attempts (`20260730T181419Z-39d2f820716d`,
   `20260730T182932Z-c93f871638bd`, `20260730T184757Z-0e9b24f41a38`) all reached
   the same coordinate with complete five-part teardown. Both host-side
