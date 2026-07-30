@@ -87,6 +87,91 @@ def ansible_package_tasks(path: Path) -> tuple[frozenset[str], ...]:
     return tuple(tasks)
 
 
+def ansible_enabled_units(path: Path) -> frozenset[str]:
+    """Extract literal units an ansible role unconditionally enables.
+
+    A templated name or a templated `enabled` value is not a static promise, and
+    a task that disables a unit is not a requirement, so neither is collected.
+    systemd resolves a bare name to `.service`; the contract records that
+    resolved form.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    units: set[str] = set()
+    for module_index, raw in enumerate(lines):
+        content = raw.split("#", 1)[0].rstrip()
+        if content.lstrip() != "ansible.builtin.systemd:":
+            continue
+        module_indent = len(content) - len(content.lstrip())
+        fields: dict[str, str] = {}
+        index = module_index + 1
+        while index < len(lines):
+            child = lines[index].split("#", 1)[0].rstrip()
+            index += 1
+            if not child.strip():
+                continue
+            child_indent = len(child) - len(child.lstrip())
+            if child_indent <= module_indent:
+                break
+            key, separator, value = child.strip().partition(":")
+            if separator:
+                fields[key] = value.strip().strip('"')
+        name = fields.get("name", "")
+        if not name or "{{" in name or fields.get("enabled") != "true":
+            continue
+        units.add(name if "." in name else f"{name}.service")
+    return frozenset(units)
+
+
+class ServiceInputParityTests(unittest.TestCase):
+    """Every unconditionally enabled unit is declared, and nothing more."""
+
+    ROLE_OVERLAYS = (
+        ("common", None),
+        ("controller_network", "controller-network"),
+        ("domain_controller", "controller-domain"),
+        ("identity_client", "identity-client"),
+        ("arch_updates", "automatic-updates"),
+        ("services", "services"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.registry = load_registry(ROOT / "package-contract.json")
+
+    def test_declared_services_match_enabled_ansible_units(self):
+        for role, overlay in self.ROLE_OVERLAYS:
+            with self.subTest(role=role):
+                layer = (
+                    self.registry.common if overlay is None
+                    else self.registry.overlays[overlay]
+                )
+                enabled = ansible_enabled_units(
+                    ROOT / f"ansible/roles/{role}/tasks/main.yml")
+                self.assertEqual(enabled, frozenset(layer.services))
+
+    def test_disabled_and_templated_units_are_not_requirements(self):
+        enabled = ansible_enabled_units(
+            ROOT / "ansible/roles/domain_controller/tasks/main.yml")
+        self.assertEqual(enabled, frozenset({"ntpd.service", "samba.service"}))
+        self.assertTrue(
+            enabled.isdisjoint({"smb.service", "nmb.service", "winbind.service"}))
+        self.assertEqual(
+            ansible_enabled_units(ROOT / "ansible/roles/services/tasks/main.yml"),
+            frozenset(),
+        )
+
+    def test_roles_without_a_contract_overlay_declare_nothing_new(self):
+        merged = merge_contract(
+            self.registry, PROFILE_OVERLAYS["controller-seed"])
+        self.assertEqual(
+            merged.services,
+            (
+                "homelab-first-boot.service", "ntpd.service", "samba.service",
+                "sshd.service", "sssd.service",
+            ),
+        )
+
+
 class PackageInputParityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

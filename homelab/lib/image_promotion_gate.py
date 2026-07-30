@@ -40,13 +40,22 @@ class ImagePromotionEvidence:
     root: PackageRootEvidence
     closure: SeedClosureEvidence
 
+    declared_services: tuple[str, ...] = ()
+
     def to_document(self) -> dict[str, Any]:
-        """Render one machine-readable, secret-free evidence document."""
+        """Render one machine-readable, secret-free evidence document.
+
+        `declared_services` records what the merged contract requires, not what
+        was observed: proving a unit is enabled and running needs the separate
+        boot gate.
+        """
         return {
             "schema": 1,
             "kind": "image-promotion-static-evidence",
             "profile": self.profile,
             "overlays": list(self.overlays),
+            "declared_services": list(self.declared_services),
+            "services_verified": False,
             "root": self.root.root,
             "seed_source_commit": self.closure.source_commit,
             "contract_packages": list(self.closure.contract_packages),
@@ -116,4 +125,5 @@ def gate_candidate_image(
         overlays=contract.overlays,
         root=root_evidence,
         closure=closure,
+        declared_services=contract.services,
     )

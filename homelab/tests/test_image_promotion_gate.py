@@ -17,16 +17,20 @@ DIGEST_ALPHA_SIG = "2" * 64
 DIGEST_DATABASE = "5" * 64
 
 
+def empty_layer():
+    return {"packages": [], "binaries": [], "services": []}
+
+
 def registry():
-    empty = {"packages": [], "binaries": []}
-    overlays = {name: dict(empty) for name in EXPECTED_OVERLAYS}
+    overlays = {name: empty_layer() for name in EXPECTED_OVERLAYS}
     overlays["workstation"] = {
         "packages": ["alpha"],
         "binaries": [{"path": "/usr/bin/alpha", "owner": "alpha"}],
+        "services": [],
     }
     return {
         "schema_version": 1,
-        "common": dict(empty),
+        "common": empty_layer(),
         "overlays": overlays,
     }
 
@@ -138,6 +142,14 @@ class ImagePromotionGateTests(unittest.TestCase):
             "owner": "alpha",
             "resolved_path": "/usr/bin/alpha",
         }])
+
+    def test_reports_declared_services_as_unverified(self):
+        value = registry()
+        value["overlays"]["workstation"]["services"] = ["alpha.service"]
+        self.write_registry(value)
+        document = self.gate().to_document()
+        self.assertEqual(document["declared_services"], ["alpha.service"])
+        self.assertIs(document["services_verified"], False)
 
     def test_rejects_unknown_profile(self):
         self.gate_error("unknown image profile: rogue", profile="rogue")

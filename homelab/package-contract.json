@@ -22,6 +22,9 @@
       {"path": "/usr/bin/systemctl", "owner": "systemd"},
       {"path": "/usr/sbin/sshd", "owner": "openssh"},
       {"path": "/usr/sbin/visudo", "owner": "sudo"}
+    ],
+    "services": [
+      "sshd.service"
     ]
   },
   "overlays": {
@@ -64,7 +67,8 @@
         {"path": "/usr/bin/parted", "owner": "parted"},
         {"path": "/usr/bin/sbctl", "owner": "sbctl"},
         {"path": "/usr/bin/sgdisk", "owner": "gptfdisk"}
-      ]
+      ],
+      "services": []
     },
     "controller-network": {
       "packages": ["dhcpcd", "dnsmasq", "iproute2", "nginx"],
@@ -73,6 +77,9 @@
         {"path": "/usr/bin/dnsmasq", "owner": "dnsmasq"},
         {"path": "/usr/bin/ip", "owner": "iproute2"},
         {"path": "/usr/bin/nginx", "owner": "nginx"}
+      ],
+      "services": [
+        "homelab-first-boot.service"
       ]
     },
     "controller-domain": {
@@ -98,6 +105,10 @@
         {"path": "/usr/bin/smbcontrol", "owner": "samba"},
         {"path": "/usr/bin/timedatectl", "owner": "systemd"},
         {"path": "/usr/bin/testparm", "owner": "samba"}
+      ],
+      "services": [
+        "ntpd.service",
+        "samba.service"
       ]
     },
     "controller-factory": {
@@ -115,7 +126,8 @@
         {"path": "/usr/bin/in.tftpd", "owner": "tftp-hpa"},
         {"path": "/usr/bin/rsync", "owner": "rsync"},
         {"path": "/usr/bin/wimlib-imagex", "owner": "wimlib"}
-      ]
+      ],
+      "services": []
     },
     "identity-client": {
       "packages": [
@@ -130,6 +142,9 @@
         {"path": "/usr/bin/sssctl", "owner": "sssd"},
         {"path": "/usr/lib/security/pam_mkhomedir.so", "owner": "pam"},
         {"path": "/usr/lib/sssd/sssd", "owner": "sssd"}
+      ],
+      "services": [
+        "sssd.service"
       ]
     },
     "automatic-updates": {
@@ -142,7 +157,8 @@
         {"path": "/usr/bin/cmp", "owner": "diffutils"},
         {"path": "/usr/bin/curl", "owner": "curl"},
         {"path": "/usr/bin/logger", "owner": "util-linux"}
-      ]
+      ],
+      "services": []
     },
     "workstation": {
       "packages": [
@@ -153,13 +169,15 @@
       ],
       "binaries": [
         {"path": "/usr/bin/nmcli", "owner": "networkmanager"}
-      ]
+      ],
+      "services": []
     },
     "services": {
       "packages": ["podman"],
       "binaries": [
         {"path": "/usr/bin/podman", "owner": "podman"}
-      ]
+      ],
+      "services": []
     },
     "image-build-host": {
       "packages": [
@@ -191,7 +209,8 @@
         {"path": "/usr/bin/qemu-system-x86_64", "owner": "qemu-system-x86"},
         {"path": "/usr/bin/umount", "owner": "util-linux"},
         {"path": "/usr/bin/xorriso", "owner": "libisoburn"}
-      ]
+      ],
+      "services": []
     }
   }
 }

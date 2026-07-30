@@ -12,6 +12,9 @@ from typing import Any
 
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
 OVERLAY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# Declared units carry an explicit suffix. systemd resolves a bare name to
+# `.service`, so the contract records the resolved name and never the shorthand.
+UNIT_RE = re.compile(r"^[a-z0-9][a-z0-9@._-]*\.(?:service|timer|socket)$")
 EXPECTED_OVERLAYS = (
     "installer-live",
     "controller-network",
@@ -55,6 +58,7 @@ class BinaryOwnership:
 class PackageLayer:
     packages: tuple[str, ...]
     binaries: tuple[BinaryOwnership, ...]
+    services: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,7 @@ class MergedPackageContract:
     overlays: tuple[str, ...]
     packages: tuple[str, ...]
     binaries: tuple[BinaryOwnership, ...]
+    services: tuple[str, ...] = ()
 
 
 def _exact_object(value: Any, fields: set[str], context: str) -> dict[str, Any]:
@@ -92,7 +97,7 @@ def _string(value: Any, context: str) -> str:
 
 
 def _layer(value: Any, context: str) -> PackageLayer:
-    raw = _exact_object(value, {"packages", "binaries"}, context)
+    raw = _exact_object(value, {"packages", "binaries", "services"}, context)
     if type(raw["packages"]) is not list:
         raise PackageContractError(f"{context}.packages must be an array")
     packages = tuple(
@@ -127,9 +132,23 @@ def _layer(value: Any, context: str) -> PackageLayer:
         binaries.append(BinaryOwnership(path=path, owner=owner))
     if len({item.path for item in binaries}) != len(binaries):
         raise PackageContractError(f"{context} has duplicate binary paths")
+
+    if type(raw["services"]) is not list:
+        raise PackageContractError(f"{context}.services must be an array")
+    services = tuple(
+        _string(item, f"{context}.services[{index}]")
+        for index, item in enumerate(raw["services"])
+    )
+    for service in services:
+        if not UNIT_RE.fullmatch(service):
+            raise PackageContractError(
+                f"{context} has invalid service unit: {service}")
+    if len(set(services)) != len(services):
+        raise PackageContractError(f"{context} has duplicate services")
     return PackageLayer(
         packages=tuple(sorted(packages)),
         binaries=tuple(sorted(binaries)),
+        services=tuple(sorted(services)),
     )
 
 
@@ -164,6 +183,10 @@ def parse_registry(value: Any) -> PackageRegistry:
             if binary.path in {item.path for item in common.binaries}:
                 raise PackageContractError(
                     f"binary {binary.path} collides between common and {name}")
+        for service in layer.services:
+            if service in common.services:
+                raise PackageContractError(
+                    f"service {service} collides between common and {name}")
         merged_packages = set(common.packages) | set(layer.packages)
         for binary in (*common.binaries, *layer.binaries):
             if binary.owner not in merged_packages:
@@ -233,4 +256,7 @@ def merge_contract(
         overlays=canonical,
         packages=packages,
         binaries=tuple(sorted(binaries_by_path.values())),
+        services=tuple(sorted({
+            service for layer in layers for service in layer.services
+        })),
     )
