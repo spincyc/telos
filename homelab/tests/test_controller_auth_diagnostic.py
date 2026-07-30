@@ -8,6 +8,7 @@ import os
 import socket
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 from homelab.vm import controller_auth_diagnostic as subject
 from homelab.vm.serial_automation import SerialAutomation
@@ -31,6 +32,48 @@ from homelab.vm.windows_identity_orchestrator import (
     _local_reauthentication_coordinate,
 )
 from homelab.vm.windows_join_iso import WindowsJoinFailureCoordinate
+
+
+def _prearm_receipts(session):
+    pattern = re.compile(
+        rb"(?:"
+        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+        rb"(code|collection):([a-z-]+))")
+    token = session._tokens["prearm"].encode()
+    receipts = [
+        pattern.fullmatch(
+            b"__TELOS_AUTH_PREARM_" + phase + b"_" + token + b"__")
+        for phase in (
+            b"PAYLOAD_VALID", b"CONFIGURATION_VALID",
+            b"SINK_READY", b"SID_READY",
+        )
+    ]
+    receipts.append(pattern.fullmatch(
+        f"__TELOS_AUTH_ARMED_{session._tokens['arm']}__".encode()))
+    return receipts
+
+
+def _terminal_receipt(session, kind, value):
+    pattern = re.compile(
+        rb"(?:"
+        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+        rb"(code|collection):([a-z-]+))")
+    return pattern.fullmatch(
+        f"__TELOS_AUTH_RESULT_{session._tokens['result']}__="
+        f"{kind}:{value}".encode())
+
+
+def _wire_receipt(raw):
+    return re.compile(
+        rb"(?:"
+        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)|"
+        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+        rb"(code|collection):([a-z-]+))").fullmatch(raw)
 
 
 class ControllerAuthDiagnosticTests(unittest.TestCase):
@@ -186,12 +229,12 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_serial_session_returns_only_closed_coordinates(self):
         console = mock.Mock(password=None)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
         console._wait.side_effect = [
-            mock.Mock(), mock.Mock(),
+            mock.Mock(), *_prearm_receipts(session),
             re.match(rb"(code|collection):([a-z-]+)", b"code:authenticated"),
             re.match(rb"(ok|absence-unproved)", b"ok"),
         ]
-        session = ControllerAuthDiagnosticSession(console, self.expected)
         session.arm()
         session.begin_submission()
         result = session.result()
@@ -206,12 +249,12 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_serial_cancellation_reports_cleanup_failure(self):
         console = mock.Mock(password=None)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
         console._wait.side_effect = [
-            mock.Mock(), mock.Mock(), mock.Mock(),
+            mock.Mock(), *_prearm_receipts(session), mock.Mock(),
             re.match(
                 rb"(ok|[a-z-]+)", b"sink-absence-unproved"),
         ]
-        session = ControllerAuthDiagnosticSession(console, self.expected)
         session.arm()
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.cancel()
@@ -227,16 +270,22 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         observed = []
         console = mock.Mock(password=None, timeout=99.0)
 
-        def waited(*_args):
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=60, clock=lambda: now[0])
+        arm_receipts = iter(_prearm_receipts(session))
+
+        def waited(_pattern, label):
             observed.append(console.timeout)
+            receipt = (
+                mock.Mock()
+                if label == "controller-auth-shell-ready"
+                else next(arm_receipts))
             now[0] += 2.0
-            return mock.Mock()
+            return receipt
 
         console._wait.side_effect = waited
-        session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=25, clock=lambda: now[0])
         session.arm()
-        self.assertEqual(observed, [25.0, 2.0])
+        self.assertEqual(observed, [60.0, 37.0, 35.0, 33.0, 31.0, 29.0])
         self.assertEqual(console.timeout, 99.0)
         command = console._send.call_args_list[1].args[0]
         encoded = command.rsplit(b" ", 1)[1]
@@ -334,7 +383,6 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_production_default_post_arm_cap_constructs_and_arms(self):
         console = mock.Mock(password=None, timeout=99.0)
-        console._wait.side_effect = [mock.Mock(), mock.Mock()]
         session = ControllerAuthDiagnosticSession(
             console,
             self.expected,
@@ -342,6 +390,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             post_arm_timeout=min(
                 120, subject.MAX_OBSERVATION_SECONDS * 2),
         )
+        console._wait.side_effect = [
+            mock.Mock(), *_prearm_receipts(session)]
 
         session.arm()
 
@@ -482,6 +532,15 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 ]
                 session = ControllerAuthDiagnosticSession(
                     console, self.expected)
+                console._wait.side_effect = [
+                    mock.Mock(),
+                    *(
+                        [mock.Mock()]
+                        if password is not None
+                        else []
+                    ),
+                    *_prearm_receipts(session),
+                ]
                 with mock.patch.object(
                     subject.uuid, "uuid4", return_value=fixed_uuid,
                 ):
@@ -600,6 +659,130 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ControllerAuthReceiveObservation.TIMEOUT)
         self.assertNotIn("private", str(caught.exception))
 
+    def test_prearm_timeout_retains_only_last_closed_phase(self):
+        expected = (
+            ControllerAuthReceiveObservation.TIMEOUT,
+            ControllerAuthReceiveObservation.TIMEOUT_AFTER_PAYLOAD_VALID,
+            ControllerAuthReceiveObservation
+            .TIMEOUT_AFTER_CONFIGURATION_VALID,
+            ControllerAuthReceiveObservation.TIMEOUT_AFTER_SINK_READY,
+            ControllerAuthReceiveObservation.TIMEOUT_AFTER_SID_READY,
+        )
+        for completed, observation in enumerate(expected):
+            with self.subTest(completed=completed):
+                console = mock.Mock(password=None, timeout=99.0, buffer=b"")
+                session = ControllerAuthDiagnosticSession(
+                    console, self.expected)
+                console._wait.side_effect = [
+                    mock.Mock(),
+                    *_prearm_receipts(session)[:completed],
+                    TimeoutError("private timeout"),
+                    re.match(rb"(ok|[a-z-]+)", b"ok"),
+                ]
+                with self.assertRaises(
+                        ControllerAuthDiagnosticError) as caught:
+                    session.arm()
+                self.assertIs(
+                    caught.exception.receive_observation, observation)
+                self.assertIs(
+                    caught.exception.arm_subphase,
+                    ControllerAuthArmSubphase.RECEIVE)
+                self.assertTrue(caught.exception.cleanup_proved)
+
+    def test_prearm_rejects_replay_order_token_and_framing_attacks(self):
+        phases = _prearm_receipts
+        scenarios = (
+            ("duplicate", lambda session: [phases(session)[0]] * 2, b""),
+            ("future", lambda session: [phases(session)[1]], b""),
+            (
+                "wrong-prearm-token",
+                lambda session: [
+                    re.compile(
+                        rb"(?:"
+                        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_"
+                        rb"([0-9a-f]{32})__)|"
+                        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)|"
+                        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+                        rb"(code|collection):([a-z-]+))").fullmatch(
+                            b"__TELOS_AUTH_PREARM_PAYLOAD_VALID_"
+                            + b"f" * 32 + b"__")
+                ],
+                b"",
+            ),
+            (
+                "early-armed",
+                lambda session: [phases(session)[-1]],
+                b"",
+            ),
+            (
+                "wrong-armed-token",
+                lambda session: [
+                    *phases(session)[:4],
+                    _wire_receipt(
+                        b"__TELOS_AUTH_ARMED_" + b"f" * 32 + b"__"),
+                ],
+                b"",
+            ),
+            (
+                "wrong-result-token",
+                lambda _session: [
+                    re.compile(
+                        rb"(?:"
+                        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_"
+                        rb"([0-9a-f]{32})__)|"
+                        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)|"
+                        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+                        rb"(code|collection):([a-z-]+))").fullmatch(
+                            b"__TELOS_AUTH_RESULT_" + b"f" * 32
+                            + b"__=collection:configuration-invalid")
+                ],
+                b"",
+            ),
+            (
+                "nonstandalone",
+                lambda session: [phases(session)[0]],
+                b"echo __TELOS_AUTH_PREARM_PAYLOAD_VALID_"
+                + b"f" * 32 + b"__ trailing\r\n",
+            ),
+            (
+                "nonstandalone-armed",
+                lambda session: [phases(session)[0]],
+                lambda session: (
+                    b"prefix__TELOS_AUTH_ARMED_"
+                    + session._tokens["arm"].encode() + b"__\r\n"),
+            ),
+            (
+                "nonstandalone-result",
+                lambda session: [phases(session)[0]],
+                lambda session: (
+                    b"echo __TELOS_AUTH_RESULT_"
+                    + session._tokens["result"].encode()
+                    + b"__=collection:configuration-invalid trailing\r\n"),
+            ),
+        )
+        for label, receipts, buffer in scenarios:
+            with self.subTest(label=label):
+                provisional = mock.Mock(
+                    password=None, timeout=99.0, buffer=b"")
+                session = ControllerAuthDiagnosticSession(
+                    provisional, self.expected)
+                observed_buffer = (
+                    buffer(session) if callable(buffer) else buffer)
+                console = mock.Mock(
+                    password=None, timeout=99.0, buffer=observed_buffer)
+                session.console = console
+                console._wait.side_effect = [
+                    mock.Mock(), *receipts(session),
+                    re.match(rb"(ok|[a-z-]+)", b"ok"),
+                ]
+                with self.assertRaises(
+                        ControllerAuthDiagnosticError) as caught:
+                    session.arm()
+                self.assertIs(
+                    caught.exception.arm_subphase,
+                    ControllerAuthArmSubphase.PARSE)
+                self.assertTrue(caught.exception.cleanup_proved)
+
     def test_receive_observation_requires_exact_receive_subphase(self):
         with self.assertRaises(ValueError):
             ControllerAuthDiagnosticError(
@@ -639,6 +822,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console = HostileConsole()
         session = ControllerAuthDiagnosticSession(console, self.expected)
+        payload_receipt = _prearm_receipts(session)[0]
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
 
@@ -719,6 +903,14 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
         cleanup = (
             f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+        prearm = [
+            b"__TELOS_AUTH_PREARM_" + phase + b"_"
+            + session._tokens["prearm"].encode() + b"__"
+            for phase in (
+                b"PAYLOAD_VALID", b"CONFIGURATION_VALID",
+                b"SINK_READY", b"SID_READY",
+            )
+        ]
 
         def responder():
             try:
@@ -726,15 +918,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 right.sendall(b"local-rescue@bootstrap-dc $ \r")
                 peer.readline()
                 right.sendall(
-                    b"\r__TELOS_AUTH_ARMED_wrong__\r"
-                    + b"echo " + armed + b"\r"
-                    + b"prefix" + armed + b"\r"
-                    + armed + b"\t \r")
+                    b"\r" + b"\r".join(prearm)
+                    + b"\r" + armed + b"\t \r")
                 peer.readline()
                 right.sendall(
-                    b"\r__TELOS_AUTH_RESULT_wrong__=code:authenticated\r"
-                    + b"echo " + result + b"code:authenticated\r"
-                    + result + b"code:authenticated\t\r"
+                    b"\r" + result + b"code:authenticated\t\r"
                     + cleanup + b"ok \t\r")
             except BaseException as error:
                 errors.append(error)
@@ -767,6 +955,9 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
         cleanup = (
             f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+        payload = (
+            b"__TELOS_AUTH_PREARM_PAYLOAD_VALID_"
+            + session._tokens["prearm"].encode() + b"__")
 
         def responder():
             try:
@@ -774,7 +965,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 right.sendall(b"local-rescue@bootstrap-dc $ \r")
                 peer.readline()
                 right.sendall(
-                    b"\r" + result + b"collection:configuration-invalid\t\r"
+                    b"\r" + payload + b"\r"
+                    + result + b"collection:configuration-invalid\t\r"
                     + cleanup + b"ok\r")
             except BaseException as error:
                 errors.append(error)
@@ -985,14 +1177,15 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_configuration_failure_is_terminal_before_arm(self):
         console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        payload_receipt = _prearm_receipts(session)[0]
         console._wait.side_effect = [
             mock.Mock(),
-            re.search(
-                rb"(code|collection):([a-z-]+)",
-                b"collection:configuration-invalid"),
+            payload_receipt,
+            _terminal_receipt(
+                session, "collection", "configuration-invalid"),
             re.match(rb"(ok|absence-unproved)", b"ok"),
         ]
-        session = ControllerAuthDiagnosticSession(console, self.expected)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertEqual(
@@ -1007,14 +1200,13 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_prearm_rejects_postarm_coordinate_and_recovers_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
         console._wait.side_effect = [
             mock.Mock(),
-            re.search(
-                rb"(code|collection):([a-z-]+)",
-                b"collection:cancelled"),
+            _prearm_receipts(session)[0],
+            _terminal_receipt(session, "collection", "cancelled"),
             re.match(rb"(ok|[a-z-]+)", b"ok"),
         ]
-        session = ControllerAuthDiagnosticSession(console, self.expected)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertTrue(caught.exception.cleanup_proved)
@@ -1028,15 +1220,14 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
     def test_sink_failure_reports_unproved_terminal_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
         console._wait.side_effect = [
             mock.Mock(),
-            re.search(
-                rb"(code|collection):([a-z-]+)",
-                b"collection:sink-invalid"),
+            *_prearm_receipts(session)[:2],
+            _terminal_receipt(session, "collection", "sink-invalid"),
             re.match(
                 rb"(ok|[a-z-]+)", b"sink-absence-unproved"),
         ]
-        session = ControllerAuthDiagnosticSession(console, self.expected)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertEqual(
@@ -1184,6 +1375,57 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 return_value=False) as cleanup:
             self.assertEqual(subject._controller_session(encoded), 2)
         cleanup.assert_called_once_with(None, None)
+
+    def test_guest_flushes_ordered_nonce_bound_prearm_receipts(self):
+        token = "a" * 32
+        payload = {
+            "account": "operator",
+            "domain": "FACTORY",
+            "workstation_ip": "10.1.31.11",
+            "arm": token,
+            "submit": "b" * 32,
+            "cancel": "c" * 32,
+            "result": "d" * 32,
+            "cleanup": "e" * 32,
+            "prearm": "f" * 32,
+            "observation_seconds": 1,
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        opened = SimpleNamespace(st_dev=1, st_ino=2, st_size=0)
+        printed = []
+        with (
+            mock.patch.object(
+                subject, "_effective_configuration", return_value=True),
+            mock.patch.object(subject, "_safe_sink", return_value=(9, opened)),
+            mock.patch.object(
+                subject, "_staged_sid",
+                return_value="S-1-5-21-1-2-3-1104"),
+            mock.patch.object(
+                subject, "_disable_and_destroy_sink", return_value=None),
+            mock.patch("builtins.input", return_value=(
+                f"__TELOS_AUTH_CANCEL_{payload['cancel']}__")),
+            mock.patch("builtins.print") as emit,
+        ):
+            self.assertEqual(subject._controller_session(encoded), 0)
+        printed = [
+            (call.args[0], call.kwargs.get("flush"))
+            for call in emit.call_args_list
+        ]
+        self.assertEqual(
+            printed[:5],
+            [
+                (f"__TELOS_AUTH_PREARM_PAYLOAD_VALID_{payload['prearm']}__",
+                 True),
+                (
+                    "__TELOS_AUTH_PREARM_CONFIGURATION_VALID_"
+                    f"{payload['prearm']}__", True),
+                (f"__TELOS_AUTH_PREARM_SINK_READY_{payload['prearm']}__",
+                 True),
+                (f"__TELOS_AUTH_PREARM_SID_READY_{payload['prearm']}__",
+                 True),
+                (f"__TELOS_AUTH_ARMED_{payload['arm']}__", True),
+            ],
+        )
 
     def test_effective_configuration_proves_file_syntax_and_live_route(self):
         with tempfile.TemporaryDirectory() as name:

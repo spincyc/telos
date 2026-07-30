@@ -47,6 +47,16 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             serial_socket=self.serial_socket,
         )
 
+    def _stub_controller_auth(self):
+        patcher = mock.patch.object(
+            subject, "ControllerAuthDiagnosticSession")
+        controller_type = patcher.start()
+        self.addCleanup(patcher.stop)
+        controller_type.return_value.armed = True
+        controller_type.return_value.result.return_value = (
+            ControllerAuthResult(code=ControllerAuthCode.NO_EVENT))
+        return controller_type
+
     def adapter(self, **changes):
         arguments = {
             "realm": "factory.test",
@@ -73,6 +83,9 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             post_join_operator_sign_in_manifest=None,
             checkpoint_timeout=11,
         )
+
+    def test_controller_prearm_timeout_is_maximum_validated_budget(self):
+        self.assertEqual(subject.CONTROLLER_AUTH_TIMEOUT_SECONDS, 60.0)
 
     def test_controller_carrier_normalizers_reject_subclasses_and_mutation(
         self,
@@ -1130,6 +1143,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "
@@ -1203,6 +1217,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "
@@ -1267,6 +1282,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "
@@ -1324,6 +1340,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "
@@ -1390,6 +1407,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "
@@ -1504,6 +1522,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self, load_references, private_evidence_root, interaction_type,
         prove_departure,
     ):
+        self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
             state="focused password field for domain account "

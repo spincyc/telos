@@ -127,6 +127,10 @@ class ControllerAuthReceiveObservation(Enum):
     SERIAL_CLOSED = "serial-closed"
     TOKEN_NONSTANDALONE = "token-nonstandalone"
     TIMEOUT = "timeout"
+    TIMEOUT_AFTER_PAYLOAD_VALID = "timeout-after-payload-valid"
+    TIMEOUT_AFTER_CONFIGURATION_VALID = "timeout-after-configuration-valid"
+    TIMEOUT_AFTER_SINK_READY = "timeout-after-sink-ready"
+    TIMEOUT_AFTER_SID_READY = "timeout-after-sid-ready"
     UNCLASSIFIED = "unclassified"
 
 
@@ -245,10 +249,6 @@ if (
     or set(_CLEANUP_BY_WIRE.values()) != set(ControllerAuthCleanup)
 ):
     raise RuntimeError("Controller auth wire vocabulary snapshot is stale")
-_PREARM_COLLECTIONS = frozenset({
-    ControllerAuthCollection.CONFIGURATION_INVALID,
-    ControllerAuthCollection.SINK_INVALID,
-})
 _INTERRUPTIONS = (KeyboardInterrupt, SystemExit, RunInterrupted)
 
 
@@ -727,7 +727,7 @@ def _controller_session(encoded: str) -> int:
                 encoded, validate=True).decode("utf-8"))
             if type(payload) is not dict or set(payload) != {
                 "account", "domain", "workstation_ip", "arm", "submit", "cancel",
-                "result", "cleanup", "observation_seconds",
+                "result", "cleanup", "prearm", "observation_seconds",
             }:
                 raise ValueError
             expectation = ControllerAuthExpectation(
@@ -736,7 +736,8 @@ def _controller_session(encoded: str) -> int:
             )
             markers = {
                 key: payload[key]
-                for key in ("arm", "submit", "cancel", "result", "cleanup")
+                for key in (
+                    "arm", "submit", "cancel", "result", "cleanup", "prearm")
             }
             observation_seconds = payload["observation_seconds"]
             if (
@@ -753,20 +754,30 @@ def _controller_session(encoded: str) -> int:
                 raise ValueError
         except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
             return 2
+        def prearm(phase: str) -> None:
+            print(
+                f"__TELOS_AUTH_PREARM_{phase}_{markers['prearm']}__",
+                flush=True,
+            )
+
+        prearm("PAYLOAD_VALID")
         primary: ControllerAuthCode | ControllerAuthCollection
         if not _effective_configuration():
             primary = ControllerAuthCollection.CONFIGURATION_INVALID
         else:
+            prearm("CONFIGURATION_VALID")
             try:
                 descriptor, opened = _safe_sink()
                 identity = (opened.st_dev, opened.st_ino)
                 offset = opened.st_size
                 observation_start = time.time()
+                prearm("SINK_READY")
                 expectation = ControllerAuthExpectation(
                     expectation.account, expectation.domain,
                     expectation.workstation_ip,
                     _staged_sid(expectation.account),
                 )
+                prearm("SID_READY")
             except (OSError, RuntimeError):
                 primary = ControllerAuthCollection.SINK_INVALID
             else:
@@ -892,9 +903,10 @@ class ControllerAuthDiagnosticSession:
         self._armed_deadline: float | None = None
         self._observation_seconds = MAX_OBSERVATION_SECONDS
         self._tokens = {name: uuid.uuid4().hex for name in (
-            "arm", "submit", "cancel", "result", "cleanup")}
+            "arm", "submit", "cancel", "result", "cleanup", "prearm")}
         self._state = "new"
         self._result: ControllerAuthResult | None = None
+        self._last_prearm_phase: str | None = None
 
     @property
     def armed(self) -> bool:
@@ -927,18 +939,24 @@ class ControllerAuthDiagnosticSession:
         raw = getattr(self.console, "buffer", b"")
         buffer = raw if type(raw) is bytes else b""
 
-        marker_pattern = (
-            _RECEIPT_LINE_START + rb"(?:"
-            + re.escape(armed_marker)
-            + _RECEIPT_LINE_END + rb"|"
-            + re.escape(result_marker)
-            + rb"(?:code|collection):[a-z-]+"
-            + _RECEIPT_LINE_END + rb")")
-        if (
-            (armed_marker in buffer or result_marker in buffer)
-            and re.search(marker_pattern, buffer, re.MULTILINE) is None
-        ):
-            return ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE
+        prearm_prefix = b"__TELOS_AUTH_PREARM_"
+        armed_prefix = b"__TELOS_AUTH_ARMED_"
+        result_prefix = b"__TELOS_AUTH_RESULT_"
+        receipt_line = re.compile(
+            rb"(?:"
+            + re.escape(armed_prefix) + rb"[0-9a-f]{32}__|"
+            + re.escape(result_prefix)
+            + rb"[0-9a-f]{32}__=(?:code|collection):[a-z-]+|"
+            + re.escape(prearm_prefix)
+            + rb"[A-Z_]{1,32}_[0-9a-f]{32}__)"
+            + rb"[^\S\r\n]*")
+        for line in re.split(rb"[\r\n]", buffer):
+            if (
+                armed_prefix in line
+                or result_prefix in line
+                or prearm_prefix in line
+            ) and receipt_line.fullmatch(line) is None:
+                return ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE
 
         prompt = (
             b"__TELOS_AUTH_SUDO_" + self._sudo_prompt_token + b"__")
@@ -984,7 +1002,19 @@ class ControllerAuthDiagnosticSession:
             or message.startswith("timed out waiting for ")
             or message == "Controller auth deadline expired"
         ):
-            return ControllerAuthReceiveObservation.TIMEOUT
+            return {
+                None: ControllerAuthReceiveObservation.TIMEOUT,
+                "PAYLOAD_VALID": (
+                    ControllerAuthReceiveObservation
+                    .TIMEOUT_AFTER_PAYLOAD_VALID),
+                "CONFIGURATION_VALID": (
+                    ControllerAuthReceiveObservation
+                    .TIMEOUT_AFTER_CONFIGURATION_VALID),
+                "SINK_READY": (
+                    ControllerAuthReceiveObservation.TIMEOUT_AFTER_SINK_READY),
+                "SID_READY": (
+                    ControllerAuthReceiveObservation.TIMEOUT_AFTER_SID_READY),
+            }[self._last_prearm_phase]
         return ControllerAuthReceiveObservation.UNCLASSIFIED
 
     def _recover_cleanup(self) -> ControllerAuthCleanup | None:
@@ -1205,15 +1235,57 @@ class ControllerAuthDiagnosticSession:
                 f"__TELOS_AUTH_ARMED_{self._tokens['arm']}__".encode())
             result_marker = (
                 f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
-            match = self._wait(
-                _RECEIPT_LINE_START + rb"(?:"
-                + re.escape(armed_marker)
-                + _RECEIPT_LINE_END + rb"|"
-                + re.escape(result_marker)
-                + rb"(code|collection):([a-z-]+)"
-                + _RECEIPT_LINE_END + rb")",
-                "controller-auth-armed",
-                deadline=self._arm_deadline - CLEANUP_RESERVE_SECONDS)
+            expected_phases = (
+                b"PAYLOAD_VALID",
+                b"CONFIGURATION_VALID",
+                b"SINK_READY",
+                b"SID_READY",
+            )
+            prearm_token = self._tokens["prearm"].encode()
+            match = None
+            invalid_prearm = False
+            for expected_phase in expected_phases + (b"ARMED",):
+                match = self._wait(
+                    _RECEIPT_LINE_START + rb"(?:"
+                    + rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_"
+                    + rb"([0-9a-f]{32})__)"
+                    + _RECEIPT_LINE_END + rb"|"
+                    + rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)"
+                    + _RECEIPT_LINE_END + rb"|"
+                    + rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+                    + rb"(code|collection):([a-z-]+)"
+                    + _RECEIPT_LINE_END + rb")",
+                    "controller-auth-armed",
+                    deadline=(
+                        self._arm_deadline - CLEANUP_RESERVE_SECONDS))
+                if self._receive_observation(
+                    RuntimeError("closed receipt inspection"),
+                    armed_marker,
+                    result_marker,
+                ) is ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE:
+                    invalid_prearm = True
+                    break
+                if match.group(8) in {b"code", b"collection"}:
+                    if (
+                        match.group(7)
+                        != self._tokens["result"].encode()
+                    ):
+                        invalid_prearm = True
+                    break
+                if expected_phase == b"ARMED":
+                    if (
+                        match.group(5)
+                        != self._tokens["arm"].encode()
+                    ):
+                        invalid_prearm = True
+                    break
+                if (
+                    match.group(2) != expected_phase
+                    or match.group(3) != prearm_token
+                ):
+                    invalid_prearm = True
+                    break
+                self._last_prearm_phase = expected_phase.decode("ascii")
         except BaseException as error:
             try:
                 observation = self._receive_observation(
@@ -1231,12 +1303,24 @@ class ControllerAuthDiagnosticSession:
                 receive_observation=observation,
             ) from None
         try:
-            if match.group(1) in {b"code", b"collection"}:
+            if invalid_prearm:
+                raise ValueError(
+                    "Controller auth pre-arm order is invalid")
+            if match.group(8) in {b"code", b"collection"}:
                 result = self._closed_result(
-                    match.group(1), match.group(2))
+                    match.group(8), match.group(9))
+                allowed = {
+                    "PAYLOAD_VALID": {
+                        ControllerAuthCollection.CONFIGURATION_INVALID},
+                    "CONFIGURATION_VALID": {
+                        ControllerAuthCollection.SINK_INVALID},
+                    "SINK_READY": {
+                        ControllerAuthCollection.SINK_INVALID},
+                }
                 if (
                     result.code is not None
-                    or result.collection not in _PREARM_COLLECTIONS
+                    or result.collection
+                    not in allowed.get(self._last_prearm_phase, set())
                 ):
                     raise ValueError(
                         "Controller auth pre-arm coordinate is invalid")

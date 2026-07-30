@@ -87,7 +87,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticError,
 )
 
-CONTROLLER_AUTH_TIMEOUT_SECONDS = 45.0
+CONTROLLER_AUTH_TIMEOUT_SECONDS = 60.0
 CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS = 60.0
 
 
