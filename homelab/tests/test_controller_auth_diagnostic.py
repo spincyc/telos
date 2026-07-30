@@ -153,7 +153,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         session = ControllerAuthDiagnosticSession(
             console, self.expected, timeout=20, clock=lambda: now[0])
         session.arm()
-        self.assertEqual(observed, [20.0, 18.0])
+        self.assertEqual(observed, [20.0, 2.0])
         self.assertEqual(console.timeout, 99.0)
         command = console._send.call_args_list[1].args[0]
         encoded = command.rsplit(b" ", 1)[1]
@@ -189,6 +189,68 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "controller-auth-abort-sent",
             [call.args[1] for call in console._send.call_args_list],
         )
+
+    def test_arm_receipt_wait_reserves_cleanup_budget(self):
+        now = [0.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] = 2.0
+                return mock.Mock()
+            if len(observed) == 2:
+                now[0] += console.timeout
+                raise TimeoutError("arm receipt deadline")
+            return re.match(rb"(ok|absence-unproved)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=20, clock=lambda: now[0])
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.RECEIVE)
+        self.assertEqual(now[0], 4.0)
+        self.assertEqual(console.timeout, 99.0)
+
+    def test_arm_recovery_never_extends_outer_deadline(self):
+        now = [0.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] = 4.0
+                return mock.Mock()
+            if len(observed) == 2:
+                now[0] += console.timeout
+                raise TimeoutError("arm receipt deadline")
+            now[0] += console.timeout
+            raise TimeoutError("cleanup receipt deadline")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=20, clock=lambda: now[0])
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertEqual(observed, [20.0, 16.0])
+        self.assertFalse(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.CLEANUP)
+        self.assertEqual(now[0], 20.0)
+        self.assertNotIn(
+            "arm receipt deadline", caught.exception.args)
+        self.assertNotIn(
+            "cleanup receipt deadline", caught.exception.args)
 
     def test_configuration_failure_is_terminal_before_arm(self):
         console = mock.Mock(password=None, timeout=99.0)

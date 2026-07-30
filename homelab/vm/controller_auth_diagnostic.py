@@ -832,8 +832,12 @@ class ControllerAuthDiagnosticSession:
     def armed(self) -> bool:
         return self._state == "armed"
 
-    def _wait(self, pattern: bytes, label: str):
-        remaining = self._deadline - self._clock()
+    def _wait(
+        self, pattern: bytes, label: str, *, deadline: float | None = None,
+    ):
+        wait_deadline = self._deadline if deadline is None else min(
+            deadline, self._deadline)
+        remaining = wait_deadline - self._clock()
         if remaining <= 0:
             raise TimeoutError("Controller auth deadline expired")
         original = self.console.timeout
@@ -964,7 +968,8 @@ class ControllerAuthDiagnosticSession:
                 + rb"\s*(?:\n|$)|"
                 + re.escape(result_marker)
                 + rb"(code|collection):([a-z-]+)\s*(?:\n|$))",
-                "controller-auth-armed")
+                "controller-auth-armed",
+                deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
         except BaseException:
             cleanup_proved = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
