@@ -193,7 +193,21 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   holds the pre-rewrite history, so the branches have diverged and publishing
   requires an authorized force-push; an ordinary push will be refused. Verify
   before pushing that no remote-only work has appeared since this reconciliation.
-- Live Windows identity attempts are blocked pending operator authorization.
+- Attempt `20260730T181419Z-39d2f820716d` ran with operator authorization and
+  failed honestly at the established boundary: `check=windows-joined`,
+  `operation=join-guest.reboot-reauth-desktop`,
+  `error=WindowsLocalReauthenticationError`,
+  `post-submit-diagnostic=no-logon-event`. All five teardown parts are proved.
+  Pre-reboot rotation reached the desktop and the security-options surface;
+  post-reboot reauthentication retained only sign-in frames and never a
+  desktop. `controller-auth-collection=receipt-unavailable` and the attempt's
+  `runtime/controller/guard` directory is empty, so the Controller diagnostic
+  produced nothing. Until that receipt is delivered, the evidence cannot
+  distinguish a rejected credential from one never presented to the directory,
+  and further Windows-side attempts will keep reproducing the same coordinate.
+  Fix Controller receipt collection before spending another attempt.
+- Live Windows identity attempts were blocked pending operator authorization,
+  which has now been granted for privileged local QEMU.
   `make homelab-windows-identity-prepare APPLY=1` and the corresponding run
   target need privileged local QEMU execution that the current agent sandbox
   refuses. Every prior attempt tore down completely, so the retained bundle
