@@ -94,12 +94,12 @@ The closed envelope contains:
 | `time` | Guest UTC timestamp for correlation only; host receive time controls deadlines. |
 | `attempt` | Opaque public attempt identifier assigned by the host. |
 | `boot_id` | Opaque per-boot value; changes across reboot. |
-| `sequence` | Unsigned integer, strictly increasing within `(attempt, boot_id, producer)`. |
+| `sequence` | Nonnegative JSON-safe integer (`0..9007199254740991`), strictly increasing within `(attempt, boot_id, producer)`. |
 | `phase` | Allowlisted factory phase or `null` where the type does not use one. |
-| `status` | Allowlisted, bounded status coordinate; no free-form exception text. |
+| `status` | Exact type-dependent coordinate: `sync=starting`, `phase-started=active`, `heartbeat=active`, `phase-finished=complete`, `phase-failed=failed`, and `diagnostic-ready=ready`. |
 | `progress` | Optional integer `0..100`; display only, never used to infer completion. |
 | `diagnostic` | Optional identifier and digest of a secret-free bounded receipt, not its unrestricted contents. |
-| `mac` | Base64 HMAC-SHA-256 over the JCS encoding of the envelope with `mac` omitted. |
+| `mac` | Canonical Base64 HMAC-SHA-256 using a per-attempt key of at least 32 bytes. The authenticated bytes are `telos-guest-progress-v1`, one NUL byte, then the JCS encoding of the envelope with `mac` omitted. |
 
 Before ordinary events, the guest sends `sync` containing the host-provided
 attempt nonce and a new `boot_id`. The host acknowledges the exact
@@ -196,4 +196,3 @@ Implementation is complete only when tests prove:
 7. keys, sockets, tasks/services, helper processes, QGA publication, and COM1
    capture are absent after successful and failed teardown; and
 8. retained events and diagnostics are bounded and secret-free.
-
