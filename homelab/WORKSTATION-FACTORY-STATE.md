@@ -302,11 +302,13 @@ the evidence above.
 
 ## Work coordination
 
-`.journal/` is the authoritative task queue, lease, event, and decision record.
-Agent names and statuses are intentionally absent here because they become
-stale independently of acceptance evidence. Re-read the journal at scheduling
-and recovery boundaries. This ledger records only durable factory results,
-gates, blockers, and the safe restart path.
+The local AIQ journal (`aiq` CLI; state under `.git/aiq/`, never committed) is
+the authoritative task queue, lease, and decision record. Worktree Marshal
+work remains intentionally excluded from that queue. Agent names and statuses
+are intentionally absent here because they become stale independently of
+acceptance evidence. Re-read the queue (`aiq status`) at scheduling and
+recovery boundaries. This ledger records only durable factory results, gates,
+blockers, and the safe restart path.
 
 After every material result, update this ledger's version, the gate table, the
 latest evidence pointer, blockers, and the literal next command. Commit code,

@@ -7,7 +7,8 @@
 > matrix, immediate next step, and open questions describe that older baseline.
 > For current factory state, gates, blockers, and the literal restart sequence,
 > read `homelab/WORKSTATION-FACTORY-STATE.md`. Durable task coordination lives
-> in `.journal/`; do not reconstruct an active-agent snapshot from this file.
+> in the local AIQ journal (`aiq status`); do not reconstruct an active-agent
+> snapshot from this file.
 
 Read the current factory ledger, then `homelab/decisions/` for anything you are
 about to change in the homelab. The decisions are the contract; the code is an

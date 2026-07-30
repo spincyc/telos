@@ -11,15 +11,15 @@ PAGES = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
 class RepositoryGuidanceTests(unittest.TestCase):
     def test_terminal_response_requires_fail_closed_yield_check(self):
         self.assertIn(
-            "Before every terminal response or handoff, run "
-            "`python3 .journal/bin/journal.py yield-check` as the immediately "
-            "preceding action",
+            "Before every terminal response or handoff, run `aiq status` as "
+            "the immediately preceding action",
             GUIDANCE,
         )
         self.assertIn(
-            "On denial, discard the proposed final response, return to journal "
-            "scheduling, and execute the highest-priority runnable task in the "
-            "same turn",
+            "Ready tasks, unexpired active claims, or messages awaiting "
+            "interpretation deny yield: discard the proposed final response, "
+            "return to queue scheduling, and execute the highest-priority "
+            "runnable task in the same turn",
             GUIDANCE,
         )
         self.assertIn(
