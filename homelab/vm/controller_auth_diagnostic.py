@@ -208,10 +208,10 @@ class ControllerAuthResult:
     collection: ControllerAuthCollection | None = None
     cleanup: ControllerAuthCleanup | None = None
     # Host-side only. The Controller has no wire vocabulary for this, so a
-    # forged or replayed frame can never claim it: an absent session is a
-    # fact the host observes about itself. It carries an exception type name,
-    # never a message, because messages can quote paths or secrets.
-    session_error: str | None = None
+    # forged or replayed frame can never claim it: a discarded host exception
+    # is a fact the host observes about itself. It carries an exception type
+    # name, never a message, because messages can quote paths or secrets.
+    host_error: str | None = None
 
     def __post_init__(self) -> None:
         self._validate()
@@ -230,13 +230,13 @@ class ControllerAuthResult:
         if self.cleanup is not None and type(
                 self.cleanup) is not ControllerAuthCleanup:
             raise TypeError("Controller auth cleanup coordinate is invalid")
-        if self.session_error is not None and (
-            type(self.session_error) is not str
-            or not self.session_error.isidentifier()
-            or len(self.session_error) > 64
+        if self.host_error is not None and (
+            type(self.host_error) is not str
+            or not self.host_error.isidentifier()
+            or len(self.host_error) > 64
         ):
             raise ValueError(
-                "Controller auth session error must be one bounded type name")
+                "Controller auth host error must be one bounded type name")
 
 
 _CODE_BY_WIRE = {

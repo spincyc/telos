@@ -1012,7 +1012,7 @@ class NativeWindowsAcceptanceAdapter:
                 # no-logon-event boundary needs answered.
                 self._controller_auth_result = ControllerAuthResult(
                     collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
-                    session_error=type(error).__name__,
+                    host_error=type(error).__name__,
                 )
                 controller_auth = None
             try:
@@ -1088,7 +1088,7 @@ class NativeWindowsAcceptanceAdapter:
                                     ControllerAuthCleanup.
                                     SINK_ABSENCE_UNPROVED),
                             )
-                    except BaseException:
+                    except BaseException as error:
                         self._controller_auth_result = ControllerAuthResult(
                             collection=(
                                 ControllerAuthCollection.RECEIPT_UNAVAILABLE),
@@ -1116,7 +1116,7 @@ class NativeWindowsAcceptanceAdapter:
                                     cancel_error))
                         except (TypeError, ValueError, AttributeError):
                             pass
-                    except BaseException:
+                    except BaseException as error:
                         self._controller_auth_result = ControllerAuthResult(
                             collection=(
                                 ControllerAuthCollection.RECEIPT_UNAVAILABLE),
@@ -1190,7 +1190,7 @@ class NativeWindowsAcceptanceAdapter:
                                             SINK_ABSENCE_UNPROVED),
                                     ))
                             controller_auth = None
-                        except BaseException:
+                        except BaseException as error:
                             self._controller_auth_result = ControllerAuthResult(
                                 collection=(
                                     ControllerAuthCollection.
@@ -1198,6 +1198,7 @@ class NativeWindowsAcceptanceAdapter:
                                 cleanup=(
                                     ControllerAuthCleanup.
                                     SINK_ABSENCE_UNPROVED),
+                                host_error=type(error).__name__,
                             )
                             controller_auth = None
                     try:

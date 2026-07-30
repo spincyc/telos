@@ -1634,11 +1634,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "controller-auth-cleanup=sink-absence-unproved", rendered)
         self.assertIn("controller-auth-arm-subphase=parse", rendered)
 
-    def test_absent_session_is_distinguishable_from_a_silent_diagnostic(self):
+    def test_a_discarded_host_error_is_distinguishable_from_silence(self):
         """An unconstructed session and an armed but silent one differ."""
         absent = ControllerAuthResult(
             collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
-            session_error="OSError",
+            host_error="OSError",
         )
         silent = ControllerAuthResult(
             collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
@@ -1653,11 +1653,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             controller_auth=silent,
         ).render()
         self.assertIn(
-            "controller-auth-session-error=OSError", rendered_absent)
-        self.assertNotIn("controller-auth-session-error", rendered_silent)
+            "controller-auth-host-error=OSError", rendered_absent)
+        self.assertNotIn("controller-auth-host-error", rendered_silent)
         self.assertNotEqual(rendered_absent, rendered_silent)
 
-    def test_session_error_rejects_unbounded_or_leaky_values(self):
+    def test_host_error_rejects_unbounded_or_leaky_values(self):
         """Only a bounded type name: a message could quote a path or secret."""
         for value in (
             "OSError: /home/ksh/secret/path",
@@ -1671,16 +1671,16 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     ControllerAuthResult(
                         collection=(
                             ControllerAuthCollection.RECEIPT_UNAVAILABLE),
-                        session_error=value,
+                        host_error=value,
                     )
 
-    def test_the_controller_cannot_claim_an_absent_session(self):
-        """session_error is host-side: no wire vocabulary can produce it."""
+    def test_the_controller_cannot_claim_a_host_error(self):
+        """host_error is host-side: no wire vocabulary can produce it."""
         for wire in _COLLECTION_BY_WIRE:
             with self.subTest(wire=wire):
                 result = ControllerAuthResult(
                     collection=_COLLECTION_BY_WIRE[wire])
-                self.assertIsNone(result.session_error)
+                self.assertIsNone(result.host_error)
 
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)

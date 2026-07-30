@@ -515,10 +515,10 @@ class IdentityFailureDiagnostic:
                 rendered += (
                     "; controller-auth-cleanup="
                     f"{self.controller_auth.cleanup.value}")
-            if self.controller_auth.session_error is not None:
+            if self.controller_auth.host_error is not None:
                 rendered += (
-                    "; controller-auth-session-error="
-                    f"{self.controller_auth.session_error}")
+                    "; controller-auth-host-error="
+                    f"{self.controller_auth.host_error}")
         if self.controller_auth_arm_subphase is not None:
             rendered += (
                 "; controller-auth-arm-subphase="
