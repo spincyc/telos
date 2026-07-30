@@ -207,6 +207,20 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   attempt writes only its own overlay, so four runs mutated neither. Do not
   read a fourth failure as four of a kind, and do not re-derive the drift
   hypothesis.
+- A fifth attempt reproduced the boundary and rendered none of the coordinates
+  added this session, so `receipt-unavailable` has a producer outside the four
+  instrumented paths. Enumerating every producer by reading, rather than by
+  running, excludes almost all of them: the six `arm()` producers all carry an
+  arm subphase, which the failure lacks; `cancel()` returns `cancelled` on its
+  success path, so the cancel-after-GUI-failure route is not it; the single
+  raise relying on the error constructor default carries
+  `arm_subphase=preflight`; and all seven adapter producers set a cleanup,
+  which the failure also lacks. No known producer matches the observed shape of
+  `receipt-unavailable` with neither cleanup nor arm subphase. Either a
+  normalization step between the adapter and the rendered diagnostic drops the
+  cleanup coordinate, or a producer remains unfound. An unavailable receipt now
+  always carries an origin, so the next run labels this one rather than leaving
+  it blank.
 - Three authorized attempts (`20260730T181419Z-39d2f820716d`,
   `20260730T182932Z-c93f871638bd`, `20260730T184757Z-0e9b24f41a38`) all reached
   the same coordinate with complete five-part teardown. Both host-side
