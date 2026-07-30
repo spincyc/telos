@@ -238,10 +238,16 @@ Telos checkout before editing code or starting a guest:
 pwd
 git status --short
 git log -1 --oneline
+aiq status
 sed -n '1,240p' homelab/WORKSTATION-FACTORY-STATE.md
 make homelab-sim-deps
 make homelab-sim-auto-plan
 ```
+
+`aiq status` is first among the reads that decide what to do next: the AIQ
+queue is authoritative for runnable work, and this ledger records only durable
+factory results. A blocked queue with no ready task means the next move needs
+an operator decision, not another command.
 
 Expected: the current directory is the intended public Telos clone and
 contains this Makefile; the current commit is at least the baseline recorded

@@ -341,10 +341,14 @@ Resume without starting a guest:
 ```sh
 git status --short
 git log -1 --oneline
+aiq status
 sed -n '1,240p' homelab/WORKSTATION-FACTORY-STATE.md
 make homelab-sim-deps
 make homelab-sim-auto-plan
 ```
+
+`aiq status` comes before the ledger because the AIQ queue, not this document,
+decides what runs next.
 
 Preserve unexplained local changes. A missing ignored artifact is `NOT RUN`,
 not permission to infer a prior pass. Read an existing receipt before deciding

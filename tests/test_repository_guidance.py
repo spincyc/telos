@@ -1,3 +1,5 @@
+import json
+import os
 import unittest
 from pathlib import Path
 
@@ -6,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GUIDANCE = " ".join(
     (ROOT / "AGENTS.md").read_text(encoding="utf-8").split())
 PAGES = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+MAKEFILE = (ROOT / "Makefile").read_text(encoding="utf-8")
 
 
 class RepositoryGuidanceTests(unittest.TestCase):
@@ -50,6 +53,30 @@ class RepositoryGuidanceTests(unittest.TestCase):
             "inspect the deployment URL, and verify the affected public pages",
             GUIDANCE,
         )
+
+    def test_tool_registry_habit_and_gate_survive(self):
+        """The tmt conversion needs the same guard the aiq conversion has."""
+        self.assertIn("<!-- tmt:agents v1 -->", GUIDANCE)
+        self.assertIn("<!-- /tmt:agents -->", GUIDANCE)
+        self.assertIn("read tmt.json and prefer a listed tool", GUIDANCE)
+        registry = json.loads(
+            (ROOT / "tmt.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(registry), ["tools", "v"])
+        self.assertIsInstance(registry["tools"], dict)
+        self.assertIn("tmt check", MAKEFILE)
+        self.assertIn("tmt absent: tmt.json registry gate skipped", MAKEFILE)
+
+    def test_every_registered_tool_exists_and_is_executable(self):
+        """An entry naming a missing tools/<id> would be a dishonest index."""
+        registry = json.loads(
+            (ROOT / "tmt.json").read_text(encoding="utf-8"))
+        for identifier in registry["tools"]:
+            with self.subTest(tool=identifier):
+                tool = ROOT / "tools" / identifier
+                self.assertTrue(tool.is_file(), f"tools/{identifier} is absent")
+                self.assertTrue(
+                    os.access(tool, os.X_OK),
+                    f"tools/{identifier} is not executable")
 
     def test_pages_verifies_every_push_but_deploys_only_main(self):
         self.assertIn("on:\n  push:\n", PAGES)

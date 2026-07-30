@@ -823,7 +823,7 @@ help:
 		'make site       Render the GitHub Pages artifact into build/site' \
 		'make site-preview          Render and serve it on localhost' \
 		'make verify-site           Re-check the rendered artifact' \
-		'make check      Validate the site manifest and run the homelab tests' \
+		'make check      Site manifest, tests, and the tmt registry gate' \
 		'make homelab-test         Run the homelab suite verbosely' \
 		'make homelab-lab          Report whether the QEMU lab can run' \
 		'make homelab-media        Fresh-fetch official disposable media' \
