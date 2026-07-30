@@ -107,6 +107,17 @@ class ControllerAuthArmSubphase(Enum):
     PARSE = "parse"
 
 
+class ControllerAuthReceiveObservation(Enum):
+    """Closed, secret-free evidence observed while awaiting the arm receipt."""
+
+    SUDO_REJECTED_OR_REPROMPTED = "sudo-rejected-or-reprompted"
+    COMMAND_LAUNCH_ERROR = "command-launch-error"
+    SERIAL_CLOSED = "serial-closed"
+    TOKEN_NONSTANDALONE = "token-nonstandalone"
+    TIMEOUT = "timeout"
+    UNCLASSIFIED = "unclassified"
+
+
 class ControllerAuthDiagnosticError(RuntimeError):
     """Host protocol failure with explicit Controller cleanup status."""
 
@@ -115,6 +126,7 @@ class ControllerAuthDiagnosticError(RuntimeError):
         controller_auth_result: "ControllerAuthResult | None" = None,
         cleanup_proved: bool,
         arm_subphase: ControllerAuthArmSubphase | None = None,
+        receive_observation: ControllerAuthReceiveObservation | None = None,
     ) -> None:
         super().__init__("Controller auth diagnostic protocol failed")
         if controller_auth_result is None:
@@ -140,9 +152,29 @@ class ControllerAuthDiagnosticError(RuntimeError):
         ):
             raise ValueError(
                 "Controller auth arm subphase needs unavailable receipt")
+        if (
+            receive_observation is not None
+            and type(receive_observation)
+            is not ControllerAuthReceiveObservation
+        ):
+            raise TypeError(
+                "Controller auth receive observation is invalid")
+        if (
+            receive_observation is not None
+            and arm_subphase is not ControllerAuthArmSubphase.RECEIVE
+        ):
+            raise ValueError(
+                "Controller auth receive observation needs receive subphase")
+        if (
+            arm_subphase is ControllerAuthArmSubphase.RECEIVE
+            and receive_observation is None
+        ):
+            raise ValueError(
+                "Controller auth receive subphase needs observation")
         self.controller_auth_result = controller_auth_result
         self.cleanup_proved = cleanup_proved
         self.arm_subphase = arm_subphase
+        self.receive_observation = receive_observation
 
 
 @dataclass(frozen=True)
@@ -867,6 +899,73 @@ class ControllerAuthDiagnosticSession:
         finally:
             self.console.timeout = original
 
+    def _receive_observation(
+        self, error: BaseException, armed_marker: bytes,
+        result_marker: bytes,
+    ) -> ControllerAuthReceiveObservation:
+        """Reduce private console state to one closed observation coordinate."""
+        raw = getattr(self.console, "buffer", b"")
+        buffer = raw if type(raw) is bytes else b""
+
+        marker_pattern = (
+            rb"(?:^|\n)(?:"
+            + re.escape(armed_marker)
+            + rb"\s*(?:\n|$)|"
+            + re.escape(result_marker)
+            + rb"(?:code|collection):[a-z-]+\s*(?:\n|$))")
+        if (
+            (armed_marker in buffer or result_marker in buffer)
+            and re.search(marker_pattern, buffer, re.MULTILINE) is None
+        ):
+            return ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE
+
+        prompt = (
+            b"__TELOS_AUTH_SUDO_" + self._sudo_prompt_token + b"__")
+        if (
+            prompt in buffer
+            or re.search(
+                rb"(?:^|\n)(?:Sorry, try again\.|"
+                rb"sudo: [0-9]+ incorrect password attempt(?:s)?|"
+                rb"sudo: (?:a password is required|no password was provided))"
+                rb"\s*(?:\n|$)",
+                buffer,
+                re.MULTILINE,
+            ) is not None
+        ):
+            return (
+                ControllerAuthReceiveObservation
+                .SUDO_REJECTED_OR_REPROMPTED)
+
+        if re.search(
+            rb"(?:^|\n)(?:"
+            rb"sudo: /usr/bin/python3: command not found|"
+            rb"/usr/bin/python3: can't open file "
+            rb"'/opt/telos-factory/controller-auth-diagnostic\.py': "
+            rb"\[Errno 2\] No such file or directory|"
+            rb"sudo: unable to execute "
+            rb"(?:/usr/bin/python3|"
+            rb"/opt/telos-factory/controller-auth-diagnostic\.py): "
+            rb"No such file or directory)"
+            rb"\s*(?:\n|$)",
+            buffer,
+            re.MULTILINE,
+        ) is not None:
+            return ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR
+
+        message = str(error)
+        if (
+            message.startswith("serial closed while waiting for ")
+            or isinstance(error, (EOFError, BrokenPipeError, ConnectionError))
+        ):
+            return ControllerAuthReceiveObservation.SERIAL_CLOSED
+        if (
+            isinstance(error, TimeoutError)
+            or message.startswith("timed out waiting for ")
+            or message == "Controller auth deadline expired"
+        ):
+            return ControllerAuthReceiveObservation.TIMEOUT
+        return ControllerAuthReceiveObservation.UNCLASSIFIED
+
     def _recover_cleanup(self) -> ControllerAuthCleanup | None:
         if self._state not in {
             "launching", "sudo-prompt", "credential-sent",
@@ -988,6 +1087,7 @@ class ControllerAuthDiagnosticSession:
             ).encode()).decode("ascii")
             prompt_prefix = b"__TELOS_AUTH_SUDO_"
             prompt_token = uuid.uuid4().hex.encode()
+            self._sudo_prompt_token = prompt_token
             prompt_suffix = b"__"
             prompt = prompt_prefix + prompt_token + prompt_suffix
             # Adjacent single-quoted shell fragments reconstruct the exact
@@ -1001,6 +1101,7 @@ class ControllerAuthDiagnosticSession:
                 else b"sudo -k -S -p " + prompt_argument + b" "
             )
             command = sudo + (
+                b"/usr/bin/python3 "
                 b"/opt/telos-factory/controller-auth-diagnostic.py "
                 b"--controller-session " + encoded.encode("ascii"))
             self.console._send(b"", "controller-auth-shell-requested")
@@ -1072,7 +1173,12 @@ class ControllerAuthDiagnosticSession:
                 + rb"(code|collection):([a-z-]+)\s*(?:\n|$))",
                 "controller-auth-armed",
                 deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
-        except BaseException:
+        except BaseException as error:
+            try:
+                observation = self._receive_observation(
+                    error, armed_marker, result_marker)
+            except BaseException:
+                observation = ControllerAuthReceiveObservation.UNCLASSIFIED
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
                 controller_auth_result=ControllerAuthResult(
@@ -1081,6 +1187,7 @@ class ControllerAuthDiagnosticSession:
                 ),
                 cleanup_proved=cleanup is None,
                 arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+                receive_observation=observation,
             ) from None
         try:
             if match.group(1) in {b"code", b"collection"}:

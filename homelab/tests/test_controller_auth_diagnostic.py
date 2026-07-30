@@ -13,6 +13,7 @@ from homelab.vm import controller_auth_diagnostic as subject
 from homelab.vm.serial_automation import SerialAutomation
 from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
+    ControllerAuthReceiveObservation,
     ControllerAuthCode,
     ControllerAuthCollection,
     ControllerAuthExpectation,
@@ -25,6 +26,10 @@ from homelab.vm.controller_auth_diagnostic import (
     _observation_complete,
 )
 from homelab.vm.windows_identity_run import IdentityFailureDiagnostic
+from homelab.vm.windows_identity_run import WindowsLocalReauthenticationError
+from homelab.vm.windows_identity_orchestrator import (
+    _local_reauthentication_coordinate,
+)
 from homelab.vm.windows_join_iso import WindowsJoinFailureCoordinate
 
 
@@ -348,6 +353,12 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     session.arm()
                 command = console._send.call_args_list[1].args[0]
                 self.assertTrue(command.startswith(expected))
+                self.assertIn(
+                    b"/usr/bin/python3 "
+                    b"/opt/telos-factory/controller-auth-diagnostic.py "
+                    b"--controller-session ",
+                    command,
+                )
                 self.assertNotIn(forbidden, command)
                 if password is not None:
                     raw_prompt = (
@@ -359,6 +370,173 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                         b"0123456789abcdef0123456789abcdef__'",
                         command,
                     )
+
+    def test_receive_observations_are_closed_and_secret_free(self):
+        session = ControllerAuthDiagnosticSession(
+            mock.Mock(password=None), self.expected)
+        session._sudo_prompt_token = b"a" * 32
+        armed = b"__TELOS_AUTH_ARMED_" + b"b" * 32 + b"__"
+        result = b"__TELOS_AUTH_RESULT_" + b"c" * 32 + b"__="
+        scenarios = (
+            (
+                b"Sorry, try again.\n",
+                RuntimeError("private rejection"),
+                ControllerAuthReceiveObservation
+                .SUDO_REJECTED_OR_REPROMPTED,
+            ),
+            (
+                b"sudo: unable to execute "
+                b"/opt/telos-factory/controller-auth-diagnostic.py: "
+                b"No such file or directory\n",
+                RuntimeError("private launch"),
+                ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR,
+            ),
+            (
+                b"/usr/bin/python3: can't open file "
+                b"'/opt/telos-factory/controller-auth-diagnostic.py': "
+                b"[Errno 2] No such file or directory\n",
+                RuntimeError("private launch"),
+                ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR,
+            ),
+            (
+                b"sudo: /usr/bin/python3: command not found\n",
+                RuntimeError("private launch"),
+                ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR,
+            ),
+            (
+                b"sudo: a password is required\n",
+                RuntimeError("private rejection"),
+                ControllerAuthReceiveObservation
+                .SUDO_REJECTED_OR_REPROMPTED,
+            ),
+            (
+                b"sudo: no password was provided\n",
+                RuntimeError("private rejection"),
+                ControllerAuthReceiveObservation
+                .SUDO_REJECTED_OR_REPROMPTED,
+            ),
+            (
+                armed + b" trailing-output\n",
+                RuntimeError("private framing"),
+                ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE,
+            ),
+            (
+                b"",
+                RuntimeError(
+                    "serial closed while waiting for private-label"),
+                ControllerAuthReceiveObservation.SERIAL_CLOSED,
+            ),
+            (
+                b"",
+                TimeoutError("private timeout"),
+                ControllerAuthReceiveObservation.TIMEOUT,
+            ),
+            (
+                b"unrecognized private output",
+                RuntimeError("private failure"),
+                ControllerAuthReceiveObservation.UNCLASSIFIED,
+            ),
+        )
+        for buffer, error, expected in scenarios:
+            with self.subTest(expected=expected):
+                session.console.buffer = buffer
+                observed = session._receive_observation(
+                    error, armed, result)
+                self.assertIs(observed, expected)
+                self.assertNotIn("private", observed.value)
+
+    def test_receive_failure_carries_closed_observation(self):
+        console = mock.Mock(password=None, timeout=99.0, buffer=b"")
+        console._wait.side_effect = [
+            mock.Mock(),
+            TimeoutError("private arm timeout"),
+            re.match(rb"(ok|absence-unproved)", b"ok"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.RECEIVE)
+        self.assertIs(
+            caught.exception.receive_observation,
+            ControllerAuthReceiveObservation.TIMEOUT)
+        self.assertNotIn("private", str(caught.exception))
+
+    def test_receive_observation_requires_exact_receive_subphase(self):
+        with self.assertRaises(ValueError):
+            ControllerAuthDiagnosticError(
+                cleanup_proved=True,
+                arm_subphase=ControllerAuthArmSubphase.COMMAND_DISPATCH,
+                receive_observation=ControllerAuthReceiveObservation.TIMEOUT,
+            )
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                cleanup_proved=True,
+                arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+                receive_observation="timeout",
+            )
+
+    def test_hostile_receive_inspection_cannot_prevent_cleanup(self):
+        class HostileConsole:
+            password = None
+            timeout = 99.0
+
+            def __init__(self):
+                self.waits = 0
+
+            @property
+            def buffer(self):
+                raise RuntimeError("private buffer")
+
+            def _send(self, _value, _label):
+                return None
+
+            def _wait(self, _pattern, _label):
+                self.waits += 1
+                if self.waits == 1:
+                    return mock.Mock()
+                if self.waits == 2:
+                    raise RuntimeError("private arm failure")
+                return re.match(rb"(ok|absence-unproved)", b"ok")
+
+        console = HostileConsole()
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.receive_observation,
+            ControllerAuthReceiveObservation.UNCLASSIFIED)
+        self.assertEqual(console.waits, 3)
+
+    def test_receive_observation_reaches_final_secret_free_diagnostic(self):
+        error = WindowsLocalReauthenticationError(
+            "controller-auth-arm",
+            controller_auth_result=ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+            controller_auth_arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+            controller_auth_receive_observation=(
+                ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR),
+        )
+        coordinate = _local_reauthentication_coordinate(error)
+        diagnostic = IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+            controller_auth_arm_subphase=(
+                coordinate.controller_auth_arm_subphase),
+            controller_auth_receive_observation=(
+                coordinate.controller_auth_receive_observation),
+        )
+
+        self.assertIn(
+            "controller-auth-receive-observation=command-launch-error",
+            diagnostic.render())
+        self.assertNotIn("private", diagnostic.render())
 
     def test_real_serial_accepts_bare_cr_prompt_not_command_echo(self):
         left, right = socket.socketpair()

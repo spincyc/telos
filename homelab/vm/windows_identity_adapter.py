@@ -21,6 +21,7 @@ from .controller_auth_diagnostic import (
     ControllerAuthDiagnosticError,
     ControllerAuthDiagnosticSession,
     ControllerAuthExpectation,
+    ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
 from .controller_principals import (
@@ -126,6 +127,11 @@ def _run_local_reauthentication_operation(
             if type(error) is WindowsLocalReauthenticationError
             else None
         )
+        controller_auth_receive_observation = (
+            error.controller_auth_receive_observation
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -143,6 +149,8 @@ def _run_local_reauthentication_operation(
             post_submit_cleanup=post_submit_cleanup,
             controller_auth_result=controller_auth_result,
             controller_auth_arm_subphase=controller_auth_arm_subphase,
+            controller_auth_receive_observation=(
+                controller_auth_receive_observation),
         ) from None
 
 
@@ -162,6 +170,8 @@ def _with_controller_auth_result(
             else error.controller_auth_result
         ),
         controller_auth_arm_subphase=error.controller_auth_arm_subphase,
+        controller_auth_receive_observation=(
+            error.controller_auth_receive_observation),
     )
 
 
@@ -953,6 +963,20 @@ class NativeWindowsAcceptanceAdapter:
                     ):
                         raise TypeError(
                             "Controller auth arm subphase is invalid")
+                    if (
+                        error.receive_observation is not None
+                        and type(error.receive_observation)
+                        is not ControllerAuthReceiveObservation
+                    ):
+                        raise TypeError(
+                            "Controller auth receive observation is invalid")
+                    if (
+                        (error.arm_subphase
+                         is ControllerAuthArmSubphase.RECEIVE)
+                        != (error.receive_observation is not None)
+                    ):
+                        raise ValueError(
+                            "Controller auth receive observation is invalid")
                 except (TypeError, ValueError, AttributeError):
                     self._controller_auth_result = ControllerAuthResult(
                         collection=(
@@ -973,6 +997,8 @@ class NativeWindowsAcceptanceAdapter:
                         controller_auth_result=(
                             self._controller_auth_result),
                         controller_auth_arm_subphase=error.arm_subphase,
+                        controller_auth_receive_observation=(
+                            error.receive_observation),
                     ) from None
                 controller_auth = None
             except BaseException:

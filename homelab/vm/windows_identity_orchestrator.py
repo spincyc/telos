@@ -20,6 +20,7 @@ from .controller_auth_diagnostic import (
     ControllerAuthCleanup,
     ControllerAuthCode,
     ControllerAuthCollection,
+    ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
 from .windows_control_serial import ControlProbe
@@ -165,6 +166,7 @@ def _local_reauthentication_coordinate(
     post_submit_cleanup: object = None
     controller_auth: object = None
     controller_auth_arm_subphase: object = None
+    controller_auth_receive_observation: object = None
     if type(error) is WindowsLocalReauthenticationError:
         try:
             operation = error.reauth_operation
@@ -174,6 +176,8 @@ def _local_reauthentication_coordinate(
             controller_auth = error.controller_auth_result
             controller_auth_arm_subphase = (
                 error.controller_auth_arm_subphase)
+            controller_auth_receive_observation = (
+                error.controller_auth_receive_observation)
         except BaseException:
             operation = None
             post_submit_diagnostic = None
@@ -181,6 +185,7 @@ def _local_reauthentication_coordinate(
             post_submit_cleanup = None
             controller_auth = None
             controller_auth_arm_subphase = None
+            controller_auth_receive_observation = None
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
@@ -254,9 +259,26 @@ def _local_reauthentication_coordinate(
         )
         else None
     )
+    normalized_controller_auth_receive_observation = (
+        controller_auth_receive_observation
+        if (
+            normalized_controller_auth_arm_subphase
+            is ControllerAuthArmSubphase.RECEIVE
+            and type(controller_auth_receive_observation)
+            is ControllerAuthReceiveObservation
+        )
+        else None
+    )
+    if (
+        normalized_controller_auth_arm_subphase
+        is ControllerAuthArmSubphase.RECEIVE
+        and normalized_controller_auth_receive_observation is None
+    ):
+        normalized_controller_auth_arm_subphase = None
     return WindowsJoinFailureCoordinate(
         phase, error_type, diagnostic_value, collection_value, cleanup_value,
-        normalized_controller_auth, normalized_controller_auth_arm_subphase)
+        normalized_controller_auth, normalized_controller_auth_arm_subphase,
+        normalized_controller_auth_receive_observation)
 
 
 _CREDENTIAL_ROLES = {
@@ -599,6 +621,7 @@ def _execute_join(
             coordinate.post_submit_cleanup,
             coordinate.controller_auth,
             coordinate.controller_auth_arm_subphase,
+            coordinate.controller_auth_receive_observation,
         )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:

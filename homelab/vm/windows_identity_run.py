@@ -50,6 +50,7 @@ from .windows_postsubmit_diagnostic import (
 )
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
+    ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
 
@@ -69,6 +70,8 @@ class IdentityFailureDiagnostic:
     post_submit_cleanup: str | None = None
     controller_auth: ControllerAuthResult | None = None
     controller_auth_arm_subphase: ControllerAuthArmSubphase | None = None
+    controller_auth_receive_observation: (
+        ControllerAuthReceiveObservation | None) = None
 
     _STATIC_PROBE_PAIRS = frozenset({
         ("controller-ready", "controller-readiness"),
@@ -189,6 +192,8 @@ class IdentityFailureDiagnostic:
         post_submit_cleanup: str | None = None,
         controller_auth: ControllerAuthResult | None = None,
         controller_auth_arm_subphase: ControllerAuthArmSubphase | None = None,
+        controller_auth_receive_observation: (
+            ControllerAuthReceiveObservation | None) = None,
     ) -> "IdentityFailureDiagnostic":
         candidate = f"join-guest.{phase}"
         if phase not in {
@@ -239,6 +244,7 @@ class IdentityFailureDiagnostic:
             post_submit_cleanup,
             controller_auth,
             controller_auth_arm_subphase,
+            controller_auth_receive_observation,
         )
 
     @classmethod
@@ -387,6 +393,24 @@ class IdentityFailureDiagnostic:
         ):
             raise ValueError("Controller auth arm subphase is invalid")
         if (
+            self.controller_auth_receive_observation is not None
+            and (
+                type(self.controller_auth_receive_observation)
+                is not ControllerAuthReceiveObservation
+                or self.controller_auth_arm_subphase
+                is not ControllerAuthArmSubphase.RECEIVE
+            )
+        ):
+            raise ValueError(
+                "Controller auth receive observation is invalid")
+        if (
+            self.controller_auth_arm_subphase
+            is ControllerAuthArmSubphase.RECEIVE
+            and self.controller_auth_receive_observation is None
+        ):
+            raise ValueError(
+                "Controller auth receive observation is missing")
+        if (
             (self.check, self.operation) not in self._STATIC_PROBES
             and not (
                 self.check == "windows-joined"
@@ -495,6 +519,10 @@ class IdentityFailureDiagnostic:
             rendered += (
                 "; controller-auth-arm-subphase="
                 f"{self.controller_auth_arm_subphase.value}")
+        if self.controller_auth_receive_observation is not None:
+            rendered += (
+                "; controller-auth-receive-observation="
+                f"{self.controller_auth_receive_observation.value}")
         return rendered
 
 
@@ -548,6 +576,8 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         post_submit_cleanup: PostSubmitDiagnosticCleanup | None = None,
         controller_auth_result: ControllerAuthResult | None = None,
         controller_auth_arm_subphase: ControllerAuthArmSubphase | None = None,
+        controller_auth_receive_observation: (
+            ControllerAuthReceiveObservation | None) = None,
     ) -> None:
         if operation not in self._OPERATIONS:
             operation = "prove-password-target"
@@ -629,6 +659,25 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
         ):
             controller_auth_arm_subphase = None
         self.controller_auth_arm_subphase = controller_auth_arm_subphase
+        if (
+            controller_auth_receive_observation is not None
+            and (
+                type(controller_auth_receive_observation)
+                is not ControllerAuthReceiveObservation
+                or controller_auth_arm_subphase
+                is not ControllerAuthArmSubphase.RECEIVE
+            )
+        ):
+            controller_auth_receive_observation = None
+        if (
+            controller_auth_arm_subphase
+            is ControllerAuthArmSubphase.RECEIVE
+            and controller_auth_receive_observation is None
+        ):
+            controller_auth_arm_subphase = None
+            self.controller_auth_arm_subphase = None
+        self.controller_auth_receive_observation = (
+            controller_auth_receive_observation)
         super().__init__(
             f"post-join local reauthentication failed at {operation}")
 

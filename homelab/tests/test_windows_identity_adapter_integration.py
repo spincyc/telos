@@ -23,6 +23,7 @@ from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthCleanup,
     ControllerAuthDiagnosticError,
     ControllerAuthExpectation,
+    ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
 
@@ -166,6 +167,12 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                                 ControllerAuthCollection.RECEIPT_UNAVAILABLE
                                 else None
                             ),
+                            receive_observation=(
+                                ControllerAuthReceiveObservation.TIMEOUT
+                                if collection is
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                                else None
+                            ),
                         ))
                     adapter = self.adapter(rotation_plan=plan)
                     with self.assertRaises(
@@ -181,6 +188,14 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     caught.exception.controller_auth_arm_subphase,
                     (
                         ControllerAuthArmSubphase.RECEIVE
+                        if collection is
+                        ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                        else None
+                    ))
+                self.assertIs(
+                    caught.exception.controller_auth_receive_observation,
+                    (
+                        ControllerAuthReceiveObservation.TIMEOUT
                         if collection is
                         ControllerAuthCollection.RECEIPT_UNAVAILABLE
                         else None

@@ -31,6 +31,7 @@ from .windows_postsubmit_diagnostic import (
 )
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
+    ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
 
@@ -49,6 +50,8 @@ class WindowsJoinFailureCoordinate:
     post_submit_cleanup: str | None = None
     controller_auth: ControllerAuthResult | None = None
     controller_auth_arm_subphase: ControllerAuthArmSubphase | None = None
+    controller_auth_receive_observation: (
+        ControllerAuthReceiveObservation | None) = None
 
     _PHASES = frozenset({
         "serial-connect", "prepare", "attach", "launch",
@@ -181,6 +184,24 @@ class WindowsJoinFailureCoordinate:
             )
         ):
             raise ValueError("Controller auth arm subphase is invalid")
+        if (
+            self.controller_auth_receive_observation is not None
+            and (
+                type(self.controller_auth_receive_observation)
+                is not ControllerAuthReceiveObservation
+                or self.controller_auth_arm_subphase
+                is not ControllerAuthArmSubphase.RECEIVE
+            )
+        ):
+            raise ValueError(
+                "Controller auth receive observation is invalid")
+        if (
+            self.controller_auth_arm_subphase
+            is ControllerAuthArmSubphase.RECEIVE
+            and self.controller_auth_receive_observation is None
+        ):
+            raise ValueError(
+                "Controller auth receive observation is missing")
 
 
 class WindowsJoinIsoError(RuntimeError):
