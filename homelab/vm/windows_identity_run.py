@@ -170,6 +170,31 @@ class IdentityFailureDiagnostic:
         return cls("windows-joined", candidate, error_type)
 
     @classmethod
+    def guest_boot(
+        cls, phase: str, error_type: str, *, retried: bool = False,
+    ) -> "IdentityFailureDiagnostic":
+        """Bind a bounded Windows boot failure to its acceptance check.
+
+        Exhausting the boot retry used to raise with no diagnostic at all, so
+        an eleven-minute run reported only its exception type and taught the
+        next run nothing.
+
+        The operation carries the signal. Exhausted readiness has no
+        underlying typed exception, and `WindowsIdentityRunError` is
+        deliberately absent from the allowlist so a generic run error cannot
+        pass as a typed one, so it renders as `UnexpectedError` while the
+        operation still says exactly where the boot stopped.
+        """
+        if phase not in {"os-readiness", "switch-disconnect-proof"}:
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        suffix = ".after-retry" if retried else ""
+        # The check is the one being pursued, as join_material does; the
+        # operation says where it stopped.
+        return cls("windows-joined", f"guest-boot.{phase}{suffix}", error_type)
+
+    @classmethod
     def controller_convergence(
         cls, phase: str, error_type: str,
     ) -> "IdentityFailureDiagnostic":
@@ -465,6 +490,13 @@ class IdentityFailureDiagnostic:
                         "desktop-sign-in-near-reference",
                     )
                 }
+            )
+            and not (
+                self.check == "windows-joined"
+                and self.operation.startswith("guest-boot.")
+                and self.operation.removeprefix("guest-boot.").removesuffix(
+                    ".after-retry"
+                ) in {"os-readiness", "switch-disconnect-proof"}
             )
             and not (
                 self.check == "controller-ready"
@@ -1426,11 +1458,21 @@ class NativeProcessBoundary:
                     )
                     if disconnect_error is not None:
                         raise WindowsIdentityRunError(
-                            "Windows switch disconnect proof failed"
+                            "Windows switch disconnect proof failed",
+                            diagnostic=IdentityFailureDiagnostic.guest_boot(
+                                "switch-disconnect-proof",
+                                type(disconnect_error).__name__,
+                                retried=boot_attempt == 2,
+                            ),
                         ) from disconnect_error
                     if not retry_eligible:
                         raise WindowsIdentityRunError(
-                            "Windows OS readiness failed after bounded retry"
+                            "Windows OS readiness failed after bounded retry",
+                            diagnostic=IdentityFailureDiagnostic.guest_boot(
+                                "os-readiness",
+                                "WindowsIdentityRunError",
+                                retried=boot_attempt == 2,
+                            ),
                         ) from None
                     self._reopen_control_iso_for_retry(process)
                     self._cleanup_qmp_root()

@@ -1675,6 +1675,38 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "UnexpectedError", caught.exception.diagnostic.error_type)
         self.assertNotIn("private", str(caught.exception))
 
+    def test_exhausted_guest_boot_still_carries_coordinates(self):
+        """A failed boot used to render only its exception type."""
+        readiness = subject.IdentityFailureDiagnostic.guest_boot(
+            "os-readiness", "WindowsIdentityRunError", retried=True)
+        self.assertEqual("windows-joined", readiness.check)
+        self.assertEqual(
+            "guest-boot.os-readiness.after-retry", readiness.operation)
+        # WindowsIdentityRunError is deliberately unlisted so a generic run
+        # error cannot pass as typed; the operation carries the signal.
+        self.assertEqual("UnexpectedError", readiness.error_type)
+        self.assertIn(
+            "operation=guest-boot.os-readiness.after-retry",
+            readiness.render())
+
+        first = subject.IdentityFailureDiagnostic.guest_boot(
+            "os-readiness", "WindowsIdentityRunError")
+        self.assertEqual("guest-boot.os-readiness", first.operation)
+        self.assertNotEqual(readiness.render(), first.render())
+
+    def test_guest_boot_keeps_a_typed_disconnect_error(self):
+        disconnect = subject.IdentityFailureDiagnostic.guest_boot(
+            "switch-disconnect-proof", "TimeoutError")
+        self.assertEqual(
+            "guest-boot.switch-disconnect-proof", disconnect.operation)
+        self.assertEqual("TimeoutError", disconnect.error_type)
+
+    def test_guest_boot_rejects_an_unknown_phase(self):
+        unknown = subject.IdentityFailureDiagnostic.guest_boot(
+            "made-up", "TimeoutError")
+        self.assertEqual("unknown-check", unknown.check)
+        self.assertEqual("unknown-operation", unknown.operation)
+
     def test_join_serial_connects_before_private_media_is_created(self):
         callbacks = self.callbacks([])
         order = []
