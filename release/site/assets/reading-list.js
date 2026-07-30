@@ -2,6 +2,10 @@
   const DATA_URL = "data/reading-list.json";
   const ROOT = document.querySelector("[data-reading-sections]");
   const SUMMARY_EL = document.getElementById("reading-summary");
+  const HORIZONTAL_SCROLL_BAR = createHorizontalScrollBar();
+  let activeHorizontalWrap = null;
+  let isSyncingHorizontalBar = false;
+  let horizontalWrappers = [];
 
   if (!ROOT || !SUMMARY_EL) {
     return;
@@ -27,7 +31,6 @@
   const SORT_LABELS = {
     title: "Title",
     author: "Author",
-    reader: "Reader",
     pages: "Pages",
     words: "Words",
     days: "Days",
@@ -43,7 +46,6 @@
   const SORT_SPECS = {
     title: (entry) => safeText(entry.title),
     author: (entry) => safeText(entry.author),
-    reader: (entry) => safeText(entry.reader),
     pages: (entry) => asNumber(entry.pages),
     words: (entry) => asNumber(entry.words),
     days: (entry) => asNumber(entry.days),
@@ -64,7 +66,6 @@
       columns: [
         { key: "title", label: "Title" },
         { key: "author", label: "Author" },
-        { key: "reader", label: "Reader" },
         { key: "genre_category", label: "Category", badge: true },
         { key: "genre_coarse", label: "Genre", badge: true },
         { key: "genre_fine", label: "Fine genre", badge: true },
@@ -85,7 +86,6 @@
       columns: [
         { key: "title", label: "Title" },
         { key: "author", label: "Author" },
-        { key: "reader", label: "Reader" },
         { key: "genre_category", label: "Category", badge: true },
         { key: "genre_coarse", label: "Genre", badge: true },
         { key: "genre_fine", label: "Fine genre", badge: true },
@@ -105,7 +105,6 @@
       columns: [
         { key: "title", label: "Title" },
         { key: "author", label: "Author" },
-        { key: "reader", label: "Reader" },
         { key: "genre_category", label: "Category", badge: true },
         { key: "genre_coarse", label: "Genre", badge: true },
         { key: "genre_fine", label: "Fine genre", badge: true },
@@ -115,6 +114,236 @@
       ],
     },
   ];
+
+  function createHorizontalScrollBar() {
+    const existingWrapper = document.querySelector("[data-reading-horizontal-scroll-wrapper]");
+    if (existingWrapper) {
+      const input = existingWrapper.querySelector("[data-reading-horizontal-scroll]");
+      const value = existingWrapper.querySelector(".reading-horizontal-scrollbar-value");
+      if (input && value) {
+        if (document.body && existingWrapper.parentElement !== document.body) {
+          document.body.appendChild(existingWrapper);
+        }
+        applyHorizontalBarLayout(existingWrapper);
+        return {
+          wrapper: existingWrapper,
+          input,
+          value,
+        };
+      }
+      existingWrapper.remove();
+    }
+    if (!document.body) {
+      return { wrapper: null, input: null, value: null };
+    }
+    const wrapper = document.createElement("div");
+    wrapper.className = "reading-horizontal-scrollbar";
+    wrapper.setAttribute("data-reading-horizontal-scroll-wrapper", "auto");
+    wrapper.setAttribute("aria-live", "polite");
+    wrapper.innerHTML = `
+      <input
+        type="range"
+        min="0"
+        max="0"
+        step="1"
+        value="0"
+        class="reading-horizontal-scrollbar-input"
+        data-reading-horizontal-scroll
+        aria-label="Reading table horizontal scroll"
+      />
+      <span class="reading-horizontal-scrollbar-value">0%</span>
+    `;
+    document.body.appendChild(wrapper);
+    return {
+      wrapper,
+      input: wrapper.querySelector("[data-reading-horizontal-scroll]"),
+      value: wrapper.querySelector(".reading-horizontal-scrollbar-value"),
+    };
+  }
+
+  function applyHorizontalBarLayout(wrapper) {
+    if (!wrapper) {
+      return;
+    }
+    wrapper.style.setProperty("position", "fixed", "important");
+    wrapper.style.setProperty("left", "1rem", "important");
+    wrapper.style.setProperty("right", "1rem", "important");
+    wrapper.style.setProperty("bottom", "max(0.75rem, env(safe-area-inset-bottom))", "important");
+    wrapper.style.setProperty("top", "auto", "important");
+    wrapper.style.setProperty("z-index", "40", "important");
+    wrapper.style.setProperty("display", "flex", "important");
+    wrapper.style.setProperty("align-items", "center", "important");
+    wrapper.style.setProperty("gap", ".65rem", "important");
+    wrapper.style.setProperty("padding", ".7rem .82rem", "important");
+    wrapper.style.setProperty("border-radius", "999px", "important");
+    wrapper.style.setProperty("width", "calc(100% - 2rem)", "important");
+    wrapper.style.setProperty("box-sizing", "border-box", "important");
+    wrapper.style.setProperty("margin", "0", "important");
+  }
+
+  function pinHorizontalBarToViewport() {
+    if (!HORIZONTAL_SCROLL_BAR.wrapper) {
+      return;
+    }
+    applyHorizontalBarLayout(HORIZONTAL_SCROLL_BAR.wrapper);
+  }
+
+  function tableHasOverflow(wrapper) {
+    return wrapper.scrollWidth > wrapper.clientWidth + 1;
+  }
+
+  function showHorizontalBarFor(wrapper) {
+    if (!HORIZONTAL_SCROLL_BAR.wrapper || !HORIZONTAL_SCROLL_BAR.input || !HORIZONTAL_SCROLL_BAR.value || !wrapper) {
+      return;
+    }
+    if (!tableHasOverflow(wrapper)) {
+      hideHorizontalBar();
+      return;
+    }
+    const max = wrapper.scrollWidth - wrapper.clientWidth;
+    const maxValue = Math.max(1, Math.ceil(max));
+    isSyncingHorizontalBar = true;
+    HORIZONTAL_SCROLL_BAR.wrapper.hidden = false;
+    HORIZONTAL_SCROLL_BAR.input.max = String(maxValue);
+    const left = Math.min(max, wrapper.scrollLeft);
+    HORIZONTAL_SCROLL_BAR.input.value = String(Math.round(left));
+    const percent = Math.round(max > 0 ? (left / max) * 100 : 0);
+    HORIZONTAL_SCROLL_BAR.value.textContent = `${percent}%`;
+    isSyncingHorizontalBar = false;
+  }
+
+  function hideHorizontalBar() {
+    if (!HORIZONTAL_SCROLL_BAR.wrapper || !HORIZONTAL_SCROLL_BAR.input || !HORIZONTAL_SCROLL_BAR.value) {
+      return;
+    }
+    HORIZONTAL_SCROLL_BAR.wrapper.hidden = true;
+    HORIZONTAL_SCROLL_BAR.input.value = "0";
+    HORIZONTAL_SCROLL_BAR.value.textContent = "0%";
+    activeHorizontalWrap = null;
+  }
+
+  function activateHorizontalWrap(wrapper) {
+    if (!wrapper) {
+      hideHorizontalBar();
+      return;
+    }
+    if (activeHorizontalWrap === wrapper) {
+      showHorizontalBarFor(wrapper);
+      return;
+    }
+    activeHorizontalWrap = wrapper;
+    showHorizontalBarFor(wrapper);
+  }
+
+  function onHorizontalWrapScroll(event) {
+    const wrapper = event.currentTarget;
+    activateHorizontalWrap(wrapper);
+    showHorizontalBarFor(wrapper);
+  }
+
+  function onHorizontalWrapPointer(event) {
+    activateHorizontalWrap(event.currentTarget);
+  }
+
+  function onHorizontalWrapFocus(event) {
+    activateHorizontalWrap(event.currentTarget);
+  }
+
+  function nearestVisibleWrapper(wrappers) {
+    const mid = window.innerHeight / 2;
+    let best;
+    let bestScore = Infinity;
+    for (const wrapper of wrappers) {
+      if (!tableHasOverflow(wrapper)) {
+        continue;
+      }
+      const rect = wrapper.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight) {
+        continue;
+      }
+      const center = (rect.top + rect.bottom) / 2;
+      const score = Math.abs(center - mid);
+      if (score < bestScore) {
+        bestScore = score;
+        best = wrapper;
+      }
+    }
+    return best || wrappers.find((wrapper) => tableHasOverflow(wrapper)) || null;
+  }
+
+  function refreshActiveHorizontalWrap() {
+    if (horizontalWrappers.length === 0) {
+      hideHorizontalBar();
+      return;
+    }
+    const next = nearestVisibleWrapper(horizontalWrappers);
+    if (next !== activeHorizontalWrap) {
+      activateHorizontalWrap(next);
+    } else if (next) {
+      showHorizontalBarFor(next);
+    }
+  }
+
+  function onInputHorizontalBar() {
+    if (!HORIZONTAL_SCROLL_BAR.input || isSyncingHorizontalBar || !activeHorizontalWrap) {
+      return;
+    }
+    if (!tableHasOverflow(activeHorizontalWrap)) {
+      hideHorizontalBar();
+      return;
+    }
+    const maxScroll = activeHorizontalWrap.scrollWidth - activeHorizontalWrap.clientWidth;
+    const max = Number(HORIZONTAL_SCROLL_BAR.input.max) || 1;
+    const sliderValue = Number(HORIZONTAL_SCROLL_BAR.input.value) || 0;
+    const target = (sliderValue / max) * maxScroll;
+    activeHorizontalWrap.scrollLeft = target;
+    const percent = Math.round(maxScroll > 0 ? (target / maxScroll) * 100 : 0);
+    HORIZONTAL_SCROLL_BAR.value.textContent = `${percent}%`;
+  }
+
+  function setupHorizontalScrollbar() {
+    horizontalWrappers = Array.from(ROOT.querySelectorAll(".reading-table-wrap"));
+    if (horizontalWrappers.length === 0) {
+      hideHorizontalBar();
+      return;
+    }
+
+    for (const [index, wrapper] of horizontalWrappers.entries()) {
+      if (wrapper.dataset.readingScrollbarWireup === "1") {
+        continue;
+      }
+      wrapper.dataset.readingSectionIndex = String(index);
+      wrapper.addEventListener("scroll", onHorizontalWrapScroll, { passive: true });
+      wrapper.addEventListener("pointerdown", onHorizontalWrapPointer, { passive: true });
+      wrapper.addEventListener("focusin", onHorizontalWrapFocus);
+      wrapper.dataset.readingScrollbarWireup = "1";
+    }
+
+    const firstOverflow = horizontalWrappers.find(tableHasOverflow);
+    if (firstOverflow) {
+      activeHorizontalWrap = firstOverflow;
+      showHorizontalBarFor(firstOverflow);
+    } else {
+      const first = horizontalWrappers[0];
+      activeHorizontalWrap = first;
+      hideHorizontalBar();
+    }
+    refreshActiveHorizontalWrap();
+  }
+
+  if (HORIZONTAL_SCROLL_BAR.input) {
+    HORIZONTAL_SCROLL_BAR.input.addEventListener("input", onInputHorizontalBar);
+  }
+  window.addEventListener("resize", () => {
+    pinHorizontalBarToViewport();
+    refreshActiveHorizontalWrap();
+  });
+  window.addEventListener("scroll", () => {
+    pinHorizontalBarToViewport();
+    requestAnimationFrame(refreshActiveHorizontalWrap);
+  }, { passive: true });
+
+  pinHorizontalBarToViewport();
 
   function escapeText(value) {
     return (value || "")
@@ -319,6 +548,7 @@
         renderRows(rows);
       });
     });
+    setupHorizontalScrollbar();
     renderSummary(rows);
   }
 

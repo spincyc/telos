@@ -214,23 +214,105 @@ a[href$=".pdf"]::after {
   color: var(--muted);
   font: 650 .67rem/1.2 ui-sans-serif, system-ui, sans-serif;
 }
-.reading-table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 12px; }
+.reading-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.reading-table-wrap::-webkit-scrollbar { display: none; }
 .reading-table {
   width: 100%;
   margin: 0;
+  table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
   font-size: .9rem;
+  min-width: min(100%, 100vw);
+  --reading-col-1: clamp(15rem, 34vw, 34rem);
+  --reading-col-2: clamp(11rem, 24vw, 21rem);
+  --reading-col-3: clamp(4.8rem, 10vw, 8.5rem);
+  --reading-col-4: clamp(4.3rem, 10vw, 8rem);
+  --reading-col-5: clamp(4.3rem, 10vw, 8rem);
+  --reading-col-6: clamp(4.6rem, 11vw, 8.8rem);
+  --reading-col-7: clamp(5.1rem, 11vw, 7.5rem);
+  --reading-col-8: clamp(5.1rem, 11vw, 7.8rem);
+  --reading-col-9: clamp(4rem, 9vw, 6.2rem);
+  --reading-col-10: clamp(4.5rem, 9.5vw, 6.8rem);
+  --reading-col-11: clamp(4.5rem, 10vw, 7rem);
+  --reading-col-12: clamp(4.5rem, 10vw, 7rem);
+  --reading-col-13: clamp(4.5rem, 9.5vw, 7.2rem);
+  --reading-col-14: clamp(5.8rem, 18vw, 12.5rem);
 }
 .reading-table th,
 .reading-table td {
   padding: .66rem .8rem;
   border-bottom: 1px solid var(--rule);
+  max-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .reading-table th { background: color-mix(in srgb, var(--panel) 85%, transparent); position: sticky; top: 0; z-index: 1; }
 .reading-table tbody tr:nth-child(2n) { background: color-mix(in srgb, var(--panel) 88%, transparent); }
 .reading-table tbody tr:hover {
   background: color-mix(in srgb, var(--signal) 10%, transparent);
+}
+.reading-table th:nth-child(1),
+.reading-table td:nth-child(1) {
+  width: var(--reading-col-1);
+}
+.reading-table th:nth-child(2),
+.reading-table td:nth-child(2) {
+  width: var(--reading-col-2);
+}
+.reading-table th:nth-child(3),
+.reading-table td:nth-child(3) {
+  width: var(--reading-col-3);
+}
+.reading-table th:nth-child(4),
+.reading-table td:nth-child(4) {
+  width: var(--reading-col-4);
+}
+.reading-table th:nth-child(5),
+.reading-table td:nth-child(5) {
+  width: var(--reading-col-5);
+}
+.reading-table th:nth-child(6),
+.reading-table td:nth-child(6) {
+  width: var(--reading-col-6);
+}
+.reading-table th:nth-child(7),
+.reading-table td:nth-child(7) {
+  width: var(--reading-col-7);
+}
+.reading-table th:nth-child(8),
+.reading-table td:nth-child(8) {
+  width: var(--reading-col-8);
+}
+.reading-table th:nth-child(9),
+.reading-table td:nth-child(9) {
+  width: var(--reading-col-9);
+}
+.reading-table th:nth-child(10),
+.reading-table td:nth-child(10) {
+  width: var(--reading-col-10);
+}
+.reading-table th:nth-child(11),
+.reading-table td:nth-child(11) {
+  width: var(--reading-col-11);
+}
+.reading-table th:nth-child(12),
+.reading-table td:nth-child(12) {
+  width: var(--reading-col-12);
+}
+.reading-table th:nth-child(13),
+.reading-table td:nth-child(13) {
+  width: var(--reading-col-13);
+}
+.reading-table th:nth-child(14),
+.reading-table td:nth-child(14) {
+  width: var(--reading-col-14);
 }
 .reading-genre-badge {
   display: inline-flex;
@@ -257,6 +339,58 @@ a[href$=".pdf"]::after {
   border-radius: 14px;
   color: var(--muted);
   background: color-mix(in srgb, var(--panel) 83%, transparent);
+}
+.reading-horizontal-scrollbar {
+  position: fixed !important;
+  left: 1rem !important;
+  right: 1rem !important;
+  bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .7rem .82rem;
+  border: 1px solid var(--rule);
+  width: calc(100% - 2rem);
+  max-width: calc(100vw - 2rem);
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 18px color-mix(in srgb, #000 16%, transparent);
+}
+.reading-horizontal-scrollbar-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: .36rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rule) 36%, transparent);
+  accent-color: var(--ink);
+}
+.reading-horizontal-scrollbar-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--ink) 72%, white);
+  background: var(--ink);
+  margin-top: -.36rem;
+}
+.reading-horizontal-scrollbar-input::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--ink) 72%, white);
+  background: var(--ink);
+}
+.reading-horizontal-scrollbar-value {
+  font: 650 .66rem/1 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted);
+  width: 2.6rem;
+  text-align: right;
 }
 
 .edition { --measure: 51rem; }
@@ -297,6 +431,65 @@ a[href$=".pdf"]::after {
   .project-tools { grid-template-columns: 1fr; }
   .fishing .edition-grid { display: block; }
   .edition-note { margin-top: 2.5rem; }
+}
+
+@media (min-width: 86rem) {
+  .reading-table {
+    --reading-col-1: clamp(17rem, 29vw, 40rem);
+    --reading-col-2: clamp(13rem, 21vw, 24rem);
+    --reading-col-3: clamp(5.4rem, 10vw, 8.8rem);
+    --reading-col-4: clamp(4.8rem, 10vw, 9rem);
+    --reading-col-5: clamp(4.8rem, 10vw, 9rem);
+    --reading-col-6: clamp(5rem, 11vw, 9.2rem);
+    --reading-col-7: clamp(5.4rem, 10.8vw, 7.8rem);
+    --reading-col-8: clamp(5.4rem, 10.8vw, 7.8rem);
+    --reading-col-9: clamp(4.4rem, 8.8vw, 6.8rem);
+    --reading-col-10: clamp(4.8rem, 9.2vw, 7.2rem);
+    --reading-col-11: clamp(4.8rem, 9.5vw, 7.6rem);
+    --reading-col-12: clamp(4.8rem, 9.5vw, 7.6rem);
+    --reading-col-13: clamp(5rem, 8.8vw, 7.6rem);
+    --reading-col-14: clamp(6rem, 16vw, 14.2rem);
+  }
+}
+
+@media (max-width: 56rem) {
+  .reading-table {
+    --reading-col-1: clamp(9.2rem, 54vw, 18rem);
+    --reading-col-2: clamp(7.4rem, 38vw, 15rem);
+    --reading-col-3: clamp(4.4rem, 20vw, 8.8rem);
+    --reading-col-4: clamp(3.7rem, 13vw, 7rem);
+    --reading-col-5: clamp(3.7rem, 13vw, 7rem);
+    --reading-col-6: clamp(3.8rem, 12vw, 7rem);
+    --reading-col-7: clamp(3.6rem, 11vw, 6rem);
+    --reading-col-8: clamp(3.6rem, 11vw, 6rem);
+    --reading-col-9: clamp(3.1rem, 10.5vw, 5.2rem);
+    --reading-col-10: clamp(3.3rem, 10.5vw, 5.8rem);
+    --reading-col-11: clamp(3.3rem, 10.8vw, 6rem);
+    --reading-col-12: clamp(3.3rem, 10.8vw, 6rem);
+    --reading-col-13: clamp(3.4rem, 9.8vw, 5.4rem);
+    --reading-col-14: clamp(3.8rem, 18vw, 8.4rem);
+  }
+}
+
+@media (max-width: 42rem) {
+  .reading-table {
+    font-size: .84rem;
+    --reading-col-1: clamp(8.2rem, 56vw, 13.8rem);
+    --reading-col-2: clamp(6.1rem, 38vw, 10.8rem);
+    --reading-col-3: clamp(3.9rem, 18vw, 6.4rem);
+    --reading-col-4: clamp(3.1rem, 15vw, 5.4rem);
+    --reading-col-5: clamp(3.1rem, 15vw, 5.4rem);
+    --reading-col-6: clamp(3.1rem, 15vw, 5.6rem);
+    --reading-col-7: clamp(2.9rem, 14vw, 4.8rem);
+    --reading-col-8: clamp(2.9rem, 14vw, 4.8rem);
+    --reading-col-9: clamp(2.8rem, 13.5vw, 4.5rem);
+    --reading-col-10: clamp(2.9rem, 14vw, 4.8rem);
+    --reading-col-11: clamp(2.9rem, 14vw, 4.8rem);
+    --reading-col-12: clamp(2.9rem, 14vw, 4.8rem);
+    --reading-col-13: clamp(3rem, 13.8vw, 4.8rem);
+    --reading-col-14: clamp(4.3rem, 23vw, 8.2rem);
+    min-width: min(100%, calc(100vw - 1.75rem));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
