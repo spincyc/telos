@@ -519,6 +519,10 @@ class IdentityFailureDiagnostic:
                 rendered += (
                     "; controller-auth-host-error="
                     f"{self.controller_auth.host_error}")
+            if self.controller_auth.receipt_origin is not None:
+                rendered += (
+                    "; controller-auth-receipt-origin="
+                    f"{self.controller_auth.receipt_origin.value}")
         if self.controller_auth_arm_subphase is not None:
             rendered += (
                 "; controller-auth-arm-subphase="

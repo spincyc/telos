@@ -16,6 +16,7 @@ from homelab.vm.serial_automation import SerialAutomation
 from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
     ControllerAuthReceiveObservation,
+    ControllerAuthReceiptOrigin,
     ControllerAuthCode,
     ControllerAuthCollection,
     ControllerAuthExpectation,
@@ -1681,6 +1682,67 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 result = ControllerAuthResult(
                     collection=_COLLECTION_BY_WIRE[wire])
                 self.assertIsNone(result.host_error)
+
+    def test_receipt_origin_separates_silence_from_a_reported_answer(self):
+        """A Controller that never answered differs from one with nothing."""
+        expired = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            receipt_origin=ControllerAuthReceiptOrigin.HOST_WAIT_EXPIRED,
+        )
+        reported = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            receipt_origin=ControllerAuthReceiptOrigin.CONTROLLER_REPORTED,
+        )
+        rendered_expired = IdentityFailureDiagnostic.join_guest(
+            "reboot-reauth-desktop",
+            "WindowsLocalReauthenticationError",
+            controller_auth=expired,
+        ).render()
+        rendered_reported = IdentityFailureDiagnostic.join_guest(
+            "reboot-reauth-desktop",
+            "WindowsLocalReauthenticationError",
+            controller_auth=reported,
+        ).render()
+        self.assertIn(
+            "controller-auth-receipt-origin=host-wait-expired",
+            rendered_expired)
+        self.assertIn(
+            "controller-auth-receipt-origin=controller-reported",
+            rendered_reported)
+        self.assertNotEqual(rendered_expired, rendered_reported)
+
+    def test_the_wire_labels_a_reported_unavailable_receipt(self):
+        """Parsing the Controller's own value attributes it to the Controller."""
+        result = ControllerAuthDiagnosticSession._closed_result(
+            b"collection", b"receipt-unavailable")
+        self.assertIs(
+            result.receipt_origin,
+            ControllerAuthReceiptOrigin.CONTROLLER_REPORTED)
+        other = ControllerAuthDiagnosticSession._closed_result(
+            b"collection", b"malformed")
+        self.assertIsNone(other.receipt_origin)
+        code = ControllerAuthDiagnosticSession._closed_result(
+            b"code", b"authenticated")
+        self.assertIsNone(code.receipt_origin)
+
+    def test_receipt_origin_requires_an_unavailable_receipt(self):
+        with self.assertRaises(ValueError):
+            ControllerAuthResult(
+                code=ControllerAuthCode.AUTHENTICATED,
+                receipt_origin=(
+                    ControllerAuthReceiptOrigin.HOST_WAIT_EXPIRED),
+            )
+        with self.assertRaises(ValueError):
+            ControllerAuthResult(
+                collection=ControllerAuthCollection.MALFORMED,
+                receipt_origin=(
+                    ControllerAuthReceiptOrigin.CONTROLLER_REPORTED),
+            )
+        with self.assertRaises(TypeError):
+            ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                receipt_origin="host-wait-expired",
+            )
 
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)

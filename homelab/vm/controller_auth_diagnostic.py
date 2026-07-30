@@ -102,6 +102,20 @@ class ControllerAuthCollection(Enum):
     RECEIPT_UNAVAILABLE = "receipt-unavailable"
 
 
+class ControllerAuthReceiptOrigin(Enum):
+    """Closed, host-side origin of an unavailable result receipt.
+
+    `receipt-unavailable` is both a value the Controller may report and the
+    value the host records when its own bounded wait expires. Those are
+    different failures with different next actions, so the host labels which
+    one it observed. There is deliberately no wire vocabulary for this: the
+    Controller supplies the collection value, never the label.
+    """
+
+    HOST_WAIT_EXPIRED = "host-wait-expired"
+    CONTROLLER_REPORTED = "controller-reported"
+
+
 class ControllerAuthCleanup(Enum):
     """Closed sink destruction failures."""
 
@@ -212,6 +226,7 @@ class ControllerAuthResult:
     # is a fact the host observes about itself. It carries an exception type
     # name, never a message, because messages can quote paths or secrets.
     host_error: str | None = None
+    receipt_origin: "ControllerAuthReceiptOrigin | None" = None
 
     def __post_init__(self) -> None:
         self._validate()
@@ -237,6 +252,15 @@ class ControllerAuthResult:
         ):
             raise ValueError(
                 "Controller auth host error must be one bounded type name")
+        if self.receipt_origin is not None:
+            if type(self.receipt_origin) is not ControllerAuthReceiptOrigin:
+                raise TypeError("Controller auth receipt origin is invalid")
+            if (
+                self.collection
+                is not ControllerAuthCollection.RECEIPT_UNAVAILABLE
+            ):
+                raise ValueError(
+                    "Controller auth receipt origin needs unavailable receipt")
 
 
 _CODE_BY_WIRE = {
@@ -1123,7 +1147,19 @@ class ControllerAuthDiagnosticSession:
         if kind == b"code" and value in _CODE_BY_WIRE:
             return ControllerAuthResult(code=_CODE_BY_WIRE[value])
         if kind == b"collection" and value in _COLLECTION_BY_WIRE:
-            return ControllerAuthResult(collection=_COLLECTION_BY_WIRE[value])
+            collection = _COLLECTION_BY_WIRE[value]
+            return ControllerAuthResult(
+                collection=collection,
+                # The Controller answered; it just had nothing to give. The
+                # host attaches this label, so the value stays the
+                # Controller's and the attribution stays the host's.
+                receipt_origin=(
+                    ControllerAuthReceiptOrigin.CONTROLLER_REPORTED
+                    if collection
+                    is ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                    else None
+                ),
+            )
         raise ValueError("Controller auth result coordinate is invalid")
 
     def _terminal_cleanup(
@@ -1510,6 +1546,10 @@ class ControllerAuthDiagnosticSession:
                 controller_auth_result=ControllerAuthResult(
                     collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
                     cleanup=cleanup,
+                    # No receipt line arrived before the bounded deadline, so
+                    # the Controller never answered at all.
+                    receipt_origin=(
+                        ControllerAuthReceiptOrigin.HOST_WAIT_EXPIRED),
                 ),
                 cleanup_proved=cleanup is None,
             ) from None
