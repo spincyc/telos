@@ -986,7 +986,8 @@ class ControllerAuthDiagnosticSession:
             try:
                 self._wait(
                     rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
-                    "controller-auth-sudo-password-prompt")
+                    "controller-auth-sudo-password-prompt",
+                    deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
             except BaseException:
                 cleanup = self._recover_cleanup()
                 raise ControllerAuthDiagnosticError(

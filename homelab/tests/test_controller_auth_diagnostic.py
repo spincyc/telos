@@ -373,6 +373,66 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(now[0], 4.0)
         self.assertEqual(console.timeout, 99.0)
 
+    def test_sudo_prompt_wait_reserves_cleanup_budget(self):
+        now = [0.0]
+        observed = []
+        console = mock.Mock(password=b"private-password", timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] = 2.0
+                return mock.Mock()
+            if len(observed) == 2:
+                now[0] += console.timeout
+                raise TimeoutError("sudo prompt deadline")
+            return re.match(rb"(ok|absence-unproved)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=20, clock=lambda: now[0])
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.SUDO_PROMPT)
+        self.assertEqual(now[0], 4.0)
+        self.assertEqual(console.timeout, 99.0)
+        self.assertNotIn(
+            "sudo prompt deadline", caught.exception.args)
+
+    def test_sudo_prompt_at_cleanup_boundary_cannot_spend_margin(self):
+        now = [0.0]
+        observed = []
+        console = mock.Mock(password=b"private-password", timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] = 2.0
+                return mock.Mock()
+            if len(observed) == 2:
+                now[0] += console.timeout
+                return mock.Mock()
+            return re.match(rb"(ok|absence-unproved)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=20, clock=lambda: now[0])
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.RECEIVE)
+        self.assertEqual(now[0], 4.0)
+        self.assertEqual(console.timeout, 99.0)
+
     def test_arm_recovery_never_extends_outer_deadline(self):
         now = [0.0]
         observed = []
