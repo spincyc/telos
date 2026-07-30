@@ -115,6 +115,9 @@ class ProtocolConfig:
     max_frame_bytes: int = MAX_FRAME_BYTES
     max_events: int = 4096
     max_boots: int = 64
+    heartbeat_interval: float = 10.0
+    silence_limit: float = 30.0
+    drain_limit: float = 5.0
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -144,6 +147,14 @@ class ProtocolConfig:
             raise SchemaError("invalid event retention limit")
         if type(self.max_boots) is not int or not 1 <= self.max_boots <= UINT32_MAX:
             raise SchemaError("invalid boot retention limit")
+        for name in ("heartbeat_interval", "silence_limit", "drain_limit"):
+            limit = getattr(self, name)
+            if (
+                type(limit) not in (int, float)
+                or not math.isfinite(limit)
+                or limit <= 0
+            ):
+                raise SchemaError(f"{name} must be a finite positive limit")
 
 
 @dataclass(frozen=True)
@@ -721,9 +732,13 @@ class ReceiverState:
             max_frame_bytes=config.max_frame_bytes,
             max_events=config.max_events,
             max_boots=config.max_boots,
+            heartbeat_interval=config.heartbeat_interval,
+            silence_limit=config.silence_limit,
+            drain_limit=config.drain_limit,
         )
         self._key = bytearray(key)
         self.deadline = float(deadline)
+        self._drain_deadline: float | None = None
         self.boot_id: str | None = None
         self.last_sequence: int | None = None
         self.active_phase: str | None = None
@@ -742,6 +757,11 @@ class ReceiverState:
             or received_at >= self.deadline
         ):
             raise DeadlineError("event arrived outside the finite host timeline")
+        if (
+            self._drain_deadline is not None
+            and received_at >= self._drain_deadline
+        ):
+            raise DeadlineError("event arrived after the drain deadline")
         envelope = parse_payload(payload, self.config, bytes(self._key))
         boot_id = envelope["boot_id"]
         event_type = envelope["type"]
@@ -759,6 +779,8 @@ class ReceiverState:
                     _seal=_ACCEPTED_EVENT_SEAL,
                 )
             raise ReplayError("event tuple reused with conflicting content")
+        if self._drain_deadline is not None:
+            raise DeadlineError("draining receiver accepts only retries")
         if envelope["id"] in self._event_ids:
             raise ReplayError("event UUID reused across sequence or boot")
 
@@ -809,6 +831,53 @@ class ReceiverState:
                 raise TransitionError("terminal event does not match the active phase")
             return None
         return self.active_phase
+
+    def liveness(self, *, now: float) -> str:
+        """Classify stream liveness: absent, live, or stalled.
+
+        While a phase is active one missed heartbeat is tolerated, so the
+        stall bound is the tighter of two heartbeat intervals and the silence
+        limit.  Classification never alters any deadline.
+        """
+
+        if self._closed or self._key is None:
+            raise AuthenticationError("receiver is closed")
+        if type(now) not in (int, float) or not math.isfinite(now):
+            raise DeadlineError("liveness requires a finite host-monotonic time")
+        if self.last_receive is None:
+            return "absent"
+        limit = self.config.silence_limit
+        if self.active_phase is not None:
+            limit = min(limit, 2 * self.config.heartbeat_interval)
+        return "stalled" if now - self.last_receive > limit else "live"
+
+    def begin_drain(self, *, now: float) -> float:
+        """Enter teardown drain; only retries of accepted events remain valid.
+
+        Returns the drain deadline, clamped to the immutable receiver
+        deadline; it never extends any timeline.
+        """
+
+        if self._closed or self._key is None:
+            raise AuthenticationError("receiver is closed")
+        if type(now) not in (int, float) or not math.isfinite(now):
+            raise DeadlineError("drain requires a finite host-monotonic time")
+        if self._drain_deadline is not None:
+            raise DeadlineError("receiver is already draining")
+        self._drain_deadline = min(
+            float(now) + self.config.drain_limit, self.deadline)
+        return self._drain_deadline
+
+    def finish_drain(self) -> bytes:
+        """Persist validated progress, then destroy key and receiver state."""
+
+        if self._closed or self._key is None:
+            raise AuthenticationError("receiver is closed")
+        if self._drain_deadline is None:
+            raise DeadlineError("receiver is not draining")
+        snapshot = self.checkpoint()
+        self.close()
+        return snapshot
 
     def checkpoint(self) -> bytes:
         """Render one authenticated, restorable snapshot of accepted progress.

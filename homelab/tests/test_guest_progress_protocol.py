@@ -698,5 +698,87 @@ class ReceiverCheckpointTests(unittest.TestCase):
             self.restore(self.mutate(extra=1))
 
 
+class ReceiverLivenessAndDrainTests(unittest.TestCase):
+    def setUp(self):
+        self.state = ReceiverState(CONFIG, KEY, deadline=100)
+
+    def accept(self, envelope, at=1):
+        return self.state.accept(canonical_json(envelope), received_at=at)
+
+    def test_rejects_invalid_lifecycle_limits(self):
+        for name in ("heartbeat_interval", "silence_limit", "drain_limit"):
+            for limit in (0, -1.0, float("nan"), float("inf"), "10"):
+                with self.subTest(name=name, limit=limit):
+                    with self.assertRaises(SchemaError):
+                        ProtocolConfig(
+                            attempt="attempt-public-1",
+                            producer="arch-installer",
+                            nonce="host-nonce-1",
+                            phases=("install",),
+                            statuses=(
+                                "starting", "active", "complete", "failed",
+                                "ready"),
+                            **{name: limit},
+                        )
+
+    def test_liveness_is_absent_then_live_then_stalled_by_silence(self):
+        self.assertEqual(self.state.liveness(now=0), "absent")
+        self.accept(event(), at=1)
+        self.assertEqual(self.state.liveness(now=31), "live")
+        self.assertEqual(self.state.liveness(now=31.5), "stalled")
+
+    def test_active_phase_tolerates_exactly_one_missed_heartbeat(self):
+        self.accept(event(), at=1)
+        self.accept(event(1, "phase-started", "install"), at=2)
+        self.assertEqual(self.state.liveness(now=22), "live")
+        self.assertEqual(self.state.liveness(now=22.5), "stalled")
+
+    def test_liveness_rejects_nonfinite_times_and_closed_receivers(self):
+        with self.assertRaises(DeadlineError):
+            self.state.liveness(now=float("nan"))
+        self.state.close()
+        with self.assertRaises(AuthenticationError):
+            self.state.liveness(now=1)
+
+    def test_drain_accepts_only_identical_retries_until_its_deadline(self):
+        sync = event()
+        self.accept(sync, at=1)
+        self.assertEqual(self.state.begin_drain(now=2), 7)
+        self.assertTrue(self.accept(sync, at=3).duplicate)
+        with self.assertRaises(DeadlineError):
+            self.accept(event(1, "phase-started", "install"), at=3)
+        with self.assertRaises(DeadlineError):
+            self.accept(sync, at=7)
+
+    def test_drain_deadline_is_clamped_and_never_extends_the_receiver(self):
+        self.accept(event(), at=1)
+        state = ReceiverState(CONFIG, KEY, deadline=4)
+        self.assertEqual(state.begin_drain(now=2), 4)
+
+    def test_drain_lifecycle_is_exact(self):
+        with self.assertRaises(DeadlineError):
+            self.state.finish_drain()
+        self.state.begin_drain(now=1)
+        with self.assertRaises(DeadlineError):
+            self.state.begin_drain(now=1)
+        snapshot = self.state.finish_drain()
+        with self.assertRaises(AuthenticationError):
+            self.state.accept(canonical_json(event()), received_at=2)
+        restored = ReceiverState.restore(snapshot, CONFIG, KEY, deadline=200)
+        self.assertIsNone(restored.boot_id)
+
+    def test_drain_snapshot_preserves_validated_events(self):
+        self.accept(event(), at=1)
+        self.accept(event(1, "phase-started", "install"), at=2)
+        self.state.begin_drain(now=3)
+        snapshot = self.state.finish_drain()
+        restored = ReceiverState.restore(snapshot, CONFIG, KEY, deadline=200)
+        self.assertEqual(restored.last_sequence, 1)
+        self.assertEqual(restored.active_phase, "install")
+        restored.accept(
+            canonical_json(event(2, "phase-finished", "install")),
+            received_at=4)
+
+
 if __name__ == "__main__":
     unittest.main()
