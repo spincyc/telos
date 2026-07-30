@@ -15,6 +15,11 @@ factory gates, and literal restart point are maintained in
 ledger before ending a work session so continuation does not depend on chat
 history.
 
+Current cross-platform design contracts include
+[guest progress reporting](GUEST-PROGRESS-REPORTING.md), which records the
+prior art, transport decision, trust boundary, deadlines, and failure
+semantics for affirmative guest-to-harness progress signals.
+
 ## Required document layers
 
 Every supported Homelab workflow must have two linked views:
