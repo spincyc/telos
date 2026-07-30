@@ -187,6 +187,8 @@ check: check-tools
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
 	@$(PYTHON) -m unittest discover -s homelab/tests -t . -q
+	@if command -v tmt >/dev/null 2>&1; then tmt check; else \
+		echo 'tmt absent: tmt.json registry gate skipped'; fi
 
 # Homelab: the tests are pure Python and need nothing installed; the lab needs
 # QEMU and OVMF and says so when they are absent.
