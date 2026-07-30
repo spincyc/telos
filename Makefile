@@ -4,6 +4,11 @@ PYTHON ?= python3
 PDF_JOBS ?= 4
 INSTALL ?= install
 CODEX ?= /usr/bin/codex
+READING_LIST_SOURCE := Reading.List.ods
+READING_LIST_TOOL := scripts/reading-list.py
+READING_LIST_YAML := site/data/reading-list.yaml
+READING_LIST_JSON := site/data/reading-list.json
+READING_LIST_GENRES := site/data/reading-genres.yaml
 
 # Arch Linux dependency manifest (the only supported local host for now).
 #
@@ -105,6 +110,9 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 
 .PHONY: all pdf install list projects help clean distclean check-tools check \
 	doc install-doc site site-preview verify-site \
+	init-aiq init-tmt \
+	reading-list \
+	reading-list-scan \
 	homelab-test homelab-lab homelab-matrix homelab-image \
 	homelab-converge-check homelab-bootstrap-deps \
 	homelab-media homelab-media-arch homelab-media-windows \
@@ -169,7 +177,34 @@ doc:
 install-doc: doc
 	@$(MAKE) --no-print-directory '$(DOC_ROOT)/$(DOC).pdf'
 
+reading-list:
+	@if [ -f '$(READING_LIST_SOURCE)' ]; then \
+		$(PYTHON) $(READING_LIST_TOOL) --source '$(READING_LIST_SOURCE)' ingest \
+			--delete-source --yaml $(READING_LIST_YAML) --json $(READING_LIST_JSON); \
+		$(PYTHON) $(READING_LIST_TOOL) --yaml $(READING_LIST_YAML) --json $(READING_LIST_JSON) \
+			--genres $(READING_LIST_GENRES) scan; \
+	elif [ -f '$(READING_LIST_YAML)' ] && [ -f '$(READING_LIST_JSON)' ]; then \
+		printf '%s\n' 'reading-list: source already ingested; using generated data'; \
+	else \
+		echo 'reading-list: missing source and generated output; place Reading.List.ods in repo root and retry' >&2; \
+		exit 1; \
+	fi
+
+reading-list-scan:
+	@if [ -f '$(READING_LIST_JSON)' ] && [ -f '$(READING_LIST_GENRES)' ]; then \
+		$(PYTHON) $(READING_LIST_TOOL) --yaml $(READING_LIST_YAML) --json $(READING_LIST_JSON) \
+			--genres $(READING_LIST_GENRES) scan; \
+	else \
+		echo 'reading-list-scan: missing $(READING_LIST_JSON) or $(READING_LIST_GENRES)' >&2; \
+		exit 1; \
+	fi
+
+init-aiq: reading-list
+
+init-tmt: site
+
 site:
+	@$(MAKE) reading-list
 	@$(PYTHON) $(SITE_TOOL) build
 
 site-preview:

@@ -1,0 +1,420 @@
+version: 1
+defaults:
+  category: unclassified
+  coarse: Unclassified
+  fine: Unspecified
+  reason: "No matching rule. Add an exact_match entry or rules below."
+exact_matches:
+  - title: "The Great Gatsby"
+    author: F. Scott Fitzgerald
+    category: fiction
+    coarse: literary-fiction
+    fine: literary-realism
+  - title: "Piranesi"
+    author: Susanna Clarke
+    category: fiction
+    coarse: literary-fiction
+    fine: weird-fiction
+  - title: "Vineland"
+    author: Thomas Pynchon
+    category: fiction
+    coarse: literary-fiction
+    fine: postmodern-literary
+  - title: "The Secret History"
+    author: Donna Tartt
+    category: fiction
+    coarse: literary-fiction
+    fine: campus-literature
+categories:
+  fiction:
+    name: Fiction
+    description: >
+      Fiction entries are narrative works that are primarily invented stories.
+      Examples include novels, linked novella cycles, fantasy, mystery, and speculative series.
+    signals:
+      title_keywords:
+        - novel
+        - tale
+        - saga
+        - journey
+        - chronicle
+      notes_keywords:
+        - protagonist
+    default_coarse: general-fiction
+    coarse:
+      - id: general-fiction
+        name: General fiction
+        description: >
+          Books that are primarily narrative fiction but do not match a stronger
+          coarse genre pattern.
+        default_fine: narrative
+        fine:
+          - id: narrative
+            name: General narrative
+            description: Character or plot-driven fiction where genre markers are ambiguous.
+            signals: {}
+      - id: fantasy
+        name: Fantasy
+        description: >
+          Fiction featuring magical systems, mythic settings, or supernatural world rules
+          that are central to the narrative.
+        signals:
+          title_keywords:
+            - king
+            - queen
+            - dawn
+            - sword
+            - blood
+            - dragon
+          author_keywords:
+            - martin
+            - lewis
+            - clancy
+        default_fine: epic-fantasy
+        fine:
+          - id: epic-fantasy
+            name: Epic fantasy
+            description: Multi-threaded quests, empires, prophecy arcs, or continent-scale conflict.
+            signals:
+              title_keywords:
+                - throne
+                - empire
+                - kingdom
+                - chronicles
+                - blood
+          - id: urban-fantasy
+            name: Urban fantasy
+            description: Modern or contemporary settings with hidden magical mechanics.
+            signals:
+              title_keywords:
+                - city
+                - dark
+                - shadow
+                - tower
+      - id: science-fiction
+        name: Science fiction
+        description: Fiction centered on science-driven speculative futures or alternate
+          physical realities.
+        signals:
+          title_keywords:
+            - space
+            - star
+            - orbit
+            - alien
+            - galaxy
+            - future
+            - machine
+          author_keywords:
+            - taylor
+            - andy weir
+            - clarke
+            - reder
+        default_fine: hard-scifi
+        fine:
+          - id: hard-scifi
+            name: Hard science fiction
+            description: Plot weight is on plausible technology and hard-edged science constraints.
+            signals:
+              title_keywords:
+                - mission
+                - mars
+                - planet
+                - engineering
+              notes_keywords:
+                - physics
+          - id: space-opera
+            name: Space opera
+            description: Fleet-scale narratives, interstellar empires, and war in space.
+            signals:
+              title_keywords:
+                - fleet
+                - fleet
+                - war
+                - galaxy
+                - empire
+          - id: soft-scifi
+            name: Soft science fiction
+            description: Emphasis on social systems and human interaction over hard detail.
+            signals:
+              title_keywords:
+                - love
+                - empire
+                - memory
+      - id: literary-fiction
+        name: Literary fiction
+        description: Character-led prose with thematic depth and style-first structure.
+        signals:
+          title_keywords:
+            - song
+            - city
+            - garden
+            - painter
+            - secret
+            - shadow
+        default_fine: literary-realism
+        fine:
+          - id: literary-realism
+            name: Literary realism
+            description: Real-world settings with stylistically strong realism and interiority.
+            signals:
+              title_keywords:
+                - gatsby
+                - painter
+                - portrait
+                - street
+          - id: experimental-literary
+            name: Experimental literary
+            description: Form-shifting, language-forward, or fragmented narrative.
+            signals:
+              title_keywords:
+                - notes
+                - dream
+                - river
+                - city
+          - id: weird-fiction
+            name: Weird fiction
+            description: Supernatural or uncanny themes with literary framing.
+            signals:
+              title_keywords:
+                - black
+                - night
+                - house
+                - secret
+                - dream
+      - id: mystery-thriller
+        name: Mystery and thriller
+        description: Crime investigation, suspense, plot-first pacing, and unresolved peril.
+        signals:
+          title_keywords:
+            - dark
+            - night
+            - blood
+            - shadow
+            - secret
+            - hunt
+        default_fine: thriller
+        fine:
+          - id: thriller
+            name: Thriller
+            description: Fast-paced danger, suspense arcs, and escalating external stakes.
+            signals:
+              title_keywords:
+                - dark
+                - hunt
+                - chase
+          - id: murder-mystery
+            name: Murder mystery
+            description: Investigative structure around a central death or accusation.
+            signals:
+              title_keywords:
+                - missing
+                - murder
+                - corpse
+                - evidence
+      - id: historical-fiction
+        name: Historical fiction
+        description: Fiction set in identified historical periods with period details.
+        signals:
+          title_keywords:
+            - empire
+            - war
+            - prince
+            - duke
+            - revolt
+            - crusade
+        default_fine: historical-adventure
+        fine:
+          - id: historical-adventure
+            name: Historical adventure
+            description: Travel, war, dynasties, or maritime conflict with period settings.
+            signals:
+              title_keywords:
+                - war
+                - battle
+                - empire
+                - crusade
+          - id: historical-epic
+            name: Historical epic
+            description: Large-scale period narratives with broad social or dynastic arcs.
+            signals:
+              title_keywords:
+                - reign
+                - empire
+                - dynasty
+      - id: horror
+        name: Horror
+        description: Horror prioritizes dread, threat, and unease as the narrative engine.
+        signals:
+          title_keywords:
+            - night
+            - dark
+            - dead
+            - fear
+            - blood
+        default_fine: dread
+        fine:
+          - id: dread
+            name: Dread horror
+            description: Psychological or atmospheric suspense with long-form unease.
+            signals:
+              title_regex:
+                - "(?i)\\bdead|\\bdark|\\bnight\\b"
+          - id: body-horror
+            name: Body horror
+            description: Bodily transformation or contamination as core motif.
+            signals:
+              title_keywords:
+                - flesh
+                - wound
+                - bone
+  non-fiction:
+    name: Non-fiction
+    description: >
+      Non-fiction entries describe real-world people, events, methods, ideas, or places.
+    signals:
+      title_keywords:
+        - history
+        - biography
+        - memoir
+        - how to
+        - guide
+        - introduction
+        - complete
+      notes_keywords:
+        - nonfiction
+    default_coarse: general-non-fiction
+    coarse:
+      - id: general-non-fiction
+        name: General non-fiction
+        description: Real-world reference or factual titles without a tighter coarse signal.
+        default_fine: practical
+        fine:
+          - id: practical
+            name: Practical and self-development
+            description: Advice, methods, and process-oriented work.
+            signals:
+              title_keywords:
+                - guide
+                - handbook
+                - manual
+                - guidebook
+      - id: biography
+        name: Biography and memoir
+        description: Life writing, memoir, and personal memory as primary format.
+        signals:
+          title_keywords:
+            - biography
+            - memoir
+            - memoirs
+            - life
+            - autobiography
+            - letters
+        default_fine: memoir
+        fine:
+          - id: biography
+            name: Biography
+            description: Third-person or researched life narratives.
+            signals:
+              title_keywords:
+                - biography
+                - life of
+                - in the life
+          - id: memoir
+            name: Memoir
+            description: First-person reflections on a life phase, event, or identity.
+            signals:
+              title_keywords:
+                - memoir
+                - memory
+                - recollections
+      - id: history
+        name: History
+        description: Works organized around historical chronology or argument.
+        signals:
+          title_keywords:
+            - history
+            - war
+            - empire
+            - revolution
+            - nation
+            - century
+        default_fine: world-history
+        fine:
+          - id: world-history
+            name: World and comparative history
+            description: Long-scale history with broad geographic or civilizational coverage.
+            signals:
+              title_keywords:
+                - history
+                - empire
+                - world
+          - id: military-history
+            name: Military history
+            description: Battles, campaigns, doctrines, and war-period structure.
+            signals:
+              title_keywords:
+                - war
+                - battle
+                - campaign
+                - invasion
+      - id: science-technology
+        name: Science and technology
+        description: Scientific, engineering, or technical exposition and explanation.
+        signals:
+          title_keywords:
+            - science
+            - physics
+            - chemistry
+            - engineering
+            - biology
+            - technology
+            - computer
+            - artificial
+        default_fine: technical-reference
+        fine:
+          - id: technical-reference
+            name: Reference science
+            description: Didactic or explanatory technical work.
+            signals:
+              title_keywords:
+                - guide to
+                - introduction to
+                - manual
+          - id: science-history
+            name: Science in history
+            description: Histories of scientific ideas and technological development.
+            signals:
+              title_keywords:
+                - history of
+                - science
+                - engineer
+      - id: social-science
+        name: Social science and politics
+        description: Economics, philosophy, sociology, policy, and social argument.
+        signals:
+          title_keywords:
+            - politics
+            - economics
+            - philosophy
+            - sociology
+            - policy
+            - capitalism
+        default_fine: political-thought
+        fine:
+          - id: political-thought
+            name: Political thought
+            description: Works on systems of power, institutions, policy, and statecraft.
+            signals:
+              title_keywords:
+                - politics
+                - government
+                - state
+          - id: psychology
+            name: Psychology and behavior
+            description: Cognitive, social, and behavioral studies or essays.
+            signals:
+              title_keywords:
+                - psychology
+                - behavior
+                - mind
+                - attention
