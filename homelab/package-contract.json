@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "common": {
+    "packages": [
+      "base",
+      "bash",
+      "btrfs-progs",
+      "coreutils",
+      "openssh",
+      "pacman",
+      "python",
+      "sudo",
+      "systemd"
+    ],
+    "binaries": [
+      {"path": "/usr/bin/bash", "owner": "bash"},
+      {"path": "/usr/bin/btrfs", "owner": "btrfs-progs"},
+      {"path": "/usr/bin/env", "owner": "coreutils"},
+      {"path": "/usr/bin/pacman", "owner": "pacman"},
+      {"path": "/usr/bin/python3", "owner": "python"},
+      {"path": "/usr/bin/ssh", "owner": "openssh"},
+      {"path": "/usr/bin/systemctl", "owner": "systemd"},
+      {"path": "/usr/sbin/sshd", "owner": "openssh"},
+      {"path": "/usr/sbin/visudo", "owner": "sudo"}
+    ]
+  },
+  "overlays": {
+    "installer-live": {
+      "packages": [
+        "arch-install-scripts",
+        "cryptsetup",
+        "curl",
+        "dmidecode",
+        "dosfstools",
+        "gptfdisk",
+        "iproute2",
+        "iputils",
+        "less",
+        "linux",
+        "linux-firmware",
+        "lsof",
+        "mkinitcpio",
+        "mkinitcpio-archiso",
+        "mkinitcpio-nfs-utils",
+        "nano",
+        "parted",
+        "pciutils",
+        "sbctl",
+        "systemd-ukify",
+        "tmux",
+        "usbutils",
+        "util-linux",
+        "wget"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/cryptsetup", "owner": "cryptsetup"},
+        {"path": "/usr/bin/curl", "owner": "curl"},
+        {"path": "/usr/bin/ip", "owner": "iproute2"},
+        {"path": "/usr/bin/lsblk", "owner": "util-linux"},
+        {"path": "/usr/bin/mkfs.fat", "owner": "dosfstools"},
+        {"path": "/usr/bin/pacstrap", "owner": "arch-install-scripts"},
+        {"path": "/usr/bin/parted", "owner": "parted"},
+        {"path": "/usr/bin/sbctl", "owner": "sbctl"},
+        {"path": "/usr/bin/sgdisk", "owner": "gptfdisk"}
+      ]
+    },
+    "controller-network": {
+      "packages": ["dhcpcd", "dnsmasq", "nginx"],
+      "binaries": [
+        {"path": "/usr/bin/dhcpcd", "owner": "dhcpcd"},
+        {"path": "/usr/bin/dnsmasq", "owner": "dnsmasq"},
+        {"path": "/usr/bin/nginx", "owner": "nginx"}
+      ]
+    },
+    "controller-domain": {
+      "packages": [
+        "bind",
+        "krb5",
+        "ntp",
+        "openresolv",
+        "python-cryptography",
+        "python-dnspython",
+        "python-markdown",
+        "samba"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/host", "owner": "bind"},
+        {"path": "/usr/bin/kinit", "owner": "krb5"},
+        {"path": "/usr/bin/net", "owner": "samba"},
+        {"path": "/usr/bin/ntpd", "owner": "ntp"},
+        {"path": "/usr/bin/resolvconf", "owner": "openresolv"},
+        {"path": "/usr/bin/samba-tool", "owner": "samba"},
+        {"path": "/usr/bin/testparm", "owner": "samba"}
+      ]
+    },
+    "controller-factory": {
+      "packages": [
+        "7zip",
+        "ansible-core",
+        "ipxe",
+        "rsync",
+        "tftp-hpa",
+        "wimlib"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/7z", "owner": "7zip"},
+        {"path": "/usr/bin/ansible-playbook", "owner": "ansible-core"},
+        {"path": "/usr/bin/in.tftpd", "owner": "tftp-hpa"},
+        {"path": "/usr/bin/rsync", "owner": "rsync"},
+        {"path": "/usr/bin/wimlib-imagex", "owner": "wimlib"}
+      ]
+    },
+    "workstation": {
+      "packages": [
+        "krb5",
+        "linux",
+        "linux-firmware",
+        "linux-lts",
+        "networkmanager",
+        "samba",
+        "sssd"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/kinit", "owner": "krb5"},
+        {"path": "/usr/bin/net", "owner": "samba"},
+        {"path": "/usr/bin/nmcli", "owner": "networkmanager"},
+        {"path": "/usr/bin/sssctl", "owner": "sssd"},
+        {"path": "/usr/lib/sssd/sssd", "owner": "sssd"}
+      ]
+    },
+    "services": {
+      "packages": ["podman"],
+      "binaries": [
+        {"path": "/usr/bin/podman", "owner": "podman"}
+      ]
+    },
+    "image-build-host": {
+      "packages": [
+        "archiso",
+        "edk2-ovmf",
+        "fakeroot",
+        "git",
+        "libisoburn",
+        "qemu-img",
+        "qemu-base",
+        "qemu-system-x86"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/fakeroot", "owner": "fakeroot"},
+        {"path": "/usr/bin/git", "owner": "git"},
+        {"path": "/usr/bin/mkarchiso", "owner": "archiso"},
+        {"path": "/usr/bin/qemu-img", "owner": "qemu-img"},
+        {"path": "/usr/bin/qemu-system-x86_64", "owner": "qemu-system-x86"},
+        {"path": "/usr/bin/xorriso", "owner": "libisoburn"}
+      ]
+    }
+  }
+}
