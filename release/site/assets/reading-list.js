@@ -2,7 +2,7 @@
   const DATA_URL = "data/reading-list.json";
   const ROOT = document.querySelector("[data-reading-sections]");
   const VERSION_EL = document.querySelector("[data-reading-version]");
-  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-4";
+  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-5";
   const TABLE_LAYOUTS = [
     {
       status: "complete",
@@ -50,9 +50,6 @@
     },
   ];
   const TABLE_SORTS = TABLE_LAYOUTS.map(() => ({ key: "title", direction: 1 }));
-  const SORT_ASC = "\u2191";
-  const SORT_DESC = "\u2193";
-
   if (!ROOT) {
     return;
   }
@@ -147,9 +144,9 @@
     const headers = config.columns
       .map((column) => {
         const active = sortState.key === column.key;
-        const arrow = active ? (sortState.direction === 1 ? ` ${SORT_ASC}` : ` ${SORT_DESC}`) : "";
-        const sortClass = active ? " class=\"reading-sort-btn is-active\"" : " class=\"reading-sort-btn\"";
-        return `<th><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"${sortClass} aria-sort="${active ? (sortState.direction === 1 ? "ascending" : "descending") : "none"}">${escapeText(column.label)}${arrow}</button></th>`;
+        const arrow = active ? (sortState.direction === 1 ? " ↑" : " ↓") : "";
+        return `<th><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"
+          style="cursor:pointer;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;">${escapeText(column.label)}${arrow}</button></th>`;
       })
       .join("");
     const body = rows
@@ -163,18 +160,18 @@
 
     if (!rows.length) {
       return `
-        <section class="reading-section" aria-labelledby=\"reading-section-${sectionIndex + 1}\">
+        <section aria-labelledby=\"reading-section-${sectionIndex + 1}\">
           <h2 id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (0)</h2>
           <p>No entries.</p>
         </section>
       `;
     }
 
-      return `
-      <section class="reading-section" aria-labelledby=\"reading-section-${sectionIndex + 1}\">
+    return `
+      <section aria-labelledby=\"reading-section-${sectionIndex + 1}\">
         <h2 id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (${rows.length})</h2>
-        <div class=\"reading-table-wrap\">
-          <table class=\"reading-table\">
+        <div style=\"overflow-x:auto;\">
+          <table style=\"width:100%; border-collapse:collapse; margin:0 0 1rem; min-width: 56rem;\">
             <thead>
               <tr>${headers}</tr>
             </thead>
