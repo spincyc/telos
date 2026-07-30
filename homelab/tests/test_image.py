@@ -72,6 +72,7 @@ class TestTheInstallerIsInTheImage(StagingCase):
         for module in image.INSTALLER_MODULES:
             with self.subTest(module=module):
                 self.assertTrue((library / module).is_file())
+        self.assertTrue((library / "package-contract.json").is_file())
 
     def test_the_modules_are_findable_at_runtime(self):
         build = self.stage()
@@ -174,6 +175,26 @@ class TestProfileIsBootable(StagingCase):
         profiledef = (ROOT / "archiso/profiledef.sh").read_text()
         self.assertIn("uefi-x64", profiledef)
         self.assertNotIn("bios.syslinux", profiledef)
+
+    def test_package_contract_is_required_by_the_audit(self):
+        build = self.stage()
+        packages = build / "packages.x86_64"
+        packages.write_text(
+            packages.read_text().replace("\npython\n", "\n")
+        )
+        self.assertTrue(any(
+            "package-contract requirements: python" in problem
+            for problem in image.audit(build)
+        ))
+
+    def test_packages_outside_the_contract_are_refused(self):
+        build = self.stage()
+        packages = build / "packages.x86_64"
+        packages.write_text(packages.read_text() + "\nunaccounted-package\n")
+        self.assertTrue(any(
+            "outside the package contract: unaccounted-package" in problem
+            for problem in image.audit(build)
+        ))
 
     def test_it_builds_netboot_artifacts(self):
         profiledef = (ROOT / "archiso/profiledef.sh").read_text()

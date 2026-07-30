@@ -10,6 +10,7 @@ from workstations.arch_second import (
     Disk, InstallContractError, Partition, parse_lsblk, render_installer,
     validate_windows_first,
 )
+from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 
 MIB = 1024**2
 SIZES = (1024, 16, 300 * 1024, 100 * 1024, 2048)
@@ -55,6 +56,26 @@ def unallocated_disk(*, arch_mib=SIZES[3], extra_gap_mib=0):
 
 
 class ArchSecondTests(unittest.TestCase):
+    def test_installer_packages_are_the_workstation_contract(self):
+        script = render_installer(
+            disk_path="/dev/nvme0n1", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        required = merge_contract(
+            load_registry(
+                Path(__file__).resolve().parents[1] / "package-contract.json"
+            ),
+            PROFILE_OVERLAYS["workstation-install"],
+        ).packages
+        pacstrap = next(
+            line for line in script.splitlines()
+            if line.startswith("pacstrap -K ")
+        )
+        self.assertEqual(
+            tuple(pacstrap.split()[3:]),
+            required,
+        )
+
     def test_accepts_exact_windows_first_shape(self):
         roles = validate_windows_first(
             good_disk(), required_serial="LAPTOP-1", expected_sizes_mib=SIZES

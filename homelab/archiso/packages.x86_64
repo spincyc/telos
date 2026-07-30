@@ -9,6 +9,11 @@
 # The live environment itself --- kernel, firmware, and the archiso hooks that
 # mount a root filesystem fetched over HTTP.
 base
+bash
+coreutils
+pacman
+sudo
+systemd
 linux
 linux-firmware
 mkinitcpio
@@ -19,6 +24,7 @@ mkinitcpio-nfs-utils
 gptfdisk
 parted
 dosfstools
+e2fsprogs
 btrfs-progs
 cryptsetup
 util-linux

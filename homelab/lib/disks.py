@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
+
+from package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 
 GIB = 1024 ** 3
 
@@ -182,18 +185,23 @@ def read_cpu_vendor(cpuinfo_text: str) -> str:
 
 
 def base_packages(vendor_id: str) -> list[str]:
-    """Everything the installer installs, and nothing else.
+    """The deterministic common + Workstation contract, plus CPU microcode.
 
-    Anything beyond this -- drivers, desktop, services -- belongs to Ansible
-    convergence under ADR 0053, where it can differ per machine without
-    changing the installer.
+    The package registry is the policy source.  CPU microcode remains a
+    measured-machine addition because selecting it before reading the target
+    CPU would either omit errata or install the wrong vendor's package.
     """
-    packages = [
-        "base", "linux-lts", "linux", "linux-firmware",
-        "btrfs-progs", "cryptsetup", "dosfstools",
-        "systemd-ukify", "openssh", "sudo",
-    ]
+    module = Path(__file__).resolve()
+    candidates = (
+        module.with_name("package-contract.json"),
+        module.parents[1] / "package-contract.json",
+    )
+    contract = next((path for path in candidates if path.is_file()),
+                    candidates[-1])
+    registry = load_registry(contract)
+    packages = list(merge_contract(
+        registry, PROFILE_OVERLAYS["workstation-install"]).packages)
     microcode = microcode_package(vendor_id)
     if microcode:
         packages.append(microcode)
-    return packages
+    return sorted(packages)

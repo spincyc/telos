@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path, PurePosixPath
 import re
+from types import MappingProxyType
 from typing import Any
 
 
@@ -16,10 +17,23 @@ EXPECTED_OVERLAYS = (
     "controller-network",
     "controller-domain",
     "controller-factory",
+    "identity-client",
     "workstation",
     "services",
     "image-build-host",
 )
+PROFILE_OVERLAYS = MappingProxyType({
+    "installer-live": ("installer-live",),
+    "controller-seed": (
+        "controller-network",
+        "controller-domain",
+        "controller-factory",
+        "identity-client",
+        "services",
+        "image-build-host",
+    ),
+    "workstation-install": ("workstation", "identity-client"),
+})
 
 
 class PackageContractError(ValueError):

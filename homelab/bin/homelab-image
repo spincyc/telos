@@ -33,6 +33,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
+
 PROFILE = ROOT / "archiso"
 OVERLAY = ROOT / "instance"
 DEFAULT_WORK = Path("/tmp/homelab-image")
@@ -41,7 +45,8 @@ DEFAULT_WORK = Path("/tmp/homelab-image")
 # lib/ cannot silently become part of a published image.
 INSTALLER_MODULES = (
     "artifacts.py", "disks.py", "dnsmasq.py", "firstboot.py", "hardware.py",
-    "manifest.py", "netplan.py", "preflight.py", "prompts.py", "steps.py",
+    "manifest.py", "netplan.py", "package_contract.py", "preflight.py",
+    "prompts.py", "steps.py",
 )
 
 # What must never appear in the image. It is published with its checksum and is
@@ -62,6 +67,7 @@ REQUIRED_NETWORKD_LINKS = (
     "systemd-networkd-wait-online.service",
     "etc/systemd/system/sockets.target.wants/systemd-networkd.socket",
 )
+PACKAGE_CONTRACT = ROOT / "package-contract.json"
 
 
 class StagingError(RuntimeError):
@@ -91,6 +97,7 @@ def stage(work: Path, *, overlay: Path = OVERLAY) -> list[str]:
             raise StagingError(f"lib/{module} is missing; the image would ship "
                                f"an installer that cannot start")
         shutil.copy2(source, local_lib / module)
+    shutil.copy2(PACKAGE_CONTRACT, local_lib / "package-contract.json")
     notes.append(f"installer staged: 1 program, {len(INSTALLER_MODULES)} modules")
 
     # bin/homelab-install finds lib/ relative to itself. Inside the image the
@@ -186,6 +193,30 @@ def audit(build: Path) -> list[str]:
     """Look at the staged tree the way somebody who downloaded it would."""
     problems: list[str] = []
 
+    package_file = build / "packages.x86_64"
+    try:
+        actual_packages = _package_names(package_file)
+        required_packages = set(merge_contract(
+            load_registry(PACKAGE_CONTRACT),
+            PROFILE_OVERLAYS["installer-live"],
+        ).packages)
+    except (OSError, UnicodeError, ValueError) as error:
+        problems.append(f"cannot verify the image package contract: {error}")
+    else:
+        actual_package_set = set(actual_packages)
+        missing_packages = sorted(required_packages - actual_package_set)
+        if missing_packages:
+            problems.append(
+                "packages.x86_64 omits package-contract requirements: "
+                + ", ".join(missing_packages)
+            )
+        unexpected_packages = sorted(actual_package_set - required_packages)
+        if unexpected_packages:
+            problems.append(
+                "packages.x86_64 contains packages outside the package contract: "
+                + ", ".join(unexpected_packages)
+            )
+
     for path in sorted(build.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
@@ -243,6 +274,18 @@ def audit(build: Path) -> list[str]:
             problems.append(f"the DHCP boot network link is missing: {relative}")
 
     return problems
+
+
+def _package_names(path: Path) -> tuple[str, ...]:
+    names = tuple(
+        value for raw in path.read_text(encoding="utf-8").splitlines()
+        if (value := raw.split("#", 1)[0].strip())
+    )
+    if not names:
+        raise ValueError("package list is empty")
+    if len(names) != len(set(names)):
+        raise ValueError("package list contains duplicates")
+    return names
 
 
 def main(argv=None) -> int:

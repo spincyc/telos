@@ -103,11 +103,11 @@ class TestMicrocode(unittest.TestCase):
         self.assertIn("linux", packages)
 
     def test_base_packages_stay_minimal(self):
-        # Anything beyond the base belongs to Ansible convergence (ADR 0053),
-        # where it can differ per machine. A driver here would be a smell.
+        # Services and Controller roles do not leak into Workstation policy.
         packages = disks.base_packages("GenuineIntel")
-        self.assertLess(len(packages), 15)
-        for unwanted in ("nvidia", "gnome", "dnsmasq", "nginx", "ansible"):
+        for required in ("python", "openssh", "sssd", "networkmanager"):
+            self.assertIn(required, packages)
+        for unwanted in ("nvidia", "gnome", "dnsmasq", "nginx", "ansible-core"):
             self.assertNotIn(unwanted, packages)
 
 

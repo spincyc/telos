@@ -37,12 +37,37 @@ class PackageContractTests(unittest.TestCase):
         controller = package_contract.merge_contract(
             registry, ["controller-network", "controller-factory"])
         workstation = package_contract.merge_contract(
-            registry, ["workstation"])
+            registry,
+            package_contract.PROFILE_OVERLAYS["workstation-install"])
+        installer = package_contract.merge_contract(
+            registry, package_contract.PROFILE_OVERLAYS["installer-live"])
+        image_host = package_contract.merge_contract(
+            registry, ["image-build-host"])
         self.assertTrue(
             {"dhcpcd", "dnsmasq", "nginx", "7zip", "wimlib"}
             <= set(controller.packages))
         self.assertTrue(
             {"python", "openssh", "sssd"} <= set(workstation.packages))
+        self.assertIn("e2fsprogs", installer.packages)
+        self.assertIn(
+            package_contract.BinaryOwnership(
+                path="/usr/bin/mkfs.ext4", owner="e2fsprogs"),
+            installer.binaries,
+        )
+        self.assertTrue(
+            {"gnupg", "iproute2", "mtools", "nftables", "util-linux"}
+            <= set(image_host.packages))
+        self.assertTrue(
+            {
+                ("/usr/bin/gpg", "gnupg"),
+                ("/usr/bin/ip", "iproute2"),
+                ("/usr/bin/lsblk", "util-linux"),
+                ("/usr/bin/mcopy", "mtools"),
+                ("/usr/bin/mount", "util-linux"),
+                ("/usr/bin/nft", "nftables"),
+                ("/usr/bin/umount", "util-linux"),
+            }
+            <= {(item.path, item.owner) for item in image_host.binaries})
 
     def test_unknown_overlay_is_rejected(self):
         registry = package_contract.parse_registry(self.raw)
@@ -127,7 +152,7 @@ class PackageContractTests(unittest.TestCase):
     def test_role_overlays_may_share_identical_owned_requirements(self):
         registry = package_contract.parse_registry(self.raw)
         merged = package_contract.merge_contract(
-            registry, ["controller-domain", "workstation"])
+            registry, ["controller-domain", "identity-client"])
         self.assertEqual(merged.packages.count("samba"), 1)
         self.assertEqual(
             [item.path for item in merged.binaries].count("/usr/bin/net"), 1)

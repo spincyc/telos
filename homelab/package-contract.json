@@ -32,6 +32,7 @@
         "curl",
         "dmidecode",
         "dosfstools",
+        "e2fsprogs",
         "gptfdisk",
         "iproute2",
         "iputils",
@@ -57,6 +58,7 @@
         {"path": "/usr/bin/curl", "owner": "curl"},
         {"path": "/usr/bin/ip", "owner": "iproute2"},
         {"path": "/usr/bin/lsblk", "owner": "util-linux"},
+        {"path": "/usr/bin/mkfs.ext4", "owner": "e2fsprogs"},
         {"path": "/usr/bin/mkfs.fat", "owner": "dosfstools"},
         {"path": "/usr/bin/pacstrap", "owner": "arch-install-scripts"},
         {"path": "/usr/bin/parted", "owner": "parted"},
@@ -110,22 +112,28 @@
         {"path": "/usr/bin/wimlib-imagex", "owner": "wimlib"}
       ]
     },
-    "workstation": {
+    "identity-client": {
       "packages": [
         "krb5",
-        "linux",
-        "linux-firmware",
-        "linux-lts",
-        "networkmanager",
         "samba",
         "sssd"
       ],
       "binaries": [
         {"path": "/usr/bin/kinit", "owner": "krb5"},
         {"path": "/usr/bin/net", "owner": "samba"},
-        {"path": "/usr/bin/nmcli", "owner": "networkmanager"},
         {"path": "/usr/bin/sssctl", "owner": "sssd"},
         {"path": "/usr/lib/sssd/sssd", "owner": "sssd"}
+      ]
+    },
+    "workstation": {
+      "packages": [
+        "linux",
+        "linux-firmware",
+        "linux-lts",
+        "networkmanager"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/nmcli", "owner": "networkmanager"}
       ]
     },
     "services": {
@@ -140,17 +148,29 @@
         "edk2-ovmf",
         "fakeroot",
         "git",
+        "gnupg",
+        "iproute2",
         "libisoburn",
+        "mtools",
+        "nftables",
         "qemu-img",
         "qemu-base",
-        "qemu-system-x86"
+        "qemu-system-x86",
+        "util-linux"
       ],
       "binaries": [
         {"path": "/usr/bin/fakeroot", "owner": "fakeroot"},
         {"path": "/usr/bin/git", "owner": "git"},
+        {"path": "/usr/bin/gpg", "owner": "gnupg"},
+        {"path": "/usr/bin/ip", "owner": "iproute2"},
+        {"path": "/usr/bin/lsblk", "owner": "util-linux"},
         {"path": "/usr/bin/mkarchiso", "owner": "archiso"},
+        {"path": "/usr/bin/mcopy", "owner": "mtools"},
+        {"path": "/usr/bin/mount", "owner": "util-linux"},
+        {"path": "/usr/bin/nft", "owner": "nftables"},
         {"path": "/usr/bin/qemu-img", "owner": "qemu-img"},
         {"path": "/usr/bin/qemu-system-x86_64", "owner": "qemu-system-x86"},
+        {"path": "/usr/bin/umount", "owner": "util-linux"},
         {"path": "/usr/bin/xorriso", "owner": "libisoburn"}
       ]
     }

@@ -13,7 +13,17 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any, Mapping, Sequence
+
+HOMELAB_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HOMELAB_ROOT))
+
+from lib.package_contract import (  # noqa: E402
+    PROFILE_OVERLAYS,
+    load_registry,
+    merge_contract,
+)
 
 
 ESP = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
@@ -251,6 +261,7 @@ def render_installer(
     ):
         raise InstallContractError("five positive integer sizes are required")
     sizes = ",".join(str(size) for size in expected_sizes_mib)
+    packages = " ".join(_workstation_packages())
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 disk={disk_path!r}
@@ -291,8 +302,7 @@ mkfs.ext4 -F -L ARCH_ROOT "$ARCH_PART"
 mount "$ARCH_PART" /mnt
 mkdir -p /mnt/boot
 mount "$ESP_PART" /mnt/boot
-pacstrap -K /mnt base linux-lts linux-firmware networkmanager sssd \
-  krb5 samba sudo
+pacstrap -K /mnt {packages}
 genfstab -U /mnt >> /mnt/etc/fstab
 printf '%s\\n' "$hostname" > /mnt/etc/hostname
 arch-chroot /mnt systemctl enable NetworkManager
@@ -313,6 +323,14 @@ bootctl --root=/mnt set-default auto-windows
 sync
 echo "Arch installed; Windows partitions and filesystems were not modified."
 """
+
+
+def _workstation_packages() -> tuple[str, ...]:
+    """Resolve the checked-in common + Workstation policy deterministically."""
+    contract = HOMELAB_ROOT / "package-contract.json"
+    return merge_contract(
+        load_registry(contract), PROFILE_OVERLAYS["workstation-install"]
+    ).packages
 
 
 def main() -> int:
