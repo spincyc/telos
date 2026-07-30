@@ -40,6 +40,11 @@ AUTH_JSON_ROUTE = f"{AUTH_JSON_COMPONENT}:{AUTH_JSON_LEVEL}@{AUDIT_PATH}"
 AUTH_JSON_CONFIG_LINE = f"\tlog level = 0 {AUTH_JSON_ROUTE}"
 MAX_OBSERVATION_SECONDS = 30
 MIN_OBSERVATION_SECONDS = 1
+# The guest owns the complete observation window.  Reserve a separate bounded
+# interval for its terminal receipt to cross the serial transport after that
+# window closes; otherwise a result produced exactly at the guest deadline
+# races an equal host deadline.
+RESULT_RECEIPT_SECONDS = 2
 # Cleanup's explicitly bounded operations can spend three sequential
 # five-second subprocess timeouts (_remove_persistent_route, disable, and
 # verification), then five seconds checking descriptor release.  This is a
@@ -1451,6 +1456,7 @@ class ControllerAuthDiagnosticSession:
             )
         self._deadline = (
             self._clock() + self._observation_seconds
+            + RESULT_RECEIPT_SECONDS
             + CLEANUP_RESERVE_SECONDS)
         self._state = "collecting"
         try:

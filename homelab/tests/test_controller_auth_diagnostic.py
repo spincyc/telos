@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -344,10 +345,89 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(
             observed,
-            [subject.MAX_OBSERVATION_SECONDS,
-             subject.CLEANUP_RESERVE_SECONDS])
+            [subject.MAX_OBSERVATION_SECONDS
+             + subject.RESULT_RECEIPT_SECONDS,
+             subject.RESULT_RECEIPT_SECONDS
+             + subject.CLEANUP_RESERVE_SECONDS])
         self.assertIs(result.code, ControllerAuthCode.AUTHENTICATED)
         self.assertEqual(now[0], 130.0)
+
+    def test_result_at_observation_boundary_has_transport_allowance(self):
+        now = [100.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] += subject.MAX_OBSERVATION_SECONDS
+                self.assertEqual(
+                    console.timeout, subject.MAX_OBSERVATION_SECONDS
+                    + subject.RESULT_RECEIPT_SECONDS)
+                return re.search(
+                    rb"(code|collection):([a-z-]+)",
+                    b"code:no-event")
+            return re.match(rb"(ok|[a-z-]+)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: now[0])
+        session._state = "armed"
+        session._armed_deadline = 107.0
+
+        session.begin_submission()
+        outcome = session.result()
+
+        self.assertIs(outcome.code, ControllerAuthCode.NO_EVENT)
+        self.assertEqual(
+            observed,
+            [
+                subject.MAX_OBSERVATION_SECONDS
+                + subject.RESULT_RECEIPT_SECONDS,
+                subject.RESULT_RECEIPT_SECONDS
+                + subject.CLEANUP_RESERVE_SECONDS,
+            ],
+        )
+
+    def test_result_at_receipt_deadline_times_out_with_cleanup_reserved(self):
+        now = [100.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] += (
+                    subject.MAX_OBSERVATION_SECONDS
+                    + subject.RESULT_RECEIPT_SECONDS)
+                raise TimeoutError("receipt reached half-open deadline")
+            return re.match(rb"(ok|[a-z-]+)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: now[0])
+        session._state = "armed"
+        session._armed_deadline = 107.0
+
+        session.begin_submission()
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.result()
+
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+        )
+        self.assertEqual(
+            observed,
+            [
+                subject.MAX_OBSERVATION_SECONDS
+                + subject.RESULT_RECEIPT_SECONDS,
+                subject.CLEANUP_RESERVE_SECONDS,
+            ],
+        )
 
     def test_begin_submission_dispatch_failure_recovers_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)
@@ -979,6 +1059,47 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
         self.assertIs(outcome.code, ControllerAuthCode.AUTHENTICATED)
+        self.assertIsNone(outcome.cleanup)
+
+    def test_real_serial_accepts_result_after_observation_window(self):
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        peer = right.makefile("rb", buffering=0)
+        errors = []
+        console = SerialAutomation(reader, writer, None, timeout=1)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25)
+        session._state = "armed"
+        session._armed_deadline = session._clock() + 1
+        session._observation_seconds = 0.05
+        result = (
+            f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
+        cleanup = (
+            f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+
+        def responder():
+            try:
+                peer.readline()
+                time.sleep(0.1)
+                right.sendall(
+                    b"\r" + result + b"code:no-event\r"
+                    + cleanup + b"ok\r")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            session.begin_submission()
+            outcome = session.result()
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIs(outcome.code, ControllerAuthCode.NO_EVENT)
         self.assertIsNone(outcome.cleanup)
 
     def test_real_serial_accepts_bare_cr_prearm_result_and_cleanup(self):
