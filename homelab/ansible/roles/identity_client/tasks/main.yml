@@ -27,6 +27,7 @@
       - sssd
       - samba          # net ads join
       - krb5
+      - pam            # pam_mkhomedir.so
     state: present
 
 - name: Configure Kerberos

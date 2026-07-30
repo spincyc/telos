@@ -5,6 +5,8 @@
       - linux
       - linux-lts
       - curl
+      - diffutils
+      - util-linux
     state: present
     update_cache: true
 

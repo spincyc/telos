@@ -14,6 +14,7 @@ python
 python-dnspython
 python-markdown
 python-cryptography
+glibc
 openresolv
 ansible-core
 samba
@@ -42,6 +43,7 @@ util-linux
 wimlib
 podman
 sssd
+pam
 
 # Seed bootstrap additions outside the role contract: the offline Controller
 # must boot, format its ESP, and establish its initial network before role

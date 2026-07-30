@@ -173,7 +173,7 @@ class TestPlaybooks(unittest.TestCase):
             if task.get("name") == "Install the directory client"
         )
         packages = package_task["ansible.builtin.package"]["name"]
-        self.assertEqual(packages, ["sssd", "samba", "krb5"])
+        self.assertEqual(packages, ["sssd", "samba", "krb5", "pam"])
         self.assertNotIn("adcli", packages)
         self.assertNotIn("oddjob-mkhomedir", packages)
 

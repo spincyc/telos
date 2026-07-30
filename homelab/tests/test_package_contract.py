@@ -35,7 +35,11 @@ class PackageContractTests(unittest.TestCase):
     def test_audited_role_requirements_are_explicit(self):
         registry = package_contract.parse_registry(self.raw)
         controller = package_contract.merge_contract(
-            registry, ["controller-network", "controller-factory"])
+            registry, [
+                "controller-network",
+                "controller-domain",
+                "controller-factory",
+            ])
         workstation = package_contract.merge_contract(
             registry,
             package_contract.PROFILE_OVERLAYS["workstation-install"])
@@ -44,10 +48,32 @@ class PackageContractTests(unittest.TestCase):
         image_host = package_contract.merge_contract(
             registry, ["image-build-host"])
         self.assertTrue(
-            {"dhcpcd", "dnsmasq", "nginx", "7zip", "wimlib"}
+            {
+                "dhcpcd", "dnsmasq", "iproute2", "nginx", "glibc",
+                "samba", "7zip", "wimlib",
+            }
             <= set(controller.packages))
         self.assertTrue(
-            {"python", "openssh", "sssd"} <= set(workstation.packages))
+            {
+                ("/usr/bin/getent", "glibc"),
+                ("/usr/bin/ip", "iproute2"),
+                ("/usr/bin/smbcontrol", "samba"),
+                ("/usr/bin/timedatectl", "systemd"),
+            }
+            <= {(item.path, item.owner) for item in controller.binaries})
+        self.assertTrue(
+            {
+                "python", "openssh", "sssd", "pam", "curl", "diffutils",
+                "util-linux",
+            } <= set(workstation.packages))
+        self.assertTrue(
+            {
+                ("/usr/bin/cmp", "diffutils"),
+                ("/usr/bin/curl", "curl"),
+                ("/usr/bin/logger", "util-linux"),
+                ("/usr/lib/security/pam_mkhomedir.so", "pam"),
+            }
+            <= {(item.path, item.owner) for item in workstation.binaries})
         self.assertIn("e2fsprogs", installer.packages)
         self.assertIn(
             package_contract.BinaryOwnership(

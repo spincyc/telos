@@ -67,16 +67,18 @@
       ]
     },
     "controller-network": {
-      "packages": ["dhcpcd", "dnsmasq", "nginx"],
+      "packages": ["dhcpcd", "dnsmasq", "iproute2", "nginx"],
       "binaries": [
         {"path": "/usr/bin/dhcpcd", "owner": "dhcpcd"},
         {"path": "/usr/bin/dnsmasq", "owner": "dnsmasq"},
+        {"path": "/usr/bin/ip", "owner": "iproute2"},
         {"path": "/usr/bin/nginx", "owner": "nginx"}
       ]
     },
     "controller-domain": {
       "packages": [
         "bind",
+        "glibc",
         "krb5",
         "ntp",
         "openresolv",
@@ -86,12 +88,15 @@
         "samba"
       ],
       "binaries": [
+        {"path": "/usr/bin/getent", "owner": "glibc"},
         {"path": "/usr/bin/host", "owner": "bind"},
         {"path": "/usr/bin/kinit", "owner": "krb5"},
         {"path": "/usr/bin/net", "owner": "samba"},
         {"path": "/usr/bin/ntpd", "owner": "ntp"},
         {"path": "/usr/bin/resolvconf", "owner": "openresolv"},
         {"path": "/usr/bin/samba-tool", "owner": "samba"},
+        {"path": "/usr/bin/smbcontrol", "owner": "samba"},
+        {"path": "/usr/bin/timedatectl", "owner": "systemd"},
         {"path": "/usr/bin/testparm", "owner": "samba"}
       ]
     },
@@ -115,6 +120,7 @@
     "identity-client": {
       "packages": [
         "krb5",
+        "pam",
         "samba",
         "sssd"
       ],
@@ -122,7 +128,20 @@
         {"path": "/usr/bin/kinit", "owner": "krb5"},
         {"path": "/usr/bin/net", "owner": "samba"},
         {"path": "/usr/bin/sssctl", "owner": "sssd"},
+        {"path": "/usr/lib/security/pam_mkhomedir.so", "owner": "pam"},
         {"path": "/usr/lib/sssd/sssd", "owner": "sssd"}
+      ]
+    },
+    "automatic-updates": {
+      "packages": [
+        "curl",
+        "diffutils",
+        "util-linux"
+      ],
+      "binaries": [
+        {"path": "/usr/bin/cmp", "owner": "diffutils"},
+        {"path": "/usr/bin/curl", "owner": "curl"},
+        {"path": "/usr/bin/logger", "owner": "util-linux"}
       ]
     },
     "workstation": {

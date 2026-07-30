@@ -18,6 +18,7 @@ EXPECTED_OVERLAYS = (
     "controller-domain",
     "controller-factory",
     "identity-client",
+    "automatic-updates",
     "workstation",
     "services",
     "image-build-host",
@@ -32,7 +33,11 @@ PROFILE_OVERLAYS = MappingProxyType({
         "services",
         "image-build-host",
     ),
-    "workstation-install": ("workstation", "identity-client"),
+    "workstation-install": (
+        "identity-client",
+        "automatic-updates",
+        "workstation",
+    ),
 })
 
 

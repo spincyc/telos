@@ -141,6 +141,7 @@
       - python-markdown
       - openresolv
       - bind
+      - glibc
     state: present
   when: homelab_ad_manage_packages | bool
 

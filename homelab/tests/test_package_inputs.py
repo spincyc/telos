@@ -33,12 +33,15 @@ def package_names(path: Path) -> tuple[str, ...]:
 
 
 def ansible_package_tasks(path: Path) -> tuple[frozenset[str], ...]:
-    """Extract literal package names from ansible.builtin.package task blocks."""
+    """Extract literal names from package and pacman task blocks."""
     lines = path.read_text(encoding="utf-8").splitlines()
     tasks: list[frozenset[str]] = []
     for module_index, raw in enumerate(lines):
         content = raw.split("#", 1)[0].rstrip()
-        if content.lstrip() != "ansible.builtin.package:":
+        if content.lstrip() not in (
+            "ansible.builtin.package:",
+            "community.general.pacman:",
+        ):
             continue
         module_indent = len(content) - len(content.lstrip())
         names: list[str] = []
@@ -119,8 +122,17 @@ class PackageInputParityTests(unittest.TestCase):
         tasks = ansible_package_tasks(
             ROOT / "ansible/roles/identity_client/tasks/main.yml"
         )
-        required = frozenset({"krb5", "samba", "sssd"})
+        required = frozenset({"krb5", "pam", "samba", "sssd"})
         self.assertIn(required, tasks)
+
+    def test_update_ansible_list_covers_automatic_update_overlay(self):
+        tasks = ansible_package_tasks(
+            ROOT / "ansible/roles/arch_updates/tasks/main.yml"
+        )
+        required = frozenset(
+            self.registry.overlays["automatic-updates"].packages
+        )
+        self.assertTrue(any(required <= task for task in tasks))
 
     def test_services_ansible_list_covers_services_overlay(self):
         tasks = ansible_package_tasks(
