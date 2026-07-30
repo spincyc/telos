@@ -187,6 +187,12 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 
 ## Current blockers and cautions
 
+- Nothing is published. `main` and `continue-windows-identity-acceptance` are
+  reconciled at the same commit and carry every local result, including the
+  reading-list line that previously existed only on `origin`. The remote still
+  holds the pre-rewrite history, so the branches have diverged and publishing
+  requires an authorized force-push; an ordinary push will be refused. Verify
+  before pushing that no remote-only work has appeared since this reconciliation.
 - Live Windows identity attempts are blocked pending operator authorization.
   `make homelab-windows-identity-prepare APPLY=1` and the corresponding run
   target need privileged local QEMU execution that the current agent sandbox
