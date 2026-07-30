@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 import zipfile
@@ -157,8 +156,8 @@ def classify_status(started: str | None, completed: str | None, title: str | Non
     return "pending"
 
 
-def compute_id(title: str, author: str, reader: str) -> str:
-    key = "\u0000".join((normalize_text(title).lower(), normalize_text(author).lower(), normalize_text(reader).lower()))
+def compute_id(title: str, author: str) -> str:
+    key = "\u0000".join((normalize_text(title).lower(), normalize_text(author).lower()))
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
@@ -251,7 +250,6 @@ def canonicalize_entry(raw: dict[str, Any], force_id: bool = False) -> dict[str,
         return None
 
     author = normalize_text(raw.get("author")) or "Unknown"
-    reader = normalize_text(raw.get("reader")) or "Unknown"
     started = normalize_text(raw.get("started")) or None
     completed = normalize_text(raw.get("completed")) or None
     pages = parse_int(raw.get("pages"))
@@ -278,7 +276,6 @@ def canonicalize_entry(raw: dict[str, Any], force_id: bool = False) -> dict[str,
     entry = {
         "title": title,
         "author": author,
-        "reader": reader,
         "status": status,
         "started": started,
         "completed": completed,
@@ -295,7 +292,11 @@ def canonicalize_entry(raw: dict[str, Any], force_id: bool = False) -> dict[str,
     }
     if source_row is not None:
         entry["source_row"] = source_row
-    entry["id"] = existing_id if existing_id and not force_id else compute_id(title, author, reader)
+    entry["id"] = (
+        existing_id
+        if existing_id and not force_id
+        else compute_id(title, author)
+    )
     return entry
 
 
@@ -303,31 +304,11 @@ def sort_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         entries,
         key=lambda item: (
-            normalize_text(item.get("reader", "unknown")).lower(),
             STATUS_ORDER.get(item.get("status", "pending"), 0),
             normalize_text(item.get("title", "")).lower(),
             normalize_text(item.get("author", "")).lower(),
         ),
     )
-
-
-def _build_readers(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in entries:
-        buckets[row.get("reader", "Unknown")].append(row)
-
-    readers: list[dict[str, Any]] = []
-    for name in sorted(buckets):
-        rows = sorted(
-            buckets[name],
-            key=lambda item: (
-                STATUS_ORDER.get(item.get("status", "pending"), 0),
-                normalize_text(item.get("title", "")).lower(),
-                normalize_text(item.get("author", "")).lower(),
-            ),
-        )
-        readers.append({"name": name, "count": len(rows), "entries": rows})
-    return readers
 
 
 def _build_summary(entries: list[dict[str, Any]]) -> dict[str, int]:
@@ -355,7 +336,6 @@ def normalize_payload(
             normalized.append(normalized_entry)
 
     normalized = sort_entries(normalized)
-    readers = _build_readers(normalized)
     source_payload = {
         "at": generated_at or now_utc_iso(),
         "source": source_name,
@@ -367,14 +347,12 @@ def normalize_payload(
 
     summary = {
         "total": len(normalized),
-        "readers": len(readers),
         "status": _build_summary(normalized),
     }
 
     return {
         "generated": source_payload,
         "summary": summary,
-        "readers": readers,
         "entries": normalized,
     }
 
@@ -410,8 +388,7 @@ def load_payload(path: Path) -> dict[str, Any]:
                 "source_sha256": None,
                 "source_size_bytes": None,
             },
-            "summary": {"total": 0, "readers": 0, "status": {"complete": 0, "active": 0, "pending": 0}},
-            "readers": [],
+            "summary": {"total": 0, "status": {"complete": 0, "active": 0, "pending": 0}},
             "entries": [],
         }
 
@@ -432,7 +409,6 @@ def read_ods_payload(source: Path) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     for table in root.findall(".//table:table", NS):
-        name = table.attrib.get(f"{{{NS['table']}}}name", "Unknown")
         parsed_rows = read_table_rows(table)
         if not parsed_rows:
             continue
@@ -444,7 +420,7 @@ def read_ods_payload(source: Path) -> list[dict[str, Any]]:
         for source_row, cells in enumerate(parsed_rows[1:], 1):
             if not any(normalize_text(value) for value in cells):
                 continue
-            record: dict[str, Any] = {"reader": name, "source_row": source_row}
+            record: dict[str, Any] = {"source_row": source_row}
             for key, value in zip(header_cells, cells):
                 record[FIELD_MAP.get(key, key)] = value
             if record.get("title", "").strip().lower() == "total":
@@ -471,8 +447,7 @@ def ingest_from_source(source: Path) -> dict[str, Any]:
             "source_size_bytes": source_size,
         },
         "entries": entries,
-        "readers": [],
-        "summary": {"total": 0, "readers": 0, "status": {"complete": 0, "active": 0, "pending": 0}},
+        "summary": {"total": 0, "status": {"complete": 0, "active": 0, "pending": 0}},
     }
     return normalize_payload(
         payload,
@@ -489,7 +464,6 @@ def find_entry(
     entry_id: str | None = None,
     title: str | None = None,
     author: str | None = None,
-    reader: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     if entry_id:
         normalized_target = normalize_text(entry_id).lower()
@@ -510,8 +484,6 @@ def find_entry(
             continue
         if author and normalize_text(entry.get("author", "")).lower() != normalize_text(author).lower():
             continue
-        if reader and normalize_text(entry.get("reader", "")).lower() != normalize_text(reader).lower():
-            continue
         candidates.append((entry, index))
 
     if not candidates:
@@ -519,8 +491,6 @@ def find_entry(
         for index, entry in enumerate(entries):
             if normalized_title in normalize_text(entry.get("title", "")).lower():
                 if author and normalize_text(entry.get("author", "")).lower() != normalize_text(author).lower():
-                    continue
-                if reader and normalize_text(entry.get("reader", "")).lower() != normalize_text(reader).lower():
                     continue
                 contains.append((entry, index))
         candidates = contains
@@ -535,7 +505,7 @@ def find_entry(
             )
         )
         raise EntryMatchError(
-            f"multiple entries match {title!r}; include --author, --reader, or --id. "
+            f"multiple entries match {title!r}; include --author or --id. "
             f"examples: {options}"
         )
     return candidates[0]
@@ -544,5 +514,5 @@ def find_entry(
 def format_entry(entry: dict[str, Any]) -> str:
     return (
         f'{entry.get("id")} | {entry.get("status", "pending"):8} | '
-        f'{entry.get("title")} — {entry.get("author")} ({entry.get("reader")})'
+        f'{entry.get("title")} — {entry.get("author")}'
     )

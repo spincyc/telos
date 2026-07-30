@@ -52,7 +52,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_command = subparsers.add_parser("list", help="list known entries")
     list_command.add_argument("--status", choices=["all", "pending", "active", "complete"], default="all")
-    list_command.add_argument("--reader", default="")
     list_command.add_argument("--query", default="")
     list_command.set_defaults(handler=handle_list)
 
@@ -63,7 +62,6 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue = subparsers.add_parser("enqueue", help="add a book to pending reading")
     enqueue.add_argument("--title", required=True)
     enqueue.add_argument("--author", required=True)
-    enqueue.add_argument("--reader", default="Kevin")
     enqueue.add_argument("--notes", default="")
     enqueue.add_argument("--pages", type=parse_count, default=None)
     enqueue.add_argument("--words", type=parse_count, default=None)
@@ -114,7 +112,6 @@ def add_selector(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--id", default="")
     parser.add_argument("--title", default="")
     parser.add_argument("--author", default="")
-    parser.add_argument("--reader", default="")
 
 
 def parse_count(value: str) -> int:
@@ -136,7 +133,6 @@ def selector_from_args(args: argparse.Namespace) -> EntrySelector:
         entry_id=args.id or None,
         title=args.title or None,
         author=args.author or None,
-        reader=args.reader or None,
     )
 
 
@@ -146,7 +142,6 @@ def handle_list(args: argparse.Namespace) -> int:
     selected = list_entries(
         payload,
         target_status=args.status,
-        reader=args.reader,
         query=args.query,
     )
 
@@ -191,7 +186,6 @@ def handle_enqueue(args: argparse.Namespace) -> int:
         payload,
         title=args.title,
         author=args.author,
-        reader=args.reader or "Kevin",
         notes=args.notes,
         pages=args.pages,
         words=args.words,

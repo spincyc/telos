@@ -24,7 +24,6 @@ class EntrySelector:
     entry_id: str | None = None
     title: str | None = None
     author: str | None = None
-    reader: str | None = None
 
 
 def load_state(json_path: Path) -> dict[str, Any]:
@@ -54,19 +53,15 @@ def list_entries(
     payload: dict[str, Any],
     *,
     target_status: str = "all",
-    reader: str = "",
     query: str = "",
 ) -> list[dict[str, Any]]:
     entries = payload.get("entries", [])
     target = target_status.strip().lower()
-    normalized_reader = reader.strip().lower()
     normalized_query = query.strip().lower()
 
     selected: list[dict[str, Any]] = []
     for entry in entries:
         if target != "all" and entry.get("status") != target:
-            continue
-        if normalized_reader and (entry.get("reader", "").lower() != normalized_reader):
             continue
         haystack = " ".join(
             str(value or "").lower()
@@ -92,7 +87,6 @@ def _resolve(payload: dict[str, Any], selector: EntrySelector) -> tuple[dict[str
         entry_id=selector.entry_id,
         title=selector.title,
         author=selector.author,
-        reader=selector.reader,
     )
 
 
@@ -118,7 +112,6 @@ def enqueue_entry(
     *,
     title: str,
     author: str,
-    reader: str = "Kevin",
     notes: str = "",
     pages: int | None = None,
     words: int | None = None,
@@ -130,7 +123,6 @@ def enqueue_entry(
         {
             "title": title,
             "author": author,
-            "reader": reader,
             "status": "pending",
             "started": None,
             "completed": None,
