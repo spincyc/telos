@@ -1,6 +1,7 @@
 """Executable parity checks between package policy and image/build inputs."""
 
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -87,19 +88,53 @@ def ansible_package_tasks(path: Path) -> tuple[frozenset[str], ...]:
     return tuple(tasks)
 
 
+ENABLING_MODULES = (
+    "ansible.builtin.systemd:",
+    "ansible.builtin.systemd_service:",
+    "ansible.builtin.service:",
+    "systemd:",
+    "service:",
+)
+TRUE_LITERALS = frozenset({"true", "yes", "on"})
+FALSE_LITERALS = frozenset({"false", "no", "off"})
+
+
+class ExtractionError(AssertionError):
+    """The source uses a form this extractor cannot honestly interpret."""
+
+
 def ansible_enabled_units(path: Path) -> frozenset[str]:
     """Extract literal units an ansible role unconditionally enables.
 
-    A templated name or a templated `enabled` value is not a static promise, and
-    a task that disables a unit is not a requirement, so neither is collected.
+    A templated name, a templated or conditional `enabled` value, and a task
+    that disables a unit are all excluded: none is an unconditional promise.
     systemd resolves a bare name to `.service`; the contract records that
     resolved form.
+
+    The extractor fails closed. A form it cannot interpret — a flow-style
+    mapping, an unrecognized boolean spelling, or `systemctl enable` behind a
+    shell module — raises rather than silently reporting nothing, because a
+    silent miss would let an undeclared requirement pass this gate.
     """
     lines = path.read_text(encoding="utf-8").splitlines()
     units: set[str] = set()
     for module_index, raw in enumerate(lines):
         content = raw.split("#", 1)[0].rstrip()
-        if content.lstrip() != "ansible.builtin.systemd:":
+        stripped = content.lstrip()
+        if stripped.startswith(("ansible.builtin.command:", "ansible.builtin.shell:",
+                                "command:", "shell:")):
+            body = stripped.partition(":")[2]
+            if "systemctl enable" in body:
+                raise ExtractionError(
+                    f"{path}:{module_index + 1}: systemctl enable behind a shell "
+                    f"module is invisible to this gate")
+            continue
+        if stripped not in ENABLING_MODULES:
+            if any(stripped.startswith(module.rstrip(":") + ": {")
+                   for module in ENABLING_MODULES):
+                raise ExtractionError(
+                    f"{path}:{module_index + 1}: flow-style service mapping is "
+                    f"not interpretable")
             continue
         module_indent = len(content) - len(content.lstrip())
         fields: dict[str, str] = {}
@@ -114,12 +149,88 @@ def ansible_enabled_units(path: Path) -> frozenset[str]:
                 break
             key, separator, value = child.strip().partition(":")
             if separator:
-                fields[key] = value.strip().strip('"')
+                fields[key] = value.strip().strip('"').strip("'")
         name = fields.get("name", "")
-        if not name or "{{" in name or fields.get("enabled") != "true":
+        enabled = fields.get("enabled")
+        if enabled is None or "{{" in enabled:
+            continue
+        if enabled.lower() in FALSE_LITERALS:
+            continue
+        if enabled.lower() not in TRUE_LITERALS:
+            raise ExtractionError(
+                f"{path}:{module_index + 1}: unrecognized enabled value: {enabled}")
+        if not name or "{{" in name:
             continue
         units.add(name if "." in name else f"{name}.service")
     return frozenset(units)
+
+
+def role_enabled_units(role: Path) -> frozenset[str]:
+    """Every unit a role enables, across its task and handler files."""
+    units: set[str] = set()
+    for name in ("tasks/main.yml", "handlers/main.yml"):
+        path = role / name
+        if path.is_file():
+            units |= ansible_enabled_units(path)
+    return frozenset(units)
+
+
+def shell_enabled_units(path: Path) -> frozenset[str]:
+    """Units enabled by `systemctl enable` inside a generated shell payload."""
+    units: set[str] = set()
+    for match in re.finditer(
+        r"systemctl enable ([A-Za-z0-9@._-]+)", path.read_text(encoding="utf-8")
+    ):
+        unit = match.group(1)
+        units.add(unit if "." in unit else f"{unit}.service")
+    return frozenset(units)
+
+
+def wants_linked_units(path: Path) -> frozenset[str]:
+    """Units installed by symlink into a systemd `.wants` directory."""
+    return frozenset(
+        match.group(1)
+        for match in re.finditer(
+            r"\.wants/([A-Za-z0-9@._-]+\.(?:service|socket|timer))",
+            path.read_text(encoding="utf-8"),
+        )
+    )
+
+
+class NonAnsibleServiceParityTests(unittest.TestCase):
+    """Roles whose units are enabled by code rather than by an ansible role."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.registry = load_registry(ROOT / "package-contract.json")
+
+    def declared(self, overlay: str) -> frozenset[str]:
+        return frozenset(self.registry.overlays[overlay].services)
+
+    def test_installer_live_declares_its_required_networkd_links(self):
+        source = (ROOT / "bin/homelab-image").read_text(encoding="utf-8")
+        required = frozenset(
+            match.group(1)
+            for match in re.finditer(
+                r'\.wants/"?\s*\n?\s*"?([A-Za-z0-9@._-]+\.(?:service|socket))',
+                source,
+            )
+        )
+        self.assertTrue(required, "no required networkd links were found")
+        self.assertEqual(self.declared("installer-live"), required)
+
+    def test_workstation_declares_what_the_installer_enables(self):
+        enabled = shell_enabled_units(ROOT / "workstations/arch_second.py")
+        self.assertEqual(enabled, frozenset({"NetworkManager.service"}))
+        self.assertEqual(self.declared("workstation"), enabled)
+
+    def test_controller_factory_declares_its_unconditional_units(self):
+        linked = wants_linked_units(ROOT / "vm/factory_publication.py")
+        declared = self.declared("controller-factory")
+        self.assertTrue(declared <= linked)
+        # smb.service is enabled only for a verified Windows source, so it is
+        # deliberately absent from the unconditional declaration.
+        self.assertEqual(linked - declared, frozenset({"smb.service"}))
 
 
 class ServiceInputParityTests(unittest.TestCase):
@@ -138,6 +249,14 @@ class ServiceInputParityTests(unittest.TestCase):
     def setUpClass(cls):
         cls.registry = load_registry(ROOT / "package-contract.json")
 
+    def test_every_ansible_role_is_mapped_to_a_layer(self):
+        """An unmapped role could enable a unit no layer ever declares."""
+        present = {
+            path.name for path in (ROOT / "ansible/roles").iterdir()
+            if path.is_dir()
+        }
+        self.assertEqual(present, {role for role, _ in self.ROLE_OVERLAYS})
+
     def test_declared_services_match_enabled_ansible_units(self):
         for role, overlay in self.ROLE_OVERLAYS:
             with self.subTest(role=role):
@@ -145,8 +264,7 @@ class ServiceInputParityTests(unittest.TestCase):
                     self.registry.common if overlay is None
                     else self.registry.overlays[overlay]
                 )
-                enabled = ansible_enabled_units(
-                    ROOT / f"ansible/roles/{role}/tasks/main.yml")
+                enabled = role_enabled_units(ROOT / f"ansible/roles/{role}")
                 self.assertEqual(enabled, frozenset(layer.services))
 
     def test_disabled_and_templated_units_are_not_requirements(self):
@@ -160,14 +278,16 @@ class ServiceInputParityTests(unittest.TestCase):
             frozenset(),
         )
 
-    def test_roles_without_a_contract_overlay_declare_nothing_new(self):
+    def test_controller_seed_merges_every_layer_deterministically(self):
         merged = merge_contract(
             self.registry, PROFILE_OVERLAYS["controller-seed"])
         self.assertEqual(
             merged.services,
             (
                 "homelab-first-boot.service", "ntpd.service", "samba.service",
-                "sshd.service", "sssd.service",
+                "sshd.service", "sssd.service", "systemd-networkd.service",
+                "telos-factory-http.service", "telos-factory-tftp.service",
+                "telos-pxe-evidence.service", "telos-pxe-ready.service",
             ),
         )
 

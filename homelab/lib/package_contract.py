@@ -14,7 +14,16 @@ PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
 OVERLAY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Declared units carry an explicit suffix. systemd resolves a bare name to
 # `.service`, so the contract records the resolved name and never the shorthand.
-UNIT_RE = re.compile(r"^[a-z0-9][a-z0-9@._-]*\.(?:service|timer|socket)$")
+# Unit names are case-sensitive: `NetworkManager.service` is not `networkmanager`.
+#
+# A layer declares only the units its role enables UNCONDITIONALLY. A unit whose
+# enablement depends on a variable or on optional input is deliberately absent,
+# because an image built without that input legitimately lacks it: the Samba
+# share the factory enables only for a verified Windows source, and the update
+# timer gated on `homelab_arch_automatic_updates`, are both excluded for this
+# reason.
+UNIT_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9@._-]*\.(?:service|timer|socket)$")
 EXPECTED_OVERLAYS = (
     "installer-live",
     "controller-network",

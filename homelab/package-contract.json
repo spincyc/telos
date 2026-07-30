@@ -68,7 +68,11 @@
         {"path": "/usr/bin/sbctl", "owner": "sbctl"},
         {"path": "/usr/bin/sgdisk", "owner": "gptfdisk"}
       ],
-      "services": []
+      "services": [
+        "systemd-networkd-wait-online.service",
+        "systemd-networkd.service",
+        "systemd-networkd.socket"
+      ]
     },
     "controller-network": {
       "packages": ["dhcpcd", "dnsmasq", "iproute2", "nginx"],
@@ -127,7 +131,13 @@
         {"path": "/usr/bin/rsync", "owner": "rsync"},
         {"path": "/usr/bin/wimlib-imagex", "owner": "wimlib"}
       ],
-      "services": []
+      "services": [
+        "systemd-networkd.service",
+        "telos-factory-http.service",
+        "telos-factory-tftp.service",
+        "telos-pxe-evidence.service",
+        "telos-pxe-ready.service"
+      ]
     },
     "identity-client": {
       "packages": [
@@ -170,7 +180,9 @@
       "binaries": [
         {"path": "/usr/bin/nmcli", "owner": "networkmanager"}
       ],
-      "services": []
+      "services": [
+        "NetworkManager.service"
+      ]
     },
     "services": {
       "packages": ["podman"],
