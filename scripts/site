@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site/site.json"
 LAYOUT_ROOT = ROOT / "release/site/layouts"
 ASSET_ROOT = ROOT / "release/site/assets"
+DATA_ROOT = ROOT / "site/data"
 DOC_ROOT = ROOT / "doc"
 OUTPUT_ROOT = ROOT / "build/site"
 
@@ -342,6 +343,8 @@ def command_build(arguments: argparse.Namespace) -> int:
         destination.write_text(rendered, encoding="utf-8")
 
     shutil.copytree(ASSET_ROOT, OUTPUT_ROOT / "assets")
+    if DATA_ROOT.is_dir():
+        shutil.copytree(DATA_ROOT, OUTPUT_ROOT / "data")
     if DOC_ROOT.is_dir():
         shutil.copytree(DOC_ROOT, OUTPUT_ROOT / "doc")
 

@@ -1,0 +1,3530 @@
+generated:
+  at: "2026-07-30T14:43:57+00:00"
+  source: "manual"
+  source_sha256: null
+  source_size_bytes: null
+summary:
+  total: 92
+  readers: 5
+  status:
+    complete: 83
+    active: 0
+    pending: 9
+readers:
+  -
+    name: "Anna"
+    count: 1
+    entries:
+      -
+        title: "Truly Devious"
+        author: "Maureen Johson"
+        reader: "Anna"
+        status: "complete"
+        started: "22 May 2026"
+        completed: "31 May 2026"
+        pages: 420
+        words: 95000
+        days: 10
+        pages_per_day: 42.0
+        words_per_day: 9500.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 1
+        id: "75a1b9e2868aef6d"
+  -
+    name: "Ava"
+    count: 2
+    entries:
+      -
+        title: "Little, Big"
+        author: "John Crowley"
+        reader: "Ava"
+        status: "complete"
+        started: "22 May 2026"
+        completed: "26 May 2026"
+        pages: 538
+        words: 144000
+        days: 5
+        pages_per_day: 107.6
+        words_per_day: 28800.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 1
+        id: "fcbd8e07d99e12c9"
+      -
+        title: "The Great Gatsby"
+        author: "F. Scott Fitzgerald"
+        reader: "Ava"
+        status: "complete"
+        started: "26 May 2026"
+        completed: "1 June 2026"
+        pages: 180
+        words: 47000
+        days: 7
+        pages_per_day: 25.71
+        words_per_day: 6714.29
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "literary-fiction"
+        genre_fine: "literary-realism"
+        genre_rule: "exact:The Great Gatsby"
+        source_row: 2
+        id: "3aad044dffb8164c"
+  -
+    name: "Jack"
+    count: 1
+    entries:
+      -
+        title: "A Canticle for Leibowitz"
+        author: "Walter Miller Jr."
+        reader: "Jack"
+        status: "complete"
+        started: "22 May 2026"
+        completed: "31 May 2026"
+        pages: 320
+        words: 110000
+        days: 10
+        pages_per_day: 32.0
+        words_per_day: 11000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 1
+        id: "d0a6b250b5e3b238"
+  -
+    name: "Kevin"
+    count: 87
+    entries:
+      -
+        title: "A Little Hatred"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 187200
+        days: 1
+        pages_per_day: null
+        words_per_day: 187200.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 82
+        id: "77aa14c4df6181ca"
+      -
+        title: "Against the Day"
+        author: "Thomas Pynchon"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: null
+        days: null
+        pages_per_day: null
+        words_per_day: null
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 84
+        id: "b54035042c52cd12"
+      -
+        title: "Best Served Cold"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 227700
+        days: 1
+        pages_per_day: null
+        words_per_day: 227700.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 79
+        id: "95ec30538205ed08"
+      -
+        title: "Dregs of Empire"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 84896
+        days: 1
+        pages_per_day: null
+        words_per_day: 84896.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 87
+        id: "ed166d6e3495c062"
+      -
+        title: "Queen Amid Ashes"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 49585
+        days: 1
+        pages_per_day: null
+        words_per_day: 49585.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 86
+        id: "715e7843f738c57f"
+      -
+        title: "Red Country"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 172100
+        days: 1
+        pages_per_day: null
+        words_per_day: 172100.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 81
+        id: "48f9ab49749203ba"
+      -
+        title: "The Heroes"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 203400
+        days: 1
+        pages_per_day: null
+        words_per_day: 203400.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 80
+        id: "d6563e133403b632"
+      -
+        title: "The Lesser Devil"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 59118
+        days: 1
+        pages_per_day: null
+        words_per_day: 59118.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 85
+        id: "8d17385c7a737dec"
+      -
+        title: "The Trouble with Peace"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "pending"
+        started: null
+        completed: null
+        pages: null
+        words: 195000
+        days: 1
+        pages_per_day: null
+        words_per_day: 195000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 83
+        id: "b9ff2378a69ff044"
+      -
+        title: "A Pale View of Hills"
+        author: "Kazuo Ishiguro"
+        reader: "Kevin"
+        status: "complete"
+        started: "26 January 2026"
+        completed: "28 January 2026"
+        pages: 183
+        words: 45750
+        days: 3
+        pages_per_day: 61.0
+        words_per_day: 15250.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 56
+        id: "726b003879041f0d"
+      -
+        title: "A Song for Arbonne"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "16 March 2026"
+        completed: "24 March 2026"
+        pages: 506
+        words: 171000
+        days: 9
+        pages_per_day: 56.22
+        words_per_day: 19000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 63
+        id: "afd8bbaec65a1d54"
+      -
+        title: "A War to End All"
+        author: "Michael R. Fletcher"
+        reader: "Kevin"
+        status: "complete"
+        started: "1 May 2026"
+        completed: "6 May 2026"
+        pages: 444
+        words: 122000
+        days: 6
+        pages_per_day: 74.0
+        words_per_day: 20333.33
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 70
+        id: "381cfdc88e71abfd"
+      -
+        title: "Arm of the Sphinx"
+        author: "Josiah Bancroft"
+        reader: "Kevin"
+        status: "complete"
+        started: "14 February 2025"
+        completed: "17 February 2025"
+        pages: 398
+        words: 130064
+        days: 4
+        pages_per_day: 99.5
+        words_per_day: 32516.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 31
+        id: "113ba186e305ab76"
+      -
+        title: "Ashes of Man"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "22 January 2025"
+        completed: "30 January 2025"
+        pages: 537
+        words: 209248
+        days: 9
+        pages_per_day: 59.67
+        words_per_day: 23249.78
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 27
+        id: "9b88aae8615fa5d6"
+      -
+        title: "Assail"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 August 2024"
+        completed: "28 August 2024"
+        pages: 544
+        words: 168000
+        days: 12
+        pages_per_day: 45.33
+        words_per_day: 14000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 18
+        id: "cdba1e1f0c051e92"
+      -
+        title: "Before They Are Hanged"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "complete"
+        started: "5 August 2025"
+        completed: "17 August 2025"
+        pages: 514
+        words: 198300
+        days: 13
+        pages_per_day: 39.54
+        words_per_day: 15253.85
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 46
+        id: "c3ce100d7a0596b6"
+      -
+        title: "Between Two Fires"
+        author: "Christopher Buehlman"
+        reader: "Kevin"
+        status: "complete"
+        started: "4 September 2025"
+        completed: "15 September 2025"
+        pages: 436
+        words: 134750
+        days: 12
+        pages_per_day: 36.33
+        words_per_day: 11229.17
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 49
+        id: "ec446e02c8edb90e"
+      -
+        title: "Beyond Redeption"
+        author: "Michael R. Fletcher"
+        reader: "Kevin"
+        status: "complete"
+        started: "24 April 2026"
+        completed: "28 April 2026"
+        pages: 491
+        words: 129000
+        days: 5
+        pages_per_day: 98.2
+        words_per_day: 25800.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 68
+        id: "3ee636d3f869f05e"
+      -
+        title: "Black Sun Rising"
+        author: "C. S. Friedman"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 December 2025"
+        completed: "19 December 2025"
+        pages: 489
+        words: 146500
+        days: 9
+        pages_per_day: 54.33
+        words_per_day: 16277.78
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 52
+        id: "889aa93bdf7d7cd6"
+      -
+        title: "Blood and Bone"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "31 July 2024"
+        completed: "16 August 2024"
+        pages: 586
+        words: 183000
+        days: 17
+        pages_per_day: 34.47
+        words_per_day: 10764.71
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 17
+        id: "36a043ffc540d816"
+      -
+        title: "Books of the South: Tales of the Black Company"
+        author: "Glen Cook"
+        reader: "Kevin"
+        status: "complete"
+        started: "18 September 2024"
+        completed: "22 October 2024"
+        pages: 672
+        words: 267800
+        days: 35
+        pages_per_day: 19.2
+        words_per_day: 7651.43
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "Fantasy"
+        genre_fine: "Epic fantasy"
+        genre_rule: "fiction:fantasy:epic-fantasy"
+        source_row: 20
+        id: "961d418b46469810"
+      -
+        title: "Butcher’s Crossing"
+        author: "John Williams"
+        reader: "Kevin"
+        status: "complete"
+        started: "20 September 2023"
+        completed: "11 November 2023"
+        pages: 274
+        words: null
+        days: 53
+        pages_per_day: 5.17
+        words_per_day: null
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 2
+        id: "227d1c6b3b60a425"
+      -
+        title: "Crown of Shadows"
+        author: "C. S. Friedman"
+        reader: "Kevin"
+        status: "complete"
+        started: "13 January 2026"
+        completed: "18 January 2026"
+        pages: 422
+        words: 105500
+        days: 6
+        pages_per_day: 70.33
+        words_per_day: 17583.33
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 54
+        id: "2924d7d3ade8d904"
+      -
+        title: "Darien"
+        author: "C. F. Iggulden"
+        reader: "Kevin"
+        status: "complete"
+        started: "12 June 2025"
+        completed: "27 June 2025"
+        pages: 340
+        words: 0
+        days: 16
+        pages_per_day: 21.25
+        words_per_day: 0.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 41
+        id: "39d53115e9607b31"
+      -
+        title: "Deadhouse Gates"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "14 December 2023"
+        completed: "19 January 2024"
+        pages: 604
+        words: 272000
+        days: 37
+        pages_per_day: 16.32
+        words_per_day: 7351.35
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 4
+        id: "7f9f2a346fed0717"
+      -
+        title: "Demon in White"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "4 January 2025"
+        completed: "16 January 2025"
+        pages: 784
+        words: 295785
+        days: 13
+        pages_per_day: 60.31
+        words_per_day: 22752.69
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 25
+        id: "50c44608db7d830d"
+      -
+        title: "Disquiet Gods"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "30 January 2025"
+        completed: "9 February 2025"
+        pages: 690
+        words: 288359
+        days: 11
+        pages_per_day: 62.73
+        words_per_day: 26214.45
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 28
+        id: "7bd15da614d57962"
+      -
+        title: "Dust of Dreams"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 May 2024"
+        completed: "5 July 2024"
+        pages: 816
+        words: 382000
+        days: 39
+        pages_per_day: 20.92
+        words_per_day: 9794.87
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 14
+        id: "d9544c125a022354"
+      -
+        title: "Empire of Silence"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 December 2024"
+        completed: "20 December 2024"
+        pages: 624
+        words: 248197
+        days: 10
+        pages_per_day: 62.4
+        words_per_day: 24819.7
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 23
+        id: "92726a8afdb48f72"
+      -
+        title: "Gardens of the Moon"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 November 2023"
+        completed: "13 December 2023"
+        pages: 494
+        words: 209000
+        days: 33
+        pages_per_day: 14.97
+        words_per_day: 6333.33
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 3
+        id: "0124196c333ed6f9"
+      -
+        title: "House of Chains"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "4 February 2024"
+        completed: "17 February 2024"
+        pages: 672
+        words: 306000
+        days: 14
+        pages_per_day: 48.0
+        words_per_day: 21857.14
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 6
+        id: "f97538e0aa1a4cb2"
+      -
+        title: "House of Suns"
+        author: "Alastair Reynolds"
+        reader: "Kevin"
+        status: "complete"
+        started: "3 August 2023"
+        completed: "17 September 2023"
+        pages: 490
+        words: null
+        days: 46
+        pages_per_day: 10.65
+        words_per_day: null
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 1
+        id: "70e0e8c8e9bb7dc3"
+      -
+        title: "Howling Dark"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "21 December 2024"
+        completed: "3 January 2025"
+        pages: 688
+        words: 264990
+        days: 14
+        pages_per_day: 49.14
+        words_per_day: 18927.86
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 24
+        id: "e620666881cf18e3"
+      -
+        title: "Kingdoms of Death"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "16 January 2025"
+        completed: "22 January 2025"
+        pages: 535
+        words: 208311
+        days: 7
+        pages_per_day: 76.43
+        words_per_day: 29758.71
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 26
+        id: "2af66a697e318b92"
+      -
+        title: "Klara and the Sun"
+        author: "Kazuo Ishiguro"
+        reader: "Kevin"
+        status: "complete"
+        started: "10 February 2026"
+        completed: "17 February 2026"
+        pages: 303
+        words: 76000
+        days: 8
+        pages_per_day: 37.88
+        words_per_day: 9500.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 58
+        id: "1720166d3501993f"
+      -
+        title: "Last Light of the Sun"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "18 April 2026"
+        completed: "24 April 2026"
+        pages: 430
+        words: 153700
+        days: 7
+        pages_per_day: 61.43
+        words_per_day: 21957.14
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 67
+        id: "9cbfbe217ff3ad86"
+      -
+        title: "Lord Foul’s Bane"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "13 May 2026"
+        completed: "22 May 2026"
+        pages: 361
+        words: 180000
+        days: 10
+        pages_per_day: 36.1
+        words_per_day: 18000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 73
+        id: "b39b94f05f7d69ae"
+      -
+        title: "Lord of Emperors"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "13 April 2026"
+        completed: "17 April 2026"
+        pages: 429
+        words: 190385
+        days: 5
+        pages_per_day: 85.8
+        words_per_day: 38077.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 66
+        id: "dc6fd2b69f0188b3"
+      -
+        title: "Memories of Ice"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "19 January 2024"
+        completed: "4 February 2024"
+        pages: 780
+        words: 358000
+        days: 17
+        pages_per_day: 45.88
+        words_per_day: 21058.82
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 5
+        id: "e08377434129ca2b"
+      -
+        title: "Midnight Tides"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 February 2024"
+        completed: "4 March 2024"
+        pages: 624
+        words: 270000
+        days: 17
+        pages_per_day: 36.71
+        words_per_day: 15882.35
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 7
+        id: "a8bb119c35ed2cee"
+      -
+        title: "Night of Knives"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "5 March 2024"
+        completed: "12 March 2024"
+        pages: 304
+        words: 104000
+        days: 8
+        pages_per_day: 38.0
+        words_per_day: 13000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 8
+        id: "a59ec87dfe04fe2d"
+      -
+        title: "Nightborn: Coldfire Rising"
+        author: "C. S. Friedman"
+        reader: "Kevin"
+        status: "complete"
+        started: "18 January 2026"
+        completed: "24 January 2026"
+        pages: 288
+        words: 65000
+        days: 7
+        pages_per_day: 41.14
+        words_per_day: 9285.71
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 55
+        id: "201e977a03d3ecdf"
+      -
+        title: "Orb Sceptre Throne"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "21 July 2024"
+        completed: "30 July 2024"
+        pages: 605
+        words: 188000
+        days: 10
+        pages_per_day: 60.5
+        words_per_day: 18800.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 16
+        id: "258d3f442752dcaf"
+      -
+        title: "Piranesi"
+        author: "Susanna Clarke"
+        reader: "Kevin"
+        status: "complete"
+        started: "10 February 2025"
+        completed: "10 February 2025"
+        pages: 245
+        words: 68000
+        days: 1
+        pages_per_day: 245.0
+        words_per_day: 68000.0
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "literary-fiction"
+        genre_fine: "weird-fiction"
+        genre_rule: "exact:Piranesi"
+        source_row: 29
+        id: "0efca58b833e7ba8"
+      -
+        title: "Pirate Freedom"
+        author: "Gene Wolfe"
+        reader: "Kevin"
+        status: "complete"
+        started: "8 May 2026"
+        completed: "12 May 2026"
+        pages: 385
+        words: 115001
+        days: 5
+        pages_per_day: 77.0
+        words_per_day: 23000.2
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 72
+        id: "535afd29b32f41df"
+      -
+        title: "Project Hail Mary"
+        author: "Andy Weir"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 July 2025"
+        completed: "29 July 2025"
+        pages: 476
+        words: 124000
+        days: 2
+        pages_per_day: 238.0
+        words_per_day: 62000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 44
+        id: "c4a09cafcea93d8d"
+      -
+        title: "Reaper’s Gale"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "29 March 2024"
+        completed: "16 April 2024"
+        pages: 832
+        words: 386000
+        days: 19
+        pages_per_day: 43.79
+        words_per_day: 20315.79
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 10
+        id: "fce9caf2f4caded2"
+      -
+        title: "Return of the Crimson Guard"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 April 2024"
+        completed: "23 April 2024"
+        pages: 702
+        words: 272000
+        days: 7
+        pages_per_day: 100.29
+        words_per_day: 38857.14
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 11
+        id: "039e1edd6e5eb24f"
+      -
+        title: "Sailing to Sarantium"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "8 April 2026"
+        completed: "13 April 2026"
+        pages: 524
+        words: 163560
+        days: 6
+        pages_per_day: 87.33
+        words_per_day: 27260.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 65
+        id: "fbfe28da8eb796c1"
+      -
+        title: "Senlin Ascends"
+        author: "Josiah Bancroft"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 February 2025"
+        completed: "14 February 2025"
+        pages: 361
+        words: 131372
+        days: 4
+        pages_per_day: 90.25
+        words_per_day: 32843.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 30
+        id: "04d54c09fb0162e0"
+      -
+        title: "Shadows Upon Time"
+        author: "Christopher Ruocchio"
+        reader: "Kevin"
+        status: "complete"
+        started: "18 November 2025"
+        completed: "10 December 2025"
+        pages: 903
+        words: 371000
+        days: 23
+        pages_per_day: 39.26
+        words_per_day: 16130.43
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 51
+        id: "2fa2171950eeed73"
+      -
+        title: "Shiang"
+        author: "C. F. Iggulden"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 July 2025"
+        completed: "23 July 2025"
+        pages: 350
+        words: 0
+        days: 13
+        pages_per_day: 26.92
+        words_per_day: 0.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 42
+        id: "ecff96482b393c4b"
+      -
+        title: "Stonewielder"
+        author: "Ian C. Esslemont"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 May 2024"
+        completed: "28 May 2024"
+        pages: 634
+        words: 198000
+        days: 18
+        pages_per_day: 35.22
+        words_per_day: 11000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 13
+        id: "b4a78960833fdb59"
+      -
+        title: "The Angel’s Game"
+        author: "Carlos Ruiz Zafon"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 February 2026"
+        completed: "24 February 2026"
+        pages: 504
+        words: 132000
+        days: 8
+        pages_per_day: 63.0
+        words_per_day: 16500.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 59
+        id: "44e90b70336c62f6"
+      -
+        title: "The Blade Itself"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "complete"
+        started: "29 July 2025"
+        completed: "5 August 2025"
+        pages: 477
+        words: 191200
+        days: 8
+        pages_per_day: 59.62
+        words_per_day: 23900.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 45
+        id: "8f08a3946b79012b"
+      -
+        title: "The Bonehunters"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "12 March 2024"
+        completed: "29 March 2024"
+        pages: 800
+        words: 365000
+        days: 18
+        pages_per_day: 44.44
+        words_per_day: 20277.78
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 9
+        id: "b3844491a17bc224"
+      -
+        title: "The Chronicles of the Black Company"
+        author: "Glen Cook"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 August 2024"
+        completed: "18 September 2024"
+        pages: 704
+        words: 288115
+        days: 22
+        pages_per_day: 32.0
+        words_per_day: 13096.14
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "Fantasy"
+        genre_fine: "Epic fantasy"
+        genre_rule: "fiction:fantasy:epic-fantasy"
+        source_row: 19
+        id: "baea24c1754823e3"
+      -
+        title: "The Crippled God"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "5 July 2024"
+        completed: "21 July 2024"
+        pages: 928
+        words: 385000
+        days: 17
+        pages_per_day: 54.59
+        words_per_day: 22647.06
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 15
+        id: "16cff991d55c0a5c"
+      -
+        title: "The Darkness that Comes Before"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 March 2025"
+        completed: "15 April 2025"
+        pages: 589
+        words: 175000
+        days: 19
+        pages_per_day: 31.0
+        words_per_day: 9210.53
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 34
+        id: "e681050f8c134399"
+      -
+        title: "The Fall of Babel"
+        author: "Josiah Bancroft"
+        reader: "Kevin"
+        status: "complete"
+        started: "25 February 2025"
+        completed: "27 March 2025"
+        pages: 638
+        words: 241000
+        days: 31
+        pages_per_day: 20.58
+        words_per_day: 7774.19
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 33
+        id: "7c54495e29f39d2b"
+      -
+        title: "The Great Ordeal"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "13 May 2025"
+        completed: "22 May 2025"
+        pages: 501
+        words: 160000
+        days: 10
+        pages_per_day: 50.1
+        words_per_day: 16000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 39
+        id: "6b835beea5fdebe9"
+      -
+        title: "The Hod King"
+        author: "Josiah Bancroft"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 February 2025"
+        completed: "24 February 2025"
+        pages: 567
+        words: 196722
+        days: 8
+        pages_per_day: 70.88
+        words_per_day: 24590.25
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 32
+        id: "88d16f4fe3467a5f"
+      -
+        title: "The Illearth War"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "22 May 2026"
+        completed: "28 May 2026"
+        pages: 389
+        words: 185000
+        days: 7
+        pages_per_day: 55.57
+        words_per_day: 26428.57
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 74
+        id: "8121a438df8aaaf0"
+      -
+        title: "The Judging Eye"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "27 April 2025"
+        completed: "1 May 2025"
+        pages: 433
+        words: 151000
+        days: 5
+        pages_per_day: 86.6
+        words_per_day: 30200.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 37
+        id: "71e1b10324539fa5"
+      -
+        title: "The Labyrinth of the Spirits"
+        author: "Carlos Ruiz Zafon"
+        reader: "Kevin"
+        status: "complete"
+        started: "24 March 2026"
+        completed: "8 April 2026"
+        pages: 805
+        words: 201250
+        days: 16
+        pages_per_day: 50.31
+        words_per_day: 12578.12
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 64
+        id: "724f386be2fba58f"
+      -
+        title: "The Last Argument of Kings"
+        author: "Joe Abercrombie"
+        reader: "Kevin"
+        status: "complete"
+        started: "17 August 2025"
+        completed: "27 August 2025"
+        pages: 603
+        words: 234100
+        days: 11
+        pages_per_day: 54.82
+        words_per_day: 21281.82
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 47
+        id: "76f13b27f0a05bb1"
+      -
+        title: "The Lions of Al-Rassan"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "24 February 2026"
+        completed: "27 February 2026"
+        pages: 504
+        words: 171000
+        days: 4
+        pages_per_day: 126.0
+        words_per_day: 42750.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 60
+        id: "fe626a4fc0960f5c"
+      -
+        title: "The Many Deaths of the Black Company"
+        author: "Glen Cook"
+        reader: "Kevin"
+        status: "complete"
+        started: "14 November 2024"
+        completed: "11 December 2024"
+        pages: 784
+        words: 327555
+        days: 28
+        pages_per_day: 28.0
+        words_per_day: 11698.39
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 22
+        id: "51ff6af928d8392e"
+      -
+        title: "The Mirror’s Truth"
+        author: "Michael R. Fletcher"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 April 2026"
+        completed: "1 May 2026"
+        pages: 484
+        words: 105000
+        days: 4
+        pages_per_day: 121.0
+        words_per_day: 26250.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 69
+        id: "794b68d235bb8799"
+      -
+        title: "The One Tree"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 June 2026"
+        completed: "15 July 2026"
+        pages: 406
+        words: 184000
+        days: 18
+        pages_per_day: 22.56
+        words_per_day: 10222.22
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 77
+        id: "6af8845554e8330f"
+      -
+        title: "The Painter"
+        author: "Peter Heller"
+        reader: "Kevin"
+        status: "complete"
+        started: "7 May 2026"
+        completed: "8 May 2026"
+        pages: 384
+        words: 115000
+        days: 2
+        pages_per_day: 192.0
+        words_per_day: 57500.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 71
+        id: "4483d8914123266b"
+      -
+        title: "The Power that Preserves"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "29 May 2026"
+        completed: "7 June 2026"
+        pages: 373
+        words: 168000
+        days: 10
+        pages_per_day: 37.3
+        words_per_day: 16800.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 75
+        id: "05b735dba36b6859"
+      -
+        title: "The Prisoner of Heaven"
+        author: "Carlos Ruiz Zafon"
+        reader: "Kevin"
+        status: "complete"
+        started: "11 March 2026"
+        completed: "16 March 2026"
+        pages: 286
+        words: 69500
+        days: 6
+        pages_per_day: 47.67
+        words_per_day: 11583.33
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 62
+        id: "27480255c0e554ff"
+      -
+        title: "The Return of the Black Company"
+        author: "Glen Cook"
+        reader: "Kevin"
+        status: "complete"
+        started: "23 October 2024"
+        completed: "13 November 2024"
+        pages: 672
+        words: 229640
+        days: 22
+        pages_per_day: 30.55
+        words_per_day: 10438.18
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 21
+        id: "ee6c6473ba95e14b"
+      -
+        title: "The Secret History"
+        author: "Donna Tartt"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 August 2025"
+        completed: "3 September 2025"
+        pages: 559
+        words: 200000
+        days: 7
+        pages_per_day: 79.86
+        words_per_day: 28571.43
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "literary-fiction"
+        genre_fine: "campus-literature"
+        genre_rule: "exact:The Secret History"
+        source_row: 48
+        id: "efd7098f8650d3f7"
+      -
+        title: "The Shadow of the Wind"
+        author: "Carlos Ruiz Zafon"
+        reader: "Kevin"
+        status: "complete"
+        started: "2 February 2026"
+        completed: "9 February 2026"
+        pages: 506
+        words: 121000
+        days: 8
+        pages_per_day: 63.25
+        words_per_day: 15125.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 57
+        id: "2605ea3e8857ca84"
+      -
+        title: "The Sword Saint"
+        author: "C. F. Iggulden"
+        reader: "Kevin"
+        status: "complete"
+        started: "23 July 2025"
+        completed: "28 July 2025"
+        pages: 374
+        words: 0
+        days: 6
+        pages_per_day: 62.33
+        words_per_day: 0.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 43
+        id: "12b82720122e4224"
+      -
+        title: "The Thousandfold Thought"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "21 April 2025"
+        completed: "27 April 2025"
+        pages: 503
+        words: 139000
+        days: 7
+        pages_per_day: 71.86
+        words_per_day: 19857.14
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 36
+        id: "3fe6b1bea629e1af"
+      -
+        title: "The Unholy Consult"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "23 May 2025"
+        completed: "30 May 2025"
+        pages: 620
+        words: 225000
+        days: 8
+        pages_per_day: 77.5
+        words_per_day: 28125.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 40
+        id: "a5165922577ce714"
+      -
+        title: "The Warrior Prophet"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "15 April 2025"
+        completed: "21 April 2025"
+        pages: 607
+        words: 205000
+        days: 7
+        pages_per_day: 86.71
+        words_per_day: 29285.71
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 35
+        id: "8d05a6a3202725a7"
+      -
+        title: "The White-Luck Warrior"
+        author: "R. Scott Baker"
+        reader: "Kevin"
+        status: "complete"
+        started: "2 May 2025"
+        completed: "13 May 2025"
+        pages: 725
+        words: 202000
+        days: 12
+        pages_per_day: 60.42
+        words_per_day: 16833.33
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 38
+        id: "7739bd3262f5b5a3"
+      -
+        title: "The Wounded Land"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "7 June 2026"
+        completed: "27 June 2026"
+        pages: 440
+        words: 186000
+        days: 21
+        pages_per_day: 20.95
+        words_per_day: 8857.14
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 76
+        id: "c619f0273e1a1ced"
+      -
+        title: "Tigana"
+        author: "Guy Gavriel Kay"
+        reader: "Kevin"
+        status: "complete"
+        started: "28 February 2026"
+        completed: "11 March 2026"
+        pages: 673
+        words: 173000
+        days: 12
+        pages_per_day: 56.08
+        words_per_day: 14416.67
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 61
+        id: "aa811d13670ace02"
+      -
+        title: "Toll the Hounds"
+        author: "Steven Erikson"
+        reader: "Kevin"
+        status: "complete"
+        started: "24 April 2024"
+        completed: "10 May 2024"
+        pages: 832
+        words: 386000
+        days: 17
+        pages_per_day: 48.94
+        words_per_day: 22705.88
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 12
+        id: "67d1833b97e40127"
+      -
+        title: "Vineland"
+        author: "Thomas Pynchon"
+        reader: "Kevin"
+        status: "complete"
+        started: "15 September 2025"
+        completed: "30 September 2025"
+        pages: 400
+        words: 100000
+        days: 16
+        pages_per_day: 25.0
+        words_per_day: 6250.0
+        notes: null
+        genre_category: "fiction"
+        genre_coarse: "literary-fiction"
+        genre_fine: "postmodern-literary"
+        genre_rule: "exact:Vineland"
+        source_row: 50
+        id: "ff75966306a5cfe1"
+      -
+        title: "When True Night Falls"
+        author: "C. S. Friedman"
+        reader: "Kevin"
+        status: "complete"
+        started: "19 December 2025"
+        completed: "13 January 2026"
+        pages: 553
+        words: 156000
+        days: 26
+        pages_per_day: 21.27
+        words_per_day: 6000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 53
+        id: "1ce625819c981b58"
+      -
+        title: "White Gold Wielder"
+        author: "Stephen Donaldson"
+        reader: "Kevin"
+        status: "complete"
+        started: "15 July 2026"
+        completed: "31 July 2026"
+        pages: 419
+        words: 184000
+        days: 17
+        pages_per_day: 24.65
+        words_per_day: 10823.53
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 78
+        id: "d60b1221213d95f5"
+  -
+    name: "Patrick"
+    count: 1
+    entries:
+      -
+        title: "A Canticle for Leibowitz"
+        author: "Walter Miller Jr."
+        reader: "Patrick"
+        status: "complete"
+        started: "22 May 2026"
+        completed: "31 May 2026"
+        pages: 320
+        words: 110000
+        days: 10
+        pages_per_day: 32.0
+        words_per_day: 11000.0
+        notes: null
+        genre_category: "unclassified"
+        genre_coarse: "Unclassified"
+        genre_fine: "Unclassified"
+        genre_rule: "unclassified:unclassified:unclassified"
+        source_row: 1
+        id: "ed73c77a097c029b"
+entries:
+  -
+    title: "Truly Devious"
+    author: "Maureen Johson"
+    reader: "Anna"
+    status: "complete"
+    started: "22 May 2026"
+    completed: "31 May 2026"
+    pages: 420
+    words: 95000
+    days: 10
+    pages_per_day: 42.0
+    words_per_day: 9500.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 1
+    id: "75a1b9e2868aef6d"
+  -
+    title: "Little, Big"
+    author: "John Crowley"
+    reader: "Ava"
+    status: "complete"
+    started: "22 May 2026"
+    completed: "26 May 2026"
+    pages: 538
+    words: 144000
+    days: 5
+    pages_per_day: 107.6
+    words_per_day: 28800.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 1
+    id: "fcbd8e07d99e12c9"
+  -
+    title: "The Great Gatsby"
+    author: "F. Scott Fitzgerald"
+    reader: "Ava"
+    status: "complete"
+    started: "26 May 2026"
+    completed: "1 June 2026"
+    pages: 180
+    words: 47000
+    days: 7
+    pages_per_day: 25.71
+    words_per_day: 6714.29
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "literary-fiction"
+    genre_fine: "literary-realism"
+    genre_rule: "exact:The Great Gatsby"
+    source_row: 2
+    id: "3aad044dffb8164c"
+  -
+    title: "A Canticle for Leibowitz"
+    author: "Walter Miller Jr."
+    reader: "Jack"
+    status: "complete"
+    started: "22 May 2026"
+    completed: "31 May 2026"
+    pages: 320
+    words: 110000
+    days: 10
+    pages_per_day: 32.0
+    words_per_day: 11000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 1
+    id: "d0a6b250b5e3b238"
+  -
+    title: "A Little Hatred"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 187200
+    days: 1
+    pages_per_day: null
+    words_per_day: 187200.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 82
+    id: "77aa14c4df6181ca"
+  -
+    title: "Against the Day"
+    author: "Thomas Pynchon"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: null
+    days: null
+    pages_per_day: null
+    words_per_day: null
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 84
+    id: "b54035042c52cd12"
+  -
+    title: "Best Served Cold"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 227700
+    days: 1
+    pages_per_day: null
+    words_per_day: 227700.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 79
+    id: "95ec30538205ed08"
+  -
+    title: "Dregs of Empire"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 84896
+    days: 1
+    pages_per_day: null
+    words_per_day: 84896.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 87
+    id: "ed166d6e3495c062"
+  -
+    title: "Queen Amid Ashes"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 49585
+    days: 1
+    pages_per_day: null
+    words_per_day: 49585.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 86
+    id: "715e7843f738c57f"
+  -
+    title: "Red Country"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 172100
+    days: 1
+    pages_per_day: null
+    words_per_day: 172100.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 81
+    id: "48f9ab49749203ba"
+  -
+    title: "The Heroes"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 203400
+    days: 1
+    pages_per_day: null
+    words_per_day: 203400.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 80
+    id: "d6563e133403b632"
+  -
+    title: "The Lesser Devil"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 59118
+    days: 1
+    pages_per_day: null
+    words_per_day: 59118.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 85
+    id: "8d17385c7a737dec"
+  -
+    title: "The Trouble with Peace"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "pending"
+    started: null
+    completed: null
+    pages: null
+    words: 195000
+    days: 1
+    pages_per_day: null
+    words_per_day: 195000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 83
+    id: "b9ff2378a69ff044"
+  -
+    title: "A Pale View of Hills"
+    author: "Kazuo Ishiguro"
+    reader: "Kevin"
+    status: "complete"
+    started: "26 January 2026"
+    completed: "28 January 2026"
+    pages: 183
+    words: 45750
+    days: 3
+    pages_per_day: 61.0
+    words_per_day: 15250.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 56
+    id: "726b003879041f0d"
+  -
+    title: "A Song for Arbonne"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "16 March 2026"
+    completed: "24 March 2026"
+    pages: 506
+    words: 171000
+    days: 9
+    pages_per_day: 56.22
+    words_per_day: 19000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 63
+    id: "afd8bbaec65a1d54"
+  -
+    title: "A War to End All"
+    author: "Michael R. Fletcher"
+    reader: "Kevin"
+    status: "complete"
+    started: "1 May 2026"
+    completed: "6 May 2026"
+    pages: 444
+    words: 122000
+    days: 6
+    pages_per_day: 74.0
+    words_per_day: 20333.33
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 70
+    id: "381cfdc88e71abfd"
+  -
+    title: "Arm of the Sphinx"
+    author: "Josiah Bancroft"
+    reader: "Kevin"
+    status: "complete"
+    started: "14 February 2025"
+    completed: "17 February 2025"
+    pages: 398
+    words: 130064
+    days: 4
+    pages_per_day: 99.5
+    words_per_day: 32516.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 31
+    id: "113ba186e305ab76"
+  -
+    title: "Ashes of Man"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "22 January 2025"
+    completed: "30 January 2025"
+    pages: 537
+    words: 209248
+    days: 9
+    pages_per_day: 59.67
+    words_per_day: 23249.78
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 27
+    id: "9b88aae8615fa5d6"
+  -
+    title: "Assail"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 August 2024"
+    completed: "28 August 2024"
+    pages: 544
+    words: 168000
+    days: 12
+    pages_per_day: 45.33
+    words_per_day: 14000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 18
+    id: "cdba1e1f0c051e92"
+  -
+    title: "Before They Are Hanged"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "complete"
+    started: "5 August 2025"
+    completed: "17 August 2025"
+    pages: 514
+    words: 198300
+    days: 13
+    pages_per_day: 39.54
+    words_per_day: 15253.85
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 46
+    id: "c3ce100d7a0596b6"
+  -
+    title: "Between Two Fires"
+    author: "Christopher Buehlman"
+    reader: "Kevin"
+    status: "complete"
+    started: "4 September 2025"
+    completed: "15 September 2025"
+    pages: 436
+    words: 134750
+    days: 12
+    pages_per_day: 36.33
+    words_per_day: 11229.17
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 49
+    id: "ec446e02c8edb90e"
+  -
+    title: "Beyond Redeption"
+    author: "Michael R. Fletcher"
+    reader: "Kevin"
+    status: "complete"
+    started: "24 April 2026"
+    completed: "28 April 2026"
+    pages: 491
+    words: 129000
+    days: 5
+    pages_per_day: 98.2
+    words_per_day: 25800.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 68
+    id: "3ee636d3f869f05e"
+  -
+    title: "Black Sun Rising"
+    author: "C. S. Friedman"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 December 2025"
+    completed: "19 December 2025"
+    pages: 489
+    words: 146500
+    days: 9
+    pages_per_day: 54.33
+    words_per_day: 16277.78
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 52
+    id: "889aa93bdf7d7cd6"
+  -
+    title: "Blood and Bone"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "31 July 2024"
+    completed: "16 August 2024"
+    pages: 586
+    words: 183000
+    days: 17
+    pages_per_day: 34.47
+    words_per_day: 10764.71
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 17
+    id: "36a043ffc540d816"
+  -
+    title: "Books of the South: Tales of the Black Company"
+    author: "Glen Cook"
+    reader: "Kevin"
+    status: "complete"
+    started: "18 September 2024"
+    completed: "22 October 2024"
+    pages: 672
+    words: 267800
+    days: 35
+    pages_per_day: 19.2
+    words_per_day: 7651.43
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "Fantasy"
+    genre_fine: "Epic fantasy"
+    genre_rule: "fiction:fantasy:epic-fantasy"
+    source_row: 20
+    id: "961d418b46469810"
+  -
+    title: "Butcher’s Crossing"
+    author: "John Williams"
+    reader: "Kevin"
+    status: "complete"
+    started: "20 September 2023"
+    completed: "11 November 2023"
+    pages: 274
+    words: null
+    days: 53
+    pages_per_day: 5.17
+    words_per_day: null
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 2
+    id: "227d1c6b3b60a425"
+  -
+    title: "Crown of Shadows"
+    author: "C. S. Friedman"
+    reader: "Kevin"
+    status: "complete"
+    started: "13 January 2026"
+    completed: "18 January 2026"
+    pages: 422
+    words: 105500
+    days: 6
+    pages_per_day: 70.33
+    words_per_day: 17583.33
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 54
+    id: "2924d7d3ade8d904"
+  -
+    title: "Darien"
+    author: "C. F. Iggulden"
+    reader: "Kevin"
+    status: "complete"
+    started: "12 June 2025"
+    completed: "27 June 2025"
+    pages: 340
+    words: 0
+    days: 16
+    pages_per_day: 21.25
+    words_per_day: 0.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 41
+    id: "39d53115e9607b31"
+  -
+    title: "Deadhouse Gates"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "14 December 2023"
+    completed: "19 January 2024"
+    pages: 604
+    words: 272000
+    days: 37
+    pages_per_day: 16.32
+    words_per_day: 7351.35
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 4
+    id: "7f9f2a346fed0717"
+  -
+    title: "Demon in White"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "4 January 2025"
+    completed: "16 January 2025"
+    pages: 784
+    words: 295785
+    days: 13
+    pages_per_day: 60.31
+    words_per_day: 22752.69
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 25
+    id: "50c44608db7d830d"
+  -
+    title: "Disquiet Gods"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "30 January 2025"
+    completed: "9 February 2025"
+    pages: 690
+    words: 288359
+    days: 11
+    pages_per_day: 62.73
+    words_per_day: 26214.45
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 28
+    id: "7bd15da614d57962"
+  -
+    title: "Dust of Dreams"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 May 2024"
+    completed: "5 July 2024"
+    pages: 816
+    words: 382000
+    days: 39
+    pages_per_day: 20.92
+    words_per_day: 9794.87
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 14
+    id: "d9544c125a022354"
+  -
+    title: "Empire of Silence"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 December 2024"
+    completed: "20 December 2024"
+    pages: 624
+    words: 248197
+    days: 10
+    pages_per_day: 62.4
+    words_per_day: 24819.7
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 23
+    id: "92726a8afdb48f72"
+  -
+    title: "Gardens of the Moon"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 November 2023"
+    completed: "13 December 2023"
+    pages: 494
+    words: 209000
+    days: 33
+    pages_per_day: 14.97
+    words_per_day: 6333.33
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 3
+    id: "0124196c333ed6f9"
+  -
+    title: "House of Chains"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "4 February 2024"
+    completed: "17 February 2024"
+    pages: 672
+    words: 306000
+    days: 14
+    pages_per_day: 48.0
+    words_per_day: 21857.14
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 6
+    id: "f97538e0aa1a4cb2"
+  -
+    title: "House of Suns"
+    author: "Alastair Reynolds"
+    reader: "Kevin"
+    status: "complete"
+    started: "3 August 2023"
+    completed: "17 September 2023"
+    pages: 490
+    words: null
+    days: 46
+    pages_per_day: 10.65
+    words_per_day: null
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 1
+    id: "70e0e8c8e9bb7dc3"
+  -
+    title: "Howling Dark"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "21 December 2024"
+    completed: "3 January 2025"
+    pages: 688
+    words: 264990
+    days: 14
+    pages_per_day: 49.14
+    words_per_day: 18927.86
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 24
+    id: "e620666881cf18e3"
+  -
+    title: "Kingdoms of Death"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "16 January 2025"
+    completed: "22 January 2025"
+    pages: 535
+    words: 208311
+    days: 7
+    pages_per_day: 76.43
+    words_per_day: 29758.71
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 26
+    id: "2af66a697e318b92"
+  -
+    title: "Klara and the Sun"
+    author: "Kazuo Ishiguro"
+    reader: "Kevin"
+    status: "complete"
+    started: "10 February 2026"
+    completed: "17 February 2026"
+    pages: 303
+    words: 76000
+    days: 8
+    pages_per_day: 37.88
+    words_per_day: 9500.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 58
+    id: "1720166d3501993f"
+  -
+    title: "Last Light of the Sun"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "18 April 2026"
+    completed: "24 April 2026"
+    pages: 430
+    words: 153700
+    days: 7
+    pages_per_day: 61.43
+    words_per_day: 21957.14
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 67
+    id: "9cbfbe217ff3ad86"
+  -
+    title: "Lord Foul’s Bane"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "13 May 2026"
+    completed: "22 May 2026"
+    pages: 361
+    words: 180000
+    days: 10
+    pages_per_day: 36.1
+    words_per_day: 18000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 73
+    id: "b39b94f05f7d69ae"
+  -
+    title: "Lord of Emperors"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "13 April 2026"
+    completed: "17 April 2026"
+    pages: 429
+    words: 190385
+    days: 5
+    pages_per_day: 85.8
+    words_per_day: 38077.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 66
+    id: "dc6fd2b69f0188b3"
+  -
+    title: "Memories of Ice"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "19 January 2024"
+    completed: "4 February 2024"
+    pages: 780
+    words: 358000
+    days: 17
+    pages_per_day: 45.88
+    words_per_day: 21058.82
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 5
+    id: "e08377434129ca2b"
+  -
+    title: "Midnight Tides"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 February 2024"
+    completed: "4 March 2024"
+    pages: 624
+    words: 270000
+    days: 17
+    pages_per_day: 36.71
+    words_per_day: 15882.35
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 7
+    id: "a8bb119c35ed2cee"
+  -
+    title: "Night of Knives"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "5 March 2024"
+    completed: "12 March 2024"
+    pages: 304
+    words: 104000
+    days: 8
+    pages_per_day: 38.0
+    words_per_day: 13000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 8
+    id: "a59ec87dfe04fe2d"
+  -
+    title: "Nightborn: Coldfire Rising"
+    author: "C. S. Friedman"
+    reader: "Kevin"
+    status: "complete"
+    started: "18 January 2026"
+    completed: "24 January 2026"
+    pages: 288
+    words: 65000
+    days: 7
+    pages_per_day: 41.14
+    words_per_day: 9285.71
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 55
+    id: "201e977a03d3ecdf"
+  -
+    title: "Orb Sceptre Throne"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "21 July 2024"
+    completed: "30 July 2024"
+    pages: 605
+    words: 188000
+    days: 10
+    pages_per_day: 60.5
+    words_per_day: 18800.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 16
+    id: "258d3f442752dcaf"
+  -
+    title: "Piranesi"
+    author: "Susanna Clarke"
+    reader: "Kevin"
+    status: "complete"
+    started: "10 February 2025"
+    completed: "10 February 2025"
+    pages: 245
+    words: 68000
+    days: 1
+    pages_per_day: 245.0
+    words_per_day: 68000.0
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "literary-fiction"
+    genre_fine: "weird-fiction"
+    genre_rule: "exact:Piranesi"
+    source_row: 29
+    id: "0efca58b833e7ba8"
+  -
+    title: "Pirate Freedom"
+    author: "Gene Wolfe"
+    reader: "Kevin"
+    status: "complete"
+    started: "8 May 2026"
+    completed: "12 May 2026"
+    pages: 385
+    words: 115001
+    days: 5
+    pages_per_day: 77.0
+    words_per_day: 23000.2
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 72
+    id: "535afd29b32f41df"
+  -
+    title: "Project Hail Mary"
+    author: "Andy Weir"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 July 2025"
+    completed: "29 July 2025"
+    pages: 476
+    words: 124000
+    days: 2
+    pages_per_day: 238.0
+    words_per_day: 62000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 44
+    id: "c4a09cafcea93d8d"
+  -
+    title: "Reaper’s Gale"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "29 March 2024"
+    completed: "16 April 2024"
+    pages: 832
+    words: 386000
+    days: 19
+    pages_per_day: 43.79
+    words_per_day: 20315.79
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 10
+    id: "fce9caf2f4caded2"
+  -
+    title: "Return of the Crimson Guard"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 April 2024"
+    completed: "23 April 2024"
+    pages: 702
+    words: 272000
+    days: 7
+    pages_per_day: 100.29
+    words_per_day: 38857.14
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 11
+    id: "039e1edd6e5eb24f"
+  -
+    title: "Sailing to Sarantium"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "8 April 2026"
+    completed: "13 April 2026"
+    pages: 524
+    words: 163560
+    days: 6
+    pages_per_day: 87.33
+    words_per_day: 27260.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 65
+    id: "fbfe28da8eb796c1"
+  -
+    title: "Senlin Ascends"
+    author: "Josiah Bancroft"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 February 2025"
+    completed: "14 February 2025"
+    pages: 361
+    words: 131372
+    days: 4
+    pages_per_day: 90.25
+    words_per_day: 32843.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 30
+    id: "04d54c09fb0162e0"
+  -
+    title: "Shadows Upon Time"
+    author: "Christopher Ruocchio"
+    reader: "Kevin"
+    status: "complete"
+    started: "18 November 2025"
+    completed: "10 December 2025"
+    pages: 903
+    words: 371000
+    days: 23
+    pages_per_day: 39.26
+    words_per_day: 16130.43
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 51
+    id: "2fa2171950eeed73"
+  -
+    title: "Shiang"
+    author: "C. F. Iggulden"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 July 2025"
+    completed: "23 July 2025"
+    pages: 350
+    words: 0
+    days: 13
+    pages_per_day: 26.92
+    words_per_day: 0.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 42
+    id: "ecff96482b393c4b"
+  -
+    title: "Stonewielder"
+    author: "Ian C. Esslemont"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 May 2024"
+    completed: "28 May 2024"
+    pages: 634
+    words: 198000
+    days: 18
+    pages_per_day: 35.22
+    words_per_day: 11000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 13
+    id: "b4a78960833fdb59"
+  -
+    title: "The Angel’s Game"
+    author: "Carlos Ruiz Zafon"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 February 2026"
+    completed: "24 February 2026"
+    pages: 504
+    words: 132000
+    days: 8
+    pages_per_day: 63.0
+    words_per_day: 16500.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 59
+    id: "44e90b70336c62f6"
+  -
+    title: "The Blade Itself"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "complete"
+    started: "29 July 2025"
+    completed: "5 August 2025"
+    pages: 477
+    words: 191200
+    days: 8
+    pages_per_day: 59.62
+    words_per_day: 23900.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 45
+    id: "8f08a3946b79012b"
+  -
+    title: "The Bonehunters"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "12 March 2024"
+    completed: "29 March 2024"
+    pages: 800
+    words: 365000
+    days: 18
+    pages_per_day: 44.44
+    words_per_day: 20277.78
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 9
+    id: "b3844491a17bc224"
+  -
+    title: "The Chronicles of the Black Company"
+    author: "Glen Cook"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 August 2024"
+    completed: "18 September 2024"
+    pages: 704
+    words: 288115
+    days: 22
+    pages_per_day: 32.0
+    words_per_day: 13096.14
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "Fantasy"
+    genre_fine: "Epic fantasy"
+    genre_rule: "fiction:fantasy:epic-fantasy"
+    source_row: 19
+    id: "baea24c1754823e3"
+  -
+    title: "The Crippled God"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "5 July 2024"
+    completed: "21 July 2024"
+    pages: 928
+    words: 385000
+    days: 17
+    pages_per_day: 54.59
+    words_per_day: 22647.06
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 15
+    id: "16cff991d55c0a5c"
+  -
+    title: "The Darkness that Comes Before"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 March 2025"
+    completed: "15 April 2025"
+    pages: 589
+    words: 175000
+    days: 19
+    pages_per_day: 31.0
+    words_per_day: 9210.53
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 34
+    id: "e681050f8c134399"
+  -
+    title: "The Fall of Babel"
+    author: "Josiah Bancroft"
+    reader: "Kevin"
+    status: "complete"
+    started: "25 February 2025"
+    completed: "27 March 2025"
+    pages: 638
+    words: 241000
+    days: 31
+    pages_per_day: 20.58
+    words_per_day: 7774.19
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 33
+    id: "7c54495e29f39d2b"
+  -
+    title: "The Great Ordeal"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "13 May 2025"
+    completed: "22 May 2025"
+    pages: 501
+    words: 160000
+    days: 10
+    pages_per_day: 50.1
+    words_per_day: 16000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 39
+    id: "6b835beea5fdebe9"
+  -
+    title: "The Hod King"
+    author: "Josiah Bancroft"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 February 2025"
+    completed: "24 February 2025"
+    pages: 567
+    words: 196722
+    days: 8
+    pages_per_day: 70.88
+    words_per_day: 24590.25
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 32
+    id: "88d16f4fe3467a5f"
+  -
+    title: "The Illearth War"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "22 May 2026"
+    completed: "28 May 2026"
+    pages: 389
+    words: 185000
+    days: 7
+    pages_per_day: 55.57
+    words_per_day: 26428.57
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 74
+    id: "8121a438df8aaaf0"
+  -
+    title: "The Judging Eye"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "27 April 2025"
+    completed: "1 May 2025"
+    pages: 433
+    words: 151000
+    days: 5
+    pages_per_day: 86.6
+    words_per_day: 30200.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 37
+    id: "71e1b10324539fa5"
+  -
+    title: "The Labyrinth of the Spirits"
+    author: "Carlos Ruiz Zafon"
+    reader: "Kevin"
+    status: "complete"
+    started: "24 March 2026"
+    completed: "8 April 2026"
+    pages: 805
+    words: 201250
+    days: 16
+    pages_per_day: 50.31
+    words_per_day: 12578.12
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 64
+    id: "724f386be2fba58f"
+  -
+    title: "The Last Argument of Kings"
+    author: "Joe Abercrombie"
+    reader: "Kevin"
+    status: "complete"
+    started: "17 August 2025"
+    completed: "27 August 2025"
+    pages: 603
+    words: 234100
+    days: 11
+    pages_per_day: 54.82
+    words_per_day: 21281.82
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 47
+    id: "76f13b27f0a05bb1"
+  -
+    title: "The Lions of Al-Rassan"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "24 February 2026"
+    completed: "27 February 2026"
+    pages: 504
+    words: 171000
+    days: 4
+    pages_per_day: 126.0
+    words_per_day: 42750.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 60
+    id: "fe626a4fc0960f5c"
+  -
+    title: "The Many Deaths of the Black Company"
+    author: "Glen Cook"
+    reader: "Kevin"
+    status: "complete"
+    started: "14 November 2024"
+    completed: "11 December 2024"
+    pages: 784
+    words: 327555
+    days: 28
+    pages_per_day: 28.0
+    words_per_day: 11698.39
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 22
+    id: "51ff6af928d8392e"
+  -
+    title: "The Mirror’s Truth"
+    author: "Michael R. Fletcher"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 April 2026"
+    completed: "1 May 2026"
+    pages: 484
+    words: 105000
+    days: 4
+    pages_per_day: 121.0
+    words_per_day: 26250.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 69
+    id: "794b68d235bb8799"
+  -
+    title: "The One Tree"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 June 2026"
+    completed: "15 July 2026"
+    pages: 406
+    words: 184000
+    days: 18
+    pages_per_day: 22.56
+    words_per_day: 10222.22
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 77
+    id: "6af8845554e8330f"
+  -
+    title: "The Painter"
+    author: "Peter Heller"
+    reader: "Kevin"
+    status: "complete"
+    started: "7 May 2026"
+    completed: "8 May 2026"
+    pages: 384
+    words: 115000
+    days: 2
+    pages_per_day: 192.0
+    words_per_day: 57500.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 71
+    id: "4483d8914123266b"
+  -
+    title: "The Power that Preserves"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "29 May 2026"
+    completed: "7 June 2026"
+    pages: 373
+    words: 168000
+    days: 10
+    pages_per_day: 37.3
+    words_per_day: 16800.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 75
+    id: "05b735dba36b6859"
+  -
+    title: "The Prisoner of Heaven"
+    author: "Carlos Ruiz Zafon"
+    reader: "Kevin"
+    status: "complete"
+    started: "11 March 2026"
+    completed: "16 March 2026"
+    pages: 286
+    words: 69500
+    days: 6
+    pages_per_day: 47.67
+    words_per_day: 11583.33
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 62
+    id: "27480255c0e554ff"
+  -
+    title: "The Return of the Black Company"
+    author: "Glen Cook"
+    reader: "Kevin"
+    status: "complete"
+    started: "23 October 2024"
+    completed: "13 November 2024"
+    pages: 672
+    words: 229640
+    days: 22
+    pages_per_day: 30.55
+    words_per_day: 10438.18
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 21
+    id: "ee6c6473ba95e14b"
+  -
+    title: "The Secret History"
+    author: "Donna Tartt"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 August 2025"
+    completed: "3 September 2025"
+    pages: 559
+    words: 200000
+    days: 7
+    pages_per_day: 79.86
+    words_per_day: 28571.43
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "literary-fiction"
+    genre_fine: "campus-literature"
+    genre_rule: "exact:The Secret History"
+    source_row: 48
+    id: "efd7098f8650d3f7"
+  -
+    title: "The Shadow of the Wind"
+    author: "Carlos Ruiz Zafon"
+    reader: "Kevin"
+    status: "complete"
+    started: "2 February 2026"
+    completed: "9 February 2026"
+    pages: 506
+    words: 121000
+    days: 8
+    pages_per_day: 63.25
+    words_per_day: 15125.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 57
+    id: "2605ea3e8857ca84"
+  -
+    title: "The Sword Saint"
+    author: "C. F. Iggulden"
+    reader: "Kevin"
+    status: "complete"
+    started: "23 July 2025"
+    completed: "28 July 2025"
+    pages: 374
+    words: 0
+    days: 6
+    pages_per_day: 62.33
+    words_per_day: 0.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 43
+    id: "12b82720122e4224"
+  -
+    title: "The Thousandfold Thought"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "21 April 2025"
+    completed: "27 April 2025"
+    pages: 503
+    words: 139000
+    days: 7
+    pages_per_day: 71.86
+    words_per_day: 19857.14
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 36
+    id: "3fe6b1bea629e1af"
+  -
+    title: "The Unholy Consult"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "23 May 2025"
+    completed: "30 May 2025"
+    pages: 620
+    words: 225000
+    days: 8
+    pages_per_day: 77.5
+    words_per_day: 28125.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 40
+    id: "a5165922577ce714"
+  -
+    title: "The Warrior Prophet"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "15 April 2025"
+    completed: "21 April 2025"
+    pages: 607
+    words: 205000
+    days: 7
+    pages_per_day: 86.71
+    words_per_day: 29285.71
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 35
+    id: "8d05a6a3202725a7"
+  -
+    title: "The White-Luck Warrior"
+    author: "R. Scott Baker"
+    reader: "Kevin"
+    status: "complete"
+    started: "2 May 2025"
+    completed: "13 May 2025"
+    pages: 725
+    words: 202000
+    days: 12
+    pages_per_day: 60.42
+    words_per_day: 16833.33
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 38
+    id: "7739bd3262f5b5a3"
+  -
+    title: "The Wounded Land"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "7 June 2026"
+    completed: "27 June 2026"
+    pages: 440
+    words: 186000
+    days: 21
+    pages_per_day: 20.95
+    words_per_day: 8857.14
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 76
+    id: "c619f0273e1a1ced"
+  -
+    title: "Tigana"
+    author: "Guy Gavriel Kay"
+    reader: "Kevin"
+    status: "complete"
+    started: "28 February 2026"
+    completed: "11 March 2026"
+    pages: 673
+    words: 173000
+    days: 12
+    pages_per_day: 56.08
+    words_per_day: 14416.67
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 61
+    id: "aa811d13670ace02"
+  -
+    title: "Toll the Hounds"
+    author: "Steven Erikson"
+    reader: "Kevin"
+    status: "complete"
+    started: "24 April 2024"
+    completed: "10 May 2024"
+    pages: 832
+    words: 386000
+    days: 17
+    pages_per_day: 48.94
+    words_per_day: 22705.88
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 12
+    id: "67d1833b97e40127"
+  -
+    title: "Vineland"
+    author: "Thomas Pynchon"
+    reader: "Kevin"
+    status: "complete"
+    started: "15 September 2025"
+    completed: "30 September 2025"
+    pages: 400
+    words: 100000
+    days: 16
+    pages_per_day: 25.0
+    words_per_day: 6250.0
+    notes: null
+    genre_category: "fiction"
+    genre_coarse: "literary-fiction"
+    genre_fine: "postmodern-literary"
+    genre_rule: "exact:Vineland"
+    source_row: 50
+    id: "ff75966306a5cfe1"
+  -
+    title: "When True Night Falls"
+    author: "C. S. Friedman"
+    reader: "Kevin"
+    status: "complete"
+    started: "19 December 2025"
+    completed: "13 January 2026"
+    pages: 553
+    words: 156000
+    days: 26
+    pages_per_day: 21.27
+    words_per_day: 6000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 53
+    id: "1ce625819c981b58"
+  -
+    title: "White Gold Wielder"
+    author: "Stephen Donaldson"
+    reader: "Kevin"
+    status: "complete"
+    started: "15 July 2026"
+    completed: "31 July 2026"
+    pages: 419
+    words: 184000
+    days: 17
+    pages_per_day: 24.65
+    words_per_day: 10823.53
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 78
+    id: "d60b1221213d95f5"
+  -
+    title: "A Canticle for Leibowitz"
+    author: "Walter Miller Jr."
+    reader: "Patrick"
+    status: "complete"
+    started: "22 May 2026"
+    completed: "31 May 2026"
+    pages: 320
+    words: 110000
+    days: 10
+    pages_per_day: 32.0
+    words_per_day: 11000.0
+    notes: null
+    genre_category: "unclassified"
+    genre_coarse: "Unclassified"
+    genre_fine: "Unclassified"
+    genre_rule: "unclassified:unclassified:unclassified"
+    source_row: 1
+    id: "ed73c77a097c029b"

@@ -4,6 +4,7 @@
   "navigation": [
     {"label": "Home", "output": "index.html"},
     {"label": "Projects", "output": "projects.html"},
+    {"label": "Reading", "output": "reading-list.html"},
     {"label": "About", "output": "about.html"}
   ],
   "pages": [
@@ -27,6 +28,14 @@
       "title": "About",
       "layout": "default",
       "description": "How Telos shares research while preserving independent AI-provider editions."
+    },
+    {
+      "source": "site/pages/reading-list.md",
+      "output": "reading-list.html",
+      "title": "Reading List",
+      "layout": "directory",
+      "body_class": "reading-list",
+      "description": "Track active, completed, and pending books."
     },
     {
       "source": "site/pages/lake-country-fishing/index.md",
