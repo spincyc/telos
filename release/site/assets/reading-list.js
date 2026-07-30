@@ -2,7 +2,7 @@
   const DATA_URL = "data/reading-list.json";
   const ROOT = document.querySelector("[data-reading-sections]");
   const VERSION_EL = document.querySelector("[data-reading-version]");
-  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-1";
+  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-3";
   const TABLE_LAYOUTS = [
     {
       status: "complete",
@@ -49,6 +49,7 @@
       ],
     },
   ];
+  const TABLE_SORTS = TABLE_LAYOUTS.map(() => ({ key: "title", direction: 1 }));
 
   if (!ROOT) {
     return;
@@ -81,12 +82,74 @@
     return escapeText(value);
   }
 
-  function renderSection(entries, config, sectionIndex) {
+  function parseSortValue(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    const text = safeText(value);
+    if (text === "") {
+      return null;
+    }
+    const parsedDate = Date.parse(text);
+    if (!Number.isNaN(parsedDate)) {
+      return parsedDate;
+    }
+    const parsedNumber = Number(text.replace(/,/g, ""));
+    if (!Number.isNaN(parsedNumber)) {
+      return parsedNumber;
+    }
+    return text.toLowerCase();
+  }
+
+  function compareValues(leftValue, rightValue) {
+    if (leftValue === null && rightValue === null) {
+      return 0;
+    }
+    if (leftValue === null) {
+      return 1;
+    }
+    if (rightValue === null) {
+      return -1;
+    }
+    if (typeof leftValue === "number" && typeof rightValue === "number") {
+      return leftValue - rightValue;
+    }
+    return safeText(leftValue).localeCompare(safeText(rightValue), "en", { sensitivity: "base" });
+  }
+
+  function sortEntries(rows, sortState) {
+    return [...rows].sort((left, right) => {
+      const leftValue = parseSortValue(left[sortState.key]);
+      const rightValue = parseSortValue(right[sortState.key]);
+      const base = compareValues(leftValue, rightValue) * sortState.direction;
+      if (base !== 0) {
+        return base;
+      }
+      return safeText(left.title).localeCompare(safeText(right.title), "en", {
+        sensitivity: "base",
+      }) || safeText(left.author).localeCompare(safeText(right.author), "en", {
+        sensitivity: "base",
+      });
+    });
+  }
+
+  function renderSection(entries, config, sectionIndex, sortState) {
     const title = config.title;
-    const rows = entries
-      .filter((row) => (row.status || "pending") === config.status)
-      .sort((left, right) => escapeText(left.title).localeCompare(escapeText(right.title)));
-    const headers = config.columns.map((column) => `<th>${escapeText(column.label)}</th>`).join("");
+    const rows = sortEntries(
+      entries.filter((row) => (row.status || "pending") === config.status),
+      sortState,
+    );
+    const headers = config.columns
+      .map((column) => {
+        const active = sortState.key === column.key;
+        const arrow = active ? (sortState.direction === 1 ? " ↑" : " ↓") : "";
+        return `<th><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"
+          style="cursor:pointer;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;">${escapeText(column.label)}${arrow}</button></th>`;
+      })
+      .join("");
     const body = rows
       .map((entry) => {
         const cells = config.columns
@@ -124,6 +187,37 @@
     ROOT.innerHTML = `<p>${escapeText(message)}</p>`;
   }
 
+  function bindSorting(entries) {
+    ROOT.querySelectorAll("[data-reading-sort]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        const target = event.currentTarget;
+        const sectionIndex = Number(target.dataset.readingSection);
+        const sortBy = target.dataset.readingSort;
+        if (!Number.isFinite(sectionIndex) || sectionIndex < 0 || sectionIndex >= TABLE_SORTS.length) {
+          return;
+        }
+        if (!sortBy) {
+          return;
+        }
+        const sortState = TABLE_SORTS[sectionIndex];
+        if (sortState.key === sortBy) {
+          sortState.direction *= -1;
+        } else {
+          sortState.key = sortBy;
+          sortState.direction = 1;
+        }
+        renderRows(entries);
+      });
+    });
+  }
+
+  function renderRows(entries) {
+    ROOT.innerHTML = TABLE_LAYOUTS.map(
+      (layout, index) => renderSection(entries, layout, index, TABLE_SORTS[index]),
+    ).join("");
+    bindSorting(entries);
+  }
+
   async function init() {
     try {
       const response = await fetch(DATA_URL);
@@ -135,7 +229,14 @@
       if (!entries) {
         throw new Error("Invalid payload: missing entries");
       }
-      ROOT.innerHTML = TABLE_LAYOUTS.map((layout, index) => renderSection(entries, layout, index)).join("");
+      TABLE_LAYOUTS.forEach((layout, index) => {
+        const found = layout.columns.find((column) => column.key === TABLE_SORTS[index].key);
+        if (!found) {
+          TABLE_SORTS[index].key = "title";
+          TABLE_SORTS[index].direction = 1;
+        }
+      });
+      renderRows(entries);
     } catch (error) {
       renderError(`Unable to load reading list: ${String(error.message || error)}`);
     }
