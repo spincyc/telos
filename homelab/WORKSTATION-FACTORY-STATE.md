@@ -193,6 +193,17 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   holds the pre-rewrite history, so the branches have diverged and publishing
   requires an authorized force-push; an ordinary push will be refused. Verify
   before pushing that no remote-only work has appeared since this reconciliation.
+- A fourth attempt `20260730T190013Z-696c1fb718b5` failed differently and
+  worse: after 11 minutes it raised a bare `WindowsIdentityRunError` with no
+  check, operation, or diagnostic at all. It booted the Windows guest twice,
+  logged two `peer-abandoned-before-authentication` switch events, produced no
+  rotation evidence, and tore down completely. That is earlier than the first
+  three attempts, which all reached the desktop, and it is before any
+  controller-auth code runs, so the receipt-origin work is not implicated.
+  Two open questions: why the boot path can lose every coordinate, and whether
+  repeated runs drift the shared Controller state at
+  `build/homelab/vm/bootstrap-dc`, which unlike the Windows overlay is not
+  recreated per attempt. Do not read a fourth failure as four of a kind.
 - Three authorized attempts (`20260730T181419Z-39d2f820716d`,
   `20260730T182932Z-c93f871638bd`, `20260730T184757Z-0e9b24f41a38`) all reached
   the same coordinate with complete five-part teardown. Both host-side
