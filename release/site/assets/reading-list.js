@@ -2,7 +2,7 @@
   const DATA_URL = "data/reading-list.json";
   const ROOT = document.querySelector("[data-reading-sections]");
   const VERSION_EL = document.querySelector("[data-reading-version]");
-  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-6";
+  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-7";
   const TABLE_LAYOUTS = [
     {
       status: "complete",
@@ -145,7 +145,8 @@
       .map((column) => {
         const active = sortState.key === column.key;
         const arrow = active ? (sortState.direction === 1 ? " ↑" : " ↓") : "";
-        return `<th><button type="button" class="reading-sort-button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}">${escapeText(column.label)}${arrow}</button></th>`;
+        return `<th><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"
+          style="cursor:pointer;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;">${escapeText(column.label)}${arrow}</button></th>`;
       })
       .join("");
     const body = rows
@@ -159,18 +160,18 @@
 
     if (!rows.length) {
       return `
-        <section class=\"reading-section\" aria-labelledby=\"reading-section-${sectionIndex + 1}\">
-          <h2 class="reading-section-title" id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (0)</h2>
+        <section aria-labelledby=\"reading-section-${sectionIndex + 1}\">
+          <h2 id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (0)</h2>
           <p>No entries.</p>
         </section>
       `;
     }
 
     return `
-      <section class=\"reading-section\" aria-labelledby=\"reading-section-${sectionIndex + 1}\">
-        <h2 class="reading-section-title" id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (${rows.length})</h2>
-        <div class=\"reading-table-wrap\">
-          <table class=\"reading-table\">
+      <section aria-labelledby=\"reading-section-${sectionIndex + 1}\">
+        <h2 id=\"reading-section-${sectionIndex + 1}\">${escapeText(title)} (${rows.length})</h2>
+        <div style=\"overflow-x:auto;\">
+          <table style=\"width:100%; border-collapse:collapse; margin:0 0 1rem; min-width: 56rem;\">
             <thead>
               <tr>${headers}</tr>
             </thead>
