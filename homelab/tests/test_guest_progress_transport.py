@@ -149,6 +149,21 @@ class GuestProgressTransportTests(unittest.TestCase):
         with self.assertRaises(TransportError):
             transport.collect()
 
+    def test_restores_the_caller_socket_timeout(self):
+        self.host.settimeout(37.0)
+        self.send(event())
+        self.guest.shutdown(socket.SHUT_WR)
+        self.transport().collect()
+        self.assertEqual(self.host.gettimeout(), 37.0)
+
+    def test_restores_the_socket_timeout_after_a_fault(self):
+        self.host.settimeout(11.0)
+        self.guest.sendall(b"\x00\x00\x00\x05hello")
+        self.guest.shutdown(socket.SHUT_WR)
+        with self.assertRaises(SchemaError):
+            self.transport().collect()
+        self.assertEqual(self.host.gettimeout(), 11.0)
+
     def test_rejects_a_foreign_receiver(self):
         with self.assertRaises(TransportError):
             GuestProgressTransport(self.host, object())

@@ -60,6 +60,14 @@ class GuestProgressTransport:
         self._clock = clock
         self._decoder = FrameDecoder(max_bytes=receiver.config.max_frame_bytes)
         self._closed = False
+        # The caller owns the socket, so its timeout is borrowed, not taken.
+        self._prior_timeout = connection.gettimeout()
+
+    def _restore_timeout(self) -> None:
+        try:
+            self.connection.settimeout(self._prior_timeout)
+        except OSError:
+            pass
 
     def _arm(self) -> float:
         remaining = self.receiver.deadline - self._clock()
@@ -93,6 +101,13 @@ class GuestProgressTransport:
 
         if self._closed:
             raise TransportError("transport is closed")
+        try:
+            return self._collect(until_terminal=until_terminal)
+        except BaseException:
+            self._restore_timeout()
+            raise
+
+    def _collect(self, *, until_terminal: bool) -> TransportResult:
         events: list[AcceptedEvent] = []
         while True:
             try:
@@ -124,6 +139,7 @@ class GuestProgressTransport:
         self.receiver.begin_drain(now=now)
         checkpoint = self.receiver.finish_drain()
         self._closed = True
+        self._restore_timeout()
         return TransportResult(
             events=tuple(events),
             liveness=liveness,
