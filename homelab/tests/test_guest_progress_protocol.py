@@ -4,6 +4,7 @@ import unittest
 import uuid
 
 from homelab.vm.guest_progress_protocol import (
+    AcceptedEvent,
     AuthenticationError,
     DeadlineError,
     FrameDecoder,
@@ -12,9 +13,12 @@ from homelab.vm.guest_progress_protocol import (
     ReceiverState,
     ReplayError,
     SchemaError,
+    SenderState,
     TransitionError,
+    ack_for,
     canonical_json,
     encode_frame,
+    parse_ack_payload,
     parse_payload,
     sign_envelope,
 )
@@ -248,7 +252,7 @@ class ReceiverTests(unittest.TestCase):
 
     def test_deadline_is_immutable_and_guest_time_cannot_extend_it(self):
         with self.assertRaises(DeadlineError):
-            self.accept(event(time="2099-01-01T00:00:00Z"), at=101)
+            self.accept(event(time="2099-01-01T00:00:00Z"), at=100)
         self.assertEqual(self.state.deadline, 100)
 
     def test_rejects_nonfinite_deadlines_and_receive_times(self):
@@ -330,6 +334,258 @@ class ReceiverTests(unittest.TestCase):
             self.accept(event(), at=2)
         with self.assertRaises(AuthenticationError):
             self.state.reconnect()
+
+
+class AcknowledgmentAndSenderTests(unittest.TestCase):
+    def setUp(self):
+        self.ack_receiver = ReceiverState(CONFIG, KEY, deadline=100)
+
+    def validated(self, envelope):
+        return self.ack_receiver.accept(canonical_json(envelope), received_at=1)
+
+    def ack(self, envelope, **changes):
+        value = ack_for(self.validated(envelope), CONFIG, KEY)
+        if changes:
+            unsigned = {k: v for k, v in value.items() if k != "mac"}
+            unsigned.update(changes)
+            from homelab.vm import guest_progress_protocol as subject
+
+            value = dict(unsigned)
+            value["mac"] = subject._domain_mac(
+                unsigned, KEY, subject.ACK_MAC_DOMAIN
+            )
+        return canonical_json(value)
+
+    def test_ack_is_closed_canonical_direction_separated_and_framable(self):
+        sync = event()
+        accepted = self.validated(sync)
+        ack = ack_for(accepted, CONFIG, KEY)
+        with self.assertRaises(TypeError):
+            accepted.envelope["sequence"] = 99
+        class ForgedAcceptedEvent(AcceptedEvent):
+            pass
+        with self.assertRaises(AuthenticationError):
+            ack_for(
+                ForgedAcceptedEvent(
+                    envelope=accepted.envelope,
+                    duplicate=False,
+                    _seal=accepted._seal,
+                ),
+                CONFIG,
+                KEY,
+            )
+        cloned_envelope = dict(accepted.envelope)
+        cloned_envelope["sequence"] = 1
+        with self.assertRaises(AuthenticationError):
+            ack_for(
+                AcceptedEvent(
+                    envelope=cloned_envelope,
+                    duplicate=False,
+                    _seal=accepted._seal,
+                ),
+                CONFIG,
+                KEY,
+            )
+        self.assertEqual(
+            frozenset(ack),
+            {
+                "specversion", "type", "attempt", "boot_id", "sequence", "id",
+                "status", "mac",
+            },
+        )
+        self.assertEqual(parse_ack_payload(canonical_json(ack), CONFIG, KEY), ack)
+        self.assertEqual(
+            encode_frame(ack)[4:],
+            canonical_json(ack),
+        )
+        event_domain_forgery = sign_envelope(
+            {k: v for k, v in ack.items() if k != "mac"}, KEY
+        )
+        with self.assertRaises(AuthenticationError):
+            parse_ack_payload(canonical_json(event_domain_forgery), CONFIG, KEY)
+
+    def test_ack_rejects_forgery_unknown_fields_and_wrong_binding(self):
+        valid = ack_for(self.validated(event()), CONFIG, KEY)
+        cases = (
+            (canonical_json(valid), b"x" * 32, AuthenticationError),
+            (canonical_json({**valid, "extra": "x"}), KEY, SchemaError),
+            (json.dumps(valid, sort_keys=True).encode(), KEY, SchemaError),
+            (self.ack(event(), attempt="other"), KEY, AuthenticationError),
+        )
+        for payload, key, error in cases:
+            with self.subTest(error=error):
+                with self.assertRaises(error):
+                    parse_ack_payload(payload, CONFIG, key)
+        for invalid in (
+            event(),
+            AcceptedEvent(envelope=event(), duplicate=False),
+        ):
+            with self.assertRaises(AuthenticationError):
+                ack_for(invalid, CONFIG, KEY)
+
+    def test_stop_and_wait_exact_ack_and_idempotence(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        sync = event()
+        frame = sender.stage(canonical_json(sync), sent_at=1)
+        self.assertEqual(sender.state, "SYNC_PENDING")
+        self.assertEqual(frame[4:], canonical_json(sync))
+        self.assertTrue(sender.acknowledge(self.ack(sync), received_at=2))
+        self.assertEqual(sender.state, "READY")
+        self.assertFalse(sender.acknowledge(self.ack(sync), received_at=2))
+
+        ordinary = event(1, "phase-started", "install")
+        sender.stage(canonical_json(ordinary), sent_at=3)
+        with self.assertRaises(TransitionError):
+            sender.stage(
+                canonical_json(event(2, "heartbeat", "install")), sent_at=3
+            )
+        self.assertFalse(sender.acknowledge(self.ack(sync), received_at=3))
+        self.assertTrue(sender.acknowledge(self.ack(ordinary), received_at=3))
+        self.assertEqual(sender.last_sequence, 1)
+
+    def test_retries_exact_bytes_on_frozen_schedule_and_deadline(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        frame = sender.stage(canonical_json(event()), sent_at=10)
+        self.assertEqual(sender.ack_deadline, 15)
+        with self.assertRaises(DeadlineError):
+            sender.retry(now=10.249)
+        for moment in (10.25, 10.75, 11.75, 13.75):
+            self.assertEqual(sender.retry(now=moment), frame)
+        with self.assertRaises(DeadlineError):
+            sender.retry(now=15)
+        self.assertEqual(sender.state, "TIMED_OUT")
+        with self.assertRaises(DeadlineError):
+            sender.stage(canonical_json(event()), sent_at=15)
+
+    def test_ack_deadline_is_clamped_to_operation_deadline(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=12)
+        sender.stage(canonical_json(event()), sent_at=10)
+        self.assertEqual(sender.ack_deadline, 12)
+        with self.assertRaises(DeadlineError):
+            sender.acknowledge(self.ack(event()), received_at=12.001)
+        self.assertEqual(sender.state, "TIMED_OUT")
+
+    def test_deadlines_are_half_open_at_exact_boundary(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=10)
+        with self.assertRaises(DeadlineError):
+            sender.stage(canonical_json(event()), sent_at=10)
+
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        sync = event()
+        sender.stage(canonical_json(sync), sent_at=10)
+        with self.assertRaises(DeadlineError):
+            sender.acknowledge(self.ack(sync), received_at=15)
+        self.assertEqual(sender.state, "TIMED_OUT")
+
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        sender.stage(canonical_json(sync), sent_at=10)
+        with self.assertRaises(DeadlineError):
+            sender.acknowledge(b"{malformed", received_at=15)
+        self.assertEqual(sender.state, "TIMED_OUT")
+        self.assertIsNone(sender.pending_payload)
+
+    def test_future_wrong_tuple_attempt_and_boot_fail_closed(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        sync = event()
+        sender.stage(canonical_json(sync), sent_at=1)
+        for ack_payload in (
+            self.ack(sync, sequence=1),
+            self.ack(sync, id=str(uuid.UUID(int=99))),
+            self.ack(sync, boot_id="boot-public-2"),
+        ):
+            with self.subTest(ack=ack_payload):
+                with self.assertRaises(ReplayError):
+                    sender.acknowledge(ack_payload, received_at=2)
+        with self.assertRaises(AuthenticationError):
+            sender.acknowledge(
+                self.ack(sync, attempt="other"),
+                received_at=2,
+            )
+        self.assertEqual(sender.state, "SYNC_PENDING")
+
+    def test_sequence_and_sync_transitions_are_sender_enforced(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        with self.assertRaises(TransitionError):
+            sender.stage(
+                canonical_json(event(0, "phase-started", "install")), sent_at=1
+            )
+        sync = event()
+        sender.stage(canonical_json(sync), sent_at=1)
+        sender.acknowledge(self.ack(sync), received_at=1)
+        for invalid in (
+            event(1),
+            event(2, "phase-started", "install"),
+            event(1, "phase-started", "install", boot_id="boot-public-2"),
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((TransitionError, ReplayError)):
+                    sender.stage(canonical_json(invalid), sent_at=2)
+        self.assertEqual(sender.state, "READY")
+
+    def test_sender_rejects_event_uuid_reuse_and_bounds_retention_atomically(self):
+        sender = SenderState(CONFIG, KEY, operation_deadline=100)
+        sync = event()
+        sender.stage(canonical_json(sync), sent_at=1)
+        sender.acknowledge(self.ack(sync), received_at=1)
+        reused = event(
+            1, "phase-started", "install", id=sync["id"]
+        )
+        with self.assertRaises(ReplayError):
+            sender.stage(canonical_json(reused), sent_at=2)
+        self.assertEqual(sender.state, "READY")
+        self.assertEqual(sender.last_sequence, 0)
+        self.assertIsNone(sender.pending_payload)
+
+        bounded_config = ProtocolConfig(
+            attempt=CONFIG.attempt,
+            producer=CONFIG.producer,
+            nonce=CONFIG.nonce,
+            phases=CONFIG.phases,
+            statuses=CONFIG.statuses,
+            max_events=1,
+        )
+        bounded = SenderState(bounded_config, KEY, operation_deadline=100)
+        bounded.stage(canonical_json(sync), sent_at=1)
+        bounded.acknowledge(self.ack(sync), received_at=1)
+        with self.assertRaises(ReplayError):
+            bounded.stage(
+                canonical_json(event(1, "phase-started", "install")),
+                sent_at=2,
+            )
+        self.assertEqual(bounded.state, "READY")
+        self.assertIsNone(bounded.pending_payload)
+
+    def test_sender_snapshots_config_rejects_nonfinite_time_and_wipes_key(self):
+        mutable = ProtocolConfig(
+            attempt=CONFIG.attempt,
+            producer=CONFIG.producer,
+            nonce=CONFIG.nonce,
+            phases=CONFIG.phases,
+            statuses=CONFIG.statuses,
+        )
+        sender = SenderState(mutable, KEY, operation_deadline=100)
+        with self.assertRaises(AttributeError):
+            sender.operation_deadline = 200
+        with self.assertRaises(AttributeError):
+            sender.state = "READY"
+        with self.assertRaises(AttributeError):
+            sender.config = CONFIG
+        with self.assertRaises(AttributeError):
+            sender.boot_id = "boot-public-2"
+        with self.assertRaises(AttributeError):
+            sender.last_sequence = 99
+        object.__setattr__(mutable, "attempt", "tampered")
+        sender.stage(canonical_json(event()), sent_at=1)
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(DeadlineError):
+                    sender.retry(now=value)
+        internal_key = sender._key
+        sender.close()
+        self.assertEqual(internal_key, bytearray(len(KEY)))
+        self.assertIsNone(sender.pending_payload)
+        with self.assertRaises(AuthenticationError):
+            sender.acknowledge(self.ack(event()), received_at=2)
 
 
 if __name__ == "__main__":

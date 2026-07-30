@@ -15,7 +15,7 @@ import math
 import re
 import struct
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -34,6 +34,9 @@ EVENT_TYPES = (
     "diagnostic-ready",
 )
 MAC_DOMAIN = b"telos-guest-progress-v1\x00"
+ACK_MAC_DOMAIN = b"telos-guest-progress-ack-v1\x00"
+ACK_TIMEOUT = 5.0
+RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
 EVENT_STATUSES = MappingProxyType({
     "sync": "starting",
     "phase-started": "active",
@@ -59,6 +62,13 @@ _RFC3339_UTC = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z\Z"
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_ACK_FIELDS = frozenset(
+    {
+        "specversion", "type", "attempt", "boot_id", "sequence", "id",
+        "status", "mac",
+    }
+)
+_ACCEPTED_EVENT_SEAL = object()
 
 
 class GuestProgressError(ValueError):
@@ -139,6 +149,7 @@ class AcceptedEvent:
     envelope: Mapping[str, Any]
     duplicate: bool
     authoritative: bool = False
+    _seal: object | None = field(default=None, repr=False, compare=False)
 
 
 def _require_token(name: str, value: Any) -> None:
@@ -183,12 +194,113 @@ def mac_for(envelope_without_mac: Mapping[str, Any], key: bytes) -> str:
     return base64.b64encode(digest).decode("ascii")
 
 
+def _domain_mac(envelope_without_mac: Mapping[str, Any], key: bytes, domain: bytes) -> str:
+    if type(key) is not bytes or len(key) < 32:
+        raise AuthenticationError("MAC key must be exact bytes of at least 32 bytes")
+    digest = hmac.new(
+        key, domain + canonical_json(envelope_without_mac), hashlib.sha256
+    ).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
 def sign_envelope(envelope_without_mac: Mapping[str, Any], key: bytes) -> dict[str, Any]:
     if "mac" in envelope_without_mac:
         raise SchemaError("unsigned envelope must omit mac")
     result = dict(envelope_without_mac)
     result["mac"] = mac_for(result, key)
     return result
+
+
+def ack_for(
+    accepted: AcceptedEvent, config: ProtocolConfig, key: bytes
+) -> dict[str, Any]:
+    """Build an authenticated host acknowledgment for one exact event tuple."""
+
+    if (
+        type(accepted) is not AcceptedEvent
+        or accepted._seal is not _ACCEPTED_EVENT_SEAL
+    ):
+        raise AuthenticationError(
+            "acknowledgment requires an exact receiver-validated event"
+        )
+    envelope = parse_payload(canonical_json(dict(accepted.envelope)), config, key)
+    unsigned = {
+        "specversion": envelope["specversion"],
+        "type": "ack",
+        "attempt": envelope["attempt"],
+        "boot_id": envelope["boot_id"],
+        "sequence": envelope["sequence"],
+        "id": envelope["id"],
+        "status": "accepted",
+    }
+    result = dict(unsigned)
+    result["mac"] = _domain_mac(unsigned, key, ACK_MAC_DOMAIN)
+    return result
+
+
+def parse_ack_payload(
+    payload: bytes, config: ProtocolConfig, key: bytes
+) -> dict[str, Any]:
+    """Validate one canonical, direction-separated acknowledgment."""
+
+    if type(config) is not ProtocolConfig:
+        raise SchemaError("config must be an exact ProtocolConfig")
+    if type(payload) is not bytes or not payload or len(payload) > config.max_frame_bytes:
+        raise FrameError("invalid acknowledgment payload length")
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_object_pairs,
+            parse_float=lambda _: (_ for _ in ()).throw(
+                SchemaError("non-integer JSON number")
+            ),
+            parse_constant=_reject_constant,
+        )
+    except SchemaError:
+        raise
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise SchemaError("invalid acknowledgment JSON") from error
+    if type(value) is not dict or frozenset(value) != _ACK_FIELDS:
+        raise SchemaError("acknowledgment must contain exactly the closed v1 fields")
+    if canonical_json(value) != payload:
+        raise SchemaError("noncanonical acknowledgment JSON encoding")
+    if (
+        value["specversion"] != config.specversion
+        or value["type"] != "ack"
+        or value["status"] != "accepted"
+    ):
+        raise SchemaError("invalid acknowledgment coordinate")
+    _require_token("attempt", value["attempt"])
+    _require_token("boot_id", value["boot_id"])
+    if value["attempt"] != config.attempt:
+        raise AuthenticationError("acknowledgment attempt binding mismatch")
+    sequence = value["sequence"]
+    if type(sequence) is not int or not 0 <= sequence <= JSON_SAFE_INTEGER_MAX:
+        raise SchemaError("acknowledgment sequence must be a JSON-safe integer")
+    try:
+        parsed_id = uuid.UUID(value["id"])
+    except (AttributeError, TypeError, ValueError) as error:
+        raise SchemaError("acknowledgment id must be a canonical UUID") from error
+    if str(parsed_id) != value["id"]:
+        raise SchemaError("acknowledgment id must be a canonical lowercase UUID")
+    supplied_mac = value["mac"]
+    if type(supplied_mac) is not str:
+        raise SchemaError("acknowledgment mac must be base64 text")
+    try:
+        decoded_mac = base64.b64decode(supplied_mac, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise SchemaError("acknowledgment mac must be canonical base64") from error
+    if (
+        len(decoded_mac) != hashlib.sha256().digest_size
+        or base64.b64encode(decoded_mac).decode("ascii") != supplied_mac
+    ):
+        raise SchemaError("acknowledgment mac must be canonical HMAC-SHA-256")
+    unsigned = dict(value)
+    del unsigned["mac"]
+    expected = _domain_mac(unsigned, key, ACK_MAC_DOMAIN)
+    if not hmac.compare_digest(supplied_mac, expected):
+        raise AuthenticationError("invalid acknowledgment MAC")
+    return value
 
 
 def encode_frame(envelope: Mapping[str, Any], *, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
@@ -366,6 +478,226 @@ def _validate_envelope(value: dict[str, Any], config: ProtocolConfig) -> None:
         raise SchemaError("diagnostic-ready requires diagnostic metadata")
 
 
+class SenderState:
+    """Stop-and-wait sender for one boot and one immutable operation deadline."""
+
+    def __init__(
+        self, config: ProtocolConfig, key: bytes, *, operation_deadline: float
+    ) -> None:
+        if type(config) is not ProtocolConfig:
+            raise SchemaError("config must be an exact ProtocolConfig")
+        if (
+            type(operation_deadline) not in (int, float)
+            or not math.isfinite(operation_deadline)
+        ):
+            raise DeadlineError(
+                "operation deadline must be a finite monotonic number"
+            )
+        if type(key) is not bytes or len(key) < 32:
+            raise AuthenticationError("MAC key must be exact bytes of at least 32 bytes")
+        self._config = ProtocolConfig(
+            attempt=config.attempt,
+            producer=config.producer,
+            nonce=config.nonce,
+            phases=config.phases,
+            statuses=config.statuses,
+            event_types=config.event_types,
+            specversion=config.specversion,
+            max_frame_bytes=config.max_frame_bytes,
+            max_events=config.max_events,
+            max_boots=config.max_boots,
+        )
+        self._key = bytearray(key)
+        self._operation_deadline = float(operation_deadline)
+        self._state = "UNSYNCED"
+        self._boot_id: str | None = None
+        self._last_sequence: int | None = None
+        self._last_ack: tuple[str, int, str] | None = None
+        self._pending_tuple: tuple[str, int, str] | None = None
+        self._pending_payload: bytes | None = None
+        self._pending_frame: bytes | None = None
+        self._ack_deadline: float | None = None
+        self._next_retry: float | None = None
+        self._retry_index = 0
+        self._used_event_ids: set[str] = set()
+        self._closed = False
+
+    @staticmethod
+    def _time(name: str, value: float) -> float:
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise DeadlineError(f"{name} must be a finite monotonic number")
+        return float(value)
+
+    @property
+    def ack_deadline(self) -> float | None:
+        return self._ack_deadline
+
+    @property
+    def operation_deadline(self) -> float:
+        return self._operation_deadline
+
+    @property
+    def config(self) -> ProtocolConfig:
+        return self._config
+
+    @property
+    def boot_id(self) -> str | None:
+        return self._boot_id
+
+    @property
+    def last_sequence(self) -> int | None:
+        return self._last_sequence
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def pending_payload(self) -> bytes | None:
+        return self._pending_payload
+
+    def stage(self, payload: bytes, *, sent_at: float) -> bytes:
+        """Stage one signed event and return its immutable framed bytes."""
+
+        self._require_open()
+        now = self._time("send time", sent_at)
+        if now >= self._operation_deadline:
+            self._expire()
+            raise DeadlineError("event started outside the operation deadline")
+        if self._state == "TIMED_OUT":
+            raise DeadlineError("sender acknowledgment deadline expired")
+        if self._pending_payload is not None:
+            raise TransitionError("an event is already awaiting acknowledgment")
+        envelope = parse_payload(payload, self._config, bytes(self._key))
+        sequence = envelope["sequence"]
+        boot_id = envelope["boot_id"]
+        event_id = envelope["id"]
+        if event_id in self._used_event_ids:
+            raise ReplayError("sender event UUID was already acknowledged")
+        if len(self._used_event_ids) >= self._config.max_events:
+            raise ReplayError("sender event UUID retention limit reached")
+        if self._state == "UNSYNCED":
+            if envelope["type"] != "sync" or sequence != 0:
+                raise TransitionError("first sender event must be sequence-zero sync")
+            if envelope["nonce"] != self._config.nonce:
+                raise AuthenticationError("synchronization nonce mismatch")
+        else:
+            if envelope["type"] == "sync":
+                raise TransitionError("sync may only be the first sender event")
+            if boot_id != self._boot_id:
+                raise ReplayError("sender boot identifier changed")
+            assert self._last_sequence is not None
+            if sequence != self._last_sequence + 1:
+                raise ReplayError("sender sequence must advance by exactly one")
+        frame = encode_frame(envelope, max_bytes=self._config.max_frame_bytes)
+        self._pending_tuple = (boot_id, sequence, envelope["id"])
+        self._pending_payload = payload
+        self._pending_frame = frame
+        self._ack_deadline = min(now + ACK_TIMEOUT, self._operation_deadline)
+        self._retry_index = 0
+        self._next_retry = min(now + RETRY_DELAYS[0], self._ack_deadline)
+        self._state = (
+            "SYNC_PENDING" if self._state == "UNSYNCED" else "EVENT_PENDING"
+        )
+        return frame
+
+    def retry(self, *, now: float) -> bytes:
+        """Return the exact pending frame once its bounded retry time arrives."""
+
+        self._require_open()
+        current = self._time("retry time", now)
+        if self._pending_frame is None:
+            raise TransitionError("no event is awaiting acknowledgment")
+        assert self._ack_deadline is not None
+        assert self._next_retry is not None
+        if current >= self._ack_deadline:
+            self._expire()
+            raise DeadlineError("sender acknowledgment deadline expired")
+        if current < self._next_retry:
+            raise DeadlineError("retry is not due")
+        frame = self._pending_frame
+        self._retry_index = min(self._retry_index + 1, len(RETRY_DELAYS) - 1)
+        self._next_retry = min(
+            current + RETRY_DELAYS[self._retry_index], self._ack_deadline
+        )
+        return frame
+
+    def acknowledge(self, payload: bytes, *, received_at: float) -> bool:
+        """Commit an exact ACK; return False for an idempotent or stale ACK."""
+
+        self._require_open()
+        current = self._time("acknowledgment receive time", received_at)
+        if self._state == "TIMED_OUT":
+            raise DeadlineError("sender acknowledgment deadline expired")
+        if (
+            self._pending_tuple is not None
+            and self._ack_deadline is not None
+            and current >= self._ack_deadline
+        ):
+            self._expire()
+            raise DeadlineError("sender acknowledgment deadline expired")
+        ack = parse_ack_payload(payload, self._config, bytes(self._key))
+        observed = (ack["boot_id"], ack["sequence"], ack["id"])
+        if self._pending_tuple is None:
+            if observed == self._last_ack:
+                return False
+            if (
+                self._last_ack is not None
+                and observed[0] == self._last_ack[0]
+                and observed[1] < self._last_ack[1]
+            ):
+                return False
+            raise ReplayError("acknowledgment does not identify the last event")
+        pending = self._pending_tuple
+        if observed[0] != pending[0]:
+            raise ReplayError("acknowledgment boot identifier mismatch")
+        if observed[1] < pending[1]:
+            return False
+        if observed != pending:
+            raise ReplayError("acknowledgment does not identify the pending event")
+        was_sync = self._state == "SYNC_PENDING"
+        self._boot_id = observed[0]
+        self._last_sequence = observed[1]
+        self._used_event_ids.add(observed[2])
+        self._last_ack = observed
+        self._clear_pending()
+        self._state = "READY"
+        if was_sync:
+            self._boot_id = observed[0]
+        return True
+
+    def _clear_pending(self) -> None:
+        self._pending_tuple = None
+        self._pending_payload = None
+        self._pending_frame = None
+        self._ack_deadline = None
+        self._next_retry = None
+        self._retry_index = 0
+
+    def _expire(self) -> None:
+        self._state = "TIMED_OUT"
+        self._clear_pending()
+
+    def _require_open(self) -> None:
+        if self._closed or self._key is None:
+            raise AuthenticationError("sender is closed")
+
+    def close(self) -> None:
+        """Drop sender secrets and pending bytes."""
+
+        if self._key is not None:
+            for index in range(len(self._key)):
+                self._key[index] = 0
+            self._key = None
+        self._clear_pending()
+        self._boot_id = None
+        self._last_sequence = None
+        self._last_ack = None
+        self._used_event_ids.clear()
+        self._state = "CLOSED"
+        self._closed = True
+
+
 class ReceiverState:
     """State for one transport connection and one immutable host deadline."""
 
@@ -405,7 +737,7 @@ class ReceiverState:
         if (
             type(received_at) not in (int, float)
             or not math.isfinite(received_at)
-            or received_at > self.deadline
+            or received_at >= self.deadline
         ):
             raise DeadlineError("event arrived outside the finite host timeline")
         envelope = parse_payload(payload, self.config, bytes(self._key))
@@ -419,7 +751,11 @@ class ReceiverState:
         prior = self._accepted.get(identity)
         if prior is not None:
             if hmac.compare_digest(prior, fingerprint):
-                return AcceptedEvent(envelope=envelope, duplicate=True)
+                return AcceptedEvent(
+                    envelope=MappingProxyType(dict(envelope)),
+                    duplicate=True,
+                    _seal=_ACCEPTED_EVENT_SEAL,
+                )
             raise ReplayError("event tuple reused with conflicting content")
         if envelope["id"] in self._event_ids:
             raise ReplayError("event UUID reused across sequence or boot")
@@ -449,7 +785,11 @@ class ReceiverState:
         self.active_phase = next_phase
         self._accepted[identity] = fingerprint
         self._event_ids.add(envelope["id"])
-        return AcceptedEvent(envelope=envelope, duplicate=False)
+        return AcceptedEvent(
+            envelope=MappingProxyType(dict(envelope)),
+            duplicate=False,
+            _seal=_ACCEPTED_EVENT_SEAL,
+        )
 
     def _next_phase(self, envelope: Mapping[str, Any]) -> str | None:
         event_type = envelope["type"]
