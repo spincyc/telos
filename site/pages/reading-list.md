@@ -14,4 +14,4 @@
 </div>
 <div id="reading-sections" class="reading-sections" data-reading-sections></div>
 
-<script src="assets/reading-list.js?v=reader-columns-removed-2026-07-30" defer></script>
+<script src="assets/reading-list.js" defer></script>
