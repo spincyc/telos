@@ -1004,9 +1004,16 @@ class NativeWindowsAcceptanceAdapter:
                     controller_auth_arm_subphase=(
                         ControllerAuthArmSubphase.PREFLIGHT),
                 ) from None
-            except BaseException:
+            except BaseException as error:
+                # The session could not be constructed, so nothing was ever
+                # armed and no receipt could exist. Recording only
+                # receipt-unavailable made that indistinguishable from a
+                # diagnostic that ran and stayed silent, which is the fork the
+                # no-logon-event boundary needs answered.
                 self._controller_auth_result = ControllerAuthResult(
-                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    session_error=type(error).__name__,
+                )
                 controller_auth = None
             try:
                 if controller_auth is not None:

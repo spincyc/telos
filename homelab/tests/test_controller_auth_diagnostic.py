@@ -24,6 +24,7 @@ from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthDiagnosticError,
     classify_auth_events,
     supplemental_only,
+    _COLLECTION_BY_WIRE,
     _complete_json_records,
     _observation_complete,
 )
@@ -1632,6 +1633,54 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertIn(
             "controller-auth-cleanup=sink-absence-unproved", rendered)
         self.assertIn("controller-auth-arm-subphase=parse", rendered)
+
+    def test_absent_session_is_distinguishable_from_a_silent_diagnostic(self):
+        """An unconstructed session and an armed but silent one differ."""
+        absent = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            session_error="OSError",
+        )
+        silent = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        rendered_absent = IdentityFailureDiagnostic.join_guest(
+            "reboot-reauth-desktop",
+            "WindowsLocalReauthenticationError",
+            controller_auth=absent,
+        ).render()
+        rendered_silent = IdentityFailureDiagnostic.join_guest(
+            "reboot-reauth-desktop",
+            "WindowsLocalReauthenticationError",
+            controller_auth=silent,
+        ).render()
+        self.assertIn(
+            "controller-auth-session-error=OSError", rendered_absent)
+        self.assertNotIn("controller-auth-session-error", rendered_silent)
+        self.assertNotEqual(rendered_absent, rendered_silent)
+
+    def test_session_error_rejects_unbounded_or_leaky_values(self):
+        """Only a bounded type name: a message could quote a path or secret."""
+        for value in (
+            "OSError: /home/ksh/secret/path",
+            "has space",
+            "x" * 65,
+            b"OSError",
+            "",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises((ValueError, TypeError)):
+                    ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        session_error=value,
+                    )
+
+    def test_the_controller_cannot_claim_an_absent_session(self):
+        """session_error is host-side: no wire vocabulary can produce it."""
+        for wire in _COLLECTION_BY_WIRE:
+            with self.subTest(wire=wire):
+                result = ControllerAuthResult(
+                    collection=_COLLECTION_BY_WIRE[wire])
+                self.assertIsNone(result.session_error)
 
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)
