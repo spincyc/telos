@@ -209,6 +209,11 @@ a[href$=".pdf"]::after {
   margin: 1.7rem 0 .8rem;
   font: 700 1rem/1.2 ui-sans-serif, system-ui, sans-serif;
 }
+.reading-sort-note {
+  margin-left: .55rem;
+  color: var(--muted);
+  font: 650 .67rem/1.2 ui-sans-serif, system-ui, sans-serif;
+}
 .reading-table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 12px; }
 .reading-table {
   width: 100%;
