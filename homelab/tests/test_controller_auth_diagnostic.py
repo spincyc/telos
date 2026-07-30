@@ -5,9 +5,12 @@ import base64
 import tempfile
 import json
 import os
+import socket
+import threading
 from pathlib import Path
 
 from homelab.vm import controller_auth_diagnostic as subject
+from homelab.vm.serial_automation import SerialAutomation
 from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
     ControllerAuthCode,
@@ -260,7 +263,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             caught.exception.arm_subphase,
             ControllerAuthArmSubphase.RECEIVE)
         self.assertIn(
-            "controller-auth-abort-sent",
+            "controller-auth-launch-interrupted",
             [call.args[1] for call in console._send.call_args_list],
         )
 
@@ -319,6 +322,74 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     "private", str(caught.exception))
 
         self.assertNotIn(ControllerAuthArmSubphase.LAUNCH, observed)
+
+    def test_sudo_argv_selects_noninteractive_or_stdin_mode(self):
+        fixed_uuid = mock.Mock(hex="0123456789abcdef0123456789abcdef")
+        for password, expected, forbidden in (
+            (None, b"sudo -k -n ", b" -S "),
+            (b"private-password", b"sudo -k -S -p '", b" -n "),
+        ):
+            with self.subTest(password=password is not None):
+                console = mock.Mock(password=password, timeout=99.0)
+                console._wait.side_effect = [
+                    mock.Mock(),
+                    *(
+                        [mock.Mock()]
+                        if password is not None
+                        else []
+                    ),
+                    mock.Mock(),
+                ]
+                session = ControllerAuthDiagnosticSession(
+                    console, self.expected)
+                with mock.patch.object(
+                    subject.uuid, "uuid4", return_value=fixed_uuid,
+                ):
+                    session.arm()
+                command = console._send.call_args_list[1].args[0]
+                self.assertTrue(command.startswith(expected))
+                self.assertNotIn(forbidden, command)
+                if password is not None:
+                    raw_prompt = (
+                        b"__TELOS_AUTH_SUDO_"
+                        b"0123456789abcdef0123456789abcdef__")
+                    self.assertNotIn(raw_prompt, command)
+                    self.assertIn(
+                        b"'__TELOS_AUTH_SUDO_''"
+                        b"0123456789abcdef0123456789abcdef__'",
+                        command,
+                    )
+
+    def test_real_serial_accepts_bare_cr_prompt_not_command_echo(self):
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        prompt = b"__TELOS_AUTH_SUDO_0123456789abcdef__"
+        pattern = (
+            rb"(?:^|[\r\n])" + re.escape(prompt)
+            + rb"[^\S\r\n]*(?=[\r\n]|$)")
+        payload = (
+            b"sudo -p '\r__TELOS_AUTH_SUDO_''"
+            b"0123456789abcdef__' command\r"
+            + prompt + b"\t \r")
+
+        def responder():
+            right.sendall(payload)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            console = SerialAutomation(
+                reader, writer, b"private-password", timeout=1)
+            match = console._wait(pattern, "bare-cr-sudo-prompt")
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(match.group(0).lstrip(b"\r"), prompt + b"\t ")
+        self.assertEqual(payload.count(prompt), 1)
+        self.assertEqual(match.start(), payload.rfind(b"\r" + prompt))
 
     def test_launch_failure_preserves_primary_and_cleanup_coordinates(self):
         console = mock.Mock(password=b"private-password", timeout=99.0)
@@ -403,6 +474,45 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(console.timeout, 99.0)
         self.assertNotIn(
             "sudo prompt deadline", caught.exception.args)
+        self.assertIn(
+            "controller-auth-launch-interrupted",
+            [call.args[1] for call in console._send.call_args_list],
+        )
+        self.assertNotIn(
+            "controller-auth-abort-sent",
+            [call.args[1] for call in console._send.call_args_list],
+        )
+
+    def test_sudo_prompt_shell_resync_does_not_claim_sink_absence(self):
+        console = mock.Mock(password=b"private-password", timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            TimeoutError("private sudo prompt timeout"),
+            re.match(rb"(?:(ok)|controller\$)", b"controller$"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.SUDO_PROMPT,
+        )
+        self.assertFalse(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+        )
+        self.assertEqual(
+            [call.args for call in console._send.call_args_list],
+            [
+                (b"", "controller-auth-shell-requested"),
+                (mock.ANY, "controller-auth-command-sent"),
+                (b"\x03", "controller-auth-launch-interrupted"),
+            ],
+        )
+        self.assertNotIn("private", str(caught.exception))
 
     def test_sudo_prompt_at_cleanup_boundary_cannot_spend_margin(self):
         now = [0.0]
@@ -508,7 +618,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             caught.exception.arm_subphase,
             ControllerAuthArmSubphase.PARSE)
         self.assertIn(
-            "controller-auth-abort-sent",
+            "controller-auth-launch-interrupted",
             [call.args[1] for call in console._send.call_args_list],
         )
 

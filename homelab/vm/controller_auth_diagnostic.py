@@ -868,18 +868,49 @@ class ControllerAuthDiagnosticSession:
             self.console.timeout = original
 
     def _recover_cleanup(self) -> ControllerAuthCleanup | None:
-        if self._state not in {"launching", "armed", "collecting"}:
+        if self._state not in {
+            "launching", "sudo-prompt", "credential-sent",
+            "armed", "collecting",
+        }:
             return (
                 None
                 if self._state == "finished"
                 else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
             )
         try:
+            marker = (
+                f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
+            if self._state in {
+                "launching", "sudo-prompt", "credential-sent",
+            }:
+                # Before an armed receipt, sudo or its child may still own the
+                # terminal.  A cancellation token could be consumed as
+                # credential input or shell text.  Interrupt first and accept
+                # only the diagnostic's typed cleanup receipt as proof;
+                # reaching a shell prompt merely proves console resynchrony.
+                self.console._send(
+                    b"\x03", "controller-auth-launch-interrupted")
+                match = self._wait(
+                    rb"(?:^|[\r\n])(?:"
+                    + re.escape(marker)
+                    + rb"(ok|[a-z-]+)[^\S\r\n]*(?:[\r\n]|$)|"
+                    + rb"[^\r\n]*\$[^\S\r\n]*(?=[\r\n]|$))",
+                    "controller-auth-launch-resynchronized")
+                cleanup_value = match.group(1)
+                if cleanup_value is None:
+                    self._state = "poisoned"
+                    return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+                self._state = "finished"
+                if cleanup_value == b"ok":
+                    return None
+                cleanup = _CLEANUP_BY_WIRE.get(cleanup_value)
+                if cleanup is None:
+                    self._state = "poisoned"
+                    return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+                return cleanup
             self.console._send(
                 f"__TELOS_AUTH_CANCEL_{self._tokens['cancel']}__".encode(),
                 "controller-auth-abort-sent")
-            marker = (
-                f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
             match = self._wait(
                 rb"(?:^|\n)" + re.escape(marker)
                 + rb"(ok|[a-z-]+)\s*(?:\n|$)",
@@ -955,12 +986,23 @@ class ControllerAuthDiagnosticSession:
             encoded = base64.b64encode(json.dumps(
                 payload, sort_keys=True, separators=(",", ":"),
             ).encode()).decode("ascii")
-            prompt = f"__TELOS_AUTH_SUDO_{uuid.uuid4().hex}__".encode()
-            command = (
-                b"sudo -k -p '" + prompt + b"' "
-                b"/opt/telos-factory/controller-auth-diagnostic.py "
-                b"--controller-session " + encoded.encode("ascii")
+            prompt_prefix = b"__TELOS_AUTH_SUDO_"
+            prompt_token = uuid.uuid4().hex.encode()
+            prompt_suffix = b"__"
+            prompt = prompt_prefix + prompt_token + prompt_suffix
+            # Adjacent single-quoted shell fragments reconstruct the exact
+            # prompt without placing its full marker in echoed command bytes.
+            prompt_argument = (
+                b"'" + prompt_prefix + b"''"
+                + prompt_token + prompt_suffix + b"'")
+            sudo = (
+                b"sudo -k -n "
+                if self.console.password is None
+                else b"sudo -k -S -p " + prompt_argument + b" "
             )
+            command = sudo + (
+                b"/opt/telos-factory/controller-auth-diagnostic.py "
+                b"--controller-session " + encoded.encode("ascii"))
             self.console._send(b"", "controller-auth-shell-requested")
             self._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-auth-shell-ready")
@@ -983,9 +1025,11 @@ class ControllerAuthDiagnosticSession:
                 arm_subphase=ControllerAuthArmSubphase.COMMAND_DISPATCH,
             ) from None
         if self.console.password is not None:
+            self._state = "sudo-prompt"
             try:
                 self._wait(
-                    rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
+                    rb"(?:^|[\r\n])" + re.escape(prompt)
+                    + rb"[^\S\r\n]*(?=[\r\n]|$)",
                     "controller-auth-sudo-password-prompt",
                     deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
             except BaseException:
@@ -1014,6 +1058,7 @@ class ControllerAuthDiagnosticSession:
                     arm_subphase=(
                         ControllerAuthArmSubphase.SUDO_CREDENTIAL_HANDOFF),
                 ) from None
+            self._state = "credential-sent"
         try:
             armed_marker = (
                 f"__TELOS_AUTH_ARMED_{self._tokens['arm']}__".encode())
