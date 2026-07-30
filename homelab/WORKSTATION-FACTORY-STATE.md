@@ -193,6 +193,18 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   holds the pre-rewrite history, so the branches have diverged and publishing
   requires an authorized force-push; an ordinary push will be refused. Verify
   before pushing that no remote-only work has appeared since this reconciliation.
+- Three authorized attempts (`20260730T181419Z-39d2f820716d`,
+  `20260730T182932Z-c93f871638bd`, `20260730T184757Z-0e9b24f41a38`) all reached
+  the same coordinate with complete five-part teardown. Both host-side
+  exception-swallow paths are now instrumented with `host_error`, and neither
+  fired on the third attempt, so no discarded host exception explains
+  `receipt-unavailable`. It is therefore produced deliberately, and the next
+  split is the one that matters: distinguish the host's bounded wait for the
+  result receipt expiring from the Controller itself reporting
+  `receipt-unavailable`, which is a legitimate value in its wire vocabulary.
+  Do not spend further attempts before that split exists. Note the empty
+  `runtime/controller/guard` directory is not evidence of failure: those paths
+  are teardown media accounting for a guard controller this path does not run.
 - Attempt `20260730T181419Z-39d2f820716d` ran with operator authorization and
   failed honestly at the established boundary: `check=windows-joined`,
   `operation=join-guest.reboot-reauth-desktop`,
