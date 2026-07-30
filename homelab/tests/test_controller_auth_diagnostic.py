@@ -245,7 +245,10 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertFalse(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
-            ControllerAuthArmSubphase.CLEANUP)
+            ControllerAuthArmSubphase.RECEIVE)
+        self.assertIs(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
         self.assertEqual(now[0], 20.0)
         self.assertNotIn(
             "arm receipt deadline", caught.exception.args)
@@ -337,7 +340,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             caught.exception.arm_subphase,
             ControllerAuthArmSubphase.RECEIVE)
 
-    def test_arm_receipt_and_cleanup_failure_reports_cleanup_subphase(self):
+    def test_arm_receipt_and_cleanup_failure_preserves_primary_subphase(self):
         console = mock.Mock(password=None, timeout=99.0)
         console._wait.side_effect = [
             mock.Mock(),
@@ -350,7 +353,10 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertFalse(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
-            ControllerAuthArmSubphase.CLEANUP)
+            ControllerAuthArmSubphase.RECEIVE)
+        self.assertIs(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
 
     def test_final_coordinate_renders_only_closed_arm_subphase(self):
         result = ControllerAuthResult(
@@ -371,6 +377,31 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertIn(
             "controller-auth-arm-subphase=receive", diagnostic.render())
         self.assertNotIn("private", diagnostic.render())
+
+    def test_final_coordinate_renders_arm_and_cleanup_coordinates(self):
+        result = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            cleanup=subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+        )
+        coordinate = WindowsJoinFailureCoordinate(
+            "reboot-reauth-controller-auth-arm",
+            "WindowsLocalReauthenticationError",
+            controller_auth=result,
+            controller_auth_arm_subphase=ControllerAuthArmSubphase.PARSE,
+        )
+        diagnostic = IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+            controller_auth_arm_subphase=(
+                coordinate.controller_auth_arm_subphase),
+        )
+        rendered = diagnostic.render()
+        self.assertIn(
+            "controller-auth-collection=receipt-unavailable", rendered)
+        self.assertIn(
+            "controller-auth-cleanup=sink-absence-unproved", rendered)
+        self.assertIn("controller-auth-arm-subphase=parse", rendered)
 
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)

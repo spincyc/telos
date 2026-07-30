@@ -161,7 +161,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                             controller_auth_result=result,
                             cleanup_proved=False,
                             arm_subphase=(
-                                ControllerAuthArmSubphase.CLEANUP
+                                ControllerAuthArmSubphase.RECEIVE
                                 if collection is
                                 ControllerAuthCollection.RECEIPT_UNAVAILABLE
                                 else None
@@ -180,7 +180,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 self.assertIs(
                     caught.exception.controller_auth_arm_subphase,
                     (
-                        ControllerAuthArmSubphase.CLEANUP
+                        ControllerAuthArmSubphase.RECEIVE
                         if collection is
                         ControllerAuthCollection.RECEIPT_UNAVAILABLE
                         else None

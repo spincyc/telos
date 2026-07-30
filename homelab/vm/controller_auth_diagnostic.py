@@ -100,7 +100,6 @@ class ControllerAuthArmSubphase(Enum):
     LAUNCH = "launch"
     RECEIVE = "receive"
     PARSE = "parse"
-    CLEANUP = "cleanup"
 
 
 class ControllerAuthDiagnosticError(RuntimeError):
@@ -847,9 +846,13 @@ class ControllerAuthDiagnosticSession:
         finally:
             self.console.timeout = original
 
-    def _recover_cleanup(self) -> bool:
+    def _recover_cleanup(self) -> ControllerAuthCleanup | None:
         if self._state not in {"launching", "armed", "collecting"}:
-            return self._state == "finished"
+            return (
+                None
+                if self._state == "finished"
+                else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+            )
         try:
             self.console._send(
                 f"__TELOS_AUTH_CANCEL_{self._tokens['cancel']}__".encode(),
@@ -861,10 +864,17 @@ class ControllerAuthDiagnosticSession:
                 + rb"(ok|[a-z-]+)\s*(?:\n|$)",
                 "controller-auth-abort-cleanup")
             self._state = "finished"
-            return match.group(1) == b"ok"
+            cleanup_value = match.group(1)
+            if cleanup_value == b"ok":
+                return None
+            cleanup = _CLEANUP_BY_WIRE.get(cleanup_value)
+            if cleanup is None:
+                self._state = "poisoned"
+                return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+            return cleanup
         except BaseException:
             self._state = "poisoned"
-            return False
+            return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
 
     @staticmethod
     def _closed_result(kind: bytes, value: bytes) -> ControllerAuthResult:
@@ -948,14 +958,14 @@ class ControllerAuthDiagnosticSession:
                 self.console._send(
                     self.console.password, "controller-auth-sudo-password-sent")
         except BaseException:
-            cleanup_proved = self._recover_cleanup()
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=cleanup_proved,
-                arm_subphase=(
-                    ControllerAuthArmSubphase.LAUNCH
-                    if cleanup_proved
-                    else ControllerAuthArmSubphase.CLEANUP
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
                 ),
+                cleanup_proved=cleanup is None,
+                arm_subphase=ControllerAuthArmSubphase.LAUNCH,
             ) from None
         try:
             armed_marker = (
@@ -971,14 +981,14 @@ class ControllerAuthDiagnosticSession:
                 "controller-auth-armed",
                 deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
         except BaseException:
-            cleanup_proved = self._recover_cleanup()
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=cleanup_proved,
-                arm_subphase=(
-                    ControllerAuthArmSubphase.RECEIVE
-                    if cleanup_proved
-                    else ControllerAuthArmSubphase.CLEANUP
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
                 ),
+                cleanup_proved=cleanup is None,
+                arm_subphase=ControllerAuthArmSubphase.RECEIVE,
             ) from None
         try:
             if match.group(1) in {b"code", b"collection"}:
@@ -999,14 +1009,14 @@ class ControllerAuthDiagnosticSession:
         except ControllerAuthDiagnosticError:
             raise
         except BaseException:
-            cleanup_proved = self._recover_cleanup()
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=cleanup_proved,
-                arm_subphase=(
-                    ControllerAuthArmSubphase.PARSE
-                    if cleanup_proved
-                    else ControllerAuthArmSubphase.CLEANUP
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
                 ),
+                cleanup_proved=cleanup is None,
+                arm_subphase=ControllerAuthArmSubphase.PARSE,
             ) from None
 
     def submitted(self) -> ControllerAuthResult:
@@ -1024,8 +1034,14 @@ class ControllerAuthDiagnosticSession:
                 + rb"(code|collection):([a-z-]+)\s*(?:\n|$)",
                 "controller-auth-result")
         except BaseException:
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=self._recover_cleanup()) from None
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
+                ),
+                cleanup_proved=cleanup is None,
+            ) from None
         try:
             result = self._closed_result(match.group(1), match.group(2))
             result, cleanup_proved = self._terminal_cleanup(
@@ -1038,8 +1054,14 @@ class ControllerAuthDiagnosticSession:
         except ControllerAuthDiagnosticError:
             raise
         except BaseException:
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=self._recover_cleanup()) from None
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
+                ),
+                cleanup_proved=cleanup is None,
+            ) from None
 
     def cancel(self) -> ControllerAuthResult:
         if self._state != "armed":
@@ -1067,8 +1089,14 @@ class ControllerAuthDiagnosticSession:
         except ControllerAuthDiagnosticError:
             raise
         except BaseException:
+            cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=self._recover_cleanup()) from None
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
+                ),
+                cleanup_proved=cleanup is None,
+            ) from None
 
 
 def main() -> int:
