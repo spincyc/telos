@@ -97,6 +97,11 @@ class ControllerAuthArmSubphase(Enum):
     """Closed, secret-free arm failure location."""
 
     PREFLIGHT = "preflight"
+    COMMAND_DISPATCH = "command-dispatch"
+    SUDO_PROMPT = "sudo-prompt"
+    SUDO_CREDENTIAL_HANDOFF = "sudo-credential-handoff"
+    # Reserved for fail-closed normalization of untrusted/generic adapter
+    # failures.  The diagnostic session emits the finer launch coordinates.
     LAUNCH = "launch"
     RECEIVE = "receive"
     PARSE = "parse"
@@ -967,12 +972,6 @@ class ControllerAuthDiagnosticSession:
         self._state = "launching"
         try:
             self.console._send(command, "controller-auth-command-sent")
-            if self.console.password is not None:
-                self._wait(
-                    rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
-                    "controller-auth-sudo-password-prompt")
-                self.console._send(
-                    self.console.password, "controller-auth-sudo-password-sent")
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -981,8 +980,39 @@ class ControllerAuthDiagnosticSession:
                     cleanup=cleanup,
                 ),
                 cleanup_proved=cleanup is None,
-                arm_subphase=ControllerAuthArmSubphase.LAUNCH,
+                arm_subphase=ControllerAuthArmSubphase.COMMAND_DISPATCH,
             ) from None
+        if self.console.password is not None:
+            try:
+                self._wait(
+                    rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
+                    "controller-auth-sudo-password-prompt")
+            except BaseException:
+                cleanup = self._recover_cleanup()
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        cleanup=cleanup,
+                    ),
+                    cleanup_proved=cleanup is None,
+                    arm_subphase=ControllerAuthArmSubphase.SUDO_PROMPT,
+                ) from None
+            try:
+                self.console._send(
+                    self.console.password, "controller-auth-sudo-password-sent")
+            except BaseException:
+                cleanup = self._recover_cleanup()
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        cleanup=cleanup,
+                    ),
+                    cleanup_proved=cleanup is None,
+                    arm_subphase=(
+                        ControllerAuthArmSubphase.SUDO_CREDENTIAL_HANDOFF),
+                ) from None
         try:
             armed_marker = (
                 f"__TELOS_AUTH_ARMED_{self._tokens['arm']}__".encode())

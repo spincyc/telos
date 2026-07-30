@@ -161,6 +161,21 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 cleanup_proved=True,
             )
 
+    def test_error_rejects_forged_arm_subphase(self):
+        class ForgedArmSubphase(str, subject.Enum):
+            COMMAND_DISPATCH = "command-dispatch"
+
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                cleanup_proved=True,
+                arm_subphase=ForgedArmSubphase.COMMAND_DISPATCH,
+            )
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                cleanup_proved=True,
+                arm_subphase="command-dispatch",
+            )
+
     def test_serial_session_returns_only_closed_coordinates(self):
         console = mock.Mock(password=None)
         console._wait.side_effect = [
@@ -248,6 +263,86 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "controller-auth-abort-sent",
             [call.args[1] for call in console._send.call_args_list],
         )
+
+    def test_launch_failures_have_exact_secret_free_subphases(self):
+        scenarios = (
+            (
+                "command dispatch",
+                [None, RuntimeError("private command dispatch failure"), None],
+                [mock.Mock(), re.match(rb"(ok|absence-unproved)", b"ok")],
+                ControllerAuthArmSubphase.COMMAND_DISPATCH,
+            ),
+            (
+                "sudo prompt",
+                [None, None, None],
+                [
+                    mock.Mock(),
+                    RuntimeError("private sudo prompt failure"),
+                    re.match(rb"(ok|absence-unproved)", b"ok"),
+                ],
+                ControllerAuthArmSubphase.SUDO_PROMPT,
+            ),
+            (
+                "sudo credential handoff",
+                [
+                    None,
+                    None,
+                    RuntimeError("private credential handoff failure"),
+                    None,
+                ],
+                [
+                    mock.Mock(),
+                    mock.Mock(),
+                    re.match(rb"(ok|absence-unproved)", b"ok"),
+                ],
+                ControllerAuthArmSubphase.SUDO_CREDENTIAL_HANDOFF,
+            ),
+        )
+        observed = set()
+        for label, send_effects, wait_effects, expected in scenarios:
+            with self.subTest(label=label):
+                console = mock.Mock(password=b"private-password", timeout=99.0)
+                console._send.side_effect = send_effects
+                console._wait.side_effect = wait_effects
+                session = ControllerAuthDiagnosticSession(
+                    console, self.expected)
+                with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+                    session.arm()
+                observed.add(caught.exception.arm_subphase)
+                self.assertIs(caught.exception.arm_subphase, expected)
+                self.assertTrue(caught.exception.cleanup_proved)
+                self.assertEqual(
+                    caught.exception.controller_auth_result.collection,
+                    ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                )
+                self.assertNotIn(
+                    "private", str(caught.exception))
+
+        self.assertNotIn(ControllerAuthArmSubphase.LAUNCH, observed)
+
+    def test_launch_failure_preserves_primary_and_cleanup_coordinates(self):
+        console = mock.Mock(password=b"private-password", timeout=99.0)
+        console._send.side_effect = [
+            None,
+            RuntimeError("private command dispatch failure"),
+            RuntimeError("private cleanup dispatch failure"),
+        ]
+        console._wait.side_effect = [mock.Mock()]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.COMMAND_DISPATCH,
+        )
+        self.assertFalse(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+        )
+        self.assertNotIn("private", str(caught.exception))
 
     def test_arm_receipt_wait_reserves_cleanup_budget(self):
         now = [0.0]
@@ -424,7 +519,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "reboot-reauth-controller-auth-arm",
             "WindowsLocalReauthenticationError",
             controller_auth=result,
-            controller_auth_arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+            controller_auth_arm_subphase=(
+                ControllerAuthArmSubphase.COMMAND_DISPATCH),
         )
         diagnostic = IdentityFailureDiagnostic.join_guest(
             coordinate.phase,
@@ -434,7 +530,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 coordinate.controller_auth_arm_subphase),
         )
         self.assertIn(
-            "controller-auth-arm-subphase=receive", diagnostic.render())
+            "controller-auth-arm-subphase=command-dispatch",
+            diagnostic.render())
         self.assertNotIn("private", diagnostic.render())
 
     def test_final_coordinate_renders_arm_and_cleanup_coordinates(self):
