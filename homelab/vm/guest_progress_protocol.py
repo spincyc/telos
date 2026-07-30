@@ -832,6 +832,13 @@ class ReceiverState:
             return None
         return self.active_phase
 
+    def acknowledgment(self, accepted: AcceptedEvent) -> dict[str, Any]:
+        """Authenticate one acknowledgment without exposing the receiver key."""
+
+        if self._closed or self._key is None:
+            raise AuthenticationError("receiver is closed")
+        return ack_for(accepted, self.config, bytes(self._key))
+
     def liveness(self, *, now: float) -> str:
         """Classify stream liveness: absent, live, or stalled.
 
