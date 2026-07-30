@@ -1725,6 +1725,37 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             b"code", b"authenticated")
         self.assertIsNone(code.receipt_origin)
 
+    def test_every_unavailable_receipt_declares_an_origin(self):
+        """The fifth attempt rendered none, so the value stayed ambiguous."""
+        bare = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        self.assertIs(
+            bare.receipt_origin, ControllerAuthReceiptOrigin.UNATTRIBUTED)
+        self.assertIn("controller-auth-receipt-origin=unattributed",
+                      IdentityFailureDiagnostic.join_guest(
+                          "reboot-reauth-desktop",
+                          "WindowsLocalReauthenticationError",
+                          controller_auth=bare).render())
+        # A site that knows its origin still keeps it.
+        self.assertIs(
+            ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                receipt_origin=(
+                    ControllerAuthReceiptOrigin.HOST_WAIT_EXPIRED),
+            ).receipt_origin,
+            ControllerAuthReceiptOrigin.HOST_WAIT_EXPIRED,
+        )
+        # Any other collection is untouched.
+        self.assertIsNone(
+            ControllerAuthResult(
+                collection=ControllerAuthCollection.MALFORMED).receipt_origin)
+
+    def test_the_error_default_receipt_is_labelled_not_silent(self):
+        error = ControllerAuthDiagnosticError(cleanup_proved=True)
+        self.assertIs(
+            error.controller_auth_result.receipt_origin,
+            ControllerAuthReceiptOrigin.UNATTRIBUTED)
+
     def test_receipt_origin_requires_an_unavailable_receipt(self):
         with self.assertRaises(ValueError):
             ControllerAuthResult(

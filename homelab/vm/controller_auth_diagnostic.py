@@ -114,6 +114,11 @@ class ControllerAuthReceiptOrigin(Enum):
 
     HOST_WAIT_EXPIRED = "host-wait-expired"
     CONTROLLER_REPORTED = "controller-reported"
+    # No producing site declared an origin. This is applied automatically so
+    # the gap is visible in the rendered failure instead of silent: an
+    # unavailable receipt always says where it came from, even when the answer
+    # is "nowhere in particular".
+    UNATTRIBUTED = "unattributed"
 
 
 class ControllerAuthCleanup(Enum):
@@ -261,6 +266,13 @@ class ControllerAuthResult:
             ):
                 raise ValueError(
                     "Controller auth receipt origin needs unavailable receipt")
+        elif self.collection is ControllerAuthCollection.RECEIPT_UNAVAILABLE:
+            # Every unavailable receipt carries an origin. Sites that know
+            # theirs pass it; the rest are labelled rather than left silent,
+            # which is what let this value mean several different failures.
+            object.__setattr__(
+                self, "receipt_origin",
+                ControllerAuthReceiptOrigin.UNATTRIBUTED)
 
 
 _CODE_BY_WIRE = {
