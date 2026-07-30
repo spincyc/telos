@@ -197,6 +197,26 @@ class PackageRootGateTests(unittest.TestCase):
         with self.assertRaisesRegex(PackageRootGateError, "too deep"):
             audit_package_root(self.root, CONTRACT)
 
+    def test_rejects_binary_symlink_resolving_to_guest_root(self):
+        alpha = self.root / "usr/bin/alpha"
+        alpha.unlink()
+        alpha.symlink_to("/")
+        with self.assertRaisesRegex(PackageRootGateError, "resolves to root"):
+            audit_package_root(self.root, CONTRACT)
+
+    def test_requires_files_section_but_permits_it_to_be_empty(self):
+        files = self.root / "var/lib/pacman/local/alpha-1.2-3/files"
+        files.write_text("%BACKUP%\n\n", encoding="utf-8")
+        with self.assertRaisesRegex(PackageRootGateError, "lacks FILES"):
+            audit_package_root(self.root, CONTRACT)
+
+        empty_contract = MergedPackageContract(
+            overlays=(), packages=("alpha",), binaries=())
+        files.write_text("%FILES%\n\n", encoding="utf-8")
+        evidence = audit_package_root(self.root, empty_contract)
+        self.assertIn("alpha", {
+            package.name for package in evidence.installed_packages})
+
     def test_rejects_absent_or_relative_root(self):
         for root in (Path("relative"), Path(self.temporary.name) / "absent"):
             with self.subTest(root=root), self.assertRaises(PackageRootGateError):

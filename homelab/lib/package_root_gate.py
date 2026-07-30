@@ -146,6 +146,8 @@ def _package_database(
             if name in packages:
                 raise _fail(f"duplicate installed package identity: {name}")
             packages[name] = InstalledPackage(name, version)
+            if "FILES" not in files:
+                raise _fail(f"package database record lacks FILES: {entry}")
             for item in files.get("FILES", ()):
                 is_directory = item.endswith("/")
                 candidate = item[:-1] if is_directory else item
@@ -236,6 +238,8 @@ def _confined_executable(root_fd: int, guest_path: str) -> tuple[str, int]:
                         normalized.pop()
                     else:
                         normalized.append(part)
+                if not normalized and not pending:
+                    raise _fail(f"binary symlink resolves to root: {guest_path}")
                 resolved = []
                 pending = normalized + pending
             elif pending:
