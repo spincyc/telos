@@ -124,6 +124,8 @@ class ControllerAuthReceiveObservation(Enum):
 
     SUDO_REJECTED_OR_REPROMPTED = "sudo-rejected-or-reprompted"
     COMMAND_LAUNCH_ERROR = "command-launch-error"
+    COMMAND_EXIT_ZERO = "command-exit-zero"
+    COMMAND_EXIT_NONZERO = "command-exit-nonzero"
     SERIAL_CLOSED = "serial-closed"
     TOKEN_NONSTANDALONE = "token-nonstandalone"
     TIMEOUT = "timeout"
@@ -902,8 +904,13 @@ class ControllerAuthDiagnosticSession:
         self._post_arm_timeout = post_arm_timeout
         self._armed_deadline: float | None = None
         self._observation_seconds = MAX_OBSERVATION_SECONDS
-        self._tokens = {name: uuid.uuid4().hex for name in (
-            "arm", "submit", "cancel", "result", "cleanup", "prearm")}
+        self._tokens = {
+            name: uuid.uuid4().hex
+            for name in (
+                "arm", "submit", "cancel", "result", "cleanup", "prearm",
+                "exit",
+            )
+        }
         self._state = "new"
         self._result: ControllerAuthResult | None = None
         self._last_prearm_phase: str | None = None
@@ -942,19 +949,25 @@ class ControllerAuthDiagnosticSession:
         prearm_prefix = b"__TELOS_AUTH_PREARM_"
         armed_prefix = b"__TELOS_AUTH_ARMED_"
         result_prefix = b"__TELOS_AUTH_RESULT_"
+        exit_prefix = b"__TELOS_AUTH_EXIT_"
         receipt_line = re.compile(
             rb"(?:"
             + re.escape(armed_prefix) + rb"[0-9a-f]{32}__|"
             + re.escape(result_prefix)
             + rb"[0-9a-f]{32}__=(?:code|collection):[a-z-]+|"
             + re.escape(prearm_prefix)
-            + rb"[A-Z_]{1,32}_[0-9a-f]{32}__)"
+            + rb"[A-Z_]{1,32}_[0-9a-f]{32}__|"
+            + re.escape(exit_prefix)
+            + rb"[0-9a-f]{32}__=(?:zero|nonzero))"
             + rb"[^\S\r\n]*")
+        exit_candidate = re.compile(
+            re.escape(exit_prefix) + rb"[0-9a-f]{32}__=")
         for line in re.split(rb"[\r\n]", buffer):
             if (
                 armed_prefix in line
                 or result_prefix in line
                 or prearm_prefix in line
+                or exit_candidate.search(line) is not None
             ) and receipt_line.fullmatch(line) is None:
                 return ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE
 
@@ -1144,7 +1157,13 @@ class ControllerAuthDiagnosticSession:
                 "domain": self.expectation.domain,
                 "workstation_ip": self.expectation.workstation_ip,
                 "observation_seconds": self._observation_seconds,
-                **self._tokens,
+                **{
+                    name: self._tokens[name]
+                    for name in (
+                        "arm", "submit", "cancel", "result", "cleanup",
+                        "prearm",
+                    )
+                },
             }
             encoded = base64.b64encode(json.dumps(
                 payload, sort_keys=True, separators=(",", ":"),
@@ -1168,6 +1187,20 @@ class ControllerAuthDiagnosticSession:
                 b"/usr/bin/python3 "
                 b"/opt/telos-factory/controller-auth-diagnostic.py "
                 b"--controller-session " + encoded.encode("ascii"))
+            exit_prefix = b"__TELOS_AUTH_EXIT_"
+            exit_token = self._tokens["exit"].encode("ascii")
+            # The login shell, rather than sudo or the diagnostic child,
+            # reports that the whole privileged command has terminated.
+            # Separate printf arguments keep the nonce-bound full marker out
+            # of terminal-echoed command text.
+            command += (
+                b"; _telos_auth_status=$?; "
+                b"if [ \"$_telos_auth_status\" -eq 0 ]; then "
+                b"_telos_auth_exit=zero; else "
+                b"_telos_auth_exit=nonzero; fi; "
+                b"printf '\\n%s%s%s%s\\n' '"
+                + exit_prefix + b"' '" + exit_token
+                + b"' '__=' \"$_telos_auth_exit\"")
             self.console._send(b"", "controller-auth-shell-requested")
             self._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-auth-shell-ready")
@@ -1254,6 +1287,12 @@ class ControllerAuthDiagnosticSession:
                     + _RECEIPT_LINE_END + rb"|"
                     + rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
                     + rb"(code|collection):([a-z-]+)"
+                    + _RECEIPT_LINE_END + rb"|"
+                    + rb"(__TELOS_AUTH_EXIT_([0-9a-f]{32})__)="
+                    + rb"(zero|nonzero)"
+                    + _RECEIPT_LINE_END + rb"|"
+                    + rb"([^\r\n]*__TELOS_AUTH_EXIT_[0-9a-f]{32}__="
+                    + rb"(?:zero|nonzero)[^\r\n]*)"
                     + _RECEIPT_LINE_END + rb")",
                     "controller-auth-armed",
                     deadline=(
@@ -1264,6 +1303,15 @@ class ControllerAuthDiagnosticSession:
                     result_marker,
                 ) is ControllerAuthReceiveObservation.TOKEN_NONSTANDALONE:
                     invalid_prearm = True
+                    break
+                exit_value = (
+                    match.group(12)
+                    if len(match.groups()) >= 12
+                    else None
+                )
+                if exit_value in {b"zero", b"nonzero"}:
+                    if match.group(11) != self._tokens["exit"].encode():
+                        invalid_prearm = True
                     break
                 if match.group(8) in {b"code", b"collection"}:
                     if (
@@ -1286,6 +1334,9 @@ class ControllerAuthDiagnosticSession:
                     invalid_prearm = True
                     break
                 self._last_prearm_phase = expected_phase.decode("ascii")
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException as error:
             try:
                 observation = self._receive_observation(
@@ -1306,6 +1357,40 @@ class ControllerAuthDiagnosticSession:
             if invalid_prearm:
                 raise ValueError(
                     "Controller auth pre-arm order is invalid")
+            exit_value = (
+                match.group(12)
+                if len(match.groups()) >= 12
+                else None
+            )
+            if exit_value in {b"zero", b"nonzero"}:
+                observation = {
+                    b"zero": (
+                        ControllerAuthReceiveObservation.COMMAND_EXIT_ZERO),
+                    b"nonzero": (
+                        ControllerAuthReceiveObservation.COMMAND_EXIT_NONZERO),
+                }[exit_value]
+                # The child emits PAYLOAD_VALID immediately after successful
+                # parsing and before any mutable pre-arm operation.  A
+                # nonce-bound wrapper exit before that receipt therefore
+                # proves this invocation could not have created a sink or
+                # changed live Samba configuration.
+                cleanup = (
+                    None
+                    if self._last_prearm_phase is None
+                    else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+                )
+                self._state = (
+                    "finished" if cleanup is None else "poisoned")
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        cleanup=cleanup,
+                    ),
+                    cleanup_proved=cleanup is None,
+                    arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+                    receive_observation=observation,
+                )
             if match.group(8) in {b"code", b"collection"}:
                 result = self._closed_result(
                     match.group(8), match.group(9))

@@ -76,6 +76,20 @@ def _wire_receipt(raw):
         rb"(code|collection):([a-z-]+))").fullmatch(raw)
 
 
+def _exit_receipt(token, value):
+    return re.compile(
+        rb"(?:"
+        rb"(__TELOS_AUTH_PREARM_([A-Z_]{1,32})_([0-9a-f]{32})__)"
+        rb"[^\S\r\n]*|"
+        rb"(__TELOS_AUTH_ARMED_([0-9a-f]{32})__)"
+        rb"[^\S\r\n]*|"
+        rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
+        rb"(code|collection):([a-z-]+)[^\S\r\n]*|"
+        rb"(__TELOS_AUTH_EXIT_([0-9a-f]{32})__)="
+        rb"(zero|nonzero)[^\S\r\n]*)").fullmatch(
+            b"__TELOS_AUTH_EXIT_" + token + b"__=" + value)
+
+
 class ControllerAuthDiagnosticTests(unittest.TestCase):
     def setUp(self):
         self.expected = ControllerAuthExpectation(
@@ -288,11 +302,21 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(observed, [60.0, 37.0, 35.0, 33.0, 31.0, 29.0])
         self.assertEqual(console.timeout, 99.0)
         command = console._send.call_args_list[1].args[0]
-        encoded = command.rsplit(b" ", 1)[1]
+        encoded = command.split(
+            b"--controller-session ", 1)[1].split(b";", 1)[0]
         payload = json.loads(base64.b64decode(encoded))
         self.assertEqual(
             payload["observation_seconds"],
             subject.MAX_OBSERVATION_SECONDS)
+        self.assertEqual(
+            set(payload),
+            {
+                "account", "domain", "workstation_ip",
+                "observation_seconds", "arm", "submit", "cancel",
+                "result", "cleanup", "prearm",
+            },
+        )
+        self.assertNotIn(session._tokens["exit"], payload.values())
 
     def test_submit_establishes_fresh_observation_and_cleanup_deadline(self):
         now = [100.0]
@@ -554,6 +578,14 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     command,
                 )
                 self.assertNotIn(forbidden, command)
+                raw_exit = (
+                    b"__TELOS_AUTH_EXIT_"
+                    + session._tokens["exit"].encode() + b"__=")
+                self.assertNotIn(raw_exit, command)
+                self.assertIn(
+                    b"printf '\\n%s%s%s%s\\n' '__TELOS_AUTH_EXIT_'",
+                    command,
+                )
                 if password is not None:
                     raw_prompt = (
                         b"__TELOS_AUTH_SUDO_"
@@ -833,29 +865,36 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(console.waits, 3)
 
     def test_receive_observation_reaches_final_secret_free_diagnostic(self):
-        error = WindowsLocalReauthenticationError(
-            "controller-auth-arm",
-            controller_auth_result=ControllerAuthResult(
-                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE),
-            controller_auth_arm_subphase=ControllerAuthArmSubphase.RECEIVE,
-            controller_auth_receive_observation=(
-                ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR),
-        )
-        coordinate = _local_reauthentication_coordinate(error)
-        diagnostic = IdentityFailureDiagnostic.join_guest(
-            coordinate.phase,
-            coordinate.error_type,
-            controller_auth=coordinate.controller_auth,
-            controller_auth_arm_subphase=(
-                coordinate.controller_auth_arm_subphase),
-            controller_auth_receive_observation=(
-                coordinate.controller_auth_receive_observation),
-        )
+        for observation in (
+            ControllerAuthReceiveObservation.COMMAND_LAUNCH_ERROR,
+            ControllerAuthReceiveObservation.COMMAND_EXIT_NONZERO,
+        ):
+            with self.subTest(observation=observation):
+                error = WindowsLocalReauthenticationError(
+                    "controller-auth-arm",
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE)),
+                    controller_auth_arm_subphase=(
+                        ControllerAuthArmSubphase.RECEIVE),
+                    controller_auth_receive_observation=observation,
+                )
+                coordinate = _local_reauthentication_coordinate(error)
+                diagnostic = IdentityFailureDiagnostic.join_guest(
+                    coordinate.phase,
+                    coordinate.error_type,
+                    controller_auth=coordinate.controller_auth,
+                    controller_auth_arm_subphase=(
+                        coordinate.controller_auth_arm_subphase),
+                    controller_auth_receive_observation=(
+                        coordinate.controller_auth_receive_observation),
+                )
 
-        self.assertIn(
-            "controller-auth-receive-observation=command-launch-error",
-            diagnostic.render())
-        self.assertNotIn("private", diagnostic.render())
+                self.assertIn(
+                    "controller-auth-receive-observation="
+                    + observation.value,
+                    diagnostic.render())
+                self.assertNotIn("private", diagnostic.render())
 
     def test_real_serial_accepts_bare_cr_prompt_not_command_echo(self):
         left, right = socket.socketpair()
@@ -986,6 +1025,155 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             caught.exception.controller_auth_result.collection,
             ControllerAuthCollection.CONFIGURATION_INVALID)
         self.assertTrue(caught.exception.cleanup_proved)
+
+    def test_real_serial_reports_nonce_bound_early_command_exit(self):
+        for value, observation in (
+            (b"zero", ControllerAuthReceiveObservation.COMMAND_EXIT_ZERO),
+            (b"nonzero",
+             ControllerAuthReceiveObservation.COMMAND_EXIT_NONZERO),
+        ):
+            with self.subTest(value=value):
+                left, right = socket.socketpair()
+                reader = left.makefile("rb", buffering=0)
+                writer = left.makefile("wb", buffering=0)
+                peer = right.makefile("rb", buffering=0)
+                console = SerialAutomation(
+                    reader, writer, None, timeout=1)
+                session = ControllerAuthDiagnosticSession(
+                    console, self.expected, timeout=25)
+                exit_receipt = (
+                    b"__TELOS_AUTH_EXIT_"
+                    + session._tokens["exit"].encode()
+                    + b"__=" + value)
+
+                def responder():
+                    peer.readline()
+                    right.sendall(b"controller $ \r")
+                    peer.readline()
+                    right.sendall(b"\r" + exit_receipt + b"\t \r")
+
+                thread = threading.Thread(target=responder, daemon=True)
+                thread.start()
+                try:
+                    with self.assertRaises(
+                            ControllerAuthDiagnosticError) as caught:
+                        session.arm()
+                finally:
+                    left.close()
+                    right.close()
+                thread.join(timeout=1)
+                self.assertFalse(thread.is_alive())
+                self.assertTrue(caught.exception.cleanup_proved)
+                self.assertIs(
+                    caught.exception.arm_subphase,
+                    ControllerAuthArmSubphase.RECEIVE)
+                self.assertIs(
+                    caught.exception.receive_observation, observation)
+                self.assertEqual(session._state, "finished")
+
+    def test_command_exit_after_payload_keeps_cleanup_unproved(self):
+        console = mock.Mock(password=None, timeout=99.0, buffer=b"")
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        console._wait.side_effect = [
+            mock.Mock(),
+            _prearm_receipts(session)[0],
+            _exit_receipt(
+                session._tokens["exit"].encode(), b"nonzero"),
+        ]
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertFalse(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.controller_auth_result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
+        self.assertIs(
+            caught.exception.receive_observation,
+            ControllerAuthReceiveObservation.COMMAND_EXIT_NONZERO)
+        self.assertEqual(session._state, "poisoned")
+        self.assertNotIn(
+            "controller-auth-launch-interrupted",
+            [call.args[1] for call in console._send.call_args_list])
+
+    def test_wrong_or_nonstandalone_exit_receipt_is_rejected(self):
+        for label, receipt, buffer in (
+            (
+                "wrong-token",
+                lambda session: _exit_receipt(b"f" * 32, b"zero"),
+                b"",
+            ),
+            (
+                "nonstandalone",
+                lambda session: _prearm_receipts(session)[0],
+                lambda session: (
+                    b"echo __TELOS_AUTH_EXIT_"
+                    + session._tokens["exit"].encode()
+                    + b"__=zero trailing\r\n"),
+            ),
+        ):
+            with self.subTest(label=label):
+                provisional = mock.Mock(
+                    password=None, timeout=99.0, buffer=b"")
+                session = ControllerAuthDiagnosticSession(
+                    provisional, self.expected)
+                provisional.buffer = (
+                    buffer(session) if callable(buffer) else buffer)
+                provisional._wait.side_effect = [
+                    mock.Mock(),
+                    receipt(session),
+                    re.match(rb"(ok|[a-z-]+)", b"ok"),
+                ]
+
+                with self.assertRaises(
+                        ControllerAuthDiagnosticError) as caught:
+                    session.arm()
+
+                self.assertIs(
+                    caught.exception.arm_subphase,
+                    ControllerAuthArmSubphase.PARSE)
+                self.assertTrue(caught.exception.cleanup_proved)
+
+    def test_early_command_exit_does_not_spend_cleanup_deadline(self):
+        now = [0.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0, buffer=b"")
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, clock=lambda: now[0])
+
+        def waited(_pattern, _label):
+            observed.append(console.timeout)
+            now[0] += 2
+            if len(observed) == 1:
+                return mock.Mock()
+            return _exit_receipt(
+                session._tokens["exit"].encode(), b"nonzero")
+
+        console._wait.side_effect = waited
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+
+        self.assertEqual(observed, [25.0, 2.0])
+        self.assertEqual(now[0], 4.0)
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertEqual(console.timeout, 99.0)
+
+    def test_arm_exit_wait_preserves_interruption_and_recovers_cleanup(self):
+        console = mock.Mock(password=None, timeout=99.0, buffer=b"")
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        console._wait.side_effect = [
+            mock.Mock(),
+            KeyboardInterrupt(),
+            re.match(rb"(ok|[a-z-]+)", b"ok"),
+        ]
+
+        with self.assertRaises(KeyboardInterrupt):
+            session.arm()
+
+        self.assertEqual(session._state, "finished")
+        self.assertIn(
+            "controller-auth-launch-interrupted",
+            [call.args[1] for call in console._send.call_args_list])
 
     def test_launch_failure_preserves_primary_and_cleanup_coordinates(self):
         console = mock.Mock(password=b"private-password", timeout=99.0)
