@@ -16,6 +16,7 @@ from .controller_join_material import (
     OneUseDomainJoinMaterial,
 )
 from .controller_auth_diagnostic import (
+    ControllerAuthArmSubphase,
     ControllerAuthCleanup,
     ControllerAuthCode,
     ControllerAuthCollection,
@@ -163,6 +164,7 @@ def _local_reauthentication_coordinate(
     post_submit_collection: object = None
     post_submit_cleanup: object = None
     controller_auth: object = None
+    controller_auth_arm_subphase: object = None
     if type(error) is WindowsLocalReauthenticationError:
         try:
             operation = error.reauth_operation
@@ -170,12 +172,15 @@ def _local_reauthentication_coordinate(
             post_submit_collection = error.post_submit_collection
             post_submit_cleanup = error.post_submit_cleanup
             controller_auth = error.controller_auth_result
+            controller_auth_arm_subphase = (
+                error.controller_auth_arm_subphase)
         except BaseException:
             operation = None
             post_submit_diagnostic = None
             post_submit_collection = None
             post_submit_cleanup = None
             controller_auth = None
+            controller_auth_arm_subphase = None
     diagnostic_value = (
         post_submit_diagnostic.value
         if type(post_submit_diagnostic) is PostSubmitDiagnosticCode
@@ -240,9 +245,18 @@ def _local_reauthentication_coordinate(
         error_type = "UnexpectedError"
     if error_type not in WindowsJoinFailureCoordinate._ERROR_TYPES:
         error_type = "UnexpectedError"
+    normalized_controller_auth_arm_subphase = (
+        controller_auth_arm_subphase
+        if (
+            phase == "reboot-reauth-controller-auth-arm"
+            and type(controller_auth_arm_subphase)
+            is ControllerAuthArmSubphase
+        )
+        else None
+    )
     return WindowsJoinFailureCoordinate(
         phase, error_type, diagnostic_value, collection_value, cleanup_value,
-        normalized_controller_auth)
+        normalized_controller_auth, normalized_controller_auth_arm_subphase)
 
 
 _CREDENTIAL_ROLES = {
@@ -584,6 +598,7 @@ def _execute_join(
             coordinate.post_submit_collection,
             coordinate.post_submit_cleanup,
             coordinate.controller_auth,
+            coordinate.controller_auth_arm_subphase,
         )
         details = ["domain join guest protocol failed", diagnostic.render()]
         if cleanup is not None:

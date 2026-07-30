@@ -15,6 +15,7 @@ import uuid
 from .controller_join_material import ControllerJoinResult, ControllerJoinSerial
 from .controller_factory import FactorySpec
 from .controller_auth_diagnostic import (
+    ControllerAuthArmSubphase,
     ControllerAuthCollection,
     ControllerAuthCleanup,
     ControllerAuthDiagnosticError,
@@ -120,6 +121,11 @@ def _run_local_reauthentication_operation(
             if type(error) is WindowsLocalReauthenticationError
             else None
         )
+        controller_auth_arm_subphase = (
+            error.controller_auth_arm_subphase
+            if type(error) is WindowsLocalReauthenticationError
+            else None
+        )
         failure_operation = (
             error.reauth_operation
             if (
@@ -136,6 +142,7 @@ def _run_local_reauthentication_operation(
             post_submit_collection=post_submit_collection,
             post_submit_cleanup=post_submit_cleanup,
             controller_auth_result=controller_auth_result,
+            controller_auth_arm_subphase=controller_auth_arm_subphase,
         ) from None
 
 
@@ -154,6 +161,7 @@ def _with_controller_auth_result(
             if controller_auth_result is not None
             else error.controller_auth_result
         ),
+        controller_auth_arm_subphase=error.controller_auth_arm_subphase,
     )
 
 
@@ -931,7 +939,9 @@ class NativeWindowsAcceptanceAdapter:
                     raise WindowsLocalReauthenticationError(
                         "controller-auth-arm",
                         controller_auth_result=(
-                            self._controller_auth_result)) from None
+                            self._controller_auth_result),
+                        controller_auth_arm_subphase=error.arm_subphase,
+                    ) from None
                 controller_auth = None
             except BaseException:
                 self._controller_auth_result = ControllerAuthResult(
@@ -941,6 +951,8 @@ class NativeWindowsAcceptanceAdapter:
                 raise WindowsLocalReauthenticationError(
                     "controller-auth-arm",
                     controller_auth_result=self._controller_auth_result,
+                    controller_auth_arm_subphase=(
+                        ControllerAuthArmSubphase.LAUNCH),
                 ) from None
         if diagnostic_factory is None or not domain_operator:
             try:

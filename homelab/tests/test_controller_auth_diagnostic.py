@@ -9,6 +9,7 @@ from pathlib import Path
 
 from homelab.vm import controller_auth_diagnostic as subject
 from homelab.vm.controller_auth_diagnostic import (
+    ControllerAuthArmSubphase,
     ControllerAuthCode,
     ControllerAuthCollection,
     ControllerAuthExpectation,
@@ -181,6 +182,9 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.RECEIVE)
         self.assertIn(
             "controller-auth-abort-sent",
             [call.args[1] for call in console._send.call_args_list],
@@ -221,6 +225,9 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.PARSE)
         self.assertIn(
             "controller-auth-abort-sent",
             [call.args[1] for call in console._send.call_args_list],
@@ -264,6 +271,44 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ControllerAuthCollection.RECEIPT_UNAVAILABLE,
         )
         self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.RECEIVE)
+
+    def test_arm_receipt_and_cleanup_failure_reports_cleanup_subphase(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [
+            mock.Mock(),
+            RuntimeError("private receipt failure"),
+            RuntimeError("private cleanup failure"),
+        ]
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.arm()
+        self.assertFalse(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.arm_subphase,
+            ControllerAuthArmSubphase.CLEANUP)
+
+    def test_final_coordinate_renders_only_closed_arm_subphase(self):
+        result = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        coordinate = WindowsJoinFailureCoordinate(
+            "reboot-reauth-controller-auth-arm",
+            "WindowsLocalReauthenticationError",
+            controller_auth=result,
+            controller_auth_arm_subphase=ControllerAuthArmSubphase.RECEIVE,
+        )
+        diagnostic = IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+            controller_auth_arm_subphase=(
+                coordinate.controller_auth_arm_subphase),
+        )
+        self.assertIn(
+            "controller-auth-arm-subphase=receive", diagnostic.render())
+        self.assertNotIn("private", diagnostic.render())
 
     def test_gui_failure_metadata_stays_typed_and_secret_free(self):
         result = ControllerAuthResult(code=ControllerAuthCode.AUTHENTICATED)

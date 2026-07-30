@@ -93,6 +93,16 @@ class ControllerAuthCleanup(Enum):
     SINK_ABSENCE_UNPROVED = "sink-absence-unproved"
 
 
+class ControllerAuthArmSubphase(Enum):
+    """Closed, secret-free arm failure location."""
+
+    PREFLIGHT = "preflight"
+    LAUNCH = "launch"
+    RECEIVE = "receive"
+    PARSE = "parse"
+    CLEANUP = "cleanup"
+
+
 class ControllerAuthDiagnosticError(RuntimeError):
     """Host protocol failure with explicit Controller cleanup status."""
 
@@ -100,6 +110,7 @@ class ControllerAuthDiagnosticError(RuntimeError):
         self, *,
         controller_auth_result: "ControllerAuthResult | None" = None,
         cleanup_proved: bool,
+        arm_subphase: ControllerAuthArmSubphase | None = None,
     ) -> None:
         super().__init__("Controller auth diagnostic protocol failed")
         if controller_auth_result is None:
@@ -107,8 +118,21 @@ class ControllerAuthDiagnosticError(RuntimeError):
                 collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
         if type(controller_auth_result) is not ControllerAuthResult:
             raise TypeError("Controller auth diagnostic result is invalid")
+        if (
+            arm_subphase is not None
+            and type(arm_subphase) is not ControllerAuthArmSubphase
+        ):
+            raise TypeError("Controller auth arm subphase is invalid")
+        if (
+            arm_subphase is not None
+            and controller_auth_result.collection
+            is not ControllerAuthCollection.RECEIPT_UNAVAILABLE
+        ):
+            raise ValueError(
+                "Controller auth arm subphase needs unavailable receipt")
         self.controller_auth_result = controller_auth_result
         self.cleanup_proved = cleanup_proved
+        self.arm_subphase = arm_subphase
 
 
 @dataclass(frozen=True)
@@ -885,38 +909,51 @@ class ControllerAuthDiagnosticSession:
     def arm(self) -> None:
         if self._state != "new":
             raise RuntimeError("Controller auth diagnostic cannot be armed")
-        payload = {
-            "account": self.expectation.account,
-            "domain": self.expectation.domain,
-            "workstation_ip": self.expectation.workstation_ip,
-            "observation_seconds": self._observation_seconds,
-            **self._tokens,
-        }
-        encoded = base64.b64encode(json.dumps(
-            payload, sort_keys=True, separators=(",", ":"),
-        ).encode()).decode("ascii")
-        prompt = f"__TELOS_AUTH_SUDO_{uuid.uuid4().hex}__".encode()
-        command = (
-            b"sudo -k -p '" + prompt + b"' "
-            b"/opt/telos-factory/controller-auth-diagnostic.py "
-            b"--controller-session " + encoded.encode("ascii")
-        )
         try:
+            payload = {
+                "account": self.expectation.account,
+                "domain": self.expectation.domain,
+                "workstation_ip": self.expectation.workstation_ip,
+                "observation_seconds": self._observation_seconds,
+                **self._tokens,
+            }
+            encoded = base64.b64encode(json.dumps(
+                payload, sort_keys=True, separators=(",", ":"),
+            ).encode()).decode("ascii")
+            prompt = f"__TELOS_AUTH_SUDO_{uuid.uuid4().hex}__".encode()
+            command = (
+                b"sudo -k -p '" + prompt + b"' "
+                b"/opt/telos-factory/controller-auth-diagnostic.py "
+                b"--controller-session " + encoded.encode("ascii")
+            )
             self.console._send(b"", "controller-auth-shell-requested")
             self._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-auth-shell-ready")
         except BaseException:
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=True) from None
+                cleanup_proved=True,
+                arm_subphase=ControllerAuthArmSubphase.PREFLIGHT,
+            ) from None
         self._state = "launching"
-        self.console._send(command, "controller-auth-command-sent")
         try:
+            self.console._send(command, "controller-auth-command-sent")
             if self.console.password is not None:
                 self._wait(
                     rb"(?:^|\n)" + re.escape(prompt) + rb"\s*$",
                     "controller-auth-sudo-password-prompt")
                 self.console._send(
                     self.console.password, "controller-auth-sudo-password-sent")
+        except BaseException:
+            cleanup_proved = self._recover_cleanup()
+            raise ControllerAuthDiagnosticError(
+                cleanup_proved=cleanup_proved,
+                arm_subphase=(
+                    ControllerAuthArmSubphase.LAUNCH
+                    if cleanup_proved
+                    else ControllerAuthArmSubphase.CLEANUP
+                ),
+            ) from None
+        try:
             armed_marker = (
                 f"__TELOS_AUTH_ARMED_{self._tokens['arm']}__".encode())
             result_marker = (
@@ -928,6 +965,17 @@ class ControllerAuthDiagnosticSession:
                 + re.escape(result_marker)
                 + rb"(code|collection):([a-z-]+)\s*(?:\n|$))",
                 "controller-auth-armed")
+        except BaseException:
+            cleanup_proved = self._recover_cleanup()
+            raise ControllerAuthDiagnosticError(
+                cleanup_proved=cleanup_proved,
+                arm_subphase=(
+                    ControllerAuthArmSubphase.RECEIVE
+                    if cleanup_proved
+                    else ControllerAuthArmSubphase.CLEANUP
+                ),
+            ) from None
+        try:
             if match.group(1) in {b"code", b"collection"}:
                 result = self._closed_result(
                     match.group(1), match.group(2))
@@ -946,8 +994,15 @@ class ControllerAuthDiagnosticSession:
         except ControllerAuthDiagnosticError:
             raise
         except BaseException:
+            cleanup_proved = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
-                cleanup_proved=self._recover_cleanup()) from None
+                cleanup_proved=cleanup_proved,
+                arm_subphase=(
+                    ControllerAuthArmSubphase.PARSE
+                    if cleanup_proved
+                    else ControllerAuthArmSubphase.CLEANUP
+                ),
+            ) from None
 
     def submitted(self) -> ControllerAuthResult:
         if self._state != "armed":

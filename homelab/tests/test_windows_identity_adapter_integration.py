@@ -17,6 +17,7 @@ from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
 )
 from homelab.vm.controller_auth_diagnostic import (
+    ControllerAuthArmSubphase,
     ControllerAuthCode,
     ControllerAuthCollection,
     ControllerAuthCleanup,
@@ -159,6 +160,12 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                         ControllerAuthDiagnosticError(
                             controller_auth_result=result,
                             cleanup_proved=False,
+                            arm_subphase=(
+                                ControllerAuthArmSubphase.CLEANUP
+                                if collection is
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                                else None
+                            ),
                         ))
                     adapter = self.adapter(rotation_plan=plan)
                     with self.assertRaises(
@@ -170,6 +177,14 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     caught.exception.reauth_operation, "controller-auth-arm")
                 self.assertIs(
                     caught.exception.controller_auth_result, result)
+                self.assertIs(
+                    caught.exception.controller_auth_arm_subphase,
+                    (
+                        ControllerAuthArmSubphase.CLEANUP
+                        if collection is
+                        ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                        else None
+                    ))
                 interaction_type.return_value.type_secret.assert_not_called()
 
     def test_controller_arm_generic_failure_closes_before_secret(self):

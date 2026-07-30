@@ -29,7 +29,10 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
-from .controller_auth_diagnostic import ControllerAuthResult
+from .controller_auth_diagnostic import (
+    ControllerAuthArmSubphase,
+    ControllerAuthResult,
+)
 
 UAC_CONSENT_SETTLE_DELAY = 3.0
 UAC_NAVIGATION_SETTLE_DELAY = 0.25
@@ -45,6 +48,7 @@ class WindowsJoinFailureCoordinate:
     post_submit_collection: str | None = None
     post_submit_cleanup: str | None = None
     controller_auth: ControllerAuthResult | None = None
+    controller_auth_arm_subphase: ControllerAuthArmSubphase | None = None
 
     _PHASES = frozenset({
         "serial-connect", "prepare", "attach", "launch",
@@ -166,6 +170,17 @@ class WindowsJoinFailureCoordinate:
             )
         ):
             raise ValueError("Controller auth diagnostic is invalid")
+        if (
+            self.controller_auth_arm_subphase is not None
+            and (
+                type(self.controller_auth_arm_subphase)
+                is not ControllerAuthArmSubphase
+                or self.phase != "reboot-reauth-controller-auth-arm"
+                or self.error_type
+                != "WindowsLocalReauthenticationError"
+            )
+        ):
+            raise ValueError("Controller auth arm subphase is invalid")
 
 
 class WindowsJoinIsoError(RuntimeError):
