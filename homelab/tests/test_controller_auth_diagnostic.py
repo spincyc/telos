@@ -193,7 +193,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         ]
         session = ControllerAuthDiagnosticSession(console, self.expected)
         session.arm()
-        result = session.submitted()
+        session.begin_submission()
+        result = session.result()
         self.assertEqual(result.code, ControllerAuthCode.AUTHENTICATED)
         self.assertIsNone(result.cleanup)
         self.assertTrue(
@@ -265,7 +266,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         session._state = "armed"
         session._armed_deadline = 107.0
 
-        result = session.submitted()
+        session.begin_submission()
+        result = session.result()
 
         self.assertEqual(
             observed,
@@ -273,6 +275,78 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
              subject.CLEANUP_RESERVE_SECONDS])
         self.assertIs(result.code, ControllerAuthCode.AUTHENTICATED)
         self.assertEqual(now[0], 130.0)
+
+    def test_begin_submission_dispatch_failure_recovers_cleanup(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._send.side_effect = [RuntimeError("private transport"), None]
+        console._wait.return_value = re.match(
+            rb"(ok|[a-z-]+)", b"ok")
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: 100.0)
+        session._state = "armed"
+        session._armed_deadline = 107.0
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.begin_submission()
+
+        self.assertTrue(caught.exception.cleanup_proved)
+        self.assertIs(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+        )
+        self.assertEqual("finished", session._state)
+
+    def test_begin_result_and_terminal_cleanup_preserve_interruptions(self):
+        for phase in ("begin", "result", "terminal-cleanup"):
+            with self.subTest(phase=phase):
+                console = mock.Mock(password=None, timeout=99.0)
+                session = ControllerAuthDiagnosticSession(
+                    console, self.expected, timeout=25, post_arm_timeout=7,
+                    clock=lambda: 100.0)
+                session._state = (
+                    "armed" if phase == "begin" else "collecting")
+                session._armed_deadline = 107.0
+                cleanup = re.match(rb"(ok|[a-z-]+)", b"ok")
+
+                if phase == "begin":
+                    console._send.side_effect = [
+                        KeyboardInterrupt(), None]
+                    console._wait.return_value = cleanup
+                    operation = session.begin_submission
+                elif phase == "result":
+                    session._wait = mock.Mock(
+                        side_effect=[KeyboardInterrupt(), cleanup])
+                    operation = session.result
+                else:
+                    session._wait = mock.Mock(
+                        side_effect=[KeyboardInterrupt(), cleanup])
+                    operation = lambda: session._terminal_cleanup(
+                        ControllerAuthResult(
+                            code=ControllerAuthCode.NO_EVENT),
+                        "controller-auth-cleanup",
+                    )
+
+                with self.assertRaises(KeyboardInterrupt):
+                    operation()
+
+                self.assertEqual("finished", session._state)
+
+    def test_production_default_post_arm_cap_constructs_and_arms(self):
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.side_effect = [mock.Mock(), mock.Mock()]
+        session = ControllerAuthDiagnosticSession(
+            console,
+            self.expected,
+            timeout=45,
+            post_arm_timeout=min(
+                120, subject.MAX_OBSERVATION_SECONDS * 2),
+        )
+
+        session.arm()
+
+        self.assertTrue(session.armed)
+        self.assertLessEqual(session._post_arm_timeout, 60)
 
     def test_cancel_after_post_arm_expiry_has_fresh_cleanup_reserve(self):
         now = [100.0]
@@ -669,7 +743,8 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         thread.start()
         try:
             session.arm()
-            outcome = session.submitted()
+            session.begin_submission()
+            outcome = session.result()
         finally:
             left.close()
             right.close()

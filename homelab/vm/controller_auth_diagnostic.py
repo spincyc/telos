@@ -25,6 +25,8 @@ import time
 from typing import Mapping
 import uuid
 
+from .signal_cleanup import RunInterrupted
+
 
 MAX_AUDIT_BYTES = 256 * 1024
 MAX_AUDIT_RECORDS = 256
@@ -247,6 +249,7 @@ _PREARM_COLLECTIONS = frozenset({
     ControllerAuthCollection.CONFIGURATION_INVALID,
     ControllerAuthCollection.SINK_INVALID,
 })
+_INTERRUPTIONS = (KeyboardInterrupt, SystemExit, RunInterrupted)
 
 
 @dataclass(frozen=True)
@@ -897,6 +900,10 @@ class ControllerAuthDiagnosticSession:
     def armed(self) -> bool:
         return self._state == "armed"
 
+    @property
+    def active(self) -> bool:
+        return self._state in {"armed", "collecting"}
+
     def _wait(
         self, pattern: bytes, label: str, *, deadline: float | None = None,
     ):
@@ -1037,9 +1044,19 @@ class ControllerAuthDiagnosticSession:
                 self._state = "poisoned"
                 return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
             return cleanup
+        except _INTERRUPTIONS:
+            self._state = "poisoned"
+            raise
         except BaseException:
             self._state = "poisoned"
             return ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
+
+    def _recover_after_interruption(self) -> None:
+        """Attempt cleanup without replacing the interruption being handled."""
+        try:
+            self._recover_cleanup()
+        except _INTERRUPTIONS:
+            pass
 
     @staticmethod
     def _closed_result(kind: bytes, value: bytes) -> ControllerAuthResult:
@@ -1059,6 +1076,9 @@ class ControllerAuthDiagnosticSession:
                 _RECEIPT_LINE_START + re.escape(cleanup_marker)
                 + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END,
                 label)
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             self._state = "poisoned"
             return (
@@ -1121,6 +1141,9 @@ class ControllerAuthDiagnosticSession:
             self.console._send(b"", "controller-auth-shell-requested")
             self._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-auth-shell-ready")
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             raise ControllerAuthDiagnosticError(
                 cleanup_proved=True,
@@ -1129,6 +1152,9 @@ class ControllerAuthDiagnosticSession:
         self._state = "launching"
         try:
             self.console._send(command, "controller-auth-command-sent")
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -1223,6 +1249,9 @@ class ControllerAuthDiagnosticSession:
             self._armed_deadline = self._clock() + self._post_arm_timeout
         except ControllerAuthDiagnosticError:
             raise
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -1234,7 +1263,8 @@ class ControllerAuthDiagnosticSession:
                 arm_subphase=ControllerAuthArmSubphase.PARSE,
             ) from None
 
-    def submitted(self) -> ControllerAuthResult:
+    def begin_submission(self) -> None:
+        """Release the armed watcher without waiting for its result."""
         if self._state != "armed":
             raise RuntimeError("Controller auth submission is out of order")
         if (
@@ -1254,9 +1284,27 @@ class ControllerAuthDiagnosticSession:
             self._clock() + self._observation_seconds
             + CLEANUP_RESERVE_SECONDS)
         self._state = "collecting"
-        self.console._send(
-            f"__TELOS_AUTH_SUBMIT_{self._tokens['submit']}__".encode(),
-            "controller-auth-submitted")
+        try:
+            self.console._send(
+                f"__TELOS_AUTH_SUBMIT_{self._tokens['submit']}__".encode(),
+                "controller-auth-submitted")
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
+        except BaseException:
+            cleanup = self._recover_cleanup()
+            raise ControllerAuthDiagnosticError(
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
+                ),
+                cleanup_proved=cleanup is None,
+            ) from None
+
+    def result(self) -> ControllerAuthResult:
+        """Collect the result after every observer has received its fence."""
+        if self._state != "collecting":
+            raise RuntimeError("Controller auth result is out of order")
         result_marker = (
             f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
         try:
@@ -1266,6 +1314,9 @@ class ControllerAuthDiagnosticSession:
                 + _RECEIPT_LINE_END,
                 "controller-auth-result",
                 deadline=self._deadline - CLEANUP_RESERVE_SECONDS)
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -1286,6 +1337,9 @@ class ControllerAuthDiagnosticSession:
             return result
         except ControllerAuthDiagnosticError:
             raise
+        except _INTERRUPTIONS:
+            self._recover_after_interruption()
+            raise
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -1297,6 +1351,19 @@ class ControllerAuthDiagnosticSession:
             ) from None
 
     def cancel(self) -> ControllerAuthResult:
+        if self._state == "collecting":
+            self._deadline = self._clock() + CLEANUP_RESERVE_SECONDS
+            cleanup = self._recover_cleanup()
+            result = ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                cleanup=cleanup,
+            )
+            if cleanup is not None:
+                raise ControllerAuthDiagnosticError(
+                    controller_auth_result=result,
+                    cleanup_proved=False,
+                )
+            return result
         if self._state != "armed":
             raise RuntimeError("Controller auth cancellation is out of order")
         # Cancellation may be required precisely because the post-arm GUI

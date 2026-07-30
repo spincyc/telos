@@ -88,6 +88,7 @@ from .windows_postsubmit_diagnostic import (
 )
 
 CONTROLLER_AUTH_TIMEOUT_SECONDS = 45.0
+CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS = 60.0
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
@@ -175,6 +176,53 @@ def _with_controller_auth_result(
         controller_auth_receive_observation=(
             error.controller_auth_receive_observation),
     )
+
+
+def _exact_controller_auth_result(
+    value: object,
+) -> ControllerAuthResult:
+    """Accept only the immutable, exact Controller result carrier."""
+    if type(value) is not ControllerAuthResult:
+        raise TypeError("Controller auth result carrier is invalid")
+    value._validate()
+    return value
+
+
+def _exact_controller_auth_error_result(
+    error: object,
+) -> ControllerAuthResult:
+    """Validate an exact protocol error and its cleanup assertion together."""
+    if type(error) is not ControllerAuthDiagnosticError:
+        raise TypeError("Controller auth error carrier is invalid")
+    result = _exact_controller_auth_result(error.controller_auth_result)
+    if type(error.cleanup_proved) is not bool:
+        raise TypeError("Controller auth cleanup proof is invalid")
+    if error.cleanup_proved != (result.cleanup is None):
+        raise ValueError("Controller auth cleanup proof contradicts result")
+    if (
+        error.arm_subphase is not None
+        and type(error.arm_subphase) is not ControllerAuthArmSubphase
+    ):
+        raise TypeError("Controller auth arm subphase is invalid")
+    if (
+        error.arm_subphase is not None
+        and result.collection
+        is not ControllerAuthCollection.RECEIPT_UNAVAILABLE
+    ):
+        raise ValueError(
+            "Controller auth arm subphase needs unavailable receipt")
+    if (
+        error.receive_observation is not None
+        and type(error.receive_observation)
+        is not ControllerAuthReceiveObservation
+    ):
+        raise TypeError("Controller auth receive observation is invalid")
+    if (
+        (error.arm_subphase is ControllerAuthArmSubphase.RECEIVE)
+        != (error.receive_observation is not None)
+    ):
+        raise ValueError("Controller auth receive observation is invalid")
+    return result
 
 
 def _diagnostic_arm_failure_operation(
@@ -939,11 +987,23 @@ class NativeWindowsAcceptanceAdapter:
                     # immutable and is checked again before any secret can
                     # be submitted.
                     timeout=CONTROLLER_AUTH_TIMEOUT_SECONDS,
-                    post_arm_timeout=self.timeout,
+                    post_arm_timeout=min(
+                        self.timeout,
+                        CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS,
+                    ),
                     clock=self.clock,
                 )
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
+            except ValueError:
+                self._controller_auth_result = ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                raise WindowsLocalReauthenticationError(
+                    "controller-auth-arm",
+                    controller_auth_result=self._controller_auth_result,
+                    controller_auth_arm_subphase=(
+                        ControllerAuthArmSubphase.PREFLIGHT),
+                ) from None
             except BaseException:
                 self._controller_auth_result = ControllerAuthResult(
                     collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
@@ -960,38 +1020,8 @@ class NativeWindowsAcceptanceAdapter:
                 raise
             except ControllerAuthDiagnosticError as error:
                 try:
-                    if type(error) is not ControllerAuthDiagnosticError:
-                        raise TypeError("Controller auth carrier is invalid")
-                    error.controller_auth_result._validate()
-                    if type(error.cleanup_proved) is not bool:
-                        raise TypeError(
-                            "Controller auth cleanup proof is invalid")
-                    if error.cleanup_proved != (
-                        error.controller_auth_result.cleanup is None
-                    ):
-                        raise ValueError(
-                            "Controller auth cleanup proof contradicts result")
-                    if (
-                        error.arm_subphase is not None
-                        and type(error.arm_subphase)
-                        is not ControllerAuthArmSubphase
-                    ):
-                        raise TypeError(
-                            "Controller auth arm subphase is invalid")
-                    if (
-                        error.receive_observation is not None
-                        and type(error.receive_observation)
-                        is not ControllerAuthReceiveObservation
-                    ):
-                        raise TypeError(
-                            "Controller auth receive observation is invalid")
-                    if (
-                        (error.arm_subphase
-                         is ControllerAuthArmSubphase.RECEIVE)
-                        != (error.receive_observation is not None)
-                    ):
-                        raise ValueError(
-                            "Controller auth receive observation is invalid")
+                    normalized_arm_result = (
+                        _exact_controller_auth_error_result(error))
                 except (TypeError, ValueError, AttributeError):
                     self._controller_auth_result = ControllerAuthResult(
                         collection=(
@@ -1005,7 +1035,7 @@ class NativeWindowsAcceptanceAdapter:
                         controller_auth_arm_subphase=(
                             ControllerAuthArmSubphase.LAUNCH),
                     ) from None
-                self._controller_auth_result = error.controller_auth_result
+                self._controller_auth_result = normalized_arm_result
                 if not error.cleanup_proved:
                     raise WindowsLocalReauthenticationError(
                         "controller-auth-arm",
@@ -1032,16 +1062,25 @@ class NativeWindowsAcceptanceAdapter:
                 submit_secret()
                 if controller_auth is not None:
                     try:
+                        controller_auth.begin_submission()
                         self._controller_auth_result = (
-                            controller_auth.submitted())
+                            _exact_controller_auth_result(
+                                controller_auth.result()))
+                    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+                        raise
                     except ControllerAuthDiagnosticError as error:
-                        self._controller_auth_result = ControllerAuthResult(
-                            collection=(
-                                ControllerAuthCollection.RECEIPT_UNAVAILABLE),
-                            cleanup=(
-                                None if error.cleanup_proved
-                                else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
-                        )
+                        try:
+                            self._controller_auth_result = (
+                                _exact_controller_auth_error_result(error))
+                        except (TypeError, ValueError, AttributeError):
+                            self._controller_auth_result = ControllerAuthResult(
+                                collection=(
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
+                                cleanup=(
+                                    ControllerAuthCleanup.
+                                    SINK_ABSENCE_UNPROVED),
+                            )
                     except BaseException:
                         self._controller_auth_result = ControllerAuthResult(
                             collection=(
@@ -1051,22 +1090,25 @@ class NativeWindowsAcceptanceAdapter:
             except BaseException as error:
                 if (
                     controller_auth is not None
-                    and controller_auth.armed
+                    and controller_auth.active
                 ):
                     try:
                         self._controller_auth_result = (
-                            controller_auth.cancel())
+                            _exact_controller_auth_result(
+                                controller_auth.cancel()))
                     except ControllerAuthDiagnosticError as cancel_error:
                         self._controller_auth_result = ControllerAuthResult(
-                            code=cancel_error.controller_auth_result.code,
                             collection=(
-                                cancel_error.controller_auth_result.collection),
+                                ControllerAuthCollection.RECEIPT_UNAVAILABLE),
                             cleanup=(
-                                cancel_error.controller_auth_result.cleanup
-                                if cancel_error.cleanup_proved
-                                else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
-                            ),
+                                ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
                         )
+                        try:
+                            self._controller_auth_result = (
+                                _exact_controller_auth_error_result(
+                                    cancel_error))
+                        except (TypeError, ValueError, AttributeError):
+                            pass
                     except BaseException:
                         self._controller_auth_result = ControllerAuthResult(
                             collection=(
@@ -1119,6 +1161,38 @@ class NativeWindowsAcceptanceAdapter:
                                 error, fallback="launch")) from None
                     armed = True
                     submit_secret()
+                    if controller_auth is not None:
+                        try:
+                            controller_auth.begin_submission()
+                        except (
+                            KeyboardInterrupt, SystemExit, RunInterrupted,
+                        ):
+                            raise
+                        except ControllerAuthDiagnosticError as error:
+                            try:
+                                self._controller_auth_result = (
+                                    _exact_controller_auth_error_result(error))
+                            except (TypeError, ValueError, AttributeError):
+                                self._controller_auth_result = (
+                                    ControllerAuthResult(
+                                        collection=(
+                                            ControllerAuthCollection.
+                                            RECEIPT_UNAVAILABLE),
+                                        cleanup=(
+                                            ControllerAuthCleanup.
+                                            SINK_ABSENCE_UNPROVED),
+                                    ))
+                            controller_auth = None
+                        except BaseException:
+                            self._controller_auth_result = ControllerAuthResult(
+                                collection=(
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
+                                cleanup=(
+                                    ControllerAuthCleanup.
+                                    SINK_ABSENCE_UNPROVED),
+                            )
+                            controller_auth = None
                     try:
                         terminal = session.submitted()
                     except (KeyboardInterrupt, SystemExit, RunInterrupted):
@@ -1147,20 +1221,26 @@ class NativeWindowsAcceptanceAdapter:
                     if controller_auth is not None:
                         try:
                             self._controller_auth_result = (
-                                controller_auth.submitted())
+                                _exact_controller_auth_result(
+                                    controller_auth.result()))
                         except (
                             KeyboardInterrupt, SystemExit, RunInterrupted,
                         ):
                             raise
                         except ControllerAuthDiagnosticError as error:
-                            self._controller_auth_result = ControllerAuthResult(
-                                collection=(
-                                    ControllerAuthCollection.
-                                    RECEIPT_UNAVAILABLE),
-                                cleanup=(
-                                    None if error.cleanup_proved
-                                    else ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
-                            )
+                            try:
+                                self._controller_auth_result = (
+                                    _exact_controller_auth_error_result(error))
+                            except (TypeError, ValueError, AttributeError):
+                                self._controller_auth_result = (
+                                    ControllerAuthResult(
+                                        collection=(
+                                            ControllerAuthCollection.
+                                            RECEIPT_UNAVAILABLE),
+                                        cleanup=(
+                                            ControllerAuthCleanup.
+                                            SINK_ABSENCE_UNPROVED),
+                                    ))
                         except BaseException:
                             self._controller_auth_result = ControllerAuthResult(
                                 collection=(
@@ -1176,28 +1256,30 @@ class NativeWindowsAcceptanceAdapter:
                 finally:
                     if (
                         controller_auth is not None
-                        and controller_auth.armed
+                        and controller_auth.active
                     ):
                         try:
                             self._controller_auth_result = (
-                                controller_auth.cancel())
+                                _exact_controller_auth_result(
+                                    controller_auth.cancel()))
                         except (
                             KeyboardInterrupt, SystemExit, RunInterrupted,
                         ):
                             raise
                         except ControllerAuthDiagnosticError as error:
                             self._controller_auth_result = ControllerAuthResult(
-                                code=error.controller_auth_result.code,
                                 collection=(
-                                    error.controller_auth_result.collection),
+                                    ControllerAuthCollection.
+                                    RECEIPT_UNAVAILABLE),
                                 cleanup=(
-                                    error.controller_auth_result.cleanup
-                                    if error.cleanup_proved
-                                    else (
-                                        ControllerAuthCleanup.
-                                        SINK_ABSENCE_UNPROVED)
-                                ),
+                                    ControllerAuthCleanup.
+                                    SINK_ABSENCE_UNPROVED),
                             )
+                            try:
+                                self._controller_auth_result = (
+                                    _exact_controller_auth_error_result(error))
+                            except (TypeError, ValueError, AttributeError):
+                                pass
                         except BaseException:
                             self._controller_auth_result = ControllerAuthResult(
                                 collection=(
