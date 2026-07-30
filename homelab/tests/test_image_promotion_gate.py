@@ -204,6 +204,16 @@ class ImagePromotionGateTests(unittest.TestCase):
         self.receipt_path.unlink()
         self.gate_error("cannot read seed receipt")
 
+    def test_bounds_the_receipt_before_reading_it(self):
+        """An endless receipt must be refused, not held in memory first."""
+        self.receipt_path.unlink()
+        self.receipt_path.symlink_to("/dev/zero")
+        self.gate_error("seed receipt is too large")
+
+    def test_rejects_deeply_nested_receipt_with_stage_attribution(self):
+        self.receipt_path.write_bytes(b"[" * 200000)
+        self.gate_error("seed-closure: seed receipt nests too deeply")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,9 +69,24 @@ class GuestProgressTransport:
         return remaining
 
     def _acknowledge(self, event: AcceptedEvent) -> None:
+        """Write one acknowledgment, translating every write fault.
+
+        A failed write may have emitted a partial frame, so the transport is
+        closed rather than left resumable onto a desynchronised stream.
+        """
+
         ack = self.receiver.acknowledgment(event)
         self._arm()
-        self.connection.sendall(encode_frame(ack))
+        try:
+            self.connection.sendall(encode_frame(ack))
+        except socket.timeout as error:
+            self._closed = True
+            raise DeadlineError(
+                "transport deadline expired while acknowledging") from error
+        except OSError as error:
+            self._closed = True
+            raise TransportError(
+                f"transport acknowledgment failed: {error}") from error
 
     def collect(self, *, until_terminal: bool = True) -> TransportResult:
         """Read, validate, and acknowledge events until the stream settles."""

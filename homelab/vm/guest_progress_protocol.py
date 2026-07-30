@@ -519,6 +519,9 @@ class SenderState:
             max_frame_bytes=config.max_frame_bytes,
             max_events=config.max_events,
             max_boots=config.max_boots,
+            heartbeat_interval=config.heartbeat_interval,
+            silence_limit=config.silence_limit,
+            drain_limit=config.drain_limit,
         )
         self._key = bytearray(key)
         self._operation_deadline = float(operation_deadline)
@@ -947,6 +950,8 @@ class ReceiverState:
             )
         except SchemaError:
             raise
+        except RecursionError as error:
+            raise SchemaError("checkpoint nests too deeply") from error
         except (json.JSONDecodeError, UnicodeError) as error:
             raise SchemaError("invalid checkpoint JSON") from error
         if type(value) is not dict or canonical_json(value) != data:
@@ -957,8 +962,19 @@ class ReceiverState:
             "mac",
         }:
             raise SchemaError("missing or unknown checkpoint field")
+        # Validate the MAC's encoding before comparing it: compare_digest
+        # rejects non-ASCII text with TypeError, and this runs before any
+        # authentication, so the input is entirely untrusted.
         if type(value["mac"]) is not str:
             raise SchemaError("checkpoint mac must be base64 text")
+        try:
+            decoded_mac = base64.b64decode(value["mac"], validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise SchemaError("checkpoint mac must be canonical base64") from error
+        if len(decoded_mac) != hashlib.sha256().digest_size or (
+            base64.b64encode(decoded_mac).decode("ascii") != value["mac"]
+        ):
+            raise SchemaError("checkpoint mac must be a canonical HMAC value")
         unsigned = dict(value)
         del unsigned["mac"]
         expected = _domain_mac(unsigned, key, CHECKPOINT_MAC_DOMAIN)
@@ -1042,6 +1058,12 @@ class ReceiverState:
                 raise SchemaError("checkpoint boot progress is not contiguous")
         if boot_id is not None:
             observed = sequences.get(boot_id, set())
+            # Compare counts before materializing the range: last_sequence is
+            # bounded only by the JSON-safe integer maximum, so building the
+            # set first would let one small authenticated checkpoint exhaust
+            # memory.
+            if last_sequence + 1 != len(observed):
+                raise SchemaError("checkpoint progress differs from its events")
             if observed != set(range(last_sequence + 1)):
                 raise SchemaError("checkpoint progress differs from its events")
 

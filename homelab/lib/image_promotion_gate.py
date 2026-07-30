@@ -89,10 +89,18 @@ def _read_receipt(path: Path) -> Any:
         return result
 
     try:
-        raw = path.read_bytes()
+        # Read one byte past the bound rather than the whole file: a receipt
+        # that is a pipe, a device, or simply enormous must be refused without
+        # first being held in memory.
+        with path.open("rb") as stream:
+            raw = stream.read(RECEIPT_LIMIT + 1)
         if len(raw) > RECEIPT_LIMIT:
             raise SeedClosureError("seed receipt is too large")
         return json.loads(raw.decode("utf-8"), object_pairs_hook=exact_pairs)
+    except RecursionError as error:
+        raise SeedClosureError("seed receipt nests too deeply") from error
+    except MemoryError as error:
+        raise SeedClosureError("seed receipt exhausted memory") from error
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise SeedClosureError(f"cannot read seed receipt: {error}") from error
 

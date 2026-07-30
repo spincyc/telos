@@ -598,7 +598,7 @@ class ReceiverCheckpointTests(unittest.TestCase):
     def restore(self, data, *, key=KEY, deadline=100):
         return ReceiverState.restore(data, CONFIG, key, deadline=deadline)
 
-    def mutate(self, **changes):
+    def mutate(self, mac_override=None, **changes):
         value = json.loads(self.state.checkpoint().decode("utf-8"))
         del value["mac"]
         value.update(changes)
@@ -606,7 +606,10 @@ class ReceiverCheckpointTests(unittest.TestCase):
             CHECKPOINT_MAC_DOMAIN,
             _domain_mac,
         )
-        value["mac"] = _domain_mac(value, KEY, CHECKPOINT_MAC_DOMAIN)
+        value["mac"] = (
+            mac_override if mac_override is not None
+            else _domain_mac(value, KEY, CHECKPOINT_MAC_DOMAIN)
+        )
         return canonical_json(value)
 
     def test_restore_resumes_exact_progress_and_replay_rejection(self):
@@ -684,6 +687,26 @@ class ReceiverCheckpointTests(unittest.TestCase):
             self.restore(self.mutate(
                 events=value["events"] + [value["events"][0]]))
 
+    def test_rejects_malformed_mac_before_comparing_it(self):
+        """compare_digest raises TypeError on non-ASCII, before any auth."""
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(mac_override="é"))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(mac_override="not-base64!"))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(mac_override="QUJD"))
+
+    def test_rejects_deeply_nested_checkpoint(self):
+        with self.assertRaises(SchemaError):
+            self.restore(b"[" * 200000)
+
+    def test_rejects_huge_sequence_without_materializing_it(self):
+        """last_sequence is JSON-safe-large; the count check must come first."""
+        value = json.loads(self.state.checkpoint().decode("utf-8"))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(
+                last_sequence=10 ** 9, events=value["events"][:1]))
+
     def test_rejects_noncanonical_and_malformed_documents(self):
         data = self.state.checkpoint()
         with self.assertRaises(SchemaError):
@@ -751,9 +774,29 @@ class ReceiverLivenessAndDrainTests(unittest.TestCase):
             self.accept(sync, at=7)
 
     def test_drain_deadline_is_clamped_and_never_extends_the_receiver(self):
-        self.accept(event(), at=1)
         state = ReceiverState(CONFIG, KEY, deadline=4)
         self.assertEqual(state.begin_drain(now=2), 4)
+
+    def test_sender_preserves_the_reviewed_lifecycle_limits(self):
+        config = ProtocolConfig(
+            attempt="attempt-public-1",
+            producer="arch-installer",
+            nonce="host-nonce-1",
+            phases=("install",),
+            statuses=("starting", "active", "complete", "failed", "ready"),
+            heartbeat_interval=1.0,
+            silence_limit=2.0,
+            drain_limit=3.0,
+        )
+        sender = SenderState(config, KEY, operation_deadline=100)
+        self.assertEqual(
+            (
+                sender.config.heartbeat_interval,
+                sender.config.silence_limit,
+                sender.config.drain_limit,
+            ),
+            (1.0, 2.0, 3.0),
+        )
 
     def test_drain_lifecycle_is_exact(self):
         with self.assertRaises(DeadlineError):

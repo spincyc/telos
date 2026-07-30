@@ -105,6 +105,30 @@ class GuestProgressTransportTests(unittest.TestCase):
         self.guest.shutdown(socket.SHUT_WR)
         result = self.transport().collect()
         self.assertEqual(len(result.events), 1)
+        # The retry must still be acknowledged, or a guest that never sees an
+        # ack retries forever against an unchanging receiver.
+        decoder = FrameDecoder()
+        self.guest.settimeout(2)
+        payloads = []
+        while len(payloads) < 2:
+            data = self.guest.recv(4096)
+            if not data:
+                break
+            payloads.extend(decoder.feed(data))
+        self.assertEqual(len(payloads), 2)
+        for payload in payloads:
+            self.assertEqual(
+                parse_ack_payload(payload, CONFIG, KEY)["sequence"], 0)
+
+    def test_write_faults_are_translated_and_close_the_transport(self):
+        """A partial ack must not leave a resumable, desynchronised stream."""
+        self.send(event())
+        self.guest.close()
+        transport = self.transport()
+        with self.assertRaises(TransportError):
+            transport.collect()
+        with self.assertRaises(TransportError):
+            transport.collect()
 
     def test_expired_deadline_refuses_to_read(self):
         transport = self.transport(clock=lambda: 100.0)
