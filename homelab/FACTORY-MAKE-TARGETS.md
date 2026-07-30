@@ -98,6 +98,28 @@ rather than reimplemented:
 - `homelab-arch-update-check`
 - `homelab-sim-deps`, `homelab-sim-auto-plan`
 - `homelab-sim-auto-run`, `homelab-sim-auto-repeat`
+- `homelab-image-promotion-gate`
+
+The promotion gate is the common static precondition for promoting any
+Arch-derived image. It is read-only: it audits a candidate root through a
+confined descriptor chain that follows no symlinked ancestor, mounts and boots
+nothing, and always gates against the tracked `package-contract.json` rather
+than a caller-supplied registry.
+
+```sh
+make homelab-image-promotion-gate \
+  IMAGE_PROFILE=controller-seed \
+  IMAGE_ROOT=<candidate root> \
+  IMAGE_RECEIPT=<signed seed receipt> \
+  IMAGE_EVIDENCE=<optional evidence path>
+```
+
+Every failure names its stage — `contract`, `root-audit`, or `seed-closure` —
+so an unaccounted binary, an unowned path, a missing package signature, and an
+installed version that drifted from the seed closure are distinguishable
+without inspecting the candidate by hand. Passing this gate is necessary and
+not sufficient: booting the candidate and verifying declared services remain
+separate gates, and promotion still needs explicit authority.
 
 The aggregate factory targets may delegate to a leaf only after its inputs and
 outputs match this contract. In particular, do not claim the current simulator

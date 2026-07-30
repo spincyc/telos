@@ -138,6 +138,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-windows-identity-prepare \
 	homelab-windows-identity-run \
 	homelab-windows-identity-judge \
+	homelab-image-promotion-gate \
 	homelab-private-bootstrap homelab-private-onboard homelab-private-check \
 	homelab-instance adr-digest \
 	dependencies-arch install-dependencies-arch check-dependencies-arch
@@ -560,6 +561,21 @@ homelab-windows-install-run:
 		$(PYTHON) homelab/bin/homelab-windows-install-run \
 			--bundle '$(WINDOWS_RUN)' --duration '$(FACTORY_DURATION)' --apply; \
 	fi
+
+# Prove a completed image root against its role contract and the signed seed
+# receipt that built it. Read-only: it audits the root without mounting,
+# booting, or mutating anything, so it is safe before promotion.
+homelab-image-promotion-gate:
+	@if [ -z '$(IMAGE_ROOT)' ] || [ -z '$(IMAGE_RECEIPT)' ] \
+			|| [ -z '$(IMAGE_PROFILE)' ]; then \
+		echo 'require IMAGE_PROFILE=<installer-live|controller-seed|workstation-install>' >&2; \
+		echo 'require IMAGE_ROOT=<candidate root> IMAGE_RECEIPT=<signed seed receipt>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-image-promotion-gate \
+		--profile '$(IMAGE_PROFILE)' --root '$(IMAGE_ROOT)' \
+		--receipt '$(IMAGE_RECEIPT)' \
+		$(if $(IMAGE_EVIDENCE),--evidence '$(IMAGE_EVIDENCE)')
 
 homelab-windows-identity-judge:
 	@if [ -z '$(WINDOWS_IDENTITY_EVIDENCE)' ]; then \
