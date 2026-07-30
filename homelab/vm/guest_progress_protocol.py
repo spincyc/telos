@@ -35,6 +35,8 @@ EVENT_TYPES = (
 )
 MAC_DOMAIN = b"telos-guest-progress-v1\x00"
 ACK_MAC_DOMAIN = b"telos-guest-progress-ack-v1\x00"
+CHECKPOINT_MAC_DOMAIN = b"telos-guest-progress-checkpoint-v1\x00"
+MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024
 ACK_TIMEOUT = 5.0
 RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
 EVENT_STATUSES = MappingProxyType({
@@ -807,6 +809,173 @@ class ReceiverState:
                 raise TransitionError("terminal event does not match the active phase")
             return None
         return self.active_phase
+
+    def checkpoint(self) -> bytes:
+        """Render one authenticated, restorable snapshot of accepted progress.
+
+        The snapshot carries no deadline and no receive time: restoring never
+        extends the host timeline, and the restored incarnation observes its
+        own receive times.
+        """
+
+        if self._closed or self._key is None:
+            raise AuthenticationError("receiver is closed")
+        events = [
+            {
+                "boot_id": boot_id,
+                "sequence": sequence,
+                "id": event_id,
+                "fingerprint": fingerprint.hex(),
+            }
+            for (_, boot_id, sequence, event_id), fingerprint
+            in sorted(self._accepted.items())
+        ]
+        unsigned = {
+            "specversion": self.config.specversion,
+            "kind": "receiver-checkpoint",
+            "attempt": self.config.attempt,
+            "producer": self.config.producer,
+            "nonce": self.config.nonce,
+            "boot_id": self.boot_id,
+            "last_sequence": self.last_sequence,
+            "active_phase": self.active_phase,
+            "retired_boot_ids": sorted(self._retired_boot_ids),
+            "events": events,
+        }
+        document = dict(unsigned)
+        document["mac"] = _domain_mac(
+            unsigned, bytes(self._key), CHECKPOINT_MAC_DOMAIN)
+        return canonical_json(document)
+
+    @classmethod
+    def restore(
+        cls,
+        data: bytes,
+        config: ProtocolConfig,
+        key: bytes,
+        *,
+        deadline: float,
+    ) -> "ReceiverState":
+        """Rebuild a receiver from checkpoint() under a caller-owned deadline."""
+
+        receiver = cls(config, key, deadline=deadline)
+        if type(data) is not bytes or not data or len(data) > MAX_CHECKPOINT_BYTES:
+            raise SchemaError("invalid checkpoint length")
+        try:
+            value = json.loads(
+                data.decode("utf-8"),
+                object_pairs_hook=_object_pairs,
+                parse_float=lambda _: (_ for _ in ()).throw(
+                    SchemaError("non-integer JSON number")),
+                parse_constant=_reject_constant,
+            )
+        except SchemaError:
+            raise
+        except (json.JSONDecodeError, UnicodeError) as error:
+            raise SchemaError("invalid checkpoint JSON") from error
+        if type(value) is not dict or canonical_json(value) != data:
+            raise SchemaError("noncanonical checkpoint encoding")
+        if frozenset(value) != {
+            "specversion", "kind", "attempt", "producer", "nonce", "boot_id",
+            "last_sequence", "active_phase", "retired_boot_ids", "events",
+            "mac",
+        }:
+            raise SchemaError("missing or unknown checkpoint field")
+        if type(value["mac"]) is not str:
+            raise SchemaError("checkpoint mac must be base64 text")
+        unsigned = dict(value)
+        del unsigned["mac"]
+        expected = _domain_mac(unsigned, key, CHECKPOINT_MAC_DOMAIN)
+        if not hmac.compare_digest(value["mac"], expected):
+            raise AuthenticationError("invalid checkpoint MAC")
+        if value["specversion"] != config.specversion:
+            raise SchemaError("unsupported checkpoint specversion")
+        if value["kind"] != "receiver-checkpoint":
+            raise SchemaError("unknown checkpoint kind")
+        if (
+            value["attempt"] != config.attempt
+            or value["producer"] != config.producer
+            or value["nonce"] != config.nonce
+        ):
+            raise AuthenticationError("checkpoint identity binding mismatch")
+
+        boot_id = value["boot_id"]
+        last_sequence = value["last_sequence"]
+        active_phase = value["active_phase"]
+        if boot_id is not None:
+            _require_token("boot_id", boot_id)
+        if last_sequence is not None and (
+            type(last_sequence) is not int
+            or not 0 <= last_sequence <= JSON_SAFE_INTEGER_MAX
+        ):
+            raise SchemaError("checkpoint sequence is not a JSON-safe integer")
+        if active_phase is not None and active_phase not in config.phases:
+            raise SchemaError("checkpoint has an unknown active phase")
+        if boot_id is None and (
+            last_sequence is not None or active_phase is not None
+        ):
+            raise SchemaError("checkpoint has progress without a bound boot")
+        if boot_id is not None and last_sequence is None:
+            raise SchemaError("checkpoint has a bound boot without progress")
+
+        retired = value["retired_boot_ids"]
+        if type(retired) is not list or len(retired) > config.max_boots:
+            raise SchemaError("invalid checkpoint boot retention")
+        for item in retired:
+            _require_token("retired_boot_ids", item)
+        if len(set(retired)) != len(retired) or retired != sorted(retired):
+            raise SchemaError("checkpoint boot retirement is not exact")
+        if boot_id is not None and boot_id in retired:
+            raise SchemaError("checkpoint boot is already retired")
+
+        events = value["events"]
+        if type(events) is not list or len(events) > config.max_events:
+            raise SchemaError("invalid checkpoint event retention")
+        known_boots = set(retired) | ({boot_id} if boot_id is not None else set())
+        sequences: dict[str, set[int]] = {}
+        accepted: dict[tuple[str, str, int, str], bytes] = {}
+        event_ids: set[str] = set()
+        for item in events:
+            if type(item) is not dict or frozenset(item) != {
+                "boot_id", "sequence", "id", "fingerprint",
+            }:
+                raise SchemaError("missing or unknown checkpoint event field")
+            _require_token("events.boot_id", item["boot_id"])
+            sequence = item["sequence"]
+            if type(sequence) is not int or not 0 <= sequence <= JSON_SAFE_INTEGER_MAX:
+                raise SchemaError("checkpoint event sequence is not JSON-safe")
+            try:
+                parsed_id = uuid.UUID(item["id"])
+            except (AttributeError, TypeError, ValueError) as error:
+                raise SchemaError("checkpoint event id must be a UUID") from error
+            if str(parsed_id) != item["id"]:
+                raise SchemaError("checkpoint event id must be canonical")
+            fingerprint = item["fingerprint"]
+            if type(fingerprint) is not str or _SHA256.fullmatch(fingerprint) is None:
+                raise SchemaError("checkpoint event fingerprint is not exact")
+            if item["boot_id"] not in known_boots:
+                raise SchemaError("checkpoint event belongs to an unknown boot")
+            identity = (config.attempt, item["boot_id"], sequence, item["id"])
+            if identity in accepted or item["id"] in event_ids:
+                raise SchemaError("checkpoint event identity is duplicated")
+            accepted[identity] = bytes.fromhex(fingerprint)
+            event_ids.add(item["id"])
+            sequences.setdefault(item["boot_id"], set()).add(sequence)
+        for observed in sequences.values():
+            if observed != set(range(len(observed))):
+                raise SchemaError("checkpoint boot progress is not contiguous")
+        if boot_id is not None:
+            observed = sequences.get(boot_id, set())
+            if observed != set(range(last_sequence + 1)):
+                raise SchemaError("checkpoint progress differs from its events")
+
+        receiver.boot_id = boot_id
+        receiver.last_sequence = last_sequence
+        receiver.active_phase = active_phase
+        receiver._retired_boot_ids = set(retired)
+        receiver._accepted = accepted
+        receiver._event_ids = event_ids
+        return receiver
 
     def reconnect(self) -> None:
         """Reset synchronization state; callers must also reset stream framing."""

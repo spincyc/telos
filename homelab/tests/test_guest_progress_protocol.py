@@ -588,5 +588,115 @@ class AcknowledgmentAndSenderTests(unittest.TestCase):
             sender.acknowledge(self.ack(event()), received_at=2)
 
 
+class ReceiverCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        self.state = ReceiverState(CONFIG, KEY, deadline=100)
+        self.state.accept(canonical_json(event()), received_at=1)
+        self.state.accept(
+            canonical_json(event(1, "phase-started", "install")), received_at=2)
+
+    def restore(self, data, *, key=KEY, deadline=100):
+        return ReceiverState.restore(data, CONFIG, key, deadline=deadline)
+
+    def mutate(self, **changes):
+        value = json.loads(self.state.checkpoint().decode("utf-8"))
+        del value["mac"]
+        value.update(changes)
+        from homelab.vm.guest_progress_protocol import (
+            CHECKPOINT_MAC_DOMAIN,
+            _domain_mac,
+        )
+        value["mac"] = _domain_mac(value, KEY, CHECKPOINT_MAC_DOMAIN)
+        return canonical_json(value)
+
+    def test_restore_resumes_exact_progress_and_replay_rejection(self):
+        restored = self.restore(self.state.checkpoint())
+        self.assertEqual(restored.boot_id, "boot-public-1")
+        self.assertEqual(restored.last_sequence, 1)
+        self.assertEqual(restored.active_phase, "install")
+        self.assertIsNone(restored.last_receive)
+        duplicate = restored.accept(
+            canonical_json(event(1, "phase-started", "install")), received_at=3)
+        self.assertTrue(duplicate.duplicate)
+        self.assertTrue(
+            restored.accept(canonical_json(event()), received_at=3).duplicate)
+        rollback = event(id=str(uuid.UUID(int=99)))
+        with self.assertRaises(ReplayError):
+            restored.accept(canonical_json(rollback), received_at=3)
+        restored.accept(
+            canonical_json(event(2, "phase-finished", "install")), received_at=4)
+        self.assertIsNone(restored.active_phase)
+
+    def test_restore_preserves_retired_boots(self):
+        self.state.reconnect()
+        restored = self.restore(self.state.checkpoint())
+        with self.assertRaises(ReplayError):
+            restored.accept(canonical_json(event(2, "heartbeat", "install")),
+                            received_at=3)
+        with self.assertRaises(ReplayError):
+            restored.accept(canonical_json(event()), received_at=3)
+
+    def test_restore_uses_the_caller_deadline_only(self):
+        restored = self.restore(self.state.checkpoint(), deadline=5)
+        with self.assertRaises(DeadlineError):
+            restored.accept(
+                canonical_json(event(2, "heartbeat", "install")), received_at=6)
+
+    def test_closed_receiver_cannot_checkpoint(self):
+        self.state.close()
+        with self.assertRaises(AuthenticationError):
+            self.state.checkpoint()
+
+    def test_rejects_wrong_key_and_forged_content(self):
+        data = self.state.checkpoint()
+        with self.assertRaises(AuthenticationError):
+            self.restore(data, key=b"x" * 32)
+        forged = data.replace(b'"install"', b'"reboot"', 1)
+        with self.assertRaises(AuthenticationError):
+            self.restore(forged)
+
+    def test_rejects_identity_binding_mismatch(self):
+        with self.assertRaises(AuthenticationError):
+            self.restore(self.mutate(attempt="attempt-public-2"))
+
+    def test_rejects_progress_without_bound_boot(self):
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(boot_id=None))
+
+    def test_rejects_retired_current_boot(self):
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(retired_boot_ids=["boot-public-1"]))
+
+    def test_rejects_unknown_boot_events_and_noncontiguous_progress(self):
+        value = json.loads(self.state.checkpoint().decode("utf-8"))
+        rogue = dict(value["events"][0])
+        rogue["boot_id"] = "boot-public-9"
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(events=value["events"] + [rogue]))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(events=value["events"][1:]))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(last_sequence=5))
+
+    def test_rejects_duplicate_event_identities(self):
+        value = json.loads(self.state.checkpoint().decode("utf-8"))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(
+                events=value["events"] + [value["events"][0]]))
+
+    def test_rejects_noncanonical_and_malformed_documents(self):
+        data = self.state.checkpoint()
+        with self.assertRaises(SchemaError):
+            self.restore(data + b" ")
+        with self.assertRaises(SchemaError):
+            self.restore(b"")
+        with self.assertRaises(SchemaError):
+            self.restore(b"not json")
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(kind="other"))
+        with self.assertRaises(SchemaError):
+            self.restore(self.mutate(extra=1))
+
+
 if __name__ == "__main__":
     unittest.main()
