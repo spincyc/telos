@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260727.011`
+Document version: `20260727.012`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-27T18:13:46-05:00
+Last evidence/workstream review: 2026-07-30T07:30:00-05:00
 
-Repository baseline reviewed: `0acab06`
+Repository baseline reviewed: `7297b87`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -187,6 +187,18 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 
 ## Current blockers and cautions
 
+- Live Windows identity attempts are blocked pending operator authorization.
+  `make homelab-windows-identity-prepare APPLY=1` and the corresponding run
+  target need privileged local QEMU execution that the current agent sandbox
+  refuses. Every prior attempt tore down completely, so the retained bundle
+  `run-20260728T114233Z-afecdf7cc9d0` remains the only identity input.
+- Image promotion now has a static, non-privileged gate:
+  `homelab.lib.image_promotion_gate.gate_candidate_image` merges the profile
+  contract, audits a candidate root through the confined read-only package
+  gate, and reconciles every required and installed package against the signed
+  seed receipt, attributing each failure to contract, root-audit, or
+  seed-closure. Booting a candidate image and promotion authority itself
+  remain open.
 - The actual Windows ISO is available and Windows 11 Pro was found at index 6.
   An OVMF WinPE boot and real Windows install are still required.
 - The disposable controller is accepted for Samba AD, DNS, signed time,
