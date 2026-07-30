@@ -934,6 +934,38 @@ class NativeWindowsAcceptanceAdapter:
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
             except ControllerAuthDiagnosticError as error:
+                try:
+                    if type(error) is not ControllerAuthDiagnosticError:
+                        raise TypeError("Controller auth carrier is invalid")
+                    error.controller_auth_result._validate()
+                    if type(error.cleanup_proved) is not bool:
+                        raise TypeError(
+                            "Controller auth cleanup proof is invalid")
+                    if error.cleanup_proved != (
+                        error.controller_auth_result.cleanup is None
+                    ):
+                        raise ValueError(
+                            "Controller auth cleanup proof contradicts result")
+                    if (
+                        error.arm_subphase is not None
+                        and type(error.arm_subphase)
+                        is not ControllerAuthArmSubphase
+                    ):
+                        raise TypeError(
+                            "Controller auth arm subphase is invalid")
+                except (TypeError, ValueError, AttributeError):
+                    self._controller_auth_result = ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        cleanup=(
+                            ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
+                    )
+                    raise WindowsLocalReauthenticationError(
+                        "controller-auth-arm",
+                        controller_auth_result=self._controller_auth_result,
+                        controller_auth_arm_subphase=(
+                            ControllerAuthArmSubphase.LAUNCH),
+                    ) from None
                 self._controller_auth_result = error.controller_auth_result
                 if not error.cleanup_proved:
                     raise WindowsLocalReauthenticationError(

@@ -117,6 +117,12 @@ class ControllerAuthDiagnosticError(RuntimeError):
                 collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
         if type(controller_auth_result) is not ControllerAuthResult:
             raise TypeError("Controller auth diagnostic result is invalid")
+        controller_auth_result._validate()
+        if type(cleanup_proved) is not bool:
+            raise TypeError("Controller auth cleanup proof is invalid")
+        if cleanup_proved != (controller_auth_result.cleanup is None):
+            raise ValueError(
+                "Controller auth cleanup proof contradicts result")
         if (
             arm_subphase is not None
             and type(arm_subphase) is not ControllerAuthArmSubphase
@@ -143,6 +149,16 @@ class ControllerAuthResult:
     cleanup: ControllerAuthCleanup | None = None
 
     def __post_init__(self) -> None:
+        self._validate()
+
+    def _validate(self) -> None:
+        if self.code is not None and type(self.code) is not ControllerAuthCode:
+            raise TypeError("Controller auth code coordinate is invalid")
+        if (
+            self.collection is not None
+            and type(self.collection) is not ControllerAuthCollection
+        ):
+            raise TypeError("Controller auth collection coordinate is invalid")
         if (self.code is None) == (self.collection is None):
             raise ValueError(
                 "Controller auth result needs exactly one primary coordinate")

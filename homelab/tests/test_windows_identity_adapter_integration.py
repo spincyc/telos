@@ -187,6 +187,64 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     ))
                 interaction_type.return_value.type_secret.assert_not_called()
 
+    def test_forged_controller_arm_carriers_fail_closed_before_secret(self):
+        class ForgedControllerAuthDiagnosticError(
+                ControllerAuthDiagnosticError):
+            pass
+
+        valid_result = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        mutated = ControllerAuthDiagnosticError(
+            controller_auth_result=valid_result,
+            cleanup_proved=True,
+        )
+        object.__setattr__(valid_result, "collection", "private-detail")
+        forged_errors = (
+            ForgedControllerAuthDiagnosticError(
+                controller_auth_result=ControllerAuthResult(
+                    collection=(
+                        ControllerAuthCollection.RECEIPT_UNAVAILABLE)),
+                cleanup_proved=True,
+            ),
+            mutated,
+        )
+        for forged_error in forged_errors:
+            with self.subTest(error=type(forged_error).__name__):
+                sign_in, desktop, plan = (
+                    self._domain_reauthentication_fixture())
+                with (
+                    mock.patch.object(
+                        subject, "_load_references",
+                        return_value=(
+                            sign_in, desktop, mock.sentinel.security,
+                            mock.sentinel.change)),
+                    mock.patch.object(
+                        subject, "_private_evidence_root",
+                        return_value=self.root / "reauth-evidence"),
+                    mock.patch.object(
+                        subject, "_GuiInteraction") as interaction_type,
+                    mock.patch.object(subject, "_prove_secret_entry_departure"),
+                    mock.patch.object(
+                        subject, "ControllerAuthDiagnosticSession",
+                    ) as controller_type,
+                ):
+                    controller_type.return_value.arm.side_effect = forged_error
+                    adapter = self.adapter(rotation_plan=plan)
+                    with self.assertRaises(
+                            subject.WindowsLocalReauthenticationError
+                    ) as caught:
+                        adapter.reauthenticate_domain_operator(
+                            "operator@FACTORY.TEST", "private", "a" * 32)
+                self.assertEqual(
+                    caught.exception.reauth_operation, "controller-auth-arm")
+                self.assertEqual(
+                    caught.exception.controller_auth_result.collection,
+                    ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+                self.assertEqual(
+                    caught.exception.controller_auth_result.cleanup,
+                    ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
+                interaction_type.return_value.type_secret.assert_not_called()
+
     def test_controller_arm_generic_failure_closes_before_secret(self):
         sign_in, desktop, plan = self._domain_reauthentication_fixture()
         with (
@@ -237,7 +295,15 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 subject, "ControllerAuthDiagnosticSession") as controller_type,
         ):
             controller_type.return_value.submitted.side_effect = (
-                ControllerAuthDiagnosticError(cleanup_proved=False))
+                ControllerAuthDiagnosticError(
+                    controller_auth_result=ControllerAuthResult(
+                        collection=(
+                            ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+                        cleanup=(
+                            ControllerAuthCleanup.SINK_ABSENCE_UNPROVED),
+                    ),
+                    cleanup_proved=False,
+                ))
             controller_type.return_value.armed = False
             adapter = self.adapter(rotation_plan=plan)
             adapter.reauthenticate_domain_operator(

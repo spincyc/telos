@@ -2033,6 +2033,7 @@ class NativeProcessBoundary:
             "runtime_quiescent": not runtime_sockets,
             "owned_media_closed": self.control_iso_fd is None
             and not self.ownership_close_failed
+            and self.controller_console is None
             and self.controller_factory_fd is None
             and self.controller_factory_bundle is None
             and self.controller_overlay is None,

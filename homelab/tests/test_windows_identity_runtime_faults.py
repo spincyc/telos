@@ -193,6 +193,10 @@ class WindowsIdentityRuntimeFaultTests(unittest.TestCase):
         controller_overlay.close.assert_called_once()
         terminate.assert_called_once_with([process])
         self.assertNotIn("controller", boundary.processes)
+        self.assertIsNotNone(boundary.controller_console)
+        teardown = boundary.audit_teardown()
+        self.assertFalse(teardown["owned_media_closed"])
+        self.assertFalse(all(teardown.values()))
 
     @mock.patch(
         "homelab.vm.windows_identity_run.os.close",

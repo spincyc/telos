@@ -102,6 +102,65 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 collection=ControllerAuthCollection.ROTATED,
             )
 
+    def test_result_rejects_untyped_primary_coordinates(self):
+        with self.assertRaises(TypeError):
+            ControllerAuthResult(code="authenticated")
+        with self.assertRaises(TypeError):
+            ControllerAuthResult(collection="malformed")
+
+    def test_error_revalidates_exact_result_carrier(self):
+        class ForgedResult(ControllerAuthResult):
+            pass
+
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=ForgedResult(
+                    code=ControllerAuthCode.NO_EVENT),
+                cleanup_proved=True,
+            )
+
+        uninitialized = object.__new__(ControllerAuthResult)
+        object.__setattr__(uninitialized, "code", ControllerAuthCode.NO_EVENT)
+        object.__setattr__(uninitialized, "collection", None)
+        object.__setattr__(uninitialized, "cleanup", None)
+        object.__setattr__(uninitialized, "code", "no-event")
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=uninitialized,
+                cleanup_proved=True,
+            )
+
+        mutated = ControllerAuthResult(
+            collection=ControllerAuthCollection.MALFORMED)
+        object.__setattr__(mutated, "collection", "malformed")
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=mutated,
+                cleanup_proved=True,
+            )
+
+    def test_error_cleanup_proof_is_exact_and_consistent(self):
+        clean = ControllerAuthResult(code=ControllerAuthCode.NO_EVENT)
+        unproved = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            cleanup=subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
+        )
+        with self.assertRaises(TypeError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=clean,
+                cleanup_proved=1,
+            )
+        with self.assertRaises(ValueError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=clean,
+                cleanup_proved=False,
+            )
+        with self.assertRaises(ValueError):
+            ControllerAuthDiagnosticError(
+                controller_auth_result=unproved,
+                cleanup_proved=True,
+            )
+
     def test_serial_session_returns_only_closed_coordinates(self):
         console = mock.Mock(password=None)
         console._wait.side_effect = [
