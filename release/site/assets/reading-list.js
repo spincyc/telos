@@ -2,7 +2,7 @@
   const DATA_URL = "data/reading-list.json";
   const ROOT = document.querySelector("[data-reading-sections]");
   const VERSION_EL = document.querySelector("[data-reading-version]");
-  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-8";
+  const BUILD_VERSION = "reading-list@2026-07-30-simple-layout-9";
   const TABLE_LAYOUTS = [
     {
       status: "complete",
@@ -145,15 +145,15 @@
       .map((column) => {
         const active = sortState.key === column.key;
         const arrow = active ? (sortState.direction === 1 ? " ↑" : " ↓") : "";
-        return `<th style="padding:0.55rem 0.5rem; background:#f8fafc; border-bottom:1px solid #e5e7eb; text-align:left;"><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"
+        return `<th style="padding:0.55rem 0.5rem; background:#eef2f7; color:#111827; border-bottom:1px solid #cbd5e1; border-right:1px solid #e2e8f0; text-align:left;"><button type="button" data-reading-section="${sectionIndex}" data-reading-sort="${escapeText(column.key)}"
           style="cursor:pointer;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;font-weight:600;">${escapeText(column.label)}${arrow}</button></th>`;
       })
       .join("");
     const body = rows
       .map((entry, rowIndex) => {
-        const zebra = rowIndex % 2 === 0 ? "#ffffff" : "#fafafa";
+        const zebra = rowIndex % 2 === 0 ? "#ffffff" : "#f1f5f9";
         const cells = config.columns
-          .map((column) => `<td style="padding:0.5rem; border-bottom:1px solid #e5e7eb;">${formatCell(entry[column.key])}</td>`)
+          .map((column) => `<td style="padding:0.5rem; color:#111827; border-bottom:1px solid #cbd5e1; border-right:1px solid #e2e8f0;">${formatCell(entry[column.key])}</td>`)
           .join("");
         return `<tr style="background:${zebra}">${cells}</tr>`;
       })
@@ -172,7 +172,7 @@
       <section aria-labelledby=\"reading-section-${sectionIndex + 1}\">
         <h2 id=\"reading-section-${sectionIndex + 1}\" style=\"margin:0 0 0.55rem;font-size:1.2rem;font-weight:600;\">${escapeText(title)} (${rows.length})</h2>
         <div style=\"overflow-x:auto;\">
-          <table style=\"width:100%; border-collapse:collapse; margin:0 0 1rem; min-width: 56rem; border:1px solid #e5e7eb;\">
+          <table style=\"width:100%; border-collapse:collapse; margin:0 0 1rem; min-width: 56rem; border:1px solid #cbd5e1;\">
             <thead>
               <tr>${headers}</tr>
             </thead>
