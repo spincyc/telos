@@ -203,9 +203,30 @@ reading-list-scan:
 		exit 1; \
 	fi
 
-init-aiq: reading-list
+# Bring this checkout's local AIQ work ledger and its owned guidance block up
+# to date. Both steps are idempotent: init validates an existing journal, and
+# the guidance integration reports no action when the block is already current.
+# Ledger state lives in .git/aiq/ and is never committed.
+init-aiq:
+	@command -v aiq >/dev/null 2>&1 || { \
+		echo 'init-aiq: aiq not found on PATH; install it from ../aiq' >&2; \
+		exit 1; \
+	}
+	@aiq journal init
+	@aiq integration install guidance --target '$(CURDIR)/AGENTS.md'
+	@aiq doctor
 
-init-tmt: site
+# Create the tool registry when absent, refresh the AGENTS.md habit block, and
+# gate the result. tmt init refuses an existing registry, so it is conditional
+# while the other two steps are safe to repeat.
+init-tmt:
+	@command -v tmt >/dev/null 2>&1 || { \
+		echo 'init-tmt: tmt not found on PATH; install it from ../tmt' >&2; \
+		exit 1; \
+	}
+	@if [ ! -f tmt.json ]; then tmt init; fi
+	@tmt agents --write
+	@tmt check
 
 site:
 	@$(MAKE) reading-list
