@@ -138,7 +138,14 @@
   }
 
   function asNumber(value) {
-    return Number.isFinite(value) ? value : null;
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value !== "string") {
+      return null;
+    }
+    const parsed = Number(value.trim().replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   function compareSortValue(left, right, direction) {
@@ -215,7 +222,18 @@
     const sectionId = `reading-section-${index + 1}`;
     const heading = `${config.title} (${rows.length})`;
     const caption = `Sorted by ${SORT_LABELS[config.sort.key] || "Title"}`;
-    const header = config.columns.map((column) => escapeText(column.label)).join("");
+    const headers = config.columns
+      .map((column) => {
+        if (!SORT_SPECS[column.key]) {
+          return `<th>${escapeText(column.label)}</th>`;
+        }
+        const active = config.sort.key === column.key;
+        const direction = active ? config.sort.direction : 0;
+        const orderClass = active ? (direction === -1 ? "desc" : "asc") : "neutral";
+        const arrow = active ? (direction === 1 ? " ↑" : " ↓") : "";
+        return `<th><button type=\"button\" class=\"reading-sort-control reading-sort-${orderClass}\" data-reading-section=\"${TABLES.indexOf(config)}\" data-reading-key=\"${escapeText(column.key)}\">${escapeText(column.label)}${arrow}</button></th>`;
+      })
+      .join("");
     const body = rows.map((entry) => renderEntry(entry, config.columns)).join("");
     if (rows.length === 0) {
       return `
@@ -233,7 +251,7 @@
         <div class=\"reading-table-wrap\">
           <table class=\"reading-table\">
             <thead>
-              <tr>${config.columns.map((column) => `<th>${escapeText(column.label)}</th>`).join("")}</tr>
+              <tr>${headers}</tr>
             </thead>
             <tbody>${body}</tbody>
           </table>
@@ -281,6 +299,26 @@
       return renderSection(config, sorted);
     });
     ROOT.innerHTML = sections.join("\n");
+    ROOT.querySelectorAll("[data-reading-key]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const sectionIndex = Number(button.dataset.readingSection);
+        const sortBy = button.dataset.readingKey;
+        const config = TABLES[sectionIndex];
+        if (!config) {
+          return;
+        }
+        if (!SORT_SPECS[sortBy]) {
+          return;
+        }
+        if (config.sort.key === sortBy) {
+          config.sort.direction *= -1;
+        } else {
+          config.sort.key = sortBy;
+          config.sort.direction = 1;
+        }
+        renderRows(rows);
+      });
+    });
     renderSummary(rows);
   }
 
