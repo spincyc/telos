@@ -233,24 +233,85 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: now[0])
+            console, self.expected, timeout=25, clock=lambda: now[0])
         session.arm()
-        self.assertEqual(observed, [20.0, 2.0])
+        self.assertEqual(observed, [25.0, 2.0])
         self.assertEqual(console.timeout, 99.0)
         command = console._send.call_args_list[1].args[0]
         encoded = command.rsplit(b" ", 1)[1]
         payload = json.loads(base64.b64decode(encoded))
-        self.assertEqual(payload["observation_seconds"], 4)
+        self.assertEqual(
+            payload["observation_seconds"],
+            subject.MAX_OBSERVATION_SECONDS)
+
+    def test_submit_establishes_fresh_observation_and_cleanup_deadline(self):
+        now = [100.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] += subject.MAX_OBSERVATION_SECONDS
+                return re.search(
+                    rb"(code|collection):([a-z-]+)",
+                    b"code:authenticated")
+            return re.match(rb"(ok|[a-z-]+)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: now[0])
+        session._state = "armed"
+        session._armed_deadline = 107.0
+
+        result = session.submitted()
+
+        self.assertEqual(
+            observed,
+            [subject.MAX_OBSERVATION_SECONDS,
+             subject.CLEANUP_RESERVE_SECONDS])
+        self.assertIs(result.code, ControllerAuthCode.AUTHENTICATED)
+        self.assertEqual(now[0], 130.0)
+
+    def test_cancel_after_post_arm_expiry_has_fresh_cleanup_reserve(self):
+        now = [100.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                now[0] += 1
+                return mock.Mock()
+            return re.match(rb"(ok|[a-z-]+)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: now[0])
+        session._state = "armed"
+        session._armed_deadline = 99.0
+
+        result = session.cancel()
+
+        self.assertEqual(
+            observed,
+            [subject.CLEANUP_RECEIPT_SECONDS,
+             subject.CLEANUP_BOUNDED_OPERATIONS_SECONDS])
+        self.assertIs(
+            result.collection, ControllerAuthCollection.CANCELLED)
 
     def test_timeout_reserves_worst_case_cleanup_margin(self):
         with self.assertRaises(ValueError):
             ControllerAuthDiagnosticSession(
                 mock.Mock(), self.expected,
-                timeout=subject.CLEANUP_MARGIN_SECONDS)
+                timeout=subject.CLEANUP_RESERVE_SECONDS)
         session = ControllerAuthDiagnosticSession(
             mock.Mock(), self.expected,
-            timeout=subject.CLEANUP_MARGIN_SECONDS + 1)
-        self.assertEqual(session._observation_seconds, 1)
+            timeout=subject.CLEANUP_RESERVE_SECONDS + 1)
+        self.assertEqual(
+            session._observation_seconds, subject.MAX_OBSERVATION_SECONDS)
 
     def test_partial_arm_failure_proves_cleanup_before_reporting(self):
         console = mock.Mock(password=None, timeout=99.0)
@@ -260,7 +321,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             re.match(rb"(ok|absence-unproved)", b"ok"),
         ]
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: 0)
+            console, self.expected, timeout=25, clock=lambda: 0)
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
         self.assertTrue(caught.exception.cleanup_proved)
@@ -569,6 +630,96 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(payload.count(prompt), 1)
         self.assertEqual(match.start(), payload.rfind(b"\r" + prompt))
 
+    def test_real_serial_accepts_bare_cr_auth_receipts_only_standalone(self):
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        peer = right.makefile("rb", buffering=0)
+        errors = []
+        console = SerialAutomation(reader, writer, None, timeout=1)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25)
+        armed = (
+            f"__TELOS_AUTH_ARMED_{session._tokens['arm']}__".encode())
+        result = (
+            f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
+        cleanup = (
+            f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+
+        def responder():
+            try:
+                peer.readline()
+                right.sendall(b"local-rescue@bootstrap-dc $ \r")
+                peer.readline()
+                right.sendall(
+                    b"\r__TELOS_AUTH_ARMED_wrong__\r"
+                    + b"echo " + armed + b"\r"
+                    + b"prefix" + armed + b"\r"
+                    + armed + b"\t \r")
+                peer.readline()
+                right.sendall(
+                    b"\r__TELOS_AUTH_RESULT_wrong__=code:authenticated\r"
+                    + b"echo " + result + b"code:authenticated\r"
+                    + result + b"code:authenticated\t\r"
+                    + cleanup + b"ok \t\r")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            session.arm()
+            outcome = session.submitted()
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIs(outcome.code, ControllerAuthCode.AUTHENTICATED)
+        self.assertIsNone(outcome.cleanup)
+
+    def test_real_serial_accepts_bare_cr_prearm_result_and_cleanup(self):
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        peer = right.makefile("rb", buffering=0)
+        errors = []
+        console = SerialAutomation(reader, writer, None, timeout=1)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25)
+        result = (
+            f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
+        cleanup = (
+            f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+
+        def responder():
+            try:
+                peer.readline()
+                right.sendall(b"local-rescue@bootstrap-dc $ \r")
+                peer.readline()
+                right.sendall(
+                    b"\r" + result + b"collection:configuration-invalid\t\r"
+                    + cleanup + b"ok\r")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+                session.arm()
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIs(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.CONFIGURATION_INVALID)
+        self.assertTrue(caught.exception.cleanup_proved)
+
     def test_launch_failure_preserves_primary_and_cleanup_coordinates(self):
         console = mock.Mock(password=b"private-password", timeout=99.0)
         console._send.side_effect = [
@@ -610,11 +761,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: now[0])
+            console, self.expected, timeout=25, clock=lambda: now[0])
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
 
-        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertEqual(observed, [25.0, 2.0, 21.0])
         self.assertTrue(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
@@ -639,11 +790,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: now[0])
+            console, self.expected, timeout=25, clock=lambda: now[0])
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
 
-        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertEqual(observed, [25.0, 2.0, 21.0])
         self.assertTrue(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
@@ -709,11 +860,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: now[0])
+            console, self.expected, timeout=25, clock=lambda: now[0])
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
 
-        self.assertEqual(observed, [20.0, 2.0, 16.0])
+        self.assertEqual(observed, [25.0, 2.0, 21.0])
         self.assertTrue(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
@@ -739,11 +890,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
 
         console._wait.side_effect = waited
         session = ControllerAuthDiagnosticSession(
-            console, self.expected, timeout=20, clock=lambda: now[0])
+            console, self.expected, timeout=25, clock=lambda: now[0])
         with self.assertRaises(ControllerAuthDiagnosticError) as caught:
             session.arm()
 
-        self.assertEqual(observed, [20.0, 16.0])
+        self.assertEqual(observed, [25.0, 21.0])
         self.assertFalse(caught.exception.cleanup_proved)
         self.assertIs(
             caught.exception.arm_subphase,
@@ -751,7 +902,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertIs(
             caught.exception.controller_auth_result.cleanup,
             subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
-        self.assertEqual(now[0], 20.0)
+        self.assertEqual(now[0], 25.0)
         self.assertNotIn(
             "arm receipt deadline", caught.exception.args)
         self.assertNotIn(

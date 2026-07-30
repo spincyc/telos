@@ -87,6 +87,8 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticError,
 )
 
+CONTROLLER_AUTH_TIMEOUT_SECONDS = 45.0
+
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
     """A required production boundary could not be proved."""
@@ -930,7 +932,15 @@ class NativeWindowsAcceptanceAdapter:
                     ControllerAuthExpectation(
                         "operator", FactorySpec().netbios,
                         str(LEASE_IP)),
-                    timeout=min(45.0, remaining("diagnostic-arm")),
+                    # Controller pre-arm work is a distinct diagnostic
+                    # lifecycle.  Give it one immutable budget rather than
+                    # inheriting whatever remains of the GUI
+                    # reauthentication deadline.  The GUI deadline remains
+                    # immutable and is checked again before any secret can
+                    # be submitted.
+                    timeout=CONTROLLER_AUTH_TIMEOUT_SECONDS,
+                    post_arm_timeout=self.timeout,
+                    clock=self.clock,
                 )
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
@@ -941,6 +951,11 @@ class NativeWindowsAcceptanceAdapter:
             try:
                 if controller_auth is not None:
                     controller_auth.arm()
+                    if controller_auth.armed:
+                        # Exact ARMED begins a fresh, bounded GUI/submission
+                        # phase.  Pre-arm Controller latency cannot deplete
+                        # it, while cancel() owns a separate cleanup reserve.
+                        deadline = self.clock() + self.timeout
             except (KeyboardInterrupt, SystemExit, RunInterrupted):
                 raise
             except ControllerAuthDiagnosticError as error:

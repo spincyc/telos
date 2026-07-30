@@ -384,6 +384,55 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 self.assertNotIn(
                     "private backend detail", str(caught.exception))
 
+    def test_controller_arm_has_independent_budget_and_gui_expiry_cancels(
+        self,
+    ):
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        now = [100.0]
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(
+                subject, "_GuiInteraction") as interaction_type,
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            controller = controller_type.return_value
+            controller.armed = True
+            controller.arm.side_effect = lambda: now.__setitem__(0, 108.0)
+            cancel_result = ControllerAuthResult(
+                collection=ControllerAuthCollection.CANCELLED)
+            controller.cancel.return_value = cancel_result
+            adapter = self.adapter(rotation_plan=plan)
+            adapter.clock = lambda: now[0]
+            interaction_type.return_value.disable_durable_capture.side_effect = (
+                lambda: now.__setitem__(0, 116.0))
+
+            with self.assertRaises(
+                    subject.WindowsLocalReauthenticationError) as caught:
+                adapter.reauthenticate_domain_operator(
+                    "operator@FACTORY.TEST", "private", "a" * 32)
+
+        controller_type.assert_called_once_with(
+            self.boundary.controller_console,
+            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
+            timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
+            post_arm_timeout=adapter.timeout,
+            clock=adapter.clock,
+        )
+        self.assertEqual("type-secret", caught.exception.reauth_operation)
+        self.assertIs(
+            cancel_result, caught.exception.controller_auth_result)
+        controller.cancel.assert_called_once_with()
+        interaction_type.return_value.type_secret.assert_not_called()
+
     def test_controller_cancel_result_survives_windows_diagnostic_arm_failure(
         self,
     ):
@@ -934,11 +983,10 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         controller_type.assert_called_once_with(
             self.boundary.controller_console,
             ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
-            timeout=mock.ANY,
+            timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
+            post_arm_timeout=adapter.timeout,
+            clock=adapter.clock,
         )
-        self.assertGreater(controller_type.call_args.kwargs["timeout"], 0)
-        self.assertLessEqual(
-            controller_type.call_args.kwargs["timeout"], 7)
         diagnostic_arguments = diagnostic_factory.call_args.kwargs
         self.assertEqual(
             "operator@FACTORY.TEST", diagnostic_arguments["principal"])

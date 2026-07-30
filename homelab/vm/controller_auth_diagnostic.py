@@ -38,11 +38,21 @@ AUTH_JSON_ROUTE = f"{AUTH_JSON_COMPONENT}:{AUTH_JSON_LEVEL}@{AUDIT_PATH}"
 AUTH_JSON_CONFIG_LINE = f"\tlog level = 0 {AUTH_JSON_ROUTE}"
 MAX_OBSERVATION_SECONDS = 30
 MIN_OBSERVATION_SECONDS = 1
-CLEANUP_MARGIN_SECONDS = 16
+# Cleanup's explicitly bounded operations can spend three sequential
+# five-second subprocess timeouts (_remove_persistent_route, disable, and
+# verification), then five seconds checking descriptor release.  This is a
+# protocol reserve, not a hard wall-clock worst case: filesystem operations
+# and process timeout teardown do not expose strict latency bounds.
+CLEANUP_BOUNDED_OPERATIONS_SECONDS = 20
+CLEANUP_RECEIPT_SECONDS = 1
+CLEANUP_RESERVE_SECONDS = (
+    CLEANUP_BOUNDED_OPERATIONS_SECONDS + CLEANUP_RECEIPT_SECONDS)
 
 _ACCOUNT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _DOMAIN = re.compile(r"[A-Z0-9][A-Z0-9-]{0,14}")
 _SID = re.compile(r"S-1-5-21-(?:[0-9]{1,10}-){2}[0-9]{1,10}-[0-9]{1,10}")
+_RECEIPT_LINE_START = rb"(?:^|[\r\n])"
+_RECEIPT_LINE_END = rb"[^\S\r\n]*(?:\r\n|[\r\n]|$)"
 
 
 def _live_auth_json_level(output: str, expected: int) -> bool:
@@ -863,18 +873,21 @@ class ControllerAuthDiagnosticSession:
 
     def __init__(
         self, console, expectation: ControllerAuthExpectation,
-        *, timeout: float = 45.0, clock=time.monotonic,
+        *, timeout: float = 45.0, post_arm_timeout: float = 45.0,
+        clock=time.monotonic,
     ) -> None:
-        if not CLEANUP_MARGIN_SECONDS + MIN_OBSERVATION_SECONDS <= timeout <= 60:
+        if not CLEANUP_RESERVE_SECONDS + MIN_OBSERVATION_SECONDS <= timeout <= 60:
             raise ValueError("Controller auth timeout is invalid")
+        if not MIN_OBSERVATION_SECONDS <= post_arm_timeout <= 60:
+            raise ValueError("Controller auth post-arm timeout is invalid")
         self.console = console
         self.expectation = expectation
         self._clock = clock
-        self._deadline = clock() + timeout
-        self._observation_seconds = min(
-            MAX_OBSERVATION_SECONDS,
-            int(timeout - CLEANUP_MARGIN_SECONDS),
-        )
+        self._arm_deadline = clock() + timeout
+        self._deadline = self._arm_deadline
+        self._post_arm_timeout = post_arm_timeout
+        self._armed_deadline: float | None = None
+        self._observation_seconds = MAX_OBSERVATION_SECONDS
         self._tokens = {name: uuid.uuid4().hex for name in (
             "arm", "submit", "cancel", "result", "cleanup")}
         self._state = "new"
@@ -908,11 +921,12 @@ class ControllerAuthDiagnosticSession:
         buffer = raw if type(raw) is bytes else b""
 
         marker_pattern = (
-            rb"(?:^|\n)(?:"
+            _RECEIPT_LINE_START + rb"(?:"
             + re.escape(armed_marker)
-            + rb"\s*(?:\n|$)|"
+            + _RECEIPT_LINE_END + rb"|"
             + re.escape(result_marker)
-            + rb"(?:code|collection):[a-z-]+\s*(?:\n|$))")
+            + rb"(?:code|collection):[a-z-]+"
+            + _RECEIPT_LINE_END + rb")")
         if (
             (armed_marker in buffer or result_marker in buffer)
             and re.search(marker_pattern, buffer, re.MULTILINE) is None
@@ -990,9 +1004,9 @@ class ControllerAuthDiagnosticSession:
                 self.console._send(
                     b"\x03", "controller-auth-launch-interrupted")
                 match = self._wait(
-                    rb"(?:^|[\r\n])(?:"
+                    _RECEIPT_LINE_START + rb"(?:"
                     + re.escape(marker)
-                    + rb"(ok|[a-z-]+)[^\S\r\n]*(?:[\r\n]|$)|"
+                    + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END + rb"|"
                     + rb"[^\r\n]*\$[^\S\r\n]*(?=[\r\n]|$))",
                     "controller-auth-launch-resynchronized")
                 cleanup_value = match.group(1)
@@ -1011,8 +1025,8 @@ class ControllerAuthDiagnosticSession:
                 f"__TELOS_AUTH_CANCEL_{self._tokens['cancel']}__".encode(),
                 "controller-auth-abort-sent")
             match = self._wait(
-                rb"(?:^|\n)" + re.escape(marker)
-                + rb"(ok|[a-z-]+)\s*(?:\n|$)",
+                _RECEIPT_LINE_START + re.escape(marker)
+                + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END,
                 "controller-auth-abort-cleanup")
             self._state = "finished"
             cleanup_value = match.group(1)
@@ -1042,8 +1056,8 @@ class ControllerAuthDiagnosticSession:
             f"__TELOS_AUTH_CLEANUP_{self._tokens['cleanup']}__=".encode())
         try:
             cleanup_match = self._wait(
-                rb"(?:^|\n)" + re.escape(cleanup_marker)
-                + rb"(ok|[a-z-]+)\s*(?:\n|$)",
+                _RECEIPT_LINE_START + re.escape(cleanup_marker)
+                + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END,
                 label)
         except BaseException:
             self._state = "poisoned"
@@ -1132,7 +1146,7 @@ class ControllerAuthDiagnosticSession:
                     rb"(?:^|[\r\n])" + re.escape(prompt)
                     + rb"[^\S\r\n]*(?=[\r\n]|$)",
                     "controller-auth-sudo-password-prompt",
-                    deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
+                    deadline=self._arm_deadline - CLEANUP_RESERVE_SECONDS)
             except BaseException:
                 cleanup = self._recover_cleanup()
                 raise ControllerAuthDiagnosticError(
@@ -1166,13 +1180,14 @@ class ControllerAuthDiagnosticSession:
             result_marker = (
                 f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
             match = self._wait(
-                rb"(?:^|\n)(?:"
+                _RECEIPT_LINE_START + rb"(?:"
                 + re.escape(armed_marker)
-                + rb"\s*(?:\n|$)|"
+                + _RECEIPT_LINE_END + rb"|"
                 + re.escape(result_marker)
-                + rb"(code|collection):([a-z-]+)\s*(?:\n|$))",
+                + rb"(code|collection):([a-z-]+)"
+                + _RECEIPT_LINE_END + rb")",
                 "controller-auth-armed",
-                deadline=self._deadline - CLEANUP_MARGIN_SECONDS)
+                deadline=self._arm_deadline - CLEANUP_RESERVE_SECONDS)
         except BaseException as error:
             try:
                 observation = self._receive_observation(
@@ -1205,6 +1220,7 @@ class ControllerAuthDiagnosticSession:
                     controller_auth_result=result,
                     cleanup_proved=cleanup_proved)
             self._state = "armed"
+            self._armed_deadline = self._clock() + self._post_arm_timeout
         except ControllerAuthDiagnosticError:
             raise
         except BaseException:
@@ -1221,6 +1237,22 @@ class ControllerAuthDiagnosticSession:
     def submitted(self) -> ControllerAuthResult:
         if self._state != "armed":
             raise RuntimeError("Controller auth submission is out of order")
+        if (
+            self._armed_deadline is None
+            or self._clock() >= self._armed_deadline
+        ):
+            self._deadline = self._clock() + CLEANUP_RESERVE_SECONDS
+            cleanup = self._recover_cleanup()
+            raise ControllerAuthDiagnosticError(
+                controller_auth_result=ControllerAuthResult(
+                    collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+                    cleanup=cleanup,
+                ),
+                cleanup_proved=cleanup is None,
+            )
+        self._deadline = (
+            self._clock() + self._observation_seconds
+            + CLEANUP_RESERVE_SECONDS)
         self._state = "collecting"
         self.console._send(
             f"__TELOS_AUTH_SUBMIT_{self._tokens['submit']}__".encode(),
@@ -1229,9 +1261,11 @@ class ControllerAuthDiagnosticSession:
             f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
         try:
             match = self._wait(
-                rb"(?:^|\n)" + re.escape(result_marker)
-                + rb"(code|collection):([a-z-]+)\s*(?:\n|$)",
-                "controller-auth-result")
+                _RECEIPT_LINE_START + re.escape(result_marker)
+                + rb"(code|collection):([a-z-]+)"
+                + _RECEIPT_LINE_END,
+                "controller-auth-result",
+                deadline=self._deadline - CLEANUP_RESERVE_SECONDS)
         except BaseException:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
@@ -1265,6 +1299,10 @@ class ControllerAuthDiagnosticSession:
     def cancel(self) -> ControllerAuthResult:
         if self._state != "armed":
             raise RuntimeError("Controller auth cancellation is out of order")
+        # Cancellation may be required precisely because the post-arm GUI
+        # deadline expired.  Establish a fresh bounded cleanup phase so that
+        # earlier arm or GUI work cannot consume its reserve.
+        self._deadline = self._clock() + CLEANUP_RESERVE_SECONDS
         self.console._send(
             f"__TELOS_AUTH_CANCEL_{self._tokens['cancel']}__".encode(),
             "controller-auth-cancelled")
@@ -1272,9 +1310,10 @@ class ControllerAuthDiagnosticSession:
             f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
         try:
             self._wait(
-                rb"(?:^|\n)" + re.escape(result_marker)
-                + rb"collection:cancelled\s*(?:\n|$)",
-                "controller-auth-cancel-result")
+                _RECEIPT_LINE_START + re.escape(result_marker)
+                + rb"collection:cancelled" + _RECEIPT_LINE_END,
+                "controller-auth-cancel-result",
+                deadline=self._deadline - CLEANUP_BOUNDED_OPERATIONS_SECONDS)
             result = ControllerAuthResult(
                 collection=ControllerAuthCollection.CANCELLED,
             )
