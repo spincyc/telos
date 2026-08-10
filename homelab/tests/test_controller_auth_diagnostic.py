@@ -2061,6 +2061,55 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 ["smbcontrol", "all", "debuglevel"],
             )
 
+    def test_effective_configuration_survives_a_hanging_probe(self):
+        """smbcontrol all hung on the live AD controller; the uncaught
+        TimeoutExpired killed the watcher after PAYLOAD_VALID."""
+        import subprocess as subprocess_module
+        with tempfile.TemporaryDirectory() as name:
+            config = Path(name) / "smb.conf"
+            config.write_text(
+                "[global]\n" + subject.AUTH_JSON_CONFIG_LINE + "\n")
+            syntax = mock.Mock(returncode=0)
+            live = mock.Mock(
+                returncode=0,
+                stdout=(
+                    "PID 41: debug levels:\n"
+                    "  all: 0\n"
+                    "  auth_json_audit: 3\n"
+                ),
+            )
+            hang = subprocess_module.TimeoutExpired(
+                ["smbcontrol", "all", "debuglevel"], 5)
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(
+                    subject.subprocess, "run",
+                    side_effect=(syntax, hang, live),
+                ) as run,
+            ):
+                self.assertTrue(subject._effective_configuration())
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["smbcontrol", "all", "debuglevel"])
+            self.assertEqual(
+                run.call_args_list[2].args[0],
+                ["smbcontrol", "smbd", "debuglevel"])
+            with (
+                mock.patch.object(subject, "SMB_CONFIG_PATH", str(config)),
+                mock.patch.object(
+                    subject.subprocess, "run",
+                    side_effect=(syntax, hang, hang),
+                ),
+            ):
+                self.assertFalse(subject._effective_configuration())
+            # A hanging SID lookup is a sink failure, never a crash.
+            with mock.patch.object(
+                    subject.subprocess, "run",
+                    side_effect=subprocess_module.TimeoutExpired(
+                        ["samba-tool"], 5)):
+                with self.assertRaisesRegex(RuntimeError, "sink-invalid"):
+                    subject._staged_sid("operator")
+
     def test_effective_configuration_rejects_bad_config_file_or_syntax(self):
         variants = (
             "[global]\n",
@@ -2168,8 +2217,11 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     mock.patch.object(
                         subject.subprocess,
                         "run",
+                        # A rejected broadcast parse now also consults the
+                        # smbd fallback destination before failing.
                         side_effect=(
                             mock.Mock(returncode=0),
+                            mock.Mock(returncode=0, stdout=output),
                             mock.Mock(returncode=0, stdout=output),
                         ),
                     ),

@@ -545,41 +545,59 @@ def _effective_configuration() -> bool:
     if active_routes != [AUTH_JSON_CONFIG_LINE]:
         return False
 
-    syntax = subprocess.run(
-        ["testparm", "-s", SMB_CONFIG_PATH],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=5,
-    )
+    try:
+        syntax = subprocess.run(
+            ["testparm", "-s", SMB_CONFIG_PATH],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
     if syntax.returncode != 0:
         return False
 
-    live = subprocess.run(
-        ["smbcontrol", "all", "debuglevel"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        text=True,
-        timeout=5,
-    )
-    if live.returncode != 0:
-        return False
-    return _live_auth_json_level(live.stdout, AUTH_JSON_LEVEL)
+    # `smbcontrol all` broadcasts to every registered process and hangs on
+    # this converged AD controller waiting for one that never answers; the
+    # uncaught TimeoutExpired killed the watcher after PAYLOAD_VALID on
+    # every attempt. A probe that cannot answer is a failed check, never a
+    # crash, and the file-server destination answers when the broadcast
+    # does not.
+    for destination in ("all", "smbd"):
+        try:
+            live = subprocess.run(
+                ["smbcontrol", destination, "debuglevel"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if live.returncode == 0 and _live_auth_json_level(
+                live.stdout, AUTH_JSON_LEVEL):
+            return True
+    return False
 
 
 def _staged_sid(account: str) -> str:
-    result = subprocess.run(
-        ["samba-tool", "user", "show", account, "--attributes=objectSid"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        text=True,
-        timeout=5,
-    )
+    try:
+        result = subprocess.run(
+            ["samba-tool", "user", "show", account,
+             "--attributes=objectSid"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise RuntimeError("sink-invalid") from None
     values = [
         line.partition(":")[2].strip()
         for line in result.stdout.splitlines()
