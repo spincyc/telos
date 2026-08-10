@@ -1,14 +1,21 @@
 """Contract tests for the bounded concurrent factory skeleton."""
 
+import os
+import socket
 import subprocess
 import json
 import tempfile
 import threading
+import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
-from homelab.vm import factory_runner
+from homelab.vm import factory_runner, simulated_topology
+from homelab.vm.guest_progress_host import PROGRESS_PORT_NAME
+from homelab.vm.guest_progress_protocol import ProtocolConfig
+from homelab.vm.guest_progress_reporter import ProgressReporter, run_over_stream
 from homelab.vm.qemu_boundary import audit_disposable_controller
 
 
@@ -687,6 +694,181 @@ class FactoryRunnerTests(unittest.TestCase):
     def test_source_sets_disposable_factory_state_private(self):
         source = Path(factory_runner.__file__).read_text()
         self.assertGreaterEqual(source.count(".chmod(0o600)"), 2)
+
+
+class WorkstationProgressTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        os.chmod(self.root, 0o700)
+
+    def _ovmf_mocks(self):
+        return (
+            mock.patch.object(
+                factory_runner, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))),
+            mock.patch(
+                "homelab.vm.simulated_topology.ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))),
+        )
+
+    def _plans(self, progress_socket=None):
+        runner, topology = self._ovmf_mocks()
+        with runner, topology:
+            return factory_runner.qemu_commands(
+                Path("/run/controller.qcow2"),
+                Path("/run/controller-vars.fd"),
+                Path("/run/workstation.qcow2"),
+                Path("/run/workstation-vars.fd"),
+                31415, None, progress_socket=progress_socket)
+
+    def test_workstation_argv_gains_exactly_the_progress_chardev_triple(self):
+        socket_path = self.root / "progress.sock"
+        plans = self._plans(progress_socket=socket_path)
+        bare = self._plans()
+        workstation = plans["workstation"]
+        chardevs = factory_runner.declared_chardevs(workstation)
+        self.assertEqual(chardevs, (
+            f"socket,id=telosprogress,path={socket_path},"
+            "server=on,wait=off",))
+        self.assertEqual(
+            workstation[:len(bare["workstation"])], bare["workstation"])
+        self.assertEqual(workstation[len(bare["workstation"]):], [
+            "-chardev", chardevs[0],
+            "-device", "virtio-serial-pci,id=telosprogressbus",
+            "-device",
+            "virtserialport,bus=telosprogressbus.0,chardev=telosprogress,"
+            f"name={PROGRESS_PORT_NAME}",
+        ])
+        simulated_topology.audit_qemu_argv(
+            "client", workstation, allowed_chardevs=chardevs)
+
+    def test_default_run_plan_declares_no_chardev_and_allowlist_is_closed(
+            self):
+        plans = self._plans()
+        for role in ("controller", "workstation"):
+            self.assertEqual(
+                factory_runner.declared_chardevs(plans[role]), ())
+        armed = self._plans(progress_socket=self.root / "progress.sock")
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            simulated_topology.audit_qemu_argv(
+                "client", armed["workstation"])
+        self.assertEqual(
+            factory_runner.declared_chardevs(armed["controller"]), ())
+
+    def test_no_peer_record_is_absent_and_merges_into_both_evidence_paths(
+            self):
+        socket_root = self.root / "progress"
+        socket_root.mkdir(mode=0o700)
+        channel = factory_runner._WorkstationProgress(
+            socket_root, deadline=time.monotonic() + 5)
+        for _ in range(3):
+            channel.poll()
+        record = channel.record()
+        self.assertEqual(record["liveness"], "absent")
+        self.assertEqual(record["classification"], "unavailable")
+        self.assertIs(record["authoritative"], False)
+        self.assertEqual(record["events_accepted"], 0)
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        passed = factory_runner.retain_evidence(
+            runtime, self.root / "evidence", status="pass", progress=record)
+        result = json.loads((passed / "result.json").read_text())
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["progress"]["liveness"], "absent")
+        # Separate root: destination names are second-granular.
+        failed = factory_runner.retain_failure_evidence(
+            runtime, self.root / "failure-evidence", RuntimeError("boom"),
+            progress=record)
+        result = json.loads((failed / "result.json").read_text())
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["progress"]["classification"], "unavailable")
+        self.assertEqual(channel.close(), [])
+        self.assertFalse(socket_root.exists())
+
+    def test_zero_event_evidence_omits_progress_and_keeps_schema(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        destination = factory_runner.retain_evidence(
+            runtime, self.root / "evidence", status="pass")
+        result = json.loads((destination / "result.json").read_text())
+        self.assertNotIn("progress", result)
+        self.assertEqual(
+            frozenset(result), {"schema", "status", "retained"})
+
+    def test_progress_root_teardown_is_proved_and_fails_closed(self):
+        absent = self.root / "never-created"
+        self.assertEqual(factory_runner._remove_progress_root(absent), [])
+        target = self.root / "target"
+        target.mkdir(mode=0o700)
+        link = self.root / "link"
+        link.symlink_to(target)
+        failures = factory_runner._remove_progress_root(link)
+        self.assertTrue(failures)
+        self.assertTrue(
+            all("progress socket root" in failure for failure in failures))
+        populated = self.root / "populated"
+        populated.mkdir(mode=0o700)
+        (populated / "progress.sock").write_bytes(b"")
+        self.assertEqual(factory_runner._remove_progress_root(populated), [])
+        self.assertFalse(populated.exists())
+
+    def test_channel_collects_and_acknowledges_authenticated_events(self):
+        socket_root = self.root / "progress"
+        socket_root.mkdir(mode=0o700)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(server.close)
+        server.bind(str(socket_root / factory_runner.PROGRESS_SOCKET_NAME))
+        server.listen(1)
+        key = os.urandom(32)
+        channel = factory_runner._WorkstationProgress(
+            socket_root, deadline=time.monotonic() + 10,
+            attempt="attempt-1", nonce="nonce-1", key=key)
+        channel.poll()
+        server.settimeout(5)
+        peer, _ = server.accept()
+        self.addCleanup(peer.close)
+        peer.settimeout(0.05)
+        config = ProtocolConfig(
+            attempt="attempt-1", producer=factory_runner.PROGRESS_PRODUCER,
+            nonce="nonce-1", phases=factory_runner.PROGRESS_PHASES,
+            statuses=factory_runner.PROGRESS_STATUSES)
+        clock = time.monotonic
+        reporter = ProgressReporter(
+            config, key, operation_deadline=clock() + 10, clock=clock,
+            uuid_source=uuid.uuid4, wall_clock=time.time)
+
+        def read_fn():
+            try:
+                return peer.recv(4096)
+            except socket.timeout:
+                return b""
+
+        reporter.sync()
+        run_over_stream(reporter, read_fn, peer.sendall, clock=clock)
+        reporter.phase_started("installer")
+        run_over_stream(reporter, read_fn, peer.sendall, clock=clock)
+        peer.close()
+        assert channel._thread is not None
+        channel._thread.join(timeout=5)
+        record = channel.record()
+        self.assertEqual(record["liveness"], "live")
+        self.assertEqual(record["events_accepted"], 2)
+        self.assertEqual(record["last_sequence"], 1)
+        self.assertEqual(record["last_phase"], "installer")
+        self.assertIsNone(record["classification"])
+        self.assertIs(record["authoritative"], False)
+        self.assertEqual(channel.close(), [])
+        self.assertFalse(socket_root.exists())
+
+    def test_phase_vocabulary_is_the_handoff_milestones_plus_installer(self):
+        self.assertEqual(
+            factory_runner.PROGRESS_PHASES,
+            tuple(factory_runner.arch_handoff_phases("")) + ("installer",))
+        self.assertEqual(
+            factory_runner.PROGRESS_STATUSES,
+            ("starting", "active", "complete", "failed", "ready"))
 
 
 if __name__ == "__main__":

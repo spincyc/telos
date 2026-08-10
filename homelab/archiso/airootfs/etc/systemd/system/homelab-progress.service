@@ -1,0 +1,43 @@
+# Diagnostic-only guest progress reporter over the dedicated virtio port
+# (homelab/GUEST-PROGRESS-REPORTING.md).  Bound to the device so it exists
+# only while the factory port exists; if credentials were never delivered
+# the program exits 0 and nothing is reported.  No event from this service
+# is acceptance evidence.
+[Unit]
+Description=Telos guest progress reporter
+BindsTo=dev-virtio\x2dports-org.telos.progress.0.device
+After=dev-virtio\x2dports-org.telos.progress.0.device
+ConditionPathExists=/usr/local/bin/homelab-progress
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/homelab-progress
+RuntimeMaxSec=7200
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+UMask=0077
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=dev-virtio\x2dports-org.telos.progress.0.device

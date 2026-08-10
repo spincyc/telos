@@ -33,4 +33,5 @@ file_permissions=(
   ["/root/.ssh"]="0:0:700"
   ["/root/.ssh/authorized_keys"]="0:0:600"
   ["/usr/local/bin/homelab-install"]="0:0:755"
+  ["/usr/local/bin/homelab-progress"]="0:0:755"
 )

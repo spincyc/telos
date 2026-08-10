@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Guest-side progress reporter for the Telos factory (v1 protocol).
+
+Self-contained stdlib program for the live image: it embeds the minimal
+canonical-JSON, HMAC, and framing rules from GUEST-PROGRESS-REPORTING.md
+and stays wire-compatible with the host receiver.  Reporting is optional
+and diagnostic only: no event here is acceptance evidence, extends a
+deadline, or carries a secret.  Credentials arrive out of band on a fixed
+private path; when they are absent this program exits 0 silently.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import select
+import stat
+import sys
+import time
+import uuid
+
+SPEC_VERSION = "1.0"
+MAC_DOMAIN = b"telos-guest-progress-v1\x00"
+ACK_MAC_DOMAIN = b"telos-guest-progress-ack-v1\x00"
+MAX_FRAME_BYTES = 16 * 1024
+CREDENTIALS_PATH = "/run/telos-progress/credentials.json"
+PORT_NAME = "org.telos.progress.0"
+DEVICE_PATH = "/dev/virtio-ports/" + PORT_NAME
+PRODUCER = "arch-installer"
+PHASE = "installer"
+DEVICE_WAIT = 30.0
+ACK_TIMEOUT = 5.0
+RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
+HEARTBEAT_INTERVAL = 5.0
+MAX_CREDENTIAL_BYTES = 4096
+EVENT_STATUSES = {
+    "sync": "starting",
+    "phase-started": "active",
+    "heartbeat": "active",
+    "phase-finished": "complete",
+    "phase-failed": "failed",
+    "diagnostic-ready": "ready",
+}
+_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+
+
+class ReporterError(Exception):
+    """Fail-closed local reporter error; the message carries no secret."""
+
+
+def canonical_json(value) -> bytes:
+    """The protocol's deterministic JCS-compatible JSON subset."""
+    text = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return text.encode("utf-8")
+
+
+def mac_for(envelope_without_mac, key: bytes) -> str:
+    if type(key) is not bytes or len(key) < 32:
+        raise ReporterError("MAC key must be at least 32 exact bytes")
+    authenticated = MAC_DOMAIN + canonical_json(envelope_without_mac)
+    digest = hmac.new(key, authenticated, hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def render_time(moment: float) -> str:
+    # Whole seconds keep exactly one canonical rendering per instant.
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment))
+
+
+def build_event(
+    event_type: str, *, attempt: str, boot_id: str, sequence: int,
+    key: bytes, phase=None, nonce=None, progress=None, moment=None,
+    event_id=None,
+) -> bytes:
+    """Return one signed canonical envelope payload."""
+    if event_type not in EVENT_STATUSES:
+        raise ReporterError("unknown event type")
+    unsigned = {
+        "specversion": SPEC_VERSION,
+        "id": event_id if event_id is not None else str(uuid.uuid4()),
+        "source": PRODUCER,
+        "type": event_type,
+        "time": render_time(time.time() if moment is None else moment),
+        "attempt": attempt,
+        "boot_id": boot_id,
+        "sequence": sequence,
+        "phase": phase,
+        "status": EVENT_STATUSES[event_type],
+    }
+    if nonce is not None:
+        unsigned["nonce"] = nonce
+    if progress is not None:
+        unsigned["progress"] = progress
+    signed = dict(unsigned)
+    signed["mac"] = mac_for(unsigned, key)
+    return canonical_json(signed)
+
+
+def frame_for(payload: bytes) -> bytes:
+    """One unsigned 32-bit big-endian length, then the canonical payload."""
+    if not payload or len(payload) > MAX_FRAME_BYTES:
+        raise ReporterError("frame length is zero or exceeds the maximum")
+    return len(payload).to_bytes(4, "big") + payload
+
+
+def verify_ack(
+    payload: bytes, *, key: bytes, attempt: str, boot_id: str,
+    sequence: int, event_id: str,
+) -> bool:
+    """Accept only the exact authenticated ack for one staged event."""
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return False
+    if type(value) is not dict:
+        return False
+    expected_fields = (
+        value.get("specversion"), value.get("type"), value.get("status"),
+        value.get("attempt"), value.get("boot_id"), value.get("sequence"),
+        value.get("id"),
+    )
+    if expected_fields != (
+        SPEC_VERSION, "ack", "accepted", attempt, boot_id, sequence, event_id,
+    ):
+        return False
+    supplied = value.get("mac")
+    if type(supplied) is not str:
+        return False
+    unsigned = {name: item for name, item in value.items() if name != "mac"}
+    digest = hmac.new(
+        key, ACK_MAC_DOMAIN + canonical_json(unsigned), hashlib.sha256,
+    ).digest()
+    expected = base64.b64encode(digest).decode("ascii")
+    return hmac.compare_digest(supplied, expected)
+
+
+def load_credentials(path: str = CREDENTIALS_PATH):
+    """Return (attempt, nonce, key) or None when reporting is not armed."""
+    try:
+        descriptor = os.open(
+            path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ReporterError(f"credentials are unreadable: {error.errno}")
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise ReporterError("credentials must be a private regular file")
+        if info.st_size > MAX_CREDENTIAL_BYTES:
+            raise ReporterError("credentials file is unexpectedly large")
+        raw = os.read(descriptor, MAX_CREDENTIAL_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        raise ReporterError("credentials are not valid JSON")
+    if type(value) is not dict or set(value) != {"attempt", "nonce", "key_hex"}:
+        raise ReporterError("credentials must hold exactly attempt, nonce, key_hex")
+    attempt, nonce = value["attempt"], value["nonce"]
+    for name, item in (("attempt", attempt), ("nonce", nonce)):
+        if type(item) is not str or _TOKEN.fullmatch(item) is None:
+            raise ReporterError(f"{name} is not a bounded public token")
+    try:
+        key = bytes.fromhex(value["key_hex"])
+    except (TypeError, ValueError):
+        raise ReporterError("key_hex is not exact hexadecimal")
+    if len(key) < 32:
+        raise ReporterError("key must be at least 32 bytes")
+    return attempt, nonce, key
+
+
+def wait_for_device(path: str = DEVICE_PATH, wait: float = DEVICE_WAIT):
+    """Open the named port read-write within a bounded wait, else None."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
+        except OSError:
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.25)
+
+
+def _read_exact(descriptor: int, count: int, deadline: float):
+    """Read exactly count bytes before the deadline, else None."""
+    data = bytearray()
+    while len(data) < count:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        ready, _, _ = select.select([descriptor], [], [], min(remaining, 0.25))
+        if not ready:
+            continue
+        chunk = os.read(descriptor, count - len(data))
+        if not chunk:
+            # Host side detached; treat as silence and let the retry
+            # schedule govern.
+            return None
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(descriptor, view)
+        view = view[written:]
+
+
+def send_with_ack(
+    descriptor: int, payload: bytes, *, key: bytes, attempt: str,
+    boot_id: str, sequence: int, event_id: str,
+) -> None:
+    """Deliver one identical frame until its exact ack arrives.
+
+    Retries are capped-backoff and unbounded here: the enclosing deadline
+    is the supervisor's RuntimeMaxSec, and the host deduplicates identical
+    retransmissions.  The sequence never advances unacknowledged.
+    """
+    frame = frame_for(payload)
+    retry = 0
+    while True:
+        _write_all(descriptor, frame)
+        ack_deadline = time.monotonic() + ACK_TIMEOUT
+        while True:
+            header = _read_exact(descriptor, 4, ack_deadline)
+            if header is None:
+                break
+            length = int.from_bytes(header, "big")
+            if not 0 < length <= MAX_FRAME_BYTES:
+                raise ReporterError("invalid acknowledgment frame length")
+            body = _read_exact(descriptor, length, ack_deadline)
+            if body is None:
+                break
+            if verify_ack(
+                body, key=key, attempt=attempt, boot_id=boot_id,
+                sequence=sequence, event_id=event_id,
+            ):
+                return
+            # Stale or foreign frame: keep reading within the ack window.
+        time.sleep(RETRY_DELAYS[min(retry, len(RETRY_DELAYS) - 1)])
+        retry += 1
+
+
+def main(
+    credentials: str = CREDENTIALS_PATH, device: str = DEVICE_PATH,
+    device_wait: float = DEVICE_WAIT,
+) -> int:
+    try:
+        loaded = load_credentials(credentials)
+    except ReporterError as error:
+        print(f"homelab-progress: {error}", file=sys.stderr)
+        return 1
+    if loaded is None:
+        # Reporting is optional; an unarmed boot stays silent.
+        return 0
+    attempt, nonce, key = loaded
+    descriptor = wait_for_device(device, device_wait)
+    if descriptor is None:
+        print("homelab-progress: progress port unavailable", file=sys.stderr)
+        return 1
+    boot_id = "boot-" + str(uuid.uuid4())
+    sequence = 0
+    try:
+        for event_type, extra in (
+            ("sync", {"nonce": nonce}),
+            ("phase-started", {"phase": PHASE}),
+        ):
+            event_id = str(uuid.uuid4())
+            payload = build_event(
+                event_type, attempt=attempt, boot_id=boot_id,
+                sequence=sequence, key=key, event_id=event_id, **extra)
+            send_with_ack(
+                descriptor, payload, key=key, attempt=attempt,
+                boot_id=boot_id, sequence=sequence, event_id=event_id)
+            sequence += 1
+        while True:
+            event_id = str(uuid.uuid4())
+            payload = build_event(
+                "heartbeat", attempt=attempt, boot_id=boot_id,
+                sequence=sequence, key=key, phase=PHASE, event_id=event_id)
+            send_with_ack(
+                descriptor, payload, key=key, attempt=attempt,
+                boot_id=boot_id, sequence=sequence, event_id=event_id)
+            sequence += 1
+            time.sleep(HEARTBEAT_INTERVAL)
+    except ReporterError as error:
+        print(f"homelab-progress: {error}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"homelab-progress: transport failed: {error.errno}",
+              file=sys.stderr)
+        return 1
+    finally:
+        os.close(descriptor)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
