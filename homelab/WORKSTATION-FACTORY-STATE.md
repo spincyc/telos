@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.013`
+Document version: `20260810.014`
 
 Status: active implementation
 
@@ -215,6 +215,20 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   NVRAM variable putting the network entry first and the disk last. The
   disk-detached-then-hot-attach approach mirrors how a real PXE archiso
   install works and is the recommended fix.
+  Rework landed (`ec79189`) and its live retry
+  (`arch-installs/run-20260810T232404Z-77e33381ce5a`) PROVED the boot fix:
+  `BdsDxe: starting Boot0002 "UEFI PXEv4 (MAC:...)"` — deterministic PXE,
+  archiso fetched and booted fully to `archiso login:` on ttyS0. The
+  install then stalled at one small seam: the arch-workstation PXE release
+  presents an `archiso login:` prompt on the serial console (no serial
+  autologin drop-in), but `arch_install_run.drive_installer` waits for a
+  root shell prompt and never answers the login, so it timed out at 1800s
+  with no install markers. NEXT: have drive_installer log in as `root`
+  (archiso live root has no password) at the `archiso login:` prompt
+  before hot-attach + install, or add a serial getty autologin drop-in to
+  the arch-workstation PXE release. The PXE transport, archiso boot, and
+  the disk-detached approach are all proven; only the login handshake
+  remains.
 
 - Gate 6 operator logon — narrowed with strong evidence 2026-08-10
   (attempt `20260810T221525Z-f22a898acb74`, first with the realm fix and
