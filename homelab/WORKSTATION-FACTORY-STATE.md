@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.010`
+Document version: `20260810.011`
 
 Status: active implementation
 
@@ -203,6 +203,30 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   worked — the controller published the Arch release and the disposable
   controller converged.
 
+- Gate 6 operator logon — narrowed with strong evidence 2026-08-10
+  (attempt `20260810T221525Z-f22a898acb74`, first with the realm fix and
+  post-submit frame retention). Coordinate unchanged
+  (`no-logon-event` + `uncorrelated`), and the 10 retained post-submit
+  frames (`post-join-reauthentication/identity-postsubmit-000N.ppm`) are
+  decisive: after the operator UPN + password + Enter, the sign-in form
+  resets to EMPTY ("Sign in to: FACTORY") and stays static for the full
+  10s — no spinner (no processing), no error message (no DC rejection),
+  no desktop, no interactive logon event. Network and DNS are correctly
+  configured: the switch log shows the post-reboot workstation completing
+  DHCP, and the identity gateway runs in `identity_mode`, so the
+  workstation's DNS is the DC (`CONTROLLER_IP`) with suffix
+  `ad.factory.test` (`simulated_gateway.py` DHCP option 6/15). So the
+  logon is submitted but never serviced to a completed interactive logon,
+  and the realm fix alone did not change the outcome. NEXT DIAGNOSTIC
+  (the instrument-and-rerun that cracked the receipt mystery): broaden the
+  guest post-submit diagnostic `windows_join_control/TelosPostSubmitDiagnostic.ps1`
+  beyond LogonType=2 4624/4625 to also report Netlogon/Kerberos errors in
+  the System log and any non-Type-2 logon so the next run says WHY
+  (no-logon-servers vs bad-credential vs profile-failure) instead of a
+  bare `no-logon-event`; and capture a few sub-second frames at the Enter
+  itself to catch a flashed error. Also verify the operator's AD password
+  staging actually took (compare staged vs typed). Do NOT keep spending
+  attempts on the bare coordinate; make the guest diagnostic speak first.
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered
