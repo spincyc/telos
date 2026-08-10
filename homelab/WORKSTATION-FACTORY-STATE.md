@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.006`
+Document version: `20260810.007`
 
 Status: active implementation
 
@@ -50,7 +50,7 @@ controller must not become a second DHCP authority.
 |---|---|
 | Delivery order | Exhaust the complete local lifecycle before requesting another routine human console action or any physical-network change. |
 | Installation order | Windows 11 first, Arch second. Arch installation must preserve Windows Boot Manager and apply the final boot policy. |
-| Firmware and disk | UEFI/GPT only. Phase-one laptops use unencrypted Windows NTFS and unencrypted Arch storage; BitLocker, LUKS, Secure Boot, and TPM enrollment are deferred. |
+| Firmware and disk | UEFI/GPT only. Phase-one laptops use unencrypted Windows NTFS and unencrypted Arch storage; BitLocker, LUKS, Secure Boot, and TPM enrollment are deferred. Owner decision 2026-08-10: unencrypted password-based authentication is the accepted phase-one target and is not a blocker to minting a real workstation, including the college laptop — a manual install would not enable BitLocker either. Full-disk encryption is a later iteration to add once the lifecycle works. This supersedes the ADR 0069 caution that phase-one images are "unsuitable for sensitive college or mobile use" for the purpose of proceeding; do not re-raise encryption as a gate on minting. |
 | Allocation | Default surplus split is 75% Windows and 25% Arch, after a 160 GiB Windows minimum, 64 GiB Arch minimum, required recovery space, 1 GiB ESP, 16 MiB MSR, and GPT margin. About 256 GiB is the practical minimum. |
 | Default boot | Windows is primary, with a five-second menu. Independent UEFI entries must remain usable for recovery. |
 | Target hardware | Lenovo ThinkPad X13 Gen 6 Intel; physical acceptance is later. |
