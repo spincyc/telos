@@ -48,13 +48,23 @@ def audit_disposable_controller(
     vars_file: Path,
     forbidden_paths: tuple[Path, ...] = (),
     qmp_socket: Path | None = None,
+    allowed_chardevs: tuple[str, ...] = (),
 ) -> None:
     """Require one disposable raw disk, disposable vars, and one loopback NIC."""
     if "-nodefaults" not in argv:
         raise ValueError("QEMU defaults are not disabled")
     lowered = [item.lower() for item in argv]
-    for item in lowered:
+    for index, item in enumerate(lowered):
         if item in _FORBIDDEN_OPTIONS:
+            # Same closed semantics as simulated_topology.audit_qemu_argv:
+            # each allowlisted chardev value exactly once, nothing else.
+            if (
+                item == "-chardev"
+                and index + 1 < len(argv)
+                and argv[index + 1] in allowed_chardevs
+                and argv.count("-chardev") == len(allowed_chardevs)
+            ):
+                continue
             raise ValueError(f"forbidden QEMU option {item}")
         if any(term in item for term in _FORBIDDEN_TEXT):
             raise ValueError("forbidden host integration in QEMU command")
