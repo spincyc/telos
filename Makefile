@@ -144,6 +144,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
+	homelab-arch-install-prepare homelab-arch-install-run \
+	homelab-arch-identity-run homelab-arch-identity-judge \
 	homelab-windows-identity-prepare \
 	homelab-windows-identity-run \
 	homelab-windows-identity-judge \
@@ -644,6 +646,54 @@ homelab-windows-install-run:
 		$(PYTHON) homelab/bin/homelab-windows-install-run \
 			--bundle '$(WINDOWS_RUN)' --duration '$(FACTORY_DURATION)' --apply; \
 	fi
+
+# Arch-second install (gate 7): PXE-boot Arch against the persistent
+# Windows disk and install into the free slot, preserving Windows. Prepare
+# builds a disposable overlay bundle; run drives the install and validates
+# preservation. Disposable, loopback-only; APPLY=1 mutates the overlay.
+homelab-arch-install-prepare:
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-arch-install-prepare \
+			$(if $(WINDOWS_RUN),--windows-disk '$(WINDOWS_RUN)'); \
+	else \
+		$(PYTHON) homelab/bin/homelab-arch-install-prepare \
+			$(if $(WINDOWS_RUN),--windows-disk '$(WINDOWS_RUN)') --apply; \
+	fi
+
+homelab-arch-install-run:
+	@if [ -z '$(ARCH_RUN)' ]; then \
+		echo 'require ARCH_RUN=<prepared arch install bundle>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-arch-install-run \
+			--bundle '$(ARCH_RUN)' --duration '$(FACTORY_DURATION)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-arch-install-run \
+			--bundle '$(ARCH_RUN)' --duration '$(FACTORY_DURATION)' --apply; \
+	fi
+
+# Arch join and login (gate 8): drive a joined Arch guest through the SSSD
+# identity lifecycle and emit the evidence the judge grades. Run drives the
+# guest; judge grades a produced evidence file (read-only, no APPLY gate).
+homelab-arch-identity-run:
+	@if [ -z '$(ARCH_IDENTITY_BUNDLE)' ]; then \
+		echo 'require ARCH_IDENTITY_BUNDLE=<joined arch bundle>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-arch-identity-run \
+			--bundle '$(ARCH_IDENTITY_BUNDLE)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-arch-identity-run \
+			--bundle '$(ARCH_IDENTITY_BUNDLE)' --apply; \
+	fi
+
+homelab-arch-identity-judge:
+	@if [ -z '$(ARCH_IDENTITY_EVIDENCE)' ]; then \
+		echo 'require ARCH_IDENTITY_EVIDENCE=<produced JSONL evidence>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-arch-identity-judge \
+		'$(ARCH_IDENTITY_EVIDENCE)'
 
 # Prove a completed image root against its role contract and the signed seed
 # receipt that built it. Read-only: it audits the root without mounting,
