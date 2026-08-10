@@ -594,7 +594,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 events.append(("spawn", process.pid))
                 return process
 
-            def readiness(_cursor):
+            def readiness(_cursor, _process=None):
                 nonlocal readiness_calls
                 readiness_calls += 1
                 if readiness_calls == 1:
@@ -685,6 +685,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 windows_identity_run.MACS["client"],
                 timeout=300.0,
                 after=cursor,
+                abort=mock.ANY,
             )
             dhcp.assert_called_once_with(
                 boundary.runtime / "switch.jsonl",
@@ -694,6 +695,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                 after=cursor,
                 generation=7,
                 gateway_generation=3,
+                abort=mock.ANY,
             )
 
     def test_windows_readiness_rejects_exhausted_port_budget(self):
@@ -717,6 +719,47 @@ class NativeProcessBoundaryTests(unittest.TestCase):
                         RuntimeError, "readiness deadline expired"):
                     boundary._wait_for_windows_os_readiness(cursor)
             dhcp.assert_not_called()
+
+    def test_windows_readiness_aborts_on_guest_exit_and_abandonment(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self.make_boundary(Path(name))
+            boundary.runtime.mkdir(mode=0o700)
+            evidence = boundary.runtime / "switch.jsonl"
+            evidence.write_text("")
+            cursor = windows_identity_run.capture_switch_evidence_cursor(
+                evidence)
+
+            exited = mock.Mock()
+            exited.poll.return_value = 1
+            exited.returncode = 1
+            reason = boundary._windows_boot_abort_reason(
+                evidence, cursor, exited)
+            self.assertIn("exited during boot with code 1", reason())
+
+            live = mock.Mock()
+            live.poll.return_value = None
+            reason = boundary._windows_boot_abort_reason(
+                evidence, cursor, live)
+            self.assertIsNone(reason())
+            with evidence.open("a") as handle:
+                handle.write(json.dumps({
+                    "event": "peer-abandoned-before-authentication",
+                }) + "\n")
+            # A fresh closure scans immediately; the throttle only spaces
+            # subsequent scans.
+            reason = boundary._windows_boot_abort_reason(
+                evidence, cursor, live)
+            self.assertIn("abandoned the switch", reason())
+
+            # A firing abort turns the readiness wait into a prompt failure.
+            with self.assertRaisesRegex(
+                    RuntimeError, "abandoned the switch"):
+                windows_identity_run.wait_for_switch_port(
+                    evidence, "workstation",
+                    windows_identity_run.MACS["client"],
+                    timeout=30.0, after=cursor,
+                    abort=lambda: "Windows guest abandoned the switch "
+                    "before authentication")
 
     def test_boot_retry_requires_zero_qmp_writes_and_unchanged_overlay(self):
         with tempfile.TemporaryDirectory() as name:
@@ -938,7 +981,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             boundary.authorized_command = ["windows"]
             process = _Process(201)
 
-            def readiness(_cursor):
+            def readiness(_cursor, _process=None):
                 boundary.windows_switch_generation = 7
                 raise RuntimeError("not ready")
 

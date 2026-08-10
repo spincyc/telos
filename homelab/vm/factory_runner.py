@@ -19,6 +19,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 try:
     from .automated_controller import DisposableBootDisk
@@ -333,10 +334,15 @@ def gateway_command(
 def wait_for_switch_port(
     evidence: Path, name: str, expected_mac: str, *, timeout: float = 10.0,
     after: SwitchEvidenceCursor | None = None,
+    abort: Callable[[], str | None] | None = None,
 ) -> int:
     expected_mac = expected_mac.casefold()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if abort is not None:
+            reason = abort()
+            if reason:
+                raise RuntimeError(reason)
         try:
             events = _switch_events_after(evidence, after)
         except FileNotFoundError:
@@ -359,6 +365,7 @@ def wait_for_plain_dhcp_transaction(
     after: SwitchEvidenceCursor | None = None,
     generation: int | None = None,
     gateway_generation: int | None = None,
+    abort: Callable[[], str | None] | None = None,
 ) -> None:
     """Require one exact, no-PXE DHCP D/O/R/A transaction for a peer."""
     if generation is not None and (
@@ -374,6 +381,10 @@ def wait_for_plain_dhcp_transaction(
     expected_mac = expected_mac.casefold()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if abort is not None:
+            reason = abort()
+            if reason:
+                raise RuntimeError(reason)
         progress: dict[str, int] = {}
         tainted: set[str] = set()
         sequence = ("DISCOVER", "OFFER", "REQUEST", "ACK")

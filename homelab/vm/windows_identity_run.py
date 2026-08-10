@@ -28,6 +28,7 @@ from .factory_runner import (
     GATEWAY_MAC,
     MACS,
     SwitchEvidenceCursor,
+    _switch_events_after,
     capture_switch_evidence_cursor,
     gateway_command,
     switch_command,
@@ -1420,7 +1421,7 @@ class NativeProcessBoundary:
                         ("authorized OVMF variables", firmware_identity[:2]),
                     ))
                 try:
-                    self._wait_for_windows_os_readiness(cursor)
+                    self._wait_for_windows_os_readiness(cursor, process)
                 except RuntimeError:
                     boot_diagnostic = self._collect_boot_failure_diagnostic(
                         process, pristine)
@@ -1570,19 +1571,61 @@ class NativeProcessBoundary:
 
     def _wait_for_windows_os_readiness(
         self, cursor: SwitchEvidenceCursor,
+        process: "subprocess.Popen[bytes] | None" = None,
     ) -> None:
         evidence = self.runtime / "switch.jsonl"
         deadline = time.monotonic() + WINDOWS_OS_READINESS_TIMEOUT
+        abort = self._windows_boot_abort_reason(evidence, cursor, process)
         self.windows_switch_generation = wait_for_switch_port(
             evidence, "workstation", MACS["client"],
-            timeout=max(0.0, deadline - time.monotonic()), after=cursor)
+            timeout=max(0.0, deadline - time.monotonic()), after=cursor,
+            abort=abort)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("Windows OS readiness deadline expired")
         wait_for_plain_dhcp_transaction(
             evidence, "workstation", MACS["client"], timeout=remaining,
             after=cursor, generation=self.windows_switch_generation,
-            gateway_generation=self.gateway_switch_generation)
+            gateway_generation=self.gateway_switch_generation, abort=abort)
+
+    @staticmethod
+    def _windows_boot_abort_reason(
+        evidence: Path,
+        cursor: SwitchEvidenceCursor,
+        process: "subprocess.Popen[bytes] | None",
+    ):
+        """Detect a boot that can no longer succeed instead of waiting it out.
+
+        A guest whose QEMU has exited, or whose switch connection was
+        abandoned before authentication, will never produce the port and DHCP
+        events the readiness wait is polling for; attempt 4 spent its full
+        two-boot 600-second budget on exactly that. Both signals are terminal
+        for the current boot only — the caller's retry policy is unchanged.
+        """
+        last_scan = [float("-inf")]
+
+        def reason() -> str | None:
+            if process is not None and process.poll() is not None:
+                return (
+                    "Windows guest exited during boot with code "
+                    f"{process.returncode}")
+            now = time.monotonic()
+            if now - last_scan[0] < 1.0:
+                return None
+            last_scan[0] = now
+            try:
+                events = _switch_events_after(evidence, cursor)
+            except FileNotFoundError:
+                return None
+            for event in events:
+                if event.get("event") == (
+                        "peer-abandoned-before-authentication"):
+                    return (
+                        "Windows guest abandoned the switch before "
+                        "authentication")
+            return None
+
+        return reason
 
     @staticmethod
     def _prove_pristine_overlay(
