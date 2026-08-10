@@ -242,12 +242,27 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   re-derived: `homelab/var/factory/evidence/20260728T001858Z-3005758-pxe-handoff`
   records a passing x86-64 UEFI iPXE Arch installer handoff and
   `20260728T002735Z-3032556-pxe-handoff` a passing WinPE wimboot chain, both
-  through the simulated gateway's options 66/67. Gates 4–5 stay pending
-  because those runs used a seed-ISO disposable controller with
-  publication-ISO release injection, not the accepted converged Controller
-  serving the selected transactional release set, and gate 5 additionally
-  needs the real Windows Setup path (its one live run failed at phase
-  `windows-setup`).
+  through the simulated gateway's options 66/67. Both were re-proved on
+  2026-08-10 against release set `20260727.005` with current code:
+  `20260810T143221Z-873911-pxe-handoff` (Arch) and
+  `20260810T143444Z-874290-pxe-handoff` (WinPE), both `pass`. Gates 4–5
+  stay pending because those runs used a seed-ISO disposable controller
+  with publication-ISO release injection, not the accepted converged
+  Controller serving the selected transactional release set, and gate 5
+  additionally needs the real Windows Setup path.
+- Gate 5's Windows Setup path is stronger than its recorded evidence: the
+  retained bundle `run-20260728T114233Z-afecdf7cc9d0` completed a genuine
+  one-shot PXE WinPE Windows 11 Pro installation — its serial log shows one
+  `BdsDxe: starting ... UEFI PXEv4` boot, two subsequent native
+  `Windows Boot Manager` disk boots with no ISO or PXE, the
+  `TELOS WINDOWS NATIVE READY` marker, `Current Edition : Professional`,
+  and a guest-initiated shutdown — while its `result.json` records
+  `fail/windows-setup` only because the pre-`1463b65` validator counted the
+  single PXE boot twice (`serial.count("UEFI PXEv4") != 1` matches both the
+  loading and starting lines). The bundle's daily use as the identity input
+  corroborates the successful install. A fresh full install run under the
+  fixed validator was started 2026-08-10 from bundle
+  `run-20260810T141818Z-8e3bc8bdd2ce` to record a clean pass.
 - Nothing is published. `main` and `continue-windows-identity-acceptance` are
   reconciled at the same commit and carry every local result, including the
   reading-list line that previously existed only on `origin`. The remote still
