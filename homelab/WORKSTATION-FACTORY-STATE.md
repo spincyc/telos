@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.002`
+Document version: `20260810.003`
 
 Status: active implementation
 
@@ -218,10 +218,26 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   shared Controller console refuses the watcher launch every attempt.
   Commit `01ddf88` preserves the arm subphase through the continue path to
   whatever coordinate the attempt reaches, and a receipt line that arrives
-  but fails processing now names its exception type. Attempt nine
-  (`20260810T141632Z-2ef64f3a9ec9`) is the first fully labelled run: every
-  producer of an unexplained receipt now signs itself, so its coordinate
-  identifies the producer outright.
+  but fails processing now names its exception type. Attempts nine and ten
+  still rendered bare because the terminal desktop raises sit after the
+  instrumented handlers and dropped the subphase a fifth time; commit
+  `a6b0a14` carries it through them with an integration test that drives
+  the real flow. RESOLVED 2026-08-10: attempt eleven
+  (`20260810T145920Z-a13b99b97a30`) rendered
+  `controller-auth-arm-subphase=receive;
+  controller-auth-receive-observation=command-exit-nonzero`, and a local
+  standalone execution reproduced the failure exactly: commit `fc628e8`
+  (2026-07-30) added a relative `signal_cleanup` import to
+  `controller_auth_diagnostic.py`, which the Controller executes as a bare
+  file from `/opt/telos-factory` — the watcher crashed with an ImportError
+  and exit 1 before printing ARMED on every attempt since, cleanup
+  recovery succeeded, and the GUI continued without a watcher. Commit
+  `2bdf36d` restores standalone execution and adds a subprocess test that
+  runs the file exactly as the Controller does, replacing the syntax-only
+  check that let this land. Attempt twelve
+  (`20260810T161556Z-a9cff6b68239`) is the first since 2026-07-30 in which
+  the directory-side watcher can arm; its receipt should finally
+  distinguish a rejected credential from one never presented.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
