@@ -209,6 +209,19 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   `rejected`, `no-event`, ...) that finally splits a rejected credential
   from one never presented, or label itself — a still-`unattributed` receipt
   from attempt eight would falsify this identification.
+  Falsified 2026-08-10: attempt eight (`20260810T135411Z-ece0215bca67`) ran
+  the widened window and still rendered a bare unattributed receipt, so the
+  expiry never fired and the producer sits earlier. The remaining match is
+  a proved-cleanup `arm()` failure: the adapter stores the arm-failure
+  result, discards the error whose arm subphase explains it, and continues
+  the GUI without a watcher — deterministic if, for example, sudo on the
+  shared Controller console refuses the watcher launch every attempt.
+  Commit `01ddf88` preserves the arm subphase through the continue path to
+  whatever coordinate the attempt reaches, and a receipt line that arrives
+  but fails processing now names its exception type. Attempt nine
+  (`20260810T141632Z-2ef64f3a9ec9`) is the first fully labelled run: every
+  producer of an unexplained receipt now signs itself, so its coordinate
+  identifies the producer outright.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
