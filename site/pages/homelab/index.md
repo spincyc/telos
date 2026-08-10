@@ -20,6 +20,8 @@ leaks into a published source.
 | **Controller Rebuild** | Bare metal to serving DHCP, written on the assumption that the Controller is dead and nothing it hosted is available | [PDF](../../doc/homelab/manual/controller-rebuild.pdf) |
 | **Workstation Factory** | Isolated bootstrap through a verified Windows/Arch workstation, with every gate and failure branch | [HTML](workstation-factory/index.md) · [PDF](../../doc/homelab/manual/workstation-factory.pdf) |
 | **Workstation Owner Guide** | Normal use, automatic updates, travel checks, recovery, and a secret-free help bundle for the person carrying the laptop | [HTML](workstation-owner-guide/index.md) · [PDF](../../doc/homelab/manual/workstation-owner-guide.pdf) |
+| **Recovery Library** | Symptom-led recovery for eight failure scenarios, each marked implemented today or pending live guests | [HTML](recovery-library/index.md) |
+| **Maintenance Library** | Routine upkeep, gated Arch and Windows updates, and the travel and cached-login limits that keep a laptop usable away from home | [HTML](maintenance-library/index.md) |
 | **Provisioning Design** | Network boot, the authorization boundary, what cannot be offered, and how the whole thing is tested | [PDF](../../doc/homelab/design/provisioning.pdf) |
 | **Convergence Design** | Where install ends and day two begins, why the manifest is the authority, and getting back in when the directory is down | [PDF](../../doc/homelab/design/convergence.pdf) |
 | **Decision Record** | All 75 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](../../doc/homelab/decisions.pdf) |

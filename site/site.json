@@ -153,6 +153,20 @@
       "description": "Join and verify Windows and Arch workstation identity without losing recovery access."
     },
     {
+      "source": "site/pages/homelab/recovery-library.md",
+      "output": "projects/homelab/recovery-library/index.html",
+      "title": "Recovery Library",
+      "layout": "default",
+      "description": "Symptom-led recovery paths for the homelab, each marked implemented today or pending live guests."
+    },
+    {
+      "source": "site/pages/homelab/maintenance-library.md",
+      "output": "projects/homelab/maintenance-library/index.html",
+      "title": "Maintenance Library",
+      "layout": "default",
+      "description": "Routine maintenance, gated Arch and Windows updates, and travel and cached-login limits for a Telos workstation."
+    },
+    {
       "source": "PROVIDER-EDITIONS.md",
       "output": "provider-editions.html",
       "title": "Provider editions",
