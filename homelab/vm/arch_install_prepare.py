@@ -24,11 +24,11 @@ import tempfile
 try:
     from .bootstrap_dc import ovmf_pair
     from .simulated_topology import MACS, _base, audit_qemu_argv
-    from .windows_install_contract import audit_qemu_disk_boundary, sha256
+    from .windows_install_contract import SAFE_SERIAL, sha256
 except ImportError:  # Direct execution from homelab/vm.
     from bootstrap_dc import ovmf_pair
     from simulated_topology import MACS, _base, audit_qemu_argv
-    from windows_install_contract import audit_qemu_disk_boundary, sha256
+    from windows_install_contract import SAFE_SERIAL, sha256
 
 from homelab.workstations import arch_second
 from homelab.workstations.layout import GIB, build_record
@@ -182,6 +182,67 @@ def render_arch_second_verify() -> str:
     return "\n".join(parts)
 
 
+def audit_arch_boot_boundary(
+    command: list[str], *, disk: Path, serial: str,
+) -> None:
+    """Prove exactly one writable install target, hot-plugged not cold-plugged.
+
+    The overlaid persistent disk still carries a bootable
+    ``\\EFI\\Microsoft\\Boot\\bootmgfw.efi``.  A cold-plugged ``-device nvme``
+    lets OVMF auto-discover that ESP and boot it, defeating ``order=n``
+    (both live shakedowns confirmed this).  So the install boot exposes the
+    overlay only as a detached block backend (``if=none,id=osdisk``): firmware
+    sees no bootable disk device and PXE is the sole boot path.  The runner
+    attaches the NVMe device that carries *serial* over QMP once archiso is
+    live, which is where the authorization's single-writable-target guarantee
+    is realised as a hot-plug.
+    """
+    if not SAFE_SERIAL.fullmatch(serial):
+        raise ArchInstallPrepareError(
+            "synthetic disk serial is not safely representable")
+    expected = str(Path(disk).resolve())
+    writable = []
+    for index, argument in enumerate(command):
+        if argument != "-drive" or index + 1 >= len(command):
+            continue
+        fields = dict(
+            item.split("=", 1)
+            for item in command[index + 1].split(",") if "=" in item)
+        if (
+            fields.get("media") == "cdrom"
+            or fields.get("readonly") == "on"
+            or fields.get("if") == "pflash"
+        ):
+            continue
+        writable.append(fields)
+    if len(writable) != 1:
+        raise ArchInstallPrepareError(
+            "install boot must expose exactly one writable disk backend")
+    backend = writable[0]
+    exposed = backend.get("file")
+    if exposed is None or str(Path(exposed).resolve()) != expected:
+        raise ArchInstallPrepareError(
+            "writable disk backend differs from the authorized overlay")
+    if backend.get("if") != "none" or backend.get("id") != "osdisk":
+        raise ArchInstallPrepareError(
+            "install target must be a detached hot-plug backend, not cold-plugged")
+    # No cold-plugged disk device and nothing may claim a firmware boot index:
+    # only the NIC may be bootable.
+    for index, argument in enumerate(command):
+        if argument != "-device" or index + 1 >= len(command):
+            continue
+        value = command[index + 1]
+        if value.split(",", 1)[0] in ("nvme", "ide-hd", "scsi-hd", "virtio-blk"):
+            raise ArchInstallPrepareError(
+                "install target disk must be hot-plugged, not cold-plugged")
+        if "bootindex=" in value:
+            raise ArchInstallPrepareError(
+                "no device may claim a firmware boot index")
+    if "order=n,menu=off" not in command:
+        raise ArchInstallPrepareError(
+            "install boot must be network-only so PXE deterministically wins")
+
+
 def qemu_arch_install_command(
     *,
     disk: Path,
@@ -190,12 +251,14 @@ def qemu_arch_install_command(
     switch_port: int,
     serial: str,
 ) -> list[str]:
-    """Build the persistent-disk UEFI/NVMe/e1000e network-boot command.
+    """Build the disk-detached UEFI/e1000e network-boot command.
 
-    The install boot is network-only (``order=n``): PXE deterministically wins
-    and firmware never falls through to the bootable Windows ESP that the
-    overlaid persistent disk still carries.  The NVMe disk stays attached as
-    the install target, it is simply outside the boot path.
+    The install target is present only as a detached ``if=none,id=osdisk``
+    block backend, never as a cold-plugged ``-device nvme``.  Firmware has
+    nothing but the NIC to boot, so a network-only ``order=n`` boot is
+    deterministic even though the overlaid persistent disk still carries a
+    bootable Windows ESP.  The runner hot-attaches the NVMe device (carrying
+    *serial*) over QMP once archiso reaches its live root prompt.
     """
     if not 1 <= switch_port <= 65535:
         raise ArchInstallPrepareError("switch port is invalid")
@@ -217,14 +280,13 @@ def qemu_arch_install_command(
             "if=none,id=osdisk,format=qcow2,cache=none,"
             f"file={Path(disk).resolve()}"
         ),
-        "-device", f"nvme,drive=osdisk,serial={serial}",
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device",
         f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
     audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
-    audit_qemu_disk_boundary(command, disk=disk, serial=serial)
+    audit_arch_boot_boundary(command, disk=disk, serial=serial)
     return command
 
 

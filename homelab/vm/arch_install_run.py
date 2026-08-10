@@ -20,10 +20,12 @@ import re
 import socket
 import subprocess
 import time
+from typing import Callable
 
 try:
     from .arch_install_prepare import (
-        INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME, inspect_overlay)
+        DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME,
+        audit_arch_boot_boundary, inspect_overlay)
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
     from .factory_publication import stage as stage_publication
@@ -34,10 +36,12 @@ try:
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
     from .simulated_topology import audit_live_process
-    from .windows_install_contract import audit_qemu_disk_boundary, sha256
+    from .windows_gui import QmpClient, WindowsGuiError
+    from .windows_install_contract import sha256
 except ImportError:  # Direct execution from homelab/vm.
     from arch_install_prepare import (
-        INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME, inspect_overlay)
+        DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME,
+        audit_arch_boot_boundary, inspect_overlay)
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
     from factory_publication import stage as stage_publication
@@ -48,7 +52,8 @@ except ImportError:  # Direct execution from homelab/vm.
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
     from simulated_topology import audit_live_process
-    from windows_install_contract import audit_qemu_disk_boundary, sha256
+    from windows_gui import QmpClient, WindowsGuiError
+    from windows_install_contract import sha256
 
 
 MAX_DURATION = 10800
@@ -57,6 +62,10 @@ GUEST_INSTALLER_PATH = "/root/arch-install.sh"
 BEGIN_MARKER = "TELOS ARCH INSTALL BEGIN"
 COMPLETE_MARKER = "TELOS ARCH INSTALL COMPLETE"
 FAIL_MARKER = "TELOS ARCH INSTALL FAIL"
+DISK_ATTACHED_MARKER = "TELOS ARCH DISK ATTACHED"
+NVME_DEVICE_ID = "osdisk-nvme"
+NVME_BACKEND_ID = "osdisk"
+ATTACH_TIMEOUT = 30.0
 VERIFY_PASS_MARKER = (
     "PASS: Windows-first GPT matches the approved Arch install contract")
 PRESERVED_MARKER = (
@@ -91,7 +100,7 @@ def _bundle(path: Path) -> tuple[dict, list[str]]:
         raise RuntimeError("persistent Windows disk is missing or unsafe")
     if sha256(backing) != authorized["backing_windows_disk"]["sha256"]:
         raise RuntimeError("persistent Windows disk differs from authorization")
-    audit_qemu_disk_boundary(command, disk=overlay, serial=serial)
+    audit_arch_boot_boundary(command, disk=overlay, serial=serial)
     for entry in authorization["guest_inputs"]:
         staged = path / entry["name"]
         if staged.is_symlink() or not staged.is_file():
@@ -137,6 +146,45 @@ def _switch_port(command: list[str]) -> int:
     raise RuntimeError("authorized command has no loopback switch port")
 
 
+def _connect_qmp(
+        path: Path, *, expected_peer_pid: int, timeout: float = 30,
+) -> QmpClient:
+    """Connect the codebase QMP client to the pinned, bounded socket."""
+    deadline = time.monotonic() + timeout
+    last_error: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            return QmpClient.connect(
+                path, timeout=1, expected_peer_pid=expected_peer_pid)
+        except (OSError, WindowsGuiError) as error:
+            last_error = error
+            time.sleep(0.05)
+    raise RuntimeError("Arch QMP socket did not become ready") from last_error
+
+
+def hot_attach_disk(
+    qmp: QmpClient, serial: str, *, timeout: float = ATTACH_TIMEOUT,
+) -> None:
+    """Hot-attach the install-target NVMe once archiso is live.
+
+    The overlay is already present as the detached ``osdisk`` block backend
+    (the boot argv carries no ``-device nvme``).  A single bounded
+    ``device_add`` realises it as an NVMe device exposing *serial*, which is
+    exactly the serial the arch_second installer greps out of lsblk.  Any QMP
+    fault raises, so the caller tears the run down fail-closed.
+    """
+    try:
+        qmp.execute("device_add", {
+            "driver": "nvme",
+            "drive": NVME_BACKEND_ID,
+            "serial": serial,
+            "id": NVME_DEVICE_ID,
+        }, timeout=timeout)
+    except WindowsGuiError as error:
+        raise RuntimeError(
+            "install-target NVMe hot-attach failed") from error
+
+
 def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
     """Retain a bounded, redacted tail after all writers have stopped."""
     try:
@@ -157,12 +205,14 @@ def _destroy_runtime_publication(path: Path) -> str | None:
     return None
 
 
-def _validate_lifecycle(serial: str) -> None:
-    """Accept only a one-PXE, Windows-preserving Arch install transcript."""
+def _validate_lifecycle(serial: str, disk_serial: str = DISK_SERIAL) -> None:
+    """Accept only a one-PXE, disk-detached, Windows-preserving transcript."""
     if FAIL_MARKER in serial:
         raise RuntimeError("Arch installer reported failure")
+    attached = f"{DISK_ATTACHED_MARKER} serial={disk_serial}"
     required = (
         BEGIN_MARKER,
+        attached,
         VERIFY_PASS_MARKER,
         PRESERVED_MARKER,
         COMPLETE_MARKER,
@@ -174,8 +224,17 @@ def _validate_lifecycle(serial: str) -> None:
     if missing:
         raise RuntimeError(
             "Arch install lifecycle markers missing: " + ", ".join(missing))
-    if not any(marker in serial for marker in ARCH_LIVE_MARKERS):
+    live_positions = [
+        serial.index(marker) for marker in ARCH_LIVE_MARKERS if marker in serial
+    ]
+    if not live_positions:
         raise RuntimeError("Arch live environment was not observed")
+    # The install target must appear only AFTER archiso is live: a disk-serial
+    # detection that precedes the live environment would mean the NVMe was
+    # cold-plugged into the boot path rather than hot-attached.
+    if serial.index(attached) < min(live_positions):
+        raise RuntimeError(
+            "install target was detected before archiso was live")
     pxe_starts = sum(
         line.startswith("BdsDxe: starting ") and '"UEFI PXEv4' in line
         for line in serial.splitlines()
@@ -197,9 +256,18 @@ def _heredoc(target: str, payload: str) -> bytes:
 
 def drive_installer(
     process: subprocess.Popen[bytes], capture: Path, *,
-    verify_script: str, installer_script: str, timeout: float,
+    verify_script: str, installer_script: str, serial: str,
+    attach: Callable[[], None], timeout: float,
 ) -> str:
-    """Drive the Arch live shell and return the captured serial transcript."""
+    """Drive the Arch live shell and return the captured serial transcript.
+
+    When archiso first reaches its root prompt the install-target NVMe is
+    absent (it was never cold-plugged).  *attach* hot-plugs it over QMP before
+    any installer step runs; a bounded in-guest lsblk gate then proves the
+    authorized serial is present, so the destructive installer only ever sees
+    the one intended target.  An *attach* failure propagates for fail-closed
+    teardown.
+    """
     import select
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("Arch install requires captured serial I/O")
@@ -207,9 +275,17 @@ def drive_installer(
     transcript = bytearray()
     capture.touch(mode=0o600)
     capture.chmod(0o600)
+    confirm_disk = (
+        f"for _ in $(seq 1 30); do "
+        f"lsblk -dno SERIAL | grep -qx {serial} && break; sleep 1; done; "
+        f"lsblk -dno SERIAL | grep -qx {serial} "
+        f"&& echo {DISK_ATTACHED_MARKER} serial={serial} "
+        f"|| echo {FAIL_MARKER} rc=disk-serial-missing\n"
+    ).encode("ascii")
     steps = [
         f"echo {BEGIN_MARKER}\n".encode("ascii"),
         b"mkdir -p /usr/local/lib/telos\n",
+        confirm_disk,
         _heredoc(GUEST_VERIFY_PATH, verify_script),
         _heredoc(GUEST_INSTALLER_PATH, installer_script),
         (
@@ -239,6 +315,9 @@ def drive_installer(
                 capture.chmod(0o600)
         text = transcript.decode("utf-8", errors="replace")
         if not began and _at_root_prompt(transcript):
+            # archiso is live: hot-attach the install target before any step so
+            # its serial is present when the installer greps lsblk.
+            attach()
             for command in steps:
                 process.stdin.write(command)
             process.stdin.flush()
@@ -276,7 +355,9 @@ def run(
     authorized = authorization["authorization"]
     print("Boundary: loopback-only switch; no host or UniFi changes")
     print(f"Bundle: {bundle}")
-    print("Workstation: persistent authorized NVMe overlay; Windows preserved")
+    print(
+        "Workstation: PXE-boots disk-detached; the authorized NVMe overlay is "
+        "hot-attached once archiso is live; Windows preserved")
     print(f"Arch release: {authorized['release_version']}")
     print(f"Maximum runtime: {duration:g} seconds")
     if not apply:
@@ -360,12 +441,20 @@ def run(
                 processes["workstation"].pid, "client",
                 allowed_nic_models=("e1000e",))
             result["phase"] = "arch-install-driving"
-            serial = drive_installer(
-                processes["workstation"],
-                evidence / "workstation-serial.log",
-                verify_script=verify_script,
-                installer_script=installer_script,
-                timeout=duration)
+            disk_serial = authorized["disk_serial"]
+            qmp = _connect_qmp(
+                qmp_socket, expected_peer_pid=processes["workstation"].pid)
+            try:
+                serial = drive_installer(
+                    processes["workstation"],
+                    evidence / "workstation-serial.log",
+                    verify_script=verify_script,
+                    installer_script=installer_script,
+                    serial=disk_serial,
+                    attach=lambda: hot_attach_disk(qmp, disk_serial),
+                    timeout=duration)
+            finally:
+                qmp.close()
             failed = [
                 role for role, process in processes.items()
                 if role != "workstation" and process.poll() not in (None, 0)
@@ -373,7 +462,7 @@ def run(
             if failed:
                 raise RuntimeError(
                     "Arch lifecycle process failed: " + ", ".join(failed))
-            _validate_lifecycle(serial)
+            _validate_lifecycle(serial, disk_serial)
             result = {
                 "schema": 1, "status": "observed",
                 "phase": "arch-installed-windows-preserved",

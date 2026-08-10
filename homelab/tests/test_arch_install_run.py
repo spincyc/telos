@@ -2,8 +2,11 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -13,6 +16,57 @@ from homelab.vm.arch_install_prepare import (
 
 
 CONST = "c" * 64
+
+
+class _FakeQmp:
+    """Record QMP execute() calls; optionally fail closed like the real client."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple] = []
+        self.fail = fail
+        self.closed = False
+
+    def execute(self, command, arguments=None, *, timeout=None):
+        self.calls.append((command, arguments, timeout))
+        if self.fail:
+            raise arch_install_run.WindowsGuiError("device_add refused")
+        return {}
+
+    def close(self):
+        self.closed = True
+
+
+class _Recorder:
+    """A stdin sink that timestamps writes so ordering can be asserted."""
+
+    def __init__(self, events: list) -> None:
+        self.events = events
+        self.data = bytearray()
+
+    def write(self, payload: bytes) -> None:
+        self.events.append(("write", bytes(payload)))
+        self.data.extend(payload)
+
+    def flush(self) -> None:
+        pass
+
+
+class _Fd:
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+
+    def fileno(self) -> int:
+        return self._fd
+
+
+class _FakeProcess:
+    def __init__(self, read_fd: int, stdin: _Recorder) -> None:
+        self.stdout = _Fd(read_fd)
+        self.stdin = stdin
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
 
 
 def _digest(command):
@@ -27,6 +81,7 @@ GOOD_SERIAL = "\n".join((
     "Welcome to Arch Linux",
     "[root@archiso ~]# echo TELOS ARCH INSTALL BEGIN",
     "TELOS ARCH INSTALL BEGIN",
+    "TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001",
     "PASS: Windows-first GPT matches the approved Arch install contract",
     "Arch installed; Windows partitions and filesystems were not modified.",
     "TELOS ARCH INSTALL COMPLETE",
@@ -52,7 +107,6 @@ class ArchInstallRunTests(unittest.TestCase):
             "-boot", "order=n,menu=off",
             "-drive",
             f"if=none,id=osdisk,format=qcow2,cache=none,file={overlay.resolve()}",
-            "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001",
             "-netdev", "socket,id=factory,connect=127.0.0.1:31415",
             "-device", "e1000e,netdev=factory,mac=52:54:00:31:12:12",
         ]
@@ -102,7 +156,7 @@ class ArchInstallRunTests(unittest.TestCase):
                     mock.patch.object(
                         arch_install_run, "sha256", return_value=CONST), \
                     mock.patch.object(
-                        arch_install_run, "audit_qemu_disk_boundary"):
+                        arch_install_run, "audit_arch_boot_boundary"):
                 self.assertEqual(arch_install_run.run(
                     bundle, controller_state=Path("/state"),
                     releases=Path("/pxe"), seed_iso=Path("/seed.iso"),
@@ -183,7 +237,7 @@ class ArchInstallRunTests(unittest.TestCase):
                     mock.patch.object(
                         arch_install_run, "sha256", return_value=CONST), \
                     mock.patch.object(
-                        arch_install_run, "audit_qemu_disk_boundary"):
+                        arch_install_run, "audit_arch_boot_boundary"):
                 with self.assertRaisesRegex(RuntimeError, "private"):
                     arch_install_run._bundle(bundle)
 
@@ -211,7 +265,7 @@ class ArchInstallRunTests(unittest.TestCase):
                     mock.patch.object(
                         arch_install_run, "sha256", return_value=CONST), \
                     mock.patch.object(
-                        arch_install_run, "audit_qemu_disk_boundary"):
+                        arch_install_run, "audit_arch_boot_boundary"):
                 with self.assertRaisesRegex(RuntimeError, "command differs"):
                     arch_install_run._bundle(bundle)
 
@@ -226,7 +280,7 @@ class ArchInstallRunTests(unittest.TestCase):
                     mock.patch.object(
                         arch_install_run, "sha256", return_value=CONST), \
                     mock.patch.object(
-                        arch_install_run, "audit_qemu_disk_boundary"):
+                        arch_install_run, "audit_arch_boot_boundary"):
                 with self.assertRaisesRegex(RuntimeError, "different disk"):
                     arch_install_run._bundle(bundle)
 
@@ -244,10 +298,116 @@ class ArchInstallRunTests(unittest.TestCase):
                     mock.patch.object(
                         arch_install_run, "sha256", side_effect=by_path), \
                     mock.patch.object(
-                        arch_install_run, "audit_qemu_disk_boundary"):
+                        arch_install_run, "audit_arch_boot_boundary"):
                 with self.assertRaisesRegex(
                         RuntimeError, "persistent Windows disk differs"):
                     arch_install_run._bundle(bundle)
+
+    def test_lifecycle_requires_the_post_attach_disk_marker(self):
+        transcript = GOOD_SERIAL.replace(
+            "TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001", "")
+        with self.assertRaisesRegex(RuntimeError, "markers missing"):
+            arch_install_run._validate_lifecycle(transcript)
+
+    def test_lifecycle_rejects_attach_before_archiso_is_live(self):
+        # A disk-serial detection that precedes the live environment implies a
+        # cold-plugged target rather than a post-boot hot-attach.
+        transcript = "\n".join((
+            'BdsDxe: starting Boot0005 "UEFI PXEv4 (MAC:525400311212)"',
+            "TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001",
+            "Welcome to Arch Linux",
+            "TELOS ARCH INSTALL BEGIN",
+            "PASS: Windows-first GPT matches the approved Arch install contract",
+            "Arch installed; Windows partitions and filesystems "
+            "were not modified.",
+            "TELOS ARCH INSTALL COMPLETE",
+            "Boot0000* Windows Boot Manager",
+            "Boot0001* Linux Boot Manager",
+            "/mnt/boot/loader/loader.conf:default auto-windows",
+        ))
+        with self.assertRaisesRegex(RuntimeError, "before archiso was live"):
+            arch_install_run._validate_lifecycle(transcript)
+
+    def test_hot_attach_adds_nvme_with_the_authorized_serial(self):
+        qmp = _FakeQmp()
+        arch_install_run.hot_attach_disk(qmp, "TELOS-WIN-0001")
+        self.assertEqual(len(qmp.calls), 1)
+        command, arguments, timeout = qmp.calls[0]
+        self.assertEqual(command, "device_add")
+        self.assertEqual(arguments["driver"], "nvme")
+        self.assertEqual(arguments["drive"], "osdisk")
+        self.assertEqual(arguments["serial"], "TELOS-WIN-0001")
+        self.assertEqual(arguments["id"], "osdisk-nvme")
+        self.assertIsNotNone(timeout)
+        self.assertGreater(timeout, 0)
+
+    def test_hot_attach_fails_closed_when_qmp_refuses(self):
+        qmp = _FakeQmp(fail=True)
+        with self.assertRaisesRegex(RuntimeError, "hot-attach failed"):
+            arch_install_run.hot_attach_disk(qmp, "TELOS-WIN-0001")
+
+    def test_drive_installer_hot_attaches_before_running_the_installer(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+        attach_calls: list = []
+
+        def attach() -> None:
+            events.append(("attach", None))
+            attach_calls.append(1)
+
+        # archiso reaches its root prompt first; the installer only runs after.
+        os.write(write_fd, b"[root@archiso ~]# ")
+
+        def feeder() -> None:
+            for _ in range(5000):
+                if attach_calls and len(events) > 1:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"\nTELOS ARCH INSTALL COMPLETE\n")
+            os.close(write_fd)
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                transcript = arch_install_run.drive_installer(
+                    process, capture, verify_script="verify",
+                    installer_script="installer", serial="TELOS-WIN-0001",
+                    attach=attach, timeout=10)
+        finally:
+            worker.join()
+            os.close(read_fd)
+        self.assertEqual(attach_calls, [1])
+        # The hot-attach precedes every byte written to the guest shell.
+        self.assertEqual(events[0], ("attach", None))
+        self.assertTrue(any(kind == "write" for kind, _ in events))
+        # The installer is only delivered after the attach.
+        self.assertIn(b"bash /root/arch-install.sh", stdin.data)
+        self.assertIn(b"lsblk -dno SERIAL", stdin.data)
+        self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
+
+    def test_drive_installer_propagates_a_hot_attach_failure(self):
+        read_fd, write_fd = os.pipe()
+        process = _FakeProcess(read_fd, _Recorder([]))
+
+        def attach() -> None:
+            raise RuntimeError("install-target NVMe hot-attach failed")
+
+        os.write(write_fd, b"[root@archiso ~]# ")
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                with self.assertRaisesRegex(RuntimeError, "hot-attach failed"):
+                    arch_install_run.drive_installer(
+                        process, capture, verify_script="verify",
+                        installer_script="installer", serial="TELOS-WIN-0001",
+                        attach=attach, timeout=10)
+        finally:
+            os.close(write_fd)
+            os.close(read_fd)
 
     def test_sanitize_log_redacts_and_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:

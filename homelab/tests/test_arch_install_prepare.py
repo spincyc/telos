@@ -59,7 +59,7 @@ class ArchInstallPrepareTests(unittest.TestCase):
         self.assertIn("--apply", result.stdout)
         self.assertIn("--windows-disk", result.stdout)
 
-    def test_qemu_command_shape_pins_nvme_e1000e_pxe_and_short_qmp(self):
+    def test_qemu_command_detaches_the_disk_and_pins_e1000e_pxe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             variables = root / "OVMF_VARS.fd"
@@ -71,11 +71,20 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 disk=disk, variables=variables, qmp_socket=qmp,
                 switch_port=31415, serial=arch_install_prepare.DISK_SERIAL)
             joined = " ".join(command)
-            self.assertIn("nvme,drive=osdisk,serial=TELOS-WIN-0001", joined)
+            # The install target is present only as a detached block backend;
+            # no cold-plugged NVMe device may sit in the boot path, or OVMF
+            # would auto-boot the bootable Windows ESP the overlay carries.
+            self.assertIn("if=none,id=osdisk", joined)
+            self.assertIn(str(disk.resolve()), joined)
+            self.assertNotIn("-device nvme", joined)
+            self.assertFalse(
+                any(item.split(",", 1)[0] == "nvme"
+                    for index, item in enumerate(command)
+                    if index and command[index - 1] == "-device"))
+            self.assertNotIn("bootindex=", joined)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn("socket,id=factory,connect=127.0.0.1:31415", joined)
-            # The install boot is network-only so PXE deterministically wins
-            # and firmware never falls through to the bootable Windows ESP.
+            # The install boot is network-only so PXE deterministically wins.
             self.assertIn("order=n,menu=off", command)
             self.assertNotIn("order=c,once=n,menu=off", command)
             self.assertNotIn("order=c", command)
@@ -84,6 +93,23 @@ class ArchInstallPrepareTests(unittest.TestCase):
             self.assertIn(",server=on,wait=off", qmp_value)
             socket_path = qmp_value[len("unix:"):].split(",", 1)[0]
             self.assertLessEqual(len(socket_path.encode()), 100)
+
+    def test_boot_boundary_rejects_a_cold_plugged_nvme_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            disk = Path(temporary) / "arch.qcow2"
+            disk.write_bytes(b"overlay")
+            good = [
+                "-boot", "order=n,menu=off",
+                "-drive",
+                f"if=none,id=osdisk,format=qcow2,file={disk.resolve()}",
+            ]
+            arch_install_prepare.audit_arch_boot_boundary(
+                good, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
+            cold = good + [
+                "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001"]
+            with self.assertRaisesRegex(RuntimeError, "hot-plugged"):
+                arch_install_prepare.audit_arch_boot_boundary(
+                    cold, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
 
     def test_qemu_command_rejects_oversize_qmp_socket(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -241,7 +267,10 @@ class ArchInstallPrepareTests(unittest.TestCase):
             self.assertEqual(
                 authorization["qemu_argv_sha256"], _digest(command))
             joined = " ".join(command)
-            self.assertIn("nvme,drive=osdisk,serial=TELOS-WIN-0001", joined)
+            # The disk is bound as a detached backend and hot-plugged at run
+            # time; no cold-plugged NVMe target sits in the boot path.
+            self.assertIn("if=none,id=osdisk", joined)
+            self.assertNotIn("-device nvme", joined)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn("order=n,menu=off", command)
 
