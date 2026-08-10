@@ -1585,6 +1585,19 @@ class ControllerAuthDiagnosticSession:
             raise RuntimeError("Controller auth result is out of order")
         result_marker = (
             f"__TELOS_AUTH_RESULT_{self._tokens['result']}__=".encode())
+        # The Controller observes for observation_seconds from the submit
+        # fence and runs concurrently with the host's own post-submit
+        # diagnostic, which can occupy up to SUBMISSION_PHASE_TIMEOUT before
+        # result() is even called. When that pushes the call past the fixed
+        # deadline, the Controller has already printed its result line and it
+        # is waiting unread in the buffer. Extend the session deadline (which
+        # _wait caps every read against) to guarantee a fresh receipt window
+        # from the call, so a late collection reads the receipt that already
+        # arrived rather than expiring the host's wait against it.
+        self._deadline = max(
+            self._deadline,
+            self._clock() + RESULT_RECEIPT_SECONDS + CLEANUP_RESERVE_SECONDS,
+        )
         try:
             match = self._wait(
                 _RECEIPT_LINE_START + re.escape(result_marker)

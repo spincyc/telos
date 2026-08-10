@@ -392,6 +392,43 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ],
         )
 
+    def test_late_result_collection_still_reads_a_waiting_receipt(self):
+        """The host's post-submit diagnostic can delay result() past the
+        fixed deadline; the Controller receipt is already in the buffer and
+        must still be read (attempts sixteen-eighteen expired against it)."""
+        now = [100.0]
+        observed = []
+        console = mock.Mock(password=None, timeout=99.0)
+
+        def waited(*_args):
+            observed.append(console.timeout)
+            if len(observed) == 1:
+                return re.search(
+                    rb"(code|collection):([a-z-]+)", b"code:authenticated")
+            return re.match(rb"(ok|[a-z-]+)", b"ok")
+
+        console._wait.side_effect = waited
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=45, post_arm_timeout=45,
+            clock=lambda: now[0])
+        session._state = "armed"
+        session._armed_deadline = now[0] + 40
+        session.begin_submission()
+        # The host spent SUBMISSION_PHASE_TIMEOUT-worth of time in its own
+        # post-submit diagnostic before collecting; the fixed deadline is now
+        # well in the past.
+        now[0] += 80.0
+
+        result = session.result()
+
+        self.assertIs(result.code, ControllerAuthCode.AUTHENTICATED)
+        # The receipt read was given a real positive window, not a negative
+        # remaining that would raise immediately.
+        self.assertGreater(observed[0], 0)
+        self.assertLessEqual(
+            observed[0],
+            subject.RESULT_RECEIPT_SECONDS + subject.CLEANUP_RESERVE_SECONDS)
+
     def test_result_at_receipt_deadline_times_out_with_cleanup_reserved(self):
         now = [100.0]
         observed = []
