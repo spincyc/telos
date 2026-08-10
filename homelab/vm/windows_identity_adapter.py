@@ -1375,6 +1375,10 @@ class NativeWindowsAcceptanceAdapter:
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
                         controller_auth_result=self._controller_auth_result,
+                        controller_auth_arm_subphase=(
+                            self._controller_auth_arm_subphase),
+                        controller_auth_receive_observation=(
+                            self._controller_auth_receive_observation),
                     ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
@@ -1388,6 +1392,10 @@ class NativeWindowsAcceptanceAdapter:
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
                         controller_auth_result=self._controller_auth_result,
+                        controller_auth_arm_subphase=(
+                            self._controller_auth_arm_subphase),
+                        controller_auth_receive_observation=(
+                            self._controller_auth_receive_observation),
                     ) from None
                 if error.state == "sign-in":
                     raise WindowsLocalReauthenticationError(
@@ -1399,6 +1407,10 @@ class NativeWindowsAcceptanceAdapter:
                         post_submit_cleanup=(
                             self._post_submit_diagnostic_cleanup),
                         controller_auth_result=self._controller_auth_result,
+                        controller_auth_arm_subphase=(
+                            self._controller_auth_arm_subphase),
+                        controller_auth_receive_observation=(
+                            self._controller_auth_receive_observation),
                     ) from None
                 raise
 
@@ -1416,6 +1428,10 @@ class NativeWindowsAcceptanceAdapter:
                 post_submit_cleanup=(
                     self._post_submit_diagnostic_cleanup),
                 controller_auth_result=self._controller_auth_result,
+                controller_auth_arm_subphase=(
+                    self._controller_auth_arm_subphase),
+                controller_auth_receive_observation=(
+                    self._controller_auth_receive_observation),
             ) from None
         if diagnostic_cleanup_failed:
             raise WindowsLocalReauthenticationError(
@@ -1426,6 +1442,10 @@ class NativeWindowsAcceptanceAdapter:
                 post_submit_cleanup=(
                     self._post_submit_diagnostic_cleanup),
                 controller_auth_result=self._controller_auth_result,
+                controller_auth_arm_subphase=(
+                    self._controller_auth_arm_subphase),
+                controller_auth_receive_observation=(
+                    self._controller_auth_receive_observation),
             ) from None
 
     def static_probe(self, action: str) -> Mapping[str, object]:

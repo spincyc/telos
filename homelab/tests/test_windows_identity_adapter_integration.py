@@ -537,6 +537,72 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         controller.cancel.assert_called_once_with()
         interaction_type.return_value.type_secret.assert_not_called()
 
+    def test_desktop_failure_after_lost_watcher_renders_the_arm_subphase(
+        self,
+    ):
+        """Attempts nine and ten: the terminal desktop raise dropped it."""
+        sign_in, desktop, plan = self._domain_reauthentication_fixture()
+        arm_error = ControllerAuthDiagnosticError(
+            controller_auth_result=ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+            cleanup_proved=True,
+            arm_subphase=ControllerAuthArmSubphase.SUDO_PROMPT,
+        )
+
+        def observe_ephemeral(reference, timeout=None, alternatives=()):
+            if reference is desktop:
+                raise subject.WindowsIdentityGuiAlternateState("sign-in")
+            return mock.Mock()
+
+        with (
+            mock.patch.object(
+                subject, "_load_references",
+                return_value=(
+                    sign_in, desktop, mock.sentinel.security,
+                    mock.sentinel.change)),
+            mock.patch.object(
+                subject, "_private_evidence_root",
+                return_value=self.root / "reauth-evidence"),
+            mock.patch.object(subject, "_GuiInteraction") as interaction_type,
+            mock.patch.object(subject, "_prove_secret_entry_departure"),
+            mock.patch.object(
+                subject, "ControllerAuthDiagnosticSession") as controller_type,
+        ):
+            interaction_type.return_value.observe_ephemeral.side_effect = (
+                observe_ephemeral)
+            controller = controller_type.return_value
+            controller.arm.side_effect = arm_error
+            controller.active = False
+            adapter = self.adapter(timeout=120, rotation_plan=plan)
+            with self.assertRaises(
+                    subject.WindowsLocalReauthenticationError) as caught:
+                adapter.reauthenticate_domain_operator(
+                    "operator@FACTORY.TEST", "private", "a" * 32)
+
+        self.assertEqual(
+            "desktop-sign-in-persisted", caught.exception.reauth_operation)
+        self.assertIs(
+            caught.exception.controller_auth_result.collection,
+            ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        self.assertIs(
+            caught.exception.controller_auth_arm_subphase,
+            ControllerAuthArmSubphase.SUDO_PROMPT)
+        # The full public pipeline keeps the explanation.
+        from homelab.vm.windows_identity_orchestrator import (
+            _local_reauthentication_coordinate)
+        from homelab.vm.windows_identity_run import IdentityFailureDiagnostic
+        coordinate = _local_reauthentication_coordinate(caught.exception)
+        rendered = IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+            controller_auth_arm_subphase=(
+                coordinate.controller_auth_arm_subphase),
+        ).render()
+        self.assertIn("controller-auth-arm-subphase=sudo-prompt", rendered)
+        self.assertIn(
+            "controller-auth-receipt-origin=unattributed", rendered)
+
     def test_controller_cancel_result_survives_windows_diagnostic_arm_failure(
         self,
     ):
