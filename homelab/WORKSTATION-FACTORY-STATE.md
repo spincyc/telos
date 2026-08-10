@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260810.003`
+Document version: `20260810.004`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-08-10T09:05:00-05:00
+Last evidence/workstream review: 2026-08-10T11:35:00-05:00
 
-Repository baseline reviewed: `627a719`
+Repository baseline reviewed: `d7c228e`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -235,9 +235,19 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   `2bdf36d` restores standalone execution and adds a subprocess test that
   runs the file exactly as the Controller does, replacing the syntax-only
   check that let this land. Attempt twelve
-  (`20260810T161556Z-a9cff6b68239`) is the first since 2026-07-30 in which
-  the directory-side watcher can arm; its receipt should finally
-  distinguish a rejected credential from one never presented.
+  (`20260810T161556Z-a9cff6b68239`) ran with the import fix and moved the
+  failure: still `arm-subphase=receive` with `command-exit-nonzero`, but
+  now with `cleanup=sink-absence-unproved` at the arm coordinate itself —
+  the watcher executes past the import and crashes somewhere the local
+  standalone reproduction cannot reach (its configuration check passes
+  only on a real converged Controller). Commit `d7c228e` therefore
+  retains a bounded, credential-redacted Controller console excerpt in
+  the attempt's reauthentication evidence whenever arming fails, so the
+  next attempt names the actual Controller-side error. Attempt thirteen
+  (`20260810T162521Z-29ba30389e7d`) was externally interrupted mid-join
+  (`join-guest.result-receive`, broken output pipe, complete teardown)
+  and carries no signal on the watcher; the next prepared attempt is the
+  one that reads the crash text.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
