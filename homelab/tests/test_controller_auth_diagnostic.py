@@ -431,6 +431,35 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ],
         )
 
+    def test_controller_side_file_executes_standalone(self):
+        """The Controller runs this file with no package; a relative import
+        crashed it before ARMED on eleven consecutive attempts."""
+        import base64
+        import subprocess
+        import sys
+        payload = {
+            "account": "operator",
+            "domain": "FACTORY",
+            "workstation_ip": "10.1.31.11",
+            "observation_seconds": 30,
+            **{
+                name: "0" * 32
+                for name in (
+                    "arm", "submit", "cancel", "result", "cleanup", "prearm")
+            },
+        }
+        encoded = base64.b64encode(json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+        ).encode()).decode("ascii")
+        completed = subprocess.run(
+            [sys.executable, str(Path(subject.__file__).resolve()),
+             "--controller-session", encoded],
+            capture_output=True, text=True, timeout=60,
+            cwd=tempfile.gettempdir())
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("__TELOS_AUTH_PREARM_PAYLOAD_VALID_", completed.stdout)
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_result_processing_failure_names_its_exception(self):
         """An unknown wire value must not render as a bare unattributed."""
         console = mock.Mock(password=None, timeout=99.0)

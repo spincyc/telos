@@ -25,7 +25,16 @@ import time
 from typing import Mapping
 import uuid
 
-from .signal_cleanup import RunInterrupted
+try:
+    from .signal_cleanup import RunInterrupted
+except ImportError:
+    # The Controller executes this file standalone from /opt/telos-factory,
+    # where no package exists. Host-side run interruption can never fire
+    # there, so a local stand-in keeps _INTERRUPTIONS coherent. The
+    # relative import crashing standalone execution (exit 1 before ARMED)
+    # is what produced receipt-unavailable on eleven consecutive attempts.
+    class RunInterrupted(BaseException):  # type: ignore[no-redef]
+        """Stand-in for standalone Controller-side execution."""
 
 
 MAX_AUDIT_BYTES = 256 * 1024
