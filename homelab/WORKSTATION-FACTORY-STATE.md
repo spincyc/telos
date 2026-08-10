@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.004`
+Document version: `20260810.005`
 
 Status: active implementation
 
@@ -246,8 +246,17 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   next attempt names the actual Controller-side error. Attempt thirteen
   (`20260810T162521Z-29ba30389e7d`) was externally interrupted mid-join
   (`join-guest.result-receive`, broken output pipe, complete teardown)
-  and carries no signal on the watcher; the next prepared attempt is the
-  one that reads the crash text.
+  and carries no signal on the watcher; attempt fourteen
+  (`20260810T163132Z-98e4fc71625a`) was likewise externally interrupted
+  during controller startup with complete teardown. Two consecutive
+  external terminations of background attempts mean the next attempt
+  should run in an operator-visible foreground session. Attempt
+  `20260810T163536Z-b6c208c25018` is prepared and unconsumed:
+  `make homelab-windows-identity-run APPLY=1
+  WINDOWS_IDENTITY_ATTEMPT=homelab/var/factory/windows-installs/run-20260728T114233Z-afecdf7cc9d0/identity/attempt-20260810T163536Z-b6c208c25018
+  FACTORY_CONTROLLER_STATE=build/homelab/vm/bootstrap-dc` — on an arm
+  failure it retains the Controller's own crash text in the attempt's
+  `post-join-reauthentication/controller-auth-console.txt`.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
