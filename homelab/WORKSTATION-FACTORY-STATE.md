@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260810.007`
+Document version: `20260810.008`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-08-10T15:25:00-05:00
+Last evidence/workstream review: 2026-08-10T16:45:00-05:00
 
-Repository baseline reviewed: `d44253d`
+Repository baseline reviewed: `b3ec83d`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -261,26 +261,42 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   bounded result wait expires (`origin=host-wait-expired`). The watcher
   is launched with `sudo -k -S`, which reads the sudo password from the
   same stdin the watcher then reads the fence from, and the fence IS
-  newline-terminated (`serial_automation._send`), so this is a
-  stdin-handoff race between sudo's password consumption and the
-  watcher's first protocol read — not a timing shortfall. Two
-  precautionary widenings landed en route and are harmless but do not
-  address it: `RESULT_RECEIPT_SECONDS` 2→10 (`d44253d`) and the
-  arm-window widening (`0524cbf`). The fixes that DID matter and stand:
-  the standalone-import regression (`2bdf36d`), the hanging-`smbcontrol`
-  crash (`3e9febe`), the console-excerpt retention that finally read the
-  crash (`d7c228e`, `29e0b7d`, `d44253d`), and all five
-  diagnostic-labelling layers. NEXT ACTION: drain sudo's authentication
-  before the watcher's first `input()` — have the Controller side emit a
-  post-sudo ready sentinel the host waits for before sending SUBMIT, or
-  give the watcher a protocol stdin distinct from sudo's password stdin.
-  This needs a considered change, not another attempt; do not spend
-  further runs before the stdin handoff is fixed. A prepared unconsumed
-  attempt (`20260810T163536Z-b6c208c25018`) remains available for the
-  post-fix verification run:
-  `make homelab-windows-identity-run APPLY=1
-  WINDOWS_IDENTITY_ATTEMPT=homelab/var/factory/windows-installs/run-20260728T114233Z-afecdf7cc9d0/identity/attempt-20260810T163536Z-b6c208c25018
-  FACTORY_CONTROLLER_STATE=build/homelab/vm/bootstrap-dc`.
+  newline-terminated (`serial_automation._send`). CORRECTED and RESOLVED
+  2026-08-10: the stdin-handoff theory was wrong. The real cause was a
+  result-collection ordering bug: `begin_submission` starts the host's
+  bounded result deadline, then the domain-operator path runs its own
+  Windows post-submit diagnostic for up to `SUBMISSION_PHASE_TIMEOUT`
+  (70s) before calling `result()`, so the fixed deadline had already
+  expired and the wait failed against a Controller receipt sitting unread
+  in the console buffer — hence `host-wait-expired` with the watcher fully
+  armed. Commit `b3ec83d` makes `result()` extend the session deadline to
+  a fresh receipt window from its own call, so a late collection reads the
+  waiting receipt. **Attempt nineteen (`20260810T213350Z-afb69732ff6c`)
+  read a real directory receipt for the first time: `controller-auth=uncorrelated`,
+  not `receipt-unavailable`.** The three-week receipt-unavailable
+  investigation is closed. Fixes that mattered and stand: the
+  standalone-import regression (`2bdf36d`), the hanging-`smbcontrol` crash
+  (`3e9febe`), the result-ordering deadline (`b3ec83d`), the
+  console-excerpt retention that read the crash (`d7c228e`, `29e0b7d`,
+  `d44253d`), and all five diagnostic-labelling layers.
+- NEW real coordinate (gate 6, not plumbing): attempt nineteen renders
+  `check=windows-joined; operation=join-guest.reboot-reauth-desktop;
+  post-submit-diagnostic=no-logon-event; controller-auth=uncorrelated;
+  controller-auth-cleanup=live-route-unproved`. Both sides agree the
+  post-reboot reauthentication is not completing the domain operator's
+  interactive logon: Windows records no Type-2 interactive 4624/4625 for
+  the operator SID in the window (`no-logon-event`), and the directory
+  observed auth activity that did not correlate to the expected
+  (account, domain, workstation_ip, sid) tuple (`uncorrelated`). This is a
+  genuine identity/GUI problem to debug from real signal — likely the
+  reauth surface is not submitting the operator credential to an
+  interactive domain logon (wrong sign-in surface, account tile, or a
+  correlation-criteria mismatch on SID/realm form). `live-route-unproved`
+  is a secondary cleanup coordinate, not the primary failure. Investigate
+  the retained `rotation-evidence/` and `post-join-reauthentication/`
+  frames against the correlation criteria in `classify_auth_events` and
+  the Windows logon query in
+  `windows_join_control/TelosPostSubmitDiagnostic.ps1`.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
