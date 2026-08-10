@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260727.012`
+Document version: `20260810.001`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-07-30T07:30:00-05:00
+Last evidence/workstream review: 2026-08-10T09:05:00-05:00
 
-Repository baseline reviewed: `7297b87`
+Repository baseline reviewed: `627a719`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -187,6 +187,54 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 
 ## Current blockers and cautions
 
+- The `receipt-unavailable` producer is identified. Attempts six
+  (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
+  both reproduced the established coordinate and both rendered
+  `controller-auth-receipt-origin=unattributed`, excluding the host result
+  wait and the Controller's own wire value. Only one producer emits an
+  unavailable receipt with no cleanup coordinate, no arm subphase, and no
+  host error: `begin_submission()` finding its armed window already expired,
+  so the submit fence is never sent and the Controller is never asked. The
+  arithmetic makes it deterministic: submission always completed inside the
+  120-second GUI budget that starts at arm, and the armed window was capped
+  at 60 seconds, so any arm-to-fence phase between 60 and 120 seconds
+  expires the window on every attempt. Commit `0524cbf` labels that expiry
+  `arm-window-expired`, widens the window to the GUI budget
+  (`min(adapter timeout, 240)`), and stops the terminal-cleanup rebuilds
+  from stripping `receipt_origin` and `host_error`. Attempt seven was
+  launched before those edits and ran only the cleanup-preservation change,
+  so it confirms the shape but not the fix; attempt eight
+  (`20260810T135411Z-ece0215bca67`) is the first run carrying the fix. Its
+  receipt must either collect a real Controller answer (`authenticated`,
+  `rejected`, `no-event`, ...) that finally splits a rejected credential
+  from one never presented, or label itself — a still-`unattributed` receipt
+  from attempt eight would falsify this identification.
+- Boot-failure attempts no longer burn the full readiness budget: commit
+  `627a719` aborts the Windows OS readiness wait as soon as the guest
+  process exits or the switch records `peer-abandoned-before-authentication`
+  (attempt four's 600-second mode); retry policy is unchanged.
+- Test-cycle latency findings recorded 2026-08-10 and deliberately deferred
+  rather than risked mid-acceptance: the two unconditional 60-second sleeps
+  (rotation initial sign-in and reauthentication wake) should become bounded
+  polls, but that needs a lock-curtain reference frame so the wake key is
+  never sent to a black screen; the per-attempt controller rebuild
+  (qemu-img convert, 267-package seed install, xorriso, Ansible convergence,
+  roughly 3–6 minutes) could be replaced by a converged-controller snapshot
+  keyed on input digests, but that weakens the per-attempt fail-closed
+  convergence proof and needs a decision record before implementation;
+  controller convergence and the first Windows boot could overlap, a
+  moderate-risk reordering of `run_lifecycle`. None of these gate attempt
+  cadence as hard as the now-fixed expiry did.
+- Local evidence for the PXE handoffs already exists and should not be
+  re-derived: `homelab/var/factory/evidence/20260728T001858Z-3005758-pxe-handoff`
+  records a passing x86-64 UEFI iPXE Arch installer handoff and
+  `20260728T002735Z-3032556-pxe-handoff` a passing WinPE wimboot chain, both
+  through the simulated gateway's options 66/67. Gates 4–5 stay pending
+  because those runs used a seed-ISO disposable controller with
+  publication-ISO release injection, not the accepted converged Controller
+  serving the selected transactional release set, and gate 5 additionally
+  needs the real Windows Setup path (its one live run failed at phase
+  `windows-setup`).
 - Nothing is published. `main` and `continue-windows-identity-acceptance` are
   reconciled at the same commit and carry every local result, including the
   reading-list line that previously existed only on `origin`. The remote still
@@ -218,9 +266,12 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   which the failure also lacks. No known producer matches the observed shape of
   `receipt-unavailable` with neither cleanup nor arm subphase. Either a
   normalization step between the adapter and the rendered diagnostic drops the
-  cleanup coordinate, or a producer remains unfound. An unavailable receipt now
-  always carries an origin, so the next run labels this one rather than leaving
-  it blank.
+  cleanup coordinate, or a producer remains unfound. Superseded 2026-08-10:
+  both branches were true — the terminal-cleanup rebuilds stripped
+  coordinates, and the unfound producer is the expired armed window in
+  `begin_submission()`, which this reading pass missed because its raise
+  sits between the arm and result phases it enumerated. See the first
+  bullet in this section.
 - Three authorized attempts (`20260730T181419Z-39d2f820716d`,
   `20260730T182932Z-c93f871638bd`, `20260730T184757Z-0e9b24f41a38`) all reached
   the same coordinate with complete five-part teardown. Both host-side
@@ -230,7 +281,9 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   split is the one that matters: distinguish the host's bounded wait for the
   result receipt expiring from the Controller itself reporting
   `receipt-unavailable`, which is a legitimate value in its wire vocabulary.
-  Do not spend further attempts before that split exists. Note the empty
+  That split exists as of commit `6d55dd0` and attempts may be spent again;
+  the labels excluded both branches and identified the true producer (see
+  the first bullet in this section). Note the empty
   `runtime/controller/guard` directory is not evidence of failure: those paths
   are teardown media accounting for a guard controller this path does not run.
 - Attempt `20260730T181419Z-39d2f820716d` ran with operator authorization and
