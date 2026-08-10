@@ -1591,12 +1591,15 @@ class ControllerAuthDiagnosticSession:
         except _INTERRUPTIONS:
             self._recover_after_interruption()
             raise
-        except BaseException:
+        except BaseException as error:
             cleanup = self._recover_cleanup()
             raise ControllerAuthDiagnosticError(
                 controller_auth_result=ControllerAuthResult(
                     collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
                     cleanup=cleanup,
+                    # A receipt line arrived but could not be processed; the
+                    # exception type is the only secret-free record of why.
+                    host_error=type(error).__name__,
                 ),
                 cleanup_proved=cleanup is None,
             ) from None

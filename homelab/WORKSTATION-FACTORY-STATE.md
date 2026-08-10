@@ -299,11 +299,14 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   distinguish a rejected credential from one never presented to the directory,
   and further Windows-side attempts will keep reproducing the same coordinate.
   Fix Controller receipt collection before spending another attempt.
-- Live Windows identity attempts were blocked pending operator authorization,
-  which has now been granted for privileged local QEMU.
-  `make homelab-windows-identity-prepare APPLY=1` and the corresponding run
-  target need privileged local QEMU execution that the current agent sandbox
-  refuses. Every prior attempt tore down completely, so the retained bundle
+  Superseded 2026-08-10: receipt collection is fixed in `0524cbf` (expired
+  arm window); see the first bullet in this section.
+- Live Windows identity attempts run under the granted operator
+  authorization for privileged local QEMU. Superseded 2026-08-10: the
+  sandbox-refusal note no longer holds — `/dev/kvm` is world-readable on
+  this host and the 2026-08-10 attempts ran KVM QEMU directly from the
+  agent session, so attempts need no operator hand-off. Every prior attempt
+  tore down completely, and the retained bundle
   `run-20260728T114233Z-afecdf7cc9d0` remains the only identity input.
 - Image promotion now has a static, non-privileged gate:
   `homelab.lib.image_promotion_gate.gate_candidate_image` merges the profile

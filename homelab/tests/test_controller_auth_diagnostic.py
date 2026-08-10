@@ -431,6 +431,30 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ],
         )
 
+    def test_result_processing_failure_names_its_exception(self):
+        """An unknown wire value must not render as a bare unattributed."""
+        console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: 100.0)
+        session._state = "collecting"
+        session._deadline = 150.0
+        session._wait = mock.Mock(side_effect=[
+            re.search(
+                rb"(code|collection):([a-z-]+)", b"collection:not-a-value"),
+            re.match(rb"(ok|[a-z-]+)", b"ok"),
+        ])
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.result()
+
+        result = caught.exception.controller_auth_result
+        self.assertIs(
+            result.collection, ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        self.assertEqual(result.host_error, "ValueError")
+        self.assertIsNone(result.cleanup)
+        self.assertTrue(caught.exception.cleanup_proved)
+
     def test_expired_arm_window_is_labelled_before_the_controller_is_asked(self):
         """The sixth attempt rendered unattributed; this producer now signs."""
         console = mock.Mock(password=None, timeout=99.0)
@@ -1749,6 +1773,38 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 result = ControllerAuthResult(
                     collection=_COLLECTION_BY_WIRE[wire])
                 self.assertIsNone(result.host_error)
+
+    def test_desktop_failure_keeps_the_arm_subphase_of_a_lost_watcher(self):
+        """A proved-cleanup arm failure must stay explained at the desktop."""
+        from homelab.vm.windows_identity_run import (
+            WindowsLocalReauthenticationError)
+        error = WindowsLocalReauthenticationError(
+            "desktop",
+            controller_auth_result=ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+            controller_auth_arm_subphase=(
+                ControllerAuthArmSubphase.SUDO_PROMPT),
+        )
+        self.assertIs(
+            error.controller_auth_arm_subphase,
+            ControllerAuthArmSubphase.SUDO_PROMPT)
+        rendered = IdentityFailureDiagnostic.join_guest(
+            "reboot-reauth-desktop",
+            "WindowsLocalReauthenticationError",
+            controller_auth=error.controller_auth_result,
+            controller_auth_arm_subphase=error.controller_auth_arm_subphase,
+        ).render()
+        self.assertIn("controller-auth-arm-subphase=sudo-prompt", rendered)
+        self.assertIn("controller-auth-receipt-origin=unattributed", rendered)
+        # Without an unavailable receipt the subphase still drops.
+        stripped = WindowsLocalReauthenticationError(
+            "desktop",
+            controller_auth_result=ControllerAuthResult(
+                code=ControllerAuthCode.AUTHENTICATED),
+            controller_auth_arm_subphase=(
+                ControllerAuthArmSubphase.SUDO_PROMPT),
+        )
+        self.assertIsNone(stripped.controller_auth_arm_subphase)
 
     def test_receipt_origin_separates_silence_from_a_reported_answer(self):
         """A Controller that never answered differs from one with nothing."""

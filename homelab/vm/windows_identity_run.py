@@ -51,6 +51,7 @@ from .windows_postsubmit_diagnostic import (
 )
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
+    ControllerAuthCollection,
     ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
@@ -411,8 +412,19 @@ class IdentityFailureDiagnostic:
             and (
                 type(self.controller_auth_arm_subphase)
                 is not ControllerAuthArmSubphase
-                or self.operation
-                != "join-guest.reboot-reauth-controller-auth-arm"
+                or (
+                    self.operation
+                    != "join-guest.reboot-reauth-controller-auth-arm"
+                    # A proved-cleanup arm failure lets the GUI continue and
+                    # fail later; the subphase then explains the unavailable
+                    # receipt at whichever reauthentication coordinate the
+                    # attempt actually reached.
+                    and not (
+                        self.controller_auth is not None
+                        and self.controller_auth.collection
+                        is ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                    )
+                )
                 or self.error_type
                 != "WindowsLocalReauthenticationError"
             )
@@ -695,7 +707,19 @@ class WindowsLocalReauthenticationError(WindowsIdentityRunError):
             and (
                 type(controller_auth_arm_subphase)
                 is not ControllerAuthArmSubphase
-                or operation != "controller-auth-arm"
+                or (
+                    operation != "controller-auth-arm"
+                    # A proved-cleanup arm failure lets the GUI continue
+                    # without a watcher; the later failure then carries an
+                    # unavailable receipt whose only explanation is the arm
+                    # subphase recorded here. Dropping it rendered attempt
+                    # eight as a bare unattributed receipt.
+                    and not (
+                        self.controller_auth_result is not None
+                        and self.controller_auth_result.collection
+                        is ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                    )
+                )
             )
         ):
             controller_auth_arm_subphase = None
