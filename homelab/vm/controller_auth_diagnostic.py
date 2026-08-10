@@ -53,7 +53,11 @@ MIN_OBSERVATION_SECONDS = 1
 # interval for its terminal receipt to cross the serial transport after that
 # window closes; otherwise a result produced exactly at the guest deadline
 # races an equal host deadline.
-RESULT_RECEIPT_SECONDS = 2
+# Transport allowance for the result line after the Controller's bounded
+# observation ends. Attempt seventeen armed, observed, and then missed this
+# window over a busy serial console: two seconds was thinner than prompt
+# echo plus receipt latency.
+RESULT_RECEIPT_SECONDS = 10
 # Cleanup's explicitly bounded operations can spend three sequential
 # five-second subprocess timeouts (_remove_persistent_route, disable, and
 # verification), then five seconds checking descriptor release.  This is a

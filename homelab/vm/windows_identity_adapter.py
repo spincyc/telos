@@ -1139,6 +1139,8 @@ class NativeWindowsAcceptanceAdapter:
                     except (KeyboardInterrupt, SystemExit, RunInterrupted):
                         raise
                     except ControllerAuthDiagnosticError as error:
+                        _retain_console_excerpt(
+                            self.boundary.controller_console, evidence)
                         try:
                             self._controller_auth_result = (
                                 _exact_controller_auth_error_result(error))
@@ -1152,6 +1154,8 @@ class NativeWindowsAcceptanceAdapter:
                                     SINK_ABSENCE_UNPROVED),
                             )
                     except BaseException as error:
+                        _retain_console_excerpt(
+                            self.boundary.controller_console, evidence)
                         self._controller_auth_result = ControllerAuthResult(
                             collection=(
                                 ControllerAuthCollection.RECEIPT_UNAVAILABLE),
@@ -1301,6 +1305,8 @@ class NativeWindowsAcceptanceAdapter:
                         ):
                             raise
                         except ControllerAuthDiagnosticError as error:
+                            _retain_console_excerpt(
+                                self.boundary.controller_console, evidence)
                             try:
                                 self._controller_auth_result = (
                                     _exact_controller_auth_error_result(error))
@@ -1315,6 +1321,8 @@ class NativeWindowsAcceptanceAdapter:
                                             SINK_ABSENCE_UNPROVED),
                                     ))
                         except BaseException:
+                            _retain_console_excerpt(
+                                self.boundary.controller_console, evidence)
                             self._controller_auth_result = ControllerAuthResult(
                                 collection=(
                                     ControllerAuthCollection.
