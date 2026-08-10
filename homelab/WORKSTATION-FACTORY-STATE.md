@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.012`
+Document version: `20260810.013`
 
 Status: active implementation
 
@@ -240,6 +240,25 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   itself to catch a flashed error. Also verify the operator's AD password
   staging actually took (compare staged vs typed). Do NOT keep spending
   attempts on the bare coordinate; make the guest diagnostic speak first.
+  Done and DEFINITIVE 2026-08-10. The guest diagnostic was enriched to
+  report the specific cause (commit `7369991`; a fail-safe fix `683da02`
+  after attempt 21 regressed to `watcher-error` from a Get-WinEvent against
+  an absent NETLOGON/Kerberos provider). Attempt 22
+  (`20260810T230825Z-c227e9001106`) rendered `no-logon-event` with the
+  enriched, fail-safe diagnostic — meaning it found NOTHING in the window:
+  no operator 4625 of any LogonType, no NETLOGON 5719/3210/5783, no
+  Kerberos error, no non-interactive operator logon. This rules out
+  DC/network/Kerberos entirely (any of those would write a System-log
+  event) and, with the post-submit frames (form resets empty, no spinner,
+  no error, no desktop), proves the operator's Enter is NOT initiating an
+  interactive logon at all. The problem is the GUI submit not reaching
+  LSA, not the directory. Note the local replacement sign-in pre-reboot
+  uses the same plain-Enter submit and DOES reach the desktop, so the
+  difference is the post-reboot domain "Other user" surface specifically.
+  NEXT: capture frames through the `type_secret` + `key("ret")` submit
+  (secret-safe — the field shows masked dots, not plaintext) to see
+  whether the password field holds dots and what Enter does, then decide
+  between a re-focus-before-Enter fix and clicking the submit arrow.
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered
