@@ -1,6 +1,7 @@
 """Tests for the bounded Windows post-submit diagnostic protocol."""
 
 import json
+from pathlib import Path
 import socket
 import unittest
 
@@ -15,6 +16,24 @@ from homelab.vm.windows_postsubmit_diagnostic import (
 
 NONCE = "ab" * 16
 PRINCIPAL = "operator@FACTORY.TEST"
+
+# The secondary evidence codes added so a silently reset operator sign-in
+# reports WHY instead of a bare no-logon-event. Each must round-trip the wire
+# protocol and be emitted verbatim by the guest watcher script.
+SECONDARY_EVIDENCE_CODES = (
+    PostSubmitDiagnosticCode.NON_INTERACTIVE_LOGON_FAILURE,
+    PostSubmitDiagnosticCode.NO_LOGON_SERVERS,
+    PostSubmitDiagnosticCode.SECURE_CHANNEL_ERROR,
+    PostSubmitDiagnosticCode.KERBEROS_ERROR,
+    PostSubmitDiagnosticCode.NON_INTERACTIVE_LOGON,
+)
+
+_WATCHER_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "vm"
+    / "windows_join_control"
+    / "TelosPostSubmitDiagnostic.ps1"
+)
 
 
 def record(value):
@@ -81,6 +100,41 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 PostSubmitDiagnosticError, "code is invalid"):
             session.result()
+
+    def test_secondary_evidence_codes_round_trip_the_wire(self):
+        for code in SECONDARY_EVIDENCE_CODES:
+            with self.subTest(code=code.value):
+                session, guest = self.session()
+                session._state = "submitted"
+                guest.sendall(record({
+                    "schema_version": 1, "event": "result", "nonce": NONCE,
+                    "code": code.value, "cleanup_complete": True,
+                }))
+                self.assertIs(code, session.result())
+
+    def test_secondary_evidence_unknown_neighbour_fails_closed(self):
+        session, guest = self.session()
+        session._state = "submitted"
+        guest.sendall(record({
+            "schema_version": 1, "event": "result", "nonce": NONCE,
+            "code": "non-interactive-logon-timeout", "cleanup_complete": True,
+        }))
+        with self.assertRaisesRegex(
+                PostSubmitDiagnosticError, "code is invalid"):
+            session.result()
+
+    def test_watcher_script_emits_each_secondary_code_once(self):
+        text = _WATCHER_SCRIPT.read_text(encoding="ascii")
+        for code in SECONDARY_EVIDENCE_CODES:
+            with self.subTest(code=code.value):
+                # Match the quoted literal so 'non-interactive-logon' is not
+                # counted inside 'non-interactive-logon-failure'.
+                self.assertEqual(
+                    1, text.count("'" + code.value + "'"),
+                    f"{code.value} must be emitted exactly once")
+        # The genuine no-evidence code and the Type-2 correlation both remain.
+        self.assertEqual(1, text.count("'no-logon-event'"))
+        self.assertIn("LogonType -cne '2'", text)
 
     def test_rejects_stale_nonce_extra_fields_and_noncanonical_json(self):
         invalid_records = (

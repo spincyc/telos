@@ -137,6 +137,29 @@ function Get-FailureCode {
     return 'other-rejection'
 }
 
+function Test-OperatorMatch {
+    param([int]$Id, [hashtable]$Data, $Config, [string]$OperatorPrincipal)
+    if ($Id -eq 4624) {
+        return [string]$Data.TargetUserSid -ceq [string]$Config.operator_sid
+    }
+    $domain = [string]$Data.TargetDomainName
+    $targetName = [string]$Data.TargetUserName
+    $realmDomain = (
+        $domain -ceq [string]$Config.operator_realm -or
+        $domain -ceq
+            ([string]$Config.operator_realm).Split('.')[0])
+    $splitIdentity = (
+        $targetName -ceq [string]$Config.operator_name -and
+        $realmDomain)
+    # Windows may preserve an interactively typed UPN in TargetUserName and
+    # leave TargetDomainName blank. Accept only the exact public UPN and finite
+    # domain forms for that same identity.
+    $upnIdentity = (
+        $targetName -ceq $OperatorPrincipal -and
+        (-not $domain -or $realmDomain))
+    return ($splitIdentity -or $upnIdentity)
+}
+
 try {
 Add-Type -TypeDefinition @'
 using System;
@@ -290,28 +313,8 @@ public static class TelosAuditPolicy {
                 continue
             }
             $sawInteractiveLogon = $true
-            $domain = [string]$data.TargetDomainName
-            $isOperator = if ($eventRecord.Id -eq 4624) {
-                [string]$data.TargetUserSid -ceq
-                    [string]$config.operator_sid
-            } else {
-                $targetName = [string]$data.TargetUserName
-                $realmDomain = (
-                    $domain -ceq [string]$config.operator_realm -or
-                    $domain -ceq
-                        ([string]$config.operator_realm).Split('.')[0])
-                $splitIdentity = (
-                    $targetName -ceq [string]$config.operator_name -and
-                    $realmDomain)
-                # Windows may preserve an interactively typed UPN in
-                # TargetUserName and leave TargetDomainName blank. Accept only
-                # the exact public UPN and finite domain forms for that same
-                # identity.
-                $upnIdentity = (
-                    $targetName -ceq $operatorPrincipal -and
-                    (-not $domain -or $realmDomain))
-                $splitIdentity -or $upnIdentity
-            }
+            $isOperator = Test-OperatorMatch `
+                $eventRecord.Id $data $config $operatorPrincipal
             if ($isOperator) {
                 $matches += ,@($eventRecord, $data)
             }
@@ -331,7 +334,61 @@ public static class TelosAuditPolicy {
         Start-Sleep -Milliseconds 250
     }
     if (-not $code) {
-        $code = if ($sawInteractiveLogon) {
+        # No correlated Type-2 logon closed the submission. Collect secondary
+        # evidence, bounded and fail-closed, within the same baseline window so
+        # a silently reset sign-in reports WHY instead of a bare no-logon-event.
+        # An operator failure of any LogonType is the most direct rejection; a
+        # missing logon server or broken secure channel explains a submission
+        # that never reaches authentication; a Kerberos error is next; an
+        # operator non-interactive success is the weakest correlate. Only a
+        # genuine absence of any evidence remains no-logon-event.
+        $operatorFailure = $false
+        $operatorNonInteractive = $false
+        $secondary = @(Get-WinEvent -LogName Security -FilterXPath (
+                '*[System[(EventID=4624 or EventID=4625) ' +
+                'and EventRecordID > ' + $baseline + ']]'
+            ) -MaxEvents 65 -ErrorAction SilentlyContinue)
+        foreach ($eventRecord in $secondary) {
+            $data = Get-EventData $eventRecord
+            if (-not (Test-OperatorMatch `
+                    $eventRecord.Id $data $config $operatorPrincipal)) {
+                continue
+            }
+            if ($eventRecord.Id -eq 4625) {
+                $operatorFailure = $true
+            } elseif ([string]$data.LogonType -cne '2') {
+                $operatorNonInteractive = $true
+            }
+        }
+        $netlogonNoDc = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'System'
+                ProviderName = 'NETLOGON'
+                Id = 5719
+                StartTime = $baselineTime
+            } -MaxEvents 1 -ErrorAction SilentlyContinue)
+        $netlogonSecure = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'System'
+                ProviderName = 'NETLOGON'
+                Id = 3210, 5783
+                StartTime = $baselineTime
+            } -MaxEvents 1 -ErrorAction SilentlyContinue)
+        $kerberosError = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'System'
+                ProviderName = 'Microsoft-Windows-Security-Kerberos'
+                StartTime = $baselineTime
+                Level = 1, 2, 3
+            } -MaxEvents 1 -ErrorAction SilentlyContinue)
+        $code = if ($operatorFailure) {
+            'non-interactive-logon-failure'
+        } elseif ($netlogonNoDc.Count -gt 0) {
+            'no-logon-servers'
+        } elseif ($netlogonSecure.Count -gt 0) {
+            'secure-channel-error'
+        } elseif ($kerberosError.Count -gt 0) {
+            'kerberos-error'
+        } elseif ($operatorNonInteractive) {
+            'non-interactive-logon'
+        } elseif ($sawInteractiveLogon) {
             'uncorrelated-logon-event'
         } else {
             'no-logon-event'

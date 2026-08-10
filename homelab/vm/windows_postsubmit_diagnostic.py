@@ -53,6 +53,14 @@ class PostSubmitDiagnosticCode(Enum):
     EVENT_GAP = "event-gap"
     NO_LOGON_EVENT = "no-logon-event"
     UNCORRELATED_LOGON_EVENT = "uncorrelated-logon-event"
+    # Secondary evidence when no correlated Type-2 logon closed the submission.
+    # A missing Type-2 4624/4625 no longer collapses to no-logon-event when the
+    # baseline window still explains why the interactive logon never completed.
+    NON_INTERACTIVE_LOGON_FAILURE = "non-interactive-logon-failure"
+    NO_LOGON_SERVERS = "no-logon-servers"
+    SECURE_CHANNEL_ERROR = "secure-channel-error"
+    KERBEROS_ERROR = "kerberos-error"
+    NON_INTERACTIVE_LOGON = "non-interactive-logon"
     AMBIGUOUS = "ambiguous"
     WATCHER_ERROR = "watcher-error"
 
