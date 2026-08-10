@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.009`
+Document version: `20260810.010`
 
 Status: active implementation
 
@@ -186,6 +186,22 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | 14 | External integration | Only after a new explicit authorization: read-only UniFi review, separately approved changes, physical attachment, then ThinkPad X13 Gen 6 Intel pilot. | blocked by design |
 
 ## Current blockers and cautions
+
+- Gate 7 first live shakedown (2026-08-10, bundle
+  `arch-installs/run-20260810T215936Z-02fe36622647`) found a real boot bug:
+  the workstation booted the existing `Windows Boot Manager` instead of
+  PXE, so the installer never ran. `arch_install_prepare` copied the
+  Windows-installed OVMF vars (carrying a `Boot0008 "Windows Boot Manager"`
+  NVRAM entry at boot priority) and pinned `-boot order=c,once=n`; the
+  one-shot network boot cannot override a firmware that already has a
+  bootable Windows entry. The Windows installer works only because it
+  starts from a blank disk. Fix in progress: use pristine OVMF vars for the
+  install boot (no inherited Windows entry) and a network-first boot order,
+  keeping the persistent Windows disk untouched; `arch_second`'s
+  `bootctl install` + `default auto-windows` handles the post-install menu.
+  The PXE transport, controller publication, and archiso boot themselves
+  worked — the controller published the Arch release and the disposable
+  controller converged.
 
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
