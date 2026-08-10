@@ -163,6 +163,38 @@ def _run_local_reauthentication_operation(
         ) from None
 
 
+def _redacted_console_excerpt(console, *, limit: int = 16384) -> bytes | None:
+    """Bounded console tail with the session credential removed.
+
+    The Controller-side watcher's crash text exists only on the shared
+    console; twelve attempts rendered `command-exit-nonzero` without it.
+    """
+    try:
+        data = bytes(console.buffer)[-limit:]
+    except (AttributeError, TypeError):
+        return None
+    password = getattr(console, "password", None)
+    if isinstance(password, (bytes, bytearray)) and password:
+        data = data.replace(bytes(password), b"[REDACTED]")
+    return data
+
+
+def _retain_console_excerpt(console, evidence: Path) -> None:
+    """Best-effort retention; diagnostics must never displace the failure."""
+    try:
+        excerpt = _redacted_console_excerpt(console)
+        if excerpt is None:
+            return
+        evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target = evidence / "controller-auth-console.txt"
+        target.write_bytes(excerpt)
+        target.chmod(0o600)
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException:
+        return
+
+
 def _with_controller_auth_result(
     error: WindowsLocalReauthenticationError,
     controller_auth_result: ControllerAuthResult | None,
@@ -1060,6 +1092,8 @@ class NativeWindowsAcceptanceAdapter:
                             ControllerAuthArmSubphase.LAUNCH),
                     ) from None
                 self._controller_auth_result = normalized_arm_result
+                _retain_console_excerpt(
+                    self.boundary.controller_console, evidence)
                 if not error.cleanup_proved:
                     raise WindowsLocalReauthenticationError(
                         "controller-auth-arm",

@@ -537,6 +537,18 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         controller.cancel.assert_called_once_with()
         interaction_type.return_value.type_secret.assert_not_called()
 
+    def test_console_excerpt_is_bounded_and_redacted(self):
+        console = mock.Mock()
+        console.buffer = b"A" * 20000 + b"sudo secret-value tail"
+        console.password = b"secret-value"
+        excerpt = subject._redacted_console_excerpt(console)
+        self.assertLessEqual(len(excerpt), 16384 + len(b"[REDACTED]"))
+        self.assertNotIn(b"secret-value", excerpt)
+        self.assertIn(b"[REDACTED]", excerpt)
+        self.assertTrue(excerpt.endswith(b"tail"))
+        console.buffer = None
+        self.assertIsNone(subject._redacted_console_excerpt(console))
+
     def test_desktop_failure_after_lost_watcher_renders_the_arm_subphase(
         self,
     ):
