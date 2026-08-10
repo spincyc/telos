@@ -184,6 +184,28 @@ def _redacted_console_excerpt(console, *, limit: int = 16384) -> bytes | None:
     return data
 
 
+def _retain_single_frame(qmp, evidence: Path, name: str, enabled) -> None:
+    """Best-effort one-shot frame for submit-transition diagnosis; never raises.
+
+    Gated on the same integer frame-count flag as the post-submit capture so
+    the test mock plan (which returns a non-int) skips it.
+    """
+    if not (type(enabled) is int and enabled > 0):
+        return
+    try:
+        evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        frame = evidence / f"identity-{name}.ppm"
+        qmp.screenshot(frame)
+        try:
+            frame.chmod(0o600)
+        except OSError:
+            pass
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException:
+        return
+
+
 def _retain_post_submit_frames(
     qmp, evidence: Path, clock, *, count: int = 10, interval: float = 1.0,
 ) -> None:
@@ -1012,6 +1034,13 @@ class NativeWindowsAcceptanceAdapter:
 
             _run_local_reauthentication_operation(
                 "submit", settle_secret_input)
+            # Secret-safe transition capture: the field is masked (dots),
+            # not plaintext. Shows whether the password is entered and what
+            # the activation does — attempt 22 proved no logon event fires,
+            # so the submit itself is the suspect.
+            _retain_single_frame(
+                self._qmp(), evidence, "submit-pre-activation",
+                getattr(plan, "post_join_retain_submit_frames", 0))
             _run_local_reauthentication_operation(
                 "submit",
                 lambda: interaction.key(
@@ -1019,6 +1048,9 @@ class NativeWindowsAcceptanceAdapter:
                     timeout=remaining("submit"),
                 ),
             )
+            _retain_single_frame(
+                self._qmp(), evidence, "submit-post-activation",
+                getattr(plan, "post_join_retain_submit_frames", 0))
             if submit_focus_authorized:
                 # The reviewed, guest-bound production authority is exactly
                 # one Tab to the submit arrow followed by one activation.

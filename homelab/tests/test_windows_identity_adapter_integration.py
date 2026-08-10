@@ -537,6 +537,24 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         controller.cancel.assert_called_once_with()
         interaction_type.return_value.type_secret.assert_not_called()
 
+    def test_single_frame_is_gated_and_fail_safe(self):
+        qmp = mock.Mock()
+        with tempfile.TemporaryDirectory() as name:
+            evidence = Path(name) / "e"
+            # Disabled (non-int mock value or 0) writes nothing.
+            subject._retain_single_frame(qmp, evidence, "x", mock.Mock())
+            subject._retain_single_frame(qmp, evidence, "x", 0)
+            qmp.screenshot.assert_not_called()
+            # Enabled writes exactly one named frame.
+            subject._retain_single_frame(qmp, evidence, "submit-pre", 1)
+            qmp.screenshot.assert_called_once()
+            self.assertTrue(
+                str(qmp.screenshot.call_args.args[0]).endswith(
+                    "identity-submit-pre.ppm"))
+            # A screenshot failure never propagates.
+            qmp.screenshot.side_effect = RuntimeError("down")
+            subject._retain_single_frame(qmp, evidence, "submit-post", 1)
+
     def test_post_submit_frames_are_bounded_and_clock_driven(self):
         clock = [100.0]
 
