@@ -238,6 +238,17 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   controller convergence and the first Windows boot could overlap, a
   moderate-risk reordering of `run_lifecycle`. None of these gate attempt
   cadence as hard as the now-fixed expiry did.
+- Guest progress reporting is implemented to the unit level (commits
+  `e4457c9`, `a315449`): the protocol library gained its missing halves
+  (envelope-building reporter, host port arming/classification), the
+  factory runner arms an audited dedicated virtserialport and records a
+  secret-free, never-load-bearing progress block in evidence, and the
+  archiso image carries a device-bound stdlib reporter service. Remaining
+  before a live guest can report: a per-run credential-delivery hook into
+  the sealed PXE payload (owner-facing design decision — do not invent a
+  secret channel), the next privileged image rebuild, reconnect-aware
+  collection across guest service restarts, and consumption by the
+  identity and install runners.
 - Local evidence for the PXE handoffs already exists and should not be
   re-derived: `homelab/var/factory/evidence/20260728T001858Z-3005758-pxe-handoff`
   records a passing x86-64 UEFI iPXE Arch installer handoff and
