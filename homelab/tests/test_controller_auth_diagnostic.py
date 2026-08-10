@@ -431,6 +431,36 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ],
         )
 
+    def test_expired_arm_window_is_labelled_before_the_controller_is_asked(self):
+        """The sixth attempt rendered unattributed; this producer now signs."""
+        console = mock.Mock(password=None, timeout=99.0)
+        console._wait.return_value = re.match(rb"(ok|[a-z-]+)", b"ok")
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25, post_arm_timeout=7,
+            clock=lambda: 200.0)
+        session._state = "armed"
+        session._armed_deadline = 107.0
+
+        with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+            session.begin_submission()
+
+        result = caught.exception.controller_auth_result
+        self.assertIs(
+            result.collection, ControllerAuthCollection.RECEIPT_UNAVAILABLE)
+        self.assertIs(
+            result.receipt_origin,
+            ControllerAuthReceiptOrigin.ARM_WINDOW_EXPIRED)
+        self.assertIn(
+            "controller-auth-receipt-origin=arm-window-expired",
+            IdentityFailureDiagnostic.join_guest(
+                "reboot-reauth-desktop",
+                "WindowsLocalReauthenticationError",
+                controller_auth=result).render())
+        # The submit fence was never sent.
+        self.assertNotIn(
+            "controller-auth-submitted",
+            [call.args[1] for call in console._send.call_args_list])
+
     def test_begin_submission_dispatch_failure_recovers_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)
         console._send.side_effect = [RuntimeError("private transport"), None]
@@ -502,7 +532,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         session.arm()
 
         self.assertTrue(session.armed)
-        self.assertLessEqual(session._post_arm_timeout, 60)
+        self.assertLessEqual(session._post_arm_timeout, 300)
 
     def test_cancel_after_post_arm_expiry_has_fresh_cleanup_reserve(self):
         now = [100.0]
@@ -1550,6 +1580,43 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
         )
         self.assertFalse(caught.exception.cleanup_proved)
+
+    def test_terminal_cleanup_preserves_receipt_origin_and_host_error(self):
+        """A degraded cleanup must not relabel a Controller-reported receipt."""
+        reported = ControllerAuthResult(
+            collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
+            receipt_origin=ControllerAuthReceiptOrigin.CONTROLLER_REPORTED,
+            host_error="RuntimeError",
+        )
+        # A cleanup receipt other than ok rebuilds the result.
+        console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        session._wait = mock.Mock(
+            return_value=re.match(rb"(ok|[a-z-]+)", b"sink-absence-unproved"))
+        result, proved = session._terminal_cleanup(
+            reported, "controller-auth-cleanup")
+        self.assertFalse(proved)
+        self.assertIs(
+            result.receipt_origin,
+            ControllerAuthReceiptOrigin.CONTROLLER_REPORTED)
+        self.assertEqual(result.host_error, "RuntimeError")
+        self.assertIs(
+            result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
+        # A lost cleanup receipt takes the poisoned rebuild instead.
+        console = mock.Mock(password=None, timeout=99.0)
+        session = ControllerAuthDiagnosticSession(console, self.expected)
+        session._wait = mock.Mock(side_effect=RuntimeError("receipt lost"))
+        result, proved = session._terminal_cleanup(
+            reported, "controller-auth-cleanup")
+        self.assertFalse(proved)
+        self.assertIs(
+            result.receipt_origin,
+            ControllerAuthReceiptOrigin.CONTROLLER_REPORTED)
+        self.assertEqual(result.host_error, "RuntimeError")
+        self.assertIs(
+            result.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
 
     def test_arm_receipt_failure_is_typed_and_recovers_cleanup(self):
         console = mock.Mock(password=None, timeout=99.0)

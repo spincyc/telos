@@ -8,7 +8,7 @@ coordinates cross the shared serial console.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 import argparse
@@ -114,6 +114,11 @@ class ControllerAuthReceiptOrigin(Enum):
 
     HOST_WAIT_EXPIRED = "host-wait-expired"
     CONTROLLER_REPORTED = "controller-reported"
+    # The armed window lapsed before the submission fence was ever sent, so
+    # the Controller was never asked. This is a host-side scheduling failure
+    # distinct from a wait that began and expired: the fix is arming later or
+    # budgeting the window for the real GUI phase, not extending a wait.
+    ARM_WINDOW_EXPIRED = "arm-window-expired"
     # No producing site declared an origin. This is applied automatically so
     # the gap is visible in the rendered failure instead of silent: an
     # unavailable receipt always says where it came from, even when the answer
@@ -947,7 +952,14 @@ class ControllerAuthDiagnosticSession:
     ) -> None:
         if not CLEANUP_RESERVE_SECONDS + MIN_OBSERVATION_SECONDS <= timeout <= 60:
             raise ValueError("Controller auth timeout is invalid")
-        if not MIN_OBSERVATION_SECONDS <= post_arm_timeout <= 60:
+        # The armed Controller watcher blocks on its submit/cancel fence with
+        # no timeout of its own, and its observation baseline is captured at
+        # arm time, so a longer armed window changes nothing on the
+        # Controller. The cap only bounds how long the shared console may
+        # stay occupied; 60 was shorter than the real GUI submission phase
+        # and made every reauthentication attempt expire the window before
+        # the fence was sent.
+        if not MIN_OBSERVATION_SECONDS <= post_arm_timeout <= 300:
             raise ValueError("Controller auth post-arm timeout is invalid")
         self.console = console
         self.expectation = expectation
@@ -1189,10 +1201,12 @@ class ControllerAuthDiagnosticSession:
             raise
         except BaseException:
             self._state = "poisoned"
+            # replace() keeps every other coordinate, in particular the
+            # receipt origin and host error, which a field-by-field rebuild
+            # silently stripped and _validate then restamped unattributed.
             return (
-                ControllerAuthResult(
-                    code=result.code,
-                    collection=result.collection,
+                replace(
+                    result,
                     cleanup=ControllerAuthCleanup.SINK_ABSENCE_UNPROVED,
                 ),
                 False,
@@ -1204,11 +1218,7 @@ class ControllerAuthDiagnosticSession:
             if cleanup is None:
                 self._state = "poisoned"
                 cleanup = ControllerAuthCleanup.SINK_ABSENCE_UNPROVED
-            result = ControllerAuthResult(
-                code=result.code,
-                collection=result.collection,
-                cleanup=cleanup,
-            )
+            result = replace(result, cleanup=cleanup)
         self._result = result
         self._state = "finished"
         return result, cleanup_proved
@@ -1511,6 +1521,8 @@ class ControllerAuthDiagnosticSession:
                 controller_auth_result=ControllerAuthResult(
                     collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE,
                     cleanup=cleanup,
+                    receipt_origin=(
+                        ControllerAuthReceiptOrigin.ARM_WINDOW_EXPIRED),
                 ),
                 cleanup_proved=cleanup is None,
             )

@@ -1091,7 +1091,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             self.boundary.controller_console,
             ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
             timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
-            post_arm_timeout=(
+            post_arm_timeout=min(
+                adapter.timeout,
                 subject.CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS),
             clock=adapter.clock,
         )

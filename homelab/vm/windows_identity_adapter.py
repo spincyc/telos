@@ -88,7 +88,13 @@ from .windows_postsubmit_diagnostic import (
 )
 
 CONTROLLER_AUTH_TIMEOUT_SECONDS = 60.0
-CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS = 60.0
+# The armed window must cover everything between arming the Controller
+# watcher and sending the submit fence: guest diagnostic arm, secret typing,
+# departure proof, and the settle drains. At 60 it was shorter than that
+# phase, so every attempt expired the window and recorded
+# receipt-unavailable before the Controller was ever asked. min() against
+# the adapter timeout still binds this to the GUI reauthentication budget.
+CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS = 240.0
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
