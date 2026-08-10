@@ -211,15 +211,15 @@ class WindowsJoinIsoTests(unittest.TestCase):
         self.assertIn("TargetUserName", diagnostic)
         self.assertIn("TargetDomainName", diagnostic)
         self.assertIn(
-            "$targetName -ceq $operatorPrincipal", diagnostic)
+            "$targetName -ceq $OperatorPrincipal", diagnostic)
         self.assertIn(
             "(-not $domain -or $realmDomain)", diagnostic)
         self.assertIn(
-            "$targetName -ceq [string]$config.operator_name", diagnostic)
+            "$targetName -ceq [string]$Config.operator_name", diagnostic)
         self.assertIn(
-            "$domain -ceq [string]$config.operator_realm", diagnostic)
+            "$domain -ceq [string]$Config.operator_realm", diagnostic)
         self.assertIn(
-            "([string]$config.operator_realm).Split('.')[0]",
+            "([string]$Config.operator_realm).Split('.')[0]",
             diagnostic,
         )
         self.assertIn("LogonType", diagnostic)
@@ -230,11 +230,14 @@ class WindowsJoinIsoTests(unittest.TestCase):
             "if ([string]$data.LogonType -cne '2')", diagnostic)
         self.assertIn(
             "$sawInteractiveLogon = $true", diagnostic)
+        # The loop filters non-interactive logons before correlating the
+        # operator identity (now via the Test-OperatorMatch helper).
+        self.assertIn("$isOperator = Test-OperatorMatch", diagnostic)
         self.assertLess(
             diagnostic.index(
                 "if ([string]$data.LogonType -cne '2')"),
             diagnostic.index(
-                "$targetName = [string]$data.TargetUserName"),
+                "$isOperator = Test-OperatorMatch"),
         )
         self.assertIn(
             "if ($sawInteractiveLogon)", diagnostic)
