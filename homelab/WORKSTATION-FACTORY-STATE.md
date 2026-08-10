@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.001`
+Document version: `20260810.002`
 
 Status: active implementation
 
@@ -174,7 +174,7 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | 2 | Immutable PXE releases | Build and verify versioned Windows, Arch, and controller targets; manifests bind every byte to `YYYYMMDD.NNN`; rejected input and rollback tests pass. | pass: rootless Controller HTTP-PXE image and sealed Arch/Windows inputs selected transactionally as `20260727.001`; aggregate manifest SHA-256 `abbc459e31e32438624f72ceae8180c53e91e1a5edbeacf180dd18350baaccdc` |
 | 3 | Controller convergence | From a fresh offline-installed disposable controller, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, and verify the authority boundary without external access. | pass: `20260727T201057Z-controller.json`; release selection, backup, and restore remain lifecycle gates |
 | 4 | PXE authority boundary | Simulated gateway remains sole DHCP authority; controller supplies only the approved boot and identity services; packet evidence proves no rogue offer, forwarding, or external connection. | simultaneous fabric and PXE gateway implemented; integrated proof pending |
-| 5 | Windows-first install | OVMF workstation PXE-boots WinPE, selects the disk by stable serial, installs Windows 11 Pro to the approved layout, and reboots without ISO attachment. Destructive authorization is scoped to the disposable disk. | pending |
+| 5 | Windows-first install | OVMF workstation PXE-boots WinPE, selects the disk by stable serial, installs Windows 11 Pro to the approved layout, and reboots without ISO attachment. Destructive authorization is scoped to the disposable disk. | pass 2026-08-10: bundle `run-20260810T145421Z-5b457e50e20b` records `observed`/`native-windows-clean-shutdown`, exactly one PXE firmware boot, release `20260727.005`, private publication destroyed; serial log shows WinPE handoff, two native Windows Boot Manager boots, `TELOS WINDOWS NATIVE READY`, Edition Professional |
 | 6 | Windows join and login | Join the synthetic domain; prove secure channel, DNS SRV, time, named user login, named administrator elevation, `local-rescue`, reboot, cached offline login, update policy, and recovery path. | pending |
 | 7 | Arch-second install | PXE-boot Arch, preserve Windows partitions and recovery data, install into the approved allocation, join the same domain, and create independent UEFI entries with Windows default. | guarded disk path implemented; live install pending |
 | 8 | Arch join and login | Prove SSSD identity, UID/GID stability, Kerberos time, named user and administrator behavior, reboot, cached offline login, automatic-update gate, rollback, and local rescue. | policy/model tests implemented; live login pending |
