@@ -113,7 +113,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	init-aiq init-tmt \
 	reading-list \
 	reading-list-scan \
-	homelab-test homelab-lab homelab-matrix homelab-image \
+	homelab-test homelab-check homelab-lab homelab-matrix homelab-image \
 	homelab-converge-check homelab-bootstrap-deps \
 	homelab-media homelab-media-arch homelab-media-windows \
 	homelab-media-windows-25h2-en-us \
@@ -251,6 +251,14 @@ check: check-tools
 # QEMU and OVMF and says so when they are absent.
 homelab-test:
 	@$(PYTHON) -m unittest discover -s homelab/tests -t . -v
+
+# The smallest honest verification after a homelab-scoped edit. Unlike
+# `check` it needs no TeX toolchain and skips the site and research gates,
+# which cannot be affected by homelab code.
+homelab-check:
+	@$(PYTHON) scripts/arch-packages --check
+	@$(PYTHON) -m unittest discover -s tests -t . -q
+	@$(PYTHON) -m unittest discover -s homelab/tests -t . -q
 
 homelab-lab:
 	@cd homelab && $(PYTHON) -c "import sys; sys.path.insert(0,'qemu'); import lab; \
@@ -881,6 +889,7 @@ help:
 		'make verify-site           Re-check the rendered artifact' \
 		'make check      Site manifest, tests, and the tmt registry gate' \
 		'make homelab-test         Run the homelab suite verbosely' \
+		'make homelab-check        Fast honest verification for homelab edits' \
 		'make homelab-lab          Report whether the QEMU lab can run' \
 		'make homelab-media        Fresh-fetch official disposable media' \
 		'make homelab-bootstrap-seed  Build the isolated Controller seed ISO' \
