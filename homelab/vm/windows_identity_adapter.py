@@ -167,6 +167,7 @@ def _with_controller_auth_result(
     error: WindowsLocalReauthenticationError,
     controller_auth_result: ControllerAuthResult | None,
     arm_subphase: "ControllerAuthArmSubphase | None" = None,
+    receive_observation: "ControllerAuthReceiveObservation | None" = None,
 ) -> WindowsLocalReauthenticationError:
     """Copy a safe GUI coordinate after the Controller cleanup converges."""
     return WindowsLocalReauthenticationError(
@@ -185,7 +186,10 @@ def _with_controller_auth_result(
             else arm_subphase
         ),
         controller_auth_receive_observation=(
-            error.controller_auth_receive_observation),
+            error.controller_auth_receive_observation
+            if error.controller_auth_receive_observation is not None
+            else receive_observation
+        ),
     )
 
 
@@ -983,6 +987,7 @@ class NativeWindowsAcceptanceAdapter:
         self._post_submit_diagnostic_cleanup = None
         self._controller_auth_result = None
         self._controller_auth_arm_subphase = None
+        self._controller_auth_receive_observation = None
         controller_auth = None
         diagnostic_cleanup_failed = False
         if domain_operator:
@@ -1069,6 +1074,8 @@ class NativeWindowsAcceptanceAdapter:
                 # Losing it here is what rendered the attempt-eight failure
                 # as a bare unattributed receipt.
                 self._controller_auth_arm_subphase = error.arm_subphase
+                self._controller_auth_receive_observation = (
+                    error.receive_observation)
                 controller_auth = None
             except BaseException:
                 self._controller_auth_result = ControllerAuthResult(
@@ -1143,7 +1150,8 @@ class NativeWindowsAcceptanceAdapter:
                 if type(error) is WindowsLocalReauthenticationError:
                     raise _with_controller_auth_result(
                         error, self._controller_auth_result,
-                        self._controller_auth_arm_subphase) from None
+                        self._controller_auth_arm_subphase,
+                        self._controller_auth_receive_observation) from None
                 raise
         else:
             manager = None
@@ -1338,7 +1346,8 @@ class NativeWindowsAcceptanceAdapter:
                 if type(primary) is WindowsLocalReauthenticationError:
                     raise _with_controller_auth_result(
                         primary, self._controller_auth_result,
-                        self._controller_auth_arm_subphase) from None
+                        self._controller_auth_arm_subphase,
+                        self._controller_auth_receive_observation) from None
                 if not armed:
                     self._static_probe_poisoned = True
                     raise WindowsLocalReauthenticationError(

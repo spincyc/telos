@@ -253,7 +253,19 @@ def _local_reauthentication_coordinate(
     normalized_controller_auth_arm_subphase = (
         controller_auth_arm_subphase
         if (
-            phase == "reboot-reauth-controller-auth-arm"
+            (
+                phase == "reboot-reauth-controller-auth-arm"
+                # A proved-cleanup arm failure lets the GUI continue without
+                # a watcher; the subphase then explains the unavailable
+                # receipt at whichever coordinate the attempt reached.
+                # Dropping it here re-blinded attempt nine after the adapter
+                # had already preserved it.
+                or (
+                    normalized_controller_auth is not None
+                    and normalized_controller_auth.collection
+                    is ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                )
+            )
             and type(controller_auth_arm_subphase)
             is ControllerAuthArmSubphase
         )

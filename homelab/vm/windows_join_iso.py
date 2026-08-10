@@ -31,6 +31,7 @@ from .windows_postsubmit_diagnostic import (
 )
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
+    ControllerAuthCollection,
     ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
@@ -178,7 +179,18 @@ class WindowsJoinFailureCoordinate:
             and (
                 type(self.controller_auth_arm_subphase)
                 is not ControllerAuthArmSubphase
-                or self.phase != "reboot-reauth-controller-auth-arm"
+                or (
+                    self.phase != "reboot-reauth-controller-auth-arm"
+                    # A proved-cleanup arm failure lets the GUI continue
+                    # without a watcher; the subphase then explains the
+                    # unavailable receipt at the coordinate the attempt
+                    # actually reached.
+                    and not (
+                        self.controller_auth is not None
+                        and self.controller_auth.collection
+                        is ControllerAuthCollection.RECEIPT_UNAVAILABLE
+                    )
+                )
                 or self.error_type
                 != "WindowsLocalReauthenticationError"
             )

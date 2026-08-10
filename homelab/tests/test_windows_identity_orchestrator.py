@@ -173,6 +173,44 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     "join-guest.reboot-reauth", diagnostic.operation)
                 self.assertEqual(error_type, diagnostic.error_type)
 
+    def test_desktop_coordinate_keeps_arm_subphase_of_a_lost_watcher(self):
+        """Attempt nine: the orchestrator re-dropped the preserved subphase."""
+        from homelab.vm.controller_auth_diagnostic import (
+            ControllerAuthArmSubphase)
+        error = subject.WindowsLocalReauthenticationError(
+            "desktop",
+            controller_auth_result=ControllerAuthResult(
+                collection=ControllerAuthCollection.RECEIPT_UNAVAILABLE),
+            controller_auth_arm_subphase=(
+                ControllerAuthArmSubphase.SUDO_PROMPT),
+        )
+        coordinate = subject._local_reauthentication_coordinate(error)
+        self.assertEqual("reboot-reauth-desktop", coordinate.phase)
+        self.assertIs(
+            coordinate.controller_auth_arm_subphase,
+            ControllerAuthArmSubphase.SUDO_PROMPT)
+        rendered = subject.IdentityFailureDiagnostic.join_guest(
+            coordinate.phase,
+            coordinate.error_type,
+            controller_auth=coordinate.controller_auth,
+            controller_auth_arm_subphase=(
+                coordinate.controller_auth_arm_subphase),
+        ).render()
+        self.assertIn("controller-auth-arm-subphase=sudo-prompt", rendered)
+        self.assertIn(
+            "controller-auth-receipt-origin=unattributed", rendered)
+        # An answered receipt still drops the subphase at the desktop.
+        answered = subject.WindowsLocalReauthenticationError(
+            "desktop",
+            controller_auth_result=ControllerAuthResult(
+                code=ControllerAuthCode.AUTHENTICATED),
+            controller_auth_arm_subphase=(
+                ControllerAuthArmSubphase.SUDO_PROMPT),
+        )
+        self.assertIsNone(
+            subject._local_reauthentication_coordinate(
+                answered).controller_auth_arm_subphase)
+
     def test_reboot_reauthentication_maps_only_allowlisted_subphases(self):
         forged_error_type = type(
             "WindowsLocalReauthenticationError",
