@@ -49,7 +49,7 @@ class ArchInstallRunTests(unittest.TestCase):
         command = [
             "qemu",
             "-qmp", "unix:/tmp/telos-arch-abc/arch.qmp,server=on,wait=off",
-            "-boot", "order=c,once=n,menu=off",
+            "-boot", "order=n,menu=off",
             "-drive",
             f"if=none,id=osdisk,format=qcow2,cache=none,file={overlay.resolve()}",
             "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001",

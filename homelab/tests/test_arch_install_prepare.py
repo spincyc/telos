@@ -74,7 +74,11 @@ class ArchInstallPrepareTests(unittest.TestCase):
             self.assertIn("nvme,drive=osdisk,serial=TELOS-WIN-0001", joined)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn("socket,id=factory,connect=127.0.0.1:31415", joined)
-            self.assertIn("order=c,once=n,menu=off", command)
+            # The install boot is network-only so PXE deterministically wins
+            # and firmware never falls through to the bootable Windows ESP.
+            self.assertIn("order=n,menu=off", command)
+            self.assertNotIn("order=c,once=n,menu=off", command)
+            self.assertNotIn("order=c", command)
             qmp_value = command[command.index("-qmp") + 1]
             self.assertTrue(qmp_value.startswith("unix:/tmp/telos-arch-"))
             self.assertIn(",server=on,wait=off", qmp_value)
@@ -125,6 +129,25 @@ class ArchInstallPrepareTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "symlink"):
                 arch_install_prepare.prepare(args)
 
+    def test_prepare_requires_a_pristine_ovmf_template(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            windows_disk = root / "windows.qcow2"
+            windows_disk.write_bytes(b"disk")
+            args = argparse.Namespace(
+                windows_disk=windows_disk, ovmf_vars=None,
+                releases=root / "pxe", seed=root / "seed.iso",
+                layout=root / "layout.json",
+                workstation_profile=root / "wp.json", run_root=root / "runs",
+                hostname="telos-workstation", switch_port=31415)
+            with mock.patch.object(
+                    arch_install_prepare, "inspect_base_windows_disk",
+                    return_value={"path": str(windows_disk.resolve())}), \
+                    mock.patch.object(
+                        arch_install_prepare, "ovmf_pair", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "pristine OVMF"):
+                    arch_install_prepare.prepare(args)
+
     def test_apply_overlays_the_disk_and_binds_authorization(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -138,7 +161,12 @@ class ArchInstallPrepareTests(unittest.TestCase):
             windows_dir.mkdir()
             windows_disk = windows_dir / "windows.qcow2"
             windows_disk.write_bytes(b"disk")
-            (windows_dir / "OVMF_VARS.fd").write_bytes(b"vars")
+            # The Windows-installed firmware vars carry a Windows Boot Manager
+            # NVRAM entry; the install boot must never inherit them.
+            (windows_dir / "OVMF_VARS.fd").write_bytes(
+                b"windows-boot-manager-nvram")
+            pristine_vars = root / "OVMF_VARS.4m.fd"
+            pristine_vars.write_bytes(b"pristine-fresh-vars-no-boot-entries")
             base = {
                 "path": str(windows_disk.resolve()),
                 "virtual_size": arch_install_prepare.DISK_BYTES,
@@ -165,6 +193,10 @@ class ArchInstallPrepareTests(unittest.TestCase):
                     arch_install_prepare.subprocess, "run",
                     side_effect=execute), \
                     mock.patch.object(
+                        arch_install_prepare, "ovmf_pair",
+                        return_value=(
+                            root / "OVMF_CODE.4m.fd", pristine_vars)), \
+                    mock.patch.object(
                         arch_install_prepare, "inspect_base_windows_disk",
                         return_value=base), \
                     mock.patch.object(
@@ -183,6 +215,13 @@ class ArchInstallPrepareTests(unittest.TestCase):
                     "arch-install.sh", "authorization.json",
                     "qemu-command.json"):
                 self.assertTrue((run / name).is_file(), name)
+
+            # The copied install-boot firmware vars come from the pristine
+            # template, never the Windows bundle's boot-entry-bearing vars, so
+            # the install boot cannot inherit a Windows Boot Manager entry.
+            copied_vars = (run / "OVMF_VARS.fd").read_bytes()
+            self.assertEqual(copied_vars, b"pristine-fresh-vars-no-boot-entries")
+            self.assertNotIn(b"windows-boot-manager-nvram", copied_vars)
 
             authorization = json.loads(
                 (run / "authorization.json").read_text())["authorization"]
@@ -204,7 +243,7 @@ class ArchInstallPrepareTests(unittest.TestCase):
             joined = " ".join(command)
             self.assertIn("nvme,drive=osdisk,serial=TELOS-WIN-0001", joined)
             self.assertIn("e1000e,netdev=factory", joined)
-            self.assertIn("order=c,once=n,menu=off", command)
+            self.assertIn("order=n,menu=off", command)
 
             names = {
                 entry["name"] for entry in json.loads(

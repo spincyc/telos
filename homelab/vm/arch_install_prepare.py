@@ -190,7 +190,13 @@ def qemu_arch_install_command(
     switch_port: int,
     serial: str,
 ) -> list[str]:
-    """Build the persistent-disk UEFI/NVMe/e1000e one-shot-PXE command."""
+    """Build the persistent-disk UEFI/NVMe/e1000e network-boot command.
+
+    The install boot is network-only (``order=n``): PXE deterministically wins
+    and firmware never falls through to the bootable Windows ESP that the
+    overlaid persistent disk still carries.  The NVMe disk stays attached as
+    the install target, it is simply outside the boot path.
+    """
     if not 1 <= switch_port <= 65535:
         raise ArchInstallPrepareError("switch port is invalid")
     if Path(variables).is_symlink():
@@ -203,7 +209,7 @@ def qemu_arch_install_command(
     command = _base("arch-install", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [
-        "-boot", "order=c,once=n,menu=off",
+        "-boot", "order=n,menu=off",
         "-monitor", "none",
         "-qmp", f"unix:{Path(qmp_socket).resolve()},server=on,wait=off",
         "-drive",
@@ -231,12 +237,21 @@ def prepare(args: argparse.Namespace) -> Path:
 
     windows_disk = args.windows_disk
     base = inspect_base_windows_disk(windows_disk)
-    ovmf_source = (
-        args.ovmf_vars if args.ovmf_vars is not None
-        else windows_disk.parent / VARS_NAME)
+    # The install boot must PXE, so it must NOT inherit the Windows firmware's
+    # NVRAM.  The Windows-installed OVMF_VARS.fd carries a "Windows Boot
+    # Manager" boot entry that firmware would prefer over the network, wedging
+    # the install.  Copy the pristine OVMF variables template (no boot
+    # entries) instead; combined with order=n this makes PXE deterministic.
+    ovmf_source = args.ovmf_vars
+    if ovmf_source is None:
+        pair = ovmf_pair()
+        if pair is None:
+            raise ArchInstallPrepareError(
+                "pristine OVMF variables template was not found")
+        ovmf_source = pair[1]
     if ovmf_source.is_symlink() or not ovmf_source.is_file():
         raise ArchInstallPrepareError(
-            "persistent OVMF variables must be a regular non-symlink file")
+            "OVMF variables template must be a regular non-symlink file")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run = run_root / f"run-{stamp}-{secrets.token_hex(6)}"
@@ -326,7 +341,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--windows-disk", type=Path, default=DEFAULT_WINDOWS_DISK,
         help="persistent gate-5 Windows-installed qcow2 to preserve")
-    result.add_argument("--ovmf-vars", type=Path, default=None)
+    result.add_argument(
+        "--ovmf-vars", type=Path, default=None,
+        help="override the pristine OVMF variables template copied for the "
+        "install boot; defaults to the firmware's fresh no-boot-entry vars")
     result.add_argument("--releases", type=Path, default=DEFAULT_RELEASES)
     result.add_argument("--seed", type=Path, default=DEFAULT_SEED)
     result.add_argument("--layout", type=Path, default=DEFAULT_LAYOUT)
