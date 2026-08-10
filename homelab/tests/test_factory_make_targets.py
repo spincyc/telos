@@ -36,6 +36,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "homelab-factory-offline-check",
             "homelab-factory-controller-bundle",
             "homelab-factory-pxe",
+            "homelab-factory-verify",
             "homelab-windows-identity-prepare",
             "homelab-windows-identity-run",
             "homelab-windows-identity-judge",
@@ -122,6 +123,22 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("FACTORY_ARCH_SOURCE_CACHE", release)
         self.assertIn("--arch-cache", release)
         self.assertIn("--arch-source", release)
+
+    def test_factory_verify_is_read_only_and_apply_gated(self):
+        text = recipe("homelab-factory-verify")
+        # Requires the retained-run evidence to validate.
+        self.assertIn("FACTORY_EVIDENCE", text)
+        # Dry run by default; APPLY=1 emits the receipt.
+        self.assertIn("APPLY", text)
+        self.assertIn("dry run", text)
+        self.assertIn("--plan", text)
+        # Invokes the real verifier CLI and can validate the release set.
+        self.assertIn("factory_verify.py", text)
+        self.assertIn("--release-set", text)
+        # Read-only acceptance gate: it must never install or run a guest.
+        self.assertNotIn("--apply", text)
+        for forbidden in ("qemu", "fetch-", "curl", "wget"):
+            self.assertNotIn(forbidden, text)
 
     def test_release_set_build_consumes_the_verified_seal(self):
         text = recipe("homelab-pxe-release-set")

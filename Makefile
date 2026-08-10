@@ -140,6 +140,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-deps homelab-factory-media \
 	homelab-factory-cache-seal homelab-factory-offline-check \
 	homelab-factory-controller-bundle homelab-factory-pxe \
+	homelab-factory-verify \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
@@ -378,6 +379,24 @@ homelab-factory-pxe: homelab-factory-offline-check
 		CONTROLLER_SOURCE='$(or $(CONTROLLER_SOURCE),$(FACTORY_CONTROLLER_SOURCE))' \
 		ARCH_SOURCE='$(ARCH_SOURCE)' \
 		BASE_URL='$(or $(BASE_URL),http://10.1.31.2)'
+
+# Validate all retained evidence and produce a machine-readable final receipt.
+# Read-only: it never boots, installs, or mutates. The dry run prints the check
+# plan; APPLY=1 emits the receipt and a PASS/FAIL/NOT RUN verdict. A recorded
+# measurement that is absent stays NOT RUN and is never promoted to a pass.
+homelab-factory-verify:
+	@if [ -z '$(FACTORY_EVIDENCE)' ]; then \
+		echo 'require FACTORY_EVIDENCE=<retained run evidence directory>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to validate retained evidence'; \
+		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
+			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') --plan; \
+	else \
+		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
+			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)'); \
+	fi
 
 homelab-bootstrap-seed:
 	@$(PYTHON) homelab/seed/build.py \

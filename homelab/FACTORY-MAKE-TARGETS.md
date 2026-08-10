@@ -42,7 +42,7 @@ exact confirmation value. Verification targets must distinguish `PASS`,
 | Windows | `homelab-factory-windows` | PXE-boot and install Windows 11 Pro first; reboot without installation media; join the synthetic domain and test login/recovery. |
 | Arch | `homelab-factory-arch` | PXE-boot and install Arch second while preserving Windows and recovery partitions; join the same domain. |
 | Dual boot | `homelab-factory-dualboot-check` | Cold-boot both systems and measure partition, EFI, boot-default, login, update, storage-failure, and recovery contracts. |
-| Acceptance | `homelab-factory-verify` | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
+| Acceptance | **`homelab-factory-verify`** (implemented) | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
 | Recovery | `homelab-factory-recover` | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. |
 | Cleanup | `homelab-factory-clean` | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
 | Repeat | `homelab-factory-repeat` | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. |
