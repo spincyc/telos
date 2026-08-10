@@ -556,6 +556,7 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
             _reviewed_submit_focus_reference(references["sign-in"].guest)
             if reviewed_submit_focus else None
         ),
+        post_join_retain_submit_frames=10,
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],

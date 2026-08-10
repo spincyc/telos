@@ -184,6 +184,39 @@ def _redacted_console_excerpt(console, *, limit: int = 16384) -> bytes | None:
     return data
 
 
+def _retain_post_submit_frames(
+    qmp, evidence: Path, clock, *, count: int = 10, interval: float = 1.0,
+) -> None:
+    """Best-effort bounded capture of the screen after the logon submit.
+
+    The post-submit surface is otherwise invisible: durable capture is
+    disabled before the secret is typed and the desktop proof deletes every
+    frame it samples, so a failed operator logon leaves no evidence of
+    whether Enter produced a spinner, an on-screen "no logon servers" error,
+    or an unchanged sign-in. Secret-safe: the secret-entry departure has
+    already been proven, so the password field is masked or cleared and no
+    plaintext is ever rendered. Diagnostics must never displace the failure.
+    """
+    try:
+        evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        deadline = clock() + count * interval
+        index = 0
+        while index < count and clock() < deadline:
+            index += 1
+            frame = evidence / f"identity-postsubmit-{index:04d}.ppm"
+            qmp.screenshot(frame)
+            try:
+                frame.chmod(0o600)
+            except OSError:
+                pass
+            if index < count:
+                time.sleep(max(0.0, min(interval, deadline - clock())))
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException:
+        return
+
+
 def _retain_console_excerpt(console, evidence: Path) -> None:
     """Best-effort retention; diagnostics must never displace the failure."""
     try:
@@ -1017,6 +1050,14 @@ class NativeWindowsAcceptanceAdapter:
 
             _run_local_reauthentication_operation(
                 "submit", settle_submission_input)
+            # Retain the post-submit surface so a failed operator logon is
+            # diagnosable. Best-effort and secret-safe; never raises. Gated
+            # on an explicit integer frame count so tests (mock plan) skip it.
+            retain_frames = getattr(
+                plan, "post_join_retain_submit_frames", 0)
+            if type(retain_frames) is int and retain_frames > 0:
+                _retain_post_submit_frames(
+                    self._qmp(), evidence, self.clock, count=retain_frames)
 
         diagnostic_factory = self.post_submit_diagnostic
         self._post_submit_diagnostic_code = None
@@ -1033,7 +1074,7 @@ class NativeWindowsAcceptanceAdapter:
                     self._shared_controller_console(),
                     ControllerAuthExpectation(
                         "operator", FactorySpec().netbios,
-                        str(LEASE_IP)),
+                        str(LEASE_IP), realm=self.realm),
                     # Controller pre-arm work is a distinct diagnostic
                     # lifecycle.  Give it one immutable budget rather than
                     # inheriting whatever remains of the GUI

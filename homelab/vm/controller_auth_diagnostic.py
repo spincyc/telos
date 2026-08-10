@@ -70,6 +70,7 @@ CLEANUP_RESERVE_SECONDS = (
 
 _ACCOUNT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _DOMAIN = re.compile(r"[A-Z0-9][A-Z0-9-]{0,14}")
+_REALM = re.compile(r"[A-Z0-9][A-Z0-9.-]{0,252}[A-Z0-9]")
 _SID = re.compile(r"S-1-5-21-(?:[0-9]{1,10}-){2}[0-9]{1,10}-[0-9]{1,10}")
 _RECEIPT_LINE_START = rb"(?:^|[\r\n])"
 _RECEIPT_LINE_END = rb"[^\S\r\n]*(?:\r\n|[\r\n]|$)"
@@ -333,6 +334,11 @@ class ControllerAuthExpectation:
     domain: str
     workstation_ip: str
     staged_sid: str | None = None
+    # The Kerberos realm (dotted, uppercase). A UPN interactive logon
+    # (operator@AD.FACTORY.TEST) makes Samba's audit carry the realm, or an
+    # empty clientDomain, never the NetBIOS `domain`; correlating on `domain`
+    # alone silently rejects every real operator logon as uncorrelated.
+    realm: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.account) is not str or _ACCOUNT.fullmatch(
@@ -341,6 +347,11 @@ class ControllerAuthExpectation:
         if type(self.domain) is not str or _DOMAIN.fullmatch(
                 self.domain) is None:
             raise ValueError("Controller auth domain is invalid")
+        if self.realm is not None and (
+            type(self.realm) is not str
+            or _REALM.fullmatch(self.realm) is None
+        ):
+            raise ValueError("Controller auth realm is invalid")
         try:
             address = ipaddress.ip_address(self.workstation_ip)
         except ValueError:
@@ -392,6 +403,11 @@ def classify_auth_events(
         domain = (
             body.get("clientDomain") or body.get("domain")
             or body.get("workgroup"))
+        # A UPN interactive logon can leave the client domain absent or
+        # empty; treat that as the blank form rather than dropping the event,
+        # so the account/IP/SID/service bindings still decide correlation.
+        if domain is None:
+            domain = ""
         remote = body.get("remoteAddress") or body.get("clientAddress")
         service = body.get("serviceDescription") or body.get("service")
         method = body.get("authDescription") or body.get("authMethod")
@@ -418,9 +434,17 @@ def classify_auth_events(
             remote_ip = str(ipaddress.ip_address(remote_ip))
         except ValueError:
             continue
+        # A UPN interactive logon carries the realm or a blank clientDomain,
+        # not the NetBIOS domain. Accept either form, and an empty domain
+        # (the account, workstation IP, service, method, and staged SID still
+        # bind the event exactly). The Windows-side diagnostic makes the same
+        # blank-domain allowance for a UPN logon.
+        accepted_domains = {expectation.domain, ""}
+        if expectation.realm is not None:
+            accepted_domains.add(expectation.realm)
         if (
             account.casefold() != expectation.account.casefold()
-            or domain.upper() != expectation.domain
+            or domain.upper() not in accepted_domains
             or remote_ip != expectation.workstation_ip
             or service.casefold() not in _SERVICES
             or method.casefold() not in _AUTH_METHODS

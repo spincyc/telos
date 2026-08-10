@@ -526,7 +526,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
         controller_type.assert_called_once_with(
             self.boundary.controller_console,
-            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
+            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
             timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
             post_arm_timeout=adapter.timeout,
             clock=adapter.clock,
@@ -536,6 +536,32 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             cancel_result, caught.exception.controller_auth_result)
         controller.cancel.assert_called_once_with()
         interaction_type.return_value.type_secret.assert_not_called()
+
+    def test_post_submit_frames_are_bounded_and_clock_driven(self):
+        clock = [100.0]
+
+        def tick(_seconds):
+            clock[0] += 1.0
+
+        captured = []
+        qmp = mock.Mock()
+        qmp.screenshot.side_effect = lambda p: captured.append(p.name)
+        with (
+            tempfile.TemporaryDirectory() as name,
+            mock.patch.object(subject.time, "sleep", side_effect=tick),
+        ):
+            evidence = Path(name) / "reauth"
+            subject._retain_post_submit_frames(
+                qmp, evidence, lambda: clock[0], count=4, interval=1.0)
+            self.assertEqual(qmp.screenshot.call_count, 4)
+            self.assertEqual(
+                captured,
+                [f"identity-postsubmit-{i:04d}.ppm" for i in range(1, 5)])
+        # A screenshot failure never propagates.
+        qmp.screenshot.side_effect = RuntimeError("qmp down")
+        with tempfile.TemporaryDirectory() as name:
+            subject._retain_post_submit_frames(
+                qmp, Path(name) / "e", lambda: 0.0, count=3, interval=0.0)
 
     def test_console_excerpt_is_bounded_and_redacted(self):
         console = mock.Mock()
@@ -1173,7 +1199,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         diagnostic_factory.assert_called_once()
         controller_type.assert_called_once_with(
             self.boundary.controller_console,
-            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11"),
+            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
             timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
             post_arm_timeout=min(
                 adapter.timeout,

@@ -136,6 +136,44 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ControllerAuthCode.AMBIGUOUS,
         )
 
+    def test_upn_logon_correlates_by_realm_or_blank_domain(self):
+        """A UPN interactive logon carries the realm or a blank clientDomain,
+        never the NetBIOS domain; attempt nineteen's real operator auth was
+        misclassified uncorrelated against the NetBIOS-only expectation."""
+        realm_expected = ControllerAuthExpectation(
+            "operator", "FACTORY", "10.1.31.11",
+            "S-1-5-21-1-2-3-1104", realm="AD.FACTORY.TEST")
+        # Kerberos audit carries the realm form.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(domain="AD.FACTORY.TEST"),), realm_expected),
+            ControllerAuthCode.AUTHENTICATED)
+        # A UPN logon may leave clientDomain blank.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(domain=""),), realm_expected),
+            ControllerAuthCode.AUTHENTICATED)
+        # The NetBIOS form still correlates.
+        self.assertEqual(
+            classify_auth_events((self.event(),), realm_expected),
+            ControllerAuthCode.AUTHENTICATED)
+        # A different realm still does not.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(domain="OTHER.REALM.TEST"),), realm_expected),
+            ControllerAuthCode.UNCORRELATED)
+        # Without a realm the old NetBIOS-only behaviour holds: the realm
+        # form does not correlate, which is exactly the attempt-19 bug.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(domain="AD.FACTORY.TEST"),), self.expected),
+            ControllerAuthCode.UNCORRELATED)
+
+    def test_realm_expectation_rejects_malformed_realm(self):
+        with self.assertRaises(ValueError):
+            ControllerAuthExpectation(
+                "operator", "FACTORY", "10.1.31.11", realm="not a realm!")
+
     def test_untrusted_service_and_source_do_not_correlate(self):
         self.assertEqual(
             classify_auth_events(

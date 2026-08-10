@@ -208,6 +208,9 @@ class ProgressiveRotationPlan:
     lock_settle_delay: float = 2.0
     timeout: float = 360.0
     checkpoint_timeout: float = 60.0
+    # Frames to retain of the post-submit surface for logon diagnosis; 0
+    # disables the capture. The production plan enables it; tests leave it 0.
+    post_join_retain_submit_frames: int = 0
 
 
 @dataclass(frozen=True)
