@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260810.005`
+Document version: `20260810.006`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-08-10T11:35:00-05:00
+Last evidence/workstream review: 2026-08-10T15:25:00-05:00
 
-Repository baseline reviewed: `d7c228e`
+Repository baseline reviewed: `d44253d`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -248,15 +248,39 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   (`join-guest.result-receive`, broken output pipe, complete teardown)
   and carries no signal on the watcher; attempt fourteen
   (`20260810T163132Z-98e4fc71625a`) was likewise externally interrupted
-  during controller startup with complete teardown. Two consecutive
-  external terminations of background attempts mean the next attempt
-  should run in an operator-visible foreground session. Attempt
-  `20260810T163536Z-b6c208c25018` is prepared and unconsumed:
+  during controller startup with complete teardown (both were harness
+  reaps of the tracked background channel, not the owner; later attempts
+  ran detached via `setsid` and completed). RESOLVED to one concrete bug
+  2026-08-10 across attempts fifteen through eighteen — the receipt is no
+  longer a mystery. The retained console transcript
+  (`.../attempt-20260810T202257Z-8aa6cc949d90/post-join-reauthentication/controller-auth-console.txt`)
+  shows the directory-side watcher printing all four prearm phases
+  (`PAYLOAD_VALID`, `CONFIGURATION_VALID`, `SINK_READY`, `SID_READY`) then
+  `ARMED`, then nothing: it blocks on `input()` awaiting the
+  `__TELOS_AUTH_SUBMIT__` fence, which never arrives, so the host's
+  bounded result wait expires (`origin=host-wait-expired`). The watcher
+  is launched with `sudo -k -S`, which reads the sudo password from the
+  same stdin the watcher then reads the fence from, and the fence IS
+  newline-terminated (`serial_automation._send`), so this is a
+  stdin-handoff race between sudo's password consumption and the
+  watcher's first protocol read — not a timing shortfall. Two
+  precautionary widenings landed en route and are harmless but do not
+  address it: `RESULT_RECEIPT_SECONDS` 2→10 (`d44253d`) and the
+  arm-window widening (`0524cbf`). The fixes that DID matter and stand:
+  the standalone-import regression (`2bdf36d`), the hanging-`smbcontrol`
+  crash (`3e9febe`), the console-excerpt retention that finally read the
+  crash (`d7c228e`, `29e0b7d`, `d44253d`), and all five
+  diagnostic-labelling layers. NEXT ACTION: drain sudo's authentication
+  before the watcher's first `input()` — have the Controller side emit a
+  post-sudo ready sentinel the host waits for before sending SUBMIT, or
+  give the watcher a protocol stdin distinct from sudo's password stdin.
+  This needs a considered change, not another attempt; do not spend
+  further runs before the stdin handoff is fixed. A prepared unconsumed
+  attempt (`20260810T163536Z-b6c208c25018`) remains available for the
+  post-fix verification run:
   `make homelab-windows-identity-run APPLY=1
   WINDOWS_IDENTITY_ATTEMPT=homelab/var/factory/windows-installs/run-20260728T114233Z-afecdf7cc9d0/identity/attempt-20260810T163536Z-b6c208c25018
-  FACTORY_CONTROLLER_STATE=build/homelab/vm/bootstrap-dc` — on an arm
-  failure it retains the Controller's own crash text in the attempt's
-  `post-join-reauthentication/controller-auth-console.txt`.
+  FACTORY_CONTROLLER_STATE=build/homelab/vm/bootstrap-dc`.
 - Boot-failure attempts no longer burn the full readiness budget: commit
   `627a719` aborts the Windows OS readiness wait as soon as the guest
   process exits or the switch records `peer-abandoned-before-authentication`
