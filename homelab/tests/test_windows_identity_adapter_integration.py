@@ -539,6 +539,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
 
     def test_console_excerpt_is_bounded_and_redacted(self):
         console = mock.Mock()
+        console.transcript = b""
         console.buffer = b"A" * 20000 + b"sudo secret-value tail"
         console.password = b"secret-value"
         excerpt = subject._redacted_console_excerpt(console)
@@ -548,6 +549,11 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertTrue(excerpt.endswith(b"tail"))
         console.buffer = None
         self.assertIsNone(subject._redacted_console_excerpt(console))
+        # The transcript outranks the consumed working buffer.
+        console.transcript = b"kept despite secret-value consumption"
+        console.buffer = b""
+        excerpt = subject._redacted_console_excerpt(console)
+        self.assertIn(b"kept despite [REDACTED] consumption", excerpt)
 
     def test_desktop_failure_after_lost_watcher_renders_the_arm_subphase(
         self,

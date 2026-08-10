@@ -170,7 +170,12 @@ def _redacted_console_excerpt(console, *, limit: int = 16384) -> bytes | None:
     console; twelve attempts rendered `command-exit-nonzero` without it.
     """
     try:
-        data = bytes(console.buffer)[-limit:]
+        # The transcript survives _wait's match consumption; the working
+        # buffer does not (attempt fifteen retained two bytes from it).
+        source = getattr(console, "transcript", None)
+        if not source:
+            source = console.buffer
+        data = bytes(source)[-limit:]
     except (AttributeError, TypeError):
         return None
     password = getattr(console, "password", None)

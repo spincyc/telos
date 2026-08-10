@@ -59,6 +59,10 @@ class SerialAutomation:
         self.timeout = timeout
         self.clock = clock
         self.buffer = b""
+        # Consumption-independent tail of everything read. _wait trims the
+        # working buffer past each match, which erased the Controller-side
+        # crash text before failure diagnostics could retain it.
+        self.transcript = b""
         self.events: list[str] = []
         self.token = uuid.uuid4().hex
 
@@ -412,6 +416,7 @@ class SerialAutomation:
                     raise SerialAutomationError(
                         f"serial closed while waiting for {label}")
                 self.buffer = (self.buffer + chunk)[-131072:]
+                self.transcript = (self.transcript + chunk)[-65536:]
         finally:
             selector.close()
         raise SerialAutomationError(f"timed out waiting for {label}")
