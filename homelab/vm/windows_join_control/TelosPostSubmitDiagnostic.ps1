@@ -344,10 +344,10 @@ public static class TelosAuditPolicy {
         # genuine absence of any evidence remains no-logon-event.
         $operatorFailure = $false
         $operatorNonInteractive = $false
-        $secondary = @(Get-WinEvent -LogName Security -FilterXPath (
+        $secondary = try { @(Get-WinEvent -LogName Security -FilterXPath (
                 '*[System[(EventID=4624 or EventID=4625) ' +
                 'and EventRecordID > ' + $baseline + ']]'
-            ) -MaxEvents 65 -ErrorAction SilentlyContinue)
+            ) -MaxEvents 65 -ErrorAction SilentlyContinue) } catch { @() }
         foreach ($eventRecord in $secondary) {
             $data = Get-EventData $eventRecord
             if (-not (Test-OperatorMatch `
@@ -360,24 +360,24 @@ public static class TelosAuditPolicy {
                 $operatorNonInteractive = $true
             }
         }
-        $netlogonNoDc = @(Get-WinEvent -FilterHashtable @{
+        $netlogonNoDc = try { @(Get-WinEvent -FilterHashtable @{
                 LogName = 'System'
                 ProviderName = 'NETLOGON'
                 Id = 5719
                 StartTime = $baselineTime
-            } -MaxEvents 1 -ErrorAction SilentlyContinue)
-        $netlogonSecure = @(Get-WinEvent -FilterHashtable @{
+            } -MaxEvents 1 -ErrorAction SilentlyContinue) } catch { @() }
+        $netlogonSecure = try { @(Get-WinEvent -FilterHashtable @{
                 LogName = 'System'
                 ProviderName = 'NETLOGON'
                 Id = 3210, 5783
                 StartTime = $baselineTime
-            } -MaxEvents 1 -ErrorAction SilentlyContinue)
-        $kerberosError = @(Get-WinEvent -FilterHashtable @{
+            } -MaxEvents 1 -ErrorAction SilentlyContinue) } catch { @() }
+        $kerberosError = try { @(Get-WinEvent -FilterHashtable @{
                 LogName = 'System'
                 ProviderName = 'Microsoft-Windows-Security-Kerberos'
                 StartTime = $baselineTime
                 Level = 1, 2, 3
-            } -MaxEvents 1 -ErrorAction SilentlyContinue)
+            } -MaxEvents 1 -ErrorAction SilentlyContinue) } catch { @() }
         $code = if ($operatorFailure) {
             'non-interactive-logon-failure'
         } elseif ($netlogonNoDc.Count -gt 0) {

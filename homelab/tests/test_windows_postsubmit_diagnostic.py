@@ -135,6 +135,12 @@ class PostSubmitDiagnosticSessionTests(unittest.TestCase):
         # The genuine no-evidence code and the Type-2 correlation both remain.
         self.assertEqual(1, text.count("'no-logon-event'"))
         self.assertIn("LogonType -cne '2'", text)
+        # Every secondary Get-WinEvent must degrade to an empty result on any
+        # error (an absent provider raises despite SilentlyContinue), so the
+        # instrument can never crash the diagnostic into watcher-error. The
+        # four secondary queries are each wrapped `try { ... } catch { @() }`.
+        self.assertGreaterEqual(text.count("} catch { @() }"), 4)
+        self.assertNotIn("Kerberos-Key-Distribution-Center", text)
 
     def test_rejects_stale_nonce_extra_fields_and_noncanonical_json(self):
         invalid_records = (
