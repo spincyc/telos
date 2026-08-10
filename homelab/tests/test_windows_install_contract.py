@@ -89,6 +89,15 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertNotIn("virtio-blk", text)
         self.assertNotIn("Win11", text)
 
+    def test_install_command_refuses_an_overlong_qmp_socket_path(self):
+        with self.assertRaises(WindowsInstallContractError):
+            qemu_install_command(
+                disk=Path("/run/private/windows.qcow2"),
+                variables=Path("/run/private/OVMF_VARS.fd"),
+                qmp_socket=Path("/run/" + "deep/" * 22 + "windows.qmp"),
+                switch_port=31415,
+                serial="TELOS-WIN-0001")
+
     def test_qcow2_must_be_standalone_and_large_enough(self):
         with tempfile.TemporaryDirectory() as temporary:
             disk = Path(temporary) / "disk.qcow2"

@@ -65,7 +65,14 @@ def prepare(args: argparse.Namespace) -> Path:
         disk = run / "windows.qcow2"
         variables = run / "OVMF_VARS.fd"
         publication_iso = run / "publication.iso"
-        qmp_socket = run / "windows.qmp"
+        # A bundle-adjacent socket exceeds the AF_UNIX bound from a deep
+        # checkout; pin a short run-unique path the runner creates and
+        # removes. The run token keeps concurrent bundles distinct.
+        qmp_socket = (
+            Path(tempfile.gettempdir())
+            / f"telos-win-{run.name.rsplit('-', 1)[1]}"
+            / "windows.qmp"
+        )
         subprocess.run(
             ["qemu-img", "create", "-f", "qcow2", str(disk), str(DISK_BYTES)],
             check=True, capture_output=True)

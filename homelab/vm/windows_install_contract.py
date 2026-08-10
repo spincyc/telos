@@ -118,6 +118,11 @@ def qemu_install_command(
     if Path(variables).is_symlink():
         raise WindowsInstallContractError(
             "OVMF variables must not be a symlink")
+    # sun_path is 108 bytes including the terminator; an over-long path
+    # would not fail until QMP connect, after the guests are booted.
+    if len(str(Path(qmp_socket).resolve()).encode()) > 100:
+        raise WindowsInstallContractError(
+            "QMP socket path exceeds the AF_UNIX length bound")
     command = _base("windows-install", variables, 8192)
     command[command.index("-serial") + 1] = "stdio"
     command += [

@@ -46,6 +46,25 @@ class WindowsInstallRunTests(unittest.TestCase):
                     duration=60, apply=False), 0)
             self.assertFalse((bundle / "evidence").exists())
 
+    def test_qmp_socket_path_is_recovered_from_the_authorized_argv(self):
+        """The bundle-adjacent socket exceeded AF_UNIX from a deep checkout."""
+        path = windows_install_run._qmp_socket_path([
+            "qemu", "-qmp", "unix:/tmp/telos-win-abc/windows.qmp,"
+            "server=on,wait=off",
+        ])
+        self.assertEqual(Path("/tmp/telos-win-abc/windows.qmp"), path)
+        for argv in (
+            ["qemu"],
+            ["qemu", "-qmp"],
+            ["qemu", "-qmp", "tcp:127.0.0.1:4444,server=on"],
+            ["qemu", "-qmp", "unix:/tmp/x.qmp"],
+            ["qemu", "-qmp", "unix:relative.qmp,server=on"],
+            ["qemu", "-qmp", "unix:/" + "a" * 120 + ",server=on"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(RuntimeError):
+                    windows_install_run._qmp_socket_path(argv)
+
     def test_long_bounded_run_uses_reduced_screenshot_cadence(self):
         self.assertEqual(windows_install_run.MAX_DURATION, 10800)
         self.assertEqual(windows_install_run._screenshot_interval(3600), 10)

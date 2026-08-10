@@ -128,6 +128,20 @@ def _validate_lifecycle(serial: str) -> None:
             "workstation did not use exactly one PXE firmware boot")
 
 
+def _qmp_socket_path(command: list[str]) -> Path:
+    """Recover the pinned QMP socket path from the authorized argv."""
+    try:
+        value = command[command.index("-qmp") + 1]
+    except (ValueError, IndexError):
+        raise RuntimeError("authorized command carries no QMP socket")
+    if not value.startswith("unix:") or ",server=on" not in value:
+        raise RuntimeError("authorized QMP socket shape is invalid")
+    path = Path(value[len("unix:"):].split(",", 1)[0])
+    if not path.is_absolute() or len(str(path).encode()) > 100:
+        raise RuntimeError("authorized QMP socket path is invalid")
+    return path
+
+
 def run(
     bundle: Path, *, controller_state: Path, duration: float, apply: bool,
 ) -> int:
@@ -148,6 +162,14 @@ def run(
     if evidence.exists():
         raise RuntimeError("bundle already has execution evidence")
     evidence.mkdir(mode=0o700)
+    qmp_socket = _qmp_socket_path(workstation_command)
+    owned_qmp_root: Path | None = None
+    if qmp_socket.parent != bundle:
+        # Exclusive creation refuses a squatted or stale runtime root.
+        qmp_socket.parent.mkdir(mode=0o700, exist_ok=False)
+        owned_qmp_root = qmp_socket.parent
+    elif qmp_socket.exists():
+        raise RuntimeError("bundle QMP socket path is already occupied")
     canonical = paths(controller_state)
     processes: dict[str, subprocess.Popen[bytes]] = {}
     listener = socket.socket()
@@ -198,7 +220,7 @@ def run(
             screens = evidence / "screens"
             screens.mkdir(mode=0o700)
             qmp = _connect_qmp(
-                bundle / "windows.qmp",
+                qmp_socket,
                 expected_peer_pid=processes["workstation"].pid)
             result["phase"] = "windows-setup"
             deadline = time.monotonic() + duration
@@ -256,6 +278,12 @@ def run(
         listener.close()
         failures = terminate_children(
             processes.values(), terminate_timeout=8, kill_timeout=3)
+        if owned_qmp_root is not None:
+            qmp_socket.unlink(missing_ok=True)
+            try:
+                owned_qmp_root.rmdir()
+            except OSError:
+                failures.append("QMP runtime root was not removed")
         if serial_thread is not None:
             serial_thread.join(timeout=2)
         _sanitize_log(evidence / "controller-publication.log")
