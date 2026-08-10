@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Judge one produced Arch identity lifecycle JSONL evidence stream.
+
+A thin shim over the existing homelab/workstations/identity_lifecycle.py judge:
+it feeds the evidence to identity_lifecycle.judge() and prints PASS with the
+check count, or FAIL with the failing check, mirroring
+homelab/bin/homelab-windows-identity-judge's shape.
+"""
+
+import argparse
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workstations"))
+
+import identity_lifecycle as lifecycle  # noqa: E402
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--contract", type=Path, default=lifecycle.CONTRACT)
+    parser.add_argument("evidence", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        contract = lifecycle.load_json(args.contract)
+        with args.evidence.open(encoding="utf-8") as source:
+            result = lifecycle.judge(
+                contract, lifecycle.load_events(source))
+    except (OSError, ValueError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+    print(
+        f"PASS: {result['checks']} checks, "
+        f"external_access={result['external_access']}")
+    return 0
+
+
+raise SystemExit(main())
