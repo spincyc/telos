@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.011`
+Document version: `20260810.012`
 
 Status: active implementation
 
@@ -202,6 +202,19 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   The PXE transport, controller publication, and archiso boot themselves
   worked — the controller published the Arch release and the disposable
   controller converged.
+  Retry 2026-08-10 (`arch-installs/run-20260810T224324Z-f60ca3d20ef4`,
+  pristine vars + `order=n`) still did not PXE: the workstation serial
+  shows `BdsDxe: starting Boot0002 "UEFI QEMU NVMe Ctrl TELOS-WIN-0001"` —
+  even with pristine vars and network-only order, OVMF auto-discovers the
+  disk's Windows ESP bootloader, creates an NVMe boot entry, and boots it,
+  ignoring `-boot order=n`. Forcing PXE while the target disk carries a
+  bootable Windows ESP needs a stronger approach than the boot order:
+  either PXE-boot with the NVMe DETACHED (archiso is a RAM live
+  environment and needs no disk to boot) and QMP hot-attach the disk after
+  archiso is up for the install, or write an explicit OVMF `BootOrder`
+  NVRAM variable putting the network entry first and the disk last. The
+  disk-detached-then-hot-attach approach mirrors how a real PXE archiso
+  install works and is the recommended fix.
 
 - Gate 6 operator logon — narrowed with strong evidence 2026-08-10
   (attempt `20260810T221525Z-f22a898acb74`, first with the realm fix and
