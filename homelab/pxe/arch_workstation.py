@@ -189,7 +189,7 @@ kernel ${{base}}/arch/boot/x86_64/vmlinuz-linux \\
     net.ifnames=0 \\
     copytoram=n \\
     earlycon=uart8250,io,0x3f8,115200n8 \\
-    ignore_loglevel \\
+    loglevel=3 \\
     console=tty0 console=ttyS0,115200n8 \\
     initrd=initramfs-linux.img
 initrd ${{base}}/arch/boot/x86_64/initramfs-linux.img

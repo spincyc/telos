@@ -173,6 +173,10 @@ class TestRelease(unittest.TestCase):
         self.assertIn("archiso_http_srv=${base}/", script)
         self.assertIn(
             "earlycon=uart8250,io,0x3f8,115200n8", script)
+        # loglevel=3, not ignore_loglevel: the kernel console shares ttyS0
+        # with the installer drive, so printk spam must be bounded.
+        self.assertIn("loglevel=3", script)
+        self.assertNotIn("ignore_loglevel", script)
         self.assertIn(
             "console=tty0 console=ttyS0,115200n8", script)
         self.assertIn("BOOTIF=01-${net0/mac:hexhyp}", script)
