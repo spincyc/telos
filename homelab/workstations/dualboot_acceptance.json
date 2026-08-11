@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "network_policy": {
+    "mode": "local-only",
+    "external_access": "forbidden"
+  },
+  "boot_policy": {
+    "firmware": "uefi",
+    "partition_table": "gpt",
+    "default_os": "windows",
+    "menu_timeout_seconds": 5,
+    "measured_handoff_bounds_seconds": [3, 15]
+  },
+  "required_checks": [
+    "windows-default-boot",
+    "five-second-policy",
+    "arch-menu-selectable",
+    "arch-console-login-surface",
+    "efi-entries-intact",
+    "partitions-unchanged",
+    "evidence-complete"
+  ],
+  "deferred_checks": [
+    {
+      "id": "windows-login-driven",
+      "phase": 2,
+      "reason": "The gate-10 boot has no in-guest control channel: the gate-5 Windows image's serial marker was a one-shot first-logon command and the identity control agent belongs to gate 6. Until GUI login driving is wired through the identity lane, Windows evidence is boot-observed only and must never claim login-proven.",
+      "applies_to": ["windows"],
+      "release_gate": "deferred"
+    },
+    {
+      "id": "arch-authenticated-login",
+      "phase": 2,
+      "reason": "Proving the ttyS0 login surface exists does not authenticate a principal. Authenticated Arch login belongs to the gate-8 identity lifecycle; gate 10 only proves the login surface is reachable from a cold menu selection.",
+      "applies_to": ["arch"],
+      "release_gate": "deferred"
+    }
+  ]
+}

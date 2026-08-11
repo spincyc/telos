@@ -145,7 +145,10 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
-	homelab-arch-identity-run homelab-arch-identity-judge \
+	homelab-arch-identity-prepare homelab-arch-identity-run \
+	homelab-arch-identity-judge \
+	homelab-dualboot-acceptance-prepare homelab-dualboot-acceptance-run \
+	homelab-dualboot-acceptance-judge \
 	homelab-windows-identity-prepare \
 	homelab-windows-identity-run \
 	homelab-windows-identity-judge \
@@ -675,16 +678,36 @@ homelab-arch-install-run:
 # Arch join and login (gate 8): drive a joined Arch guest through the SSSD
 # identity lifecycle and emit the evidence the judge grades. Run drives the
 # guest; judge grades a produced evidence file (read-only, no APPLY gate).
+homelab-arch-identity-prepare:
+	@if [ -z '$(ARCH_RUN)' ]; then \
+		echo 'require ARCH_RUN=<passing arch install bundle>' >&2; exit 2; \
+	fi
+	@if [ -z '$(WINDOWS_IDENTITY_EVIDENCE)' ]; then \
+		echo 'require WINDOWS_IDENTITY_EVIDENCE=<produced acceptance JSONL>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-arch-identity-prepare \
+			--install-bundle '$(ARCH_RUN)' \
+			--windows-evidence '$(WINDOWS_IDENTITY_EVIDENCE)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-arch-identity-prepare \
+			--install-bundle '$(ARCH_RUN)' \
+			--windows-evidence '$(WINDOWS_IDENTITY_EVIDENCE)' --apply; \
+	fi
+
 homelab-arch-identity-run:
 	@if [ -z '$(ARCH_IDENTITY_BUNDLE)' ]; then \
 		echo 'require ARCH_IDENTITY_BUNDLE=<joined arch bundle>' >&2; exit 2; \
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-arch-identity-run \
-			--bundle '$(ARCH_IDENTITY_BUNDLE)'; \
+			--bundle '$(ARCH_IDENTITY_BUNDLE)' \
+			--duration '$(FACTORY_DURATION)'; \
 	else \
 		$(PYTHON) homelab/bin/homelab-arch-identity-run \
-			--bundle '$(ARCH_IDENTITY_BUNDLE)' --apply; \
+			--bundle '$(ARCH_IDENTITY_BUNDLE)' \
+			--duration '$(FACTORY_DURATION)' --apply; \
 	fi
 
 homelab-arch-identity-judge:
@@ -694,6 +717,44 @@ homelab-arch-identity-judge:
 	fi
 	@$(PYTHON) homelab/bin/homelab-arch-identity-judge \
 		'$(ARCH_IDENTITY_EVIDENCE)'
+
+# Dual-boot acceptance (gate 10): from cold boot, prove the Windows-default
+# five-second menu, Arch selectability, EFI recovery choices, and an
+# unchanged GPT against a fresh overlay of the completed gate-7 disk.
+# Disposable, disk-only (no PXE, no media); APPLY=1 mutates the overlay.
+homelab-dualboot-acceptance-prepare:
+	@if [ -z '$(GATE7_RUN)' ]; then \
+		echo 'require GATE7_RUN=<completed gate-7 install bundle>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-dualboot-acceptance prepare \
+			--gate7-bundle '$(GATE7_RUN)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-dualboot-acceptance prepare \
+			--gate7-bundle '$(GATE7_RUN)' --apply; \
+	fi
+
+homelab-dualboot-acceptance-run:
+	@if [ -z '$(DUALBOOT_RUN)' ]; then \
+		echo 'require DUALBOOT_RUN=<prepared dual-boot bundle>' >&2; exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-dualboot-acceptance run \
+			--bundle '$(DUALBOOT_RUN)' --duration '$(FACTORY_DURATION)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-dualboot-acceptance run \
+			--bundle '$(DUALBOOT_RUN)' --duration '$(FACTORY_DURATION)' \
+			--apply; \
+	fi
+
+homelab-dualboot-acceptance-judge:
+	@if [ -z '$(DUALBOOT_EVIDENCE)' ]; then \
+		echo 'require DUALBOOT_EVIDENCE=<produced JSONL evidence>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-dualboot-acceptance judge \
+		'$(DUALBOOT_EVIDENCE)'
 
 # Prove a completed image root against its role contract and the signed seed
 # receipt that built it. Read-only: it audits the root without mounting,
