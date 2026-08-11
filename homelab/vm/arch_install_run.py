@@ -304,9 +304,21 @@ def drive_installer(
     transcript = bytearray()
     capture.touch(mode=0o600)
     capture.chmod(0o600)
+    # After the PCIe hotplug the kernel sees the disk but has not re-read its
+    # GPT, so its Windows partitions are not yet enumerated (arch-second-verify
+    # saw "/dev/nvme0n1 has no partitions"). Resolve the device by serial, then
+    # force a partition-table reread and settle udev before the verifier runs.
     confirm_disk = (
         f"for _ in $(seq 1 30); do "
         f"lsblk -dno SERIAL | grep -qx {serial} && break; sleep 1; done; "
+        f"dev=$(lsblk -dno NAME,SERIAL | "
+        f"awk -v s={serial} '$2==s{{print \"/dev/\"$1}}'); "
+        f"if [ -n \"$dev\" ]; then "
+        f"partprobe \"$dev\" 2>/dev/null || "
+        f"blockdev --rereadpt \"$dev\" 2>/dev/null || true; "
+        f"udevadm settle 2>/dev/null || true; "
+        f"for _ in $(seq 1 15); do "
+        f"lsblk -no NAME \"$dev\" | grep -q . && break; sleep 1; done; fi; "
         f"lsblk -dno SERIAL | grep -qx {serial} "
         f"&& echo {DISK_ATTACHED_MARKER} serial={serial} "
         f"|| echo {FAIL_MARKER} rc=disk-serial-missing\n"
