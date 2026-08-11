@@ -26,6 +26,20 @@ class ControllerJoinSerialTests(unittest.TestCase):
             stream = right.makefile("rb", buffering=0)
             self.assertEqual(b"\n", stream.readline())
             right.sendall(b"[local-rescue@bootstrap-dc ~]$ ")
+            # The PUBLIC program arrives first as a short-lined heredoc into a
+            # guest temp file (the one-liner exceeded the tty's 4095-byte
+            # canonical input limit); echo it back and acknowledge.
+            transfer = bytearray()
+            while True:
+                line = stream.readline()
+                transfer.extend(line)
+                if line.startswith(b"printf") and b"_PGM_" in line:
+                    break
+            observed.append(bytes(transfer))
+            done = bytes(transfer).split(
+                b"__TELOS_JOIN_PGM_", 1)[1].split(b"__", 1)[0]
+            right.sendall(bytes(transfer))
+            right.sendall(b"__TELOS_JOIN_PGM_" + done + b"__\r\n")
             command = stream.readline()
             observed.append(command)
             token = command.split(
@@ -67,10 +81,11 @@ class ControllerJoinSerialTests(unittest.TestCase):
             lambda serial: serial.stage(SECRET))
         self.assertEqual("stage", result.operation)
         self.assertFalse(result.destruction_proved)
-        self.assertIn(b"stty -echo || exit 91", observed[0])
-        self.assertIn(b"sudo -n python3", observed[0])
+        self.assertIn(b"stty -echo || exit 91", observed[1])
+        self.assertIn(b"sudo -n python3", observed[1])
         self.assertNotIn(SECRET.encode(), observed[0])
-        payload = __import__("json").loads(base64.b64decode(observed[1]))
+        self.assertNotIn(SECRET.encode(), observed[1])
+        payload = __import__("json").loads(base64.b64decode(observed[2]))
         self.assertEqual(SECRET, payload.pop("credential"))
         self.assertRegex(payload["principal"], r"^tj-[0-9a-f]{16}$")
         self.assertRegex(payload["ownership_token"], r"^[0-9a-f]{64}$")
@@ -80,11 +95,15 @@ class ControllerJoinSerialTests(unittest.TestCase):
         result, observed = self.run_operation(
             lambda serial: serial.destroy())
         self.assertTrue(result.destruction_proved)
-        self.assertIn(b"samdb.deleteuser", base64.b64decode(
-            observed[0].split(
-                b"exec(base64.b64decode('", 1)[1].split(b"'))", 1)[0]))
+        heredoc_lines = [
+            line for line in observed[0].split(b"\n")
+            if line and b" " not in line and b"'" not in line
+            and not line.startswith(b"TELOS_JOIN_PGM_EOF_")
+        ]
+        self.assertIn(
+            b"samdb.deleteuser", base64.b64decode(b"".join(heredoc_lines)))
         self.assertNotIn(SECRET.encode(), b"".join(observed))
-        payload = __import__("json").loads(base64.b64decode(observed[1]))
+        payload = __import__("json").loads(base64.b64decode(observed[2]))
         self.assertEqual(result.principal, payload["principal"])
         self.assertRegex(payload["ownership_token"], r"^[0-9a-f]{64}$")
 
@@ -93,10 +112,11 @@ class ControllerJoinSerialTests(unittest.TestCase):
         result, observed = self.run_operation(
             lambda serial: serial.stage(SECRET), sudo_password=password)
         self.assertEqual("stage", result.operation)
-        self.assertIn(b"sudo -k -p", observed[0])
-        self.assertNotIn(b"sudo -S", observed[0])
+        self.assertIn(b"sudo -k -p", observed[1])
+        self.assertNotIn(b"sudo -S", observed[1])
         self.assertNotIn(password, observed[0])
-        self.assertEqual(password + b"\n", observed[2])
+        self.assertNotIn(password, observed[1])
+        self.assertEqual(password + b"\n", observed[3])
 
     def test_stage_and_destroy_share_unique_ownership_identity(self):
         left = __import__("io").BytesIO()

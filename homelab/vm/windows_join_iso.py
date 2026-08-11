@@ -61,6 +61,14 @@ class WindowsJoinFailureCoordinate:
         "result-ack", "accepted-receive", "accepted-parse",
         "result", "reboot-reauth",
         "reboot-probe", "cleanup",
+        # One coordinate per expected post-reboot proof field, so a proof
+        # mismatch names its first failing field instead of rendering as a
+        # bare `result` (attempt 34, 20260811T123220Z).
+        "result-mismatch-schema-version", "result-mismatch-boot-completed",
+        "result-mismatch-domain-joined", "result-mismatch-domain",
+        "result-mismatch-operator",
+        "result-mismatch-operator-local-administrator",
+        "result-mismatch-key-set",
         "result-guest-add-computer", "result-guest-operator-resolution",
         "result-guest-operator-mutation",
         "result-guest-operator-verification",
@@ -774,17 +782,44 @@ class JoinMediaChannel:
             ):
                 raise error from None
             raise _join_error("reboot-probe", error) from None
-        if result != {
+        expected = {
             "schema_version": 2,
             "boot_completed": True,
             "domain_joined": True,
-            "domain": expected_domain,
+            # DNS names compare case-insensitively. The configuration hands
+            # this proof the Kerberos REALM form (FactorySpec.realm,
+            # AD.FACTORY.TEST) while the guest reports the DC-canonical DNS
+            # form of Win32_ComputerSystem.Domain (ad.factory.test); byte
+            # equality failed attempt 34 (20260811T123220Z) at the first
+            # live evaluation this proof ever reached.
+            "domain": expected_domain.casefold(),
             "operator": f"operator@{expected_domain.upper()}",
             "operator_local_administrator": True,
-        }:
-            raise _join_error(
-                "result", WindowsJoinIsoError(
-                    "join/reboot proof is invalid")) from None
+        }
+        observed = dict(result)
+        if type(observed.get("domain")) is str:
+            observed["domain"] = observed["domain"].casefold()
+        if observed != expected:
+            # Name only failing EXPECTED field names (closed vocabulary),
+            # never observed values. The message is dropped by the
+            # progressive sanitizer, so the FIRST failing field also rides
+            # the coordinate phase: attempt 34 rendered a bare
+            # `join-guest.result` and cost a whole investigation.
+            mismatched = [
+                key for key in expected
+                if observed.get(key) != expected[key]
+            ]
+            if set(observed) != set(expected):
+                mismatched.append("key-set")
+            phase = (
+                "result-mismatch-" + mismatched[0].replace("_", "-"))
+            raise WindowsJoinIsoError(
+                "Windows join protocol failed; "
+                f"phase={phase}; error=WindowsJoinIsoError; "
+                "fields=" + ",".join(mismatched),
+                coordinate=WindowsJoinFailureCoordinate(
+                    phase, "WindowsJoinIsoError"),
+            ) from None
         return {
             "schema_version": 1,
             "join_media_destroyed": True,

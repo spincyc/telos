@@ -230,6 +230,15 @@ class IdentityFailureDiagnostic:
             "result-ack", "accepted-receive", "accepted-parse",
             "result", "reboot-reauth",
             "reboot-probe", "cleanup",
+            # One coordinate per expected post-reboot proof field, so a
+            # proof mismatch names its first failing field instead of a
+            # bare `result` (attempt 34, 20260811T123220Z).
+            "result-mismatch-schema-version",
+            "result-mismatch-boot-completed",
+            "result-mismatch-domain-joined", "result-mismatch-domain",
+            "result-mismatch-operator",
+            "result-mismatch-operator-local-administrator",
+            "result-mismatch-key-set",
             "result-guest-add-computer",
             "result-guest-join-authorization",
             "result-guest-join-authentication",

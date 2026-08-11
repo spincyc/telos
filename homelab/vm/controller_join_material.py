@@ -238,6 +238,8 @@ class ControllerJoinSerial:
         # and CPython exits 120: trap BaseException in-guest and print a
         # bounded, credential-free exception TYPE NAME to stdout instead.
         program = (
+            "import os\n"
+            "os.close(2)\n"
             "try:\n"
             + textwrap.indent(program, "    ")
             + "\nexcept SystemExit:\n"
@@ -252,6 +254,21 @@ class ControllerJoinSerial:
             if self.console.password is None
             else b"sudo -k -p '" + sudo_prompt + b"'"
         )
+        # The console is a canonical-mode tty capped at 4095 bytes per input
+        # line, and the encoded program alone exceeds that as a one-liner (the
+        # transcript ends at a shell continuation prompt when it happens). The
+        # PUBLIC program therefore travels as a short-lined heredoc into a
+        # mode-0600 guest temp file; only the secret payload stays on stdin.
+        program_path = b"/tmp/telos-join-" + token + b".py"
+        transfer_done = b"__TELOS_JOIN_PGM_" + token + b"__"
+        terminator = b"TELOS_JOIN_PGM_EOF_" + token
+        transfer = (
+            b"umask 077; base64 -d > " + program_path
+            + b" <<'" + terminator + b"'\n"
+            + base64.encodebytes(program.encode("utf-8"))
+            + terminator + b"\n"
+            b"printf '\\n" + transfer_done + b"\\n'"
+        )
         command = (
             b"trap 'stty echo' INT TERM EXIT; "
             b"stty -echo || exit 91; "
@@ -259,10 +276,9 @@ class ControllerJoinSerial:
             b"IFS= read -r __telos_payload; "
             b"stty echo; trap - INT TERM EXIT; "
             b"printf '%s' \"$__telos_payload\" | base64 -d | "
-            + sudo + b" python3 -c \"import os;os.close(2);import base64;"
-            b"exec(base64.b64decode('"
-            + _encoded_program(program) + b"'))\"; "
+            + sudo + b" python3 " + program_path + b"; "
             b"__telos_rc=$?; unset __telos_payload; "
+            b"rm -f " + program_path + b"; "
             b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
         )
         def invoke(phase: str, callback: Callable[[], _T]) -> _T:
@@ -296,6 +312,17 @@ class ControllerJoinSerial:
             "shell-prompt",
             lambda: self.console._wait(
                 rb"(?:^|\n)[^\n]*\$\s*$", "controller-shell-ready"),
+        )
+        invoke(
+            "program-transfer-send",
+            lambda: self.console._send(
+                transfer, operation + "-program-transfer-sent"),
+        )
+        invoke(
+            "program-transfer-done",
+            lambda: self.console._wait(
+                rb"(?:^|\n)" + re.escape(transfer_done) + rb"\s*(?:\n|$)",
+                operation + "-program-transfer-done"),
         )
         invoke(
             "command-send",

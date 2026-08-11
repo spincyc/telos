@@ -751,7 +751,10 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     lambda: {"private": "invalid"},
                     expected_domain="ad.example.test",
                 )
-        self.assertEqual("result", caught.exception.coordinate.phase)
+        self.assertEqual(
+            "result-mismatch-schema-version",
+            caught.exception.coordinate.phase,
+        )
         self.assertEqual(
             "WindowsJoinIsoError",
             caught.exception.coordinate.error_type,
@@ -1231,7 +1234,89 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     },
                     expected_domain="ad.example.test",
                 )
-            self.assertEqual("result", caught.exception.coordinate.phase)
+            self.assertEqual(
+                "result-mismatch-boot-completed",
+                caught.exception.coordinate.phase,
+            )
+
+    def test_post_reboot_proof_accepts_realm_form_expected_domain(self):
+        """Attempt 34 (20260811T123220Z): the configuration hands this proof
+        the Kerberos realm (AD.FACTORY.TEST) while the guest reports the
+        DC-canonical lowercase DNS domain; DNS names must compare
+        case-insensitively."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            channel.destroyed = True
+            channel.state = JoinMediaState.REBOOT_ACCEPTED
+            proof = channel.prove_join_and_reboot(
+                lambda: {
+                    "schema_version": 2,
+                    "boot_completed": True,
+                    "domain_joined": True,
+                    "domain": "ad.example.test",
+                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator_local_administrator": True,
+                },
+                expected_domain="AD.EXAMPLE.TEST",
+            )
+            self.assertTrue(proof["joined_after_reboot"])
+            # A genuinely different domain still fails closed.
+            channel.state = JoinMediaState.REBOOT_ACCEPTED
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                channel.prove_join_and_reboot(
+                    lambda: {
+                        "schema_version": 2,
+                        "boot_completed": True,
+                        "domain_joined": True,
+                        "domain": "other.example.test",
+                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator_local_administrator": True,
+                    },
+                    expected_domain="AD.EXAMPLE.TEST",
+                )
+            self.assertEqual(
+                "result-mismatch-domain",
+                caught.exception.coordinate.phase,
+            )
+
+    def test_invalid_post_reboot_proof_names_expected_fields_only(self):
+        """The bare `join/reboot proof is invalid` left attempt 34
+        undiagnosable; the failure now names the mismatching EXPECTED field
+        names (closed vocabulary) and never observed values."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = JoinMediaChannel(FakeQmp(), iso, NONCE)
+            channel.destroyed = True
+            channel.state = JoinMediaState.REBOOT_ACCEPTED
+            with self.assertRaises(WindowsJoinIsoError) as caught:
+                channel.prove_join_and_reboot(
+                    lambda: {
+                        "schema_version": 2,
+                        "boot_completed": True,
+                        "domain_joined": False,
+                        "domain": "ad.example.test",
+                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator_local_administrator": False,
+                        "private-extra": "secret-value",
+                    },
+                    expected_domain="AD.EXAMPLE.TEST",
+                )
+            self.assertEqual(
+                "result-mismatch-domain-joined",
+                caught.exception.coordinate.phase,
+            )
+            self.assertIn(
+                "fields=domain_joined,operator_local_administrator,key-set",
+                str(caught.exception),
+            )
+            self.assertNotIn("secret-value", str(caught.exception))
 
 
 if __name__ == "__main__":
