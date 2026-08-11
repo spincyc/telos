@@ -898,8 +898,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
         ) as execute:
             channel_type.return_value = mock.Mock(
                 state=mock.Mock(value="attached"),
-                attached=True, node_added=True, parent_added=True,
-                child_added=True, destroyed=False,
+                attached=True, ever_attached=True, node_added=True,
+                parent_added=True, child_added=True, destroyed=False,
             )
             raw_serial = mock.Mock(closed=False)
             connect.return_value = raw_serial
@@ -939,14 +939,17 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 ).read_text())
                 self.assertEqual(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "action": "connected-domain-login",
                         "state": "attached",
                         "attached": True,
+                        "ever_attached": True,
                         "node_added": True,
                         "parent_added": True,
                         "child_added": True,
                         "destroyed": False,
+                        "guest_stage": None,
+                        "guest_code": None,
                     },
                     breadcrumb,
                 )

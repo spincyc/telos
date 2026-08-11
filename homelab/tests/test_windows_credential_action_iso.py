@@ -676,12 +676,32 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertLess(started_at, script.index("Get-Volume"))
         self.assertLess(started_at, script.index("action.json"))
         failed_at = script.index(
-            '{"schema_version":1,"event":"credential-script-failed"}')
+            '{"schema_version":1,"event":"credential-script-failed"')
         result_write_at = script.rindex("$serial.WriteLine(($result")
         terminal_catch_at = script.index("catch {", result_write_at)
         self.assertLess(result_write_at, terminal_catch_at)
         self.assertLess(terminal_catch_at, failed_at)
         self.assertLess(failed_at, script.rindex("finally {"))
+        # The failed line names a closed-literal stage and the bounded
+        # Win32 logon code; the stage rises monotonically through the
+        # script and is never assigned from dynamic content.
+        self.assertIn("""',"stage":"' + $failureStage""", script)
+        self.assertIn("([string][int]$failureCode)", script)
+        expected_stages = (
+            "$failureStage = 'material'",
+            "$failureStage = 'release-wait'",
+            "$failureStage = 'post-release-setup'",
+            "$failureStage = 'logon'",
+            "$failureStage = 'child-wait'",
+            "$failureStage = 'result-read'",
+        )
+        positions = [script.index(stage) for stage in expected_stages]
+        self.assertEqual(sorted(positions), positions)
+        self.assertIn("$failureCode = [int]$logonError", script)
+        from homelab.vm import windows_credential_action_iso as module
+        for literal in expected_stages:
+            stage = literal.split("'")[1]
+            self.assertIn(stage, module._SCRIPT_FAILED_STAGES)
         # The offline fault phases must record an unreachable gateway, not
         # throw: Get-NetRoute raises under ErrorActionPreference Stop when
         # no default route matches.
@@ -689,6 +709,103 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "Get-NetRoute -DestinationPrefix '0.0.0.0/0' `\n"
             "        -ErrorAction SilentlyContinue",
             script)
+
+    def test_failed_line_stage_and_code_are_bounded_and_carried(self):
+        """Attempt 38 (20260811T142143Z): the guest died within a second of
+        the material release and the bare failed line could not say where.
+        The typed error now carries the closed-vocabulary stage and the
+        bounded Win32 code; forged values degrade, never propagate."""
+        parse = __import__(
+            "homelab.vm.windows_credential_action_iso",
+            fromlist=["_script_failed_detail"])._script_failed_detail
+        self.assertEqual(
+            ("logon", 1326),
+            parse('{"schema_version":1,"event":"credential-script-failed"'
+                  ',"stage":"logon","code":1326}'))
+        self.assertEqual(
+            ("unclassified", 0),
+            parse('{"schema_version":1,'
+                  '"event":"credential-script-failed"}'))
+        self.assertEqual(
+            ("unclassified", 0),
+            parse('{"schema_version":1,"event":"credential-script-failed"'
+                  ',"stage":"secret-path","code":-3}'))
+        self.assertIsNone(parse('{"schema_version":1,'
+                                '"event":"credential-material-loaded"}'))
+        self.assertIsNone(parse("not json"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "action.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+
+            def launch(_command):
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            def guest_result():
+                guest.recv(256)
+                guest.sendall(
+                    b'{"schema_version":1,'
+                    b'"event":"credential-script-failed",'
+                    b'"stage":"logon","code":1326}\n')
+
+            import threading
+            worker = threading.Thread(target=guest_result)
+            worker.start()
+            with self.assertRaisesRegex(
+                WindowsCredentialActionError,
+                "failed after material release; "
+                "guest_stage=logon; guest_code=1326",
+            ) as caught:
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            worker.join()
+            guest.close()
+            self.assertEqual("logon", caught.exception.guest_stage)
+            self.assertEqual(1326, caught.exception.guest_code)
+            # The lifecycle completed: the current flags are torn down but
+            # the high-water mark still proves the media was attached
+            # (attempt 38's breadcrumb read as never-attached without it).
+            self.assertTrue(channel.ever_attached)
+            self.assertFalse(channel.attached)
+            self.assertIs(CredentialActionMediaState.RELEASED, channel.state)
+
+    def test_unattached_channel_fails_closed_before_the_guest_launch(self):
+        """A channel that reports itself unattached after attach() must
+        raise before the guest is ever asked to poll for the volume."""
+        channel = mock.Mock(attached=False)
+        serial = mock.Mock()
+        launched = []
+        with self.assertRaisesRegex(
+            WindowsCredentialActionError,
+            "not attached before launch",
+        ):
+            execute_credential_action(
+                channel=channel, serial=serial,
+                action=MATERIAL["action"],
+                expected_principal="AD\\acceptance-operator",
+                allowed_authentication_types=frozenset({"Kerberos"}),
+                launch_guest=launched.append,
+                await_device_deleted=lambda _: None,
+            )
+        channel.attach.assert_called_once_with()
+        self.assertEqual([], launched)
+        serial.close.assert_called()
+        channel.cleanup.assert_called_once()
 
     def test_composition_closes_serial_and_cleans_media_on_result_failure(self):
         with tempfile.TemporaryDirectory() as temporary:

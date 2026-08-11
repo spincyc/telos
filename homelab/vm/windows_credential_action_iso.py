@@ -56,6 +56,56 @@ ACTION_BUS = f"{ACTION_PARENT}.0"
 # (20260811T134831Z) could not distinguish from a clean-desktop frame.
 SCRIPT_STARTED_EVENT = '{"schema_version":1,"event":"credential-script-started"}'
 SCRIPT_FAILED_EVENT = '{"schema_version":1,"event":"credential-script-failed"}'
+# Closed guest failure-stage vocabulary. Attempt 38 (20260811T142143Z)
+# proved the guest died within one second of the material release, but the
+# bare failed line could not say where; the script now names its stage from
+# these literals and the bounded Win32 logon error code.
+_SCRIPT_FAILED_STAGES = frozenset({
+    "material", "release-wait", "post-release-setup",
+    "logon", "child-wait", "result-read",
+})
+
+
+def _script_failed_detail(line: str) -> tuple[str, int] | None:
+    """Parse a fixed-form guest failed line; None when it is not one.
+
+    Diagnostic only, never authority: an unparseable stage or code
+    degrades to unclassified/0 instead of changing any behavior.
+    """
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(record, dict)
+        or record.get("schema_version") != 1
+        or record.get("event") != "credential-script-failed"
+        or not set(record) <= {"schema_version", "event", "stage", "code"}
+    ):
+        return None
+    stage = record.get("stage")
+    if not isinstance(stage, str) or stage not in _SCRIPT_FAILED_STAGES:
+        stage = "unclassified"
+    code = record.get("code")
+    if (
+        isinstance(code, bool)
+        or not isinstance(code, int)
+        or not 0 <= code <= 0xFFFFFFFF
+    ):
+        code = 0
+    return stage, code
+
+
+def _raise_script_failed(
+    position: str, detail: tuple[str, int],
+) -> None:
+    stage, code = detail
+    error = WindowsCredentialActionError(
+        f"credential-action script failed {position}; "
+        f"guest_stage={stage}; guest_code={code}")
+    error.guest_stage = stage
+    error.guest_code = code
+    raise error
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
     "principal", "authenticated", "local_administrators_member",
@@ -413,6 +463,11 @@ class CredentialActionMediaChannel:
         self.parent_added = False
         self.child_added = False
         self.attached = False
+        # High-water mark: the release path resets `attached` and every
+        # *_added flag while tearing the devices down, which made attempt
+        # 38's post-mortem breadcrumb read as "never attached" for a media
+        # lifecycle that had in fact completed. This flag only ever rises.
+        self.ever_attached = False
         self.destroyed = False
         self.state = CredentialActionMediaState.DETACHED
 
@@ -512,6 +567,7 @@ class CredentialActionMediaChannel:
                 "credential-action ISO attach failed: "
                 f"{type(error).__name__}") from None
         self.attached = True
+        self.ever_attached = True
         self.state = CredentialActionMediaState.ATTACHED
 
     def _destroy_owned_iso(self) -> None:
@@ -665,6 +721,12 @@ def execute_credential_action(
     """Run one complete private handoff and public proof on one COM1 session."""
     try:
         channel.attach()
+        # A channel that reaches the guest launch unattached would leave
+        # the guest polling for a volume that never existed; fail closed
+        # BEFORE the launch instead of letting the poll die.
+        if not getattr(channel, "attached", False):
+            raise WindowsCredentialActionError(
+                "credential-action media is not attached before launch")
         launch_guest(launch_credential_action_command())
         # The first read stays a raw timeout when nothing ever arrives:
         # that is the "launcher or script never reported" class.
@@ -678,19 +740,22 @@ def execute_credential_action(
                 raise WindowsCredentialActionError(
                     "credential-action script started but delivered "
                     "no material marker") from None
-        if marker.rstrip("\n") == SCRIPT_FAILED_EVENT:
-            raise WindowsCredentialActionError(
-                "credential-action script failed before releasing material"
-                + (" after starting" if script_started else ""))
+        failed = _script_failed_detail(marker.rstrip("\n"))
+        if failed is not None:
+            _raise_script_failed(
+                "before releasing material"
+                + (" after starting" if script_started else ""),
+                failed,
+            )
         channel.release_after_marker(
             marker,
             await_device_deleted=await_device_deleted,
             send_release=serial.send_release,
         )
         result_line = serial.read_line()
-        if result_line.rstrip("\n") == SCRIPT_FAILED_EVENT:
-            raise WindowsCredentialActionError(
-                "credential-action script failed after material release")
+        failed = _script_failed_detail(result_line.rstrip("\n"))
+        if failed is not None:
+            _raise_script_failed("after material release", failed)
         result = parse_action_result(
             result_line,
             nonce=channel.nonce,

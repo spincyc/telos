@@ -227,28 +227,44 @@ def _retain_single_frame(qmp, evidence: Path, name: str, enabled) -> None:
 
 
 def _retain_credential_channel_state(
-    evidence: Path, action: str, channel,
+    evidence: Path, action: str, channel, error=None,
 ) -> None:
     """Best-effort media-lifecycle breadcrumb; secret-free; never raises.
 
     Attempt 37 (20260811T134831Z) could not even prove whether the
-    credential ISO had been attached: the QMP exchange is unlogged and the
-    channel state died with the process. Booleans and the state enum only.
+    credential ISO had been attached. Attempt 38 then showed the CURRENT
+    flags mislead post-release (the release path resets them while tearing
+    devices down), so the record also carries the high-water
+    `ever_attached` mark and the guest's bounded failure stage/code when
+    the typed error names them. Booleans, closed enums and one bounded
+    integer only.
     """
     try:
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        guest_stage = getattr(error, "guest_stage", None)
+        guest_code = getattr(error, "guest_code", None)
         record = {
-            "schema_version": 1,
+            "schema_version": 2,
             "action": action,
             "state": getattr(
                 getattr(channel, "state", None), "value", None),
             **{
                 name: bool(getattr(channel, name, False))
                 for name in (
-                    "attached", "node_added", "parent_added",
-                    "child_added", "destroyed",
+                    "attached", "ever_attached", "node_added",
+                    "parent_added", "child_added", "destroyed",
                 )
             },
+            "guest_stage": (
+                guest_stage
+                if isinstance(guest_stage, str) and len(guest_stage) <= 32
+                else None
+            ),
+            "guest_code": (
+                guest_code
+                if type(guest_code) is int and 0 <= guest_code <= 0xFFFFFFFF
+                else None
+            ),
         }
         target = evidence / f"credential-action-{action}-channel.json"
         target.write_text(
@@ -2102,7 +2118,8 @@ class NativeWindowsAcceptanceAdapter:
                 f"credential-action-{action}",
                 retain_frames,
             )
-            _retain_credential_channel_state(evidence, action, channel)
+            _retain_credential_channel_state(
+                evidence, action, channel, error=error)
             raise WindowsIdentityAdapterError(
                 "credential action execution failed: "
                 f"{type(error).__name__}",

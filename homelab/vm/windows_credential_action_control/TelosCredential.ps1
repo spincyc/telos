@@ -16,6 +16,13 @@ $serial.NewLine = "`n"
 $serial.Open()
 $serial.WriteLine('{"schema_version":1,"event":"credential-script-started"}')
 $password = $null
+# Progressive, fixed-literal failure coordinates for the catch below:
+# attempt 38 (20260811T142143Z) proved the guest died within one second of
+# the material release, but the fixed failed line could not say WHERE. The
+# stage is only ever assigned from these literals and the code only from
+# the Win32 logon error -- bounded and credential-free.
+$failureStage = 'material'
+$failureCode = 0
 try {
     $volumes = @(
         Get-Volume -FileSystemLabel 'TELOS_CRED' |
@@ -57,11 +64,13 @@ try {
         '{"schema_version":1,"event":"credential-material-loaded","nonce":"' +
         $nonce + '"}'
     )
+    $failureStage = 'release-wait'
     $release = $serial.ReadLine().Trim()
     if ($release -ne (
             'TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED ' + $nonce)) {
         throw 'credential action release was not authorized'
     }
+    $failureStage = 'post-release-setup'
 
     $source = @'
 using System;
@@ -201,6 +210,7 @@ $record | ConvertTo-Json -Compress |
     $commandLine = (
         'powershell.exe -NoLogo -NoProfile -NonInteractive ' +
         '-ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+    $failureStage = 'logon'
     $loginClock = [Diagnostics.Stopwatch]::StartNew()
     $created = [TelosCredentialLogon]::CreateProcessWithLogonW(
         $username, $domain, $password, 1, $null, $commandLine, 0,
@@ -235,9 +245,11 @@ $record | ConvertTo-Json -Compress |
             $serial.WriteLine(($denied | ConvertTo-Json -Compress))
             return
         }
+        $failureCode = [int]$logonError
         throw ('credential action logon failed: ' +
             $logonError)
     }
+    $failureStage = 'child-wait'
     try {
         $wait = [TelosCredentialLogon]::WaitForSingleObject(
             $process.hProcess, 30000)
@@ -255,6 +267,7 @@ $record | ConvertTo-Json -Compress |
         [void][TelosCredentialLogon]::CloseHandle($process.hThread)
         [void][TelosCredentialLogon]::CloseHandle($process.hProcess)
     }
+    $failureStage = 'result-read'
     if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
         throw 'credential action emitted no result'
     }
@@ -301,11 +314,14 @@ $record | ConvertTo-Json -Compress |
 }
 catch {
     # Never serialize the exception: it may contain private guest state.
-    # One fixed, credential-free breadcrumb turns a silent COM1 into a
-    # typed mid-script failure on the host.
+    # One fixed-form, credential-free breadcrumb turns a silent COM1 into
+    # a typed mid-script failure on the host: the stage is a closed
+    # literal set and the code is the bounded Win32 logon error.
     try {
         $serial.WriteLine(
-            '{"schema_version":1,"event":"credential-script-failed"}')
+            '{"schema_version":1,"event":"credential-script-failed"' +
+            ',"stage":"' + $failureStage + '","code":' +
+            ([string][int]$failureCode) + '}')
     }
     catch {
     }
