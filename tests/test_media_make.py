@@ -15,10 +15,23 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+# Git may detach background maintenance from any writing command; a maintenance
+# process recreating .git files while TemporaryDirectory tears the repo down
+# aborts the rmtree mid-walk and leaks the multi-gigabyte remainder into /tmp.
+# Every test-repository git invocation therefore pins maintenance off.
+NO_MAINTENANCE = (
+    "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+    "-c", "gc.autoDetach=false",
+)
+
+
 def candidate_repository(destination: Path) -> None:
     """Commit the tracked plus candidate worktree into a local test remote."""
     destination.mkdir()
-    subprocess.run(["git", "init", "--quiet", str(destination)], check=True)
+    subprocess.run(
+        ["git", *NO_MAINTENANCE, "init", "--quiet", str(destination)],
+        check=True,
+    )
     listed = subprocess.run(
         [
             "git",
@@ -44,10 +57,14 @@ def candidate_repository(destination: Path) -> None:
             target.symlink_to(os.readlink(source))
         else:
             shutil.copy2(source, target)
-    subprocess.run(["git", "-C", str(destination), "add", "--all"], check=True)
+    subprocess.run(
+        ["git", *NO_MAINTENANCE, "-C", str(destination), "add", "--all"],
+        check=True,
+    )
     subprocess.run(
         [
             "git",
+            *NO_MAINTENANCE,
             "-C",
             str(destination),
             "-c",
@@ -74,6 +91,7 @@ class MediaMakeTests(unittest.TestCase):
             subprocess.run(
                 [
                     "git",
+                    *NO_MAINTENANCE,
                     "clone",
                     "--quiet",
                     "--no-hardlinks",
@@ -83,7 +101,15 @@ class MediaMakeTests(unittest.TestCase):
                 check=True,
             )
             subprocess.run(
-                ["git", "-C", str(clone), "pull", "--ff-only", "--quiet"],
+                [
+                    "git",
+                    *NO_MAINTENANCE,
+                    "-C",
+                    str(clone),
+                    "pull",
+                    "--ff-only",
+                    "--quiet",
+                ],
                 check=True,
             )
 
