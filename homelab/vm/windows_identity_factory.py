@@ -599,6 +599,11 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
             serial_socket=boundary.serial_socket,
             switch_port=boundary.port,
             control_iso=boundary.attempt / "control.iso",
+            # The scan runs mid-acceptance while QEMU still owns the COM1
+            # server socket, so re-derivation must accept the live private
+            # socket rather than demand the launch-time absence (which raised
+            # WindowsControlSerialError at update-source-offline, check 17).
+            require_absent_serial_socket=False,
         )
         if (
             boundary._normalized_command(runtime_command)

@@ -26,8 +26,15 @@ def qemu_identity_command(
     serial_socket: Path,
     switch_port: int,
     control_iso: Path | None = None,
+    require_absent_serial_socket: bool = True,
 ) -> list[str]:
-    """Boot only the retained native disk on the isolated factory switch."""
+    """Boot only the retained native disk on the isolated factory switch.
+
+    ``require_absent_serial_socket`` defaults to the launch-time invariant
+    (the socket must not yet exist).  The live acceptance secret scan
+    re-derives the running argv while QEMU already owns the server socket, so
+    it passes ``False`` to require a live private socket instead of absence.
+    """
     if not 1 <= switch_port <= 65535:
         raise ValueError("switch port is invalid")
     for path, label in (
@@ -100,4 +107,6 @@ def qemu_identity_command(
     # The generic topology audit intentionally rejects all host character
     # devices. Add only the separately audited, fixed-purpose serial socket
     # after that broad audit has accepted the rest of the command.
-    return attach_qemu_serial(command, serial_socket)
+    return attach_qemu_serial(
+        command, serial_socket,
+        require_absent_socket=require_absent_serial_socket)

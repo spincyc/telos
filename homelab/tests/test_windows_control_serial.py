@@ -137,6 +137,42 @@ class WindowsControlSerialTests(unittest.TestCase):
             self.assertNotIn("password", joined.casefold())
             self.assertNotIn("credential", joined.casefold())
 
+    def test_qemu_serial_reconstructs_against_a_live_private_socket(self):
+        # The live acceptance secret scan re-derives the running argv while
+        # QEMU still owns the COM1 server socket. In that mode absence is a
+        # failure and an existing private socket is required, but the argv is
+        # byte-for-byte identical to the launch-time command so the
+        # authorization comparison still holds.
+        import socket
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            path = root / "windows.serial"
+            source = ["qemu-system-x86_64", "-serial", "stdio", "-m", "8G"]
+            launch = attach_qemu_serial(list(source), path)
+            # Reconstruction while the socket is still absent must fail closed.
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "live private socket"):
+                attach_qemu_serial(
+                    list(source), path, require_absent_socket=False)
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.addCleanup(server.close)
+            server.bind(str(path))
+            reconstructed = attach_qemu_serial(
+                list(source), path, require_absent_socket=False)
+            self.assertEqual(launch, reconstructed)
+            # The launch-time guard still rejects the now-existing socket.
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "absent"):
+                attach_qemu_serial(list(source), path)
+            symlink = root / "linked.serial"
+            symlink.symlink_to(path)
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "live private socket"):
+                attach_qemu_serial(
+                    list(source), symlink, require_absent_socket=False)
+
     def test_qemu_serial_rejects_unsafe_runtime_and_ambiguous_argv(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

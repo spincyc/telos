@@ -1,11 +1,43 @@
+import socket
 import tempfile
 import unittest
 from pathlib import Path
 
+from homelab.vm.windows_control_serial import WindowsControlSerialError
 from homelab.vm.windows_identity_contract import qemu_identity_command
 
 
 class WindowsIdentityContractTests(unittest.TestCase):
+    def test_live_reconstruction_accepts_the_running_serial_socket(self):
+        # The mid-run acceptance secret scan re-derives the argv while the
+        # private COM1 server socket already exists. Launch-time construction
+        # demands the socket be absent; reconstruction demands a live private
+        # socket and yields identical argv so authorization comparison holds.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "windows.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            control = root / "control.iso"
+            for path in (disk, variables, control):
+                path.write_bytes(path.name.encode())
+            control.chmod(0o444)
+            kwargs = dict(
+                disk=disk, variables=variables,
+                qmp_socket=root / "windows.qmp", switch_port=31415,
+                serial_socket=root / "windows.serial", control_iso=control)
+            launch = qemu_identity_command(**kwargs)
+            # Reconstruction before QEMU created the socket must fail closed.
+            with self.assertRaisesRegex(
+                    WindowsControlSerialError, "live private socket"):
+                qemu_identity_command(
+                    **kwargs, require_absent_serial_socket=False)
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.addCleanup(server.close)
+            server.bind(str(root / "windows.serial"))
+            reconstructed = qemu_identity_command(
+                **kwargs, require_absent_serial_socket=False)
+            self.assertEqual(launch, reconstructed)
+
     def test_command_boots_only_overlay_and_optional_read_only_control_iso(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

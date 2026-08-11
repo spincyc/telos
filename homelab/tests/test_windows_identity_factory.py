@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import socket
 import tempfile
 import unittest
 from unittest import mock
@@ -21,6 +22,17 @@ SOURCE_DISK_SHA256 = (
 
 
 class WindowsIdentityFactoryTests(unittest.TestCase):
+    def bind_live_serial(self, path: Path) -> None:
+        """Model the mid-run COM1 server socket QEMU already owns.
+
+        The acceptance secret scan re-derives the running argv while the
+        private serial socket exists, so scan_secrets requires a live private
+        socket rather than the launch-time absence.
+        """
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(path))
+        self.addCleanup(server.close)
+
     def factory(self, boundary, bundle):
         with mock.patch(
             "homelab.vm.windows_identity_factory._sha256",
@@ -194,6 +206,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
             boundary.qmp_root = Path(name) / "runtime-qmp"
             boundary.qmp_root.mkdir(mode=0o700)
             boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            self.bind_live_serial(boundary.serial_socket)
             boundary.port = 31415
             boundary.processes["windows"] = mock.Mock(
                 poll=mock.Mock(return_value=None))
@@ -362,6 +375,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 boundary.qmp_root = Path(name) / "qmp"
                 boundary.qmp_root.mkdir(mode=0o700)
                 boundary.serial_socket = boundary.qmp_root / "windows.serial"
+                self.bind_live_serial(boundary.serial_socket)
                 boundary.port = 31415
                 boundary.processes["windows"] = mock.Mock(
                     poll=mock.Mock(return_value=None))
@@ -397,6 +411,7 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
             boundary.qmp_root = Path(name) / "qmp"
             boundary.qmp_root.mkdir(mode=0o700)
             boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            self.bind_live_serial(boundary.serial_socket)
             boundary.port = 31415
             boundary.processes["windows"] = mock.Mock(
                 poll=mock.Mock(return_value=None))

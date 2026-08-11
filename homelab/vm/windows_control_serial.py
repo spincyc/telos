@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import socket
+import stat
 from typing import Mapping
 
 from .windows_control_iso import (
@@ -128,7 +129,7 @@ class ControlProbe:
     command: str
 
 
-def _validate_socket_path(path: Path) -> Path:
+def _validate_socket_path(path: Path, *, require_absent: bool = True) -> Path:
     path = Path(path).absolute()
     encoded = str(path).encode()
     if b"," in encoded or any(byte < 0x20 for byte in encoded):
@@ -139,21 +140,45 @@ def _validate_socket_path(path: Path) -> Path:
             or parent.stat().st_mode & 0o077):
         raise WindowsControlSerialError(
             "serial socket parent must be a private real directory")
-    if path.exists() or path.is_symlink():
-        raise WindowsControlSerialError("serial socket path must be absent")
+    if require_absent:
+        # Launch-time construction: QEMU will create the server socket, so a
+        # pre-existing path would be a stale or hostile artifact.
+        if path.exists() or path.is_symlink():
+            raise WindowsControlSerialError(
+                "serial socket path must be absent")
+    else:
+        # Mid-run reconstruction for audit (the live secret scan re-derives
+        # the running argv): the QEMU server socket already exists, so require
+        # it to be a private, non-symlink Unix socket instead of absent.
+        try:
+            info = path.lstat()
+        except OSError as error:
+            raise WindowsControlSerialError(
+                "serial socket path must be a live private socket") from error
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+            raise WindowsControlSerialError(
+                "serial socket path must be a live private socket")
     # Linux sockaddr_un.sun_path has 108 bytes including the trailing NUL.
     if len(encoded) >= 108:
         raise WindowsControlSerialError("serial socket path is too long")
     return path
 
 
-def attach_qemu_serial(command: list[str], socket_path: Path) -> list[str]:
+def attach_qemu_serial(
+    command: list[str],
+    socket_path: Path,
+    *,
+    require_absent_socket: bool = True,
+) -> list[str]:
     """Return an argv copy whose COM1 is a private host Unix socket.
 
     The socket is a QEMU server.  Nothing secret enters argv, and the original
-    authorized command is left untouched for audit comparison.
+    authorized command is left untouched for audit comparison.  Pass
+    ``require_absent_socket=False`` to re-derive a still-running command whose
+    server socket already exists (the live acceptance secret scan).
     """
-    path = _validate_socket_path(socket_path)
+    path = _validate_socket_path(
+        socket_path, require_absent=require_absent_socket)
     result = list(command)
     positions = [
         index for index, value in enumerate(result[:-1]) if value == "-serial"
