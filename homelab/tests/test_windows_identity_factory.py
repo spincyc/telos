@@ -414,6 +414,16 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                     else "proof.ppm"
                 )
                 (target / proof).write_bytes(b"clean")
+            # The reauthentication that runs during acceptance retains its own
+            # runtime frames and the redacted Controller transcript here.
+            reauth = boundary.attempt / "post-join-reauthentication"
+            for frame in (
+                "identity-0001-sign-in.ppm", "identity-postsubmit-0003.ppm",
+                "identity-after-type-secret.ppm",
+                "identity-submit-pre-activation.ppm",
+            ):
+                (reauth / frame).write_bytes(b"clean frame")
+            (reauth / "controller-auth-console.txt").write_text("redacted")
             (boundary.attempt / "attempt-consumed.json").write_text("{}")
             (boundary.attempt / "acceptance-progress.json").write_text("{}")
             boundary.qmp_root = Path(name) / "qmp"

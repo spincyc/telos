@@ -471,12 +471,25 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
                 "post-join-operator-submit-focus-tab-3.ppm",
                 "post-join-operator-submit-focus-tab-4.ppm",
             }
+            # The post-join reauthentication that runs during acceptance also
+            # retains its own runtime frames beside the calibration
+            # references: masked-secret sign-in/submit/desktop PPMs
+            # (identity-*.ppm) and the credential-redacted Controller auth
+            # transcript. All are secret-free by construction and scanned by
+            # the rglob below; they are allowed by name pattern.
+            def _reauth_runtime(candidate: str) -> bool:
+                return (
+                    candidate == "controller-auth-console.txt"
+                    or (candidate.startswith("identity-")
+                        and candidate.endswith(".ppm")))
+
             if any(
                 path.is_symlink()
                 or not path.is_file()
                 or (
                     name == "post-join-reauthentication"
                     and path.name not in expected_calibration_names
+                    and not _reauth_runtime(path.name)
                 )
                 or (
                     name != "post-join-reauthentication"
