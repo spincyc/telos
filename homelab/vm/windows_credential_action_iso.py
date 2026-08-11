@@ -140,6 +140,10 @@ _AUTHENTICATION_SEMANTICS = frozenset({
     "local-account",
     "domain-logon-denied",
 })
+# Kerberos-family packages that a connected/online domain interactive logon
+# uses; a cached offline logon falls to NTLM. Ground truth for the
+# online-vs-cached classification, from the token's logon session.
+_ONLINE_DOMAIN_PACKAGES = frozenset({"Kerberos", "Negotiate"})
 _CACHE_EVIDENCE = frozenset({
     "online-interactive-logon",
     "offline-cache-proven",
@@ -476,13 +480,20 @@ def parse_action_result(
             and (not result["domain_reachable"]
                  or result["authentication_semantics"] != "connected-domain"
                  or result["cache_evidence"]
-                 != "online-interactive-logon")):
+                 != "online-interactive-logon"
+                 # Ground-truth package classification (attempt 44 added the
+                 # real logon-session package): a connected/online domain
+                 # logon is Kerberos-family, never bare cached NTLM.
+                 or result["authentication_type"]
+                 not in _ONLINE_DOMAIN_PACKAGES)):
         raise WindowsCredentialActionError(
             "connected domain login measurement is invalid")
     if (action == "cached-domain-login"
             and (result["domain_reachable"]
                  or result["authentication_semantics"] != "cached-domain"
-                 or result["cache_evidence"] != "offline-cache-proven")):
+                 or result["cache_evidence"] != "offline-cache-proven"
+                 # A cached (offline) logon is served by NTLM/MSV1_0.
+                 or result["authentication_type"] != "NTLM")):
         raise WindowsCredentialActionError(
             "cached domain login measurement is invalid")
     if (action == "local-rescue-login"

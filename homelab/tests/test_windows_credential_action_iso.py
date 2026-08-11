@@ -45,7 +45,9 @@ def cred_result(**changes):
         "principal_matches_expected": True,
         "authenticated": True,
         "local_administrators_member": False,
-        "authentication_type": "Kerberos",
+        # Default is a cached (offline) logon -> NTLM package; connected
+        # cases override to Kerberos alongside their online semantics.
+        "authentication_type": "NTLM",
         "authentication_semantics": "cached-domain",
         "cache_evidence": "offline-cache-proven",
         "login_elapsed_seconds": 1.25,
@@ -185,6 +187,24 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                       script)
         self.assertIn("gateway_reachable = [bool]$gatewayReachable", script)
         self.assertIn("$cacheEvidence = 'offline-cache-proven'", script)
+        # The real authentication package comes from the token's logon
+        # session (attempt 44: WindowsIdentity.AuthenticationType is empty
+        # for a bare LogonUser token). Extract it, use it as the auth type,
+        # and fall back to it only when the identity's own type is empty.
+        self.assertIn("public static string LogonPackage(IntPtr token) {",
+                      script)
+        self.assertIn("LsaGetLogonSessionData(", script)
+        self.assertIn("LsaFreeReturnBuffer(", script)
+        self.assertIn("public struct SECURITY_LOGON_SESSION_DATA {", script)
+        self.assertIn("AuthenticationPackage", script)
+        self.assertIn(
+            "$authenticationPackage = [string](\n"
+            "            [TelosCredentialLogon]::LogonPackage($token))",
+            script)
+        self.assertIn(
+            "if ([string]::IsNullOrEmpty($authenticationType)) {", script)
+        self.assertIn(
+            "$authenticationType = $authenticationPackage", script)
         command = launch_credential_action_command()
         self.assertLessEqual(len(command), MAX_PUBLIC_COMMAND_CHARS)
         self.assertIn("1..40", command)
@@ -332,7 +352,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             json.dumps(result) + "\n",
             nonce=NONCE, action=MATERIAL["action"],
             expected_principal="AD\\acceptance-operator",
-            allowed_authentication_types=frozenset({"Kerberos"}))
+            allowed_authentication_types=frozenset({"Kerberos", "Negotiate", "NTLM"}))
         self.assertEqual(result, parsed)
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "invalid"):
@@ -358,9 +378,71 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                     expected_principal="AD\\acceptance-operator",
                     allowed_authentication_types=frozenset({"Kerberos"}))
 
+    def test_auth_package_classifies_online_versus_cached(self):
+        """Attempt 44: WindowsIdentity(token).AuthenticationType is empty for
+        a bare LogonUser token. The real logon-session package is now the
+        authoritative authentication_type AND the online/cached ground
+        truth: a connected logon is Kerberos-family, a cached one is NTLM."""
+        online = cred_result(
+            action="connected-domain-login",
+            authentication_type="Kerberos",
+            authentication_semantics="connected-domain",
+            cache_evidence="online-interactive-logon",
+            domain_reachable=True, controller_reachable=True,
+        )
+        # Kerberos and Negotiate both classify as online.
+        for package in ("Kerberos", "Negotiate"):
+            with self.subTest(package=package):
+                parsed = parse_action_result(
+                    json.dumps({**online, "authentication_type": package})
+                    + "\n",
+                    nonce=NONCE, action="connected-domain-login",
+                    expected_principal="AD\\student",
+                    allowed_authentication_types=frozenset(
+                        {"Kerberos", "Negotiate", "NTLM"}))
+                self.assertEqual(package, parsed["authentication_type"])
+        # An empty package (the attempt-44 bug) fails closed -- never a pass.
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "schema"):
+            parse_action_result(
+                json.dumps({**online, "authentication_type": ""}) + "\n",
+                nonce=NONCE, action="connected-domain-login",
+                expected_principal="AD\\student",
+                allowed_authentication_types=frozenset(
+                    {"Kerberos", "Negotiate", "NTLM"}))
+        # An online logon that reports bare NTLM is a classification
+        # contradiction and is rejected.
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "measurement"):
+            parse_action_result(
+                json.dumps({**online, "authentication_type": "NTLM"}) + "\n",
+                nonce=NONCE, action="connected-domain-login",
+                expected_principal="AD\\student",
+                allowed_authentication_types=frozenset(
+                    {"Kerberos", "Negotiate", "NTLM"}))
+        # A cached logon must be NTLM; Kerberos there is a contradiction.
+        cached = cred_result(
+            action="cached-domain-login", authentication_type="NTLM")
+        self.assertEqual("NTLM", parse_action_result(
+            json.dumps(cached) + "\n", nonce=NONCE,
+            action="cached-domain-login",
+            expected_principal="AD\\student",
+            allowed_authentication_types=frozenset(
+                {"Kerberos", "Negotiate", "NTLM"}))["authentication_type"])
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "measurement"):
+            parse_action_result(
+                json.dumps({**cached, "authentication_type": "Kerberos"})
+                + "\n",
+                nonce=NONCE, action="cached-domain-login",
+                expected_principal="AD\\student",
+                allowed_authentication_types=frozenset(
+                    {"Kerberos", "Negotiate", "NTLM"}))
+
     def test_action_semantics_reject_network_or_membership_mismatch(self):
         base = cred_result(
             action="connected-domain-login",
+            authentication_type="Kerberos",
             authentication_semantics="connected-domain",
             cache_evidence="online-interactive-logon",
             login_elapsed_seconds=0.75,
@@ -467,7 +549,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 serial=serial,
                 action=MATERIAL["action"],
                 expected_principal="AD\\acceptance-operator",
-                allowed_authentication_types=frozenset({"Kerberos"}),
+                allowed_authentication_types=frozenset({"Kerberos", "Negotiate", "NTLM"}),
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
             )
@@ -517,7 +599,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 serial=serial,
                 action=MATERIAL["action"],
                 expected_principal="AD\\acceptance-operator",
-                allowed_authentication_types=frozenset({"Kerberos"}),
+                allowed_authentication_types=frozenset({"Kerberos", "Negotiate", "NTLM"}),
                 launch_guest=launch,
                 await_device_deleted=lambda _: None,
             )
@@ -884,6 +966,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             # rejects -- exactly the attempt-43 shape (guest succeeded).
             rejected = cred_result(
                 action="connected-domain-login",
+                authentication_type="Kerberos",
                 authentication_semantics="connected-domain",
                 cache_evidence="online-interactive-logon",
                 domain_reachable=True, controller_reachable=True,

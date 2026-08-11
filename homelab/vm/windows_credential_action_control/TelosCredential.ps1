@@ -88,10 +88,55 @@ try {
 using System;
 using System.Runtime.InteropServices;
 public static class TelosCredentialLogon {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LUID {
+        public UInt32 LowPart;
+        public Int32 HighPart;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TOKEN_STATISTICS {
+        public LUID TokenId;
+        public LUID AuthenticationId;
+        public Int64 ExpirationTime;
+        public Int32 TokenType;
+        public Int32 ImpersonationLevel;
+        public UInt32 DynamicCharged;
+        public UInt32 DynamicAvailable;
+        public UInt32 GroupCount;
+        public UInt32 PrivilegeCount;
+        public LUID ModifiedId;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LSA_UNICODE_STRING {
+        public UInt16 Length;
+        public UInt16 MaximumLength;
+        public IntPtr Buffer;
+    }
+    // Only the leading fields are needed; the rest of
+    // SECURITY_LOGON_SESSION_DATA is deliberately omitted -- we read
+    // AuthenticationPackage and stop.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_LOGON_SESSION_DATA {
+        public UInt32 Size;
+        public LUID LogonId;
+        public LSA_UNICODE_STRING UserName;
+        public LSA_UNICODE_STRING LogonDomain;
+        public LSA_UNICODE_STRING AuthenticationPackage;
+    }
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool LogonUser(
         string user, string domain, string password,
         Int32 logonType, Int32 logonProvider, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool GetTokenInformation(
+        IntPtr token, Int32 tokenInformationClass,
+        IntPtr tokenInformation, Int32 tokenInformationLength,
+        out Int32 returnLength);
+    [DllImport("Secur32.dll", SetLastError = true)]
+    public static extern Int32 LsaGetLogonSessionData(
+        ref LUID logonId, out IntPtr ppLogonSessionData);
+    [DllImport("Secur32.dll")]
+    public static extern Int32 LsaFreeReturnBuffer(IntPtr buffer);
     [DllImport("kernel32.dll")]
     public static extern bool CloseHandle(IntPtr handle);
     // Capture the Win32 error in the same interop frame as the call:
@@ -104,6 +149,50 @@ public static class TelosCredentialLogon {
         bool ok = LogonUser(user, domain, password, logonType, 0, out token);
         logonError = ok ? 0 : Marshal.GetLastWin32Error();
         return ok;
+    }
+    // WindowsIdentity(token).AuthenticationType is empty for a bare
+    // LogonUser token (attempt 44). The real package lives in the token's
+    // logon session: TokenStatistics.AuthenticationId (a LUID) ->
+    // LsaGetLogonSessionData -> AuthenticationPackage. Reading the caller's
+    // OWN just-created session needs no SeTcbPrivilege. Returns "" on any
+    // failure so the host fails closed rather than on fabricated data.
+    public static string LogonPackage(IntPtr token) {
+        int needed = 0;
+        // TokenStatistics = 10.
+        GetTokenInformation(token, 10, IntPtr.Zero, 0, out needed);
+        if (needed <= 0) { return ""; }
+        IntPtr buffer = Marshal.AllocHGlobal(needed);
+        try {
+            int returned = 0;
+            if (!GetTokenInformation(token, 10, buffer, needed, out returned)) {
+                return "";
+            }
+            TOKEN_STATISTICS stats = (TOKEN_STATISTICS)Marshal.PtrToStructure(
+                buffer, typeof(TOKEN_STATISTICS));
+            LUID authId = stats.AuthenticationId;
+            IntPtr sessionData = IntPtr.Zero;
+            if (LsaGetLogonSessionData(ref authId, out sessionData) != 0
+                    || sessionData == IntPtr.Zero) {
+                return "";
+            }
+            try {
+                SECURITY_LOGON_SESSION_DATA data =
+                    (SECURITY_LOGON_SESSION_DATA)Marshal.PtrToStructure(
+                        sessionData, typeof(SECURITY_LOGON_SESSION_DATA));
+                LSA_UNICODE_STRING package = data.AuthenticationPackage;
+                if (package.Buffer == IntPtr.Zero || package.Length == 0) {
+                    return "";
+                }
+                return Marshal.PtrToStringUni(
+                    package.Buffer, package.Length / 2);
+            }
+            finally {
+                LsaFreeReturnBuffer(sessionData);
+            }
+        }
+        finally {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 }
 '@
@@ -215,11 +304,22 @@ public static class TelosCredentialLogon {
 
     $failureStage = 'identity-read'
     try {
+        # The real authentication package from the token's logon session:
+        # WindowsIdentity(token).AuthenticationType is empty for a bare
+        # LogonUser token (attempt 44). This is the ground-truth package
+        # ("Kerberos"/"NTLM"/"Negotiate") that also drives online-vs-cached.
+        $authenticationPackage = [string](
+            [TelosCredentialLogon]::LogonPackage($token))
         $identity = [Security.Principal.WindowsIdentity]::new($token)
         try {
             $principalSid = [string]$identity.User.Value
             $authenticated = [bool]$identity.IsAuthenticated
+            # Prefer the identity's own type when the OS populated it; fall
+            # back to the logon-session package (the LogonUser-token case).
             $authenticationType = [string]$identity.AuthenticationType
+            if ([string]::IsNullOrEmpty($authenticationType)) {
+                $authenticationType = $authenticationPackage
+            }
             # The raw local-Administrators SID is present in the token
             # (deny-only when the logon is UAC-filtered) exactly when the
             # account is a member -- unlike IsInRole, which reports false
