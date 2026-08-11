@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 import time
@@ -16,6 +17,30 @@ from homelab.vm.arch_install_prepare import (
 
 
 CONST = "c" * 64
+
+# The runner echoes ``printf '\nTELOS_ARCH_SHELL_READY_<token>=%s\n' ready`` to
+# prove the shell is live; the fake guest greps this command out of its stdin,
+# reconstructs the token, and prints the resolved ``...=ready`` sentinel back.
+_READY_PROBE = re.compile(rb"TELOS_ARCH_SHELL_READY_([0-9a-f]+)=%s")
+
+
+def _kernel_noise(stamp: str) -> bytes:
+    """A kernel audit/printk line like the ones that share archiso's ttyS0."""
+    return (
+        f"[  {stamp}.807034] audit: type=1131 "
+        f"audit(1700000000.{stamp}:{stamp}): pid=1 uid=0 "
+        f"msg='unit=telos comm=\"systemd\" exe=\"/usr/lib/systemd/systemd\"'\n"
+    ).encode("ascii")
+
+
+def _await_ready_probe(stdin: "_Recorder", spins: int = 5000) -> bytes | None:
+    """Spin until the runner has echoed its readiness probe; return the token."""
+    for _ in range(spins):
+        match = _READY_PROBE.search(stdin.data)
+        if match:
+            return match.group(1)
+        time.sleep(0.001)
+    return None
 
 
 class _FakeQmp:
@@ -357,14 +382,22 @@ class ArchInstallRunTests(unittest.TestCase):
             events.append(("attach", None))
             attach_calls.append(1)
 
-        # archiso reaches its root prompt first; the installer only runs after.
+        # archiso reaches its root prompt first; the installer only runs after
+        # the readiness sentinel is proven despite interleaved kernel spam.
         os.write(write_fd, b"[root@archiso ~]# ")
 
         def feeder() -> None:
+            token = _await_ready_probe(stdin)
+            # The prompt is buried under kernel audit lines, then the resolved
+            # sentinel arrives, then more spam: an end-anchored matcher fails.
+            os.write(write_fd, _kernel_noise("900"))
+            os.write(write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+            os.write(write_fd, _kernel_noise("901"))
             for _ in range(5000):
-                if attach_calls and len(events) > 1:
+                if attach_calls and b"bash /root/arch-install.sh" in stdin.data:
                     break
                 time.sleep(0.001)
+            os.write(write_fd, _kernel_noise("902"))
             os.write(write_fd, b"\nTELOS ARCH INSTALL COMPLETE\n")
             os.close(write_fd)
 
@@ -381,10 +414,17 @@ class ArchInstallRunTests(unittest.TestCase):
             worker.join()
             os.close(read_fd)
         self.assertEqual(attach_calls, [1])
-        # The hot-attach precedes every byte written to the guest shell.
-        self.assertEqual(events[0], ("attach", None))
-        self.assertTrue(any(kind == "write" for kind, _ in events))
-        # The installer is only delivered after the attach.
+        # The readiness probe is echoed before the hot-attach, and the attach
+        # precedes every installer byte written to the guest shell.
+        probe_index = next(
+            index for index, (kind, payload) in enumerate(events)
+            if kind == "write" and b"TELOS_ARCH_SHELL_READY_" in payload)
+        attach_index = events.index(("attach", None))
+        installer_index = next(
+            index for index, (kind, payload) in enumerate(events)
+            if kind == "write" and b"bash /root/arch-install.sh" in payload)
+        self.assertLess(probe_index, attach_index)
+        self.assertLess(attach_index, installer_index)
         self.assertIn(b"bash /root/arch-install.sh", stdin.data)
         self.assertIn(b"lsblk -dno SERIAL", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
@@ -406,12 +446,17 @@ class ArchInstallRunTests(unittest.TestCase):
 
         def feeder() -> None:
             # Once the runner answers the login with `root`, the getty echoes it
-            # and drops to the passwordless root shell the runner waits for.
+            # and drops to the passwordless root shell; the runner then echoes a
+            # readiness probe, which the shell answers with the sentinel.
             for _ in range(5000):
                 if b"root\n" in stdin.data:
                     break
                 time.sleep(0.001)
             os.write(write_fd, b"root\n[root@archiso ~]# ")
+            token = _await_ready_probe(stdin)
+            os.write(write_fd, _kernel_noise("900"))
+            os.write(write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+            os.write(write_fd, _kernel_noise("901"))
             for _ in range(5000):
                 if attach_calls and b"bash /root/arch-install.sh" in stdin.data:
                     break
@@ -439,11 +484,16 @@ class ArchInstallRunTests(unittest.TestCase):
         login_index = next(
             index for index, (kind, payload) in enumerate(events)
             if kind == "write" and payload == b"root\n")
+        probe_index = next(
+            index for index, (kind, payload) in enumerate(events)
+            if kind == "write" and b"TELOS_ARCH_SHELL_READY_" in payload)
         attach_index = events.index(("attach", None))
         installer_index = next(
             index for index, (kind, payload) in enumerate(events)
             if kind == "write" and b"bash /root/arch-install.sh" in payload)
-        self.assertLess(login_index, attach_index)
+        # Ordering: login `root` -> readiness probe -> hot-attach -> installer.
+        self.assertLess(login_index, probe_index)
+        self.assertLess(probe_index, attach_index)
         self.assertLess(attach_index, installer_index)
         self.assertIn(b"lsblk -dno SERIAL", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
@@ -479,12 +529,24 @@ class ArchInstallRunTests(unittest.TestCase):
 
     def test_drive_installer_propagates_a_hot_attach_failure(self):
         read_fd, write_fd = os.pipe()
-        process = _FakeProcess(read_fd, _Recorder([]))
+        stdin = _Recorder([])
+        process = _FakeProcess(read_fd, stdin)
 
         def attach() -> None:
             raise RuntimeError("install-target NVMe hot-attach failed")
 
         os.write(write_fd, b"[root@archiso ~]# ")
+
+        def feeder() -> None:
+            # The sentinel confirms readiness, so the runner reaches the attach
+            # step whose failure must propagate for fail-closed teardown.
+            token = _await_ready_probe(stdin)
+            if token is not None:
+                os.write(
+                    write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
         try:
             with tempfile.TemporaryDirectory() as temporary:
                 capture = Path(temporary) / "serial.log"
@@ -494,8 +556,110 @@ class ArchInstallRunTests(unittest.TestCase):
                         installer_script="installer", serial="TELOS-WIN-0001",
                         attach=attach, timeout=10)
         finally:
+            worker.join()
             os.close(write_fd)
             os.close(read_fd)
+
+    def test_drive_installer_reaches_readiness_when_the_prompt_is_buried(self):
+        # The core regression: the root prompt is never the last bytes because
+        # kernel audit lines keep printing to the shared ttyS0. An end-anchored
+        # matcher would never fire, but the sentinel handshake still proceeds.
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+        attach_calls: list = []
+
+        def attach() -> None:
+            events.append(("attach", None))
+            attach_calls.append(1)
+
+        os.write(write_fd, b"archiso login: ")
+
+        def feeder() -> None:
+            for _ in range(5000):
+                if b"root\n" in stdin.data:
+                    break
+                time.sleep(0.001)
+            # A root prompt that is immediately and continuously buried under
+            # kernel spam: it is never the tail of the transcript.
+            os.write(write_fd, b"root\n[root@archiso ~]# ")
+            os.write(write_fd, _kernel_noise("900"))
+            os.write(write_fd, _kernel_noise("901"))
+            token = _await_ready_probe(stdin)
+            os.write(write_fd, _kernel_noise("902"))
+            os.write(write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+            os.write(write_fd, _kernel_noise("903"))
+            for _ in range(5000):
+                if attach_calls and b"bash /root/arch-install.sh" in stdin.data:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, _kernel_noise("904"))
+            os.write(write_fd, b"\nTELOS ARCH INSTALL COMPLETE\n")
+            os.close(write_fd)
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                transcript = arch_install_run.drive_installer(
+                    process, capture, verify_script="verify",
+                    installer_script="installer", serial="TELOS-WIN-0001",
+                    attach=attach, timeout=10)
+        finally:
+            worker.join()
+            os.close(read_fd)
+        self.assertEqual(attach_calls, [1])
+        # The prompt really is followed by kernel audit spam in the transcript,
+        # so an end-of-transcript matcher could not have detected readiness.
+        self.assertLess(
+            transcript.index("[root@archiso ~]#"), transcript.index("audit:"))
+        self.assertIn(b"bash /root/arch-install.sh", stdin.data)
+        self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
+
+    def test_drive_installer_fails_closed_when_the_sentinel_never_appears(self):
+        # A root prompt is reached and the probe is echoed, but the guest only
+        # ever emits kernel spam and never the sentinel: the run fails closed.
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+
+        def attach() -> None:
+            events.append(("attach", None))
+
+        # The root prompt is reached (so the runner echoes its probe), but the
+        # guest only ever emits kernel spam afterwards, never the sentinel.
+        os.write(write_fd, b"[root@archiso ~]# ")
+
+        def feeder() -> None:
+            token = _await_ready_probe(stdin)
+            os.write(write_fd, _kernel_noise("900"))
+            os.write(write_fd, _kernel_noise("901"))
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                with self.assertRaisesRegex(
+                        RuntimeError, "root shell was never reached"):
+                    arch_install_run.drive_installer(
+                        process, capture, verify_script="verify",
+                        installer_script="installer", serial="TELOS-WIN-0001",
+                        attach=attach, timeout=1)
+        finally:
+            worker.join()
+            os.close(write_fd)
+            os.close(read_fd)
+        # The readiness probe was echoed, but no destructive step ran: the
+        # sentinel never surfaced, so there was no hot-attach and no installer.
+        self.assertTrue(any(
+            kind == "write" and b"TELOS_ARCH_SHELL_READY_" in payload
+            for kind, payload in events))
+        self.assertNotIn(("attach", None), events)
+        self.assertNotIn(b"bash /root/arch-install.sh", stdin.data)
 
     def test_sanitize_log_redacts_and_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -281,10 +281,13 @@ def drive_installer(
 
     The PXE archiso boots to a getty ``archiso login:`` prompt on ttyS0 with no
     serial autologin, so this first answers that login (username ``root``; the
-    live root has an empty password) and waits for the root shell.  An image
-    that already dropped straight to a root shell is honoured without sending a
-    spurious login.  When archiso first reaches its root prompt the
-    install-target NVMe is absent (it was never cold-plugged).  *attach*
+    live root has an empty password).  Shell readiness is then proven with a
+    sentinel-echo handshake rather than an end-of-transcript prompt match: the
+    kernel console shares ttyS0 and keeps printing audit/printk lines after the
+    prompt, so an end-anchored matcher would never fire.  An image that already
+    dropped straight to a root shell is honoured without a spurious login.
+    Once the sentinel surfaces the install-target NVMe is still absent (it was
+    never cold-plugged).  *attach*
     hot-plugs it over QMP before any installer step runs; a bounded in-guest
     lsblk gate then proves the authorized serial is present, so the destructive
     installer only ever sees the one intended target.  An *attach* failure
@@ -321,10 +324,24 @@ def drive_installer(
         b"echo TELOS ARCH TEARDOWN; sync; systemctl poweroff -i "
         b"|| poweroff -f\n",
     ]
+    # Shell readiness is proven with a sentinel-echo handshake, never with an
+    # end-of-transcript prompt match: archiso boots the kernel console on the
+    # same ttyS0, so audit/printk lines keep printing AFTER the root prompt and
+    # a prompt anchored to end-of-transcript would never be the last bytes. We
+    # echo a unique nonce and substring-search for it anywhere in the buffer,
+    # which interleaved kernel spam cannot defeat. The sentinel resolves to
+    # ``...=ready``; the echoed command carries ``...=%s``, so the command's own
+    # terminal echo can never be mistaken for the shell's ``ready`` output.
+    token = os.urandom(16).hex()
+    sentinel = f"TELOS_ARCH_SHELL_READY_{token}=ready"
+    probe = (
+        f"printf '\\nTELOS_ARCH_SHELL_READY_{token}=%s\\n' ready\n"
+    ).encode("ascii")
     began = False
     dispatched = False
     login_sent = False
     password_sent = False
+    probe_sent = False
     while time.monotonic() < deadline:
         if process.poll() is not None:
             break
@@ -340,20 +357,21 @@ def drive_installer(
                 capture.chmod(0o600)
         text = transcript.decode("utf-8", errors="replace")
         if not began:
-            if _at_root_prompt(transcript):
-                # archiso is live at a root shell (getty login answered, or an
-                # image that autologged in): hot-attach the install target
-                # before any step so its serial is present when the installer
-                # greps lsblk.
-                attach()
-                for command in steps:
-                    process.stdin.write(command)
-                process.stdin.flush()
-                began = True
-                dispatched = True
+            if probe_sent:
+                if sentinel in text:
+                    # The sentinel proves the root shell is live and reading
+                    # stdin despite interleaved kernel spam: hot-attach the
+                    # install target before any step so its serial is present
+                    # when the installer greps lsblk, then drive the installer.
+                    attach()
+                    for command in steps:
+                        process.stdin.write(command)
+                    process.stdin.flush()
+                    began = True
+                    dispatched = True
             elif not login_sent and _at_login_prompt(transcript):
                 # Answer the getty login; the live root has no password, so this
-                # yields the root shell the branch above waits for.
+                # yields the root shell the sentinel handshake then confirms.
                 process.stdin.write(b"root\n")
                 process.stdin.flush()
                 login_sent = True
@@ -365,6 +383,16 @@ def drive_installer(
                 process.stdin.write(b"\n")
                 process.stdin.flush()
                 password_sent = True
+            elif login_sent or _at_root_prompt(transcript):
+                # The getty login was answered (or an autologin image dropped
+                # straight to a root shell): echo the readiness sentinel and
+                # wait for it to surface anywhere in the transcript. Sending it
+                # before attaching keeps the ordering root -> ready -> attach ->
+                # installer; the shell buffers our line through login, so the
+                # nonce prints as soon as it is actually accepting commands.
+                process.stdin.write(probe)
+                process.stdin.flush()
+                probe_sent = True
         if dispatched and (COMPLETE_MARKER in text or FAIL_MARKER in text):
             # Give the boot-entry proof and teardown lines a brief moment to
             # arrive before the guest powers off.
@@ -385,7 +413,8 @@ def drive_installer(
     if not began:
         raise RuntimeError(
             "Arch live root shell was never reached: the archiso getty login "
-            "was not completed before the deadline")
+            "was answered but the readiness sentinel never surfaced in the "
+            "serial transcript before the deadline")
     return transcript.decode("utf-8", errors="replace")
 
 
