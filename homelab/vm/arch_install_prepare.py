@@ -51,7 +51,11 @@ DISK_SERIAL = "TELOS-WIN-0001"
 DISK_PORT_ID = "telosdiskport"
 DISK_PORT_CHASSIS = 1
 DISK_BYTES = 256 * GIB
-GUEST_DISK = "/dev/nvme0n1"
+# The install boot hot-attaches the target as virtio-blk (see
+# arch_install_run.hot_attach_disk for why NVMe was abandoned), so the guest
+# sees it at the first virtio disk path. The installer still gates on the
+# authorized serial, never on this path alone.
+GUEST_DISK = "/dev/vda"
 DEFAULT_HOSTNAME = "telos-workstation"
 VERIFY_NAME = "arch-second-verify.py"
 INSTALLER_NAME = "arch-install.sh"

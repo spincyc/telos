@@ -353,17 +353,19 @@ class ArchInstallRunTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "before archiso was live"):
             arch_install_run._validate_lifecycle(transcript)
 
-    def test_hot_attach_adds_nvme_with_the_authorized_serial(self):
+    def test_hot_attach_adds_virtio_blk_with_the_authorized_serial(self):
         qmp = _FakeQmp()
         arch_install_run.hot_attach_disk(qmp, "TELOS-WIN-0001")
         self.assertEqual(len(qmp.calls), 1)
         command, arguments, timeout = qmp.calls[0]
         self.assertEqual(command, "device_add")
-        self.assertEqual(arguments["driver"], "nvme")
+        # virtio-blk, not NVMe: QEMU's NVMe namespace identifiers are bogus to
+        # the kernel and namespace revalidation tears down the enumerated GPT.
+        self.assertEqual(arguments["driver"], "virtio-blk-pci")
         self.assertEqual(arguments["drive"], "osdisk")
         self.assertEqual(arguments["serial"], "TELOS-WIN-0001")
-        self.assertEqual(arguments["id"], "osdisk-nvme")
-        # The NVMe must land in the cold-plugged hotplug root port, not the
+        self.assertEqual(arguments["id"], "osdisk-blk")
+        # The disk must land in the cold-plugged hotplug root port, not the
         # q35 root complex pcie.0, which does not support PCIe hotplug.
         self.assertEqual(arguments["bus"], arch_install_run.DISK_PORT_ID)
         self.assertIsNotNone(timeout)
@@ -430,14 +432,15 @@ class ArchInstallRunTests(unittest.TestCase):
         self.assertLess(attach_index, installer_index)
         self.assertIn(b"bash /root/arch-install.sh", stdin.data)
         self.assertIn(b"lsblk -dno SERIAL", stdin.data)
-        # After the hotplug the disk confirmation forces an NVMe namespace
-        # rescan before partprobe, because partprobe alone re-reads a table the
-        # controller has not re-enumerated. The controller name is derived from
-        # the namespace device (nvme0n1 -> nvme0) and both the sysfs and
-        # nvme-cli rescan paths are issued best-effort.
-        self.assertIn(b"rescan_controller", stdin.data)
-        self.assertIn(b"nvme ns-rescan", stdin.data)
-        self.assertIn(b"ctrl=${base%n*}", stdin.data)
+        # The disk confirmation gates the ATTACHED marker on visible
+        # partitions, not on the serial alone, so an attach whose GPT never
+        # surfaces fails before a single installer byte runs. No NVMe rescan
+        # remains: the attach is virtio-blk and forced namespace rescans were
+        # what tore the enumerated partitions back down.
+        self.assertIn(b'grep -qw part && echo TELOS ARCH DISK ATTACHED',
+                      stdin.data)
+        self.assertNotIn(b"rescan_controller", stdin.data)
+        self.assertNotIn(b"nvme ns-rescan", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
 
     def test_drive_installer_answers_the_getty_login_then_hot_attaches(self):

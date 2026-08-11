@@ -224,6 +224,59 @@ class TestControllerOverlay(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "cannot inspect"):
                 overlay.prepare()
 
+    def test_same_user_qemu_zombie_is_skipped(self):
+        # A zombie's descriptor table is already destroyed by the kernel, so it
+        # cannot hold the canonical disk, yet its fd directory raises
+        # PermissionError even for the owner and its comm stays readable. The
+        # run's own just-killed QEMU sits in exactly this state during
+        # teardown; the audit must skip it rather than fail closed.
+        proc = self.root / "proc"
+        pid = proc / "7350"
+        (pid / "fd").mkdir(parents=True)
+        (pid / "comm").write_text("qemu-system-x86\n")
+        (pid / "cmdline").write_bytes(b"")
+        (pid / "stat").write_text(
+            "7350 (qemu-system-x86) Z 1 7350 7350 0 -1 4227340\n")
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        real_iterdir = Path.iterdir
+
+        def iterdir(path):
+            if Path(path) == pid / "fd":
+                raise PermissionError("zombie fd table")
+            return real_iterdir(path)
+
+        with mock.patch.object(Path, "iterdir", new=iterdir), \
+             mock.patch.object(simulation_overlay.subprocess, "run"):
+            overlay.prepare()
+        overlay.close()
+
+    def test_same_user_live_qemu_with_unreadable_descriptors_fails_closed(self):
+        # The zombie tolerance must not extend to a live QEMU: a running
+        # same-EUID QEMU whose descriptors cannot be read stays a fail-closed
+        # audit error, because it genuinely could hold the canonical disk.
+        proc = self.root / "proc"
+        pid = proc / "7351"
+        (pid / "fd").mkdir(parents=True)
+        (pid / "comm").write_text("qemu-system-x86\n")
+        (pid / "cmdline").write_bytes(b"qemu-system-x86_64\0-m\0512\0")
+        (pid / "stat").write_text(
+            "7351 (qemu-system-x86) S 1 7351 7351 0 -1 4194560\n")
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        real_iterdir = Path.iterdir
+
+        def iterdir(path):
+            if Path(path) == pid / "fd":
+                raise PermissionError("live but unreadable")
+            return real_iterdir(path)
+
+        with mock.patch.object(Path, "iterdir", new=iterdir), \
+             mock.patch.object(simulation_overlay.time, "sleep"), \
+             mock.patch.object(simulation_overlay.subprocess, "run"):
+            with self.assertRaisesRegex(RuntimeError, "cannot inspect"):
+                overlay.prepare()
+
     def test_transient_unidentified_process_that_exits_is_skipped(self):
         # A same-EUID unidentified process that is momentarily un-inspectable
         # but exits within the re-check window held no descriptors on the

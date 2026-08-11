@@ -53,6 +53,27 @@ def _process_is_live(process: Path) -> bool:
     return True
 
 
+def _process_is_zombie(process: Path) -> bool:
+    """True when ``/proc/<pid>`` is an exited process awaiting reaping.
+
+    A zombie's file-descriptor table is already destroyed by the kernel, so it
+    cannot hold the canonical disk open, yet reading its ``fd`` directory
+    raises ``PermissionError`` even for the owner. Teardown routinely audits
+    while this run's own just-killed QEMU sits in that state, so the audit must
+    recognise it rather than fail closed on a process that provably holds
+    nothing.
+    """
+    try:
+        status = (process / "stat").read_text()
+    except OSError:
+        return False
+    # /proc/<pid>/stat: pid (comm) state ... — comm may contain spaces and
+    # parentheses, so parse the state as the first field after the LAST ')'.
+    _, _, tail = status.rpartition(")")
+    fields = tail.split()
+    return bool(fields) and fields[0] == "Z"
+
+
 def _disk_user_label(process: Path, wanted: os.stat_result) -> str | None:
     """Return a label if ``process`` holds ``wanted`` open, else ``None``.
 
@@ -81,7 +102,7 @@ def _disk_user_label(process: Path, wanted: os.stat_result) -> str | None:
     except FileNotFoundError:
         return None
     except OSError as error:
-        if tolerant:
+        if tolerant or _process_is_zombie(process):
             return None
         raise RuntimeError(
             f"cannot inspect process {process.name} file descriptors"

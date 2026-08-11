@@ -63,8 +63,8 @@ BEGIN_MARKER = "TELOS ARCH INSTALL BEGIN"
 COMPLETE_MARKER = "TELOS ARCH INSTALL COMPLETE"
 FAIL_MARKER = "TELOS ARCH INSTALL FAIL"
 DISK_ATTACHED_MARKER = "TELOS ARCH DISK ATTACHED"
-NVME_DEVICE_ID = "osdisk-nvme"
-NVME_BACKEND_ID = "osdisk"
+DISK_DEVICE_ID = "osdisk-blk"
+DISK_BACKEND_ID = "osdisk"
 ATTACH_TIMEOUT = 30.0
 VERIFY_PASS_MARKER = (
     "PASS: Windows-first GPT matches the approved Arch install contract")
@@ -165,27 +165,34 @@ def _connect_qmp(
 def hot_attach_disk(
     qmp: QmpClient, serial: str, *, timeout: float = ATTACH_TIMEOUT,
 ) -> None:
-    """Hot-attach the install-target NVMe once archiso is live.
+    """Hot-attach the install-target disk once archiso is live.
 
     The overlay is already present as the detached ``osdisk`` block backend
-    (the boot argv carries no ``-device nvme``).  A single bounded
-    ``device_add`` realises it as an NVMe device exposing *serial*, which is
-    exactly the serial the arch_second installer greps out of lsblk.  The
-    device is targeted at the cold-plugged ``pcie-root-port`` (``bus``) rather
-    than the q35 root complex ``pcie.0``, which does not support PCIe hotplug.
+    (the boot argv carries no disk device).  A single bounded ``device_add``
+    realises it as a virtio-blk device exposing *serial*, which is exactly the
+    serial the arch_second installer greps out of lsblk.  The device is
+    targeted at the cold-plugged ``pcie-root-port`` (``bus``) rather than the
+    q35 root complex ``pcie.0``, which does not support PCIe hotplug.
+
+    virtio-blk deliberately replaced NVMe here: QEMU's NVMe namespace carries
+    identifiers the kernel logs as bogus, and any later namespace revalidation
+    (one fired per rescan attempt) tears the enumerated partitions back down —
+    the live runs showed ``nvme0n1: p1 p2 p3 p4`` at attach and an empty
+    partition list by installer time.  virtio-blk hotplug has no namespace
+    revalidation semantics, so the GPT enumerated at attach stays enumerated.
     Any QMP fault raises, so the caller tears the run down fail-closed.
     """
     try:
         qmp.execute("device_add", {
-            "driver": "nvme",
+            "driver": "virtio-blk-pci",
             "bus": DISK_PORT_ID,
-            "drive": NVME_BACKEND_ID,
+            "drive": DISK_BACKEND_ID,
             "serial": serial,
-            "id": NVME_DEVICE_ID,
+            "id": DISK_DEVICE_ID,
         }, timeout=timeout)
     except WindowsGuiError as error:
         raise RuntimeError(
-            "install-target NVMe hot-attach failed") from error
+            "install-target disk hot-attach failed") from error
 
 
 def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
@@ -304,34 +311,26 @@ def drive_installer(
     transcript = bytearray()
     capture.touch(mode=0o600)
     capture.chmod(0o600)
-    # After the PCIe hotplug the kernel sees the disk but has not re-read its
-    # GPT, so its Windows partitions are not yet enumerated (arch-second-verify
-    # saw "/dev/nvme0n1 has no partitions"). partprobe/blockdev re-read a table
-    # the NVMe controller has not re-enumerated after a live namespace attach, so
-    # they alone are insufficient. Force an NVMe namespace rescan first — via the
-    # controller's sysfs rescan_controller attribute and, when present, the
-    # nvme-cli ns-rescan — then re-read the partition table and settle udev. The
-    # controller name is the namespace device with its trailing nN stripped
-    # (nvme0n1 -> nvme0). Every rescan path is best-effort so a non-NVMe transport
-    # (or a kernel without the sysfs attribute) still falls through to partprobe.
+    # After the PCIe hotplug the kernel usually enumerates the GPT at attach;
+    # when it has not yet, a partition-table re-read plus a udev settle is
+    # sufficient for virtio-blk (no NVMe namespace revalidation exists to tear
+    # the enumeration back down). The gate below requires the authorized serial
+    # AND visible partitions before the installer is allowed to run, so a disk
+    # that never surfaces its GPT fails here rather than inside the installer.
     confirm_disk = (
         f"for _ in $(seq 1 30); do "
         f"lsblk -dno SERIAL | grep -qx {serial} && break; sleep 1; done; "
         f"dev=$(lsblk -dno NAME,SERIAL | "
         f"awk -v s={serial} '$2==s{{print \"/dev/\"$1}}'); "
         f"if [ -n \"$dev\" ]; then "
-        f"base=$(basename \"$dev\"); ctrl=${{base%n*}}; "
         f"for _ in $(seq 1 20); do "
-        f"[ -w /sys/class/nvme/$ctrl/rescan_controller ] "
-        f"&& echo 1 > /sys/class/nvme/$ctrl/rescan_controller 2>/dev/null "
-        f"|| true; "
-        f"nvme ns-rescan /dev/$ctrl 2>/dev/null || true; "
+        f"lsblk -rno NAME,TYPE \"$dev\" | grep -qw part && break; "
         f"partprobe \"$dev\" 2>/dev/null || "
         f"blockdev --rereadpt \"$dev\" 2>/dev/null || true; "
         f"udevadm settle 2>/dev/null || true; "
-        f"lsblk -rno NAME,TYPE \"$dev\" | grep -qw part && break; "
         f"sleep 1; done; fi; "
-        f"lsblk -dno SERIAL | grep -qx {serial} "
+        f"[ -n \"$dev\" ] "
+        f"&& lsblk -rno NAME,TYPE \"$dev\" | grep -qw part "
         f"&& echo {DISK_ATTACHED_MARKER} serial={serial} "
         f"|| echo {FAIL_MARKER} rc=disk-serial-missing\n"
     ).encode("ascii")
@@ -580,6 +579,15 @@ def run(
         result["error"] = redact(
             str(error).encode("utf-8", errors="replace")).decode(
                 "utf-8", errors="replace")
+        # A teardown raise (an overlay audit, for example) replaces the
+        # driving failure during unwinding; keep the original diagnosable
+        # instead of letting cleanup mask it.
+        context = error.__context__
+        if context is not None:
+            result["error_context_type"] = type(context).__name__
+            result["error_context"] = redact(
+                str(context).encode("utf-8", errors="replace")).decode(
+                    "utf-8", errors="replace")
         raise
     finally:
         listener.close()
