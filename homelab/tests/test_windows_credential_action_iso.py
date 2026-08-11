@@ -105,7 +105,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             script.index("$password = [string]$document.password"),
             script.index('"credential-material-loaded"'),
             script.index("TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED"),
-            script.index("CreateProcessWithLogonW(\n        $username"),
+            script.index("CreateProcessWithLogonAndError(\n        $username"),
         ]
         self.assertEqual(sorted(positions), positions)
         self.assertIn("logonFlags", script)
@@ -701,17 +701,29 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         positions = [script.index(stage) for stage in expected_stages]
         self.assertEqual(sorted(positions), positions)
         self.assertIn("$failureCode = [int]$logonError", script)
-        # Attempt 39 rendered logon/0: the Win32 error must be captured
-        # IMMEDIATELY after the P/Invoke (engine work clobbers the saved
-        # value) and exactly once, before the result branch runs.
-        self.assertEqual(1, script.count(
+        # Attempts 39/40 rendered logon/0 even with an immediately-next
+        # script-side read: the engine's own interop between statements
+        # resets the saved error. The capture must live INSIDE the compiled
+        # wrapper's interop frame, and no script-side read may remain.
+        self.assertEqual(0, script.count(
             "[Runtime.InteropServices.Marshal]::GetLastWin32Error()"))
-        call_at = script.index("CreateProcessWithLogonW(\n        $username")
-        capture_at = script.index(
-            "[Runtime.InteropServices.Marshal]::GetLastWin32Error()")
-        self.assertLess(call_at, capture_at)
-        self.assertLess(capture_at, script.index(
+        self.assertIn(
+            "logonError = created ? 0 : Marshal.GetLastWin32Error();",
+            script)
+        self.assertLess(
+            script.index("logonError = created ? 0 :"),
+            script.index("Add-Type -TypeDefinition $source"))
+        call_at = script.index(
+            "CreateProcessWithLogonAndError(\n        $username")
+        self.assertIn("[ref]$logonError)", script)
+        self.assertLess(call_at, script.index("[ref]$logonError)"))
+        self.assertLess(call_at, script.index(
             "$failureStage = 'logon-result'"))
+        # The wrapper still routes through the SetLastError=true extern.
+        self.assertIn(
+            '[DllImport("advapi32.dll", CharSet = CharSet.Unicode, '
+            "SetLastError = true)]",
+            script)
         # A thrown Win32Exception still yields its bounded NativeErrorCode.
         catch_at = script.index(
             "catch {", script.rindex("$serial.WriteLine(($result"))

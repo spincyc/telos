@@ -111,6 +111,25 @@ public static class TelosCredentialLogon {
         string application, string commandLine, Int32 creationFlags,
         IntPtr environment, string currentDirectory,
         ref STARTUPINFO startupInfo, out PROCESS_INFORMATION processInfo);
+    // Attempts 39/40 (guest_code=0 despite SetLastError=true and an
+    // immediately-following read): PowerShell executes engine interop of
+    // its own between any two script statements, which can reset the
+    // thread's saved Win32 error before Marshal.GetLastWin32Error() runs
+    // in script code. Capturing the error HERE, in the same interop frame
+    // as the native call, is immune to that.
+    public static bool CreateProcessWithLogonAndError(
+        string user, string domain, string password, Int32 logonFlags,
+        string application, string commandLine, Int32 creationFlags,
+        IntPtr environment, string currentDirectory,
+        ref STARTUPINFO startupInfo, out PROCESS_INFORMATION processInfo,
+        out Int32 logonError) {
+        bool created = CreateProcessWithLogonW(
+            user, domain, password, logonFlags, application, commandLine,
+            creationFlags, environment, currentDirectory,
+            ref startupInfo, out processInfo);
+        logonError = created ? 0 : Marshal.GetLastWin32Error();
+        return created;
+    }
     [DllImport("kernel32.dll")]
     public static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 ms);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -214,16 +233,15 @@ $record | ConvertTo-Json -Compress |
         '-ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
     $failureStage = 'logon-call'
     $loginClock = [Diagnostics.Stopwatch]::StartNew()
-    $created = [TelosCredentialLogon]::CreateProcessWithLogonW(
+    $logonError = 0
+    # The error comes back through the wrapper's out parameter, captured
+    # inside the compiled interop frame: attempts 39/40 proved that even a
+    # script-side read on the very next statement renders 0, because the
+    # PowerShell engine runs interop of its own between statements.
+    $created = [TelosCredentialLogon]::CreateProcessWithLogonAndError(
         $username, $domain, $password, 1, $null, $commandLine, 0,
-        [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process)
-    # Capture the Win32 error IMMEDIATELY after the P/Invoke: attempt 39
-    # (20260811T145412Z) reported logon/0 because engine work between the
-    # call and the old read further down could clobber the saved error --
-    # or because the call itself threw (the catch below now extracts a
-    # Win32Exception's NativeErrorCode for that case). The stage split
-    # logon-call/logon-result separates the two decisively.
-    $logonError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process,
+        [ref]$logonError)
     $failureStage = 'logon-result'
     $password = $null
     if (-not $created) {
