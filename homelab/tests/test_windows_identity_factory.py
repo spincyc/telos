@@ -383,6 +383,92 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                     (secret, "two", "three", "four"))
                 self.assertGreater(result["secrets_found"], 0)
 
+    def test_scanner_allows_run_written_surfaces(self):
+        # The secret scan runs mid-acceptance, after the run has written its
+        # own evidence surfaces: credential-action-evidence/, the progress and
+        # consumed markers, and one windows-boot-attempt-N.json per boot. All
+        # are allowed and scanned, none rejected as unexpected.
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            configuration = self.factory(boundary, bundle)
+            runtime = boundary.attempt / "runtime"
+            (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+            for relative in (
+                "switch.jsonl", "windows-qemu.log",
+                "controller/controller.raw", "controller/OVMF_VARS.fd",
+                "controller/guard/controller-overlay.qcow2",
+                "controller/guard/OVMF_VARS.fd",
+            ):
+                (runtime / relative).write_bytes(b"clean")
+            (runtime / "windows-boot-attempt-1.json").write_text('{"boot":1}')
+            (runtime / "windows-boot-attempt-2.json").write_text('{"boot":2}')
+            for surface in (
+                "rotation-evidence", "public-command-evidence",
+                "post-join-reauthentication", "credential-action-evidence",
+            ):
+                target = boundary.attempt / surface
+                target.mkdir(mode=0o700)
+                proof = (
+                    "post-join-generic-prompt.ppm"
+                    if surface == "post-join-reauthentication"
+                    else "proof.ppm"
+                )
+                (target / proof).write_bytes(b"clean")
+            (boundary.attempt / "attempt-consumed.json").write_text("{}")
+            (boundary.attempt / "acceptance-progress.json").write_text("{}")
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
+            boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            self.bind_live_serial(boundary.serial_socket)
+            boundary.port = 31415
+            boundary.processes["windows"] = mock.Mock(
+                poll=mock.Mock(return_value=None))
+            result = configuration.callbacks.scan_secrets((
+                "Zzx-Secret-Alpha-91", "Zzx-Secret-Beta-92",
+                "Zzx-Secret-Gamma-93", "Zzx-Secret-Delta-94"))
+            self.assertEqual(result["secrets_found"], 0)
+
+    def test_scanner_rejects_a_foreign_runtime_file(self):
+        # A runtime file that is neither the fixed set nor a boot-attempt
+        # record is still rejected as an unexpected retained path.
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            configuration = self.factory(boundary, bundle)
+            runtime = boundary.attempt / "runtime"
+            (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+            for relative in (
+                "switch.jsonl", "windows-qemu.log",
+                "controller/controller.raw", "controller/OVMF_VARS.fd",
+                "controller/guard/controller-overlay.qcow2",
+                "controller/guard/OVMF_VARS.fd",
+            ):
+                (runtime / relative).write_bytes(b"clean")
+            (runtime / "stowaway.dat").write_bytes(b"clean")
+            for surface in (
+                "rotation-evidence", "public-command-evidence",
+                "post-join-reauthentication",
+            ):
+                target = boundary.attempt / surface
+                target.mkdir(mode=0o700)
+                proof = (
+                    "post-join-generic-prompt.ppm"
+                    if surface == "post-join-reauthentication"
+                    else "proof.ppm"
+                )
+                (target / proof).write_bytes(b"clean")
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
+            boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            self.bind_live_serial(boundary.serial_socket)
+            boundary.port = 31415
+            boundary.processes["windows"] = mock.Mock(
+                poll=mock.Mock(return_value=None))
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError, "unexpected retained path"
+            ):
+                configuration.callbacks.scan_secrets(
+                    ("one", "two", "three", "four"))
+
     def test_scanner_rejects_unallowlisted_post_join_ppm(self):
         with tempfile.TemporaryDirectory() as name:
             boundary, bundle = self.prepared(Path(name))

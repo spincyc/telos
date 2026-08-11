@@ -420,9 +420,16 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
             raise WindowsIdentityFactoryError(
                 "acceptance runtime evidence is unavailable")
         runtime_entries = {path.name: path for path in runtime.iterdir()}
-        if set(runtime_entries) != {
+        # Each guest boot writes a windows-boot-attempt-N.json evidence record
+        # into runtime/; the count is not fixed (retries add more), so they are
+        # allowed by name pattern. Their secret-freedom is still proven by the
+        # rglob scan below.
+        _boot_attempt = re.compile(r"windows-boot-attempt-[0-9]+\.json")
+        runtime_unexpected = set(runtime_entries) - {
             "switch.jsonl", "windows-qemu.log", "controller"
-        }:
+        }
+        if any(_boot_attempt.fullmatch(name) is None
+               for name in runtime_unexpected):
             raise WindowsIdentityFactoryError(
                 "acceptance runtime has unexpected retained paths")
         controller = runtime / "controller"
