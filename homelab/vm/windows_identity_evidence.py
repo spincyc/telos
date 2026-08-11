@@ -73,12 +73,20 @@ class StrictIdentityEvidenceCollector:
         """Names of the checks recorded so far, in contract order."""
         return tuple(event["check"] for event in self._events)
 
-    def write_progress(self, path: Path) -> None:
+    def write_progress(
+        self, path: Path, *, failure_detail: str | None = None
+    ) -> None:
         """Best-effort, secret-free record of how far acceptance got.
 
         Attempt 47 failed somewhere between check 4 and the aggregate with
         no evidence of how far it reached. Only public check names and
         counts are written; never observation data. Never raises.
+
+        ``failure_detail`` records the raising exception's own message when
+        the sanitized coordinate keeps only its type -- the fixed, secret-free
+        factory/control messages that distinguish which mid-run invariant
+        failed (attempt 56: which of the five scan_secrets raise sites fired).
+        A defensive length cap keeps an unexpected long value bounded.
         """
         try:
             record = {
@@ -90,6 +98,8 @@ class StrictIdentityEvidenceCollector:
                 "passed_checks": list(self.passed_checks),
                 "next_check": self.next_check,
             }
+            if failure_detail is not None:
+                record["failure_detail"] = str(failure_detail)[:400]
             target = Path(path)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_text(

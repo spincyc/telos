@@ -1078,12 +1078,16 @@ def execute_windows_identity_acceptance(
             destroy_principals=destroy_principals,
             run_acceptance=acceptance,
         )
-    except BaseException:
+    except BaseException as error:
         # Persist how far acceptance got before the raise (public check
         # names/counts only) so a failure deep in the 24-check stream is no
-        # longer blind between check 4 and the aggregate (attempt 47).
+        # longer blind between check 4 and the aggregate (attempt 47). The
+        # raising exception's own message is captured too: the sanitized
+        # coordinate keeps only the type, but the fixed factory/control
+        # messages name which mid-run invariant failed.
         if collector is not None:
-            collector.write_progress(progress_path)
+            collector.write_progress(
+                progress_path, failure_detail=str(error) or None)
         raise
     if collector is not None:
         collector.write_progress(progress_path)
