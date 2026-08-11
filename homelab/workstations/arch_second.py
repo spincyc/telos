@@ -1006,6 +1006,17 @@ timeout 5
 editor no
 EOF
 grep -q '^default auto-windows$' /mnt/boot/loader/loader.conf
+# NVRAM entries cannot be proven in this boot: the disk was hot-attached
+# after firmware init (no Windows auto-entry yet) and the chroot cannot
+# write EFI variables. The install proves the ESP state it authored; the
+# dual-boot acceptance gate proves the cold-boot NVRAM behavior. These
+# markers print from inside this heredoc-delivered script, so the serial
+# echo of a dispatched command can never fake them.
+[ -f /mnt/boot/EFI/systemd/systemd-bootx64.efi ]
+echo "TELOS ARCH BOOTLOADER LINUX PRESENT"
+[ -f /mnt/boot/EFI/Microsoft/Boot/bootmgfw.efi ]
+echo "TELOS ARCH BOOTLOADER WINDOWS PRESERVED"
+echo "TELOS ARCH DEFAULT auto-windows"
 sync
 echo "Arch installed; Windows partitions and filesystems were not modified."
 """

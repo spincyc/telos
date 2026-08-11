@@ -116,9 +116,9 @@ GOOD_SERIAL = "\n".join((
     "TELOS ARCH JOIN VERIFIED",
     "Arch installed; Windows partitions and filesystems were not modified.",
     "TELOS ARCH INSTALL COMPLETE",
-    "Boot0000* Windows Boot Manager",
-    "Boot0001* Linux Boot Manager",
-    "/mnt/boot/loader/loader.conf:default auto-windows",
+    "TELOS ARCH BOOTLOADER LINUX PRESENT",
+    "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
+    "TELOS ARCH DEFAULT auto-windows",
 ))
 
 
@@ -354,9 +354,9 @@ class ArchInstallRunTests(unittest.TestCase):
             "Arch installed; Windows partitions and filesystems "
             "were not modified.",
             "TELOS ARCH INSTALL COMPLETE",
-            "Boot0000* Windows Boot Manager",
-            "Boot0001* Linux Boot Manager",
-            "/mnt/boot/loader/loader.conf:default auto-windows",
+            "TELOS ARCH BOOTLOADER LINUX PRESENT",
+            "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
+            "TELOS ARCH DEFAULT auto-windows",
         ))
         with self.assertRaisesRegex(RuntimeError, "before archiso was live"):
             arch_install_run._validate_lifecycle(transcript)

@@ -865,9 +865,13 @@ def _validate_lifecycle(serial: str, disk_serial: str = DISK_SERIAL) -> None:
         VERIFY_PASS_MARKER,
         PRESERVED_MARKER,
         COMPLETE_MARKER,
-        "Windows Boot Manager",
-        "Linux Boot Manager",
-        "default auto-windows",
+        # ESP-state proofs printed from inside the heredoc-delivered
+        # installer: NVRAM entries are not provable in the hot-attach boot
+        # (no Windows auto-entry yet, chroot cannot write EFI variables);
+        # the dual-boot acceptance gate proves cold-boot NVRAM behavior.
+        "TELOS ARCH BOOTLOADER LINUX PRESENT",
+        "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
+        "TELOS ARCH DEFAULT auto-windows",
     )
     missing = [marker for marker in required if marker not in serial]
     if missing:
