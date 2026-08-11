@@ -518,11 +518,16 @@ def parse_action_result(
     if (action == "cached-domain-login"
             and (result["domain_reachable"]
                  or result["authentication_semantics"] != "cached-domain"
-                 or result["cache_evidence"] != "offline-cache-proven"
-                 # Best-effort: a reported package for a cached (offline)
-                 # logon must be NTLM/MSV1_0; an empty package is accepted.
-                 or (result["authentication_type"] != ""
-                     and result["authentication_type"] != "NTLM"))):
+                 or result["cache_evidence"] != "offline-cache-proven")):
+        # The offline proof rests on the DC being unreachable
+        # (domain_reachable=false), the cached-domain semantics, and
+        # offline-cache-proven cache_evidence -- NOT on the package name.
+        # Windows logs in offline with EITHER the MSV1_0 cached verifier
+        # (NTLM) OR a still-valid cached Kerberos TGT obtained during an
+        # earlier online logon; a live admin run reported Kerberos with the
+        # DC provably unreachable. Requiring NTLM specifically wrongly
+        # rejected that genuine offline logon, so the package is accepted as
+        # optional enrichment here as it is on the connected path.
         raise WindowsCredentialActionError(
             "cached domain login measurement is invalid")
     if (action == "local-rescue-login"

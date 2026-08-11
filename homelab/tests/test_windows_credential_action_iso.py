@@ -443,24 +443,24 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 nonce=NONCE, action="connected-domain-login",
                 expected_principal="AD\\student",
                 allowed_authentication_types=allowed)
-        # Cached path: empty accepted, NTLM accepted, Kerberos rejected.
+        # Cached path: the offline proof is reachability + cache_evidence, not
+        # the package, so empty, NTLM, AND a cached Kerberos TGT are all
+        # accepted (a live offline admin logon reported Kerberos).
         cached = cred_result(
             action="cached-domain-login", authentication_type="")
-        self.assertEqual("", parse_action_result(
-            json.dumps(cached) + "\n", nonce=NONCE,
-            action="cached-domain-login",
-            expected_principal="AD\\student",
-            allowed_authentication_types=allowed)["authentication_type"])
-        self.assertEqual("NTLM", parse_action_result(
-            json.dumps({**cached, "authentication_type": "NTLM"}) + "\n",
-            nonce=NONCE, action="cached-domain-login",
-            expected_principal="AD\\student",
-            allowed_authentication_types=allowed)["authentication_type"])
+        for package in ("", "NTLM", "Kerberos", "Negotiate"):
+            self.assertEqual(package, parse_action_result(
+                json.dumps({**cached, "authentication_type": package}) + "\n",
+                nonce=NONCE, action="cached-domain-login",
+                expected_principal="AD\\student",
+                allowed_authentication_types=allowed)["authentication_type"])
+        # But a cached logon whose DC was actually reachable is still rejected:
+        # offline-ness rests on domain_reachable=false.
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "measurement"):
             parse_action_result(
-                json.dumps({**cached, "authentication_type": "Kerberos"})
-                + "\n",
+                json.dumps({**cached, "authentication_type": "Kerberos",
+                            "domain_reachable": True}) + "\n",
                 nonce=NONCE, action="cached-domain-login",
                 expected_principal="AD\\student",
                 allowed_authentication_types=allowed)
