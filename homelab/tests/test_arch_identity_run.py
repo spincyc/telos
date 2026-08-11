@@ -49,6 +49,11 @@ from homelab.vm.arch_identity_run import (
     self_judge,
     workstation_boot_command,
 )
+from homelab.vm.dualboot_acceptance import (
+    MENU_ARCH_ENTRY,
+    MENU_FIRMWARE_ENTRY,
+    MENU_WINDOWS_ENTRY,
+)
 
 # The real judge, imported exactly as the shim and the producer do.
 ROOT = Path(__file__).resolve().parents[1]
@@ -668,6 +673,35 @@ class _FakeQmp:
 TIMELINE: list[str] = []
 
 
+def _menu_cell(row: int, title: str, *, selected: bool) -> bytes:
+    """One positioned, attribute-run, space-padded menu cell (live shape)."""
+    attributes = (
+        b"\x1b[1m\x1b[30m\x1b[47m\x1b[0m\x1b[30m\x1b[47m" if selected
+        else b"\x1b[1m\x1b[37m\x1b[40m\x1b[0m\x1b[37m\x1b[40m")
+    return b"\x1b[%03d;103H" % row + attributes + f"{title:^36}".encode()
+
+
+# systemd-boot menu renders modeled on the REAL gate-10 boot-1 serial
+# transcript (cursor-positioned rows at column 103 with attribute runs and
+# space padding, the Windows default highlighted, a countdown line below):
+# the shape mirrors test_dualboot_acceptance.MENU, not plain log text —
+# ``_menu_entries`` only counts positioned cells as rendered entries.
+MENU_ARCH_FIRST = (
+    b"\x1b[2J\x1b[001;001H"
+    + _menu_cell(27, MENU_ARCH_ENTRY, selected=False)
+    + _menu_cell(28, MENU_WINDOWS_ENTRY, selected=True)
+    + _menu_cell(29, MENU_FIRMWARE_ENTRY, selected=False)
+    + _menu_cell(31, "Boot in 5s.", selected=False)
+)
+MENU_WINDOWS_FIRST = (
+    b"\x1b[2J\x1b[001;001H"
+    + _menu_cell(27, MENU_WINDOWS_ENTRY, selected=True)
+    + _menu_cell(28, MENU_ARCH_ENTRY, selected=False)
+    + _menu_cell(29, MENU_FIRMWARE_ENTRY, selected=False)
+    + _menu_cell(31, "Boot in 5s.", selected=False)
+)
+
+
 class _FakeSerial:
     """Stands in for SerialAutomation on both consoles.
 
@@ -677,9 +711,7 @@ class _FakeSerial:
 
     instances: list["_FakeSerial"] = []
     console_banner = b"[root@telos-ws1 ~]# "
-    menu_render = (
-        b"Arch Linux LTS\n  Windows Boot Manager\n"
-        b"  Reboot Into Firmware Interface")
+    menu_render = MENU_ARCH_FIRST
     login_outcome: bytes | None = None  # group(1): b"Login incorrect"
     sudo_outcome: bytes | None = None  # group(1): failure return code
     root_uid = b"0"
@@ -718,6 +750,10 @@ class _FakeSerial:
         self.calls.append(f"wait:{label}")
         self.events.append(label)
         if label == "arch-menu-rendered":
+            # The real console retains the raw escape-bearing render in its
+            # consumption-independent transcript tail; drive_boot_menu
+            # parses the rendered entries from there.
+            self.transcript = self.transcript + type(self).menu_render
             return _FakeMatch({0: type(self).menu_render})
         if label == "arch-login-outcome":
             return _FakeMatch({0: b"", 1: type(self).login_outcome})
@@ -1063,19 +1099,7 @@ class BoundaryWiringTests(unittest.TestCase):
 # Boot drive against synthetic serial transcripts (real SerialAutomation).
 # --------------------------------------------------------------------------
 
-MENU_ARCH_FIRST = (
-    b"BdsDxe: loading Boot0001 \"Linux Boot Manager\"\n"
-    b"  Arch Linux LTS\n"
-    b"  Windows Boot Manager\n"
-    b"  Reboot Into Firmware Interface\n"
-)
-MENU_WINDOWS_FIRST = (
-    b"BdsDxe: loading Boot0001\n"
-    b"  Windows Boot Manager\n"
-    b"  Arch Linux LTS\n"
-    b"  Reboot Into Firmware Interface\n"
-)
-HANDOFF = b"EFI stub: Loaded initrd from LINUX_EFI_INITRD_MEDIA_GUID\n"
+HANDOFF = b"\r\nEFI stub: Loaded initrd from LINUX_EFI_INITRD_MEDIA_GUID\n"
 GETTY = b"\ntelos-ws1 login: "
 PASSWORD_PROMPT = b"\nPassword: "
 OPERATOR_SHELL = (

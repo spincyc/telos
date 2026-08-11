@@ -823,16 +823,18 @@ def drive_boot_menu(
     """Select the Arch entry on the serial systemd-boot menu, fail-closed.
 
     Mirrors the dual-boot acceptance lane (``dualboot_acceptance``): the menu
-    entries are parsed from the serial render, the digit key for the Arch
-    entry is sent raw within the five-second Windows-default window, and the
-    Linux EFI-stub handoff markers prove the selection took.  A missed window
-    means Windows is booting silently; the guest is power-cycled via *reset*
-    (QMP ``system_reset``) and the menu is driven once more.  Every terminal
+    entries are parsed from the raw escape-bearing serial render (positioned,
+    space-padded cells — plain log text mentioning an entry title never
+    counts), the digit key for the Arch entry is sent raw within the
+    five-second Windows-default window, and the Linux EFI-stub handoff
+    markers prove the selection took.  A missed window means Windows is
+    booting silently; the guest is power-cycled via *reset* (QMP
+    ``system_reset``) and the menu is driven once more.  Every terminal
     outcome is a distinct, named failure.
     """
     from .dualboot_acceptance import (
         ARCH_HANDOFF_MARKERS, MENU_ARCH_ENTRY, MENU_WINDOWS_ENTRY,
-        _menu_entries, _plain)
+        _menu_entries)
     from .serial_automation import SerialAutomationError
 
     arch = re.escape(MENU_ARCH_ENTRY.encode("ascii"))
@@ -849,14 +851,17 @@ def drive_boot_menu(
             if menu_timeout is not None:
                 console.timeout = menu_timeout
             try:
-                match = console._wait(menu_pattern, "arch-menu-rendered")
+                console._wait(menu_pattern, "arch-menu-rendered")
             except SerialAutomationError as error:
                 raise ArchIdentityError(
                     MENU_NEVER_RENDERED_FAILURE, check="arch-joined",
                 ) from error
             facts["menu_seen"] = True
+            # ``_wait`` matches (and trims) the ANSI-stripped buffer, so the
+            # raw render ``_menu_entries`` needs lives only in the console's
+            # consumption-independent transcript tail.
             entries = _menu_entries(
-                _plain(match.group(0).decode("utf-8", "replace")))
+                console.transcript.decode("utf-8", "replace"))
             if MENU_ARCH_ENTRY not in entries:
                 raise ArchIdentityError(
                     MENU_NEVER_RENDERED_FAILURE, check="arch-joined")
