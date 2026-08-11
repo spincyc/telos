@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260811.004`
+Document version: `20260811.005`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-08-10T16:45:00-05:00
+Last evidence/workstream review: 2026-08-11T06:35:00-05:00
 
-Repository baseline reviewed: `b3ec83d`
+Repository baseline reviewed: `a179368`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -175,11 +175,11 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | 3 | Controller convergence | From a fresh offline-installed disposable controller, configure Samba AD/DNS, Kerberos/time, HTTP/TFTP/iPXE, and verify the authority boundary without external access. | pass: `20260727T201057Z-controller.json`; release selection, backup, and restore remain lifecycle gates |
 | 4 | PXE authority boundary | Simulated gateway remains sole DHCP authority; controller supplies only the approved boot and identity services; packet evidence proves no rogue offer, forwarding, or external connection. | simultaneous fabric and PXE gateway implemented; integrated proof pending |
 | 5 | Windows-first install | OVMF workstation PXE-boots WinPE, selects the disk by stable serial, installs Windows 11 Pro to the approved layout, and reboots without ISO attachment. Destructive authorization is scoped to the disposable disk. | pass 2026-08-10: bundle `run-20260810T145421Z-5b457e50e20b` records `observed`/`native-windows-clean-shutdown`, exactly one PXE firmware boot, release `20260727.005`, private publication destroyed; serial log shows WinPE handoff, two native Windows Boot Manager boots, `TELOS WINDOWS NATIVE READY`, Edition Professional |
-| 6 | Windows join and login | Join the synthetic domain; prove secure channel, DNS SRV, time, named user login, named administrator elevation, `local-rescue`, reboot, cached offline login, update policy, and recovery path. | in progress: receipt plumbing fixed, real directory verdict now read; post-reboot operator interactive logon not completing (`no-logon-event` + `uncorrelated`) — see blockers |
-| 7 | Arch-second install | PXE-boot Arch, preserve Windows partitions and recovery data, install into the approved allocation, join the same domain, and create independent UEFI entries with Windows default. | runner implemented `98ef086` (`homelab/vm/arch_install_{prepare,run}.py`, Windows-preserving, pure tests green); live install pending the fabric |
-| 8 | Arch join and login | Prove SSSD identity, UID/GID stability, Kerberos time, named user and administrator behavior, reboot, cached offline login, automatic-update gate, rollback, and local rescue. | live harness + evidence producer implemented `68781ef` (`homelab/vm/arch_identity_run.py`, producer↔judge proven); live login pending gate 7's joined disk |
-| 9 | Optional storage failure | Prove per-user SMB authorization when present and successful login with no delay or hard failure when the NAS is absent. Record UID/GID and timestamp measurements before reconsidering NFS. | pending |
-| 10 | Dual-boot acceptance | From cold boot, select and log into both systems; verify Windows-default five-second policy, disk measurements, EFI recovery choices, and no cross-OS partition damage. | pending |
+| 6 | Windows join and login | Join the synthetic domain; prove secure channel, DNS SRV, time, named user login, named administrator elevation, `local-rescue`, reboot, cached offline login, update policy, and recovery path. | MAJOR PROGRESS 2026-08-11: attempt `20260811T111019Z-5520e9d8bf1a` PROVED the post-reboot operator domain logon — the submit fires and Windows reaches first-profile creation ("Getting things ready for you."). The GUI-submit saga is closed (`13f1bf6` baseline-band departure proof, live-validated). Remaining: desktop proof near-reference against the local-account reference, receipt collection discarding a delivered result on a truncated cleanup line, and `uncorrelated` correlation criteria — fixes in progress, see blockers |
+| 7 | Arch-second install | PXE-boot Arch, preserve Windows partitions and recovery data, install into the approved allocation, join the same domain, and create independent UEFI entries with Windows default. | ROOT CAUSE CLOSED 2026-08-11: every live "no partitions" failure was the verify's own lsblk parse — `-o` without NAME emits flat JSON with no `children` (fixed `941ba41`, both shapes parsed; partitions were present all along). Hot-attach is now virtio-blk (`a179368`; QEMU NVMe bogus-NSID revalidation risk removed), the teardown audit tolerates the run's own QEMU zombie without weakening the boundary, and teardown no longer masks the driving error. The installer now provisions the domain join from one-use TELOS_JOIN media plus SSSD/probe/local-rescue (`941ba41`); host-side join-media wiring in progress. Next live run needs that wiring |
+| 8 | Arch join and login | Prove SSSD identity, UID/GID stability, Kerberos time, named user and administrator behavior, reboot, cached offline login, automatic-update gate, rollback, and local rescue. | live boundary wired `e58cef8` (controller bring-up, identity fabric, disk-boot workstation, bounded duration) with bundle producer `arch_identity_prepare`; synthetic principals now carry POSIX attrs (`cf13ebd`, staged per run, no image rebuild); menu-drive + operator serial login lane in progress |
+| 9 | Optional storage failure | Prove per-user SMB authorization when present and successful login with no delay or hard failure when the NAS is absent. Record UID/GID and timestamp measurements before reconsidering NFS. | pending; identity_lifecycle contract carries no storage check yet — needs a loopback SMB target, client optional-mount policy, and an Arch-side three-state judge |
+| 10 | Dual-boot acceptance | From cold boot, select and log into both systems; verify Windows-default five-second policy, disk measurements, EFI recovery choices, and no cross-OS partition damage. | runner implemented `3d45584` (`homelab/vm/dualboot_acceptance.py` prepare/run/judge, 51 tests): cold-boot Windows-default + five-second measurement + serial menu-drive to Arch + GPT identity; Windows login recorded boot-observed only (GUI driving deferred phase 2); live shakedown pending a completed gate-7 disk |
 | 11 | Lifecycle recovery | Exercise controller restart/loss, PXE release rollback, failed install, broken boot, directory/DNS loss, update failure, workstation remint, and controller reconstruction from public inputs plus a synthetic private overlay. | pending |
 | 12 | Repeatability | Destroy disposable state and repeat the entire factory at least twice from a clean local input set; compare manifests and explain any nondeterministic bytes. | verifier + comparator implemented `b3244e8` (`make homelab-factory-verify`, `homelab/vm/factory_verify.py`); live twice-through pending gates 6-10 |
 | 13 | Documentation/publication | Human and operator guides match tested commands, contain no private data, pass links/site checks, and expose exact supported and unsupported states. | pending |
@@ -187,6 +187,23 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 
 ## Current blockers and cautions
 
+- CURRENT 2026-08-11 (supersedes the two long gate-6/gate-7 investigation
+  bullets below, which are retained as history): the live blockers those
+  bullets tracked are closed. Gate 6's operator logon is proven live
+  (first-profile creation reached; `13f1bf6`); its three remaining seams are
+  the desktop proof (near-reference against the local-account reference — the
+  operator's first desktop needs retention/calibration), receipt collection
+  discarding a delivered `uncorrelated` result when the cleanup line arrives
+  truncated (host `ValueError`), and the `classify_auth_events` correlation
+  criteria rejecting a logon that visibly succeeded. Gate 7's repeated
+  "no partitions" was the verify's lsblk parse (`941ba41`), not the guest, the
+  transport, or partition timing; the audit failure was the run's own QEMU
+  zombie at teardown (`a179368`). Still open before the next live gate-7 run:
+  host-side join-media wiring (build/attach/destroy the one-use TELOS_JOIN
+  credential ISO around the new in-guest join step) — in progress. Gates 8 and
+  10 gained runners (`e58cef8`, `3d45584`); both await their first live
+  shakedown behind gate 7. No successful local lifecycle permits any implicit
+  UniFi mutation, physical attachment, or hardware erase.
 - Gate 7 first live shakedown (2026-08-10, bundle
   `arch-installs/run-20260810T215936Z-02fe36622647`) found a real boot bug:
   the workstation booted the existing `Windows Boot Manager` instead of
