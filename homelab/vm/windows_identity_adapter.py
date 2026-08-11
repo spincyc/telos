@@ -1047,15 +1047,26 @@ class NativeWindowsAcceptanceAdapter:
                 for key in wake_keys:
                     interaction.key(key, timeout=remaining("wake"))
 
+            frames_enabled = getattr(
+                plan, "post_join_retain_submit_frames", 0)
             _run_local_reauthentication_operation(
                 "wake",
                 lambda: interaction.chord(
                     "ctrl", "alt", "delete", timeout=remaining("wake")))
+            _retain_single_frame(
+                self._qmp(), evidence, "reestablish-after-cad",
+                frames_enabled)
             _run_local_reauthentication_operation("wake", rewake)
+            _retain_single_frame(
+                self._qmp(), evidence, "reestablish-after-wake",
+                frames_enabled)
             _run_local_reauthentication_operation(
                 "select-local-account", select_local_account)
             _run_local_reauthentication_operation(
                 "type-public-username", normalize_public_username)
+            _retain_single_frame(
+                self._qmp(), evidence, "reestablish-after-upn",
+                frames_enabled)
             _run_local_reauthentication_operation(
                 "prove-password-target", prove_password_target)
 
