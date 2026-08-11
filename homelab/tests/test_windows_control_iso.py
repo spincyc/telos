@@ -61,6 +61,44 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertNotIn("Password", script)
         self.assertNotIn("Credential", script)
 
+    def test_managed_identity_membership_is_strictmode_safe_and_sid_exact(self):
+        """Attempt 35 (20260811T125822Z): the first live
+        managed-identity-state probe threw under Set-StrictMode Latest by
+        reading .SID on a Win32_GroupUser association REFERENCE (references
+        carry only their Domain/Name keys), rendering guest-probe-error.
+        Membership must select the group by exact SID and dereference the
+        association to full member instances, with every pipeline
+        @()-wrapped so an empty result cannot raise on .Count."""
+        script = (
+            ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"
+        ).read_text(encoding="utf-8")
+        # The landmines are gone: no property access on association
+        # references and no unfiltered association scan.
+        self.assertNotIn("PartComponent.SID", script)
+        self.assertNotIn("GroupComponent.Name", script)
+        self.assertNotIn("Get-CimInstance Win32_GroupUser", script)
+        helper = script[
+            script.index("function Test-DomainGroupMemberBySid"):
+            script.index("function Test-UdpRole")
+        ]
+        self.assertIn("\"SID='\" + $GroupSid.Value + \"'\"", helper)
+        self.assertIn("Get-CimAssociatedInstance", helper)
+        self.assertIn("-Association Win32_GroupUser", helper)
+        self.assertIn("$_.PSObject.Properties['SID']", helper)
+        # Null SIDs fail closed before any query.
+        self.assertIn(
+            "if ($null -eq $GroupSid -or $null -eq $MemberSid) {", helper)
+        managed = script[
+            script.index("'managed-identity-state' {"):
+            script.index("'cached-logon-policy' {")
+        ]
+        # Both domain-membership fields go through the safe helper with the
+        # SID-exact arguments; the judged checks depend on real values
+        # (domain-admin-separate requires directory-admin membership True).
+        self.assertEqual(2, managed.count("Test-DomainGroupMemberBySid"))
+        self.assertIn("$domainAdminsSid $operatorSid", managed)
+        self.assertIn("$domainAdminsSid $directoryAdminSid", managed)
+
     def test_serial_opens_before_probe_and_failure_record_is_fixed(self):
         script = (
             ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1"

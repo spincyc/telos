@@ -93,6 +93,35 @@ function Test-LocalAdministratorMember {
     return $matches.Count -eq 1
 }
 
+function Test-DomainGroupMemberBySid {
+    param(
+        [Security.Principal.SecurityIdentifier]$GroupSid,
+        [Security.Principal.SecurityIdentifier]$MemberSid
+    )
+    if ($null -eq $GroupSid -or $null -eq $MemberSid) {
+        return $false
+    }
+    # Win32_GroupUser association REFERENCES carry only their key
+    # properties (Domain, Name); reading .SID on one throws under
+    # Set-StrictMode -Version Latest -- attempt 35 (20260811T125822Z)
+    # failed exactly there on the first live managed-identity-state probe.
+    # Select the group by its exact SID server-side, then dereference the
+    # association to FULL member instances, which do carry SID. Every
+    # pipeline is @()-wrapped so an empty result can never yield a
+    # StrictMode .Count error.
+    $groups = @(Get-CimInstance Win32_Group -Filter (
+        "SID='" + $GroupSid.Value + "'"))
+    if ($groups.Count -ne 1) {
+        return $false
+    }
+    $members = @(Get-CimAssociatedInstance -InputObject $groups[0] `
+        -Association Win32_GroupUser)
+    return @($members | Where-Object {
+        $null -ne $_.PSObject.Properties['SID'] -and
+        [string]$_.SID -ceq $MemberSid.Value
+    }).Count -eq 1
+}
+
 function Test-UdpRole {
     param(
         [System.Net.IPAddress]$Address,
@@ -335,22 +364,10 @@ function Get-Probe {
             $directoryAdminSid = Resolve-AccountSid (
                 $domain + '\directory-admin')
             $domainAdminsSid = Get-DomainAdministratorSid $domain
-            $operatorDomainAdmin = (
-                $null -ne $operatorSid -and
-                $null -ne $domainAdminsSid -and
-                (Get-CimInstance Win32_GroupUser | Where-Object {
-                    $_.GroupComponent.Name -ceq 'Domain Admins' -and
-                    $_.PartComponent.SID -ceq $operatorSid.Value
-                }).Count -gt 0
-            )
-            $directoryDomainAdmin = (
-                $null -ne $directoryAdminSid -and
-                $null -ne $domainAdminsSid -and
-                (Get-CimInstance Win32_GroupUser | Where-Object {
-                    $_.GroupComponent.Name -ceq 'Domain Admins' -and
-                    $_.PartComponent.SID -ceq $directoryAdminSid.Value
-                }).Count -gt 0
-            )
+            $operatorDomainAdmin = Test-DomainGroupMemberBySid `
+                $domainAdminsSid $operatorSid
+            $directoryDomainAdmin = Test-DomainGroupMemberBySid `
+                $domainAdminsSid $directoryAdminSid
             return [ordered]@{
                 standard_identity_resolved = $null -ne $standardSid
                 standard_profile_present = Test-ProfileForSid $standardSid
