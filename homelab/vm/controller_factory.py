@@ -100,12 +100,24 @@ iface=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\\n' |
   grep -Ev '^(lo|docker|virbr|br-|tap|veth)' | head -1)
 [[ -n "$iface" ]] || {{ echo "no isolated guest NIC" >&2; exit 2; }}
 systemctl stop NetworkManager.service
+# systemd-networkd re-matches the renamed NIC asynchronously and can flush
+# the manually configured address between these commands; one live run died
+# with "Nexthop has invalid gateway" exactly there. Stop it, then retry the
+# route add over a short bound: right after link-up the kernel may briefly
+# refuse a via-route until the address is usable.
+systemctl stop systemd-networkd.service systemd-networkd.socket 2>/dev/null || true
 ip link set "$iface" down
 ip link set "$iface" name sim0
 ip addr flush dev sim0
 ip addr add {spec.address}/{spec.prefix} dev sim0
 ip link set sim0 up
-ip route replace default via {spec.gateway} dev sim0
+for _ in $(seq 1 20); do
+  ip route replace default via {spec.gateway} dev sim0 && break
+  sleep 0.5
+done
+ip route show default | grep -q 'via {spec.gateway}' || {{
+  echo "default route via {spec.gateway} was not installed" >&2; exit 2;
+}}
 hostnamectl hostname {spec.hostname}
 printf '127.0.0.1 localhost\\n{spec.address} {spec.fqdn} {spec.hostname}\\n' >/etc/hosts
 echo 'TELOS FACTORY STEP time-sync'
