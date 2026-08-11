@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.014`
+Document version: `20260810.015`
 
 Status: active implementation
 
@@ -273,6 +273,28 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   (secret-safe — the field shows masked dots, not plaintext) to see
   whether the password field holds dots and what Enter does, then decide
   between a re-focus-before-Enter fix and clicking the submit arrow.
+  ROOT CAUSE FOUND 2026-08-10 (attempt 23,
+  `20260810T235549Z-3230f9dcca17`, submit-transition frames `cd9499f`):
+  the `identity-submit-pre-activation.ppm` and `-post-activation.ppm`
+  frames — captured immediately before and after the operator's Enter —
+  BOTH show the Windows LOCK SCREEN (the clock/date), not the sign-in
+  form. The UPN was entered into the sign-in form earlier (frames
+  0001-0004), but by the time the password is typed and submitted the form
+  has reverted to the lock screen, so the credential and Enter hit a dead
+  surface and no logon fires. The cause is ordering in
+  `windows_identity_adapter._reauthenticate`: `prove_password_target`
+  (types the UPN, line ~962) runs, then the slow `controller_auth.arm()`
+  (line ~1147 — sudo prompt + watcher launch + prearm handshake over the
+  Controller serial, tens of seconds), then `submit_secret` (types the
+  password + Enter, line ~1205). The Windows "Other user" sign-in form
+  times out back to the lock screen during that arm. FIX: the arm must not
+  sit between UPN entry and password submit. Move the controller-auth arm
+  to BEFORE the GUI credential entry (arm while at the lock screen, then
+  wake → UPN → password → submit contiguously and quickly), or re-wake and
+  re-enter the sign-in form after the arm and before typing the password.
+  The observation window is anchored to the submit fence, not the arm
+  time, so arming earlier is semantically safe (the armed window is 120s,
+  ample for the quick GUI entry).
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered
