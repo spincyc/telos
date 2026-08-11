@@ -149,6 +149,8 @@ class IdentityFailureDiagnostic:
         "WindowsCredentialActionError",
         "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
+        "WindowsIdentityDiagnosticError",
+        "WindowsIdentityFactoryError",
         "WindowsIdentityGuiError",
         "WindowsIdentityObservationError",
         "WindowsIdentityOrchestratorError",

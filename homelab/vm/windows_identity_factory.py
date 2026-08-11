@@ -378,19 +378,34 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
         "windows.qcow2", "OVMF_VARS.fd", "authorization.json",
         "qemu-command.json", "control.iso",
     }
+    # Files the run itself writes during acceptance: present by the time the
+    # first secret scan runs (update-source-offline, check 17) but not part of
+    # the prepared media, so they are allowed without being required. Their
+    # secret-freedom is proven by the scan that reads them, not by excluding
+    # them from the inventory.
+    allowed_files = {
+        "attempt-consumed.json", "acceptance-progress.json",
+        "terminal-teardown.json",
+    }
     allowed_directories = {
         "runtime", "rotation-evidence", "public-command-evidence",
-        "post-join-reauthentication",
+        "post-join-reauthentication", "credential-action-evidence",
     }
     try:
         entries = {path.name: path for path in attempt.iterdir()}
         if not expected_files.issubset(entries):
             raise WindowsIdentityFactoryError(
                 "attempt retained surfaces lack prepared artifacts")
-        unexpected_top = set(entries) - expected_files - allowed_directories
+        unexpected_top = (
+            set(entries) - expected_files - allowed_files
+            - allowed_directories)
         if unexpected_top:
             raise WindowsIdentityFactoryError(
                 "attempt contains an unexpected retained surface")
+        for name in allowed_files & set(entries):
+            if entries[name].is_symlink() or not entries[name].is_file():
+                raise WindowsIdentityFactoryError(
+                    "retained run surface identity changed")
         for name in expected_files:
             if entries[name].is_symlink() or not entries[name].is_file():
                 raise WindowsIdentityFactoryError(

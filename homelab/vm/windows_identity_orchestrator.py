@@ -944,17 +944,43 @@ def _run_acceptance_checks(
         return apply
 
     def fault_observe(check: str) -> None:
-        extra: dict[str, object] = {"fault_record": {
-            "schema_version": 1,
-            "check": check,
-            "offline_dependencies": sorted(offline),
-        }}
-        if check == "update-source-offline":
-            extra["diagnostics_scan"] = callbacks.scan_secrets(
-                (local_credential, *principals.values()))
-        record(check, **extra)
-        if check == "windows-secure-channel-restored":
-            record("windows-update-policy")
+        try:
+            extra: dict[str, object] = {"fault_record": {
+                "schema_version": 1,
+                "check": check,
+                "offline_dependencies": sorted(offline),
+            }}
+            if check == "update-source-offline":
+                extra["diagnostics_scan"] = callbacks.scan_secrets(
+                    (local_credential, *principals.values()))
+            record(check, **extra)
+            if check == "windows-secure-channel-restored":
+                record("windows-update-policy")
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as error:
+            # `record` already binds an acceptance_check coordinate to every
+            # failure it raises. The one step that ran OUTSIDE that binding
+            # was the update-source-offline secret scan: its host-side
+            # failure (attempt 51 -- WindowsIdentityFactoryError) carried no
+            # diagnostic, so run_fault_phases re-wrapped a diagnostic-less
+            # FaultPhaseError and the whole stream collapsed to the generic
+            # scoped-acceptance.acceptance/FaultPhaseError coordinate. Bind
+            # any diagnostic-less fault observation to its exact check so the
+            # coordinate names the check, its phase, and the real exception
+            # type; an inner failure that already carries a precise
+            # diagnostic (a credential action, or the paired
+            # windows-update-policy observation) is preserved untouched.
+            if (
+                isinstance(error, WindowsIdentityRunError)
+                and isinstance(error.diagnostic, IdentityFailureDiagnostic)
+            ):
+                raise
+            raise WindowsIdentityOrchestratorError(
+                f"{check} fault observation failed",
+                diagnostic=IdentityFailureDiagnostic.acceptance_check(
+                    check, "observe", type(error).__name__),
+            ) from error
 
     faults = run_fault_phases(FaultPhaseOperations(
         set_controller_available=fault_setter(
@@ -967,10 +993,25 @@ def _run_acceptance_checks(
             "optional-storage", boundary.set_optional_storage_available),
         observe=fault_observe,
     ))
+    try:
+        diagnostics_scan = callbacks.scan_secrets(
+            (local_credential, *principals.values()))
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as error:
+        # The final secret scan runs outside `_record`, so a host-side scan
+        # failure would otherwise escape unbound and collapse to
+        # scoped-acceptance.acceptance. Name its exact check and the real
+        # exception type instead (mirrors fault_observe's binding).
+        raise WindowsIdentityOrchestratorError(
+            "windows-diagnostics-sanitized secret scan failed",
+            diagnostic=IdentityFailureDiagnostic.acceptance_check(
+                "windows-diagnostics-sanitized", "observe",
+                type(error).__name__),
+        ) from error
     record(
         "windows-diagnostics-sanitized",
-        diagnostics_scan=callbacks.scan_secrets(
-            (local_credential, *principals.values())))
+        diagnostics_scan=diagnostics_scan)
     record("windows-identity-acceptance")
     if collector.next_check is not None:
         raise WindowsIdentityOrchestratorError(

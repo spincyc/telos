@@ -628,6 +628,143 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             mock.call(False), mock.call(True),
         ], boundary.set_controller_available.call_args_list)
 
+    def test_update_source_scan_failure_binds_its_acceptance_coordinate(self):
+        # Attempt 51: update-source-offline's secret scan (scan_secrets) runs
+        # in fault_observe OUTSIDE `_record`, so a host-side failure carried
+        # no diagnostic and the whole fault stream collapsed to the generic
+        # scoped-acceptance.acceptance/FaultPhaseError coordinate. The scan
+        # failure must now bind the exact check, phase, and real error type.
+        import dataclasses
+        from homelab.vm.windows_identity_faults import FaultPhaseError
+        from homelab.vm.windows_identity_factory import (
+            WindowsIdentityFactoryError,
+        )
+
+        scan_calls: list[object] = []
+
+        def scan_secrets(secrets):
+            scan_calls.append(secrets)
+            raise WindowsIdentityFactoryError(
+                "attempt contains an unexpected retained surface")
+
+        callbacks = dataclasses.replace(
+            self.callbacks([]), scan_secrets=scan_secrets)
+
+        def execute_production(**kwargs):
+            kwargs["run_acceptance"]("Local-Secret-47!", {
+                "student": "Student-Secret-47!",
+                "operator": "Operator-Secret-47!",
+                "directory-admin": "Directory-Secret-47!",
+            })
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject, "execute_production_identity_acceptance",
+            side_effect=execute_production,
+        ), mock.patch.object(
+            subject, "_execute_join", return_value=({}, True),
+        ), mock.patch.object(
+            subject, "map_exact_observation",
+            side_effect=lambda check, _context: details()[check],
+        ):
+            root = Path(name)
+            root.chmod(0o700)
+            with self.assertRaises(FaultPhaseError) as caught:
+                subject.execute_windows_identity_acceptance(
+                    boundary=mock.Mock(),
+                    rotation_plan=mock.Mock(),
+                    publication=root / "recovery.iso",
+                    private_root=root,
+                    evidence=root / "evidence.jsonl",
+                    realm="FACTORY.TEST",
+                    callbacks=callbacks,
+                    stage_principals=mock.Mock(),
+                    destroy_principals=mock.Mock(),
+                    stage_join_principal=mock.Mock(),
+                    destroy_join_principal=mock.Mock(),
+                )
+
+        # The scan raised on the update-source-offline invocation, before the
+        # final windows-diagnostics-sanitized scan ever ran.
+        self.assertEqual(1, len(scan_calls))
+        diagnostic = caught.exception.diagnostic
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual("update-source-offline", diagnostic.check)
+        self.assertEqual("acceptance.observe", diagnostic.operation)
+        self.assertEqual("WindowsIdentityFactoryError", diagnostic.error_type)
+        self.assertIn(
+            "check=update-source-offline; operation=acceptance.observe; "
+            "error=WindowsIdentityFactoryError",
+            diagnostic.render(),
+        )
+
+    def test_final_diagnostics_scan_failure_binds_its_acceptance_coordinate(
+        self,
+    ):
+        # The check-23 secret scan also runs outside `_record`; its failure
+        # must bind windows-diagnostics-sanitized rather than collapse to the
+        # generic scoped-acceptance coordinate.
+        import dataclasses
+        from homelab.vm.windows_identity_factory import (
+            WindowsIdentityFactoryError,
+        )
+
+        scan_calls: list[object] = []
+
+        def scan_secrets(secrets):
+            scan_calls.append(secrets)
+            if len(scan_calls) == 1:
+                # update-source-offline scan succeeds.
+                return details()["windows-diagnostics-sanitized"]
+            raise WindowsIdentityFactoryError(
+                "attempt contains an unexpected retained surface")
+
+        callbacks = dataclasses.replace(
+            self.callbacks([]), scan_secrets=scan_secrets)
+
+        def execute_production(**kwargs):
+            kwargs["run_acceptance"]("Local-Secret-47!", {
+                "student": "Student-Secret-47!",
+                "operator": "Operator-Secret-47!",
+                "directory-admin": "Directory-Secret-47!",
+            })
+
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject, "execute_production_identity_acceptance",
+            side_effect=execute_production,
+        ), mock.patch.object(
+            subject, "_execute_join", return_value=({}, True),
+        ), mock.patch.object(
+            subject, "map_exact_observation",
+            side_effect=lambda check, _context: details()[check],
+        ):
+            root = Path(name)
+            root.chmod(0o700)
+            with self.assertRaises(
+                subject.WindowsIdentityOrchestratorError,
+            ) as caught:
+                subject.execute_windows_identity_acceptance(
+                    boundary=mock.Mock(),
+                    rotation_plan=mock.Mock(),
+                    publication=root / "recovery.iso",
+                    private_root=root,
+                    evidence=root / "evidence.jsonl",
+                    realm="FACTORY.TEST",
+                    callbacks=callbacks,
+                    stage_principals=mock.Mock(),
+                    destroy_principals=mock.Mock(),
+                    stage_join_principal=mock.Mock(),
+                    destroy_join_principal=mock.Mock(),
+                )
+
+        self.assertEqual(2, len(scan_calls))
+        diagnostic = caught.exception.diagnostic
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual(
+            "windows-diagnostics-sanitized", diagnostic.check)
+        self.assertEqual("acceptance.observe", diagnostic.operation)
+        self.assertEqual(
+            "WindowsIdentityFactoryError", diagnostic.error_type)
+
     def test_observation_failure_leaves_destination_absent(self):
         callbacks = self.callbacks([])
         def execute_production(**kwargs):
