@@ -5,6 +5,16 @@ the GPT.  Arch may use either an existing, unformatted Linux-root partition or
 the sole free extent whose measured size exactly matches the approved plan.
 It mounts the existing ESP without formatting it and never resizes, deletes,
 or recreates a Windows partition.
+
+Beyond the base install the script provisions the synthetic-realm identity
+client that gate 8 (``vm/arch_identity_run.py``) accepts: Kerberos, Samba and
+SSSD configuration mirroring ``ansible/roles/identity_client/templates``, the
+``net ads`` domain join, PAM/NSS wiring, a serial getty, the ``local-rescue``
+break-glass administrator mirroring the Controller seed, and the secret-free
+identity probe helper.  The machine-join credential never appears in this
+module, in the rendered script, or on the installed disk: the script reads it
+from a one-use removable volume (the same shape ``vm/windows_join_iso.py``
+builds) into tmpfs, joins, and removes it.
 """
 
 from __future__ import annotations
@@ -42,6 +52,42 @@ EXPECTED = (
 SAFE_HOSTNAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_SERIAL = re.compile(r"^[A-Za-z0-9_.:+-]{1,128}$")
 SAFE_DISK = re.compile(r"^/dev/[A-Za-z0-9._+-]{1,128}$")
+SAFE_DOMAIN = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+SAFE_WORKGROUP = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,14}$")
+SAFE_LABEL = re.compile(r"^[A-Z0-9_]{1,32}$")
+SAFE_PRINCIPAL = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+# Synthetic factory realm defaults.  These mirror vm.controller_factory
+# FactorySpec (domain/netbios); the runner may override them, and the test
+# suite pins this module's defaults to FactorySpec so they cannot drift.
+SYNTHETIC_DOMAIN = "ad.factory.test"
+SYNTHETIC_WORKGROUP = "FACTORY"
+
+# One-use machine-join credential media.  The label matches the volume id the
+# Windows lane's vm.windows_join_iso.build_join_iso emits, so the same private
+# ISO shape (join.json with at least username and password) serves both lanes.
+JOIN_MEDIA_LABEL = "TELOS_JOIN"
+JOIN_MEDIA_CONSUMED_MARKER = "TELOS ARCH JOIN MEDIA CONSUMED"
+JOIN_VERIFIED_MARKER = "TELOS ARCH JOIN VERIFIED"
+
+# Gate 8 invokes this fixed, secret-free helper for every Arch lifecycle
+# check (vm.arch_identity_run.PROBE_HELPER).
+PROBE_HELPER_PATH = "/usr/local/sbin/homelab-arch-identity-probe"
+
+# The lifecycle checks the probe helper answers; gate 8's drive sends exactly
+# these names (vm/arch_identity_run.py, workstations/identity_lifecycle.json).
+PROBE_CHECKS = (
+    "arch-joined",
+    "arch-standard-online",
+    "arch-daily-admin",
+    "domain-admin-separate",
+    "arch-cached-login",
+    "arch-uncached-denied",
+    "arch-local-rescue",
+    "arch-identity-restored",
+)
 
 
 class InstallContractError(ValueError):
@@ -91,8 +137,20 @@ def parse_lsblk(document: Mapping[str, Any], disk_path: str) -> Disk:
     item = matches[0]
     if item.get("type") != "disk":
         raise InstallContractError(f"{disk_path} is not a disk")
+    # lsblk nests partitions under ``children`` only when the NAME column is
+    # selected; with an explicit ``-o`` list omitting NAME (as the verify
+    # invocation does) every partition is a flat sibling row. Accept both
+    # shapes — the live installer sees the flat one.
     children = item.get("children")
     if not isinstance(children, list):
+        children = [
+            sibling for sibling in devices
+            if isinstance(sibling, dict)
+            and sibling is not item
+            and isinstance(sibling.get("path"), str)
+            and sibling["path"].startswith(disk_path)
+        ]
+    if not children:
         raise InstallContractError(f"{disk_path} has no partitions")
     partitions = []
     for child in children:
@@ -241,14 +299,305 @@ def _find_arch_gap(
     return candidates[0]
 
 
+def _identity_principals() -> dict[str, str]:
+    """Read the acceptance principals from the identity-lifecycle contract."""
+    contract = json.loads(
+        Path(__file__).with_name("identity_lifecycle.json").read_text(
+            encoding="utf-8"))
+    principals = contract["principals"]
+    names = {
+        "standard": principals["standard_user"]["name"],
+        "daily_admin": principals["daily_administrator"]["name"],
+        "domain_admin": principals["domain_administrator"]["name"],
+        "local_rescue": principals["local_rescue"]["name"],
+    }
+    for name in names.values():
+        if not isinstance(name, str) or not SAFE_PRINCIPAL.fullmatch(name):
+            raise InstallContractError(
+                "identity-lifecycle principal name is not safely representable")
+    return names
+
+
+def _render_krb5(realm: str) -> str:
+    """Mirror ansible/roles/identity_client/templates/krb5.conf.j2."""
+    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+[libdefaults]
+    default_realm = {realm}
+    dns_lookup_realm = false
+    dns_lookup_kdc = true
+    rdns = false
+    ticket_lifetime = 24h
+    renew_lifetime = 7d
+    forwardable = true"""
+
+
+def _render_smb(realm: str, workgroup: str) -> str:
+    """Mirror ansible/roles/identity_client/templates/smb.conf.j2."""
+    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+[global]
+    security = ADS
+    realm = {realm}
+    workgroup = {workgroup}
+    kerberos method = secrets and keytab"""
+
+
+def _render_sssd(domain: str, realm: str) -> str:
+    """Mirror ansible/roles/identity_client/templates/sssd.conf.j2."""
+    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+[sssd]
+domains = {domain}
+config_file_version = 2
+services = nss, pam
+
+[domain/{domain}]
+id_provider = ad
+access_provider = ad
+ad_domain = {domain}
+krb5_realm = {realm}
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+# ADR 0071: SSSD defines zero as no expiration. A disconnected machine cannot
+# learn that an AD account was disabled; phase 2 owns stronger revocation.
+krb5_store_password_if_offline = True
+offline_credentials_expiration = 0
+# UID and GID come from the directory (ADR 0055), not from a local mapping.
+ldap_id_mapping = False
+fallback_homedir = /home/%u
+default_shell = /bin/bash
+use_fully_qualified_names = False
+enumerate = False"""
+
+
+# Complete deterministic /etc/pam.d/system-auth: the stock Arch file with
+# pam_sss added (no authselect on Arch).  pam_mkhomedir goes into
+# system-login, mirroring roles/identity_client/tasks/main.yml.
+_PAM_SYSTEM_AUTH = """\
+#%PAM-1.0
+# Managed by Telos gate 7 (workstations/arch_second.py): the stock Arch
+# system-auth stack with pam_sss for the joined synthetic realm.
+auth       required                                     pam_faillock.so      preauth
+auth       [success=3 default=ignore]                   pam_unix.so          try_first_pass nullok
+auth       [success=2 default=ignore]                   pam_sss.so           use_first_pass
+auth       [default=die]                                pam_faillock.so      authfail
+auth       optional                                     pam_permit.so
+auth       required                                     pam_env.so
+auth       required                                     pam_faillock.so      authsucc
+
+account    [default=bad success=ok user_unknown=ignore] pam_sss.so
+account    required                                     pam_unix.so
+account    optional                                     pam_permit.so
+account    required                                     pam_time.so
+
+password   [success=1 default=ignore]                   pam_sss.so
+password   required                                     pam_unix.so          try_first_pass nullok shadow
+password   optional                                     pam_permit.so
+
+session    required                                     pam_limits.so
+session    required                                     pam_unix.so
+session    optional                                     pam_sss.so
+session    optional                                     pam_permit.so"""
+
+
+# The guest-side lifecycle probe.  @TOKENS@ are substituted at render time
+# with validated, quote-free values.  Every check is answered honestly from
+# what a credential-free root session can observe; anything unprovable is a
+# FAIL, never a fabricated PASS.
+_PROBE_TEMPLATE = """\
+#!/usr/bin/env bash
+# Managed by Telos gate 7 (workstations/arch_second.py).  Secret-free
+# identity probe for gate 8 (vm/arch_identity_run.py): runs exactly one
+# lifecycle check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL.  It
+# never reads or carries a credential, so each proof is bounded to what a
+# credential-free session can honestly observe; unprovable means FAIL.
+set -u
+
+DOMAIN='@DOMAIN@'
+ADMIN_GROUP='domain admins'
+STANDARD_USER='@STANDARD_USER@'
+DAILY_ADMIN='@DAILY_ADMIN@'
+DOMAIN_ADMIN='@DOMAIN_ADMIN@'
+RESCUE_USER='@RESCUE_USER@'
+
+usage() {
+  echo 'usage: homelab-arch-identity-probe <check> <token>' >&2
+  exit 2
+}
+
+[ "$#" -eq 2 ] || usage
+check="$1"
+token="$2"
+case "$check" in
+  arch-joined|arch-standard-online|arch-daily-admin|domain-admin-separate|\\
+  arch-cached-login|arch-uncached-denied|arch-local-rescue|\\
+  arch-identity-restored) ;;
+  *) usage ;;
+esac
+printf '%s' "$token" | grep -Eq '^[A-Za-z0-9]{8,64}$' || usage
+
+if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
+  exec sudo -n -- "$0" "$check" "$token"
+fi
+
+key=$(printf '%s' "$check" | tr 'a-z-' 'A-Z_')
+
+verdict() {
+  printf '__TELOS_ARCH_%s_%s=%s\\n' "$key" "$token" "$1"
+}
+
+domain_state() {
+  sssctl domain-status "$DOMAIN" 2>/dev/null | grep -qi "Online status: $1"
+}
+
+await_domain_state() {
+  for _ in $(seq 1 30); do
+    # A lookup no cache can serve forces SSSD to test the backend.
+    getent passwd "telos-probe-trigger-$$" >/dev/null 2>&1 || true
+    domain_state "$1" && return 0
+    sleep 2
+  done
+  return 1
+}
+
+resolved_by_sssd() {
+  getent passwd "$1" >/dev/null 2>&1 &&
+    ! getent -s files passwd "$1" >/dev/null 2>&1
+}
+
+in_wheel() {
+  id -nG "$1" 2>/dev/null | tr ' ' '\\n' | grep -qx wheel
+}
+
+has_full_sudo() {
+  sudo -l -U "$1" 2>/dev/null |
+    grep -Eq '\\(ALL([ \\t]*:[ \\t]*ALL)?\\)[ \\t]+ALL'
+}
+
+admin_group_gid() {
+  getent group "$ADMIN_GROUP" 2>/dev/null | cut -d: -f3 | grep -E '^[0-9]+$'
+}
+
+admin_group_members() {
+  getent group "$ADMIN_GROUP" 2>/dev/null | cut -d: -f4 | tr ',' '\\n'
+}
+
+check_arch_joined() {
+  await_domain_state Online || return 1
+  net ads testjoin >/dev/null 2>&1
+}
+
+check_arch_standard_online() {
+  await_domain_state Online || return 1
+  resolved_by_sssd "$STANDARD_USER" || return 1
+  # Unelevated: no wheel membership and no sudo grant.
+  in_wheel "$STANDARD_USER" && return 1
+  has_full_sudo "$STANDARD_USER" && return 1
+  return 0
+}
+
+check_arch_daily_admin() {
+  await_domain_state Online || return 1
+  resolved_by_sssd "$DAILY_ADMIN" || return 1
+  has_full_sudo "$DAILY_ADMIN" || return 1
+  # Local administrator, yet not a directory administrator.
+  gid=$(admin_group_gid) || return 1
+  id -G "$DAILY_ADMIN" 2>/dev/null | tr ' ' '\\n' | grep -qx "$gid" && return 1
+  return 0
+}
+
+check_domain_admin_separate() {
+  await_domain_state Online || return 1
+  [ "$DAILY_ADMIN" != "$DOMAIN_ADMIN" ] || return 1
+  # Proved from the group's member list on purpose: resolving the directory
+  # administrator as a user here would prime the identity cache and falsify
+  # arch-uncached-denied.
+  admin_group_members | grep -qx "$DOMAIN_ADMIN" || return 1
+  admin_group_members | grep -qx "$DAILY_ADMIN" && return 1
+  return 0
+}
+
+check_arch_cached_login() {
+  await_domain_state Offline || return 1
+  # The primed identity is still served from the SSSD cache while the
+  # Controller is down.
+  getent passwd "$STANDARD_USER" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+check_arch_uncached_denied() {
+  await_domain_state Offline || return 1
+  # The directory administrator was deliberately never resolved on this
+  # workstation, so its offline lookup must be denied.
+  getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 && return 1
+  return 0
+}
+
+check_arch_local_rescue() {
+  getent -s files passwd "$RESCUE_USER" >/dev/null 2>&1 || return 1
+  in_wheel "$RESCUE_USER" || return 1
+  has_full_sudo "$RESCUE_USER" || return 1
+  # A usable break-glass login needs a set password; the install-time
+  # default is disabled and only an authorized console session sets it.
+  [ "$(passwd -S "$RESCUE_USER" 2>/dev/null | awk '{print $2}')" = P ] ||
+    return 1
+  return 0
+}
+
+check_arch_identity_restored() {
+  await_domain_state Online || return 1
+  # A lookup no cache can serve proves the directory answers again.
+  getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+result=FAIL
+case "$check" in
+  arch-joined) check_arch_joined && result=PASS ;;
+  arch-standard-online) check_arch_standard_online && result=PASS ;;
+  arch-daily-admin) check_arch_daily_admin && result=PASS ;;
+  domain-admin-separate) check_domain_admin_separate && result=PASS ;;
+  arch-cached-login) check_arch_cached_login && result=PASS ;;
+  arch-uncached-denied) check_arch_uncached_denied && result=PASS ;;
+  arch-local-rescue) check_arch_local_rescue && result=PASS ;;
+  arch-identity-restored) check_arch_identity_restored && result=PASS ;;
+esac
+verdict "$result"
+[ "$result" = PASS ]"""
+
+
+def _render_probe(*, domain: str, principals: Mapping[str, str]) -> str:
+    """Substitute validated, quote-free values into the probe template."""
+    replacements = {
+        "@DOMAIN@": domain,
+        "@STANDARD_USER@": principals["standard"],
+        "@DAILY_ADMIN@": principals["daily_admin"],
+        "@DOMAIN_ADMIN@": principals["domain_admin"],
+        "@RESCUE_USER@": principals["local_rescue"],
+    }
+    text = _PROBE_TEMPLATE
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    return text
+
+
 def render_installer(
     *,
     disk_path: str,
     disk_serial: str,
     hostname: str,
     expected_sizes_mib: Sequence[int],
+    realm_dns_domain: str = SYNTHETIC_DOMAIN,
+    realm_workgroup: str = SYNTHETIC_WORKGROUP,
+    join_media_label: str = JOIN_MEDIA_LABEL,
 ) -> str:
-    """Render the destructive stage with its validation embedded before mkfs."""
+    """Render the destructive stage with its validation embedded before mkfs.
+
+    The synthetic-realm identity provisioning takes no secret: the machine
+    join reads a per-run credential (``join.json`` carrying ``username`` and
+    ``password``) from one-use removable media labelled *join_media_label*,
+    which the runner attaches after archiso is live and destroys after the
+    ``TELOS ARCH JOIN MEDIA CONSUMED`` marker.  The credential exists only in
+    tmpfs and is removed before the installer finishes.
+    """
     if not SAFE_DISK.fullmatch(disk_path):
         raise InstallContractError("disk path must be a simple /dev path")
     if not SAFE_SERIAL.fullmatch(disk_serial):
@@ -260,8 +609,24 @@ def render_installer(
         for size in expected_sizes_mib
     ):
         raise InstallContractError("five positive integer sizes are required")
+    if not SAFE_DOMAIN.fullmatch(realm_dns_domain):
+        raise InstallContractError("realm DNS domain is invalid")
+    if not SAFE_WORKGROUP.fullmatch(realm_workgroup):
+        raise InstallContractError("realm workgroup is invalid")
+    if not SAFE_LABEL.fullmatch(join_media_label):
+        raise InstallContractError("join media label is invalid")
+    realm = realm_dns_domain.upper()
+    principals = _identity_principals()
     sizes = ",".join(str(size) for size in expected_sizes_mib)
     packages = " ".join(_workstation_packages())
+    krb5_conf = _render_krb5(realm)
+    smb_conf = _render_smb(realm, realm_workgroup)
+    sssd_conf = _render_sssd(realm_dns_domain, realm)
+    probe = _render_probe(domain=realm_dns_domain, principals=principals)
+    pam_system_auth = _PAM_SYSTEM_AUTH
+    probe_path = PROBE_HELPER_PATH
+    local_rescue = principals["local_rescue"]
+    daily_admin = principals["daily_admin"]
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 disk={disk_path!r}
@@ -305,14 +670,105 @@ mount "$ESP_PART" /mnt/boot
 pacstrap -K /mnt {packages}
 genfstab -U /mnt >> /mnt/etc/fstab
 printf '%s\\n' "$hostname" > /mnt/etc/hostname
+
+# The install-time boot attaches this disk as virtio-blk, but later boots
+# (dual-boot acceptance, gate 8) attach the very same disk as NVMe again.
+# mkinitcpio's autodetect would trim the absent transport, so pin both and
+# regenerate every preset after the drop-in exists.
+install -Dm0644 /dev/stdin /mnt/etc/mkinitcpio.conf.d/telos-transports.conf \\
+    <<'TELOS_MKINITCPIO_EOF'
+# Managed by Telos gate 7: the disk is attached as virtio-blk at install
+# time and as NVMe on later boots; carry both transports unconditionally.
+MODULES+=(nvme virtio_blk)
+TELOS_MKINITCPIO_EOF
+arch-chroot /mnt mkinitcpio -P
+
 arch-chroot /mnt systemctl enable NetworkManager
+
+# ---- Synthetic-realm identity client (gate 7 -> gate 8 contract) ----
+# The machine-join credential arrives on one-use removable media; it is read
+# into tmpfs only, never echoed, never written to the installed disk, and the
+# runner destroys the media after the consumed marker below.
+join_dev="/dev/disk/by-label/{join_media_label}"
+for _ in $(seq 1 60); do
+  [[ -e "$join_dev" ]] && break
+  sleep 2
+done
+[[ -e "$join_dev" ]] || {{ echo "join credential media is absent" >&2; exit 1; }}
+mkdir -p -m 700 /run/telos-join /run/telos-join/media
+mount -o ro "$join_dev" /run/telos-join/media
+(
+  umask 077
+  python3 - > /run/telos-join/credentials <<'TELOS_JOIN_CRED_EOF'
+import json
+with open("/run/telos-join/media/join.json", encoding="utf-8") as source:
+    values = json.load(source)
+username = values["username"]
+password = values["password"]
+for item in (username, password):
+    if (not isinstance(item, str) or not item
+            or any(ord(character) < 32 for character in item)):
+        raise SystemExit("join credential is invalid")
+print("username = " + username)
+print("password = " + password)
+TELOS_JOIN_CRED_EOF
+)
+chmod 600 /run/telos-join/credentials
+umount /run/telos-join/media
+echo "{JOIN_MEDIA_CONSUMED_MARKER}"
+
+install -Dm0644 /dev/stdin /mnt/etc/krb5.conf <<'TELOS_KRB5_EOF'
+{krb5_conf}
+TELOS_KRB5_EOF
+install -Dm0644 /dev/stdin /mnt/etc/samba/smb.conf <<'TELOS_SMB_EOF'
+{smb_conf}
+TELOS_SMB_EOF
+install -Dm0600 /dev/stdin /mnt/etc/sssd/sssd.conf <<'TELOS_SSSD_EOF'
+{sssd_conf}
+TELOS_SSSD_EOF
+
+# Join as the installed hostname, not the live image's; arch-chroot bind
+# mounts /run, so the tmpfs credential file is visible inside the chroot.
+printf '%s' "$hostname" > /proc/sys/kernel/hostname
+arch-chroot /mnt net ads join -A /run/telos-join/credentials
+arch-chroot /mnt net ads testjoin
+rm -rf /run/telos-join
+echo "{JOIN_VERIFIED_MARKER}"
+
+# NSS and PAM the Arch way (no authselect): sss sits next to files.
+sed -i -E 's/^(passwd|group): files/\\1: files sss/' /mnt/etc/nsswitch.conf
+grep -q '^passwd: files sss' /mnt/etc/nsswitch.conf
+grep -q '^group: files sss' /mnt/etc/nsswitch.conf
+install -Dm0644 /dev/stdin /mnt/etc/pam.d/system-auth <<'TELOS_PAM_EOF'
+{pam_system_auth}
+TELOS_PAM_EOF
+printf 'session   optional  pam_mkhomedir.so umask=0077\\n' \\
+    >> /mnt/etc/pam.d/system-login
+
+# Local break-glass administrator, mirroring the Controller seed installer:
+# created with a disabled password; an authorized console session sets it.
+arch-chroot /mnt useradd --create-home --groups wheel --shell /bin/bash \\
+    {local_rescue}
+install -Dm0440 /dev/stdin /mnt/etc/sudoers.d/10-local-rescue <<'TELOS_SUDO_EOF'
+%wheel ALL=(ALL:ALL) ALL
+TELOS_SUDO_EOF
+install -Dm0440 /dev/stdin /mnt/etc/sudoers.d/20-daily-admin <<'TELOS_DAILY_EOF'
+{daily_admin} ALL=(ALL:ALL) ALL
+TELOS_DAILY_EOF
+
+install -Dm0755 /dev/stdin /mnt{probe_path} <<'TELOS_PROBE_EOF'
+{probe}
+TELOS_PROBE_EOF
+
+arch-chroot /mnt systemctl enable sssd serial-getty@ttyS0.service
+
 arch-chroot /mnt bootctl install
 root_uuid=$(blkid -s UUID -o value "$ARCH_PART")
 cat > /mnt/boot/loader/entries/arch-linux-lts.conf <<EOF
 title Arch Linux LTS
 linux /vmlinuz-linux-lts
 initrd /initramfs-linux-lts.img
-options root=UUID=$root_uuid rw
+options root=UUID=$root_uuid rw console=tty0 console=ttyS0,115200
 EOF
 cat > /mnt/boot/loader/loader.conf <<'EOF'
 default auto-windows

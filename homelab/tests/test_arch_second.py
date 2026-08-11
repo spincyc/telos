@@ -1,14 +1,17 @@
+import inspect
 import json
 from pathlib import Path
+import re
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    ESP, LINUX_ROOT_X86_64, MSR, WINDOWS, WINDOWS_RECOVERY,
-    Disk, InstallContractError, Partition, parse_lsblk, render_installer,
-    validate_windows_first,
+    ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64, MSR, PROBE_CHECKS,
+    PROBE_HELPER_PATH, SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS,
+    WINDOWS_RECOVERY, Disk, InstallContractError, Partition, parse_lsblk,
+    render_installer, validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 
@@ -191,6 +194,44 @@ class ArchSecondTests(unittest.TestCase):
             good_disk(),
         )
 
+    def test_parses_flat_lsblk_json_without_name_column(self):
+        # The verify invocation selects explicit -o columns without NAME, and
+        # lsblk then emits the disk and its partitions as flat sibling rows
+        # with no ``children`` nesting — the shape every live installer run
+        # actually sees. The parser must accept it identically.
+        rows = [{
+            "path": "/dev/vda", "type": "disk", "serial": "LAPTOP-1",
+            "pttype": "gpt",
+        }]
+        rows.extend(
+            {"path": f"/dev/vda{i}", "type": "part",
+             "parttype": guid.lower(), "size": size * MIB,
+             "fstype": filesystem}
+            for i, (guid, size, filesystem)
+            in enumerate(zip(GUIDS, SIZES, FILESYSTEMS), 1)
+        )
+        document = {"blockdevices": rows}
+        parsed = parse_lsblk(json.loads(json.dumps(document)), "/dev/vda")
+        self.assertEqual(parsed.serial, "LAPTOP-1")
+        self.assertEqual(
+            [partition.number for partition in parsed.partitions],
+            [1, 2, 3, 4, 5][:len(parsed.partitions)],
+        )
+        self.assertEqual(len(parsed.partitions), len(SIZES))
+
+    def test_loader_entry_carries_a_serial_console(self):
+        # The installed system must render its boot menu and getty on ttyS0:
+        # gate 8 drives the login and gate 10 drives the menu over serial.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="stephen", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(
+            "options root=UUID=$root_uuid rw console=tty0 "
+            "console=ttyS0,115200",
+            script,
+        )
+
     def test_installer_never_repartitions_or_formats_windows(self):
         script = render_installer(
             disk_path="/dev/nvme0n1", disk_serial="LAPTOP-1",
@@ -210,6 +251,155 @@ class ArchSecondTests(unittest.TestCase):
         self.assertNotIn("oddjob", script)
         self.assertIn("sssd", script)
         self.assertIn("samba", script)
+
+    def test_installer_provisions_identity_client(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        # Domain join, then its machine-credential verification.
+        self.assertIn(
+            "arch-chroot /mnt net ads join -A /run/telos-join/credentials",
+            script)
+        self.assertIn("arch-chroot /mnt net ads testjoin", script)
+        self.assertIn("TELOS ARCH JOIN MEDIA CONSUMED", script)
+        self.assertIn("TELOS ARCH JOIN VERIFIED", script)
+        # Config mirrors ansible/roles/identity_client/templates.
+        self.assertIn("install -Dm0644 /dev/stdin /mnt/etc/krb5.conf", script)
+        self.assertIn(
+            "install -Dm0644 /dev/stdin /mnt/etc/samba/smb.conf", script)
+        self.assertIn(
+            "install -Dm0600 /dev/stdin /mnt/etc/sssd/sssd.conf", script)
+        self.assertIn("security = ADS", script)
+        self.assertIn("realm = AD.FACTORY.TEST", script)
+        self.assertIn("workgroup = FACTORY", script)
+        self.assertIn("default_realm = AD.FACTORY.TEST", script)
+        self.assertIn("cache_credentials = True", script)
+        # ADR 0071: zero means the offline cache never expires.
+        self.assertIn("offline_credentials_expiration = 0", script)
+        self.assertIn("ldap_id_mapping = False", script)
+        # NSS/PAM wiring the Arch way, and the boot-time services.
+        self.assertIn("grep -q '^passwd: files sss'", script)
+        self.assertIn("grep -q '^group: files sss'", script)
+        self.assertIn("pam_sss.so", script)
+        self.assertIn("pam_mkhomedir.so umask=0077", script)
+        self.assertIn(
+            "arch-chroot /mnt systemctl enable sssd "
+            "serial-getty@ttyS0.service", script)
+
+    def test_installer_creates_break_glass_and_daily_admin(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        # Mirrors seed/install-controller: wheel membership plus the %wheel
+        # sudoers rule, and no password is ever staged for local-rescue.
+        self.assertIn(
+            "useradd --create-home --groups wheel --shell /bin/bash", script)
+        self.assertIn("local-rescue", script)
+        self.assertIn("%wheel ALL=(ALL:ALL) ALL", script)
+        self.assertIn("operator ALL=(ALL:ALL) ALL", script)
+        self.assertNotIn("passwd local-rescue", script)
+        self.assertNotIn("chpasswd", script)
+
+    def test_probe_helper_is_installed_and_covers_the_contract(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(
+            f"install -Dm0755 /dev/stdin /mnt{PROBE_HELPER_PATH}", script)
+        contract = json.loads(
+            (Path(__file__).resolve().parents[1] / "workstations"
+             / "identity_lifecycle.json").read_text(encoding="utf-8"))
+        expected = tuple(
+            check for check in contract["required_checks"]
+            if check.startswith("arch-") or check == "domain-admin-separate"
+        )
+        self.assertEqual(sorted(PROBE_CHECKS), sorted(expected))
+        for check in expected:
+            self.assertIn(f"{check})", script)
+        # The exact marker shape gate 8's drive waits for.
+        self.assertIn(
+            "printf '__TELOS_ARCH_%s_%s=%s\\n' \"$key\" \"$token\" \"$1\"",
+            script)
+        for principal in ("student", "operator", "directory-admin",
+                          "local-rescue"):
+            self.assertIn(principal, script)
+
+    def test_join_secret_never_enters_the_rendered_script(self):
+        # The seam is credential-free: the join secret arrives on one-use
+        # removable media and only ever exists in guest tmpfs.
+        signature = inspect.signature(render_installer)
+        for name in signature.parameters:
+            self.assertNotRegex(name, r"(?i)password|secret|credential")
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(f"/dev/disk/by-label/{JOIN_MEDIA_LABEL}", script)
+        self.assertIn("/run/telos-join/media/join.json", script)
+        self.assertIn("rm -rf /run/telos-join", script)
+        # The credential file only ever lives on tmpfs.
+        paths = re.findall(r"\S*/credentials\b", script)
+        self.assertTrue(paths)
+        self.assertEqual(set(paths), {"/run/telos-join/credentials"})
+        # Every mention of a password is config, PAM stack, or the tmpfs
+        # media reader; no literal secret value can be present.
+        allowed = (
+            "krb5_store_password_if_offline",
+            'values["password"]',
+            '"password = " + password',
+            "(username, password)",
+            "pam_",
+        )
+        for line in script.splitlines():
+            if "password" in line and not line.lstrip().startswith("#"):
+                self.assertTrue(
+                    any(marker in line for marker in allowed),
+                    f"unexpected password reference: {line!r}")
+
+    def test_initramfs_carries_both_disk_transports(self):
+        # Installed via virtio-blk, later booted via NVMe: autodetect would
+        # trim the absent transport, so both are pinned and images rebuilt.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(
+            "/mnt/etc/mkinitcpio.conf.d/telos-transports.conf", script)
+        self.assertIn("MODULES+=(nvme virtio_blk)", script)
+        self.assertIn("arch-chroot /mnt mkinitcpio -P", script)
+        # Transport-agnostic: no baked-in device naming beyond the argument.
+        self.assertNotIn("/dev/nvme", script)
+
+    def test_synthetic_defaults_match_the_factory_spec(self):
+        from vm.controller_factory import FactorySpec
+
+        spec = FactorySpec()
+        self.assertEqual(SYNTHETIC_DOMAIN, spec.domain)
+        self.assertEqual(SYNTHETIC_WORKGROUP, spec.netbios)
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(f"realm = {spec.realm}", script)
+
+    def test_rejects_invalid_realm_parameters(self):
+        for overrides in (
+            {"realm_dns_domain": "AD.Factory.Test"},
+            {"realm_dns_domain": "single-label"},
+            {"realm_workgroup": "factory"},
+            {"realm_workgroup": "TOO-LONG-WORKGROUP"},
+            {"join_media_label": "bad label"},
+            {"join_media_label": ""},
+        ):
+            with self.assertRaises(InstallContractError):
+                render_installer(
+                    disk_path="/dev/vda", disk_serial="LAPTOP-1",
+                    hostname="workstation", expected_sizes_mib=SIZES,
+                    **overrides,
+                )
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):
