@@ -1005,7 +1005,7 @@ default auto-windows
 timeout 5
 editor no
 EOF
-bootctl --root=/mnt set-default auto-windows
+grep -q '^default auto-windows$' /mnt/boot/loader/loader.conf
 sync
 echo "Arch installed; Windows partitions and filesystems were not modified."
 """

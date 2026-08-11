@@ -250,7 +250,12 @@ class ArchSecondTests(unittest.TestCase):
         self.assertIn('mkfs.ext4 -F -L ARCH_ROOT "$ARCH_PART"', script)
         self.assertIn('mount "$ESP_PART" /mnt/boot', script)
         self.assertIn("default auto-windows", script)
-        self.assertIn("bootctl --root=/mnt set-default auto-windows", script)
+        # set-default writes an EFI variable and rejects --root/--image, so
+        # the default-boot policy lives solely in loader.conf; the render
+        # proves the written line instead of calling an unsupported verb.
+        self.assertNotIn("set-default", script)
+        self.assertIn("grep -q '^default auto-windows$' "
+                      "/mnt/boot/loader/loader.conf", script)
         self.assertNotIn("adcli", script)
         self.assertNotIn("oddjob", script)
         self.assertIn("sssd", script)
