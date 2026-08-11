@@ -1870,6 +1870,123 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     @mock.patch.object(subject, "_GuiInteraction")
     @mock.patch.object(subject, "_private_evidence_root")
     @mock.patch.object(subject, "_load_references")
+    def test_near_operator_desktop_retains_bounded_terminal_frames(
+        self, load_references, private_evidence_root, interaction_type,
+        prove_departure,
+    ):
+        """Seam 1 (attempt 20260811T111019Z): the operator logon succeeded
+        but the desktop proof failed near-reference against the reference
+        calibrated on the LOCAL desktop, leaving no frames to mint an
+        operator-desktop reference from. The domain path retains a small
+        bounded secret-free set before the failure is raised."""
+        self._stub_controller_auth()
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        desktop = mock.Mock(state_kind="desktop")
+        load_references.return_value = (
+            sign_in, desktop, mock.sentinel.security, mock.sentinel.change)
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        interaction_type.return_value.observe_ephemeral.side_effect = (
+            subject.WindowsIdentityGuiNearReference("desktop"))
+        adapter = self.adapter(rotation_plan=mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=(),
+            post_join_operator_account_keys=(),
+            post_join_operator_account_calibrated=True,
+            post_join_operator_sign_in_manifest=None,
+            post_join_retain_submit_frames=3,
+            checkpoint_timeout=11,
+        ))
+
+        with (
+            mock.patch.object(subject.time, "sleep"),
+            self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught,
+        ):
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "f" * 32)
+
+        self.assertEqual(
+            "desktop-near-reference", caught.exception.reauth_operation)
+        near_frames = [
+            Path(call.args[0]).name
+            for call in self.qmp.screenshot.call_args_list
+            if "desktop-near" in str(call.args[0])
+        ]
+        self.assertEqual(
+            [
+                "identity-desktop-near-0001.ppm",
+                "identity-desktop-near-0002.ppm",
+                "identity-desktop-near-0003.ppm",
+            ],
+            near_frames,
+        )
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject, "load_identity_reference")
+    def test_operator_desktop_manifest_selects_reviewed_reference(
+        self, load_identity_reference, load_references,
+        private_evidence_root, interaction_type, prove_departure,
+    ):
+        """Once a reviewed operator-desktop reference exists, the domain
+        path proves the desktop against it instead of the local-account
+        desktop reference."""
+        self._stub_controller_auth()
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        local_desktop = mock.Mock(state_kind="desktop")
+        load_references.return_value = (
+            sign_in, local_desktop,
+            mock.sentinel.security, mock.sentinel.change)
+        operator_desktop = mock.Mock(state_kind="desktop")
+        load_identity_reference.return_value = operator_desktop
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        manifest = self.root / "post-join-operator-desktop.json"
+        plan = mock.Mock(
+            initial_sign_in_delay=0,
+            lock_settle_delay=0,
+            wake_after_lock_keys=(),
+            post_join_operator_account_keys=(),
+            post_join_operator_account_calibrated=True,
+            post_join_operator_sign_in_manifest=None,
+            post_join_operator_desktop_manifest=manifest,
+            checkpoint_timeout=11,
+        )
+        adapter = self.adapter(rotation_plan=plan)
+
+        adapter.reauthenticate_domain_operator(
+            "operator@FACTORY.TEST", "private", "a" * 32)
+
+        load_identity_reference.assert_called_once_with(
+            manifest, expected_guest=plan.expected_guest)
+        interaction_type.return_value.observe_ephemeral.assert_called_once_with(
+            operator_desktop, 11, alternatives=(("sign-in", sign_in),))
+
+        # A manifest that does not prove a desktop state fails closed
+        # before any GUI interaction.
+        load_identity_reference.return_value = mock.Mock(
+            state_kind="sign-in")
+        with self.assertRaises(
+                subject.WindowsLocalReauthenticationError) as caught:
+            adapter.reauthenticate_domain_operator(
+                "operator@FACTORY.TEST", "private", "b" * 32)
+        self.assertEqual(
+            "prove-password-target", caught.exception.reauth_operation)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
     @mock.patch.object(subject.time, "sleep")
     def test_reauthentication_deadline_starts_after_boot_settle(
         self, sleep, load_references, private_evidence_root, interaction_type,

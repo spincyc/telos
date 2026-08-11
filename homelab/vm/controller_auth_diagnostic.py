@@ -74,6 +74,23 @@ _REALM = re.compile(r"[A-Z0-9][A-Z0-9.-]{0,252}[A-Z0-9]")
 _SID = re.compile(r"S-1-5-21-(?:[0-9]{1,10}-){2}[0-9]{1,10}-[0-9]{1,10}")
 _RECEIPT_LINE_START = rb"(?:^|[\r\n])"
 _RECEIPT_LINE_END = rb"[^\S\r\n]*(?:\r\n|[\r\n]|$)"
+# Receipt lines that carry an open-vocabulary VALUE must end at a real line
+# terminator. The `$` (end-of-buffer) alternative in _RECEIPT_LINE_END let a
+# chunk-boundary read match a PREFIX of a value still being written: attempt
+# 20260811T111019Z delivered `code:uncorrelated`, the host's wait matched a
+# shorter prefix at the buffer edge, _closed_result raised ValueError, and
+# the DELIVERED result was discarded as receipt-unavailable/host-error; the
+# recovery cleanup wait then matched the two bytes `=l` of the cleanup line
+# mid-write and stopped reading, leaving the transcript truncated mid-line.
+# Fixed-marker lines (ARMED, PREARM) keep the permissive end: their tokens
+# are fixed-length, so a partial line can never satisfy the pattern.
+_VALUE_RECEIPT_LINE_END = rb"[^\S\r\n]*(?:\r\n|[\r\n])"
+# Bounded wire form of the credential-free mismatch summary attached to an
+# uncorrelated or ambiguous code (reason=count, comma-joined, closed reason
+# vocabulary, counts capped at three digits).
+_SUMMARY_WIRE = re.compile(
+    r"[a-z][a-z-]{0,31}=[1-9][0-9]{0,2}"
+    r"(?:,[a-z][a-z-]{0,31}=[1-9][0-9]{0,2}){0,6}")
 
 
 def _live_auth_json_level(output: str, expected: int) -> bool:
@@ -101,6 +118,59 @@ class ControllerAuthCode(Enum):
     NO_EVENT = "no-event"
     UNCORRELATED = "uncorrelated"
     AMBIGUOUS = "ambiguous"
+
+
+# Closed, credential-free reasons an observed event failed correlation, in
+# check order (each event is counted once, under the FIRST criterion it
+# failed). Attempt 20260811T111019Z proved a successful operator logon can
+# still render `uncorrelated` with no record of what the watcher saw; these
+# bounded counts make a mismatch name its reason on the wire without ever
+# carrying event data.
+_MISMATCH_REASONS = (
+    "non-authentication",
+    "incomplete-record",
+    "wrong-account",
+    "matched-account-wrong-domain",
+    "matched-account-wrong-ip",
+    "unlisted-service-or-method",
+    "matched-wrong-sid",
+)
+_MISMATCH_COUNT_CAP = 999
+
+
+def _mismatch_summary(mismatches: Mapping[str, int]) -> str:
+    """Encode bounded mismatch counts in fixed vocabulary order."""
+    return ",".join(
+        f"{reason}={min(int(mismatches[reason]), _MISMATCH_COUNT_CAP)}"
+        for reason in _MISMATCH_REASONS
+        if mismatches.get(reason)
+    )
+
+
+def _valid_summary_text(value: object) -> bool:
+    """Exact wire-form check against the closed mismatch vocabulary."""
+    if type(value) is not str or len(value) > 256:
+        return False
+    if _SUMMARY_WIRE.fullmatch(value) is None:
+        return False
+    reasons = [item.split("=", 1)[0] for item in value.split(",")]
+    return len(set(reasons)) == len(reasons) and all(
+        reason in _MISMATCH_REASONS for reason in reasons)
+
+
+def _closed_summary(code: "ControllerAuthCode", summary: bytes | None):
+    """Accept a valid wire summary; drop anything else WITHOUT invalidating
+    the delivered result (an unreadable annotation must never displace the
+    receipt it annotates)."""
+    if summary is None or code not in {
+        ControllerAuthCode.UNCORRELATED, ControllerAuthCode.AMBIGUOUS,
+    }:
+        return None
+    try:
+        text = summary.decode("ascii")
+    except UnicodeError:
+        return None
+    return text if _valid_summary_text(text) else None
 
 
 class ControllerAuthCollection(Enum):
@@ -251,6 +321,10 @@ class ControllerAuthResult:
     # name, never a message, because messages can quote paths or secrets.
     host_error: str | None = None
     receipt_origin: "ControllerAuthReceiptOrigin | None" = None
+    # Bounded, credential-free mismatch counts reported by the Controller
+    # alongside an uncorrelated or ambiguous code (see _MISMATCH_REASONS).
+    # Never event data: closed reason vocabulary, capped integer counts.
+    correlation_summary: str | None = None
 
     def __post_init__(self) -> None:
         self._validate()
@@ -276,6 +350,15 @@ class ControllerAuthResult:
         ):
             raise ValueError(
                 "Controller auth host error must be one bounded type name")
+        if self.correlation_summary is not None and (
+            not _valid_summary_text(self.correlation_summary)
+            or self.code not in {
+                ControllerAuthCode.UNCORRELATED,
+                ControllerAuthCode.AMBIGUOUS,
+            }
+        ):
+            raise ValueError(
+                "Controller auth correlation summary is invalid")
         if self.receipt_origin is not None:
             if type(self.receipt_origin) is not ControllerAuthReceiptOrigin:
                 raise TypeError("Controller auth receipt origin is invalid")
@@ -380,19 +463,31 @@ _AUTH_METHODS = frozenset({
 def classify_auth_events(
     events: tuple[Mapping[str, object], ...],
     expectation: ControllerAuthExpectation,
+    mismatches: dict[str, int] | None = None,
 ) -> ControllerAuthCode:
     """Classify already Controller-parsed JSON without returning event data.
 
     Samba versions use slightly different field names.  Every accepted alias
     remains exact and allowlisted; unknown services, authentication methods,
     or incomplete records are ignored rather than broadened heuristically.
+
+    When `mismatches` is supplied, every skipped event increments one closed
+    _MISMATCH_REASONS counter for the FIRST criterion it failed, so an
+    uncorrelated verdict can say what the watcher actually saw -- bounded
+    counts only, never account, address, or SID data.
     """
+    def note(reason: str) -> None:
+        if mismatches is not None:
+            mismatches[reason] = min(
+                _MISMATCH_COUNT_CAP, mismatches.get(reason, 0) + 1)
+
     matches: list[bool] = []
     for event in events:
         if type(event) is not dict:
             raise ValueError("Controller auth event is not an object")
         event_type = event.get("type")
         if event_type != "Authentication":
+            note("non-authentication")
             continue
         body = event.get(event_type)
         if type(body) is not dict:
@@ -423,6 +518,7 @@ def classify_auth_events(
             or type(method) is not str
             or type(status) is not str
         ):
+            note("incomplete-record")
             continue
         try:
             if remote.startswith("ipv4:"):
@@ -433,6 +529,7 @@ def classify_auth_events(
                 remote_ip = remote
             remote_ip = str(ipaddress.ip_address(remote_ip))
         except ValueError:
+            note("incomplete-record")
             continue
         # A UPN interactive logon carries the realm or a blank clientDomain,
         # not the NetBIOS domain. Accept either form, and an empty domain
@@ -442,17 +539,33 @@ def classify_auth_events(
         accepted_domains = {expectation.domain, ""}
         if expectation.realm is not None:
             accepted_domains.add(expectation.realm)
+        # A UPN logon may also render the ACCOUNT in UPN form
+        # (operator@AD.FACTORY.TEST). With a declared realm that form is
+        # exact, not heuristic: only the expectation's own account joined to
+        # the expectation's own realm is accepted.
+        accepted_accounts = {expectation.account.casefold()}
+        if expectation.realm is not None:
+            accepted_accounts.add(
+                f"{expectation.account}@{expectation.realm}".casefold())
+        if account.casefold() not in accepted_accounts:
+            note("wrong-account")
+            continue
+        if domain.upper() not in accepted_domains:
+            note("matched-account-wrong-domain")
+            continue
+        if remote_ip != expectation.workstation_ip:
+            note("matched-account-wrong-ip")
+            continue
         if (
-            account.casefold() != expectation.account.casefold()
-            or domain.upper() not in accepted_domains
-            or remote_ip != expectation.workstation_ip
-            or service.casefold() not in _SERVICES
+            service.casefold() not in _SERVICES
             or method.casefold() not in _AUTH_METHODS
         ):
+            note("unlisted-service-or-method")
             continue
         accepted = status in {"NT_STATUS_OK", "0x00000000"}
         if accepted and expectation.staged_sid is not None:
             if sid != expectation.staged_sid:
+                note("matched-wrong-sid")
                 continue
         matches.append(accepted)
     if not events:
@@ -841,13 +954,21 @@ def _controller_session(encoded: str) -> int:
             payload = json.loads(base64.b64decode(
                 encoded, validate=True).decode("utf-8"))
             if type(payload) is not dict or set(payload) != {
-                "account", "domain", "workstation_ip", "arm", "submit", "cancel",
+                "account", "domain", "workstation_ip", "realm",
+                "arm", "submit", "cancel",
                 "result", "cleanup", "prearm", "observation_seconds",
             }:
                 raise ValueError
+            # The realm must cross the wire: the host-side expectation
+            # carried it since attempt nineteen, but this session rebuilt its
+            # own expectation without it, so the Controller-side
+            # classification still rejected every realm-form clientDomain as
+            # uncorrelated (attempt 20260811T111019Z, a visibly successful
+            # operator logon).
             expectation = ControllerAuthExpectation(
                 payload["account"], payload["domain"],
                 payload["workstation_ip"],
+                realm=payload["realm"],
             )
             markers = {
                 key: payload[key]
@@ -877,6 +998,7 @@ def _controller_session(encoded: str) -> int:
 
         prearm("PAYLOAD_VALID")
         primary: ControllerAuthCode | ControllerAuthCollection
+        mismatch_summary = ""
         if not _effective_configuration():
             primary = ControllerAuthCollection.CONFIGURATION_INVALID
         else:
@@ -891,6 +1013,7 @@ def _controller_session(encoded: str) -> int:
                     expectation.account, expectation.domain,
                     expectation.workstation_ip,
                     _staged_sid(expectation.account),
+                    realm=expectation.realm,
                 )
                 prearm("SID_READY")
             except (OSError, RuntimeError):
@@ -958,7 +1081,10 @@ def _controller_session(encoded: str) -> int:
                             primary = ControllerAuthCollection.MALFORMED
                             break
                         events = tuple(windowed)
-                        code = classify_auth_events(events, expectation)
+                        mismatch_counts: dict[str, int] = {}
+                        code = classify_auth_events(
+                            events, expectation, mismatches=mismatch_counts)
+                        mismatch_summary = _mismatch_summary(mismatch_counts)
                         now = time.monotonic()
                         if _observation_complete(
                             code,
@@ -971,9 +1097,19 @@ def _controller_session(encoded: str) -> int:
                             break
                         time.sleep(0.1)
         kind = "code" if type(primary) is ControllerAuthCode else "collection"
+        rendered = f"{kind}:{primary.value}"
+        if (
+            primary in (
+                ControllerAuthCode.UNCORRELATED,
+                ControllerAuthCode.AMBIGUOUS,
+            )
+            and mismatch_summary
+        ):
+            # A mismatch names its reason on the wire: bounded closed-
+            # vocabulary counts, never event data.
+            rendered = f"{rendered};{mismatch_summary}"
         print(
-            f"__TELOS_AUTH_RESULT_{markers['result']}__="
-            f"{kind}:{primary.value}",
+            f"__TELOS_AUTH_RESULT_{markers['result']}__={rendered}",
             flush=True,
         )
     finally:
@@ -1074,7 +1210,8 @@ class ControllerAuthDiagnosticSession:
             rb"(?:"
             + re.escape(armed_prefix) + rb"[0-9a-f]{32}__|"
             + re.escape(result_prefix)
-            + rb"[0-9a-f]{32}__=(?:code|collection):[a-z-]+|"
+            + rb"[0-9a-f]{32}__=(?:code|collection):[a-z-]+"
+            + rb"(?:;[a-z0-9=,-]{1,256})?|"
             + re.escape(prearm_prefix)
             + rb"[A-Z_]{1,32}_[0-9a-f]{32}__|"
             + re.escape(exit_prefix)
@@ -1176,7 +1313,7 @@ class ControllerAuthDiagnosticSession:
                 match = self._wait(
                     _RECEIPT_LINE_START + rb"(?:"
                     + re.escape(marker)
-                    + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END + rb"|"
+                    + rb"(ok|[a-z-]+)" + _VALUE_RECEIPT_LINE_END + rb"|"
                     + rb"[^\r\n]*\$[^\S\r\n]*(?=[\r\n]|$))",
                     "controller-auth-launch-resynchronized")
                 cleanup_value = match.group(1)
@@ -1196,7 +1333,7 @@ class ControllerAuthDiagnosticSession:
                 "controller-auth-abort-sent")
             match = self._wait(
                 _RECEIPT_LINE_START + re.escape(marker)
-                + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END,
+                + rb"(ok|[a-z-]+)" + _VALUE_RECEIPT_LINE_END,
                 "controller-auth-abort-cleanup")
             self._state = "finished"
             cleanup_value = match.group(1)
@@ -1222,9 +1359,15 @@ class ControllerAuthDiagnosticSession:
             pass
 
     @staticmethod
-    def _closed_result(kind: bytes, value: bytes) -> ControllerAuthResult:
+    def _closed_result(
+        kind: bytes, value: bytes, summary: bytes | None = None,
+    ) -> ControllerAuthResult:
         if kind == b"code" and value in _CODE_BY_WIRE:
-            return ControllerAuthResult(code=_CODE_BY_WIRE[value])
+            code = _CODE_BY_WIRE[value]
+            return ControllerAuthResult(
+                code=code,
+                correlation_summary=_closed_summary(code, summary),
+            )
         if kind == b"collection" and value in _COLLECTION_BY_WIRE:
             collection = _COLLECTION_BY_WIRE[value]
             return ControllerAuthResult(
@@ -1249,7 +1392,7 @@ class ControllerAuthDiagnosticSession:
         try:
             cleanup_match = self._wait(
                 _RECEIPT_LINE_START + re.escape(cleanup_marker)
-                + rb"(ok|[a-z-]+)" + _RECEIPT_LINE_END,
+                + rb"(ok|[a-z-]+)" + _VALUE_RECEIPT_LINE_END,
                 label)
         except _INTERRUPTIONS:
             self._recover_after_interruption()
@@ -1286,6 +1429,10 @@ class ControllerAuthDiagnosticSession:
                 "account": self.expectation.account,
                 "domain": self.expectation.domain,
                 "workstation_ip": self.expectation.workstation_ip,
+                # Without this the Controller rebuilt its expectation
+                # realm-less and rejected every realm-form clientDomain of a
+                # real UPN operator logon as uncorrelated.
+                "realm": self.expectation.realm,
                 "observation_seconds": self._observation_seconds,
                 **{
                     name: self._tokens[name]
@@ -1417,10 +1564,11 @@ class ControllerAuthDiagnosticSession:
                     + _RECEIPT_LINE_END + rb"|"
                     + rb"(__TELOS_AUTH_RESULT_([0-9a-f]{32})__)="
                     + rb"(code|collection):([a-z-]+)"
-                    + _RECEIPT_LINE_END + rb"|"
+                    + rb"(?:;[a-z0-9=,-]{1,256})?"
+                    + _VALUE_RECEIPT_LINE_END + rb"|"
                     + rb"(__TELOS_AUTH_EXIT_([0-9a-f]{32})__)="
                     + rb"(zero|nonzero)"
-                    + _RECEIPT_LINE_END + rb"|"
+                    + _VALUE_RECEIPT_LINE_END + rb"|"
                     + rb"([^\r\n]*__TELOS_AUTH_EXIT_[0-9a-f]{32}__="
                     + rb"(?:zero|nonzero)[^\r\n]*)"
                     + _RECEIPT_LINE_END + rb")",
@@ -1626,7 +1774,8 @@ class ControllerAuthDiagnosticSession:
             match = self._wait(
                 _RECEIPT_LINE_START + re.escape(result_marker)
                 + rb"(code|collection):([a-z-]+)"
-                + _RECEIPT_LINE_END,
+                + rb"(?:;(?P<summary>[a-z0-9=,-]{1,256}))?"
+                + _VALUE_RECEIPT_LINE_END,
                 "controller-auth-result",
                 deadline=self._deadline - CLEANUP_RESERVE_SECONDS)
         except _INTERRUPTIONS:
@@ -1646,7 +1795,11 @@ class ControllerAuthDiagnosticSession:
                 cleanup_proved=cleanup is None,
             ) from None
         try:
-            result = self._closed_result(match.group(1), match.group(2))
+            result = self._closed_result(
+                match.group(1), match.group(2),
+                # Named lookup keeps fabricated two-group matches (tests,
+                # older fakes) valid: absent group means no summary.
+                match.groupdict().get("summary"))
             result, cleanup_proved = self._terminal_cleanup(
                 result, "controller-auth-cleanup")
             if not cleanup_proved:

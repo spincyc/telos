@@ -174,6 +174,114 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             ControllerAuthExpectation(
                 "operator", "FACTORY", "10.1.31.11", realm="not a realm!")
 
+    def test_upn_account_form_correlates_only_with_declared_realm(self):
+        realm_expected = ControllerAuthExpectation(
+            "operator", "FACTORY", "10.1.31.11",
+            "S-1-5-21-1-2-3-1104", realm="AD.FACTORY.TEST")
+        # The audit may render the account itself in UPN form.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(account="operator@AD.FACTORY.TEST"),),
+                realm_expected),
+            ControllerAuthCode.AUTHENTICATED)
+        # Only the expectation's own realm joins the account: a foreign
+        # UPN suffix does not correlate.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(account="operator@OTHER.REALM.TEST"),),
+                realm_expected),
+            ControllerAuthCode.UNCORRELATED)
+        # Without a declared realm the UPN account form stays rejected.
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(account="operator@AD.FACTORY.TEST"),),
+                self.expected),
+            ControllerAuthCode.UNCORRELATED)
+
+    def test_mismatches_count_the_first_failed_criterion_per_event(self):
+        """Attempt 20260811T111019Z rendered a bare `uncorrelated` for a
+        visibly successful logon; a mismatch must name its reason."""
+        mismatches = {}
+        code = classify_auth_events(
+            (
+                self.event(remoteAddress="ipv4:10.1.31.4:1"),
+                self.event(remoteAddress="ipv4:10.1.31.5:1"),
+                self.event(sid="S-1-5-21-1-2-3-9999"),
+                self.event(account="intruder"),
+                self.event(domain="OTHER.REALM.TEST"),
+                self.event(type="Authorization"),
+                self.event(remoteAddress=1234),
+            ),
+            self.expected,
+            mismatches=mismatches,
+        )
+        self.assertEqual(code, ControllerAuthCode.UNCORRELATED)
+        self.assertEqual(
+            mismatches,
+            {
+                "matched-account-wrong-ip": 2,
+                "matched-wrong-sid": 1,
+                "wrong-account": 1,
+                "matched-account-wrong-domain": 1,
+                "non-authentication": 1,
+                "incomplete-record": 1,
+            },
+        )
+        self.assertEqual(
+            subject._mismatch_summary(mismatches),
+            "non-authentication=1,incomplete-record=1,wrong-account=1,"
+            "matched-account-wrong-domain=1,matched-account-wrong-ip=2,"
+            "matched-wrong-sid=1",
+        )
+
+    def test_exact_match_produces_no_mismatch_counts(self):
+        mismatches = {}
+        self.assertEqual(
+            classify_auth_events(
+                (self.event(),), self.expected, mismatches=mismatches),
+            ControllerAuthCode.AUTHENTICATED,
+        )
+        self.assertEqual(mismatches, {})
+        self.assertEqual(subject._mismatch_summary(mismatches), "")
+
+    def test_closed_result_attaches_only_a_valid_wire_summary(self):
+        closed = ControllerAuthDiagnosticSession._closed_result
+        parsed = closed(
+            b"code", b"uncorrelated",
+            b"wrong-account=2,matched-account-wrong-ip=1")
+        self.assertIs(parsed.code, ControllerAuthCode.UNCORRELATED)
+        self.assertEqual(
+            parsed.correlation_summary,
+            "wrong-account=2,matched-account-wrong-ip=1")
+        # An unreadable annotation is dropped; it never invalidates the
+        # delivered result.
+        for forged in (
+            b"unknown-reason=1", b"wrong-account=0", b"wrong-account=",
+            b"wrong-account=1,wrong-account=2", b"=1", b"a" * 300,
+        ):
+            with self.subTest(forged=forged):
+                degraded = closed(b"code", b"uncorrelated", forged)
+                self.assertIs(
+                    degraded.code, ControllerAuthCode.UNCORRELATED)
+                self.assertIsNone(degraded.correlation_summary)
+        # A summary never attaches to codes that cannot carry one.
+        self.assertIsNone(
+            closed(
+                b"code", b"authenticated", b"wrong-account=1",
+            ).correlation_summary)
+        self.assertIsNone(
+            closed(b"collection", b"malformed").correlation_summary)
+
+    def test_result_rejects_forged_correlation_summary(self):
+        with self.assertRaises(ValueError):
+            ControllerAuthResult(
+                code=ControllerAuthCode.AUTHENTICATED,
+                correlation_summary="wrong-account=1")
+        with self.assertRaises(ValueError):
+            ControllerAuthResult(
+                code=ControllerAuthCode.UNCORRELATED,
+                correlation_summary="secret-path=1")
+
     def test_untrusted_service_and_source_do_not_correlate(self):
         self.assertEqual(
             classify_auth_events(
@@ -352,11 +460,14 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         self.assertEqual(
             set(payload),
             {
-                "account", "domain", "workstation_ip",
+                "account", "domain", "workstation_ip", "realm",
                 "observation_seconds", "arm", "submit", "cancel",
                 "result", "cleanup", "prearm",
             },
         )
+        # setUp's expectation carries no realm; the key still crosses the
+        # wire explicitly as null so the schema stays exact.
+        self.assertIsNone(payload["realm"])
         self.assertNotIn(session._tokens["exit"], payload.values())
 
     def test_submit_establishes_fresh_observation_and_cleanup_deadline(self):
@@ -516,6 +627,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "account": "operator",
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
+            "realm": "AD.FACTORY.TEST",
             "observation_seconds": 30,
             **{
                 name: "0" * 32
@@ -2060,6 +2172,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             "account": "operator",
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
+            "realm": "AD.FACTORY.TEST",
             "arm": token,
             "submit": "b" * 32,
             "cancel": "c" * 32,
@@ -2104,6 +2217,219 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                 (f"__TELOS_AUTH_ARMED_{payload['arm']}__", True),
             ],
         )
+
+    def test_controller_session_expectation_carries_wire_realm(self):
+        """The host expectation carried the realm since attempt nineteen,
+        but the Controller session rebuilt its own expectation realm-less:
+        every realm-form clientDomain of a real UPN logon stayed
+        uncorrelated (attempt 20260811T111019Z)."""
+        constructed = []
+        real = subject.ControllerAuthExpectation
+
+        def recording(*args, **kwargs):
+            expectation = real(*args, **kwargs)
+            constructed.append(expectation)
+            return expectation
+
+        payload = {
+            "account": "operator",
+            "domain": "FACTORY",
+            "workstation_ip": "10.1.31.11",
+            "realm": "AD.FACTORY.TEST",
+            "observation_seconds": 1,
+            **{
+                name: "0" * 32
+                for name in (
+                    "arm", "submit", "cancel", "result", "cleanup", "prearm")
+            },
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        opened = SimpleNamespace(st_dev=1, st_ino=2, st_size=0)
+        with (
+            mock.patch.object(
+                subject, "_effective_configuration", return_value=True),
+            mock.patch.object(subject, "_safe_sink", return_value=(9, opened)),
+            mock.patch.object(
+                subject, "_staged_sid",
+                return_value="S-1-5-21-1-2-3-1104"),
+            mock.patch.object(
+                subject, "_disable_and_destroy_sink", return_value=None),
+            mock.patch.object(
+                subject, "ControllerAuthExpectation", recording),
+            mock.patch("builtins.input", return_value=(
+                f"__TELOS_AUTH_CANCEL_{payload['cancel']}__")),
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(subject._controller_session(encoded), 0)
+        self.assertEqual(
+            ["AD.FACTORY.TEST", "AD.FACTORY.TEST"],
+            [expectation.realm for expectation in constructed],
+        )
+
+    def test_uncorrelated_wire_result_names_mismatch_reasons(self):
+        """The Controller's RESULT line carries the bounded mismatch counts
+        so an uncorrelated verdict names what the watcher saw."""
+        payload = {
+            "account": "operator",
+            "domain": "FACTORY",
+            "workstation_ip": "10.1.31.11",
+            "realm": "AD.FACTORY.TEST",
+            "observation_seconds": 1,
+            **{
+                name: "0" * 32
+                for name in (
+                    "arm", "submit", "cancel", "result", "cleanup", "prearm")
+            },
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        opened = SimpleNamespace(st_dev=1, st_ino=2, st_size=0)
+        timestamp = subject.datetime.now(subject.timezone.utc).isoformat()
+        record = json.dumps({
+            "timestamp": timestamp,
+            "type": "Authentication",
+            "account": "operator",
+            "domain": "AD.FACTORY.TEST",
+            "remoteAddress": "ipv4:10.1.31.4:49152",
+            "serviceDescription": "KDC",
+            "authDescription": "Kerberos",
+            "status": "NT_STATUS_OK",
+            "sid": "S-1-5-21-1-2-3-1104",
+        }).encode() + b"\n"
+        audit = SimpleNamespace(
+            st_dev=1, st_ino=2, st_size=len(record))
+        with (
+            mock.patch.object(
+                subject, "_effective_configuration", return_value=True),
+            mock.patch.object(subject, "_safe_sink", return_value=(9, opened)),
+            mock.patch.object(
+                subject, "_staged_sid",
+                return_value="S-1-5-21-1-2-3-1104"),
+            mock.patch.object(
+                subject, "_disable_and_destroy_sink", return_value=None),
+            mock.patch.object(subject.os, "stat", return_value=audit),
+            mock.patch.object(subject.os, "pread", return_value=record),
+            mock.patch("builtins.input", return_value=(
+                f"__TELOS_AUTH_SUBMIT_{payload['submit']}__")),
+            mock.patch("builtins.print") as emit,
+        ):
+            self.assertEqual(subject._controller_session(encoded), 0)
+        result_lines = [
+            call.args[0] for call in emit.call_args_list
+            if call.args and "__TELOS_AUTH_RESULT_" in str(call.args[0])
+        ]
+        self.assertEqual(
+            [
+                f"__TELOS_AUTH_RESULT_{payload['result']}__="
+                "code:uncorrelated;matched-account-wrong-ip=1",
+            ],
+            result_lines,
+        )
+
+    def test_real_serial_chunked_result_value_is_never_prefix_matched(self):
+        """Attempt 20260811T111019Z: a chunk boundary inside
+        `code:uncorrelated` matched a prefix of the value at the buffer
+        edge, ValueError'd the receipt, and discarded a delivered result.
+        The wait must hold until the line terminator arrives."""
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        peer = right.makefile("rb", buffering=0)
+        errors = []
+        console = SerialAutomation(reader, writer, None, timeout=2)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25)
+        session._state = "armed"
+        session._armed_deadline = session._clock() + 1
+        session._observation_seconds = 0.05
+        result = (
+            f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
+        cleanup = (
+            f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+
+        def responder():
+            try:
+                peer.readline()
+                right.sendall(b"\r" + result + b"code:uncorrelat")
+                time.sleep(0.2)
+                right.sendall(
+                    b"ed;wrong-account=2,matched-account-wrong-ip=1\r"
+                    + cleanup + b"ok\r")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            session.begin_submission()
+            outcome = session.result()
+        finally:
+            left.close()
+            right.close()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIs(outcome.code, ControllerAuthCode.UNCORRELATED)
+        self.assertEqual(
+            outcome.correlation_summary,
+            "wrong-account=2,matched-account-wrong-ip=1")
+        self.assertIsNone(outcome.cleanup)
+        self.assertIsNone(outcome.host_error)
+
+    def test_real_serial_truncated_cleanup_preserves_delivered_result(self):
+        """The retained attempt transcript ended mid-cleanup-line at `=l`.
+        A valid RESULT already received must be honored; the cleanup
+        coordinate honestly renders sink-absence-unproved without
+        invalidating it."""
+        left, right = socket.socketpair()
+        reader = left.makefile("rb", buffering=0)
+        writer = left.makefile("wb", buffering=0)
+        peer = right.makefile("rb", buffering=0)
+        errors = []
+        console = SerialAutomation(reader, writer, None, timeout=2)
+        session = ControllerAuthDiagnosticSession(
+            console, self.expected, timeout=25)
+        session._state = "armed"
+        session._armed_deadline = session._clock() + 1
+        session._observation_seconds = 0.05
+        result = (
+            f"__TELOS_AUTH_RESULT_{session._tokens['result']}__=".encode())
+        cleanup = (
+            f"__TELOS_AUTH_CLEANUP_{session._tokens['cleanup']}__=".encode())
+
+        def responder():
+            try:
+                peer.readline()
+                right.sendall(
+                    b"\r" + result + b"code:uncorrelated\r" + cleanup + b"l")
+                time.sleep(0.2)
+                # A real FIN, despite the makefile reference keeping the
+                # descriptor open: the host must see the stream end mid-line.
+                right.shutdown(socket.SHUT_WR)
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            session.begin_submission()
+            with self.assertRaises(ControllerAuthDiagnosticError) as caught:
+                session.result()
+        finally:
+            left.close()
+            try:
+                right.close()
+            except OSError:
+                pass
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        preserved = caught.exception.controller_auth_result
+        self.assertIs(preserved.code, ControllerAuthCode.UNCORRELATED)
+        self.assertIs(
+            preserved.cleanup,
+            subject.ControllerAuthCleanup.SINK_ABSENCE_UNPROVED)
+        self.assertIsNone(preserved.host_error)
+        self.assertFalse(caught.exception.cleanup_proved)
 
     def test_effective_configuration_proves_file_syntax_and_live_route(self):
         with tempfile.TemporaryDirectory() as name:

@@ -204,6 +204,13 @@ class ProgressiveRotationPlan:
     post_join_operator_submit_focus_tabs: int = 0
     post_join_operator_submit_focus_authorized: bool = False
     post_join_operator_submit_focus_reference: Path | None = None
+    # Optional reviewed reference for the domain operator's own desktop. The
+    # tracked desktop manifest was calibrated on the LOCAL telosadmin
+    # desktop; the operator's first-logon desktop proves near (<= 12) but
+    # not exact (<= 6) against it, so the operator path may carry its own
+    # reviewed desktop reference once minted from the retained
+    # identity-desktop-near frames.
+    post_join_operator_desktop_manifest: Path | None = None
     initial_sign_in_delay: float = 60.0
     lock_settle_delay: float = 2.0
     timeout: float = 360.0

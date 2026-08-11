@@ -226,6 +226,7 @@ def _retain_single_frame(qmp, evidence: Path, name: str, enabled) -> None:
 
 def _retain_post_submit_frames(
     qmp, evidence: Path, clock, *, count: int = 10, interval: float = 1.0,
+    name: str = "postsubmit",
 ) -> None:
     """Best-effort bounded capture of the screen after the logon submit.
 
@@ -243,7 +244,7 @@ def _retain_post_submit_frames(
         index = 0
         while index < count and clock() < deadline:
             index += 1
-            frame = evidence / f"identity-postsubmit-{index:04d}.ppm"
+            frame = evidence / f"identity-{name}-{index:04d}.ppm"
             qmp.screenshot(frame)
             try:
                 frame.chmod(0o600)
@@ -767,6 +768,7 @@ class NativeWindowsAcceptanceAdapter:
             return budget
 
         reference_failure = False
+        operator_desktop_applied = False
         try:
             references = _load_references(plan)
             manifest = (
@@ -782,6 +784,29 @@ class NativeWindowsAcceptanceAdapter:
                     ),
                     *references[1:],
                 )
+            # The tracked desktop reference was calibrated on the LOCAL
+            # telosadmin desktop; the operator's first-logon desktop proved
+            # near, not exact, against it. Once a reviewed operator-desktop
+            # reference is minted from the retained desktop-near frames the
+            # plan carries it here and the operator path proves against its
+            # own desktop. The strict Path type gate keeps mock plans (whose
+            # attributes are Mocks) on the tracked reference.
+            operator_desktop_manifest = getattr(
+                plan, "post_join_operator_desktop_manifest", None)
+            if (
+                domain_operator
+                and selection_calibrated
+                and isinstance(operator_desktop_manifest, Path)
+            ):
+                references = (
+                    references[0],
+                    load_identity_reference(
+                        operator_desktop_manifest,
+                        expected_guest=plan.expected_guest,
+                    ),
+                    *references[2:],
+                )
+                operator_desktop_applied = True
         except (KeyboardInterrupt, SystemExit, RunInterrupted):
             raise
         except BaseException:
@@ -791,14 +816,19 @@ class NativeWindowsAcceptanceAdapter:
                 "prove-password-target") from None
         try:
             sign_in, desktop = references[:2]
-            reference_valid = not selection_calibrated or (
-                sign_in.state_kind == "sign-in"
-                and sign_in.state == (
-                    "focused password field for domain account "
-                    f"{principal}"
-                    if domain_operator
-                    else "focused password field for local account "
-                    f"{self.local_principal}"
+            reference_valid = (
+                not operator_desktop_applied
+                or desktop.state_kind == "desktop"
+            ) and (
+                not selection_calibrated or (
+                    sign_in.state_kind == "sign-in"
+                    and sign_in.state == (
+                        "focused password field for domain account "
+                        f"{principal}"
+                        if domain_operator
+                        else "focused password field for local account "
+                        f"{self.local_principal}"
+                    )
                 )
             )
         except (KeyboardInterrupt, SystemExit, RunInterrupted):
@@ -1608,6 +1638,30 @@ class NativeWindowsAcceptanceAdapter:
                     ) from None
                 raise primary from None
 
+        def retain_near_desktop_frames() -> None:
+            # Seam-1 evidence (attempt 20260811T111019Z): the operator's
+            # first-logon desktop proved near (<= 12.0) but not exact
+            # (<= 6.0) against the desktop reference calibrated on the LOCAL
+            # telosadmin desktop, so the logon succeeded and the proof still
+            # failed. Retain a small bounded set of terminal frames -- the
+            # post-logon desktop is secret-free -- so the next attempt can
+            # mint a reviewed post-join-operator-desktop reference (see
+            # plan.post_join_operator_desktop_manifest) or adjust the crop.
+            # Gated on the same integer frame-count flag as every other
+            # retention; never raises; never displaces the failure.
+            retain_frames = getattr(
+                plan, "post_join_retain_submit_frames", 0)
+            if (
+                domain_operator
+                and type(retain_frames) is int
+                and retain_frames > 0
+            ):
+                _retain_post_submit_frames(
+                    self._qmp(), evidence, self.clock,
+                    count=min(retain_frames, 3),
+                    name="desktop-near",
+                )
+
         def prove_desktop() -> None:
             try:
                 interaction.observe_ephemeral(
@@ -1633,6 +1687,8 @@ class NativeWindowsAcceptanceAdapter:
                     ) from None
                 raise
             except WindowsIdentityGuiNearReference as error:
+                if error.state in {"desktop", "sign-in"}:
+                    retain_near_desktop_frames()
                 if error.state == "desktop":
                     raise WindowsLocalReauthenticationError(
                         "desktop-near-reference",
