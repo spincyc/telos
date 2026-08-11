@@ -64,6 +64,24 @@ def mac_text(value: bytes) -> str:
     return ":".join(f"{part:02x}" for part in value)
 
 
+def flow_summary(
+    frame: bytes,
+) -> tuple[int, int | None, int | None, int | None]:
+    """Summarize one frame as (ethertype, ip_protocol, src_port, dst_port).
+
+    Only fixed header fields are read; payloads are never recorded.
+    """
+    ethertype = struct.unpack("!H", frame[12:14])[0]
+    if ethertype != 0x0800 or len(frame) < 34:
+        return ethertype, None, None, None
+    ihl = (frame[14] & 0x0F) * 4
+    protocol = frame[23]
+    if protocol not in (6, 17) or len(frame) < 14 + ihl + 4:
+        return ethertype, protocol, None, None
+    src_port, dst_port = struct.unpack("!HH", frame[14 + ihl:14 + ihl + 4])
+    return ethertype, protocol, src_port, dst_port
+
+
 @dataclass(frozen=True)
 class Port:
     number: int
@@ -161,6 +179,8 @@ class ConcurrentSwitch:
         self.frames = 0
         self.deliveries = 0
         self.blocked = 0
+        self.names_by_mac = {port.mac: port.name for port in ports}
+        self.flows: dict[tuple[object, ...], int] = {}
 
     def _fail(self, error: BaseException) -> None:
         if self.error.empty():
@@ -525,6 +545,25 @@ class ConcurrentSwitch:
                     if output is None:
                         continue
                     self.deliveries += 1
+                    origin = self.names_by_mac.get(
+                        delivered[6:12], self.port_names[sender])
+                    key = (origin, self.port_names[target],
+                           *flow_summary(delivered))
+                    seen = self.flows.get(key, 0)
+                    self.flows[key] = seen + 1
+                    if not seen:
+                        record: dict[str, object] = {
+                            "event": "flow",
+                            "peer": key[0],
+                            "delivered_to": key[1],
+                            "ethertype": key[2],
+                        }
+                        if key[3] is not None:
+                            record["ip_protocol"] = key[3]
+                        if key[4] is not None:
+                            record["src_port"] = key[4]
+                            record["dst_port"] = key[5]
+                        self.evidence.write(record)
                     try:
                         output.put(delivered, timeout=1.0)
                     except queue.Full:
@@ -583,6 +622,7 @@ class ConcurrentSwitch:
                 "frames": self.frames,
                 "deliveries": self.deliveries,
                 "blocked": self.blocked,
+                "flows": len(self.flows),
                 "accepted_ports": len(self.accepted_ports),
             })
             self.evidence.close()
