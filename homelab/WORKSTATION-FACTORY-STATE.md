@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260810.015`
+Document version: `20260811.001`
 
 Status: active implementation
 
@@ -295,6 +295,16 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   The observation window is anchored to the submit fence, not the arm
   time, so arming earlier is semantically safe (the armed window is 120s,
   ample for the quick GUI entry).
+  Fix landed in two parts. `7c8929c` added a `reestablish_sign_in_form`
+  step (wake → account select → UPN → password-target) at the top of
+  `submit_secret` on the domain-operator path. Attempt 24
+  (`20260811T004113Z-62bd7ec41301`) still showed the lock-screen clock in
+  the pre-activation frame: a plain wake key does not dismiss a
+  domain-joined machine's timed-out lock screen — it requires the Secure
+  Attention Sequence. `dea0472` prepends `Ctrl+Alt+Del`
+  (`interaction.chord("ctrl","alt","delete")`, as the change-password flow
+  already uses) to the re-establish. Attempt 25
+  (`20260811T005919Z-c6d2f4c73061`) is the validation run.
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered
