@@ -1032,6 +1032,17 @@ class NativeWindowsAcceptanceAdapter:
             # watcher observes. The secret itself is still typed exactly
             # once, below, after disable_durable_capture and guarded by the
             # same _prove_secret_entry_departure proof.
+            #
+            # A domain-joined machine's lock screen requires the Secure
+            # Attention Sequence to surface the sign-in form: a plain key
+            # does not dismiss a timed-out lock screen (attempt 24's
+            # re-established frame was still the lock-screen clock). Send
+            # Ctrl+Alt+Del first, as the change-password flow already does,
+            # then the ordinary wake / account selection / UPN entry.
+            _run_local_reauthentication_operation(
+                "wake",
+                lambda: interaction.chord(
+                    "ctrl", "alt", "delete", timeout=remaining("wake")))
             _run_local_reauthentication_operation("wake", wake)
             _run_local_reauthentication_operation(
                 "select-local-account", select_local_account)
