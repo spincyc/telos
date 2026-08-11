@@ -62,7 +62,11 @@ SCRIPT_FAILED_EVENT = '{"schema_version":1,"event":"credential-script-failed"}'
 # these literals and the bounded Win32 logon error code.
 _SCRIPT_FAILED_STAGES = frozenset({
     "material", "release-wait", "post-release-setup",
-    "logon", "child-wait", "result-read",
+    # Attempt 39 (20260811T145412Z) rendered the whole logon as one stage
+    # with code 0; the split separates the wrapper compile, the P/Invoke
+    # throwing, and the call returning false with a captured error.
+    "logon", "logon-compile", "logon-prepare", "logon-call", "logon-result",
+    "child-wait", "result-read",
 })
 
 

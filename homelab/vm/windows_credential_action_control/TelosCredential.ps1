@@ -72,6 +72,7 @@ try {
     }
     $failureStage = 'post-release-setup'
 
+    $failureStage = 'logon-compile'
     $source = @'
 using System;
 using System.Runtime.InteropServices;
@@ -119,6 +120,7 @@ public static class TelosCredentialLogon {
 }
 '@
     Add-Type -TypeDefinition $source
+    $failureStage = 'logon-prepare'
 
     # This encoded program is the only child action: observe the authenticated
     # principal and write a public result. It never receives a credential.
@@ -210,17 +212,25 @@ $record | ConvertTo-Json -Compress |
     $commandLine = (
         'powershell.exe -NoLogo -NoProfile -NonInteractive ' +
         '-ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
-    $failureStage = 'logon'
+    $failureStage = 'logon-call'
     $loginClock = [Diagnostics.Stopwatch]::StartNew()
     $created = [TelosCredentialLogon]::CreateProcessWithLogonW(
         $username, $domain, $password, 1, $null, $commandLine, 0,
         [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process)
+    # Capture the Win32 error IMMEDIATELY after the P/Invoke: attempt 39
+    # (20260811T145412Z) reported logon/0 because engine work between the
+    # call and the old read further down could clobber the saved error --
+    # or because the call itself threw (the catch below now extracts a
+    # Win32Exception's NativeErrorCode for that case). The stage split
+    # logon-call/logon-result separates the two decisively.
+    $logonError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    $failureStage = 'logon-result'
     $password = $null
     if (-not $created) {
+        $failureCode = [int]$logonError
         $loginClock.Stop()
         $loginElapsedSeconds = [Math]::Round(
             $loginClock.Elapsed.TotalSeconds, 3)
-        $logonError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         if ($action -eq 'uncached-domain-user-denied' -and
                 -not $controllerReachable -and $logonError -eq 1326) {
             $denied = [ordered]@{
@@ -245,7 +255,6 @@ $record | ConvertTo-Json -Compress |
             $serial.WriteLine(($denied | ConvertTo-Json -Compress))
             return
         }
-        $failureCode = [int]$logonError
         throw ('credential action logon failed: ' +
             $logonError)
     }
@@ -316,8 +325,21 @@ catch {
     # Never serialize the exception: it may contain private guest state.
     # One fixed-form, credential-free breadcrumb turns a silent COM1 into
     # a typed mid-script failure on the host: the stage is a closed
-    # literal set and the code is the bounded Win32 logon error.
+    # literal set and the code is the bounded Win32 error. When no code
+    # was captured at a call site, a Win32Exception anywhere in the chain
+    # still yields its NativeErrorCode -- a bounded integer, nothing else.
     try {
+        if ($failureCode -eq 0) {
+            $failureException = $_.Exception
+            while ($null -ne $failureException) {
+                if ($failureException -is
+                        [ComponentModel.Win32Exception]) {
+                    $failureCode = [int]$failureException.NativeErrorCode
+                    break
+                }
+                $failureException = $failureException.InnerException
+            }
+        }
         $serial.WriteLine(
             '{"schema_version":1,"event":"credential-script-failed"' +
             ',"stage":"' + $failureStage + '","code":' +

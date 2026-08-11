@@ -691,13 +691,33 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "$failureStage = 'material'",
             "$failureStage = 'release-wait'",
             "$failureStage = 'post-release-setup'",
-            "$failureStage = 'logon'",
+            "$failureStage = 'logon-compile'",
+            "$failureStage = 'logon-prepare'",
+            "$failureStage = 'logon-call'",
+            "$failureStage = 'logon-result'",
             "$failureStage = 'child-wait'",
             "$failureStage = 'result-read'",
         )
         positions = [script.index(stage) for stage in expected_stages]
         self.assertEqual(sorted(positions), positions)
         self.assertIn("$failureCode = [int]$logonError", script)
+        # Attempt 39 rendered logon/0: the Win32 error must be captured
+        # IMMEDIATELY after the P/Invoke (engine work clobbers the saved
+        # value) and exactly once, before the result branch runs.
+        self.assertEqual(1, script.count(
+            "[Runtime.InteropServices.Marshal]::GetLastWin32Error()"))
+        call_at = script.index("CreateProcessWithLogonW(\n        $username")
+        capture_at = script.index(
+            "[Runtime.InteropServices.Marshal]::GetLastWin32Error()")
+        self.assertLess(call_at, capture_at)
+        self.assertLess(capture_at, script.index(
+            "$failureStage = 'logon-result'"))
+        # A thrown Win32Exception still yields its bounded NativeErrorCode.
+        catch_at = script.index(
+            "catch {", script.rindex("$serial.WriteLine(($result"))
+        self.assertLess(catch_at, script.index(
+            "[ComponentModel.Win32Exception]"))
+        self.assertIn("$failureException.NativeErrorCode", script)
         from homelab.vm import windows_credential_action_iso as module
         for literal in expected_stages:
             stage = literal.split("'")[1]
@@ -722,6 +742,15 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             ("logon", 1326),
             parse('{"schema_version":1,"event":"credential-script-failed"'
                   ',"stage":"logon","code":1326}'))
+        for stage in (
+            "logon-compile", "logon-prepare", "logon-call", "logon-result",
+        ):
+            with self.subTest(stage=stage):
+                self.assertEqual(
+                    (stage, 1385),
+                    parse('{"schema_version":1,'
+                          '"event":"credential-script-failed"'
+                          f',"stage":"{stage}","code":1385}}'))
         self.assertEqual(
             ("unclassified", 0),
             parse('{"schema_version":1,'
