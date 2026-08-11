@@ -50,13 +50,26 @@ DISK_SERIAL = "TELOS-WIN-0001"
 # present at boot does.  This carries no disk device at boot, only the slot.
 DISK_PORT_ID = "telosdiskport"
 DISK_PORT_CHASSIS = 1
+# A second cold-plugged, empty root port for the one-use domain-join media.
+# The runner builds the TELOS_JOIN ISO at run time (it cannot exist at
+# prepare time: the credential is per-run), QMP-attaches it read-only into
+# this slot after archiso is live, and destroys it by exact inode once the
+# guest prints the consumed marker.  Like the disk port, it carries no
+# device at boot, only the slot.
+JOIN_PORT_ID = "telosjoinport"
+JOIN_PORT_CHASSIS = 2
 DISK_BYTES = 256 * GIB
 # The install boot hot-attaches the target as virtio-blk (see
 # arch_install_run.hot_attach_disk for why NVMe was abandoned), so the guest
 # sees it at the first virtio disk path. The installer still gates on the
 # authorized serial, never on this path alone.
 GUEST_DISK = "/dev/vda"
-DEFAULT_HOSTNAME = "telos-workstation"
+# The domain join derives the machine account from this hostname.  NetBIOS
+# machine names are limited to 15 characters and samba silently truncates
+# longer ones, so the machine account would not match the hostname; the
+# previous default "telos-workstation" (17 characters) broke that limit.
+NETBIOS_HOSTNAME_LIMIT = 15
+DEFAULT_HOSTNAME = "telos-ws1"
 VERIFY_NAME = "arch-second-verify.py"
 INSTALLER_NAME = "arch-install.sh"
 OVERLAY_NAME = "arch.qcow2"
@@ -65,6 +78,23 @@ VARS_NAME = "OVMF_VARS.fd"
 
 class ArchInstallPrepareError(RuntimeError):
     """The proposed Arch-second run cannot prove its narrow boundary."""
+
+
+def require_netbios_hostname(hostname: str) -> str:
+    """Reject hostnames whose machine account samba would silently truncate.
+
+    ``net ads join`` derives the AD machine account from the NetBIOS machine
+    name, which is capped at 15 characters; samba truncates a longer hostname
+    silently, so the joined account would not match the installed hostname.
+    """
+    if not isinstance(hostname, str) or not hostname:
+        raise ArchInstallPrepareError("hostname must be a non-empty string")
+    if len(hostname) > NETBIOS_HOSTNAME_LIMIT:
+        raise ArchInstallPrepareError(
+            f"hostname {hostname!r} exceeds the {NETBIOS_HOSTNAME_LIMIT}-"
+            "character NetBIOS machine-name limit; samba would silently "
+            "truncate the machine account")
+    return hostname
 
 
 def _selected(releases: Path) -> dict:
@@ -236,18 +266,35 @@ def audit_arch_boot_boundary(
     if backend.get("if") != "none" or backend.get("id") != "osdisk":
         raise ArchInstallPrepareError(
             "install target must be a detached hot-plug backend, not cold-plugged")
-    # No cold-plugged disk device and nothing may claim a firmware boot index:
-    # only the NIC may be bootable.
+    # No cold-plugged disk or media device and nothing may claim a firmware
+    # boot index: only the NIC may be bootable.  The two named PCIe root
+    # ports are required and must be empty: they are the only hotplug slots
+    # the runner may realise the install target and the one-use join media
+    # into after archiso is live.
+    ports: dict[str, dict[str, str]] = {}
     for index, argument in enumerate(command):
         if argument != "-device" or index + 1 >= len(command):
             continue
         value = command[index + 1]
-        if value.split(",", 1)[0] in ("nvme", "ide-hd", "scsi-hd", "virtio-blk"):
+        driver = value.split(",", 1)[0]
+        if driver in (
+            "nvme", "ide-hd", "scsi-hd", "virtio-blk", "virtio-blk-pci",
+            "scsi-cd", "ide-cd", "usb-storage",
+        ):
             raise ArchInstallPrepareError(
                 "install target disk must be hot-plugged, not cold-plugged")
         if "bootindex=" in value:
             raise ArchInstallPrepareError(
                 "no device may claim a firmware boot index")
+        if driver == "pcie-root-port":
+            fields = dict(
+                item.split("=", 1)
+                for item in value.split(",") if "=" in item)
+            ports[fields.get("id", "")] = fields
+    if set(ports) != {DISK_PORT_ID, JOIN_PORT_ID}:
+        raise ArchInstallPrepareError(
+            "install boot must cold-plug exactly the empty disk and "
+            "join-media hotplug root ports")
     if "order=n,menu=off" not in command:
         raise ArchInstallPrepareError(
             "install boot must be network-only so PXE deterministically wins")
@@ -268,10 +315,11 @@ def qemu_arch_install_command(
     nothing but the NIC to boot, so a network-only ``order=n`` boot is
     deterministic even though the overlaid persistent disk still carries a
     bootable Windows ESP.  The runner hot-attaches the NVMe device (carrying
-    *serial*) over QMP once archiso reaches its live root prompt.  A single
-    empty ``pcie-root-port`` is cold-plugged onto ``pcie.0`` to supply the one
-    hotplug-capable slot that device_add needs (q35's root complex itself does
-    not support PCIe hotplug); it carries no disk at boot.
+    *serial*) over QMP once archiso reaches its live root prompt.  Two empty
+    ``pcie-root-port`` slots are cold-plugged onto ``pcie.0`` to supply the
+    hotplug-capable slots that device_add needs (q35's root complex itself
+    does not support PCIe hotplug): one for the install-target disk and one
+    for the one-use domain-join media; neither carries a device at boot.
     """
     if not 1 <= switch_port <= 65535:
         raise ArchInstallPrepareError("switch port is invalid")
@@ -300,6 +348,15 @@ def qemu_arch_install_command(
             f"pcie-root-port,id={DISK_PORT_ID},bus=pcie.0,"
             f"chassis={DISK_PORT_CHASSIS}"
         ),
+        # A second empty hotplug slot for the one-use TELOS_JOIN media the
+        # runner builds and QMP-attaches read-only at run time; nothing is
+        # cold-plugged into it and the credential never exists at prepare
+        # time, so the boot argv carries only the empty port.
+        "-device",
+        (
+            f"pcie-root-port,id={JOIN_PORT_ID},bus=pcie.0,"
+            f"chassis={JOIN_PORT_CHASSIS}"
+        ),
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device",
@@ -311,6 +368,7 @@ def qemu_arch_install_command(
 
 
 def prepare(args: argparse.Namespace) -> Path:
+    require_netbios_hostname(args.hostname)
     run_root = args.run_root
     if run_root.is_symlink():
         raise ArchInstallPrepareError("Arch run root must not be a symlink")

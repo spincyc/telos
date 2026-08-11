@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -13,7 +14,10 @@ from unittest import mock
 
 from homelab.vm import arch_install_run
 from homelab.vm.arch_install_prepare import (
-    DISK_BYTES, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME)
+    DISK_BYTES, INSTALLER_NAME, JOIN_PORT_ID, OVERLAY_NAME, VARS_NAME,
+    VERIFY_NAME)
+from homelab.vm.controller_join_material import (
+    ControllerJoinResult, OneUseDomainJoinMaterial)
 
 
 CONST = "c" * 64
@@ -108,6 +112,8 @@ GOOD_SERIAL = "\n".join((
     "TELOS ARCH INSTALL BEGIN",
     "TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001",
     "PASS: Windows-first GPT matches the approved Arch install contract",
+    "TELOS ARCH JOIN MEDIA CONSUMED",
+    "TELOS ARCH JOIN VERIFIED",
     "Arch installed; Windows partitions and filesystems were not modified.",
     "TELOS ARCH INSTALL COMPLETE",
     "Boot0000* Windows Boot Manager",
@@ -142,7 +148,7 @@ class ArchInstallRunTests(unittest.TestCase):
                 "release_manifest_sha256": "a" * 64,
                 "disk_serial": "TELOS-WIN-0001",
                 "guest_disk": "/dev/nvme0n1",
-                "hostname": "telos-workstation",
+                "hostname": "telos-ws1",
                 "overlay": {
                     "path": str(overlay.resolve()), "format": "qcow2",
                     "backing": str(backing.resolve()), "sha256": CONST,
@@ -343,6 +349,8 @@ class ArchInstallRunTests(unittest.TestCase):
             "Welcome to Arch Linux",
             "TELOS ARCH INSTALL BEGIN",
             "PASS: Windows-first GPT matches the approved Arch install contract",
+            "TELOS ARCH JOIN MEDIA CONSUMED",
+            "TELOS ARCH JOIN VERIFIED",
             "Arch installed; Windows partitions and filesystems "
             "were not modified.",
             "TELOS ARCH INSTALL COMPLETE",
@@ -675,6 +683,132 @@ class ArchInstallRunTests(unittest.TestCase):
         self.assertNotIn(("attach", None), events)
         self.assertNotIn(b"bash /root/arch-install.sh", stdin.data)
 
+    def test_lifecycle_requires_the_join_media_consumed_marker(self):
+        transcript = GOOD_SERIAL.replace("TELOS ARCH JOIN MEDIA CONSUMED", "")
+        with self.assertRaisesRegex(RuntimeError, "markers missing"):
+            arch_install_run._validate_lifecycle(transcript)
+
+    def test_lifecycle_requires_the_join_verified_marker(self):
+        transcript = GOOD_SERIAL.replace("TELOS ARCH JOIN VERIFIED", "")
+        with self.assertRaisesRegex(RuntimeError, "markers missing"):
+            arch_install_run._validate_lifecycle(transcript)
+
+    def test_lifecycle_requires_join_markers_between_attach_and_complete(self):
+        lines = GOOD_SERIAL.splitlines()
+        consumed = lines.index("TELOS ARCH JOIN MEDIA CONSUMED")
+        verified = lines.index("TELOS ARCH JOIN VERIFIED")
+        attached = lines.index("TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001")
+        complete = lines.index("TELOS ARCH INSTALL COMPLETE")
+        reorderings = (
+            # Media consumed before the disk attach: credential media exposed
+            # to a pre-live environment.
+            [lines[consumed]] + lines[:consumed] + lines[consumed + 1:],
+            # Verified before consumed: the join cannot precede the media.
+            (lines[:consumed] + [lines[verified], lines[consumed]]
+             + lines[verified + 1:]),
+            # Verified only after completion: the installer finished without
+            # a proven join.
+            (lines[:verified] + lines[verified + 1:complete + 1]
+             + [lines[verified]] + lines[complete + 1:]),
+        )
+        # The attach index anchors the window; sanity-check the fixture.
+        self.assertLess(attached, consumed)
+        for transcript in reorderings:
+            with self.subTest(transcript=transcript[:6]):
+                with self.assertRaisesRegex(RuntimeError, "out of order"):
+                    arch_install_run._validate_lifecycle(
+                        "\n".join(transcript))
+
+    def test_drive_installer_destroys_join_media_on_the_consumed_marker(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+        consumed_calls: list = []
+
+        def attach() -> None:
+            events.append(("attach", None))
+
+        def consume_media() -> None:
+            events.append(("consume-media", None))
+            consumed_calls.append(1)
+
+        os.write(write_fd, b"[root@archiso ~]# ")
+
+        def feeder() -> None:
+            token = _await_ready_probe(stdin)
+            os.write(write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+            for _ in range(5000):
+                if b"bash /root/arch-install.sh" in stdin.data:
+                    break
+                time.sleep(0.001)
+            # The guest unmounts the media and prints the consumed marker;
+            # only after the host destroys the media does the guest join.
+            os.write(write_fd, b"\nTELOS ARCH JOIN MEDIA CONSUMED\n")
+            for _ in range(5000):
+                if consumed_calls:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"TELOS ARCH JOIN VERIFIED\n")
+            os.write(write_fd, b"\nTELOS ARCH INSTALL COMPLETE\n")
+            os.close(write_fd)
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                transcript = arch_install_run.drive_installer(
+                    process, capture, verify_script="verify",
+                    installer_script="installer", serial="TELOS-WIN-0001",
+                    attach=attach, consume_media=consume_media, timeout=10)
+        finally:
+            worker.join()
+            os.close(read_fd)
+        # Exactly one destruction, after the attach and before completion.
+        self.assertEqual(consumed_calls, [1])
+        attach_index = events.index(("attach", None))
+        consume_index = events.index(("consume-media", None))
+        self.assertLess(attach_index, consume_index)
+        self.assertIn("TELOS ARCH JOIN MEDIA CONSUMED", transcript)
+        self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
+
+    def test_drive_installer_propagates_a_media_destruction_failure(self):
+        read_fd, write_fd = os.pipe()
+        stdin = _Recorder([])
+        process = _FakeProcess(read_fd, stdin)
+
+        def consume_media() -> None:
+            raise RuntimeError("join media hot-remove failed: refused")
+
+        os.write(write_fd, b"[root@archiso ~]# ")
+
+        def feeder() -> None:
+            token = _await_ready_probe(stdin)
+            os.write(write_fd, b"TELOS_ARCH_SHELL_READY_" + token + b"=ready\n")
+            for _ in range(5000):
+                if b"bash /root/arch-install.sh" in stdin.data:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"\nTELOS ARCH JOIN MEDIA CONSUMED\n")
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                with self.assertRaisesRegex(
+                        RuntimeError, "hot-remove failed"):
+                    arch_install_run.drive_installer(
+                        process, capture, verify_script="verify",
+                        installer_script="installer", serial="TELOS-WIN-0001",
+                        attach=lambda: None, consume_media=consume_media,
+                        timeout=10)
+        finally:
+            worker.join()
+            os.close(write_fd)
+            os.close(read_fd)
+
     def test_sanitize_log_redacts_and_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "serial.log"
@@ -699,6 +833,445 @@ class ArchInstallRunTests(unittest.TestCase):
                 "symlink",
                 arch_install_run._destroy_runtime_publication(publication))
             self.assertTrue(target.exists())
+
+
+class _FakeMediaQmp:
+    """Track blockdev/device lifecycle and prove inode ownership like QEMU."""
+
+    def __init__(self, *, fail_on=()) -> None:
+        self.calls: list[tuple] = []
+        self.fail_on = set(fail_on)
+        self.held: set[tuple[int, int]] = set()
+        self.deleted: list[str] = []
+
+    def execute(self, command, arguments=None, *, timeout=None):
+        self.calls.append((command, arguments))
+        if command in self.fail_on:
+            raise arch_install_run.WindowsGuiError(f"{command} refused")
+        if command == "blockdev-add":
+            info = Path(arguments["file"]["filename"]).stat()
+            self.held.add((info.st_dev, info.st_ino))
+        if command == "blockdev-del":
+            self.held.clear()
+        return {}
+
+    def holds_inode(self, device, inode):
+        return (device, inode) in self.held
+
+    def await_device_deleted(self, device_id, *, timeout=None):
+        self.deleted.append(device_id)
+        return {"event": "DEVICE_DELETED", "data": {"device": device_id}}
+
+
+def _private_parent(root: Path) -> Path:
+    parent = root / "evidence"
+    parent.mkdir(mode=0o700)
+    return parent
+
+
+def _iso_runner(argv, **_kwargs):
+    """Stand in for xorriso: create the -o target without reading secrets."""
+    Path(argv[argv.index("-o") + 1]).write_bytes(b"iso-image")
+    return subprocess.CompletedProcess(argv, 0)
+
+
+JOIN_MATERIAL = {
+    "username": "tj-" + "0" * 16 + "@AD.FACTORY.TEST",
+    "password": "Synthetic-Join-secret-47!",
+}
+
+
+class ArchJoinMediaTests(unittest.TestCase):
+    def build(self, parent: Path, runner=_iso_runner) -> Path:
+        return arch_install_run.build_arch_join_iso(
+            parent / "join.iso", JOIN_MATERIAL, runner=runner)
+
+    def test_join_iso_is_private_and_secret_free_in_argv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            argvs: list[list[str]] = []
+
+            def runner(argv, **kwargs):
+                argvs.append(list(argv))
+                return _iso_runner(argv, **kwargs)
+
+            iso = self.build(parent, runner)
+            self.assertEqual(iso.stat().st_mode & 0o777, 0o600)
+            # The credential never crosses the process boundary and no
+            # plaintext staging survives next to the ISO.
+            self.assertEqual(len(argvs), 1)
+            self.assertNotIn(
+                JOIN_MATERIAL["password"], " ".join(argvs[0]))
+            self.assertEqual(list(parent.iterdir()), [iso])
+            # The staged tree fed to xorriso carried join.json read-only.
+            staging = Path(argvs[0][-1])
+            self.assertEqual(staging.name, "payload")
+
+    def test_join_iso_builder_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            occupied = parent / "join.iso"
+            occupied.write_bytes(b"stale")
+            with self.assertRaisesRegex(RuntimeError, "absent"):
+                self.build(parent)
+            occupied.unlink()
+            parent.chmod(0o755)
+            with self.assertRaisesRegex(RuntimeError, "mode-0700"):
+                self.build(parent)
+            parent.chmod(0o700)
+            for material in (
+                {"username": "operator@AD.FACTORY.TEST",
+                 "password": "Synthetic-47!"},
+                {"username": JOIN_MATERIAL["username"],
+                 "password": "line\nbreak"},
+                {"username": JOIN_MATERIAL["username"], "password": ""},
+                {"username": JOIN_MATERIAL["username"]},
+            ):
+                with self.subTest(material=material):
+                    with self.assertRaises(RuntimeError):
+                        arch_install_run.build_arch_join_iso(
+                            parent / "join.iso", material,
+                            runner=_iso_runner)
+            self.assertEqual(list(parent.iterdir()), [])
+
+    def test_media_attach_is_read_only_into_the_join_port(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = self.build(parent)
+            qmp = _FakeMediaQmp()
+            media = arch_install_run.ArchJoinMedia(qmp, iso, qemu_pid=4321)
+            media.attach()
+            commands = [command for command, _ in qmp.calls]
+            self.assertEqual(commands, ["blockdev-add", "device_add"])
+            node = qmp.calls[0][1]
+            self.assertIs(node["read-only"], True)
+            self.assertEqual(node["node-name"], "joinmedia")
+            self.assertEqual(node["file"]["filename"], str(iso.resolve()))
+            device = qmp.calls[1][1]
+            self.assertEqual(device["driver"], "virtio-blk-pci")
+            self.assertEqual(device["bus"], JOIN_PORT_ID)
+            self.assertEqual(device["drive"], "joinmedia")
+            self.assertEqual(device["id"], "joinmedia-blk")
+            self.assertFalse(media.destroyed)
+            self.assertTrue(iso.is_file())
+
+    def test_media_destroy_hot_removes_then_unlinks_the_exact_inode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = self.build(parent)
+            qmp = _FakeMediaQmp()
+            media = arch_install_run.ArchJoinMedia(qmp, iso, qemu_pid=4321)
+            media.attach()
+            media.destroy()
+            commands = [command for command, _ in qmp.calls]
+            self.assertEqual(commands, [
+                "blockdev-add", "device_add", "device_del", "blockdev-del"])
+            self.assertEqual(qmp.deleted, ["joinmedia-blk"])
+            self.assertTrue(media.destroyed)
+            self.assertFalse(iso.exists())
+
+    def test_media_destroy_refuses_an_impostor_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = self.build(parent)
+            qmp = _FakeMediaQmp()
+            media = arch_install_run.ArchJoinMedia(qmp, iso, qemu_pid=4321)
+            media.attach()
+            # The name is replaced by a different inode after attach: exact
+            # inode destruction must refuse to unlink the impostor.
+            iso.unlink()
+            iso.write_bytes(b"impostor")
+            with self.assertRaisesRegex(RuntimeError, "uniquely owned"):
+                media.destroy()
+            self.assertTrue(iso.is_file())
+            self.assertEqual(iso.read_bytes(), b"impostor")
+
+    def test_media_attach_failure_fails_closed_and_cleanup_destroys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = self.build(parent)
+            qmp = _FakeMediaQmp(fail_on={"device_add"})
+            media = arch_install_run.ArchJoinMedia(qmp, iso, qemu_pid=4321)
+            with self.assertRaisesRegex(RuntimeError, "attach failed"):
+                media.attach()
+            self.assertEqual(media.cleanup(), [])
+            self.assertTrue(media.destroyed)
+            self.assertFalse(iso.exists())
+
+    def test_join_account_media_install_sequencing(self):
+        # The proven order: per-run DC account staged, then ISO built, then
+        # media attached, then consumed/destroyed, then the DC account
+        # destroyed — with the credential absent from every recorded fact.
+        events: list[str] = []
+        principal = "tj-" + "a" * 16
+
+        def stage(credential):
+            self.assertIsInstance(credential, str)
+            events.append("stage-principal")
+            return ControllerJoinResult(
+                operation="stage", principal=principal,
+                destruction_proved=False, events=())
+
+        def destroy():
+            events.append("destroy-principal")
+            return ControllerJoinResult(
+                operation="destroy", principal=principal,
+                destruction_proved=True, events=())
+
+        owner = OneUseDomainJoinMaterial(
+            "ad.factory.test", stage=stage, destroy=destroy)
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = parent / "join.iso"
+            qmp = _FakeMediaQmp()
+            materials: list[dict] = []
+
+            def consume(material):
+                materials.append(dict(material))
+
+                def drive(attach_media, consume_media):
+                    events.append("guest-boot")
+                    attach_media()
+                    events.append("media-attached")
+                    consume_media()
+                    events.append("media-destroyed")
+                    return "transcript"
+
+                original_build = arch_install_run.build_arch_join_iso
+
+                def build(output, material, **kwargs):
+                    events.append("iso-built")
+                    self.assertNotIn("credential", material)
+                    return original_build(
+                        output, material, runner=_iso_runner)
+
+                with mock.patch.object(
+                        arch_install_run, "build_arch_join_iso",
+                        side_effect=build):
+                    return arch_install_run.run_join_install(
+                        material=material, iso=iso, qmp=qmp,
+                        qemu_pid=4321, drive=drive)
+
+            (transcript, facts), proof = owner.use(consume)
+        self.assertEqual(transcript, "transcript")
+        self.assertEqual(events, [
+            "stage-principal", "iso-built", "guest-boot", "media-attached",
+            "media-destroyed", "destroy-principal"])
+        # Facts are secret-free lifecycle booleans only.
+        self.assertEqual(facts, {
+            "built": True, "attached": True,
+            "consumed": True, "destroyed": True})
+        self.assertTrue(proof.destruction_proved)
+        self.assertFalse(iso.exists())
+        # The staged one-use credential reached the ISO builder, not the
+        # facts, the transcript, or the events.
+        self.assertEqual(
+            materials[0]["principal"], principal)
+        self.assertNotIn(materials[0]["credential"], json.dumps(facts))
+
+    def test_run_join_install_fails_closed_without_consumption(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = parent / "join.iso"
+            qmp = _FakeMediaQmp()
+
+            def drive(attach_media, consume_media):
+                attach_media()
+                return "transcript"  # COMPLETE without the consumed marker.
+
+            facts: dict = {}
+            with mock.patch.object(
+                    arch_install_run, "build_arch_join_iso",
+                    side_effect=lambda output, material, **kwargs:
+                    _build_stub(output)):
+                with self.assertRaisesRegex(
+                        RuntimeError, "not consumed and destroyed"):
+                    arch_install_run.run_join_install(
+                        material={
+                            "principal": "tj-" + "b" * 16,
+                            "realm": "AD.FACTORY.TEST",
+                            "credential": "Synthetic-47!",
+                        },
+                        iso=iso, qmp=qmp, qemu_pid=4321, drive=drive,
+                        facts=facts)
+            # The failure still tore the attached media down by exact inode.
+            self.assertTrue(facts["attached"])
+            self.assertFalse(facts["consumed"])
+            self.assertFalse(iso.exists())
+
+    def test_run_join_install_lets_a_guest_failure_surface_unmasked(self):
+        # An installer that fails before consuming the media must surface as
+        # the guest's honest FAIL marker (via lifecycle validation), not as a
+        # masking media error — while the media is still torn down.
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = parent / "join.iso"
+            qmp = _FakeMediaQmp()
+
+            def drive(attach_media, consume_media):
+                attach_media()
+                return "TELOS ARCH INSTALL FAIL rc=1"
+
+            facts: dict = {}
+            with mock.patch.object(
+                    arch_install_run, "build_arch_join_iso",
+                    side_effect=lambda output, material, **kwargs:
+                    _build_stub(output)):
+                transcript, returned = arch_install_run.run_join_install(
+                    material={
+                        "principal": "tj-" + "d" * 16,
+                        "realm": "AD.FACTORY.TEST",
+                        "credential": "Synthetic-47!",
+                    },
+                    iso=iso, qmp=qmp, qemu_pid=4321, drive=drive,
+                    facts=facts)
+            self.assertIn("TELOS ARCH INSTALL FAIL", transcript)
+            self.assertFalse(facts["consumed"])
+            # cleanup destroyed the attached media by exact inode anyway.
+            self.assertTrue(facts["destroyed"])
+            self.assertFalse(iso.exists())
+            with self.assertRaisesRegex(RuntimeError, "reported failure"):
+                arch_install_run._validate_lifecycle(transcript)
+
+    def test_run_join_install_cleans_up_when_the_drive_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = _private_parent(Path(temporary))
+            iso = parent / "join.iso"
+            qmp = _FakeMediaQmp()
+
+            def drive(attach_media, consume_media):
+                attach_media()
+                raise RuntimeError("installer failed")
+
+            facts: dict = {}
+            with mock.patch.object(
+                    arch_install_run, "build_arch_join_iso",
+                    side_effect=lambda output, material, **kwargs:
+                    _build_stub(output)):
+                with self.assertRaisesRegex(RuntimeError, "installer failed"):
+                    arch_install_run.run_join_install(
+                        material={
+                            "principal": "tj-" + "c" * 16,
+                            "realm": "AD.FACTORY.TEST",
+                            "credential": "Synthetic-47!",
+                        },
+                        iso=iso, qmp=qmp, qemu_pid=4321, drive=drive,
+                        facts=facts)
+            self.assertTrue(facts["built"])
+            self.assertTrue(facts["attached"])
+            self.assertFalse(facts["consumed"])
+            # Cleanup still destroyed the attached media by exact inode, and
+            # the facts record that honestly.
+            self.assertTrue(facts["destroyed"])
+            self.assertFalse(iso.exists())
+
+    def test_leftover_join_iso_destroyed_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            iso = root / "join.iso"
+            iso.write_bytes(b"leftover")
+            self.assertIsNone(
+                arch_install_run._destroy_leftover_join_iso(iso))
+            self.assertFalse(iso.exists())
+            target = root / "target"
+            target.write_bytes(b"preserve")
+            iso.symlink_to(target)
+            self.assertIn(
+                "symlink",
+                arch_install_run._destroy_leftover_join_iso(iso))
+            self.assertTrue(target.exists())
+
+
+def _build_stub(output: Path) -> Path:
+    output.write_bytes(b"iso-image")
+    output.chmod(0o600)
+    return output
+
+
+class _ConsoleProcess:
+    def __init__(self, read_fd: int, stdin: _Recorder) -> None:
+        self.stdout = os.fdopen(read_fd, "rb", buffering=0)
+        self.stdin = stdin
+
+
+class EstablishPublicationConsoleTests(unittest.TestCase):
+    """The Controller console must publish and stay owned for join staging."""
+
+    def test_publication_then_authenticated_console_is_returned(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _ConsoleProcess(read_fd, stdin)
+        password = b"Synthetic-Controller-test-47!"
+
+        def feeder() -> None:
+            os.write(write_fd, b"\n[root@bootstrap-dc /]# ")
+            for _ in range(5000):
+                if b"/run/telos-pxe-release/publish" in stdin.data:
+                    break
+                time.sleep(0.001)
+            os.write(
+                write_fd,
+                b"\npublishing verified release\n"
+                b"TELOS PXE PUBLICATION PASS\n")
+            # Systemd services print readiness on the same console after the
+            # (mocked) session establishment execs systemd and logs in.
+            os.write(write_fd, b"TELOS PXE SERVICES READY\n")
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with mock.patch.object(
+                    arch_install_run.SerialAutomation,
+                    "establish_disposable_controller_session") as establish:
+                console = arch_install_run.establish_publication_console(
+                    process, password=password, timeout=10)
+        finally:
+            worker.join()
+            os.close(write_fd)
+            process.stdout.close()
+        establish.assert_called_once()
+        # The publish command was sent from the disposable init shell, and
+        # the returned console still owns the channel and the credential the
+        # join-material protocol needs for sudo.
+        sent = bytes(stdin.data)
+        self.assertIn(b"/usr/bin/mount -L TELOS_PXE_RELEASE", sent)
+        self.assertIn(b"/run/telos-pxe-release/publish", sent)
+        self.assertIsInstance(console, arch_install_run.SerialAutomation)
+        self.assertEqual(console.password, password)
+        self.assertIn(b"TELOS PXE SERVICES READY", console.transcript)
+
+    def test_publication_failure_fails_closed(self):
+        read_fd, write_fd = os.pipe()
+        stdin = _Recorder([])
+        process = _ConsoleProcess(read_fd, stdin)
+
+        def feeder() -> None:
+            os.write(write_fd, b"\n[root@bootstrap-dc /]# ")
+            for _ in range(5000):
+                if b"/run/telos-pxe-release/publish" in stdin.data:
+                    break
+                time.sleep(0.001)
+            # The publish script fails: no PASS marker ever arrives and the
+            # console closes, so the run must fail closed.
+            os.write(write_fd, b"\nTELOS PXE PUBLICATION FAIL\n")
+            os.close(write_fd)
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with mock.patch.object(
+                    arch_install_run.SerialAutomation,
+                    "establish_disposable_controller_session") as establish:
+                with self.assertRaisesRegex(
+                        RuntimeError, "publication console failed"):
+                    arch_install_run.establish_publication_console(
+                        process, password=b"Synthetic-Controller-test-47!",
+                        timeout=5)
+        finally:
+            worker.join()
+            process.stdout.close()
+        establish.assert_not_called()
 
 
 if __name__ == "__main__":

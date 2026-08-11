@@ -85,19 +85,30 @@ class ArchInstallPrepareTests(unittest.TestCase):
                     in ("nvme", "ide-hd", "scsi-hd", "virtio-blk")
                     for value in device_values))
             self.assertNotIn("bootindex=", joined)
-            # Exactly one empty PCIe hotplug slot sits on pcie.0 so the runner's
-            # device_add can realise the NVMe into it; q35's pcie.0 root complex
-            # itself does not support PCIe hotplug.  It carries no disk at boot.
-            root_ports = [
-                value for value in device_values
-                if value.split(",", 1)[0] == "pcie-root-port"]
-            self.assertEqual(len(root_ports), 1)
-            fields = dict(
-                item.split("=", 1)
-                for item in root_ports[0].split(",") if "=" in item)
-            self.assertEqual(fields["bus"], "pcie.0")
-            self.assertEqual(fields["id"], arch_install_prepare.DISK_PORT_ID)
-            self.assertIn("chassis", fields)
+            # Exactly two empty PCIe hotplug slots sit on pcie.0 so the
+            # runner's device_add can realise the install disk and the
+            # one-use join media into them; q35's pcie.0 root complex itself
+            # does not support PCIe hotplug.  Neither carries a device at
+            # boot: the join credential does not even exist at prepare time.
+            root_ports = {}
+            for value in device_values:
+                if value.split(",", 1)[0] != "pcie-root-port":
+                    continue
+                fields = dict(
+                    item.split("=", 1)
+                    for item in value.split(",") if "=" in item)
+                root_ports[fields["id"]] = fields
+            self.assertEqual(
+                set(root_ports),
+                {arch_install_prepare.DISK_PORT_ID,
+                 arch_install_prepare.JOIN_PORT_ID})
+            chassis = set()
+            for fields in root_ports.values():
+                self.assertEqual(fields["bus"], "pcie.0")
+                self.assertIn("chassis", fields)
+                self.assertNotIn("drive", fields)
+                chassis.add(fields["chassis"])
+            self.assertEqual(len(chassis), 2)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn("socket,id=factory,connect=127.0.0.1:31415", joined)
             # The install boot is network-only so PXE deterministically wins.
@@ -118,11 +129,15 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 "-boot", "order=n,menu=off",
                 "-drive",
                 f"if=none,id=osdisk,format=qcow2,file={disk.resolve()}",
-                # An empty hotplug slot is not a disk device: the audit accepts
-                # it while still rejecting any real cold-plugged disk device.
+                # Two empty hotplug slots are not disk devices: the audit
+                # accepts them while still rejecting any real cold-plugged
+                # disk or media device.
                 "-device",
                 f"pcie-root-port,id={arch_install_prepare.DISK_PORT_ID},"
                 "bus=pcie.0,chassis=1",
+                "-device",
+                f"pcie-root-port,id={arch_install_prepare.JOIN_PORT_ID},"
+                "bus=pcie.0,chassis=2",
             ]
             arch_install_prepare.audit_arch_boot_boundary(
                 good, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
@@ -131,12 +146,94 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 "ide-hd,drive=osdisk",
                 "scsi-hd,drive=osdisk",
                 "virtio-blk,drive=osdisk",
+                # The join media must be QMP-attached at run time, never
+                # cold-plugged: a boot-time device would expose credential
+                # media to firmware and to the pre-live environment.
+                "virtio-blk-pci,drive=osdisk",
+                "scsi-cd,drive=osdisk",
+                "ide-cd,drive=osdisk",
+                "usb-storage,drive=osdisk",
             ):
                 cold = good + ["-device", cold_device]
                 with self.assertRaisesRegex(RuntimeError, "hot-plugged"):
                     arch_install_prepare.audit_arch_boot_boundary(
                         cold, disk=disk,
                         serial=arch_install_prepare.DISK_SERIAL)
+
+    def test_boot_boundary_requires_both_empty_hotplug_ports(self):
+        # A boot argv missing either cold-plugged root port cannot realise
+        # the hot-attach of the install disk or the one-use join media, so
+        # the audit refuses it before a guest ever boots.
+        with tempfile.TemporaryDirectory() as temporary:
+            disk = Path(temporary) / "arch.qcow2"
+            disk.write_bytes(b"overlay")
+            base = [
+                "-boot", "order=n,menu=off",
+                "-drive",
+                f"if=none,id=osdisk,format=qcow2,file={disk.resolve()}",
+            ]
+            disk_port = [
+                "-device",
+                f"pcie-root-port,id={arch_install_prepare.DISK_PORT_ID},"
+                "bus=pcie.0,chassis=1",
+            ]
+            join_port = [
+                "-device",
+                f"pcie-root-port,id={arch_install_prepare.JOIN_PORT_ID},"
+                "bus=pcie.0,chassis=2",
+            ]
+            for argv in (
+                base,
+                base + disk_port,
+                base + join_port,
+                base + disk_port + join_port + [
+                    "-device", "pcie-root-port,id=rogue,bus=pcie.0,chassis=3",
+                ],
+            ):
+                with self.subTest(argv=argv):
+                    with self.assertRaisesRegex(RuntimeError, "hotplug"):
+                        arch_install_prepare.audit_arch_boot_boundary(
+                            argv, disk=disk,
+                            serial=arch_install_prepare.DISK_SERIAL)
+
+    def test_default_hostname_fits_the_netbios_machine_name_limit(self):
+        # The domain join derives the machine account from the hostname;
+        # NetBIOS machine names are capped at 15 characters and samba
+        # silently truncates longer ones (the old "telos-workstation"
+        # default was 17 characters, so its machine account would not have
+        # matched the installed hostname).
+        self.assertLessEqual(
+            len(arch_install_prepare.DEFAULT_HOSTNAME),
+            arch_install_prepare.NETBIOS_HOSTNAME_LIMIT)
+        self.assertEqual(
+            arch_install_prepare.require_netbios_hostname(
+                arch_install_prepare.DEFAULT_HOSTNAME),
+            arch_install_prepare.DEFAULT_HOSTNAME)
+
+    def test_hostname_over_the_netbios_limit_is_rejected(self):
+        self.assertEqual(arch_install_prepare.NETBIOS_HOSTNAME_LIMIT, 15)
+        self.assertEqual(
+            arch_install_prepare.require_netbios_hostname("a" * 15), "a" * 15)
+        for hostname in ("telos-workstation", "a" * 16, ""):
+            with self.subTest(hostname=hostname):
+                with self.assertRaises(
+                        arch_install_prepare.ArchInstallPrepareError):
+                    arch_install_prepare.require_netbios_hostname(hostname)
+
+    def test_prepare_rejects_an_overlong_hostname_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = argparse.Namespace(
+                windows_disk=root / "windows.qcow2", ovmf_vars=None,
+                releases=root / "pxe", seed=root / "seed.iso",
+                layout=root / "layout.json",
+                workstation_profile=root / "wp.json",
+                run_root=root / "runs", hostname="telos-workstation",
+                switch_port=31415)
+            with self.assertRaisesRegex(RuntimeError, "NetBIOS"):
+                arch_install_prepare.prepare(args)
+            # The rejection happened before the run root was even created.
+            self.assertFalse((root / "runs").exists())
 
     def test_qemu_command_rejects_oversize_qmp_socket(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -177,7 +274,7 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 releases=root / "pxe", seed=root / "seed.iso",
                 layout=root / "layout.json",
                 workstation_profile=root / "wp.json",
-                run_root=link, hostname="telos-workstation",
+                run_root=link, hostname="telos-ws1",
                 switch_port=31415)
             with self.assertRaisesRegex(RuntimeError, "symlink"):
                 arch_install_prepare.prepare(args)
@@ -192,7 +289,7 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 releases=root / "pxe", seed=root / "seed.iso",
                 layout=root / "layout.json",
                 workstation_profile=root / "wp.json", run_root=root / "runs",
-                hostname="telos-workstation", switch_port=31415)
+                hostname="telos-ws1", switch_port=31415)
             with mock.patch.object(
                     arch_install_prepare, "inspect_base_windows_disk",
                     return_value={"path": str(windows_disk.resolve())}), \
@@ -229,7 +326,7 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 windows_disk=windows_disk, ovmf_vars=None, releases=releases,
                 seed=root / "seed.iso", layout=root / "layout.json",
                 workstation_profile=root / "wp.json", run_root=root / "runs",
-                hostname="telos-workstation", switch_port=31415)
+                hostname="telos-ws1", switch_port=31415)
 
             def execute(command, **_kwargs):
                 if command[:2] == ["qemu-img", "create"]:
