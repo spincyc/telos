@@ -693,6 +693,8 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "$failureStage = 'post-release-setup'",
             "$failureStage = 'logon-compile'",
             "$failureStage = 'logon-prepare'",
+            "$failureStage = 'logon-validate'",
+            "$failureStage = 'logon-seclogon'",
             "$failureStage = 'logon-call'",
             "$failureStage = 'logon-result'",
             "$failureStage = 'child-wait'",
@@ -724,6 +726,30 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             '[DllImport("advapi32.dll", CharSet = CharSet.Unicode, '
             "SetLastError = true)]",
             script)
+        # Authoritative LogonUser credential probe, in-frame error capture,
+        # token closed on success, and interactive logon type (2) matching
+        # CreateProcessWithLogonW -- runs BEFORE the spawn so a rejected
+        # credential names its real Win32 code instead of the FALSE/0 the
+        # spawn produced across attempts 39-41.
+        self.assertIn("public static extern bool LogonUser(", script)
+        self.assertIn("public static bool ValidateLogon(", script)
+        self.assertIn(
+            "logonError = ok ? 0 : Marshal.GetLastWin32Error();", script)
+        self.assertIn("CloseHandle(token);", script)
+        self.assertIn(
+            "$validated = [TelosCredentialLogon]::ValidateLogon(\n"
+            "        $username, $domain, $password, 2, [ref]$validateError)",
+            script)
+        self.assertLess(
+            script.index("ValidateLogon(\n        $username"),
+            script.index(
+                "CreateProcessWithLogonAndError(\n        $username"))
+        # The Secondary Logon service is ensured running before the spawn.
+        self.assertIn("Get-Service -Name seclogon", script)
+        self.assertIn("Start-Service -Name seclogon", script)
+        self.assertLess(
+            script.index("$failureStage = 'logon-seclogon'"),
+            script.index("$failureStage = 'logon-call'"))
         # A thrown Win32Exception still yields its bounded NativeErrorCode.
         catch_at = script.index(
             "catch {", script.rindex("$serial.WriteLine(($result"))
@@ -755,7 +781,8 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             parse('{"schema_version":1,"event":"credential-script-failed"'
                   ',"stage":"logon","code":1326}'))
         for stage in (
-            "logon-compile", "logon-prepare", "logon-call", "logon-result",
+            "logon-compile", "logon-prepare", "logon-validate",
+            "logon-seclogon", "logon-call", "logon-result",
         ):
             with self.subTest(stage=stage):
                 self.assertEqual(

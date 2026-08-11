@@ -130,6 +130,28 @@ public static class TelosCredentialLogon {
         logonError = created ? 0 : Marshal.GetLastWin32Error();
         return created;
     }
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool LogonUser(
+        string user, string domain, string password,
+        Int32 logonType, Int32 logonProvider, out IntPtr token);
+    // Authoritative credential probe. Attempts 39-41 saw
+    // CreateProcessWithLogonW return FALSE with an in-frame last error of
+    // 0 -- the signature of a mechanism failure (it uniquely needs the
+    // Secondary Logon service) rather than a rejected credential, which
+    // sets a real error. LogonUser has no such dependency and reliably
+    // reports its Win32 error, so it decides credential-or-mechanism in
+    // one shot; the token is closed immediately (validation only).
+    public static bool ValidateLogon(
+        string user, string domain, string password,
+        Int32 logonType, out Int32 logonError) {
+        IntPtr token = IntPtr.Zero;
+        bool ok = LogonUser(user, domain, password, logonType, 0, out token);
+        logonError = ok ? 0 : Marshal.GetLastWin32Error();
+        if (ok && token != IntPtr.Zero) {
+            CloseHandle(token);
+        }
+        return ok;
+    }
     [DllImport("kernel32.dll")]
     public static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 ms);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -231,6 +253,36 @@ $record | ConvertTo-Json -Compress |
     $commandLine = (
         'powershell.exe -NoLogo -NoProfile -NonInteractive ' +
         '-ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+    # Decide credential-vs-mechanism before the fragile spawn. LOGON32_
+    # LOGON_INTERACTIVE (2) matches CreateProcessWithLogonW's logon type,
+    # so a rejected credential or missing logon right surfaces its REAL
+    # Win32 code here (1326 bad password, 1385 no interactive right, ...);
+    # if this passes, the credential is valid and any later spawn failure
+    # is a mechanism problem, not the account. Local-rescue uses NTLM
+    # against the '.' machine domain; every domain action uses the DC.
+    $failureStage = 'logon-validate'
+    $validateError = 0
+    $validated = [TelosCredentialLogon]::ValidateLogon(
+        $username, $domain, $password, 2, [ref]$validateError)
+    if (-not $validated) {
+        $failureCode = [int]$validateError
+        throw ('credential validation logon failed: ' + $validateError)
+    }
+
+    # CreateProcessWithLogonW needs the Secondary Logon service; it is
+    # trigger-started and can be stopped under automation, which returns
+    # FALSE with no useful error (attempts 39-41). Ensure it is running
+    # now that the credential is proven valid. Failure to do so names
+    # itself rather than corrupting the spawn's diagnosis.
+    $failureStage = 'logon-seclogon'
+    $seclogon = Get-Service -Name seclogon -ErrorAction Stop
+    if ($seclogon.StartType -eq 'Disabled') {
+        Set-Service -Name seclogon -StartupType Manual -ErrorAction Stop
+    }
+    if ($seclogon.Status -ne 'Running') {
+        Start-Service -Name seclogon -ErrorAction Stop
+    }
+
     $failureStage = 'logon-call'
     $loginClock = [Diagnostics.Stopwatch]::StartNew()
     $logonError = 0

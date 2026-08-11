@@ -65,7 +65,13 @@ _SCRIPT_FAILED_STAGES = frozenset({
     # Attempt 39 (20260811T145412Z) rendered the whole logon as one stage
     # with code 0; the split separates the wrapper compile, the P/Invoke
     # throwing, and the call returning false with a captured error.
-    "logon", "logon-compile", "logon-prepare", "logon-call", "logon-result",
+    "logon", "logon-compile", "logon-prepare",
+    # Attempt 41 stayed at logon-result/0; validate the credential with the
+    # dependency-free LogonUser primitive and ensure the Secondary Logon
+    # service before the spawn, so attempt 42 either succeeds or names a
+    # real Win32 code at logon-validate.
+    "logon-validate", "logon-seclogon",
+    "logon-call", "logon-result",
     "child-wait", "result-read",
 })
 
