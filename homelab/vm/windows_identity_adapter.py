@@ -265,6 +265,19 @@ def _retain_credential_channel_state(
                 if type(guest_code) is int and 0 <= guest_code <= 0xFFFFFFFF
                 else None
             ),
+            # Attempt 43: the guest emitted a well-formed result the host
+            # rejected on some field, with no way to see which. The result
+            # line is public token metadata (bounded/redacted upstream), so
+            # retaining it names the rejected field on the next run.
+            "result_line": (
+                result_line
+                if isinstance(
+                    (result_line := getattr(error, "result_line", None)),
+                    str,
+                )
+                and len(result_line) <= 4096
+                else None
+            ),
         }
         target = evidence / f"credential-action-{action}-channel.json"
         target.write_text(

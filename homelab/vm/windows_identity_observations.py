@@ -333,7 +333,19 @@ def derive_observation(
                 managed["standard_identity_resolved"] is True
                 and login["authenticated"] is True
             ),
-            "cache_primed": managed["standard_profile_present"],
+            # `cache_primed` proves the standard user obtains a live
+            # connected-domain logon. The retired interactive-spawn login
+            # materialized a local profile as a side effect, so this used to
+            # read managed-identity-state's standard_profile_present; the
+            # token credential proof (attempts 39-43) neither creates nor
+            # requires a profile to prove online authentication, and nothing
+            # else in the flow ever logs the standard user in interactively.
+            # Source it honestly from the proven online logon instead of a
+            # profile that would otherwise have to be manufactured.
+            "cache_primed": (
+                login["authenticated"] is True
+                and login["authentication_semantics"] == "connected-domain"
+            ),
         })
 
     elif check == "windows-daily-admin":

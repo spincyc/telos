@@ -349,6 +349,30 @@ def launch_credential_action_command() -> str:
     )
 
 
+def _redacted_result_line(line: str) -> str:
+    """Bounded, defensively-safe echo of a rejected result line.
+
+    The token result is public metadata, but retention still fails closed:
+    keep it only when it is one bounded JSON object whose string values are
+    short (a SID/package/enum, never a free-form blob); otherwise report a
+    fixed marker so nothing unexpected is ever written to evidence.
+    """
+    try:
+        if len(line.encode("utf-8")) > 4096:
+            return "credential-action-result-oversized"
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            return "credential-action-result-nonobject"
+        if any(
+            isinstance(value, str) and len(value) > 256
+            for value in record.values()
+        ):
+            return "credential-action-result-overlong-field"
+        return json.dumps(record, sort_keys=True, separators=(",", ":"))
+    except (ValueError, UnicodeError):
+        return "credential-action-result-unparsable"
+
+
 def parse_action_result(
     line: str,
     *,
@@ -794,13 +818,22 @@ def execute_credential_action(
         failed = _script_failed_detail(result_line.rstrip("\n"))
         if failed is not None:
             _raise_script_failed("after material release", failed)
-        result = parse_action_result(
-            result_line,
-            nonce=channel.nonce,
-            action=action,
-            expected_principal=expected_principal,
-            allowed_authentication_types=allowed_authentication_types,
-        )
+        try:
+            result = parse_action_result(
+                result_line,
+                nonce=channel.nonce,
+                action=action,
+                expected_principal=expected_principal,
+                allowed_authentication_types=allowed_authentication_types,
+            )
+        except WindowsCredentialActionError as error:
+            # The guest completed and emitted a well-formed result the host
+            # rejected on some field (attempt 43: parse rejected a token
+            # field with no way to see which). The result line is public
+            # token metadata -- SID, package, booleans, no credential --
+            # so carry it on the exception for secret-free retention.
+            error.result_line = _redacted_result_line(result_line)
+            raise
     except BaseException as error:
         serial.close()
         try:

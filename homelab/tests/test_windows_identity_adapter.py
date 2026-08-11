@@ -950,6 +950,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                         "destroyed": False,
                         "guest_stage": None,
                         "guest_code": None,
+                        "result_line": None,
                     },
                     breadcrumb,
                 )

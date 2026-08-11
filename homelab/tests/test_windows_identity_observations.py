@@ -123,6 +123,63 @@ class WindowsIdentityObservationTests(unittest.TestCase):
             ),
         )
 
+    def test_standard_online_cache_primed_comes_from_the_online_logon(self):
+        """The token credential proof neither creates nor requires a
+        profile, so windows-standard-online's cache_primed is sourced from
+        the proven connected-domain logon, not standard_profile_present."""
+        managed = probe("managed-identity-state", {
+            "standard_identity_resolved": True,
+            # Deliberately FALSE: no interactive logon ever creates the
+            # standard user's profile under the token proof.
+            "standard_profile_present": False,
+            "operator_identity_resolved": True,
+            "operator_profile_present": True,
+            "operator_local_administrator": True,
+            "operator_domain_administrator": False,
+            "directory_admin_identity_resolved": True,
+            "directory_admin_domain_administrator": True,
+            "operator_is_directory_admin": False,
+        })
+        login = credential(
+            "connected-domain-login",
+            domain_reachable=True,
+            controller_reachable=True,
+            authentication_semantics="connected-domain",
+            cache_evidence="online-interactive-logon",
+        )
+        fields = map_exact_observation(
+            "windows-standard-online",
+            ObservationRecords(
+                static_probes={"managed-identity-state": managed},
+                credential_actions={"connected-domain-login": login},
+            ),
+        )
+        self.assertEqual({
+            "principal_role": "standard",
+            "elevated": False,
+            "identity_resolved": True,
+            "cache_primed": True,
+        }, fields)
+        # A logon that is authenticated but only cached does not prime the
+        # standard-online check.
+        offline = credential(
+            "connected-domain-login",
+            domain_reachable=False,
+            controller_reachable=False,
+            authentication_semantics="cached-domain",
+            cache_evidence="offline-cache-proven",
+        )
+        with self.assertRaises(WindowsIdentityObservationError):
+            # cached semantics also violates the connected-domain gate in
+            # _credential, so this fails closed rather than mislabelling.
+            map_exact_observation(
+                "windows-standard-online",
+                ObservationRecords(
+                    static_probes={"managed-identity-state": managed},
+                    credential_actions={"connected-domain-login": offline},
+                ),
+            )
+
     def test_cached_login_is_derived_without_caller_source_labels(self):
         fields = map_exact_observation(
             "windows-cached-login",

@@ -161,10 +161,17 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertNotIn(".IsInRole(", script)
         self.assertIn("foreach ($group in $identity.Groups) {", script)
         self.assertIn("-ceq $administratorsSid", script)
-        # Offline-safe identity match: account tail + domain scope.
+        # Offline-safe identity match handling BOTH name forms: NetBIOS
+        # (DOMAIN\user) and Kerberos UPN (user@domain). Attempt 43's token
+        # may have rendered the UPN form, which the old '\'-only split
+        # mishandled.
+        self.assertIn("if ($identityName.Contains('\\')) {", script)
+        self.assertIn("elseif ($identityName.Contains('@')) {", script)
+        self.assertIn("$nameParts = $identityName -split '@', 2", script)
         self.assertIn("$accountMatches = ($accountTail -ieq $username)", script)
         self.assertIn("$domainPart -ine $env:COMPUTERNAME", script)
         self.assertIn("$domainPart -ieq $env:COMPUTERNAME", script)
+        self.assertIn("$domainPart -ne '' -and", script)
         self.assertIn(
             "$loginClock = [Diagnostics.Stopwatch]::StartNew()", script)
         self.assertIn(
@@ -859,6 +866,81 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             guest.close()
             self.assertTrue(serial.closed)
             self.assertTrue(channel.destroyed)
+
+    def test_host_rejected_result_line_is_carried_for_retention(self):
+        """Attempt 43: the guest emitted a well-formed result the host
+        rejected on a field, with no way to see which. A host rejection now
+        carries the bounded, redacted result line so the next run names the
+        field; a guest-reported failure line does not (it has no result)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "action.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+            # A structurally valid result whose principal_sid the host
+            # rejects -- exactly the attempt-43 shape (guest succeeded).
+            rejected = cred_result(
+                action="connected-domain-login",
+                authentication_semantics="connected-domain",
+                cache_evidence="online-interactive-logon",
+                domain_reachable=True, controller_reachable=True,
+                principal_sid="not-a-valid-sid")
+
+            def launch(_command):
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            def guest_result():
+                guest.recv(256)
+                guest.sendall((json.dumps(rejected) + "\n").encode())
+
+            import threading
+            worker = threading.Thread(target=guest_result)
+            worker.start()
+            with self.assertRaises(WindowsCredentialActionError) as caught:
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action="connected-domain-login",
+                    expected_principal="AD\\student",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            worker.join()
+            guest.close()
+            carried = json.loads(caught.exception.result_line)
+            self.assertEqual("not-a-valid-sid", carried["principal_sid"])
+            self.assertNotIn("password", carried)
+
+    def test_redacted_result_line_fails_closed_on_anything_unexpected(self):
+        from homelab.vm.windows_credential_action_iso import (
+            _redacted_result_line,
+        )
+        # A normal token result round-trips as compact JSON.
+        good = json.dumps(cred_result()) + "\n"
+        self.assertEqual(
+            json.loads(good.strip()),
+            json.loads(_redacted_result_line(good)))
+        # Anything oversized, non-object, overlong-field, or unparsable is
+        # replaced by a fixed marker -- never written verbatim.
+        self.assertEqual(
+            "credential-action-result-oversized",
+            _redacted_result_line("x" * 4097))
+        self.assertEqual(
+            "credential-action-result-nonobject",
+            _redacted_result_line("[1,2,3]"))
+        self.assertEqual(
+            "credential-action-result-overlong-field",
+            _redacted_result_line(json.dumps({"blob": "z" * 300})))
+        self.assertEqual(
+            "credential-action-result-unparsable",
+            _redacted_result_line("{not json"))
 
     def test_duplex_serial_shares_absolute_deadline_across_records(self):
         connection = mock.Mock()

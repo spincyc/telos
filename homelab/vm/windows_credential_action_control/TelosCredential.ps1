@@ -234,19 +234,35 @@ public static class TelosCredentialLogon {
             }
             # Prove the credential authenticated as the intended account.
             # Compare the token's own name -- offline-safe, no DC lookup --
-            # by account tail (case-insensitive) and by domain scope: a
-            # domain action must not resolve to the local machine, and the
-            # local-rescue action must.
+            # by account and by domain scope. Kerberos logons can render the
+            # name in UPN form (user@domain) and NTLM/down-level in
+            # NetBIOS form (DOMAIN\user); accept both. A domain action must
+            # not resolve to the local machine; the local-rescue action must.
             $identityName = [string]$identity.Name
-            $nameParts = $identityName -split '\\', 2
-            $accountTail = $nameParts[-1]
-            $domainPart = $nameParts[0]
+            if ($identityName.Contains('\')) {
+                $nameParts = $identityName -split '\\', 2
+                $domainPart = $nameParts[0]
+                $accountTail = $nameParts[1]
+            }
+            elseif ($identityName.Contains('@')) {
+                $nameParts = $identityName -split '@', 2
+                $accountTail = $nameParts[0]
+                $domainPart = $nameParts[1]
+            }
+            else {
+                $accountTail = $identityName
+                $domainPart = ''
+            }
             $accountMatches = ($accountTail -ieq $username)
             if ($domain -eq '.') {
                 $scopeMatches = ($domainPart -ieq $env:COMPUTERNAME)
             }
             else {
-                $scopeMatches = ($domainPart -ine $env:COMPUTERNAME)
+                # Domain scope: a DNS-suffix UPN (student@ad.factory.test)
+                # or a NetBIOS domain (FACTORY), never the local machine.
+                $scopeMatches = (
+                    $domainPart -ne '' -and
+                    $domainPart -ine $env:COMPUTERNAME)
             }
             $principalMatches = ($accountMatches -and $scopeMatches)
         }
