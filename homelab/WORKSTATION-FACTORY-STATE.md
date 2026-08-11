@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260811.002`
+Document version: `20260811.003`
 
 Status: active implementation
 
@@ -229,6 +229,34 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   the arch-workstation PXE release. The PXE transport, archiso boot, and
   the disk-detached approach are all proven; only the login handshake
   remains.
+  UPDATE 2026-08-11 (runs through `arch-installs/run-20260811T025952Z-47fafcfc988a`):
+  the login (`986ebdc`), the readiness handshake (`8ca8640`, re-probed in
+  `07a1058` after a single probe was eaten as login echo), and the NVMe
+  hot-attach (`ce02565`, a `pcie-root-port` since q35 will not hotplug onto
+  pcie.0) are ALL proven live — the serial shows
+  `TELOS ARCH INSTALL BEGIN` and `TELOS ARCH DISK ATTACHED serial=TELOS-WIN-0001`.
+  TWO seams remain, both consistent across runs:
+  (1) INSTALLER: `arch-second-verify.py` fails `/dev/nvme0n1 has no
+  partitions`. The backing `windows.qcow2` genuinely holds the Windows GPT
+  (17.6 GiB mapped, 29045 extents) and the overlay is correctly backed, so
+  the guest is not enumerating the GPT after the PCIe hotplug. A
+  `partprobe`/`blockdev --rereadpt`/`udevadm settle` retry loop
+  (`490c313`, `1e23b55`) did NOT surface the partitions, so partprobe
+  timing is not the cause. NEXT: this needs an NVMe-namespace rescan
+  (`nvme ns-rescan /dev/nvme0` or `echo 1 > /sys/class/nvme/nvme0/rescan_controller`),
+  or attaching the target as a hotplug-capable virtio-blk instead of nvme,
+  or a cold-plug-behind-a-disabled-boot-entry approach. (2) AUDIT: every
+  run's terminal error is `simulation_overlay` "cannot inspect process
+  <pid> file descriptors" (phase arch-install-driving; the pid increments
+  each run). This is the fail-closed overlay-ownership audit
+  (`audit_live_process`, arch_install_run.py:521/532) hitting a same-uid
+  process whose `/proc/<pid>/fd` it cannot read. It is a real strictness
+  issue for this runner: do NOT weaken the security boundary, but the
+  arch runner's driving-phase audit should tolerate a genuinely
+  un-inspectable transient process (the FileNotFoundError skip is not
+  enough; an exiting process can raise a different OSError) OR run on a
+  quiet host. Both seams are code-level and well-localized; the whole
+  transport + boot + login + hot-attach chain is proven.
 
 - Gate 6 operator logon — narrowed with strong evidence 2026-08-10
   (attempt `20260810T221525Z-f22a898acb74`, first with the realm fix and
