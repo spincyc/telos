@@ -127,14 +127,21 @@ def dhcp_options(data: bytes) -> dict[int, bytes]:
 class Gateway:
     def __init__(
         self, clock=time.time, *, controller_mac: bytes = CONTROLLER_MAC,
-        identity_mode: bool = False,
+        identity_mode: bool = False, pxe_identity_mode: bool = False,
     ) -> None:
         if len(controller_mac) != 6 or controller_mac[0] & 1:
             raise ValueError("Controller MAC must be a unicast Ethernet address")
+        if identity_mode and pxe_identity_mode:
+            raise ValueError(
+                "identity_mode and pxe_identity_mode are exclusive")
         self.lease_mac: bytes | None = None
         self.clock = clock
         self.controller_mac = controller_mac
         self.identity_mode = identity_mode
+        # PXE workstations that must also join the synthetic realm: keep
+        # options 66/67 for PXE requests while every client lease carries
+        # the Controller as DNS and the identity search domain.
+        self.pxe_identity_mode = pxe_identity_mode
 
     def _valid_source(
         self, source_mac: bytes, source_ip: ipaddress.IPv4Address,
@@ -260,7 +267,9 @@ class Gateway:
         options += bytes((54, 4)) + GATEWAY_IP.packed
         options += bytes((1, 4)) + NETMASK.packed
         options += bytes((3, 4)) + GATEWAY_IP.packed
-        identity_client = self.identity_mode and not controller_bootstrap
+        identity_client = (
+            (self.identity_mode or self.pxe_identity_mode)
+            and not controller_bootstrap)
         dns_server = (
             CONTROLLER_IP if boot_file or identity_client else GATEWAY_IP)
         options += bytes((6, 4)) + dns_server.packed
@@ -545,12 +554,13 @@ def serve(
 
 def connect_peer(
     host: str, port: int, *, controller_mac: bytes = CONTROLLER_MAC,
-    identity_mode: bool = False,
+    identity_mode: bool = False, pxe_identity_mode: bool = False,
 ) -> None:
     if host != "127.0.0.1":
         raise RuntimeError("gateway peer must connect only to 127.0.0.1")
     gateway = Gateway(
-        controller_mac=controller_mac, identity_mode=identity_mode)
+        controller_mac=controller_mac, identity_mode=identity_mode,
+        pxe_identity_mode=pxe_identity_mode)
     with socket.create_connection((host, port)) as connection:
         announcement = identity_announcement(GATEWAY_MAC, "gateway")
         connection.sendall(struct.pack("!I", len(announcement)) + announcement)
@@ -577,6 +587,7 @@ def main() -> int:
     parser.add_argument("--connect", action="store_true")
     parser.add_argument("--controller-mac", default=CONTROLLER_MAC.hex(":"))
     parser.add_argument("--identity-mode", action="store_true")
+    parser.add_argument("--pxe-identity-mode", action="store_true")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be an unprivileged TCP port")
@@ -589,9 +600,13 @@ def main() -> int:
             controller_mac = bytes.fromhex(args.controller_mac.replace(":", ""))
         except ValueError:
             parser.error("--controller-mac must be six hexadecimal octets")
+        if args.identity_mode and args.pxe_identity_mode:
+            parser.error(
+                "--identity-mode and --pxe-identity-mode are exclusive")
         connect_peer(
             "127.0.0.1", args.port, controller_mac=controller_mac,
-            identity_mode=args.identity_mode)
+            identity_mode=args.identity_mode,
+            pxe_identity_mode=args.pxe_identity_mode)
     else:
         serve(args.port, args.connections, args.listener_fd, args.audit_first)
     return 0

@@ -1194,6 +1194,301 @@ class _ConsoleProcess:
         self.stdin = stdin
 
 
+class _FakeControllerQmp:
+    """Record controller QMP media lifecycle like the identity lane's QEMU."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.deleted: list[str] = []
+
+    def execute(self, command, arguments=None, *, timeout=None):
+        self.calls.append((command, arguments))
+        return {}
+
+    def await_device_deleted(self, device_id, *, timeout=None):
+        self.deleted.append(device_id)
+        return {"event": "DEVICE_DELETED", "data": {"device": device_id}}
+
+
+class _FakeConsole:
+    """Record the proven SerialAutomation convergence entry points."""
+
+    def __init__(self) -> None:
+        self.password = b"Synthetic-Controller-test-47!"
+        self.events: list = []
+
+    def install_offline_controller_dependencies(self, **kwargs):
+        self.events.append(("seed-install", None))
+
+    def converge_disposable_controller(self, guest_command, **kwargs):
+        self.events.append(("converge", guest_command))
+
+
+class ControllerDomainTests(unittest.TestCase):
+    def test_prepare_controller_domain_orders_the_proven_steps(self):
+        events: list[str] = []
+        facts: dict = {}
+        with mock.patch.object(
+                arch_install_run, "install_controller_seed",
+                side_effect=lambda *a, **k: events.append("seed")), \
+                mock.patch.object(
+                    arch_install_run, "_controller_sudo",
+                    side_effect=lambda console, command, label:
+                    events.append(label)), \
+                mock.patch.object(
+                    arch_install_run, "converge_controller",
+                    side_effect=lambda *a, **k: events.append("converge")):
+            returned = arch_install_run.prepare_controller_domain(
+                qmp=object(), console=object(), seed_iso=Path("/seed.iso"),
+                media_root=Path("/media"), facts=facts)
+        # Publication stays (it ran in the init shell); then: seed install,
+        # stop the publication nginx the convergence would collide with,
+        # converge (which requires PASS and live AD), restore the published
+        # PXE bootstrap the convergence overwrote.
+        self.assertEqual(events, [
+            "seed", "arch-publication-http-stop", "converge",
+            "arch-pxe-bootstrap-restore"])
+        self.assertEqual(returned, {
+            "seed_installed": True, "converged": True,
+            "pxe_bootstrap_restored": True})
+        self.assertIs(returned, facts)
+
+    def test_prepare_controller_domain_fails_closed_mid_sequence(self):
+        facts: dict = {}
+        with mock.patch.object(
+                arch_install_run, "install_controller_seed"), \
+                mock.patch.object(arch_install_run, "_controller_sudo"), \
+                mock.patch.object(
+                    arch_install_run, "converge_controller",
+                    side_effect=RuntimeError("convergence failed")):
+            with self.assertRaisesRegex(RuntimeError, "convergence failed"):
+                arch_install_run.prepare_controller_domain(
+                    qmp=object(), console=object(),
+                    seed_iso=Path("/seed.iso"),
+                    media_root=Path("/media"), facts=facts)
+        # The evidence facts honestly record how far provisioning got.
+        self.assertEqual(facts, {
+            "seed_installed": True, "converged": False,
+            "pxe_bootstrap_restored": False})
+
+    def test_seed_install_attaches_verifies_and_releases_media(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            seed = Path(temporary) / "seed.iso"
+            seed.write_bytes(b"seed")
+            seed.chmod(0o644)
+            qmp = _FakeControllerQmp()
+            console = _FakeConsole()
+            arch_install_run.install_controller_seed(qmp, console, seed)
+            self.assertEqual(
+                [command for command, _ in qmp.calls],
+                ["blockdev-add", "blockdev-add", "device_add",
+                 "device_del", "blockdev-del", "blockdev-del"])
+            device = qmp.calls[2][1]
+            self.assertEqual(device["driver"], "scsi-cd")
+            self.assertEqual(device["bus"], "archfactorybus.0")
+            node = qmp.calls[1][1]
+            self.assertIs(node["read-only"], True)
+            # The in-guest verify/install ran between attach and release.
+            self.assertEqual(console.events, [("seed-install", None)])
+            self.assertEqual(qmp.deleted, ["archseedcd"])
+
+    def test_seed_install_refuses_unsafe_media(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            world_writable = root / "seed.iso"
+            world_writable.write_bytes(b"seed")
+            world_writable.chmod(0o666)
+            link = root / "link.iso"
+            link.symlink_to(world_writable)
+            for unsafe in (world_writable, link, root / "absent.iso"):
+                with self.subTest(seed=unsafe):
+                    with self.assertRaisesRegex(RuntimeError, "unsafe"):
+                        arch_install_run.install_controller_seed(
+                            _FakeControllerQmp(), _FakeConsole(), unsafe)
+
+    def test_convergence_attaches_media_and_destroys_the_secret(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            media_root = Path(temporary) / "controller-media"
+            bundles: list = []
+
+            class _StubBundle:
+                def __init__(self, repo, output, *, authorization_nonce):
+                    self.output = Path(output)
+                    self.nonce = authorization_nonce
+                    self.password = "Synthetic-secret-47!"
+                    bundles.append(self)
+
+                def build(self):
+                    self.output.write_bytes(b"convergence")
+                    self.output.chmod(0o600)
+                    return self.output
+
+                @staticmethod
+                def guest_command(nonce):
+                    return f"converge --nonce {nonce}"
+
+            qmp = _FakeControllerQmp()
+            console = _FakeConsole()
+            with mock.patch.object(
+                    arch_install_run, "FactoryBundle", _StubBundle):
+                arch_install_run.converge_controller(
+                    qmp, console, media_root, repo_root=Path(temporary))
+            bundle = bundles[0]
+            # The console ran the exact nonce-bound convergence command.
+            self.assertEqual(
+                console.events,
+                [("converge", f"converge --nonce {bundle.nonce}")])
+            self.assertEqual(
+                [command for command, _ in qmp.calls],
+                ["blockdev-add", "blockdev-add", "device_add",
+                 "device_del", "blockdev-del", "blockdev-del"])
+            self.assertEqual(qmp.calls[2][1]["bus"], "archfactorybus.0")
+            self.assertEqual(qmp.deleted, ["archfactorycd"])
+            # The secret-bearing media and in-memory password are destroyed.
+            self.assertEqual(bundle.password, "")
+            self.assertFalse(bundle.output.exists())
+            self.assertFalse(media_root.exists())
+
+    def test_convergence_drops_the_secret_even_on_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            media_root = Path(temporary) / "controller-media"
+            bundles: list = []
+
+            class _StubBundle:
+                def __init__(self, repo, output, *, authorization_nonce):
+                    self.output = Path(output)
+                    self.password = "Synthetic-secret-47!"
+                    bundles.append(self)
+
+                def build(self):
+                    self.output.write_bytes(b"convergence")
+                    return self.output
+
+                @staticmethod
+                def guest_command(nonce):
+                    return "converge"
+
+            class _FailingConsole(_FakeConsole):
+                def converge_disposable_controller(self, guest_command,
+                                                   **kwargs):
+                    raise RuntimeError("convergence guest failure")
+
+            with mock.patch.object(
+                    arch_install_run, "FactoryBundle", _StubBundle):
+                with self.assertRaisesRegex(RuntimeError, "guest failure"):
+                    arch_install_run.converge_controller(
+                        _FakeControllerQmp(), _FailingConsole(), media_root,
+                        repo_root=Path(temporary))
+            self.assertEqual(bundles[0].password, "")
+            self.assertFalse(bundles[0].output.exists())
+
+    def test_controller_sudo_runs_one_bounded_root_command(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        console = arch_install_run.SerialAutomation(
+            os.fdopen(read_fd, "rb", buffering=0), stdin,
+            b"Synthetic-Controller-test-47!", timeout=10)
+
+        def feeder() -> None:
+            os.write(write_fd, b"\n[local-rescue@bootstrap-dc ~]$ ")
+            prompt = None
+            for _ in range(5000):
+                match = re.search(
+                    rb"__TELOS_ARCH_SUDO_[0-9a-f]{32}__", stdin.data)
+                if match:
+                    prompt = match.group(0)
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"\n" + prompt)
+            for _ in range(5000):
+                if b"Synthetic-Controller-test-47!" in stdin.data:
+                    break
+                time.sleep(0.001)
+            marker = re.search(
+                rb"__TELOS_ARCH_RC_[0-9a-f]{32}=", stdin.data).group(0)
+            os.write(write_fd, b"\n" + marker + b"0\n")
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            arch_install_run._controller_sudo(
+                console, "systemctl stop telos-factory-http.service",
+                "arch-publication-http-stop")
+        finally:
+            worker.join()
+            os.close(write_fd)
+            console.reader.close()
+        self.assertIn(
+            b"systemctl stop telos-factory-http.service", stdin.data)
+        self.assertIn(b"sudo -k -S", stdin.data)
+
+    def test_controller_sudo_fails_closed_on_nonzero_return(self):
+        read_fd, write_fd = os.pipe()
+        stdin = _Recorder([])
+        console = arch_install_run.SerialAutomation(
+            os.fdopen(read_fd, "rb", buffering=0), stdin,
+            b"Synthetic-Controller-test-47!", timeout=10)
+
+        def feeder() -> None:
+            os.write(write_fd, b"\n[local-rescue@bootstrap-dc ~]$ ")
+            prompt = None
+            for _ in range(5000):
+                match = re.search(
+                    rb"__TELOS_ARCH_SUDO_[0-9a-f]{32}__", stdin.data)
+                if match:
+                    prompt = match.group(0)
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"\n" + prompt)
+            for _ in range(5000):
+                if b"Synthetic-Controller-test-47!" in stdin.data:
+                    break
+                time.sleep(0.001)
+            marker = re.search(
+                rb"__TELOS_ARCH_RC_[0-9a-f]{32}=", stdin.data).group(0)
+            os.write(write_fd, b"\n" + marker + b"1\n")
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "command failed"):
+                arch_install_run._controller_sudo(
+                    console, "false", "arch-pxe-bootstrap-restore")
+        finally:
+            worker.join()
+            os.close(write_fd)
+            console.reader.close()
+
+    def test_gateway_argv_requires_the_pxe_identity_seam(self):
+        # Until the simulated_gateway/factory_runner pxe_identity_mode seam
+        # lands, the run must fail closed naming the exact gap: the archiso
+        # live client's plain DHCP lease needs Controller DNS and the
+        # ad.factory.test suffix while PXE options 66/67 stay served.
+        def old_signature(port, *, controller_mac=None, identity_mode=False):
+            raise AssertionError("must not be reached")
+
+        def rejecting(port, **kwargs):
+            raise TypeError(
+                "gateway_command() got an unexpected keyword argument "
+                "'pxe_identity_mode'")
+
+        with mock.patch.object(
+                arch_install_run, "gateway_command", side_effect=rejecting):
+            with self.assertRaisesRegex(RuntimeError, "pxe_identity_mode"):
+                arch_install_run._gateway_argv(31415)
+
+        def composed(port, *, pxe_identity_mode=False):
+            self.assertTrue(pxe_identity_mode)
+            return ["gateway", "--port", str(port), "--pxe-identity-mode"]
+
+        with mock.patch.object(
+                arch_install_run, "gateway_command", side_effect=composed):
+            self.assertEqual(
+                arch_install_run._gateway_argv(31415),
+                ["gateway", "--port", "31415", "--pxe-identity-mode"])
+
+
 class EstablishPublicationConsoleTests(unittest.TestCase):
     """The Controller console must publish and stay owned for join staging."""
 

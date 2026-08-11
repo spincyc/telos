@@ -8,8 +8,12 @@ Windows-preserving installer over the serial console.  Nothing here touches a
 physical disk, host networking, or UniFi.
 
 The installer's synthetic-realm machine join is supplied host-side, mirroring
-the Windows lane: a per-run disposable join account is staged on the
-Controller over its retained serial console (``ControllerJoinSerial``), the
+the Windows lane.  The canonical bootstrap-dc image carries no provisioned
+AD, so after the PXE publication the runner performs the identity lane's
+proven seed install and factory convergence over the retained Controller
+console (``prepare_controller_domain``), preserving the published PXE tree
+across the convergence.  Then a per-run disposable join account is staged on
+the Controller over the same serial console (``ControllerJoinSerial``), the
 credential is sealed into a run-built, mode-0600 ``TELOS_JOIN`` ISO that is
 QMP-attached read-only into the cold-plugged empty join root port, and the
 media is hot-removed and destroyed by exact inode as soon as the guest prints
@@ -28,6 +32,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
+import shutil
 import socket
 import stat
 import subprocess
@@ -41,6 +47,7 @@ try:
         VARS_NAME, VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
+    from .controller_factory import FactoryBundle
     from .controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
     from .factory_publication import stage as stage_publication
@@ -60,6 +67,7 @@ except ImportError:  # Direct execution from homelab/vm.
         VARS_NAME, VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
+    from homelab.vm.controller_factory import FactoryBundle
     from homelab.vm.controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
     from factory_publication import stage as stage_publication
@@ -100,6 +108,10 @@ JOIN_DEVICE_ID = "joinmedia-blk"
 JOIN_USERNAME = re.compile(
     r"tj-[0-9a-f]{16}@[A-Z0-9](?:[A-Z0-9.-]{0,251}[A-Z0-9])?")
 CONTROLLER_CONSOLE_TIMEOUT = 300.0
+# Cold-plugged virtio-scsi bus on the controller for the seed and factory
+# convergence media (both QMP-attached read-only and provably released),
+# mirroring the identity lane's ``identityfactorybus``.
+FACTORY_BUS_ID = "archfactorybus"
 VERIFY_PASS_MARKER = (
     "PASS: Windows-first GPT matches the approved Arch install contract")
 PRESERVED_MARKER = (
@@ -278,6 +290,199 @@ def establish_publication_console(
         console.release_password()
         raise
     return console
+
+
+def _gateway_argv(port: int) -> list[str]:
+    """Gateway argv serving PXE boot options AND identity DHCP options.
+
+    The archiso live environment renews its lease as a plain DHCP client
+    (no PXE options), and its ``net ads join`` needs the Controller as DNS
+    plus the ``ad.factory.test`` search domain; the firmware PXE boot still
+    needs options 66/67.  ``simulated_gateway`` composes those only with the
+    ``pxe_identity_mode`` seam (``identity_mode`` deliberately suppresses
+    the boot file); until that seam lands in ``factory_runner`` and
+    ``simulated_gateway`` this fails closed with the exact gap named.
+    """
+    try:
+        return gateway_command(port, pxe_identity_mode=True)
+    except TypeError:
+        raise RuntimeError(
+            "simulated gateway does not support pxe_identity_mode: the "
+            "archiso domain join needs identity DHCP options (Controller "
+            "DNS, ad.factory.test suffix) alongside the PXE boot options; "
+            "apply the gateway pxe-identity seam patch") from None
+
+
+def _controller_sudo(
+    console: SerialAutomation, command: str, label: str,
+) -> None:
+    """Run one bounded, secret-free root command over the console."""
+    if console.password is None:
+        raise RuntimeError("Controller session credential is unavailable")
+    if not command or "\n" in command:
+        raise RuntimeError("controller command is invalid")
+    token = os.urandom(16).hex().encode("ascii")
+    prompt = b"__TELOS_ARCH_SUDO_" + token + b"__"
+    marker = b"__TELOS_ARCH_RC_" + token + b"="
+    try:
+        console._send(b"", label + "-shell-requested")
+        console._wait(rb"(?:^|\n)[^\n]*\$\s*$", label + "-shell-ready")
+        console._send(
+            b"sudo -k -S -p '" + prompt + b"' /usr/bin/bash -c "
+            + shlex.quote(command).encode("ascii")
+            + b"; __telos_rc=$?; printf '\\n" + marker
+            + b"%s\\n' \"$__telos_rc\"",
+            label + "-command-sent")
+        console._wait(
+            rb"(?:^|[\r\n])" + re.escape(prompt) + rb"\s*$",
+            label + "-sudo-prompt")
+        console._send(console.password, label + "-password-sent")
+        match = console._wait(
+            rb"(?:^|\n)" + re.escape(marker) + rb"([0-9]+)\s*(?:\n|$)",
+            label + "-result")
+    except SerialAutomationError as error:
+        raise RuntimeError(f"controller command failed: {label}") from error
+    if int(match.group(1)) != 0:
+        raise RuntimeError(f"controller command failed: {label}")
+
+
+def install_controller_seed(qmp, console, seed_iso: Path) -> None:
+    """Attach, verify, install, and provably release the signed seed.
+
+    Mirrors ``arch_identity_run._install_controller_seed``: the signed seed
+    ISO is QMP-attached read-only to the cold-plugged virtio-scsi factory
+    bus, the in-guest verify/install runs over the authenticated console,
+    and the media is provably released before returning.
+    """
+    seed_iso = Path(seed_iso)
+    if (
+        seed_iso.is_symlink()
+        or not seed_iso.is_file()
+        or seed_iso.stat().st_mode & 0o022
+    ):
+        raise RuntimeError("Controller seed media has an unsafe identity")
+    qmp.execute("blockdev-add", {
+        "node-name": "archseedfile",
+        "driver": "file",
+        "filename": str(seed_iso.resolve()),
+    })
+    qmp.execute("blockdev-add", {
+        "node-name": "archseednode",
+        "driver": "raw",
+        "read-only": True,
+        "file": "archseedfile",
+    })
+    qmp.execute("device_add", {
+        "driver": "scsi-cd",
+        "id": "archseedcd",
+        "drive": "archseednode",
+        "bus": f"{FACTORY_BUS_ID}.0",
+    })
+    console.install_offline_controller_dependencies()
+    qmp.execute("device_del", {"id": "archseedcd"})
+    qmp.await_device_deleted("archseedcd", timeout=30.0)
+    qmp.execute("blockdev-del", {"node-name": "archseednode"})
+    qmp.execute("blockdev-del", {"node-name": "archseedfile"})
+
+
+def converge_controller(
+    qmp, console, media_root: Path, *, repo_root: Path | None = None,
+) -> None:
+    """Run the offline factory convergence and release its media.
+
+    Mirrors ``arch_identity_run._converge_controller``: the secret-bearing
+    convergence ISO (per-run synthetic Administrator password inside the
+    ``FactoryBundle``) is built into *media_root*, QMP-attached read-only,
+    executed over the authenticated console (which requires the staged
+    ``TELOS FACTORY CONTROLLER PASS`` and the live AD service), and then
+    provably released and destroyed.  The password never crosses argv; the
+    bundle's in-memory copy is dropped in ``finally``.
+    """
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parents[2]
+    nonce = secrets.token_hex(32)
+    media_root.mkdir(mode=0o700)
+    bundle = FactoryBundle(
+        repo_root, media_root / "controller-convergence.iso",
+        authorization_nonce=nonce)
+    try:
+        bundle.build()
+        qmp.execute("blockdev-add", {
+            "node-name": "archfactoryfile",
+            "driver": "file",
+            "filename": str(bundle.output.resolve()),
+        })
+        qmp.execute("blockdev-add", {
+            "node-name": "archfactorynode",
+            "driver": "raw",
+            "read-only": True,
+            "file": "archfactoryfile",
+        })
+        qmp.execute("device_add", {
+            "driver": "scsi-cd",
+            "id": "archfactorycd",
+            "drive": "archfactorynode",
+            "bus": f"{FACTORY_BUS_ID}.0",
+        })
+        console.converge_disposable_controller(
+            FactoryBundle.guest_command(nonce))
+        qmp.execute("device_del", {"id": "archfactorycd"})
+        qmp.await_device_deleted("archfactorycd", timeout=30.0)
+        qmp.execute("blockdev-del", {"node-name": "archfactorynode"})
+        qmp.execute("blockdev-del", {"node-name": "archfactoryfile"})
+    finally:
+        bundle.password = ""
+        bundle.output.unlink(missing_ok=True)
+    media_root.rmdir()
+
+
+# The published PXE bootstrap the gateway's iPXE chain fetches; convergence
+# overwrites it with its own chain (to a path the publication tree does not
+# carry), so it is restored from the still-mounted publication media and
+# byte-compared afterwards.
+PXE_BOOTSTRAP_RESTORE = (
+    "install -m 0644 /run/telos-pxe-release/www/boot/boot.ipxe "
+    "/srv/http/homelab/boot/boot.ipxe && "
+    "cmp /run/telos-pxe-release/www/boot/boot.ipxe "
+    "/srv/http/homelab/boot/boot.ipxe"
+)
+
+
+def prepare_controller_domain(
+    *, qmp, console, seed_iso: Path, media_root: Path,
+    repo_root: Path | None = None, facts: dict | None = None,
+) -> dict:
+    """Provision Samba AD on the publication Controller, PXE preserved.
+
+    The PXE publication ran in the disposable init shell (its services are
+    linked before systemd boots); the identity lane's proven seed install
+    and factory convergence then run over the same authenticated console.
+    Two publication/convergence collisions are handled explicitly: the
+    convergence starts its own nginx, so the publication's running HTTP
+    service is stopped first (the convergence-started nginx serves the same
+    published tree afterwards), and the convergence overwrites the published
+    PXE bootstrap chain, so the published bootstrap is restored from the
+    still-mounted publication media and byte-compared before returning.
+    Every step is fail-closed; the returned facts are secret-free booleans.
+    """
+    if facts is None:
+        facts = {}
+    facts.update({
+        "seed_installed": False,
+        "converged": False,
+        "pxe_bootstrap_restored": False,
+    })
+    install_controller_seed(qmp, console, seed_iso)
+    facts["seed_installed"] = True
+    _controller_sudo(
+        console, "systemctl stop telos-factory-http.service",
+        "arch-publication-http-stop")
+    converge_controller(qmp, console, media_root, repo_root=repo_root)
+    facts["converged"] = True
+    _controller_sudo(
+        console, PXE_BOOTSTRAP_RESTORE, "arch-pxe-bootstrap-restore")
+    facts["pxe_bootstrap_restored"] = True
+    return facts
 
 
 def build_arch_join_iso(
@@ -941,7 +1146,9 @@ def run(
     publication_iso = evidence / "publication.iso"
     join_iso = evidence / JOIN_ISO_NAME
     join_facts: dict = {}
+    controller_facts: dict = {}
     console: SerialAutomation | None = None
+    controller_qmp_root: Path | None = None
     result = {"schema": 1, "status": "fail", "phase": "starting"}
     try:
         with SignalGuard(), DisposableBootDisk(
@@ -967,6 +1174,17 @@ def run(
                 overlay.disk, overlay.vars,
                 bundle / OVERLAY_NAME, bundle / VARS_NAME,
                 port, None, publication_iso)["controller"]
+            # The seed and convergence media are QMP-attached at run time,
+            # so the controller additionally carries a QMP socket and an
+            # empty virtio-scsi factory bus (identity-lane pattern).
+            controller_qmp_root = Path(
+                tempfile.mkdtemp(prefix="telos-arch-ctl-"))
+            controller_qmp_root.chmod(0o700)
+            controller_qmp_path = controller_qmp_root / "controller.qmp"
+            controller_command = controller_command + [
+                "-qmp", f"unix:{controller_qmp_path},server=on,wait=off",
+                "-device", f"virtio-scsi-pci,id={FACTORY_BUS_ID}",
+            ]
             processes["switch"] = subprocess.Popen(
                 switch_command(
                     listener.fileno(), evidence / "switch.jsonl",
@@ -975,7 +1193,7 @@ def run(
                 stderr=subprocess.STDOUT, pass_fds=(listener.fileno(),))
             listener.close()
             processes["gateway"] = subprocess.Popen(
-                gateway_command(port), stdin=subprocess.DEVNULL,
+                _gateway_argv(port), stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             wait_for_switch_port(
                 evidence / "switch.jsonl", "gateway", GATEWAY_MAC)
@@ -985,16 +1203,32 @@ def run(
             audit_live_process(
                 processes["controller"].pid, "controller",
                 disposable_disk=overlay.disk, disposable_vars=overlay.vars,
-                forbidden_paths=(canonical["disk"], canonical["vars"]))
+                forbidden_paths=(canonical["disk"], canonical["vars"]),
+                qmp_socket=controller_qmp_path)
             # One SerialAutomation owner both publishes the PXE release and
-            # keeps the authenticated Controller shell; the join-material
-            # protocol later reuses exactly this console.
+            # keeps the authenticated Controller shell; the convergence and
+            # join-material protocols later reuse exactly this console.
             controller_password = (
                 "Synthetic-Controller-" + secrets.token_urlsafe(24) + "-47!"
             ).encode("ascii")
             console = establish_publication_console(
                 processes["controller"], password=controller_password)
             result["phase"] = "arch-publication-ready"
+            # The canonical bootstrap-dc image carries no provisioned AD:
+            # the identity lane's seed install and factory convergence must
+            # run before any SamDB-backed join staging can succeed (the
+            # 2026-08-11 live run proved staging fails without them).
+            controller_qmp = _connect_qmp(
+                controller_qmp_path,
+                expected_peer_pid=processes["controller"].pid)
+            try:
+                prepare_controller_domain(
+                    qmp=controller_qmp, console=console, seed_iso=seed_iso,
+                    media_root=evidence / "controller-media",
+                    facts=controller_facts)
+            finally:
+                controller_qmp.close()
+            result["phase"] = "arch-domain-ready"
             disk_serial = authorized["disk_serial"]
             join_serial = ControllerJoinSerial(
                 processes["controller"].stdout, processes["controller"].stdin,
@@ -1059,6 +1293,7 @@ def run(
                 "pxe_firmware_boots": 1,
                 "windows_preserved": True,
                 "release_version": authorized["release_version"],
+                "controller": dict(controller_facts),
                 "join_media": dict(join_facts),
                 "join_principal_destroyed": destruction.destruction_proved,
             }
@@ -1088,6 +1323,11 @@ def run(
                 owned_qmp_root.rmdir()
             except OSError:
                 failures.append("QMP runtime root was not removed")
+        if controller_qmp_root is not None:
+            shutil.rmtree(controller_qmp_root, ignore_errors=True)
+        # The convergence media root holds only the secret-bearing ISO the
+        # converge step already destroys; sweep any leftover after failure.
+        shutil.rmtree(evidence / "controller-media", ignore_errors=True)
         if console is not None:
             console.release_password()
             try:
@@ -1109,6 +1349,8 @@ def run(
             # Secret-free lifecycle booleans; the failure path keeps whatever
             # stage the media lifecycle actually reached.
             result.setdefault("join_media", dict(join_facts))
+        if controller_facts:
+            result.setdefault("controller", dict(controller_facts))
         result["join_media_destroyed"] = (
             join_iso_failure is None and not join_iso.exists())
         if failures:

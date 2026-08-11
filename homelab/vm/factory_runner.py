@@ -350,7 +350,7 @@ def switch_command(
 
 def gateway_command(
     port: int, *, controller_mac: str | None = None,
-    identity_mode: bool = False,
+    identity_mode: bool = False, pxe_identity_mode: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -361,6 +361,8 @@ def gateway_command(
         command.extend(["--controller-mac", controller_mac])
     if identity_mode:
         command.append("--identity-mode")
+    if pxe_identity_mode:
+        command.append("--pxe-identity-mode")
     return command
 
 

@@ -10,6 +10,7 @@ import re
 import secrets
 from types import MappingProxyType
 from typing import BinaryIO, Callable, Mapping, TypeVar
+import textwrap
 import uuid
 
 from .serial_automation import SerialAutomation, SerialAutomationError
@@ -231,7 +232,21 @@ class ControllerJoinSerial:
         token = uuid.uuid4().hex.encode("ascii")
         ready = b"__TELOS_JOIN_READY_" + token + b"__"
         result = b"__TELOS_JOIN_RC_" + token + b"="
+        error_marker = b"__TELOS_JOIN_ERR_" + token + b"="
         sudo_prompt = b"__TELOS_JOIN_SUDO_" + token + b"__"
+        # stderr stays closed for secrecy, so any traceback dies unprinted
+        # and CPython exits 120: trap BaseException in-guest and print a
+        # bounded, credential-free exception TYPE NAME to stdout instead.
+        program = (
+            "try:\n"
+            + textwrap.indent(program, "    ")
+            + "\nexcept SystemExit:\n"
+            "    raise\n"
+            "except BaseException as __telos_error:\n"
+            "    print('" + error_marker.decode("ascii") + "'\n"
+            "          + type(__telos_error).__name__[:64], flush=True)\n"
+            "    raise SystemExit(1)\n"
+        )
         sudo = (
             b"sudo -n"
             if self.console.password is None
@@ -324,11 +339,18 @@ class ControllerJoinSerial:
         )
         returncode = int(match.group(1))
         if returncode:
+            observed = re.search(
+                rb"(?:^|\n)" + re.escape(error_marker)
+                + rb"([A-Za-z0-9_.]{1,64})",
+                self.console.transcript)
+            detail = (
+                "; guest_error=" + observed.group(1).decode("ascii")
+                if observed else "")
             coordinate = ControllerJoinFailureCoordinate(
                 operation, "return-code", "ControllerJoinReturnCode")
             raise ControllerJoinMaterialError(
                 f"Controller join {operation} failed; "
-                + coordinate.render(),
+                + coordinate.render() + detail,
                 coordinate=coordinate,
             )
         return ControllerJoinResult(
