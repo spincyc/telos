@@ -1051,6 +1051,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     sign_in,
                     timeout=mock.ANY,
                     clock=adapter.clock,
+                    baseline=None,
                 ),
                 mock.call.sleep(2),
                 mock.call.key("ret", timeout=mock.ANY),
@@ -1255,6 +1256,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     sign_in,
                     timeout=mock.ANY,
                     clock=adapter.clock,
+                    baseline=None,
                 ),
                 mock.call.key("ret", timeout=mock.ANY),
                 mock.call.controller_begin_submission(),
@@ -1446,6 +1448,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     sign_in,
                     timeout=mock.ANY,
                     clock=adapter.clock,
+                    baseline=None,
                 ),
                 mock.call.sleep(2),
                 mock.call.key("tab", timeout=mock.ANY),
@@ -2325,6 +2328,142 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 subject.WindowsLocalReauthenticationError,
                 "prove-password-target"):
             adapter.reauthenticate_local("private")
+
+
+class SecretEntryDepartureBaselineTests(unittest.TestCase):
+    """Direct contracts for the band-baselined secret-entry departure proof.
+
+    Live attempt 20260811T104317Z proved the candidate-(b) failure: the
+    after-type-secret frame showed the password field full of masked dots
+    while the departure proof looped to its full timeout, because the
+    calibrated tile crop's static content dilutes the dots below the 6.0
+    mean-distance threshold. The proof therefore compares the secret-entry
+    band -- straddling the calibrated crop's bottom edge -- against a live
+    pre-secret baseline.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.root.chmod(0o700)
+        # read_ppm requires a plausible screen (>= 320x200). The crop's
+        # bottom edge (y = 160) bisects the fixture's secret-entry row, as
+        # the production tile crop's bottom edge does.
+        self.reference = mock.Mock(
+            geometry=(320, 200), crop=(40, 40, 160, 120))
+
+    @staticmethod
+    def _frame(width, height, dot_value):
+        """A textured full frame; dot_value != 0 draws dots at rows 150-157,
+        inside the fixture band (y 112-200) exactly as production dots render
+        just beneath the calibrated crop's bottom edge."""
+        rows = []
+        for y in range(height):
+            base = 40 + (y % 8) * 8
+            for x in range(width):
+                value = dot_value if (
+                    dot_value and 150 <= y < 158 and x % 4 < 2
+                ) else base
+                rows.append(bytes((value, value, value)))
+        return (
+            f"P6\n{width} {height}\n255\n".encode("ascii") + b"".join(rows))
+
+    @staticmethod
+    def _qmp_serving(frames):
+        remaining_frames = list(frames)
+        qmp = mock.Mock()
+
+        def screenshot(path):
+            content = (
+                remaining_frames.pop(0)
+                if len(remaining_frames) > 1 else remaining_frames[0])
+            Path(path).write_bytes(content)
+
+        qmp.screenshot.side_effect = screenshot
+        return qmp
+
+    def test_secret_entry_band_straddles_calibrated_crop_bottom(self):
+        reference = mock.Mock(
+            crop=(460, 150, 360, 360), geometry=(1280, 800))
+        self.assertEqual(
+            (460, 462, 360, 96), subject._secret_entry_band(reference))
+
+    def test_secret_entry_band_clamps_to_frame(self):
+        reference = mock.Mock(crop=(0, 700, 100, 90), geometry=(1280, 800))
+        self.assertEqual(
+            (0, 742, 100, 58), subject._secret_entry_band(reference))
+
+    def test_band_baseline_proves_departure_on_masked_dots(self):
+        empty = self._frame(320, 200, 0)
+        dotted = self._frame(320, 200, 230)
+        baseline = subject._capture_secret_entry_baseline(
+            self._qmp_serving([empty]), self.root, self.reference)
+        self.assertIsNotNone(baseline)
+        now = [0.0]
+        subject._prove_secret_entry_departure(
+            self._qmp_serving([dotted]),
+            self.root,
+            self.reference,
+            timeout=30.0,
+            clock=lambda: now[0],
+            pause=lambda delay: now.__setitem__(0, now[0] + delay),
+            baseline=baseline,
+        )
+        # Every proof frame was ephemeral.
+        self.assertEqual(
+            [], [p for p in self.root.iterdir() if p.suffix == ".ppm"])
+
+    def test_band_baseline_still_requires_visible_change(self):
+        empty = self._frame(320, 200, 0)
+        baseline = subject._capture_secret_entry_baseline(
+            self._qmp_serving([empty]), self.root, self.reference)
+        self.assertIsNotNone(baseline)
+        now = [0.0]
+        with self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError,
+                "departure was not proved"):
+            subject._prove_secret_entry_departure(
+                self._qmp_serving([empty]),
+                self.root,
+                self.reference,
+                timeout=3.0,
+                clock=lambda: now[0],
+                pause=lambda delay: now.__setitem__(0, now[0] + delay),
+                baseline=baseline,
+            )
+
+    def test_baseline_capture_failure_returns_none_and_never_raises(self):
+        qmp = mock.Mock()
+        qmp.screenshot.side_effect = RuntimeError("qmp down")
+        self.assertIsNone(subject._capture_secret_entry_baseline(
+            qmp, self.root, self.reference))
+
+    def test_baseline_capture_rejects_geometry_drift(self):
+        wrong = self._frame(320, 208, 0)
+        self.assertIsNone(subject._capture_secret_entry_baseline(
+            self._qmp_serving([wrong]), self.root, self.reference))
+
+    def test_without_baseline_the_legacy_comparison_is_unchanged(self):
+        empty = self._frame(320, 200, 0)
+        from homelab.vm.windows_gui import crop_image, read_ppm
+        staging = self.root / "reference.ppm"
+        staging.write_bytes(empty)
+        self.reference.image = crop_image(
+            read_ppm(staging), self.reference.crop)
+        staging.unlink()
+        now = [0.0]
+        with self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError,
+                "departure was not proved"):
+            subject._prove_secret_entry_departure(
+                self._qmp_serving([empty]),
+                self.root,
+                self.reference,
+                timeout=3.0,
+                clock=lambda: now[0],
+                pause=lambda delay: now.__setitem__(0, now[0] + delay),
+            )
 
 
 if __name__ == "__main__":

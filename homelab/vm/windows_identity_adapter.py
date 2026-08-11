@@ -96,6 +96,24 @@ CONTROLLER_AUTH_TIMEOUT_SECONDS = 60.0
 # the adapter timeout still binds this to the GUI reauthentication budget.
 CONTROLLER_AUTH_POST_ARM_TIMEOUT_SECONDS = 240.0
 
+# Candidate-(b) gate-6 fix. The calibrated post-join sign-in crop is an
+# account-tile region whose bottom edge bisects the secret-entry row: the
+# tracked reference image (post-join-operator-sign-in.ppm, crop
+# 460,150,360,360 on 1280x800) shows the "Password" hint truncated at its
+# last rows. More than 90% of that crop is static avatar/username content,
+# so 32 masked dots move the crop's mean RGB distance by only ~1-2 units --
+# below the 6.0 departure threshold -- and the departure proof loops even
+# when the keystrokes land. Departure is therefore proved over a horizontal
+# band straddling the crop's bottom edge, which contains the whole
+# secret-entry row.
+SECRET_ENTRY_BAND_HALF_HEIGHT = 48
+# Band frames are compared against a live pre-secret baseline of the same
+# band captured just after the SAS re-establishes the form. QEMU screendumps
+# are pixel-exact (identical screens give distance 0.0) and a blinking caret
+# contributes well under one unit over the band, while masked dots
+# contribute several, so a small threshold separates them decisively.
+SECRET_ENTRY_BASELINE_DISTANCE = 1.0
+
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
     """A required production boundary could not be proved."""
@@ -368,6 +386,41 @@ _ACTIONS = {
 }
 
 
+def _secret_entry_band(reference) -> tuple[int, int, int, int]:
+    """The secret-entry row derived from the calibrated sign-in crop."""
+    x, y, width, height = reference.crop
+    _frame_width, frame_height = reference.geometry
+    top = max(0, y + height - SECRET_ENTRY_BAND_HALF_HEIGHT)
+    bottom = min(frame_height, y + height + SECRET_ENTRY_BAND_HALF_HEIGHT)
+    return (x, top, width, bottom - top)
+
+
+def _capture_secret_entry_baseline(qmp, evidence: Path, reference):
+    """Best-effort pre-secret band baseline of the re-established form.
+
+    Captured between the SAS and type_secret, so it can never contain
+    secret material, and ephemeral: the staging frame is deleted at once.
+    Returns None on any failure so the departure proof falls back to the
+    calibrated reference comparison instead of displacing the submission;
+    never raises (the _retain_single_frame contract).
+    """
+    path = evidence / f".secret-baseline-{uuid.uuid4().hex}.ppm"
+    try:
+        try:
+            qmp.screenshot(path)
+            os.chmod(path, 0o600)
+            full = read_ppm(path)
+            if (full.width, full.height) != reference.geometry:
+                return None
+            return crop_image(full, _secret_entry_band(reference))
+        finally:
+            path.unlink(missing_ok=True)
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException:
+        return None
+
+
 def _prove_secret_entry_departure(
     qmp,
     evidence: Path,
@@ -376,11 +429,26 @@ def _prove_secret_entry_departure(
     timeout: float,
     clock: Callable[[], float],
     pause: Callable[[float], None] = time.sleep,
+    baseline=None,
 ) -> None:
-    """Ephemerally prove two frames departed the empty password target."""
+    """Ephemerally prove two frames departed the empty password target.
+
+    With a band baseline (candidate-(b) gate-6 fix), departure means the
+    live secret-entry band visibly changed from its just-captured empty
+    state; without one, the legacy comparison against the calibrated crop
+    applies.
+    """
     deadline = clock() + timeout
     consecutive = 0
     previous = None
+    if baseline is None:
+        crop = reference.crop
+        expected = reference.image
+        threshold = 6.0
+    else:
+        crop = _secret_entry_band(reference)
+        expected = baseline
+        threshold = SECRET_ENTRY_BASELINE_DISTANCE
     while clock() < deadline:
         path = evidence / f".secret-entry-{uuid.uuid4().hex}.ppm"
         try:
@@ -393,10 +461,10 @@ def _prove_secret_entry_departure(
             ):
                 raise WindowsIdentityAdapterError(
                     "post-secret screenshot geometry differs from reference")
-            actual = crop_image(full_actual, reference.crop)
+            actual = crop_image(full_actual, crop)
             departed = (
                 useful_frame(actual)
-                and image_distance(actual, reference.image) > 6.0
+                and image_distance(actual, expected) > threshold
             )
         finally:
             path.unlink(missing_ok=True)
@@ -1046,10 +1114,19 @@ class NativeWindowsAcceptanceAdapter:
                 frames_enabled)
 
         def submit_secret() -> None:
+            departure_baseline = None
             if domain_operator:
                 # The arm(s) above can outlast the sign-in form; re-establish
                 # it before the secret is typed. See reestablish_sign_in_form.
                 reestablish_sign_in_form()
+                # Candidate-(b) gate-6 fix: baseline the departure proof on
+                # the live post-SAS secret-entry band instead of the
+                # calibrated tile crop, whose static avatar/username content
+                # dilutes masked dots below the departure threshold (see
+                # SECRET_ENTRY_BAND_HALF_HEIGHT). Pre-secret and ephemeral;
+                # None on failure falls back to the legacy comparison.
+                departure_baseline = _capture_secret_entry_baseline(
+                    self._qmp(), evidence, sign_in)
             _run_local_reauthentication_operation(
                 "type-secret", interaction.disable_durable_capture)
             _run_local_reauthentication_operation(
@@ -1076,6 +1153,7 @@ class NativeWindowsAcceptanceAdapter:
                     sign_in,
                     timeout=remaining("type-secret"),
                     clock=self.clock,
+                    baseline=departure_baseline,
                 ),
             )
 
