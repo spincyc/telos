@@ -94,6 +94,11 @@ public static class TelosCredentialLogon {
         public Int32 HighPart;
     }
     [StructLayout(LayoutKind.Sequential)]
+    public struct SID_AND_ATTRIBUTES {
+        public IntPtr Sid;
+        public UInt32 Attributes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     public struct TOKEN_STATISTICS {
         public LUID TokenId;
         public LUID AuthenticationId;
@@ -139,6 +144,49 @@ public static class TelosCredentialLogon {
     public static extern Int32 LsaFreeReturnBuffer(IntPtr buffer);
     [DllImport("kernel32.dll")]
     public static extern bool CloseHandle(IntPtr handle);
+    // Membership by raw token groups. WindowsIdentity.Groups omits the
+    // deny-only BUILTIN\Administrators SID that a UAC-filtered interactive
+    // admin token carries (attempt 46 reported False for the provisioned
+    // operator, who TelosJoin verifiably added to local Administrators).
+    // Reading TokenGroups directly counts the SID's PRESENCE regardless of
+    // SE_GROUP_USE_FOR_DENY_ONLY -- the correct "is a local admin" test.
+    // Uses only Marshal primitives + SecurityIdentifier(IntPtr) and derives
+    // the array offset/stride from IntPtr.Size, so it is x86/x64-correct
+    // without hand-computed struct offsets. Returns false on any failure.
+    public static bool TokenHasGroup(IntPtr token, string sid) {
+        int needed = 0;
+        // TokenGroups = 2.
+        GetTokenInformation(token, 2, IntPtr.Zero, 0, out needed);
+        if (needed <= 0) { return false; }
+        IntPtr buffer = Marshal.AllocHGlobal(needed);
+        try {
+            int returned = 0;
+            if (!GetTokenInformation(token, 2, buffer, needed, out returned)) {
+                return false;
+            }
+            int count = Marshal.ReadInt32(buffer, 0);
+            // TOKEN_GROUPS: DWORD GroupCount, then a pointer-aligned array of
+            // SID_AND_ATTRIBUTES (array offset == IntPtr.Size on both x86/x64).
+            int arrayOffset = IntPtr.Size;
+            int entrySize = Marshal.SizeOf(typeof(SID_AND_ATTRIBUTES));
+            for (int i = 0; i < count; i++) {
+                IntPtr sidPtr = Marshal.ReadIntPtr(
+                    buffer, arrayOffset + i * entrySize);
+                if (sidPtr == IntPtr.Zero) { continue; }
+                try {
+                    System.Security.Principal.SecurityIdentifier current =
+                        new System.Security.Principal.SecurityIdentifier(
+                            sidPtr);
+                    if (current.Value == sid) { return true; }
+                }
+                catch { }
+            }
+            return false;
+        }
+        finally {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
     // Capture the Win32 error in the same interop frame as the call:
     // attempts 39/40 proved a script-side read even on the next statement
     // renders 0, because the PowerShell engine runs interop of its own
@@ -322,16 +370,13 @@ public static class TelosCredentialLogon {
             }
             # The raw local-Administrators SID is present in the token
             # (deny-only when the logon is UAC-filtered) exactly when the
-            # account is a member -- unlike IsInRole, which reports false
-            # for a filtered admin. Match the SID directly.
+            # account is a member. WindowsIdentity.Groups omits the
+            # deny-only SID (attempt 46 -> False for the provisioned
+            # operator), so read the raw TokenGroups: presence with ANY
+            # attributes is the correct membership test.
             $administratorsSid = '.S-1-5-32-544'.Substring(1)
-            $isAdministrator = $false
-            foreach ($group in $identity.Groups) {
-                if ([string]$group.Value -ceq $administratorsSid) {
-                    $isAdministrator = $true
-                    break
-                }
-            }
+            $isAdministrator = [TelosCredentialLogon]::TokenHasGroup(
+                $token, $administratorsSid)
             # Prove the credential authenticated as the intended account.
             # Compare the token's own name -- offline-safe, no DC lookup --
             # by account and by domain scope. Kerberos logons can render the

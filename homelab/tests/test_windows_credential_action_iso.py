@@ -157,12 +157,30 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertIn("$deniedCodes -contains [int]$logonError", script)
         self.assertIn(
             "failure_classification = 'windows-logon-failure'", script)
-        # Local-admin membership via the raw token SID, never IsInRole
-        # (which reports false for a UAC-filtered admin token).
+        # Local-admin membership via the RAW token groups, never IsInRole
+        # (false for a UAC-filtered admin) and never WindowsIdentity.Groups
+        # (omits the deny-only Administrators SID -- attempt 46 reported
+        # False for the provisioned operator). Presence with any attributes
+        # is the correct test.
         self.assertNotIn("WindowsBuiltInRole]::Administrator", script)
         self.assertNotIn(".IsInRole(", script)
-        self.assertIn("foreach ($group in $identity.Groups) {", script)
-        self.assertIn("-ceq $administratorsSid", script)
+        self.assertNotIn("foreach ($group in $identity.Groups)", script)
+        self.assertIn(
+            "public static bool TokenHasGroup(IntPtr token, string sid) {",
+            script)
+        self.assertIn("public struct SID_AND_ATTRIBUTES {", script)
+        # TokenGroups = 2, pointer-sized array offset, SecurityIdentifier
+        # from the raw PSID -- no hand-computed struct offsets.
+        self.assertIn("GetTokenInformation(token, 2,", script)
+        self.assertIn("int arrayOffset = IntPtr.Size;", script)
+        self.assertIn(
+            "Marshal.SizeOf(typeof(SID_AND_ATTRIBUTES))", script)
+        self.assertIn(
+            "new System.Security.Principal.SecurityIdentifier(\n"
+            "                            sidPtr)", script)
+        self.assertIn(
+            "$isAdministrator = [TelosCredentialLogon]::TokenHasGroup(\n"
+            "                $token, $administratorsSid)", script)
         # Offline-safe identity match handling BOTH name forms: NetBIOS
         # (DOMAIN\user) and Kerberos UPN (user@domain). Attempt 43's token
         # may have rendered the UPN form, which the old '\'-only split
