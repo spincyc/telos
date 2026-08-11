@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260811.003`
+Document version: `20260811.004`
 
 Status: active implementation
 
@@ -242,21 +242,32 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   the guest is not enumerating the GPT after the PCIe hotplug. A
   `partprobe`/`blockdev --rereadpt`/`udevadm settle` retry loop
   (`490c313`, `1e23b55`) did NOT surface the partitions, so partprobe
-  timing is not the cause. NEXT: this needs an NVMe-namespace rescan
-  (`nvme ns-rescan /dev/nvme0` or `echo 1 > /sys/class/nvme/nvme0/rescan_controller`),
-  or attaching the target as a hotplug-capable virtio-blk instead of nvme,
-  or a cold-plug-behind-a-disabled-boot-entry approach. (2) AUDIT: every
-  run's terminal error is `simulation_overlay` "cannot inspect process
-  <pid> file descriptors" (phase arch-install-driving; the pid increments
-  each run). This is the fail-closed overlay-ownership audit
-  (`audit_live_process`, arch_install_run.py:521/532) hitting a same-uid
-  process whose `/proc/<pid>/fd` it cannot read. It is a real strictness
-  issue for this runner: do NOT weaken the security boundary, but the
-  arch runner's driving-phase audit should tolerate a genuinely
-  un-inspectable transient process (the FileNotFoundError skip is not
-  enough; an exiting process can raise a different OSError) OR run on a
-  quiet host. Both seams are code-level and well-localized; the whole
-  transport + boot + login + hot-attach chain is proven.
+  timing is not the cause. FIX APPLIED (pending live validation): the
+  `confirm_disk` step now forces an NVMe-namespace rescan BEFORE partprobe —
+  it derives the controller name from the namespace device
+  (`base=$(basename "$dev"); ctrl=${base%n*}`, nvme0n1 -> nvme0) and issues
+  both `echo 1 > /sys/class/nvme/$ctrl/rescan_controller` and
+  `nvme ns-rescan /dev/$ctrl` best-effort inside the existing reread loop
+  (arch_install_run.py; test `test_drive_installer...` asserts
+  `rescan_controller`/`nvme ns-rescan`/`ctrl=${base%n*}`). If a namespace
+  rescan still does not surface the GPT on the next live run, the fallbacks
+  are a hotplug-capable virtio-blk target or a cold-plug-behind-a-disabled-
+  boot-entry approach. (2) AUDIT: every run's terminal error was
+  `simulation_overlay` "cannot inspect process <pid> file descriptors"
+  (phase arch-install-driving; the pid incremented each run) — the
+  fail-closed overlay-ownership audit hitting a same-uid transient process
+  whose `/proc/<pid>/fd` it could not read. FIX APPLIED (pending live
+  validation): `canonical_disk_users` now re-checks a same-EUID
+  un-inspectable process over a tiny bounded budget
+  (`_PROCESS_INSPECT_ATTEMPTS`/`_PROCESS_INSPECT_BACKOFF_SECONDS`) and skips
+  it ONLY if it exits within the window (a process that has exited holds no
+  descriptors on the canonical disk); a process that stays live and
+  un-inspectable still fails closed, so the security boundary is unchanged.
+  Two new tests pin both halves:
+  `test_same_user_unidentified_live_process_fails_closed` and
+  `test_transient_unidentified_process_that_exits_is_skipped`. Both seams
+  now have code fixes with unit coverage; the whole transport + boot +
+  login + hot-attach chain was already proven live and unchanged.
 
 - Gate 6 operator logon — narrowed with strong evidence 2026-08-10
   (attempt `20260810T221525Z-f22a898acb74`, first with the realm fix and
@@ -355,9 +366,22 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   `test_reviewed_submit_focus_timeout_never_issues_return`); or (b) verify
   the departure-proof `sign_in` reference geometry/crop still matches the
   post-SAS field (a stale reference would also loop). Add an
-  after-`type_secret` frame to confirm which before choosing. This is the
-  only remaining step for gate 6; the root cause and the form recovery are
-  solved.
+  after-`type_secret` frame to confirm which before choosing.
+  DIAGNOSTIC IN PLACE (pending the next live run): `submit_secret` now
+  retains a secret-safe `identity-after-type-secret.ppm` frame BETWEEN
+  `type_secret` and `_prove_secret_entry_departure`
+  (windows_identity_adapter.py, gated on `post_join_retain_submit_frames`
+  so the mock-plan tests skip it; suite green). That frame is decisive
+  between the two candidates: masked dots present -> field receives input,
+  the departure-proof reference crop is stale (candidate b); empty field or
+  lock screen -> keystrokes are not landing, apply the fixed bounded
+  settle-before-`type_secret` (candidate a). Candidate (a) was deliberately
+  NOT pre-applied: adding a settle sleep perturbs the sleep-count structure
+  that `test_reviewed_submit_focus_timeout_never_issues_return` depends on,
+  and the choice between (a) and (b) is unfalsifiable without this frame --
+  so the next live run reads the frame first, exactly as the receipt
+  mystery was cracked by instrument-then-rerun. This is the only remaining
+  step for gate 6; the root cause and the form recovery are solved.
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered

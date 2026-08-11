@@ -8,7 +8,17 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
+
+# A same-EUID process that is momentarily un-inspectable (mid-exec, or a
+# short-lived process the kernel is tearing down) is re-checked over this small
+# budget before the audit fails closed. A process that exits within the window
+# holds no descriptors on the canonical disk, so skipping it is sound; a process
+# that stays live and un-inspectable still fails closed, so the boundary is
+# unchanged. The budget is tiny so a real un-inspectable process is not masked.
+_PROCESS_INSPECT_ATTEMPTS = 6
+_PROCESS_INSPECT_BACKOFF_SECONDS = 0.05
 
 
 class CanonicalDiskInUse(RuntimeError):
@@ -34,6 +44,72 @@ def _process_identity(process: Path) -> tuple[bool, bool]:
     return bool(values), any(name in value for value in values for name in names)
 
 
+def _process_is_live(process: Path) -> bool:
+    """True while ``/proc/<pid>`` still resolves to an existing process."""
+    try:
+        process.stat()
+    except OSError:
+        return False
+    return True
+
+
+def _disk_user_label(process: Path, wanted: os.stat_result) -> str | None:
+    """Return a label if ``process`` holds ``wanted`` open, else ``None``.
+
+    Raises ``RuntimeError`` when a same-EUID, possibly-QEMU process is
+    un-inspectable and so cannot be cleared of holding the canonical disk. A
+    positively identified non-QEMU same-EUID process may have inaccessible
+    descriptors (for example, a non-dumpable user systemd); those are ignored so
+    the check works without sudo.
+    """
+    try:
+        process_uid = process.stat().st_uid
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot inspect process {process.name} ownership"
+        ) from error
+    identified, is_qemu = _process_identity(process)
+    # A different EUID cannot open our disk under our permissions, and a
+    # positively identified non-QEMU process is not a storage backend; both may
+    # be ignored when un-inspectable. Everything else must be inspected.
+    tolerant = process_uid != os.geteuid() or (identified and not is_qemu)
+    descriptors = process / "fd"
+    try:
+        open_files = list(descriptors.iterdir())
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        if tolerant:
+            return None
+        raise RuntimeError(
+            f"cannot inspect process {process.name} file descriptors"
+        ) from error
+    for descriptor in open_files:
+        try:
+            opened = descriptor.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if tolerant:
+                continue
+            raise RuntimeError(
+                f"cannot inspect process {process.name} descriptor {descriptor.name}"
+            ) from error
+        if (opened.st_dev, opened.st_ino) != (wanted.st_dev, wanted.st_ino):
+            continue
+        label = process.name
+        try:
+            command = (process / "comm").read_text().strip()
+            if command:
+                label = f"{process.name} ({command})"
+        except OSError:
+            pass
+        return label
+    return None
+
+
 def canonical_disk_users(path: Path, *, proc_root: Path = Path("/proc")) -> list[str]:
     """Best-effort guard against normal and QEMU opens of a user-mode VM disk.
 
@@ -43,6 +119,12 @@ def canonical_disk_users(path: Path, *, proc_root: Path = Path("/proc")) -> list
     may have inaccessible descriptors (for example, a non-dumpable user
     systemd); those descriptors are ignored so the check works without sudo.
     This is not a defense against a malicious same-user or privileged process.
+
+    A same-EUID process that is only *momentarily* un-inspectable — a
+    short-lived process the kernel is tearing down, common on a busy host — is
+    re-checked over a small budget. If it exits within the window it held no
+    descriptors on the canonical disk and is skipped; if it stays live and
+    un-inspectable the audit still fails closed, so the boundary is unchanged.
     """
     try:
         wanted = path.stat()
@@ -54,48 +136,23 @@ def canonical_disk_users(path: Path, *, proc_root: Path = Path("/proc")) -> list
     for process in processes:
         if not process.name.isdigit():
             continue
-        try:
-            process_uid = process.stat().st_uid
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise RuntimeError(
-                f"cannot inspect process {process.name} ownership"
-            ) from error
-        identified, is_qemu = _process_identity(process)
-        descriptors = process / "fd"
-        try:
-            open_files = list(descriptors.iterdir())
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            if process_uid != os.geteuid() or (identified and not is_qemu):
-                continue
-            raise RuntimeError(
-                f"cannot inspect process {process.name} file descriptors"
-            ) from error
-        for descriptor in open_files:
+        for attempt in range(_PROCESS_INSPECT_ATTEMPTS):
             try:
-                opened = descriptor.stat()
-            except FileNotFoundError:
+                label = _disk_user_label(process, wanted)
+            except RuntimeError:
+                # A process that has since exited holds nothing on the canonical
+                # disk. Only a process that stays live through the whole budget
+                # and remains un-inspectable fails the audit closed.
+                if not _process_is_live(process):
+                    label = None
+                    break
+                if attempt + 1 == _PROCESS_INSPECT_ATTEMPTS:
+                    raise
+                time.sleep(_PROCESS_INSPECT_BACKOFF_SECONDS)
                 continue
-            except OSError as error:
-                if process_uid != os.geteuid() or (identified and not is_qemu):
-                    continue
-                raise RuntimeError(
-                    f"cannot inspect process {process.name} descriptor {descriptor.name}"
-                ) from error
-            if (opened.st_dev, opened.st_ino) != (wanted.st_dev, wanted.st_ino):
-                continue
-            label = process.name
-            try:
-                command = (process / "comm").read_text().strip()
-                if command:
-                    label = f"{process.name} ({command})"
-            except OSError:
-                pass
-            users.append(label)
             break
+        if label is not None:
+            users.append(label)
     return users
 
 

@@ -201,6 +201,65 @@ class TestControllerOverlay(unittest.TestCase):
             overlay.prepare()
         overlay.close()
 
+    def test_same_user_unidentified_live_process_fails_closed(self):
+        # A same-EUID process with no readable identity and inaccessible
+        # descriptors cannot be cleared of holding the canonical disk. As long
+        # as it stays live, the audit must fail closed even after the transient
+        # re-check budget, or the security boundary would be weakened.
+        proc = self.root / "proc"
+        pid = proc / "5150"
+        (pid / "fd").mkdir(parents=True)
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        real_iterdir = Path.iterdir
+
+        def iterdir(path):
+            if Path(path) == pid / "fd":
+                raise PermissionError("non-dumpable, unidentified")
+            return real_iterdir(path)
+
+        with mock.patch.object(Path, "iterdir", new=iterdir), \
+             mock.patch.object(simulation_overlay.time, "sleep"), \
+             mock.patch.object(simulation_overlay.subprocess, "run"):
+            with self.assertRaisesRegex(RuntimeError, "cannot inspect"):
+                overlay.prepare()
+
+    def test_transient_unidentified_process_that_exits_is_skipped(self):
+        # A same-EUID unidentified process that is momentarily un-inspectable
+        # but exits within the re-check window held no descriptors on the
+        # canonical disk, so it is skipped rather than failing the audit.
+        proc = self.root / "proc"
+        pid = proc / "6270"
+        (pid / "fd").mkdir(parents=True)
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.run, proc_root=proc)
+        real_iterdir = Path.iterdir
+        real_stat = Path.stat
+        pid_stats = {"count": 0}
+
+        def iterdir(path):
+            if Path(path) == pid / "fd":
+                raise PermissionError("un-inspectable while tearing down")
+            return real_iterdir(path)
+
+        # The ownership stat during inspection succeeds (the process is still
+        # live), the descriptor read raises, and by the liveness re-check the
+        # pid directory no longer stats: the process has exited, so the audit
+        # treats it as gone rather than failing closed.
+        def stat(path):
+            if Path(path) == pid:
+                pid_stats["count"] += 1
+                if pid_stats["count"] > 1:
+                    raise FileNotFoundError(path)
+            return real_stat(path)
+
+        with mock.patch.object(Path, "iterdir", new=iterdir), \
+             mock.patch.object(Path, "stat", new=stat), \
+             mock.patch.object(simulation_overlay.time, "sleep"), \
+             mock.patch.object(simulation_overlay.subprocess, "run"):
+            overlay.prepare()
+        overlay.close()
+
     def test_group_writable_canonical_disk_is_rejected(self):
         self.disk.chmod(0o660)
         proc = self.root / "proc"

@@ -430,6 +430,14 @@ class ArchInstallRunTests(unittest.TestCase):
         self.assertLess(attach_index, installer_index)
         self.assertIn(b"bash /root/arch-install.sh", stdin.data)
         self.assertIn(b"lsblk -dno SERIAL", stdin.data)
+        # After the hotplug the disk confirmation forces an NVMe namespace
+        # rescan before partprobe, because partprobe alone re-reads a table the
+        # controller has not re-enumerated. The controller name is derived from
+        # the namespace device (nvme0n1 -> nvme0) and both the sysfs and
+        # nvme-cli rescan paths are issued best-effort.
+        self.assertIn(b"rescan_controller", stdin.data)
+        self.assertIn(b"nvme ns-rescan", stdin.data)
+        self.assertIn(b"ctrl=${base%n*}", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
 
     def test_drive_installer_answers_the_getty_login_then_hot_attaches(self):

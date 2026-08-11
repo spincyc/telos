@@ -1055,6 +1055,19 @@ class NativeWindowsAcceptanceAdapter:
             _run_local_reauthentication_operation(
                 "type-secret", lambda: interaction.type_secret(
                     credential, timeout=remaining("type-secret")))
+            # Secret-safe disambiguation frame captured BEFORE the departure
+            # proof. The remaining gate-6 question is whether, after the SAS
+            # restores the form, the secret keystrokes land: if this frame
+            # already shows masked dots the field is receiving input and a
+            # looping departure proof implicates a stale reference crop; if it
+            # shows an empty field (or the lock screen) the keystrokes are not
+            # landing and the fix is a settle/re-focus before type_secret.
+            # Additive instrumentation only: no sleep, no budget draw, no change
+            # to the submit sequence. Gated on the integer frame-count flag, so
+            # the mock-plan tests skip it exactly like the other retain frames.
+            _retain_single_frame(
+                self._qmp(), evidence, "after-type-secret",
+                getattr(plan, "post_join_retain_submit_frames", 0))
             _run_local_reauthentication_operation(
                 "type-secret",
                 lambda: _prove_secret_entry_departure(

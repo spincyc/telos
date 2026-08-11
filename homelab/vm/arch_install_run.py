@@ -306,15 +306,26 @@ def drive_installer(
     capture.chmod(0o600)
     # After the PCIe hotplug the kernel sees the disk but has not re-read its
     # GPT, so its Windows partitions are not yet enumerated (arch-second-verify
-    # saw "/dev/nvme0n1 has no partitions"). Resolve the device by serial, then
-    # force a partition-table reread and settle udev before the verifier runs.
+    # saw "/dev/nvme0n1 has no partitions"). partprobe/blockdev re-read a table
+    # the NVMe controller has not re-enumerated after a live namespace attach, so
+    # they alone are insufficient. Force an NVMe namespace rescan first — via the
+    # controller's sysfs rescan_controller attribute and, when present, the
+    # nvme-cli ns-rescan — then re-read the partition table and settle udev. The
+    # controller name is the namespace device with its trailing nN stripped
+    # (nvme0n1 -> nvme0). Every rescan path is best-effort so a non-NVMe transport
+    # (or a kernel without the sysfs attribute) still falls through to partprobe.
     confirm_disk = (
         f"for _ in $(seq 1 30); do "
         f"lsblk -dno SERIAL | grep -qx {serial} && break; sleep 1; done; "
         f"dev=$(lsblk -dno NAME,SERIAL | "
         f"awk -v s={serial} '$2==s{{print \"/dev/\"$1}}'); "
         f"if [ -n \"$dev\" ]; then "
+        f"base=$(basename \"$dev\"); ctrl=${{base%n*}}; "
         f"for _ in $(seq 1 20); do "
+        f"[ -w /sys/class/nvme/$ctrl/rescan_controller ] "
+        f"&& echo 1 > /sys/class/nvme/$ctrl/rescan_controller 2>/dev/null "
+        f"|| true; "
+        f"nvme ns-rescan /dev/$ctrl 2>/dev/null || true; "
         f"partprobe \"$dev\" 2>/dev/null || "
         f"blockdev --rereadpt \"$dev\" 2>/dev/null || true; "
         f"udevadm settle 2>/dev/null || true; "
