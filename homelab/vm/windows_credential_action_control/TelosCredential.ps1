@@ -73,141 +73,43 @@ try {
     $failureStage = 'post-release-setup'
 
     $failureStage = 'logon-compile'
+    # Token-based credential proof. Attempts 39-42 proved
+    # CreateProcessWithLogonW is a dead end here: it returns FALSE with an
+    # authoritative in-frame last error of 0 even after LogonUser(INTERACTIVE)
+    # succeeded and the Secondary Logon service was started -- a mechanism
+    # failure of the spawn primitive, not the credential. LogonUser is the
+    # correct primitive for "prove these credentials obtain an
+    # online/interactive logon": it validates the credential against the DC
+    # (or the local cache when offline), and its token carries the
+    # authenticated SID, the authentication package (Kerberos => connected,
+    # NTLM => cached), and the resolved group memberships -- everything the
+    # checks judge -- with no interactive-process dependency.
     $source = @'
 using System;
 using System.Runtime.InteropServices;
 public static class TelosCredentialLogon {
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct STARTUPINFO {
-        public Int32 cb;
-        public string lpReserved;
-        public string lpDesktop;
-        public string lpTitle;
-        public Int32 dwX;
-        public Int32 dwY;
-        public Int32 dwXSize;
-        public Int32 dwYSize;
-        public Int32 dwXCountChars;
-        public Int32 dwYCountChars;
-        public Int32 dwFillAttribute;
-        public Int32 dwFlags;
-        public Int16 wShowWindow;
-        public Int16 cbReserved2;
-        public IntPtr lpReserved2;
-        public IntPtr hStdInput;
-        public IntPtr hStdOutput;
-        public IntPtr hStdError;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION {
-        public IntPtr hProcess;
-        public IntPtr hThread;
-        public Int32 dwProcessId;
-        public Int32 dwThreadId;
-    }
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern bool CreateProcessWithLogonW(
-        string user, string domain, string password, Int32 logonFlags,
-        string application, string commandLine, Int32 creationFlags,
-        IntPtr environment, string currentDirectory,
-        ref STARTUPINFO startupInfo, out PROCESS_INFORMATION processInfo);
-    // Attempts 39/40 (guest_code=0 despite SetLastError=true and an
-    // immediately-following read): PowerShell executes engine interop of
-    // its own between any two script statements, which can reset the
-    // thread's saved Win32 error before Marshal.GetLastWin32Error() runs
-    // in script code. Capturing the error HERE, in the same interop frame
-    // as the native call, is immune to that.
-    public static bool CreateProcessWithLogonAndError(
-        string user, string domain, string password, Int32 logonFlags,
-        string application, string commandLine, Int32 creationFlags,
-        IntPtr environment, string currentDirectory,
-        ref STARTUPINFO startupInfo, out PROCESS_INFORMATION processInfo,
-        out Int32 logonError) {
-        bool created = CreateProcessWithLogonW(
-            user, domain, password, logonFlags, application, commandLine,
-            creationFlags, environment, currentDirectory,
-            ref startupInfo, out processInfo);
-        logonError = created ? 0 : Marshal.GetLastWin32Error();
-        return created;
-    }
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool LogonUser(
         string user, string domain, string password,
         Int32 logonType, Int32 logonProvider, out IntPtr token);
-    // Authoritative credential probe. Attempts 39-41 saw
-    // CreateProcessWithLogonW return FALSE with an in-frame last error of
-    // 0 -- the signature of a mechanism failure (it uniquely needs the
-    // Secondary Logon service) rather than a rejected credential, which
-    // sets a real error. LogonUser has no such dependency and reliably
-    // reports its Win32 error, so it decides credential-or-mechanism in
-    // one shot; the token is closed immediately (validation only).
-    public static bool ValidateLogon(
-        string user, string domain, string password,
-        Int32 logonType, out Int32 logonError) {
-        IntPtr token = IntPtr.Zero;
-        bool ok = LogonUser(user, domain, password, logonType, 0, out token);
-        logonError = ok ? 0 : Marshal.GetLastWin32Error();
-        if (ok && token != IntPtr.Zero) {
-            CloseHandle(token);
-        }
-        return ok;
-    }
-    [DllImport("kernel32.dll")]
-    public static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 ms);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool TerminateProcess(IntPtr handle, UInt32 exitCode);
     [DllImport("kernel32.dll")]
     public static extern bool CloseHandle(IntPtr handle);
+    // Capture the Win32 error in the same interop frame as the call:
+    // attempts 39/40 proved a script-side read even on the next statement
+    // renders 0, because the PowerShell engine runs interop of its own
+    // between statements.
+    public static bool LogonUserAndError(
+        string user, string domain, string password, Int32 logonType,
+        out IntPtr token, out Int32 logonError) {
+        bool ok = LogonUser(user, domain, password, logonType, 0, out token);
+        logonError = ok ? 0 : Marshal.GetLastWin32Error();
+        return ok;
+    }
 }
 '@
     Add-Type -TypeDefinition $source
     $failureStage = 'logon-prepare'
 
-    # This encoded program is the only child action: observe the authenticated
-    # principal and write a public result. It never receives a credential.
-    $resultPath = Join-Path $env:SystemRoot (
-        'Temp\telos-credential-' + $nonce + '.json')
-    if (Test-Path -LiteralPath $resultPath) {
-        throw 'credential action result path already exists'
-    }
-    $child = @'
-$ErrorActionPreference='Stop'
-$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-$administratorSid='S-1-5-32-544'
-$member=$false
-$localMembers=@(Get-LocalGroupMember -SID $administratorSid -ErrorAction Stop)
-foreach ($localMember in $localMembers) {
- if ($null -ne $localMember.SID -and
-     $localMember.SID.Value -eq $identity.User.Value) {
-  $member=$true
-  break
- }
-}
-$record=[ordered]@{
- schema_version=1
- event='credential-action-result'
- nonce='__NONCE__'
- action='__ACTION__'
- result='pass'
- principal=[string]$identity.Name
- authenticated=[bool]$identity.IsAuthenticated
- local_administrators_member=[bool]$member
- authentication_type=[string]$identity.AuthenticationType
- local_profile_available=[bool](
-  -not [string]::IsNullOrWhiteSpace($env:USERPROFILE) -and
-  (Test-Path -LiteralPath $env:USERPROFILE -PathType Container)
- )
-}
-$record | ConvertTo-Json -Compress |
- Set-Content -LiteralPath '__OUTPUT__' -Encoding UTF8 -NoNewline
-'@
-    $child = $child.Replace('__NONCE__', $nonce).
-        Replace('__ACTION__', $action).
-        Replace('__DOMAIN__', $domain).
-        Replace('__OUTPUT__', $resultPath)
-    $startup = [TelosCredentialLogon+STARTUPINFO]::new()
-    $startup.cb = [Runtime.InteropServices.Marshal]::SizeOf($startup)
-    $process = [TelosCredentialLogon+PROCESS_INFORMATION]::new()
     $controllerReachable = $false
     if ($domain -ne '.') {
         $client = [Net.Sockets.TcpClient]::new()
@@ -224,10 +126,9 @@ $record | ConvertTo-Json -Compress |
         }
     }
     $gatewayReachable = $false
-    # Audit finding alongside the StrictMode sweep: with
-    # $ErrorActionPreference = 'Stop', Get-NetRoute THROWS when no default
-    # route matches (offline fault phases), which would fail the whole
-    # action instead of recording gateway_reachable = false.
+    # With $ErrorActionPreference = 'Stop', Get-NetRoute THROWS when no
+    # default route matches (offline fault phases); tolerate it and record
+    # gateway_reachable = false rather than failing the whole action.
     $gatewayRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' `
         -ErrorAction SilentlyContinue |
         Where-Object { $_.NextHop -ne '0.0.0.0' } |
@@ -248,114 +149,7 @@ $record | ConvertTo-Json -Compress |
             $ping.Dispose()
         }
     }
-    $encoded = [Convert]::ToBase64String(
-        [Text.Encoding]::Unicode.GetBytes($child))
-    $commandLine = (
-        'powershell.exe -NoLogo -NoProfile -NonInteractive ' +
-        '-ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
-    # Decide credential-vs-mechanism before the fragile spawn. LOGON32_
-    # LOGON_INTERACTIVE (2) matches CreateProcessWithLogonW's logon type,
-    # so a rejected credential or missing logon right surfaces its REAL
-    # Win32 code here (1326 bad password, 1385 no interactive right, ...);
-    # if this passes, the credential is valid and any later spawn failure
-    # is a mechanism problem, not the account. Local-rescue uses NTLM
-    # against the '.' machine domain; every domain action uses the DC.
-    $failureStage = 'logon-validate'
-    $validateError = 0
-    $validated = [TelosCredentialLogon]::ValidateLogon(
-        $username, $domain, $password, 2, [ref]$validateError)
-    if (-not $validated) {
-        $failureCode = [int]$validateError
-        throw ('credential validation logon failed: ' + $validateError)
-    }
 
-    # CreateProcessWithLogonW needs the Secondary Logon service; it is
-    # trigger-started and can be stopped under automation, which returns
-    # FALSE with no useful error (attempts 39-41). Ensure it is running
-    # now that the credential is proven valid. Failure to do so names
-    # itself rather than corrupting the spawn's diagnosis.
-    $failureStage = 'logon-seclogon'
-    $seclogon = Get-Service -Name seclogon -ErrorAction Stop
-    if ($seclogon.StartType -eq 'Disabled') {
-        Set-Service -Name seclogon -StartupType Manual -ErrorAction Stop
-    }
-    if ($seclogon.Status -ne 'Running') {
-        Start-Service -Name seclogon -ErrorAction Stop
-    }
-
-    $failureStage = 'logon-call'
-    $loginClock = [Diagnostics.Stopwatch]::StartNew()
-    $logonError = 0
-    # The error comes back through the wrapper's out parameter, captured
-    # inside the compiled interop frame: attempts 39/40 proved that even a
-    # script-side read on the very next statement renders 0, because the
-    # PowerShell engine runs interop of its own between statements.
-    $created = [TelosCredentialLogon]::CreateProcessWithLogonAndError(
-        $username, $domain, $password, 1, $null, $commandLine, 0,
-        [IntPtr]::Zero, $env:SystemRoot, [ref]$startup, [ref]$process,
-        [ref]$logonError)
-    $failureStage = 'logon-result'
-    $password = $null
-    if (-not $created) {
-        $failureCode = [int]$logonError
-        $loginClock.Stop()
-        $loginElapsedSeconds = [Math]::Round(
-            $loginClock.Elapsed.TotalSeconds, 3)
-        if ($action -eq 'uncached-domain-user-denied' -and
-                -not $controllerReachable -and $logonError -eq 1326) {
-            $denied = [ordered]@{
-                schema_version = 1
-                event = 'credential-action-result'
-                nonce = $nonce
-                action = $action
-                result = 'pass'
-                principal = $domain + '\' + $username
-                authenticated = $false
-                local_administrators_member = $false
-                authentication_type = 'None'
-                domain_reachable = $false
-                controller_reachable = $false
-                gateway_reachable = [bool]$gatewayReachable
-                login_elapsed_seconds = $loginElapsedSeconds
-                local_profile_available = $false
-                authentication_semantics = 'domain-logon-denied'
-                cache_evidence = 'offline-cache-miss-proven'
-                failure_classification = 'windows-logon-failure'
-            }
-            $serial.WriteLine(($denied | ConvertTo-Json -Compress))
-            return
-        }
-        throw ('credential action logon failed: ' +
-            $logonError)
-    }
-    $failureStage = 'child-wait'
-    try {
-        $wait = [TelosCredentialLogon]::WaitForSingleObject(
-            $process.hProcess, 30000)
-        if ($wait -ne 0) {
-            if (-not [TelosCredentialLogon]::TerminateProcess(
-                    $process.hProcess, 1)) {
-                throw 'credential action timeout cleanup failed'
-            }
-            [void][TelosCredentialLogon]::WaitForSingleObject(
-                $process.hProcess, 5000)
-            throw 'credential action timed out'
-        }
-    }
-    finally {
-        [void][TelosCredentialLogon]::CloseHandle($process.hThread)
-        [void][TelosCredentialLogon]::CloseHandle($process.hProcess)
-    }
-    $failureStage = 'result-read'
-    if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
-        throw 'credential action emitted no result'
-    }
-    $childResult = Get-Content -LiteralPath $resultPath -Raw |
-        ConvertFrom-Json
-    $loginClock.Stop()
-    $loginElapsedSeconds = [Math]::Round(
-        $loginClock.Elapsed.TotalSeconds, 3)
-    Remove-Item -LiteralPath $resultPath -Force
     if ($domain -eq '.') {
         $authenticationSemantics = 'local-account'
         $cacheEvidence = 'not-applicable'
@@ -368,25 +162,121 @@ $record | ConvertTo-Json -Compress |
         $authenticationSemantics = 'cached-domain'
         $cacheEvidence = 'offline-cache-proven'
     }
+
+    # LOGON32_LOGON_INTERACTIVE (2) so an online logon exercises Kerberos
+    # against the DC and an offline one exercises the cached-credential
+    # path -- the same distinction the check judges, without an
+    # interactive process. The Win32 error is captured in the interop
+    # frame; the token carries the SID, package and groups.
+    $failureStage = 'logon-call'
+    $loginClock = [Diagnostics.Stopwatch]::StartNew()
+    $token = [IntPtr]::Zero
+    $logonError = 0
+    $ok = [TelosCredentialLogon]::LogonUserAndError(
+        $username, $domain, $password, 2, [ref]$token, [ref]$logonError)
+    $loginClock.Stop()
+    $loginElapsedSeconds = [Math]::Round(
+        $loginClock.Elapsed.TotalSeconds, 3)
+    $password = $null
+    $failureStage = 'logon-result'
+    if (-not $ok) {
+        $failureCode = [int]$logonError
+        # Denial is only a PASS for the action that expects it: a
+        # directory account that is neither reachable at the DC nor cached
+        # on this box. Any other failure names its real Win32 code.
+        $deniedCodes = @(1326, 1311, 1355)
+        if ($action -eq 'uncached-domain-user-denied' -and
+                -not $controllerReachable -and
+                $deniedCodes -contains [int]$logonError) {
+            $denied = [ordered]@{
+                schema_version = 1
+                event = 'credential-action-result'
+                nonce = $nonce
+                action = $action
+                result = 'pass'
+                principal_sid = ''
+                principal_matches_expected = $false
+                authenticated = $false
+                local_administrators_member = $false
+                authentication_type = 'None'
+                authentication_semantics = 'domain-logon-denied'
+                cache_evidence = 'offline-cache-miss-proven'
+                login_elapsed_seconds = $loginElapsedSeconds
+                domain_reachable = $false
+                controller_reachable = $false
+                gateway_reachable = [bool]$gatewayReachable
+                failure_classification = 'windows-logon-failure'
+            }
+            $serial.WriteLine(($denied | ConvertTo-Json -Compress))
+            return
+        }
+        throw ('credential action logon failed: ' + $logonError)
+    }
+
+    $failureStage = 'identity-read'
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::new($token)
+        try {
+            $principalSid = [string]$identity.User.Value
+            $authenticated = [bool]$identity.IsAuthenticated
+            $authenticationType = [string]$identity.AuthenticationType
+            # The raw local-Administrators SID is present in the token
+            # (deny-only when the logon is UAC-filtered) exactly when the
+            # account is a member -- unlike IsInRole, which reports false
+            # for a filtered admin. Match the SID directly.
+            $administratorsSid = '.S-1-5-32-544'.Substring(1)
+            $isAdministrator = $false
+            foreach ($group in $identity.Groups) {
+                if ([string]$group.Value -ceq $administratorsSid) {
+                    $isAdministrator = $true
+                    break
+                }
+            }
+            # Prove the credential authenticated as the intended account.
+            # Compare the token's own name -- offline-safe, no DC lookup --
+            # by account tail (case-insensitive) and by domain scope: a
+            # domain action must not resolve to the local machine, and the
+            # local-rescue action must.
+            $identityName = [string]$identity.Name
+            $nameParts = $identityName -split '\\', 2
+            $accountTail = $nameParts[-1]
+            $domainPart = $nameParts[0]
+            $accountMatches = ($accountTail -ieq $username)
+            if ($domain -eq '.') {
+                $scopeMatches = ($domainPart -ieq $env:COMPUTERNAME)
+            }
+            else {
+                $scopeMatches = ($domainPart -ine $env:COMPUTERNAME)
+            }
+            $principalMatches = ($accountMatches -and $scopeMatches)
+        }
+        finally {
+            $identity.Dispose()
+        }
+    }
+    finally {
+        if ($token -ne [IntPtr]::Zero) {
+            [void][TelosCredentialLogon]::CloseHandle($token)
+        }
+    }
+
     $result = [ordered]@{
         schema_version = 1
         event = 'credential-action-result'
         nonce = $nonce
         action = $action
         result = 'pass'
-        principal = [string]$childResult.principal
-        authenticated = [bool]$childResult.authenticated
-        local_administrators_member = [bool](
-            $childResult.local_administrators_member)
-        authentication_type = [string]$childResult.authentication_type
+        principal_sid = $principalSid
+        principal_matches_expected = [bool]$principalMatches
+        authenticated = [bool]$authenticated
+        local_administrators_member = [bool]$isAdministrator
+        authentication_type = $authenticationType
+        authentication_semantics = $authenticationSemantics
+        cache_evidence = $cacheEvidence
+        login_elapsed_seconds = $loginElapsedSeconds
         domain_reachable = [bool]$controllerReachable
         controller_reachable = [bool]$controllerReachable
         gateway_reachable = [bool]$gatewayReachable
-        login_elapsed_seconds = $loginElapsedSeconds
-        local_profile_available = [bool](
-            $childResult.local_profile_available)
-        authentication_semantics = $authenticationSemantics
-        cache_evidence = $cacheEvidence
         failure_classification = 'none'
     }
     $serial.WriteLine(($result | ConvertTo-Json -Compress))

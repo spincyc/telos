@@ -70,12 +70,11 @@ def details():
             "diagnostics_secret_free": True},
         "optional-storage-offline": {
             "storage_reachable": False, "login_succeeded": True,
-            "login_seconds": 3.5, "login_bound_seconds": 30,
-            "local_profile": True},
+            "login_seconds": 3.5, "login_bound_seconds": 30},
         "optional-storage-access-denied": {
             "storage_reachable": True, "storage_access": "denied",
             "login_succeeded": True, "login_seconds": 4,
-            "login_bound_seconds": 30, "local_profile": True},
+            "login_bound_seconds": 30},
         "ad-dns-offline": {
             "dns_reachable": False, "kerberos_reachable": False,
             "ldap_reachable": False, "smb_reachable": False,

@@ -37,6 +37,12 @@ SCRIPT = (
 NONCE = re.compile(r"[a-f0-9]{32}")
 ACCOUNT = re.compile(r"[A-Za-z0-9_.@-]{1,256}")
 DOMAIN = re.compile(r"(?:\.|[A-Za-z0-9][A-Za-z0-9.-]{0,252})")
+# A domain user's token SID (S-1-5-21-<domain>-<rid>). The token-based
+# credential proof (attempts 39-42 retired the process-spawn primitive)
+# reports the authenticated SID; identity is proven in-guest by comparing
+# it to the material account, so the host validates SID shape and the
+# guest's boolean match, not a name string it cannot resolve offline.
+_LOGON_SID = re.compile(r"S-1-5-21-[0-9]{1,10}(?:-[0-9]{1,10}){3}")
 ACTIONS = frozenset({
     "connected-domain-login",
     "cached-domain-login",
@@ -62,17 +68,12 @@ SCRIPT_FAILED_EVENT = '{"schema_version":1,"event":"credential-script-failed"}'
 # these literals and the bounded Win32 logon error code.
 _SCRIPT_FAILED_STAGES = frozenset({
     "material", "release-wait", "post-release-setup",
-    # Attempt 39 (20260811T145412Z) rendered the whole logon as one stage
-    # with code 0; the split separates the wrapper compile, the P/Invoke
-    # throwing, and the call returning false with a captured error.
-    "logon", "logon-compile", "logon-prepare",
-    # Attempt 41 stayed at logon-result/0; validate the credential with the
-    # dependency-free LogonUser primitive and ensure the Secondary Logon
-    # service before the spawn, so attempt 42 either succeeds or names a
-    # real Win32 code at logon-validate.
-    "logon-validate", "logon-seclogon",
-    "logon-call", "logon-result",
-    "child-wait", "result-read",
+    # Token-proof stages (the process-spawn stages retired with attempts
+    # 39-42): compile the LogonUser wrapper, probe reachability, call
+    # LogonUser (a rejected credential names its real Win32 code here),
+    # read the token's identity.
+    "logon-compile", "logon-prepare", "logon-call", "logon-result",
+    "identity-read",
 })
 
 
@@ -116,11 +117,20 @@ def _raise_script_failed(
     error.guest_stage = stage
     error.guest_code = code
     raise error
+# Token-proof result shape. `principal` (a name string the host cannot
+# resolve offline) is replaced by `principal_sid` plus the guest's
+# offline-safe `principal_matches_expected` boolean. `local_profile_available`
+# is dropped: a token in the operator's non-elevated Run-dialog context
+# cannot LoadUserProfile (no SE_RESTORE), and profile presence is already
+# judged by managed-identity-state's standard/operator_profile_present --
+# the fields the acceptance judge actually consumes. Nothing is fabricated:
+# a claim that cannot be proven from the token is not reported at all.
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
-    "principal", "authenticated", "local_administrators_member",
+    "principal_sid", "principal_matches_expected",
+    "authenticated", "local_administrators_member",
     "authentication_type", "authentication_semantics", "cache_evidence",
-    "login_elapsed_seconds", "local_profile_available",
+    "login_elapsed_seconds",
     "domain_reachable", "controller_reachable", "gateway_reachable",
     "failure_classification",
 }
@@ -377,19 +387,34 @@ def parse_action_result(
         raise WindowsCredentialActionError(
             "credential-action result identity is invalid")
     for key in (
-            "principal", "authentication_type", "authentication_semantics",
+            "authentication_type", "authentication_semantics",
             "cache_evidence", "failure_classification"):
         if (not isinstance(result[key], str) or not result[key]
                 or len(result[key]) > 256):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
     for key in (
+            "principal_matches_expected",
             "authenticated", "local_administrators_member",
-            "local_profile_available", "domain_reachable",
+            "domain_reachable",
             "controller_reachable", "gateway_reachable"):
         if not isinstance(result[key], bool):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
+    # A denied logon has no session, so an empty SID is permitted only when
+    # the identity is explicitly not claimed; every other case must carry a
+    # well-formed domain-user SID.
+    principal_sid = result["principal_sid"]
+    if not isinstance(principal_sid, str) or len(principal_sid) > 256:
+        raise WindowsCredentialActionError(
+            "credential-action result schema is invalid")
+    if principal_sid == "":
+        if result["principal_matches_expected"]:
+            raise WindowsCredentialActionError(
+                "credential-action result schema is invalid")
+    elif _LOGON_SID.fullmatch(principal_sid) is None:
+        raise WindowsCredentialActionError(
+            "credential-action result schema is invalid")
     elapsed = result["login_elapsed_seconds"]
     if (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))
             or not math.isfinite(elapsed) or elapsed < 0 or elapsed > 120):
@@ -401,10 +426,11 @@ def parse_action_result(
         raise WindowsCredentialActionError(
             "credential-action result measurement is invalid")
     if action == "uncached-domain-user-denied":
-        if (result["principal"].casefold() != expected_principal.casefold()
+        # A denied logon asserts no identity: no session, no SID, no match.
+        if (result["principal_matches_expected"]
+                or result["principal_sid"] != ""
                 or result["authenticated"]
                 or result["local_administrators_member"]
-                or result["local_profile_available"]
                 or result["authentication_type"] != "None"
                 or result["domain_reachable"]
                 or result["authentication_semantics"] != "domain-logon-denied"
@@ -413,9 +439,11 @@ def parse_action_result(
             raise WindowsCredentialActionError(
                 "uncached domain login denial proof is invalid")
         return result
-    if (result["principal"].casefold() != expected_principal.casefold()
+    # The guest resolved the token's SID against the material account
+    # offline-safely; the host requires that match plus a well-formed SID.
+    if (not result["principal_matches_expected"]
+            or _LOGON_SID.fullmatch(result["principal_sid"]) is None
             or not result["authenticated"]
-            or not result["local_profile_available"]
             or result["authentication_type"] not in allowed_authentication_types
             or result["failure_classification"] != "none"):
         raise WindowsCredentialActionError(

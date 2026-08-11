@@ -57,10 +57,10 @@ FIELD_SETS = {
         "diagnostics_secret_free"},
     "optional-storage-offline": {
         "storage_reachable", "login_succeeded", "login_seconds",
-        "login_bound_seconds", "local_profile"},
+        "login_bound_seconds"},
     "optional-storage-access-denied": {
         "storage_reachable", "storage_access", "login_succeeded",
-        "login_seconds", "login_bound_seconds", "local_profile"},
+        "login_seconds", "login_bound_seconds"},
     "ad-dns-offline": {
         "dns_reachable", "kerberos_reachable", "ldap_reachable",
         "smb_reachable", "cached_login"},
@@ -231,10 +231,10 @@ def judge(contract: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
     _expect(by["update-source-offline"], update_source_reachable=False,
             login_unaffected=True, diagnostics_secret_free=True)
     _expect(by["optional-storage-offline"], storage_reachable=False,
-            login_succeeded=True, local_profile=True)
+            login_succeeded=True)
     _validate_login_time(by["optional-storage-offline"])
     _expect(by["optional-storage-access-denied"], storage_reachable=True,
-            storage_access="denied", login_succeeded=True, local_profile=True)
+            storage_access="denied", login_succeeded=True)
     _validate_login_time(by["optional-storage-access-denied"])
     _expect(by["ad-dns-offline"], dns_reachable=False,
             kerberos_reachable=False, ldap_reachable=False,

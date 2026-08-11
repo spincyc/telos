@@ -30,6 +30,32 @@ MATERIAL = {
     "domain": "ad.example.test",
     "password": "private credential value",
 }
+STUDENT_SID = "S-1-5-21-1-2-3-1201"
+
+
+def cred_result(**changes):
+    """A token-proof credential-action result (post attempts 39-42)."""
+    result = {
+        "schema_version": 1,
+        "event": "credential-action-result",
+        "nonce": NONCE,
+        "action": MATERIAL["action"],
+        "result": "pass",
+        "principal_sid": STUDENT_SID,
+        "principal_matches_expected": True,
+        "authenticated": True,
+        "local_administrators_member": False,
+        "authentication_type": "Kerberos",
+        "authentication_semantics": "cached-domain",
+        "cache_evidence": "offline-cache-proven",
+        "login_elapsed_seconds": 1.25,
+        "domain_reachable": False,
+        "controller_reachable": False,
+        "gateway_reachable": True,
+        "failure_classification": "none",
+    }
+    result.update(changes)
+    return result
 
 
 class FakeQmp:
@@ -101,43 +127,57 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "homelab/vm/windows_credential_action_control/"
             "TelosCredential.ps1"
         ).read_text(encoding="utf-8")
+        # Material is loaded and the medium destruction is awaited BEFORE
+        # any credential use; then the token proof runs (no process spawn).
         positions = [
             script.index("$password = [string]$document.password"),
             script.index('"credential-material-loaded"'),
             script.index("TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED"),
-            script.index("CreateProcessWithLogonAndError(\n        $username"),
+            script.index("LogonUserAndError(\n        $username"),
         ]
         self.assertEqual(sorted(positions), positions)
-        self.assertIn("logonFlags", script)
-        self.assertIn("$username, $domain, $password, 1,", script)
+        # The token proof replaced the spawn entirely: none of the
+        # CreateProcessWithLogonW / child-process machinery remains in code
+        # (the retired primitive may still be named in an explanatory
+        # comment, so match the executable forms).
+        self.assertNotIn("extern bool CreateProcessWithLogonW", script)
+        self.assertNotIn("CreateProcessWithLogonAndError", script)
+        self.assertNotIn("WaitForSingleObject", script)
+        self.assertNotIn("TerminateProcess", script)
+        self.assertNotIn("EncodedCommand", script)
+        # LOGON32_LOGON_INTERACTIVE (2) exercises the same online/cached
+        # distinction the checks judge.
         self.assertIn(
-            "$action -eq 'uncached-domain-user-denied' -and\n"
-            "                -not $controllerReachable -and "
-            "$logonError -eq 1326",
+            "$username, $domain, $password, 2, [ref]$token, [ref]$logonError",
             script)
         self.assertIn(
+            "$action -eq 'uncached-domain-user-denied' -and", script)
+        self.assertIn("$deniedCodes -contains [int]$logonError", script)
+        self.assertIn(
             "failure_classification = 'windows-logon-failure'", script)
-        self.assertIn("Get-LocalGroupMember -SID $administratorSid", script)
+        # Local-admin membership via the raw token SID, never IsInRole
+        # (which reports false for a UAC-filtered admin token).
         self.assertNotIn("WindowsBuiltInRole]::Administrator", script)
+        self.assertNotIn(".IsInRole(", script)
+        self.assertIn("foreach ($group in $identity.Groups) {", script)
+        self.assertIn("-ceq $administratorsSid", script)
+        # Offline-safe identity match: account tail + domain scope.
+        self.assertIn("$accountMatches = ($accountTail -ieq $username)", script)
+        self.assertIn("$domainPart -ine $env:COMPUTERNAME", script)
+        self.assertIn("$domainPart -ieq $env:COMPUTERNAME", script)
         self.assertIn(
             "$loginClock = [Diagnostics.Stopwatch]::StartNew()", script)
         self.assertIn(
             "$loginClock.Elapsed.TotalSeconds, 3", script)
-        self.assertGreater(
-            script.rindex("$loginClock.Stop()"),
-            script.index("$childResult = Get-Content"))
-        self.assertIn(
-            "Test-Path -LiteralPath $env:USERPROFILE -PathType Container",
-            script)
+        # No user-profile filesystem probe (the token loads no profile).
+        self.assertNotIn("USERPROFILE", script)
+        self.assertNotIn("local_profile_available", script)
         self.assertIn(
             "Get-NetRoute -DestinationPrefix '0.0.0.0/0'", script)
         self.assertIn("controller_reachable = [bool]$controllerReachable",
                       script)
         self.assertIn("gateway_reachable = [bool]$gatewayReachable", script)
-        self.assertIn("cacheEvidence = 'offline-cache-proven'", script)
-        self.assertIn("TerminateProcess(", script)
-        self.assertLess(script.index("TerminateProcess("),
-                        script.index("throw 'credential action timed out'"))
+        self.assertIn("$cacheEvidence = 'offline-cache-proven'", script)
         command = launch_credential_action_command()
         self.assertLessEqual(len(command), MAX_PUBLIC_COMMAND_CHARS)
         self.assertIn("1..40", command)
@@ -280,25 +320,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             ], sent)
 
     def test_result_parser_accepts_only_strict_public_jsonl(self):
-        result = {
-            "schema_version": 1,
-            "event": "credential-action-result",
-            "nonce": NONCE,
-            "action": MATERIAL["action"],
-            "result": "pass",
-            "principal": "AD\\acceptance-operator",
-            "authenticated": True,
-            "local_administrators_member": False,
-            "authentication_type": "Kerberos",
-            "authentication_semantics": "cached-domain",
-            "cache_evidence": "offline-cache-proven",
-            "login_elapsed_seconds": 1.25,
-            "local_profile_available": True,
-            "domain_reachable": False,
-            "controller_reachable": False,
-            "gateway_reachable": True,
-            "failure_classification": "none",
-        }
+        result = cred_result()
         parsed = parse_action_result(
             json.dumps(result) + "\n",
             nonce=NONCE, action=MATERIAL["action"],
@@ -316,6 +338,11 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 {**result, "authenticated": 1},
                 {**result, "login_elapsed_seconds": float("nan")},
                 {**result, "controller_reachable": True},
+                # A malformed or absent SID on an authenticated result fails.
+                {**result, "principal_sid": "not-a-sid"},
+                {**result, "principal_sid": ""},
+                # The identity match is mandatory for a success action.
+                {**result, "principal_matches_expected": False},
                 {**result, "nonce": "00" * 16}):
             with self.assertRaises(WindowsCredentialActionError):
                 parse_action_result(
@@ -325,25 +352,12 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                     allowed_authentication_types=frozenset({"Kerberos"}))
 
     def test_action_semantics_reject_network_or_membership_mismatch(self):
-        base = {
-            "schema_version": 1,
-            "event": "credential-action-result",
-            "nonce": NONCE,
-            "action": "connected-domain-login",
-            "result": "pass",
-            "principal": "AD\\operator",
-            "authenticated": True,
-            "local_administrators_member": False,
-            "authentication_type": "Kerberos",
-            "authentication_semantics": "connected-domain",
-            "cache_evidence": "online-interactive-logon",
-            "login_elapsed_seconds": 0.75,
-            "local_profile_available": True,
-            "domain_reachable": False,
-            "controller_reachable": False,
-            "gateway_reachable": True,
-            "failure_classification": "none",
-        }
+        base = cred_result(
+            action="connected-domain-login",
+            authentication_semantics="connected-domain",
+            cache_evidence="online-interactive-logon",
+            login_elapsed_seconds=0.75,
+        )
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "measurement"):
             parse_action_result(
@@ -365,40 +379,32 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 expected_principal="AD\\operator",
                 allowed_authentication_types=frozenset({"Kerberos"}))
 
-        unavailable_profile = {
+        unmatched_identity = {
             **base,
             "domain_reachable": True,
             "controller_reachable": True,
-            "local_profile_available": False,
+            "principal_matches_expected": False,
         }
         with self.assertRaisesRegex(
                 WindowsCredentialActionError, "principal proof"):
             parse_action_result(
-                json.dumps(unavailable_profile) + "\n", nonce=NONCE,
+                json.dumps(unmatched_identity) + "\n", nonce=NONCE,
                 action="connected-domain-login",
                 expected_principal="AD\\operator",
                 allowed_authentication_types=frozenset({"Kerberos"}))
 
     def test_uncached_denial_requires_offline_classified_failure(self):
-        result = {
-            "schema_version": 1,
-            "event": "credential-action-result",
-            "nonce": NONCE,
-            "action": "uncached-domain-user-denied",
-            "result": "pass",
-            "principal": "AD\\never-cached",
-            "authenticated": False,
-            "local_administrators_member": False,
-            "authentication_type": "None",
-            "authentication_semantics": "domain-logon-denied",
-            "cache_evidence": "offline-cache-miss-proven",
-            "login_elapsed_seconds": 0.5,
-            "local_profile_available": False,
-            "domain_reachable": False,
-            "controller_reachable": False,
-            "gateway_reachable": True,
-            "failure_classification": "windows-logon-failure",
-        }
+        result = cred_result(
+            action="uncached-domain-user-denied",
+            principal_sid="",
+            principal_matches_expected=False,
+            authenticated=False,
+            authentication_type="None",
+            authentication_semantics="domain-logon-denied",
+            cache_evidence="offline-cache-miss-proven",
+            login_elapsed_seconds=0.5,
+            failure_classification="windows-logon-failure",
+        )
         self.assertEqual(result, parse_action_result(
             json.dumps(result) + "\n",
             nonce=NONCE,
@@ -408,7 +414,9 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         for mutation in (
                 {**result, "domain_reachable": True},
                 {**result, "authenticated": True},
-                {**result, "local_profile_available": True},
+                # A denial must not claim an identity.
+                {**result, "principal_matches_expected": True},
+                {**result, "principal_sid": STUDENT_SID},
                 {**result, "cache_evidence": "offline-cache-proven"},
                 {**result, "failure_classification": "script-failure"},
                 {**result, "result": "error"}):
@@ -429,25 +437,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
             host, guest = socket.socketpair()
             serial = DuplexCredentialActionSerial(host)
-            result = {
-                "schema_version": 1,
-                "event": "credential-action-result",
-                "nonce": NONCE,
-                "action": MATERIAL["action"],
-                "result": "pass",
-                "principal": "AD\\acceptance-operator",
-                "authenticated": True,
-                "local_administrators_member": False,
-                "authentication_type": "Kerberos",
-                "authentication_semantics": "cached-domain",
-                "cache_evidence": "offline-cache-proven",
-                "login_elapsed_seconds": 1.25,
-                "local_profile_available": True,
-                "domain_reachable": False,
-                "controller_reachable": False,
-                "gateway_reachable": True,
-                "failure_classification": "none",
-            }
+            result = cred_result()
 
             def launch(_command):
                 guest.sendall((json.dumps({
@@ -491,25 +481,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
             host, guest = socket.socketpair()
             serial = DuplexCredentialActionSerial(host)
-            result = {
-                "schema_version": 1,
-                "event": "credential-action-result",
-                "nonce": NONCE,
-                "action": MATERIAL["action"],
-                "result": "pass",
-                "principal": "AD\\acceptance-operator",
-                "authenticated": True,
-                "local_administrators_member": False,
-                "authentication_type": "Kerberos",
-                "authentication_semantics": "cached-domain",
-                "cache_evidence": "offline-cache-proven",
-                "login_elapsed_seconds": 1.25,
-                "local_profile_available": True,
-                "domain_reachable": False,
-                "controller_reachable": False,
-                "gateway_reachable": True,
-                "failure_classification": "none",
-            }
+            result = cred_result()
             released = []
 
             def launch(_command):
@@ -693,63 +665,37 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "$failureStage = 'post-release-setup'",
             "$failureStage = 'logon-compile'",
             "$failureStage = 'logon-prepare'",
-            "$failureStage = 'logon-validate'",
-            "$failureStage = 'logon-seclogon'",
             "$failureStage = 'logon-call'",
             "$failureStage = 'logon-result'",
-            "$failureStage = 'child-wait'",
-            "$failureStage = 'result-read'",
+            "$failureStage = 'identity-read'",
         )
         positions = [script.index(stage) for stage in expected_stages]
         self.assertEqual(sorted(positions), positions)
         self.assertIn("$failureCode = [int]$logonError", script)
-        # Attempts 39/40 rendered logon/0 even with an immediately-next
-        # script-side read: the engine's own interop between statements
-        # resets the saved error. The capture must live INSIDE the compiled
-        # wrapper's interop frame, and no script-side read may remain.
+        # The Win32 error is captured INSIDE the compiled wrapper's interop
+        # frame; no script-side GetLastWin32Error may remain (attempts 39/40
+        # proved a script-side read renders 0).
         self.assertEqual(0, script.count(
             "[Runtime.InteropServices.Marshal]::GetLastWin32Error()"))
         self.assertIn(
-            "logonError = created ? 0 : Marshal.GetLastWin32Error();",
+            "logonError = ok ? 0 : Marshal.GetLastWin32Error();",
             script)
         self.assertLess(
-            script.index("logonError = created ? 0 :"),
+            script.index("logonError = ok ? 0 :"),
             script.index("Add-Type -TypeDefinition $source"))
-        call_at = script.index(
-            "CreateProcessWithLogonAndError(\n        $username")
+        call_at = script.index("LogonUserAndError(\n        $username")
         self.assertIn("[ref]$logonError)", script)
         self.assertLess(call_at, script.index("[ref]$logonError)"))
         self.assertLess(call_at, script.index(
             "$failureStage = 'logon-result'"))
-        # The wrapper still routes through the SetLastError=true extern.
+        # The token wrapper routes through the SetLastError=true LogonUser
+        # extern.
         self.assertIn(
             '[DllImport("advapi32.dll", CharSet = CharSet.Unicode, '
             "SetLastError = true)]",
             script)
-        # Authoritative LogonUser credential probe, in-frame error capture,
-        # token closed on success, and interactive logon type (2) matching
-        # CreateProcessWithLogonW -- runs BEFORE the spawn so a rejected
-        # credential names its real Win32 code instead of the FALSE/0 the
-        # spawn produced across attempts 39-41.
         self.assertIn("public static extern bool LogonUser(", script)
-        self.assertIn("public static bool ValidateLogon(", script)
-        self.assertIn(
-            "logonError = ok ? 0 : Marshal.GetLastWin32Error();", script)
-        self.assertIn("CloseHandle(token);", script)
-        self.assertIn(
-            "$validated = [TelosCredentialLogon]::ValidateLogon(\n"
-            "        $username, $domain, $password, 2, [ref]$validateError)",
-            script)
-        self.assertLess(
-            script.index("ValidateLogon(\n        $username"),
-            script.index(
-                "CreateProcessWithLogonAndError(\n        $username"))
-        # The Secondary Logon service is ensured running before the spawn.
-        self.assertIn("Get-Service -Name seclogon", script)
-        self.assertIn("Start-Service -Name seclogon", script)
-        self.assertLess(
-            script.index("$failureStage = 'logon-seclogon'"),
-            script.index("$failureStage = 'logon-call'"))
+        self.assertIn("public static bool LogonUserAndError(", script)
         # A thrown Win32Exception still yields its bounded NativeErrorCode.
         catch_at = script.index(
             "catch {", script.rindex("$serial.WriteLine(($result"))
@@ -777,12 +723,12 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "homelab.vm.windows_credential_action_iso",
             fromlist=["_script_failed_detail"])._script_failed_detail
         self.assertEqual(
-            ("logon", 1326),
+            ("logon-call", 1326),
             parse('{"schema_version":1,"event":"credential-script-failed"'
-                  ',"stage":"logon","code":1326}'))
+                  ',"stage":"logon-call","code":1326}'))
         for stage in (
-            "logon-compile", "logon-prepare", "logon-validate",
-            "logon-seclogon", "logon-call", "logon-result",
+            "logon-compile", "logon-prepare",
+            "logon-call", "logon-result", "identity-read",
         ):
             with self.subTest(stage=stage):
                 self.assertEqual(
@@ -823,7 +769,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 guest.sendall(
                     b'{"schema_version":1,'
                     b'"event":"credential-script-failed",'
-                    b'"stage":"logon","code":1326}\n')
+                    b'"stage":"logon-call","code":1326}\n')
 
             import threading
             worker = threading.Thread(target=guest_result)
@@ -831,7 +777,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 WindowsCredentialActionError,
                 "failed after material release; "
-                "guest_stage=logon; guest_code=1326",
+                "guest_stage=logon-call; guest_code=1326",
             ) as caught:
                 execute_credential_action(
                     channel=channel, serial=serial,
@@ -843,7 +789,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                 )
             worker.join()
             guest.close()
-            self.assertEqual("logon", caught.exception.guest_stage)
+            self.assertEqual("logon-call", caught.exception.guest_stage)
             self.assertEqual(1326, caught.exception.guest_code)
             # The lifecycle completed: the current flags are torn down but
             # the high-water mark still proves the media was attached

@@ -17,14 +17,14 @@ def credential(action, **changes):
         "nonce": "ab" * 16,
         "action": action,
         "result": "pass",
-        "principal": "FACTORY\\student",
+        "principal_sid": "S-1-5-21-1-2-3-1201",
+        "principal_matches_expected": True,
         "authenticated": True,
         "local_administrators_member": False,
         "authentication_type": "Kerberos",
         "authentication_semantics": "cached-domain",
         "cache_evidence": "offline-cache-proven",
         "login_elapsed_seconds": 2.5,
-        "local_profile_available": True,
         "domain_reachable": False,
         "controller_reachable": False,
         "gateway_reachable": True,
@@ -206,7 +206,8 @@ class WindowsIdentityObservationTests(unittest.TestCase):
                     credential(
                     "uncached-domain-user-denied",
                     authenticated=False,
-                    local_profile_available=False,
+                    principal_sid="",
+                    principal_matches_expected=False,
                     authentication_type="None",
                     authentication_semantics="domain-logon-denied",
                     cache_evidence="offline-cache-miss-proven",
@@ -242,7 +243,6 @@ class WindowsIdentityObservationTests(unittest.TestCase):
             "login_succeeded": True,
             "login_seconds": 2.5,
             "login_bound_seconds": 30,
-            "local_profile": True,
         }, map_exact_observation(
             "optional-storage-access-denied", records))
 

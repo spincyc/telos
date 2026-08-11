@@ -33,10 +33,11 @@ _PROBE_KEYS = {
     "schema_version", "action", "result", "observed_at", "observation",
 }
 _CREDENTIAL_KEYS = {
-    "schema_version", "event", "nonce", "action", "result", "principal",
+    "schema_version", "event", "nonce", "action", "result",
+    "principal_sid", "principal_matches_expected",
     "authenticated", "local_administrators_member", "authentication_type",
     "authentication_semantics", "cache_evidence", "login_elapsed_seconds",
-    "local_profile_available", "domain_reachable", "controller_reachable",
+    "domain_reachable", "controller_reachable",
     "gateway_reachable", "failure_classification",
 }
 _JOIN_KEYS = {
@@ -159,13 +160,20 @@ def _credential(
         raise WindowsIdentityObservationError(
             f"exact {action} credential action is unavailable")
     for key in (
+        "principal_matches_expected",
         "authenticated", "local_administrators_member",
-        "local_profile_available", "domain_reachable",
+        "domain_reachable",
         "controller_reachable", "gateway_reachable",
     ):
         if type(record[key]) is not bool:
             raise WindowsIdentityObservationError(
                 f"exact {action} credential action is invalid")
+    # A successful credential action must have authenticated as the
+    # intended account; a denial asserts no identity.
+    successful_action = action != "uncached-domain-user-denied"
+    if record["principal_matches_expected"] is not successful_action:
+        raise WindowsIdentityObservationError(
+            f"exact {action} credential action is invalid")
     successful = action != "uncached-domain-user-denied"
     if (
         record["authenticated"] is not successful
@@ -443,11 +451,16 @@ def derive_observation(
                     and scan["tracked_artifacts_secret_free"] is True
                     and scan["logs_secret_free"] is True)
             else:
+                # `local_profile` is no longer reported here: the token
+                # credential proof does not load or create a user profile
+                # (LoadUserProfile needs the elevation the operator's
+                # Run-dialog context lacks), so a truthful value is not
+                # available. Profile presence remains judged where it is
+                # provable -- managed-identity-state's *_profile_present.
                 fields.update({
                     "login_succeeded": login["authenticated"],
                     "login_seconds": login["login_elapsed_seconds"],
                     "login_bound_seconds": 30,
-                    "local_profile": login["local_profile_available"],
                 })
         elif check == "combined-dependencies-offline":
             cached = _credential(records, "cached-domain-login")
