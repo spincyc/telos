@@ -445,8 +445,13 @@ class ArchInstallRunTests(unittest.TestCase):
         # surfaces fails before a single installer byte runs. No NVMe rescan
         # remains: the attach is virtio-blk and forced namespace rescans were
         # what tore the enumerated partitions back down.
-        self.assertIn(b'grep -qw part && echo TELOS ARCH DISK ATTACHED',
-                      stdin.data)
+        # The marker is emitted quote-split so the command's own tty echo can
+        # never contain the contiguous marker text the host watches for.
+        self.assertIn(
+            b"grep -qw part && echo 'TELOS ARCH DISK' 'ATTACHED'",
+            stdin.data)
+        self.assertNotIn(b"echo TELOS ARCH DISK ATTACHED", stdin.data)
+        self.assertNotIn(b"echo TELOS ARCH INSTALL FAIL", stdin.data)
         self.assertNotIn(b"rescan_controller", stdin.data)
         self.assertNotIn(b"nvme ns-rescan", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)

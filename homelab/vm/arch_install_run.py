@@ -119,6 +119,20 @@ PRESERVED_MARKER = (
 ARCH_LIVE_MARKERS = ("Welcome to Arch Linux", "archiso login:")
 
 
+def _emit_marker(marker: str) -> str:
+    """Emit *marker* so the command's own tty echo can never contain it.
+
+    The dispatched command is echoed back on the shared console, and with the
+    right terminal-wrap position the literal marker text survives contiguously
+    in the transcript — a live run aborted mid-pacstrap because the echoed
+    ``|| echo TELOS ARCH INSTALL FAIL`` matched the failure watch. Splitting
+    the final word behind shell quoting keeps the echoed command text
+    non-matching while the executed echo still prints the exact marker.
+    """
+    head, _, tail = marker.rpartition(" ")
+    return f"echo '{head}' '{tail}'"
+
+
 def _bundle(path: Path) -> tuple[dict, list[str]]:
     if path.is_symlink():
         raise RuntimeError("Arch bundle must be a private non-symlink directory")
@@ -975,24 +989,24 @@ def drive_installer(
         f"sleep 1; done; fi; "
         f"[ -n \"$dev\" ] "
         f"&& lsblk -rno NAME,TYPE \"$dev\" | grep -qw part "
-        f"&& echo {DISK_ATTACHED_MARKER} serial={serial} "
-        f"|| echo {FAIL_MARKER} rc=disk-serial-missing\n"
+        f"&& {_emit_marker(DISK_ATTACHED_MARKER)} serial={serial} "
+        f"|| {_emit_marker(FAIL_MARKER)} rc=disk-serial-missing\n"
     ).encode("ascii")
     steps = [
-        f"echo {BEGIN_MARKER}\n".encode("ascii"),
+        f"{_emit_marker(BEGIN_MARKER)}\n".encode("ascii"),
         b"mkdir -p /usr/local/lib/telos\n",
         confirm_disk,
         _heredoc(GUEST_VERIFY_PATH, verify_script),
         _heredoc(GUEST_INSTALLER_PATH, installer_script),
         (
             f"bash {GUEST_INSTALLER_PATH} "
-            f"&& echo {COMPLETE_MARKER} "
-            f"|| echo {FAIL_MARKER} rc=$?\n"
+            f"&& {_emit_marker(COMPLETE_MARKER)} "
+            f"|| {_emit_marker(FAIL_MARKER)} rc=$?\n"
         ).encode("ascii"),
         b"efibootmgr || true\n",
         b"grep -H '^default' /mnt/boot/loader/loader.conf || true\n",
-        b"echo TELOS ARCH TEARDOWN; sync; systemctl poweroff -i "
-        b"|| poweroff -f\n",
+        f"{_emit_marker('TELOS ARCH TEARDOWN')}; sync; "
+        "systemctl poweroff -i || poweroff -f\n".encode("ascii"),
     ]
     # Shell readiness is proven with a sentinel-echo handshake, never with an
     # end-of-transcript prompt match: archiso boots the kernel console on the
