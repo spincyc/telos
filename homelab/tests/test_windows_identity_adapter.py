@@ -146,6 +146,105 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                     subject.WindowsIdentityAdapterError, "Run-dialog"):
                 adapter.launch_guest("powershell.exe -NoProfile")
 
+    def _launch_adapter(self, root: Path):
+        root.chmod(0o700)
+        process = mock.Mock()
+        process.poll.return_value = None
+        boundary = mock.Mock(
+            processes={"windows": process},
+            qmp=mock.Mock(),
+            serial_socket=None,
+        )
+        return subject.NativeWindowsAcceptanceAdapter(
+            boundary,
+            root,
+            realm="factory.test",
+            local_principal="telosadmin",
+            scan_secrets=mock.sentinel.scanner,
+            command_plan=mock.Mock(),
+            timeout=1,
+        )
+
+    @mock.patch.object(subject, "WindowsPublicCommandLauncher")
+    def test_guest_launch_dismisses_transient_start_menu_first(
+        self, launcher_type,
+    ):
+        """Attempt 33: the operator's first logon left the Start menu open
+        and the probe's desktop proof failed at distance 6.49 (> 6.0), the
+        menu's left edge crossing x 320-360 of the desktop crop. One Esc
+        dismisses the transient menu BEFORE the launcher's own fail-closed
+        desktop proof; on a clean desktop it is a no-op."""
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self._launch_adapter(Path(name))
+            ordering = mock.Mock()
+            ordering.attach_mock(adapter.boundary.qmp.key, "key")
+            ordering.attach_mock(launcher_type.return_value.launch, "launch")
+
+            adapter.launch_guest("powershell.exe -NoProfile")
+
+            self.assertEqual(
+                [
+                    mock.call.key("esc"),
+                    mock.call.launch(
+                        "powershell.exe -NoProfile", adapter.command_plan),
+                ],
+                ordering.mock_calls,
+            )
+
+    @mock.patch.object(subject, "WindowsPublicCommandLauncher")
+    def test_guest_launch_retains_fixed_public_launcher_detail(
+        self, launcher_type,
+    ):
+        """A launcher proof failure is a fixed-format public string; the
+        sanitized adapter error keeps it (attempt 33 rendered only the bare
+        type name and lost `best image distance 6.49`). Any other backend
+        exception still reduces to its type name."""
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self._launch_adapter(Path(name))
+            launcher_type.return_value.launch.side_effect = (
+                subject.WindowsPublicCommandError(
+                    "failed to prove desktop within 30 frames; "
+                    "best image distance 6.49"))
+            with self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError,
+                r"launch failed: failed to prove desktop within 30 frames; "
+                r"best image distance 6\.49",
+            ) as caught:
+                adapter.launch_guest("powershell.exe -NoProfile")
+            self.assertIsNone(caught.exception.__cause__)
+
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self._launch_adapter(Path(name))
+            launcher_type.return_value.launch.side_effect = RuntimeError(
+                "private backend detail")
+            with self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError,
+                r"launch failed: RuntimeError$",
+            ) as caught:
+                adapter.launch_guest("powershell.exe -NoProfile")
+            self.assertNotIn("private backend detail", str(caught.exception))
+            self.assertIsNone(caught.exception.__cause__)
+
+    @mock.patch.object(subject, "WindowsPublicCommandLauncher")
+    def test_guest_launch_never_passes_through_error_subclasses(
+        self, launcher_type,
+    ):
+        """Only the exact fixed-vocabulary launcher error keeps its message;
+        a subclass could smuggle arbitrary backend text."""
+        class Forged(subject.WindowsPublicCommandError):
+            pass
+
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self._launch_adapter(Path(name))
+            launcher_type.return_value.launch.side_effect = Forged(
+                "private forged detail")
+            with self.assertRaisesRegex(
+                subject.WindowsIdentityAdapterError,
+                r"launch failed: Forged$",
+            ) as caught:
+                adapter.launch_guest("powershell.exe -NoProfile")
+            self.assertNotIn("private forged detail", str(caught.exception))
+
     def test_device_deletion_awaits_exact_qmp_event(self):
         with tempfile.TemporaryDirectory() as name:
             process = mock.Mock()

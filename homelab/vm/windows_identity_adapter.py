@@ -72,6 +72,7 @@ from .windows_identity_reference import load_identity_reference
 from .windows_join_iso import DuplexJoinSerial
 from .windows_public_command import (
     PublicPowerShellLaunchPlan,
+    WindowsPublicCommandError,
     WindowsPublicCommandLauncher,
 )
 from .windows_postjoin_calibration import (
@@ -671,10 +672,30 @@ class NativeWindowsAcceptanceAdapter:
         if not evidence.exists():
             evidence.mkdir(mode=0o700)
         try:
+            # A first logon leaves the Start menu OPEN over the desktop
+            # ("Get Started -- Welcome to Windows"): attempt 33's
+            # interactive-operator probe failed its desktop proof exactly
+            # there, and attempt 32's retained desktop-near frame measures
+            # 6.49 (> the 6.0 threshold) against the tracked desktop crop
+            # (0,0,360,360) because the menu's left edge crosses x 320-360.
+            # One Esc dismisses that transient menu and is a no-op on the
+            # clean desktop; nothing is trusted blind, because the launcher
+            # still begins with its own two-consecutive-frame desktop proof
+            # and fails closed if the surface is anything else.
+            self._qmp().key("esc")
             WindowsPublicCommandLauncher(
                 self._qmp(), evidence,
             ).launch(command, plan)
         except Exception as error:
+            if type(error) is WindowsPublicCommandError:
+                # Launcher failures are fixed-format public strings (state
+                # label, frame bound, best image distance) that never carry
+                # command text or GUI contents. Retaining the message names
+                # the failing proof: attempt 33 rendered only the bare type
+                # name and lost the decisive `best image distance 6.49`.
+                raise WindowsIdentityAdapterError(
+                    "calibrated public guest command launch failed: "
+                    f"{error}") from None
             raise WindowsIdentityAdapterError(
                 "calibrated public guest command launch failed: "
                 f"{type(error).__name__}") from None
