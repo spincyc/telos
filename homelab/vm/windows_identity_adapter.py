@@ -1972,7 +1972,11 @@ class NativeWindowsAcceptanceAdapter:
             self._release_com1()
             raise WindowsIdentityAdapterError(
                 "credential serial acquisition failed: "
-                f"{type(error).__name__}") from None
+                f"{type(error).__name__}",
+                diagnostic=IdentityFailureDiagnostic.credential_action(
+                    check, action, "serial-connect",
+                    type(error).__name__),
+            ) from None
         serial = _LeasedSerial(raw_serial, self._release_com1)
         try:
             try:
@@ -1995,10 +1999,18 @@ class NativeWindowsAcceptanceAdapter:
                     raise WindowsIdentityAdapterError(
                         "credential media creation and cleanup failed: "
                         f"{type(primary).__name__}; "
-                        f"{type(cleanup).__name__}") from None
+                        f"{type(cleanup).__name__}",
+                        diagnostic=(
+                            IdentityFailureDiagnostic.credential_action(
+                                check, action, "media",
+                                type(primary).__name__)),
+                    ) from None
                 raise WindowsIdentityAdapterError(
                     "credential media creation failed: "
-                    f"{type(primary).__name__}") from None
+                    f"{type(primary).__name__}",
+                    diagnostic=IdentityFailureDiagnostic.credential_action(
+                        check, action, "media", type(primary).__name__),
+                ) from None
         except BaseException:
             if not serial.closed:
                 serial.close()
@@ -2018,6 +2030,29 @@ class NativeWindowsAcceptanceAdapter:
                 launch_guest=self.launch_guest,
                 await_device_deleted=self.await_device_deleted,
             )
+        except (KeyboardInterrupt, SystemExit, RunInterrupted):
+            raise
+        except BaseException as error:
+            # Attempt 36's first live connected-domain-login died here and
+            # rendered nothing. Name the coordinate, and retain one
+            # secret-safe terminal frame (the credential travels only on
+            # the private ISO, never through the GUI) so a silent guest is
+            # diagnosable next run. Gated on the same integer frame-count
+            # flag as every other retention; never displaces the failure.
+            _retain_single_frame(
+                qmp,
+                self.private_root / "credential-action-evidence",
+                f"credential-action-{action}",
+                getattr(
+                    self.rotation_plan,
+                    "post_join_retain_submit_frames", 0),
+            )
+            raise WindowsIdentityAdapterError(
+                "credential action execution failed: "
+                f"{type(error).__name__}",
+                diagnostic=IdentityFailureDiagnostic.credential_action(
+                    check, action, "execute", type(error).__name__),
+            ) from None
         finally:
             if not serial.closed:
                 serial.close()

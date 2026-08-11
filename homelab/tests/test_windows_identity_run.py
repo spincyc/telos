@@ -134,6 +134,121 @@ class WindowsIdentityRunTests(unittest.TestCase):
             recovery.destroy_publication.assert_not_called()
             recovery.__exit__.assert_called_once()
 
+    def test_scoped_acceptance_never_renders_a_bare_coordinate(self):
+        """Attempt 36 (20260811T132018Z): a diagnostic-less acceptance
+        failure rendered only `WindowsIdentityRunError` -- no check, no
+        operation -- because this producer forwarded diagnostic=None and
+        the progressive sanitizer discards messages. Even an untyped
+        failure must name its scope side and inner exception type."""
+        material = PrivateIdentityMaterial(
+            Path("/private/publication.iso"),
+            Path("/private"),
+            rotate_guest=mock.Mock(),
+            stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock(),
+        )
+        material._new_local = "replacement"
+
+        def failing_acceptance(_local, _principals):
+            raise OSError("private acceptance detail")
+
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                material._new_local, failing_acceptance)
+        diagnostic = caught.exception.diagnostic
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual("windows-identity-acceptance", diagnostic.check)
+        self.assertEqual(
+            "scoped-acceptance.acceptance", diagnostic.operation)
+        self.assertEqual("OSError", diagnostic.error_type)
+        self.assertIn(diagnostic.render(), str(caught.exception))
+        self.assertNotIn(
+            "private acceptance detail", str(caught.exception))
+
+        # The principal-destruction side names itself the same way.
+        material = PrivateIdentityMaterial(
+            Path("/private/publication.iso"),
+            Path("/private"),
+            rotate_guest=mock.Mock(),
+            stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock(
+                side_effect=RuntimeError("private destroy detail")),
+        )
+        material._new_local = "replacement"
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                material._new_local, lambda _local, _principals: None)
+        diagnostic = caught.exception.diagnostic
+        self.assertEqual(
+            "scoped-acceptance.principal-destruction",
+            diagnostic.operation)
+        # RuntimeError is deliberately not allowlisted; it renders as the
+        # unexpected marker while the operation still names the scope.
+        self.assertEqual("UnexpectedError", diagnostic.error_type)
+        self.assertNotIn("private destroy detail", str(caught.exception))
+
+    def test_credential_action_diagnostic_binds_exact_pairs_and_phases(self):
+        """Every (check, action) pair from the adapter's map renders under
+        its own check; anything else fails closed to unknown."""
+        diagnostic = (
+            windows_identity_run.IdentityFailureDiagnostic
+            .credential_action(
+                "windows-standard-online", "connected-domain-login",
+                "execute", "WindowsCredentialActionError")
+        )
+        self.assertEqual("windows-standard-online", diagnostic.check)
+        self.assertEqual(
+            "credential-action.connected-domain-login.execute",
+            diagnostic.operation)
+        self.assertEqual(
+            "WindowsCredentialActionError", diagnostic.error_type)
+        for check, action in sorted(
+            windows_identity_run.IdentityFailureDiagnostic
+            ._CREDENTIAL_ACTION_PAIRS
+        ):
+            for phase in ("serial-connect", "media", "execute"):
+                with self.subTest(check=check, action=action, phase=phase):
+                    diagnostic = (
+                        windows_identity_run.IdentityFailureDiagnostic
+                        .credential_action(check, action, phase, "OSError")
+                    )
+                    self.assertEqual(check, diagnostic.check)
+                    self.assertEqual(
+                        f"credential-action.{action}.{phase}",
+                        diagnostic.operation)
+        for forged in (
+            ("windows-standard-online", "cached-domain-login", "execute"),
+            ("windows-standard-online", "connected-domain-login", "launch"),
+            ("unknown", "connected-domain-login", "execute"),
+        ):
+            with self.subTest(forged=forged):
+                diagnostic = (
+                    windows_identity_run.IdentityFailureDiagnostic
+                    .credential_action(*forged, "OSError")
+                )
+                self.assertEqual("unknown-check", diagnostic.check)
+                self.assertEqual(
+                    "unknown-operation", diagnostic.operation)
+
+    def test_join_guest_result_mismatch_phases_construct(self):
+        """The result-mismatch coordinates must pass BOTH the join_guest
+        allowlist and the dataclass coordinate registry; the registry was
+        initially missed and would have crashed the failure path."""
+        for field in (
+            "schema-version", "boot-completed", "domain-joined", "domain",
+            "operator", "operator-local-administrator", "key-set",
+        ):
+            with self.subTest(field=field):
+                diagnostic = (
+                    windows_identity_run.IdentityFailureDiagnostic
+                    .join_guest(
+                        f"result-mismatch-{field}", "WindowsJoinIsoError")
+                )
+                self.assertEqual("windows-joined", diagnostic.check)
+                self.assertEqual(
+                    f"join-guest.result-mismatch-{field}",
+                    diagnostic.operation)
+
     def test_cleanup_only_failure_preserves_safe_diagnostic(self):
         diagnostic = windows_identity_run.IdentityFailureDiagnostic.static_probe(
             "controller-ready",

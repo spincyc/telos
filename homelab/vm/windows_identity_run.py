@@ -139,10 +139,12 @@ class IdentityFailureDiagnostic:
     _ERROR_TYPES = frozenset({
         "ControllerJoinMaterialError",
         "ControllerJoinReturnCode",
+        "ControllerPrincipalError",
         "OSError",
         "SerialAutomationError",
         "TimeoutError",
         "WindowsControlSerialError",
+        "WindowsCredentialActionError",
         "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
         "WindowsIdentityGuiError",
@@ -151,6 +153,68 @@ class IdentityFailureDiagnostic:
         "WindowsLocalReauthenticationError",
         "WindowsPublicCommandError",
     })
+    # Exact (check, guest credential action) pairs, mirroring the adapter's
+    # check-to-action map including the combined-dependencies split.
+    _CREDENTIAL_ACTION_PAIRS = frozenset({
+        ("windows-standard-online", "connected-domain-login"),
+        ("windows-daily-admin", "operator-local-administrators-check"),
+        ("windows-cached-login", "cached-domain-login"),
+        ("windows-cached-admin-login", "cached-domain-login"),
+        ("windows-uncached-denied", "uncached-domain-user-denied"),
+        ("windows-local-rescue", "local-rescue-login"),
+        ("gateway-offline", "connected-domain-login"),
+        ("update-source-offline", "connected-domain-login"),
+        ("optional-storage-offline", "connected-domain-login"),
+        ("optional-storage-access-denied", "connected-domain-login"),
+        ("ad-dns-offline", "cached-domain-login"),
+        ("combined-dependencies-offline", "cached-domain-login"),
+        ("combined-dependencies-offline", "local-rescue-login"),
+    })
+
+    @classmethod
+    def credential_action(
+        cls, check: str, action: str, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        """Bind a typed guest credential-action failure to its check.
+
+        Attempt 36 (20260811T132018Z) failed inside the first live
+        connected-domain-login and rendered NOTHING: the credential-action
+        machinery carried no diagnostic, so the run reported only its
+        wrapper exception type and taught the next run nothing -- the same
+        gap guest_boot closed for boot raises.
+        """
+        if (
+            (check, action) not in cls._CREDENTIAL_ACTION_PAIRS
+            or phase not in {"serial-connect", "media", "execute"}
+        ):
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(
+            check, f"credential-action.{action}.{phase}", error_type)
+
+    @classmethod
+    def scoped_acceptance(
+        cls, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        """Last-resort coordinate for a diagnostic-less acceptance failure.
+
+        run_scoped_acceptance forwarded diagnostic=None whenever the inner
+        failure carried none, and the progressive sanitizer then discarded
+        the message too, so attempt 36 rendered a completely bare
+        `WindowsIdentityRunError`. Under the no-bare-coordinates convention
+        even an untyped failure names which side of the scope broke and the
+        exact inner exception type.
+        """
+        if phase not in {"acceptance", "principal-destruction"}:
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(
+            "windows-identity-acceptance",
+            f"scoped-acceptance.{phase}",
+            error_type,
+        )
 
     @classmethod
     def join_material(
@@ -481,6 +545,13 @@ class IdentityFailureDiagnostic:
                     "result-parse", "result-ack", "accepted-receive",
                     "accepted-parse", "result", "reboot-reauth",
                     "reboot-probe", "cleanup",
+                    "result-mismatch-schema-version",
+                    "result-mismatch-boot-completed",
+                    "result-mismatch-domain-joined",
+                    "result-mismatch-domain",
+                    "result-mismatch-operator",
+                    "result-mismatch-operator-local-administrator",
+                    "result-mismatch-key-set",
                     "result-guest-add-computer",
                     "result-guest-join-authorization",
                     "result-guest-join-authentication",
@@ -526,6 +597,23 @@ class IdentityFailureDiagnostic:
                 and self.operation.removeprefix(
                     "controller-convergence."
                 ) in self._CONTROLLER_CONVERGENCE_STAGES
+            )
+            and not (
+                self.operation.startswith("credential-action.")
+                and len(self.operation.split(".")) == 3
+                and (
+                    self.check, self.operation.split(".")[1],
+                ) in self._CREDENTIAL_ACTION_PAIRS
+                and self.operation.split(".")[2] in {
+                    "serial-connect", "media", "execute",
+                }
+            )
+            and not (
+                self.check == "windows-identity-acceptance"
+                and self.operation in {
+                    "scoped-acceptance.acceptance",
+                    "scoped-acceptance.principal-destruction",
+                }
             )
             and (self.check, self.operation)
             != ("unknown-check", "unknown-operation")
@@ -2313,6 +2401,18 @@ class PrivateIdentityMaterial:
                 if isinstance(candidate, IdentityFailureDiagnostic)
                 else None
             )
+            if diagnostic is None:
+                # No-bare-coordinates convention: attempt 36 rendered only
+                # the wrapper type because this producer forwarded
+                # diagnostic=None and the progressive sanitizer discards
+                # messages. Even an untyped failure names its scope side
+                # and inner exception type.
+                diagnostic = IdentityFailureDiagnostic.scoped_acceptance(
+                    "acceptance"
+                    if primary is not None
+                    else "principal-destruction",
+                    type(source).__name__,
+                )
             message = "scoped identity acceptance failed; " + "; ".join(details)
             if diagnostic is not None:
                 message += "; " + diagnostic.render()

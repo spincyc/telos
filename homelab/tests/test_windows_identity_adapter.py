@@ -828,11 +828,17 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(
                         subject.WindowsIdentityAdapterError,
-                        "serial acquisition"):
+                        "serial acquisition") as caught:
                     adapter.credential_action(
                         "windows-standard-online", "student", "secret")
 
             build.assert_not_called()
+            diagnostic = caught.exception.diagnostic
+            self.assertEqual("windows-standard-online", diagnostic.check)
+            self.assertEqual(
+                "credential-action.connected-domain-login.serial-connect",
+                diagnostic.operation)
+            self.assertEqual("OSError", diagnostic.error_type)
 
     def test_partial_credential_media_is_destroyed_and_error_is_sanitized(self):
         secret = "Never-Retain-This-47!"
@@ -869,6 +875,62 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 Path(name).glob("windows-credential-*.iso")))
             raw_serial.close.assert_called_once_with()
             self.assertFalse(adapter._com1_owned)
+
+    def test_credential_action_execute_failure_names_its_coordinate(self):
+        """Attempt 36 (20260811T132018Z): the first live
+        connected-domain-login died inside execution and rendered a
+        completely bare WindowsIdentityRunError. The execute phase now
+        carries a named diagnostic, sanitizes the backend message to its
+        type name, and retains one secret-safe terminal frame."""
+        from homelab.vm.windows_credential_action_iso import (
+            WindowsCredentialActionError,
+        )
+        with tempfile.TemporaryDirectory() as name, mock.patch.object(
+            subject.DuplexCredentialActionSerial, "connect",
+        ) as connect, mock.patch.object(
+            subject, "build_credential_action_iso",
+        ), mock.patch.object(
+            subject, "CredentialActionMediaChannel",
+        ), mock.patch.object(
+            subject, "execute_credential_action",
+            side_effect=WindowsCredentialActionError(
+                "private execution detail"),
+        ):
+            raw_serial = mock.Mock(closed=False)
+            connect.return_value = raw_serial
+            qmp = mock.Mock()
+            boundary = mock.Mock()
+            boundary.processes = {"windows": mock.Mock(
+                poll=mock.Mock(return_value=None))}
+            boundary.qmp = qmp
+            serial_path = Path(name) / "serial"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(serial_path))
+                boundary.serial_socket = serial_path
+                adapter = self.adapter(Path(name), boundary)
+                adapter.rotation_plan = mock.Mock(
+                    post_join_retain_submit_frames=1)
+                with self.assertRaises(
+                        subject.WindowsIdentityAdapterError) as caught:
+                    adapter.credential_action(
+                        "windows-standard-online", "student", "secret")
+
+        diagnostic = caught.exception.diagnostic
+        self.assertEqual("windows-standard-online", diagnostic.check)
+        self.assertEqual(
+            "credential-action.connected-domain-login.execute",
+            diagnostic.operation)
+        self.assertEqual(
+            "WindowsCredentialActionError", diagnostic.error_type)
+        self.assertNotIn("private execution detail", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertEqual(
+            ["identity-credential-action-connected-domain-login.ppm"],
+            [
+                Path(call.args[0]).name
+                for call in qmp.screenshot.call_args_list
+            ],
+        )
 
     def test_regular_file_is_not_accepted_as_com1_transport(self):
         with tempfile.TemporaryDirectory() as name:
