@@ -4,6 +4,13 @@
     "mode": "local-only",
     "external_access": "forbidden"
   },
+  "login_bound_seconds": 30,
+  "optional_storage": {
+    "protocol": "smb",
+    "authorization": "per-user",
+    "login_dependency": "forbidden",
+    "nfs": "disabled"
+  },
   "principals": {
     "standard_user": {
       "name": "student",
@@ -44,7 +51,10 @@
     "arch-local-rescue",
     "controller-restored",
     "windows-secure-channel-restored",
-    "arch-identity-restored"
+    "arch-identity-restored",
+    "arch-storage-attached",
+    "arch-storage-denied",
+    "arch-storage-absent-login"
   ],
   "deferred_checks": [
     {

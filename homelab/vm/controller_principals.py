@@ -239,6 +239,16 @@ try:
             raise RuntimeError("staged principal login shell is invalid")
         if strings(record, "unixHomeDirectory") != [unix["unixHomeDirectory"]]:
             raise RuntimeError("staged principal unix home is invalid")
+    # Gate 9: each staged user owns an optional per-user UNAS share root on
+    # the DC, owned by the directory-stored POSIX identity so smbd's rfc2307
+    # mapping grants the share owner and nobody else.
+    import os
+    for name in ("student", "operator", "directory-admin"):
+        unix = posix["users"][name]
+        path = "/srv/unas/" + name
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.chown(path, unix["uidNumber"], unix["gidNumber"])
+        os.chmod(path, 0o700)
 except BaseException:
     rollback_failures = []
     for name in reversed(created):
@@ -299,6 +309,9 @@ for name in names:
     )
     if results:
         failures.append("PrincipalRemains")
+import shutil
+for name in names:
+    shutil.rmtree("/srv/unas/" + name, ignore_errors=True)
 if failures:
     raise RuntimeError("principal destruction failed: " + ",".join(failures))
 """

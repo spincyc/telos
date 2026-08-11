@@ -172,16 +172,19 @@
     },
     "workstation": {
       "packages": [
+        "cifs-utils",
         "linux",
         "linux-firmware",
         "linux-lts",
         "networkmanager"
       ],
       "binaries": [
+        {"path": "/usr/bin/mount.cifs", "owner": "cifs-utils"},
         {"path": "/usr/bin/nmcli", "owner": "networkmanager"}
       ],
       "services": [
-        "NetworkManager.service"
+        "NetworkManager.service",
+        "serial-getty@ttyS0.service"
       ]
     },
     "services": {

@@ -345,6 +345,7 @@ class FactoryBundle:
             "homelab_ad_development_clock_receipt_file":
                 "/run/telos-factory-state/clock.receipt",
             "homelab_ad_manage_packages": False,
+            "homelab_storage_address": self.spec.address,
         }
         (destination / "factory-vars.json").write_text(
             json.dumps(variables, sort_keys=True) + "\n", encoding="utf-8")

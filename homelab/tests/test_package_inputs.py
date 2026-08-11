@@ -179,10 +179,11 @@ def shell_enabled_units(path: Path) -> frozenset[str]:
     """Units enabled by `systemctl enable` inside a generated shell payload."""
     units: set[str] = set()
     for match in re.finditer(
-        r"systemctl enable ([A-Za-z0-9@._-]+)", path.read_text(encoding="utf-8")
+        r"systemctl enable ((?:[A-Za-z0-9@._-]+ ?)+)",
+        path.read_text(encoding="utf-8"),
     ):
-        unit = match.group(1)
-        units.add(unit if "." in unit else f"{unit}.service")
+        for unit in match.group(1).split():
+            units.add(unit if "." in unit else f"{unit}.service")
     return frozenset(units)
 
 
@@ -219,10 +220,21 @@ class NonAnsibleServiceParityTests(unittest.TestCase):
         self.assertTrue(required, "no required networkd links were found")
         self.assertEqual(self.declared("installer-live"), required)
 
-    def test_workstation_declares_what_the_installer_enables(self):
+    def test_workstation_profile_declares_what_the_installer_enables(self):
+        # The installer enables identity and console units beyond networking,
+        # so parity is judged against the whole workstation-install profile,
+        # not the workstation overlay alone.
         enabled = shell_enabled_units(ROOT / "workstations/arch_second.py")
-        self.assertEqual(enabled, frozenset({"NetworkManager.service"}))
-        self.assertEqual(self.declared("workstation"), enabled)
+        self.assertEqual(enabled, frozenset({
+            "NetworkManager.service",
+            "sssd.service",
+            "serial-getty@ttyS0.service",
+        }))
+        profile_declared = frozenset().union(*(
+            self.declared(overlay)
+            for overlay in PROFILE_OVERLAYS["workstation-install"]
+        ))
+        self.assertEqual(profile_declared, enabled)
 
     def test_controller_factory_declares_its_unconditional_units(self):
         linked = wants_linked_units(ROOT / "vm/factory_publication.py")

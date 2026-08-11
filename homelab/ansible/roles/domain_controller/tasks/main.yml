@@ -218,6 +218,62 @@
     enabled: true
     state: started
 
+- name: Map directory rfc2307 identifiers into DC file access
+  # Without this smbd maps SIDs through idmap.ldb allocation and the staged
+  # uidNumber-owned share directories would be unreadable by their owners.
+  ansible.builtin.lineinfile:
+    path: "{{ homelab_ad_smb_conf }}"
+    insertafter: '^\[global\]'
+    regexp: '^\s*idmap_ldb:use rfc2307'
+    line: "        idmap_ldb:use rfc2307 = yes"
+  when: homelab_ad_enable_rfc2307 | bool
+  notify: restart samba ad dc
+
+- name: Create the optional per-user UNAS share root
+  ansible.builtin.file:
+    path: /srv/unas
+    state: directory
+    owner: root
+    group: root
+    mode: "0711"
+
+- name: Export optional per-user UNAS home shares
+  ansible.builtin.blockinfile:
+    path: "{{ homelab_ad_smb_conf }}"
+    marker: "# {mark} TELOS OPTIONAL PER-USER UNAS SHARES (gate 9)"
+    prepend_newline: true
+    block: |
+      [homes]
+          path = /srv/unas/%S
+          read only = no
+          browseable = no
+          valid users = %S
+  notify: restart samba ad dc
+
+- name: Apply share changes before publishing the storage name
+  ansible.builtin.meta: flush_handlers
+
+- name: Publish the storage authority name in domain DNS
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/samba-tool
+      - dns
+      - add
+      - "127.0.0.1"
+      - "{{ homelab_ad_dns_domain }}"
+      - "{{ homelab_storage_host_label }}"
+      - A
+      - "{{ homelab_storage_address }}"
+      - -P
+  register: homelab_unas_dns
+  changed_when: homelab_unas_dns.rc == 0
+  failed_when: >-
+    homelab_unas_dns.rc != 0 and
+    'already exists' not in
+    ((homelab_unas_dns.stderr | default('')) ~
+     (homelab_unas_dns.stdout | default('')))
+  when: homelab_storage_address | length > 0
+
 - name: Configure authenticated domain time
   ansible.builtin.template:
     src: ntp.conf.j2

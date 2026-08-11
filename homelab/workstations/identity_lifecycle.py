@@ -5,12 +5,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Iterable
 
 CONTRACT = Path(__file__).with_name("identity_lifecycle.json")
 OSES = ("windows", "arch")
+# Gate 9 (WORKSTATION-FACTORY-STATE.md): optional per-user SMB storage may
+# attach when reachable but must never block or fail login; local homes stay
+# authoritative and NFS stays disabled.  The three storage checks mirror the
+# Windows lane's optional-storage-offline/access-denied shape and run after
+# the restored-identity check so the reachable proofs have a live directory.
+STORAGE_CHECKS = (
+    "arch-storage-attached",
+    "arch-storage-denied",
+    "arch-storage-absent-login",
+)
+OPTIONAL_STORAGE_POLICY = {
+    "protocol": "smb",
+    "authorization": "per-user",
+    "login_dependency": "forbidden",
+    "nfs": "disabled",
+}
+LOGIN_BOUND_SECONDS = 30
 
 
 class EvidenceError(ValueError):
@@ -55,6 +73,23 @@ def validate_contract(contract: dict[str, Any]) -> list[str]:
     checks = contract.get("required_checks")
     if not isinstance(checks, list) or not checks or len(checks) != len(set(checks)):
         errors.append("required_checks must be a non-empty unique list")
+    if contract.get("login_bound_seconds") != LOGIN_BOUND_SECONDS:
+        errors.append(f"login_bound_seconds must be {LOGIN_BOUND_SECONDS}")
+    if contract.get("optional_storage") != OPTIONAL_STORAGE_POLICY:
+        errors.append(
+            "optional_storage must be per-user SMB that never gates login, "
+            "with NFS disabled")
+    if isinstance(checks, list):
+        if not set(STORAGE_CHECKS) <= set(checks) \
+                or "arch-identity-restored" not in checks:
+            errors.append("optional-storage checks are missing")
+        else:
+            anchor = checks.index("arch-identity-restored")
+            positions = [checks.index(check) for check in STORAGE_CHECKS]
+            if positions != sorted(positions) or positions[0] < anchor:
+                errors.append(
+                    "optional-storage checks must follow arch-identity-restored "
+                    "in order attached, denied, absent-login")
     deferred = contract.get("deferred_checks", [])
     revocation = [item for item in deferred if item.get("id") == "disable-reenable"]
     if len(revocation) != 1 or revocation[0].get("phase", 0) < 2:
@@ -145,6 +180,49 @@ def judge(contract: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
         raise EvidenceError("Windows secure channel did not recover")
     if by_check["arch-identity-restored"].get("identity_lookup") is not True:
         raise EvidenceError("Arch identity lookup did not recover")
+
+    # Gate 9: per-user authorization when the storage target is reachable,
+    # denial of a foreign user's share, and a bounded, independent login
+    # while the target is absent.  Every field is judged fail-closed.
+    bound = contract["login_bound_seconds"]
+    attached = by_check["arch-storage-attached"]
+    if (
+        attached.get("storage_reachable") is not True
+        or attached.get("mount_state") != "mounted"
+        or attached.get("storage_access") != "authorized"
+    ):
+        raise EvidenceError(
+            "Arch optional storage was not mounted and authorized while reachable")
+    denied = by_check["arch-storage-denied"]
+    if (
+        denied.get("storage_reachable") is not True
+        or denied.get("mount_state") != "refused"
+        or denied.get("storage_access") != "denied"
+        or denied.get("foreign_share") is not True
+    ):
+        raise EvidenceError("a foreign user's share was not refused")
+    absent = by_check["arch-storage-absent-login"]
+    if (
+        absent.get("storage_reachable") is not False
+        or absent.get("mount_state") != "absent"
+        or absent.get("login") != "allowed"
+        or absent.get("login_path_independent") is not True
+    ):
+        raise EvidenceError(
+            "login with the storage target absent was not proven independent")
+    if absent.get("login_bound_seconds") != bound:
+        raise EvidenceError(
+            "arch-storage-absent-login does not carry the contract login bound")
+    seconds = absent.get("login_seconds")
+    if (
+        isinstance(seconds, bool)
+        or not isinstance(seconds, (int, float))
+        or not math.isfinite(seconds)
+        or seconds < 0
+        or seconds > bound
+    ):
+        raise EvidenceError(
+            f"arch-storage-absent-login exceeded the {bound}-second login bound")
     return {
         "schema_version": 1,
         "result": "pass",

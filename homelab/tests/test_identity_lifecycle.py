@@ -44,6 +44,16 @@ def valid_events(contract):
         "controller-restored": {"authority_reachable": True},
         "windows-secure-channel-restored": {"secure_channel": True},
         "arch-identity-restored": {"identity_lookup": True},
+        "arch-storage-attached": {
+            "storage_reachable": True, "mount_state": "mounted",
+            "storage_access": "authorized"},
+        "arch-storage-denied": {
+            "storage_reachable": True, "mount_state": "refused",
+            "storage_access": "denied", "foreign_share": True},
+        "arch-storage-absent-login": {
+            "storage_reachable": False, "mount_state": "absent",
+            "login": "allowed", "login_path_independent": True,
+            "login_seconds": 4, "login_bound_seconds": 30},
     }
     return [event(check, **details.get(check, {}))
             for check in contract["required_checks"]]
@@ -146,6 +156,153 @@ class IdentityLifecycleTests(unittest.TestCase):
     def test_jsonl_parser_reports_line(self):
         with self.assertRaisesRegex(lifecycle.EvidenceError, "line 2"):
             lifecycle.load_events(['{"ok": true}\n', "nope\n"])
+
+    # ---- Gate 9: optional per-user SMB storage ----
+
+    def _storage_event(self, evidence, check):
+        return next(item for item in evidence if item["check"] == check)
+
+    def test_contract_orders_storage_checks_after_identity_restored(self):
+        required = self.contract["required_checks"]
+        anchor = required.index("arch-identity-restored")
+        positions = [required.index(check)
+                     for check in lifecycle.STORAGE_CHECKS]
+        self.assertEqual(positions, sorted(positions))
+        self.assertGreater(positions[0], anchor)
+        result = lifecycle.judge(self.contract, valid_events(self.contract))
+        self.assertEqual(result["checks"], len(required))
+        self.assertEqual(len(required), 21)
+
+    def test_contract_without_storage_checks_is_invalid(self):
+        for check in lifecycle.STORAGE_CHECKS:
+            contract = copy.deepcopy(self.contract)
+            contract["required_checks"].remove(check)
+            self.assertTrue(any(
+                "optional-storage" in error
+                for error in lifecycle.validate_contract(contract)))
+
+    def test_contract_with_reordered_storage_checks_is_invalid(self):
+        contract = copy.deepcopy(self.contract)
+        checks = contract["required_checks"]
+        first = checks.index("arch-storage-attached")
+        last = checks.index("arch-storage-absent-login")
+        checks[first], checks[last] = checks[last], checks[first]
+        self.assertTrue(any(
+            "attached, denied, absent-login" in error
+            for error in lifecycle.validate_contract(contract)))
+        contract = copy.deepcopy(self.contract)
+        checks = contract["required_checks"]
+        checks.remove("arch-storage-attached")
+        checks.insert(0, "arch-storage-attached")
+        self.assertTrue(any(
+            "arch-identity-restored" in error
+            for error in lifecycle.validate_contract(contract)))
+
+    def test_contract_pins_login_bound_and_storage_policy(self):
+        contract = copy.deepcopy(self.contract)
+        contract["login_bound_seconds"] = 300
+        self.assertTrue(any(
+            "login_bound_seconds" in error
+            for error in lifecycle.validate_contract(contract)))
+        contract = copy.deepcopy(self.contract)
+        del contract["login_bound_seconds"]
+        self.assertTrue(any(
+            "login_bound_seconds" in error
+            for error in lifecycle.validate_contract(contract)))
+        for mutation in (
+            {"nfs": "enabled"},
+            {"login_dependency": "allowed"},
+            {"protocol": "nfs"},
+            {"authorization": "shared"},
+        ):
+            contract = copy.deepcopy(self.contract)
+            contract["optional_storage"].update(mutation)
+            self.assertTrue(any(
+                "optional_storage" in error
+                for error in lifecycle.validate_contract(contract)))
+        contract = copy.deepcopy(self.contract)
+        del contract["optional_storage"]
+        self.assertTrue(any(
+            "optional_storage" in error
+            for error in lifecycle.validate_contract(contract)))
+
+    def test_storage_attach_judged_fields_fail_closed(self):
+        for field, value in (
+            ("storage_reachable", False),
+            ("storage_reachable", None),
+            ("mount_state", "absent"),
+            ("storage_access", "denied"),
+        ):
+            evidence = valid_events(self.contract)
+            check = self._storage_event(evidence, "arch-storage-attached")
+            check[field] = value
+            with self.assertRaisesRegex(
+                    lifecycle.EvidenceError, "mounted and authorized"):
+                lifecycle.judge(self.contract, evidence)
+        evidence = valid_events(self.contract)
+        del self._storage_event(
+            evidence, "arch-storage-attached")["mount_state"]
+        with self.assertRaisesRegex(
+                lifecycle.EvidenceError, "mounted and authorized"):
+            lifecycle.judge(self.contract, evidence)
+
+    def test_storage_denial_judged_fields_fail_closed(self):
+        for field, value in (
+            ("storage_reachable", False),
+            ("mount_state", "mounted"),
+            ("storage_access", "authorized"),
+            ("foreign_share", False),
+            ("foreign_share", None),
+        ):
+            evidence = valid_events(self.contract)
+            check = self._storage_event(evidence, "arch-storage-denied")
+            check[field] = value
+            with self.assertRaisesRegex(
+                    lifecycle.EvidenceError, "foreign user's share"):
+                lifecycle.judge(self.contract, evidence)
+
+    def test_storage_absent_login_judged_fields_fail_closed(self):
+        for field, value in (
+            ("storage_reachable", True),
+            ("mount_state", "mounted"),
+            ("login", "denied"),
+            ("login_path_independent", False),
+            ("login_path_independent", None),
+        ):
+            evidence = valid_events(self.contract)
+            check = self._storage_event(
+                evidence, "arch-storage-absent-login")
+            check[field] = value
+            with self.assertRaisesRegex(
+                    lifecycle.EvidenceError, "proven independent"):
+                lifecycle.judge(self.contract, evidence)
+
+    def test_storage_absent_login_duration_is_bounded_and_typed(self):
+        for value in (31, 30.5, -1, True, "4", float("nan"), float("inf"),
+                      None):
+            evidence = valid_events(self.contract)
+            check = self._storage_event(
+                evidence, "arch-storage-absent-login")
+            check["login_seconds"] = value
+            with self.assertRaisesRegex(
+                    lifecycle.EvidenceError, "login bound"):
+                lifecycle.judge(self.contract, evidence)
+        evidence = valid_events(self.contract)
+        check = self._storage_event(evidence, "arch-storage-absent-login")
+        del check["login_seconds"]
+        with self.assertRaisesRegex(lifecycle.EvidenceError, "login bound"):
+            lifecycle.judge(self.contract, evidence)
+        evidence = valid_events(self.contract)
+        check = self._storage_event(evidence, "arch-storage-absent-login")
+        check["login_bound_seconds"] = 60
+        with self.assertRaisesRegex(
+                lifecycle.EvidenceError, "contract login bound"):
+            lifecycle.judge(self.contract, evidence)
+        evidence = valid_events(self.contract)
+        check = self._storage_event(evidence, "arch-storage-absent-login")
+        check["login_seconds"] = 30
+        result = lifecycle.judge(self.contract, evidence)
+        self.assertEqual(result["result"], "pass")
 
 
 if __name__ == "__main__":

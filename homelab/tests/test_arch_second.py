@@ -9,9 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
     ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64, MSR, PROBE_CHECKS,
-    PROBE_HELPER_PATH, SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS,
-    WINDOWS_RECOVERY, Disk, InstallContractError, Partition, parse_lsblk,
-    render_installer, validate_windows_first,
+    PROBE_HELPER_PATH, STORAGE_HOST_LABEL, STORAGE_LOGIN_SECONDS_MARKER,
+    STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT, SYNTHETIC_DOMAIN,
+    SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY, Disk,
+    InstallContractError, Partition, parse_lsblk, render_installer,
+    validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 
@@ -400,6 +402,108 @@ class ArchSecondTests(unittest.TestCase):
                     hostname="workstation", expected_sizes_mib=SIZES,
                     **overrides,
                 )
+
+    def test_probe_covers_the_optional_storage_checks(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        for check in ("arch-storage-attached", "arch-storage-denied",
+                      "arch-storage-absent-login"):
+            self.assertIn(check, PROBE_CHECKS)
+            self.assertIn(f"{check})", script)
+        # The storage authority is a stable DNS name inside the synthetic
+        # domain so the gate-8 runner can toggle reachability in DNS alone.
+        self.assertIn(
+            f"STORAGE_HOST='{STORAGE_HOST_LABEL}.{SYNTHETIC_DOMAIN}'", script)
+        # Bounded absence probe and a bounded, credential-free mount attempt
+        # via the user's Kerberos identity.
+        self.assertIn("timeout 5 bash -c", script)
+        self.assertIn("/dev/tcp/$STORAGE_HOST/445", script)
+        self.assertIn("timeout 20 mount.cifs", script)
+        self.assertIn("sec=krb5,cruid=$mount_uid", script)
+        # mount.cifs is a contract gap (cifs-utils); the probe must guard on
+        # its presence and fail closed instead of assuming it.
+        self.assertIn("command -v mount.cifs >/dev/null 2>&1 || return 1",
+                      script)
+        self.assertIn(STORAGE_PROBE_ROOT, script)
+        # The measured login duration is reported as a token-scoped data
+        # marker the gate-8 drive records as evidence.
+        self.assertIn(
+            f"printf '{STORAGE_LOGIN_SECONDS_MARKER}%s=%s\\n' "
+            '"$token" "$elapsed"', script)
+        # The login bound comes from the identity-lifecycle contract.
+        contract = json.loads(
+            (Path(__file__).resolve().parents[1] / "workstations"
+             / "identity_lifecycle.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            f"LOGIN_BOUND_SECONDS='{contract['login_bound_seconds']}'",
+            script)
+
+    def test_storage_denial_first_proves_the_own_share_mounts(self):
+        # A broken mount path must never masquerade as authorization denial:
+        # the denial check first mounts the caller's own share.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        denial = script.split("check_arch_storage_denied()")[1].split(
+            "check_arch_storage_absent_login()")[0]
+        self.assertIn(
+            'storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1',
+            denial)
+        self.assertIn(
+            'if storage_mount "$STANDARD_USER" "$DAILY_ADMIN"; then', denial)
+
+    def test_optional_storage_attach_is_never_login_blocking(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        fstab_lines = [
+            line for line in script.splitlines()
+            if " cifs " in line and line.startswith("//")
+        ]
+        self.assertEqual(len(fstab_lines), 1)
+        line = fstab_lines[0]
+        device, mountpoint, fstype, options = line.split()[:4]
+        self.assertEqual(
+            device, f"//{STORAGE_HOST_LABEL}.{SYNTHETIC_DOMAIN}/student")
+        self.assertEqual(mountpoint, f"{STORAGE_MOUNT_ROOT}/student")
+        self.assertEqual(fstype, "cifs")
+        flags = options.split(",")
+        # Structural login independence: the systemd fstab generator can
+        # only emit a Wants= automount with a bounded attach.
+        for flag in ("nofail", "x-systemd.automount", "_netdev", "soft",
+                     "x-systemd.mount-timeout=10s", "sec=krb5"):
+            self.assertIn(flag, flags)
+        self.assertIn(f"mkdir -p /mnt{STORAGE_MOUNT_ROOT}/student", script)
+        # No hard dependency shapes: nothing may require, order after, or
+        # boot-block on the optional storage.
+        self.assertNotIn("x-systemd.requires", script)
+        self.assertNotIn("x-systemd.before", script)
+        self.assertNotIn("RequiresMountsFor", script)
+        for line in script.splitlines():
+            if "systemctl enable" in line:
+                self.assertNotIn(".mount", line)
+                self.assertNotIn(".automount", line)
+        # The probe proves the same structure at acceptance time.
+        self.assertIn("fstab_never_blocks_login", script)
+        self.assertIn(
+            "systemctl list-unit-files --state=enabled --no-legend", script)
+
+    def test_workstation_contract_supplies_mount_cifs_for_the_probe(self):
+        # cifs-utils owns /usr/bin/mount.cifs; the workstation closure carries
+        # it so the storage probes can mount, and the probe still guards
+        # command -v mount.cifs so an image built without it fails closed
+        # instead of erroring mid-check.
+        required = merge_contract(
+            load_registry(
+                Path(__file__).resolve().parents[1] / "package-contract.json"
+            ),
+            PROFILE_OVERLAYS["workstation-install"],
+        ).packages
+        self.assertIn("cifs-utils", required)
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):

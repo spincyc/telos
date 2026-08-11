@@ -87,7 +87,23 @@ PROBE_CHECKS = (
     "arch-uncached-denied",
     "arch-local-rescue",
     "arch-identity-restored",
+    "arch-storage-attached",
+    "arch-storage-denied",
+    "arch-storage-absent-login",
 )
+
+# Gate 9: optional per-user UNAS SMB storage.  The storage authority has its
+# own stable DNS label inside the synthetic domain so the gate-8 runner can
+# toggle reachability in DNS alone (samba-tool dns update on the Controller
+# serial) while Kerberos, LDAP, and DNS identity services stay online.
+STORAGE_HOST_LABEL = "unas"
+# Where the durable, never-login-blocking automount attaches a user's share.
+STORAGE_MOUNT_ROOT = "/srv/unas"
+# Where the acceptance probe performs its own explicit, bounded mounts.
+STORAGE_PROBE_ROOT = "/run/telos-storage-probe"
+# The extra data marker the storage-absent check prints before its verdict so
+# the gate-8 drive can record the measured login duration as evidence.
+STORAGE_LOGIN_SECONDS_MARKER = "__TELOS_ARCH_STORAGE_LOGIN_SECONDS_"
 
 
 class InstallContractError(ValueError):
@@ -318,6 +334,19 @@ def _identity_principals() -> dict[str, str]:
     return names
 
 
+def _identity_login_bound() -> int:
+    """Read the login duration bound from the identity-lifecycle contract."""
+    contract = json.loads(
+        Path(__file__).with_name("identity_lifecycle.json").read_text(
+            encoding="utf-8"))
+    bound = contract.get("login_bound_seconds")
+    if isinstance(bound, bool) or not isinstance(bound, int) \
+            or not 1 <= bound <= 600:
+        raise InstallContractError(
+            "identity-lifecycle login bound is not a sane bounded integer")
+    return bound
+
+
 def _render_krb5(realm: str) -> str:
     """Mirror ansible/roles/identity_client/templates/krb5.conf.j2."""
     return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
@@ -406,9 +435,12 @@ _PROBE_TEMPLATE = """\
 #!/usr/bin/env bash
 # Managed by Telos gate 7 (workstations/arch_second.py).  Secret-free
 # identity probe for gate 8 (vm/arch_identity_run.py): runs exactly one
-# lifecycle check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL.  It
-# never reads or carries a credential, so each proof is bounded to what a
-# credential-free session can honestly observe; unprovable means FAIL.
+# lifecycle check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL.  The
+# storage-absent check additionally prints one token-scoped
+# __TELOS_ARCH_STORAGE_LOGIN_SECONDS_<token>=<n> data line before its
+# verdict.  It never reads or carries a credential, so each proof is
+# bounded to what a credential-free session can honestly observe;
+# unprovable means FAIL.
 set -u
 
 DOMAIN='@DOMAIN@'
@@ -417,6 +449,9 @@ STANDARD_USER='@STANDARD_USER@'
 DAILY_ADMIN='@DAILY_ADMIN@'
 DOMAIN_ADMIN='@DOMAIN_ADMIN@'
 RESCUE_USER='@RESCUE_USER@'
+STORAGE_HOST='@STORAGE_HOST@'
+STORAGE_PROBE_ROOT='@STORAGE_PROBE_ROOT@'
+LOGIN_BOUND_SECONDS='@LOGIN_BOUND@'
 
 usage() {
   echo 'usage: homelab-arch-identity-probe <check> <token>' >&2
@@ -429,7 +464,8 @@ token="$2"
 case "$check" in
   arch-joined|arch-standard-online|arch-daily-admin|domain-admin-separate|\\
   arch-cached-login|arch-uncached-denied|arch-local-rescue|\\
-  arch-identity-restored) ;;
+  arch-identity-restored|arch-storage-attached|arch-storage-denied|\\
+  arch-storage-absent-login) ;;
   *) usage ;;
 esac
 printf '%s' "$token" | grep -Eq '^[A-Za-z0-9]{8,64}$' || usage
@@ -549,6 +585,105 @@ check_arch_identity_restored() {
   return 0
 }
 
+storage_reachable() {
+  # Bounded reachability probe: a dead or absent NAS costs at most 5s.
+  timeout 5 bash -c "exec 3<>/dev/tcp/$STORAGE_HOST/445" 2>/dev/null
+}
+
+storage_mount() {
+  # Mount share $1 with user $2's Kerberos identity.  Credential-free by
+  # construction: sec=krb5 can only succeed from a ticket a real login
+  # already obtained; the probe never holds or types a secret.  mount.cifs
+  # comes from cifs-utils; if the package contract does not ship it the
+  # attempt honestly fails closed.
+  command -v mount.cifs >/dev/null 2>&1 || return 1
+  mount_uid=$(id -u "$2" 2>/dev/null) || return 1
+  mkdir -p "$STORAGE_PROBE_ROOT/$1" || return 1
+  timeout 20 mount.cifs "//$STORAGE_HOST/$1" "$STORAGE_PROBE_ROOT/$1" \\
+    -o "sec=krb5,cruid=$mount_uid,uid=$mount_uid,soft,echo_interval=10" \\
+    >/dev/null 2>&1
+}
+
+storage_unmount() {
+  umount "$STORAGE_PROBE_ROOT/$1" 2>/dev/null
+  rmdir "$STORAGE_PROBE_ROOT/$1" 2>/dev/null
+  return 0
+}
+
+fstab_never_blocks_login() {
+  # Structural login independence: every cifs fstab entry (if any exists)
+  # must be a nofail systemd automount with a bounded mount timeout, so
+  # systemd-fstab-generator can only emit a Wants= automount that no boot
+  # or login unit ever waits on; and no mount or automount unit may be
+  # administratively enabled.  The optional attach path is therefore
+  # incapable of gating login, rather than merely observed not to.
+  while IFS= read -r options; do
+    case ",$options," in
+      *,nofail,*) ;;
+      *) return 1 ;;
+    esac
+    case "$options" in
+      *x-systemd.automount*) ;;
+      *) return 1 ;;
+    esac
+    case "$options" in
+      *x-systemd.mount-timeout=*) ;;
+      *) return 1 ;;
+    esac
+  done < <(grep -Ev '^[[:space:]]*#' /etc/fstab 2>/dev/null |
+           awk '$3 == "cifs" {print $4}')
+  systemctl list-unit-files --state=enabled --no-legend \\
+      '*.mount' '*.automount' 2>/dev/null | grep -q . && return 1
+  return 0
+}
+
+check_arch_storage_attached() {
+  # The mounting identity is the daily administrator: the gate-8 drive's
+  # real getty login primes that principal's Kerberos ticket, and sec=krb5
+  # can only ever succeed from such a real login's ticket.
+  await_domain_state Online || return 1
+  storage_reachable || return 1
+  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1
+  fstype=$(findmnt -rn -M "$STORAGE_PROBE_ROOT/$DAILY_ADMIN" \\
+    -o FSTYPE 2>/dev/null)
+  listed=0
+  ls "$STORAGE_PROBE_ROOT/$DAILY_ADMIN" >/dev/null 2>&1 && listed=1
+  storage_unmount "$DAILY_ADMIN"
+  [ "$fstype" = cifs ] || return 1
+  [ "$listed" = 1 ] || return 1
+  return 0
+}
+
+check_arch_storage_denied() {
+  await_domain_state Online || return 1
+  storage_reachable || return 1
+  # Fail-closed: the same identity must first mount its own share so a
+  # broken mount path can never masquerade as an authorization denial.
+  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1
+  storage_unmount "$DAILY_ADMIN"
+  if storage_mount "$STANDARD_USER" "$DAILY_ADMIN"; then
+    storage_unmount "$STANDARD_USER"
+    return 1
+  fi
+  storage_unmount "$STANDARD_USER"
+  return 0
+}
+
+check_arch_storage_absent_login() {
+  # The target must actually be absent, proven by the bounded probe.
+  storage_reachable && return 1
+  fstab_never_blocks_login || return 1
+  # A root su -l runs the real PAM account and session stacks for the
+  # domain user without a credential; with the NAS absent it must still
+  # complete inside the contract bound.
+  SECONDS=0
+  timeout "$LOGIN_BOUND_SECONDS" su -l "$STANDARD_USER" -c true \\
+    >/dev/null 2>&1 || return 1
+  elapsed=$SECONDS
+  printf '__TELOS_ARCH_STORAGE_LOGIN_SECONDS_%s=%s\\n' "$token" "$elapsed"
+  [ "$elapsed" -le "$LOGIN_BOUND_SECONDS" ]
+}
+
 result=FAIL
 case "$check" in
   arch-joined) check_arch_joined && result=PASS ;;
@@ -559,12 +694,21 @@ case "$check" in
   arch-uncached-denied) check_arch_uncached_denied && result=PASS ;;
   arch-local-rescue) check_arch_local_rescue && result=PASS ;;
   arch-identity-restored) check_arch_identity_restored && result=PASS ;;
+  arch-storage-attached) check_arch_storage_attached && result=PASS ;;
+  arch-storage-denied) check_arch_storage_denied && result=PASS ;;
+  arch-storage-absent-login) check_arch_storage_absent_login && result=PASS ;;
 esac
 verdict "$result"
 [ "$result" = PASS ]"""
 
 
-def _render_probe(*, domain: str, principals: Mapping[str, str]) -> str:
+def _render_probe(
+    *,
+    domain: str,
+    principals: Mapping[str, str],
+    storage_host: str,
+    login_bound: int,
+) -> str:
     """Substitute validated, quote-free values into the probe template."""
     replacements = {
         "@DOMAIN@": domain,
@@ -572,6 +716,9 @@ def _render_probe(*, domain: str, principals: Mapping[str, str]) -> str:
         "@DAILY_ADMIN@": principals["daily_admin"],
         "@DOMAIN_ADMIN@": principals["domain_admin"],
         "@RESCUE_USER@": principals["local_rescue"],
+        "@STORAGE_HOST@": storage_host,
+        "@STORAGE_PROBE_ROOT@": STORAGE_PROBE_ROOT,
+        "@LOGIN_BOUND@": str(login_bound),
     }
     text = _PROBE_TEMPLATE
     for token, value in replacements.items():
@@ -617,16 +764,22 @@ def render_installer(
         raise InstallContractError("join media label is invalid")
     realm = realm_dns_domain.upper()
     principals = _identity_principals()
+    login_bound = _identity_login_bound()
+    storage_host = f"{STORAGE_HOST_LABEL}.{realm_dns_domain}"
     sizes = ",".join(str(size) for size in expected_sizes_mib)
     packages = " ".join(_workstation_packages())
     krb5_conf = _render_krb5(realm)
     smb_conf = _render_smb(realm, realm_workgroup)
     sssd_conf = _render_sssd(realm_dns_domain, realm)
-    probe = _render_probe(domain=realm_dns_domain, principals=principals)
+    probe = _render_probe(
+        domain=realm_dns_domain, principals=principals,
+        storage_host=storage_host, login_bound=login_bound)
     pam_system_auth = _PAM_SYSTEM_AUTH
     probe_path = PROBE_HELPER_PATH
     local_rescue = principals["local_rescue"]
     daily_admin = principals["daily_admin"]
+    standard_user = principals["standard"]
+    storage_mount_root = STORAGE_MOUNT_ROOT
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 disk={disk_path!r}
@@ -759,6 +912,22 @@ TELOS_DAILY_EOF
 install -Dm0755 /dev/stdin /mnt{probe_path} <<'TELOS_PROBE_EOF'
 {probe}
 TELOS_PROBE_EOF
+
+# ---- Optional per-user UNAS storage (gate 9 contract) ----
+# Local profiles and homes stay authoritative for login.  The durable attach
+# path below is structurally incapable of blocking login: nofail keeps it a
+# Wants= of remote-fs.target, x-systemd.automount defers the network mount to
+# first access, and the bounded mount timeout caps any attach attempt.  No
+# login-path unit orders after it and the acceptance probe performs its own
+# explicit bounded mounts.  mount.cifs is owned by cifs-utils, which the
+# package contract does not yet carry; until that contract decision lands the
+# automount trigger and the probe both fail closed without hanging.
+mkdir -p /mnt{storage_mount_root}/{standard_user}
+cat >> /mnt/etc/fstab <<'TELOS_STORAGE_EOF'
+# Optional per-user UNAS storage: may attach when reachable, never
+# login-blocking (Telos gate 9).
+//{storage_host}/{standard_user} {storage_mount_root}/{standard_user} cifs sec=krb5,multiuser,soft,echo_interval=15,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=10s,x-systemd.idle-timeout=1min 0 0
+TELOS_STORAGE_EOF
 
 arch-chroot /mnt systemctl enable sssd serial-getty@ttyS0.service
 

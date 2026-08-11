@@ -46,3 +46,9 @@ homelab_ad_udp_ports:
   - 389
   - 464
 homelab_ad_rpc_dynamic_tcp_range: 49152-65535
+
+# Gate 9: optional per-user UNAS SMB storage. The authority name gets its own
+# DNS label so acceptance can toggle reachability in DNS alone; an empty
+# address skips publication.
+homelab_storage_host_label: unas
+homelab_storage_address: ""
