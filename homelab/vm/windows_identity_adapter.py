@@ -1037,13 +1037,21 @@ class NativeWindowsAcceptanceAdapter:
             # Attention Sequence to surface the sign-in form: a plain key
             # does not dismiss a timed-out lock screen (attempt 24's
             # re-established frame was still the lock-screen clock). Send
-            # Ctrl+Alt+Del first, as the change-password flow already does,
-            # then the ordinary wake / account selection / UPN entry.
+            # Ctrl+Alt+Del first, as the change-password flow already does.
+            # Then send only the wake keys -- NOT the full wake(), whose
+            # initial_delay would sleep the freshly surfaced form back into
+            # a timeout before the UPN is re-entered (attempt 25's frame was
+            # still the clock even after the SAS). Calibration already ran
+            # once, so it is not repeated here.
+            def rewake() -> None:
+                for key in wake_keys:
+                    interaction.key(key, timeout=remaining("wake"))
+
             _run_local_reauthentication_operation(
                 "wake",
                 lambda: interaction.chord(
                     "ctrl", "alt", "delete", timeout=remaining("wake")))
-            _run_local_reauthentication_operation("wake", wake)
+            _run_local_reauthentication_operation("wake", rewake)
             _run_local_reauthentication_operation(
                 "select-local-account", select_local_account)
             _run_local_reauthentication_operation(
