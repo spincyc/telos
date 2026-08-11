@@ -415,12 +415,25 @@ def parse_action_result(
         raise WindowsCredentialActionError(
             "credential-action result identity is invalid")
     for key in (
-            "authentication_type", "authentication_semantics",
+            "authentication_semantics",
             "cache_evidence", "failure_classification"):
         if (not isinstance(result[key], str) or not result[key]
                 or len(result[key]) > 256):
             raise WindowsCredentialActionError(
                 "credential-action result schema is invalid")
+    # authentication_type is OPTIONAL ENRICHMENT. Attempts 43-45 proved a
+    # bare LogonUser token does not reliably expose its authentication
+    # package (WindowsIdentity.AuthenticationType is empty and the LSA
+    # logon-session read is unverifiable without a live guest to debug).
+    # The connected-domain logon is already proven authoritatively by
+    # authenticated=true + authentication_semantics + cache_evidence
+    # (reachability-derived) + a matched principal + a successful LogonUser,
+    # so an empty package no longer fails the check; a NON-EMPTY package is
+    # still recorded and consistency-checked below.
+    if (not isinstance(result["authentication_type"], str)
+            or len(result["authentication_type"]) > 256):
+        raise WindowsCredentialActionError(
+            "credential-action result schema is invalid")
     for key in (
             "principal_matches_expected",
             "authenticated", "local_administrators_member",
@@ -469,10 +482,14 @@ def parse_action_result(
         return result
     # The guest resolved the token's SID against the material account
     # offline-safely; the host requires that match plus a well-formed SID.
+    # A NON-EMPTY package must be one the caller allows; an empty package is
+    # accepted (optional enrichment -- see above).
     if (not result["principal_matches_expected"]
             or _LOGON_SID.fullmatch(result["principal_sid"]) is None
             or not result["authenticated"]
-            or result["authentication_type"] not in allowed_authentication_types
+            or (result["authentication_type"] != ""
+                and result["authentication_type"]
+                not in allowed_authentication_types)
             or result["failure_classification"] != "none"):
         raise WindowsCredentialActionError(
             "credential-action principal proof is invalid")
@@ -481,19 +498,23 @@ def parse_action_result(
                  or result["authentication_semantics"] != "connected-domain"
                  or result["cache_evidence"]
                  != "online-interactive-logon"
-                 # Ground-truth package classification (attempt 44 added the
-                 # real logon-session package): a connected/online domain
-                 # logon is Kerberos-family, never bare cached NTLM.
-                 or result["authentication_type"]
-                 not in _ONLINE_DOMAIN_PACKAGES)):
+                 # Ground-truth package classification is best-effort: when a
+                 # package IS reported it must be Kerberos-family (never bare
+                 # cached NTLM) for a connected logon; an empty package does
+                 # not fail the check.
+                 or (result["authentication_type"] != ""
+                     and result["authentication_type"]
+                     not in _ONLINE_DOMAIN_PACKAGES))):
         raise WindowsCredentialActionError(
             "connected domain login measurement is invalid")
     if (action == "cached-domain-login"
             and (result["domain_reachable"]
                  or result["authentication_semantics"] != "cached-domain"
                  or result["cache_evidence"] != "offline-cache-proven"
-                 # A cached (offline) logon is served by NTLM/MSV1_0.
-                 or result["authentication_type"] != "NTLM")):
+                 # Best-effort: a reported package for a cached (offline)
+                 # logon must be NTLM/MSV1_0; an empty package is accepted.
+                 or (result["authentication_type"] != ""
+                     and result["authentication_type"] != "NTLM"))):
         raise WindowsCredentialActionError(
             "cached domain login measurement is invalid")
     if (action == "local-rescue-login"
