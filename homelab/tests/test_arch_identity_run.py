@@ -14,19 +14,24 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from homelab.vm import arch_identity_run
 from homelab.vm.arch_identity_run import (
+    ArchIdentityBoundary,
     ArchIdentityBundle,
     ArchIdentityDrive,
     ArchIdentityError,
     CHECK_DETAILS,
+    MAX_DURATION,
     REQUIRED_CHECKS,
     WINDOWS_CHECKS,
     assemble_evidence,
+    audit_arch_identity_boot,
     run,
     run_lifecycle,
     self_judge,
+    workstation_boot_command,
 )
 
 # The real judge, imported exactly as the shim and the producer do.
@@ -452,6 +457,376 @@ class RunGatingTests(unittest.TestCase):
             ok, message = self_judge(bundle.evidence_path)
             self.assertFalse(ok)
             self.assertIn("arch-local-rescue", message)
+
+    def test_out_of_bounds_duration_is_refused_before_any_session(self):
+        with tempfile.TemporaryDirectory() as name:
+            bundle = make_bundle(Path(name))
+            for duration in (0, 59, MAX_DURATION + 1):
+                with self.subTest(duration=duration):
+                    with self.assertRaisesRegex(
+                            ArchIdentityError, "duration"):
+                        run(bundle.bundle, apply=True,
+                            controller_state=bundle.controller_state,
+                            session_factory=lambda prepared: FakeSession(),
+                            duration=duration)
+            self.assertFalse(bundle.evidence_path.exists())
+
+    def test_explicit_duration_is_accepted(self):
+        with tempfile.TemporaryDirectory() as name:
+            bundle = make_bundle(Path(name))
+            code = run(bundle.bundle, apply=True,
+                       controller_state=bundle.controller_state,
+                       session_factory=lambda prepared: FakeSession(),
+                       duration=60)
+            self.assertEqual(code, 0)
+
+
+# --------------------------------------------------------------------------
+# Live boundary: boot command, wiring, and wall-clock bound (no QEMU).
+# --------------------------------------------------------------------------
+
+class WorkstationBootCommandTests(unittest.TestCase):
+    def _command(self, root: Path, port: int = 23456) -> list[str]:
+        disk = root / "arch-workstation.qcow2"
+        variables = root / "OVMF_VARS.fd"
+        disk.write_bytes(b"disk")
+        variables.write_bytes(b"vars")
+        return workstation_boot_command(disk, variables, port)
+
+    def test_boots_from_disk_only(self):
+        from homelab.vm.arch_install_prepare import DISK_SERIAL
+        with tempfile.TemporaryDirectory() as name:
+            command = self._command(Path(name))
+        self.assertIn("order=c,menu=off", command)
+        self.assertFalse(any("order=n" in item for item in command))
+        self.assertNotIn("-cdrom", command)
+        self.assertFalse(any("media=cdrom" in item for item in command))
+        # The joined disk is cold-plugged as the NVMe the installer targeted,
+        # firmware-bootable, so OVMF's proven ESP auto-discovery boots it.
+        self.assertIn(
+            f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1", command)
+        self.assertIn(
+            "socket,id=factory,connect=127.0.0.1:23456", command)
+        self.assertTrue(
+            any(item.startswith("e1000e,netdev=factory,")
+                for item in command))
+
+    def test_installation_media_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            command = self._command(root)
+            polluted = command + [
+                "-drive", "if=none,id=media,media=cdrom,file=/x.iso"]
+            with self.assertRaisesRegex(ArchIdentityError, "media"):
+                audit_arch_identity_boot(
+                    polluted, disk=root / "arch-workstation.qcow2")
+
+    def test_pxe_boot_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            command = [
+                "order=n" if item == "order=c,menu=off" else item
+                for item in self._command(root)
+            ]
+            with self.assertRaisesRegex(ArchIdentityError, "PXE"):
+                audit_arch_identity_boot(
+                    command, disk=root / "arch-workstation.qcow2")
+
+    def test_second_writable_disk_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            command = self._command(root) + [
+                "-drive", "if=virtio,format=qcow2,file=/other.qcow2"]
+            with self.assertRaisesRegex(ArchIdentityError, "exactly one"):
+                audit_arch_identity_boot(
+                    command, disk=root / "arch-workstation.qcow2")
+
+    def test_foreign_writable_disk_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            command = self._command(root)
+            with self.assertRaisesRegex(ArchIdentityError, "authorized"):
+                audit_arch_identity_boot(
+                    command, disk=root / "other.qcow2")
+
+
+class _FakeProcess:
+    def __init__(self) -> None:
+        self.pid = 4242
+        self.stdout = None
+        self.stdin = None
+        self.signals: list[int] = []
+        self.terminated = False
+
+    def poll(self):
+        return 0 if self.terminated else None
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+    def send_signal(self, signum):
+        self.signals.append(signum)
+
+
+class _FakeQmp:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.closed = False
+
+    def execute(self, command, arguments=None, **_kw):
+        self.calls.append((command, arguments))
+        return {}
+
+    def await_device_deleted(self, device, timeout=None):
+        self.calls.append(("await_device_deleted", device))
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeMatchBytes:
+    def __init__(self, value: bytes) -> None:
+        self.value = value
+
+    def group(self, index: int) -> bytes:
+        return self.value
+
+
+class _FakeSerial:
+    """Stands in for SerialAutomation on both consoles."""
+
+    instances: list["_FakeSerial"] = []
+    console_banner = b"[root@telos-workstation ~]# "
+
+    def __init__(self, reader, writer, password, *, timeout=90.0,
+                 clock=None) -> None:
+        self.password = password
+        self.timeout = timeout
+        self.calls: list[str] = []
+        self.token = "feedfacefeedface"
+        type(self).instances.append(self)
+
+    def establish_disposable_controller_session(self):
+        self.calls.append("establish")
+
+    def install_offline_controller_dependencies(self, **_kw):
+        self.calls.append("seed-install")
+
+    def converge_disposable_controller(self, guest_command, **_kw):
+        self.calls.append(f"converge:{guest_command}")
+
+    def release_password(self):
+        self.password = None
+        self.calls.append("release")
+
+    def _send(self, value, event):
+        self.calls.append(f"send:{event}")
+
+    def _wait(self, pattern, label):
+        self.calls.append(f"wait:{label}")
+        return _FakeMatchBytes(self.console_banner)
+
+
+class _FakeDisposableDisk:
+    instances: list["_FakeDisposableDisk"] = []
+
+    def __init__(self, canonical_disk, canonical_vars, *, run_root=None):
+        self.canonical = (canonical_disk, canonical_vars)
+        self.disk = Path(run_root or "/tmp") / "controller.raw"
+        self.vars = Path(run_root or "/tmp") / "OVMF_VARS.fd"
+        self.closed = False
+        type(self).instances.append(self)
+
+    def prepare(self):
+        return self
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeFactoryBundle:
+    def __init__(self, root, output, *, authorization_nonce):
+        self.output = Path(output)
+        self.nonce = authorization_nonce
+        self.password = "factory-secret"
+
+    def build(self):
+        self.output.touch(mode=0o600)
+        return self.output
+
+    @staticmethod
+    def guest_command(nonce):
+        return f"converge-with-nonce-{nonce}"
+
+
+class _WiredBoundary(ArchIdentityBoundary):
+    """The real boundary with only the process/QMP layer replaced."""
+
+    def __init__(self, bundle, **kw) -> None:
+        super().__init__(bundle, **kw)
+        self.spawned: list[tuple[str, list[str]]] = []
+        self.audited: list[str] = []
+        self.switch_waits: list[str] = []
+        self.qmp = _FakeQmp()
+
+    def _spawn(self, role, command, *, pass_fds=(), stdio=False):
+        process = _FakeProcess()
+        self.spawned.append((role, list(command)))
+        self._processes[role] = process
+        return process
+
+    def _audit(self, role, pid, **_kw):
+        self.audited.append(role)
+
+    def _wait_switch_port(self, name, mac):
+        self.switch_waits.append(name)
+
+    def _connect_qmp(self, path, pid):
+        return self.qmp
+
+
+class BoundaryWiringTests(unittest.TestCase):
+    """Prove the live wiring without booting anything.
+
+    Only the subprocess/QMP/serial layer is doubled; command construction,
+    sequencing, media attach/release ordering, outage control, and teardown
+    all run the real code.
+    """
+
+    def setUp(self):
+        _FakeSerial.instances = []
+        _FakeDisposableDisk.instances = []
+        self._patches = [
+            mock.patch(
+                "homelab.vm.automated_controller.DisposableBootDisk",
+                _FakeDisposableDisk),
+            mock.patch(
+                "homelab.vm.serial_automation.SerialAutomation", _FakeSerial),
+            mock.patch(
+                "homelab.vm.controller_factory.FactoryBundle",
+                _FakeFactoryBundle),
+        ]
+        for patch in self._patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _boundary(self, root: Path) -> _WiredBoundary:
+        bundle = make_bundle(root)
+        boundary = _WiredBoundary(bundle, duration=600)
+        seed = root / "seed.iso"
+        seed.write_bytes(b"seed")
+        seed.chmod(0o600)
+        boundary.seed_iso = seed
+        return boundary
+
+    def test_start_wires_identity_fabric_controller_then_workstation(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            boundary.start()
+            try:
+                roles = [role for role, _ in boundary.spawned]
+                self.assertEqual(
+                    roles, ["switch", "gateway", "controller", "workstation"])
+                commands = dict(boundary.spawned)
+                # The fabric runs in identity mode: the gateway's DHCP points
+                # DNS at the Controller.
+                self.assertIn("--identity-mode", commands["switch"])
+                self.assertIn("--identity-mode", commands["gateway"])
+                self.assertIn("--controller-mac", commands["gateway"])
+                self.assertIn(
+                    "virtio-scsi-pci,id=identityfactorybus",
+                    commands["controller"])
+                self.assertTrue(
+                    any("nvme,drive=osdisk" in item
+                        for item in commands["workstation"]))
+                self.assertEqual(
+                    boundary.switch_waits, ["gateway", "controller"])
+                self.assertEqual(
+                    boundary.audited, ["controller", "client"])
+                # Controller console: session, verified seed, convergence.
+                controller_console = _FakeSerial.instances[0]
+                self.assertEqual(controller_console.calls[0], "establish")
+                self.assertIn("seed-install", controller_console.calls)
+                converge = [call for call in controller_console.calls
+                            if call.startswith("converge:")]
+                self.assertEqual(len(converge), 1)
+                self.assertLess(
+                    controller_console.calls.index("seed-install"),
+                    controller_console.calls.index(converge[0]))
+                # Media are attached and provably released around each phase.
+                qmp_names = [name for name, _ in boundary.qmp.calls]
+                self.assertEqual(qmp_names, [
+                    "blockdev-add", "blockdev-add", "device_add",
+                    "device_del", "await_device_deleted",
+                    "blockdev-del", "blockdev-del",
+                    "blockdev-add", "blockdev-add", "device_add",
+                    "device_del", "await_device_deleted",
+                    "blockdev-del", "blockdev-del",
+                ])
+                self.assertTrue(boundary.observe_controller_ready())
+                # The convergence media and its password never survive.
+                self.assertIsNone(boundary._factory_media)
+                # Outage control drives the Controller process, not the fabric.
+                import signal
+                boundary.take_controller_offline()
+                self.assertTrue(boundary.observe_controller_offline())
+                boundary.restore_controller()
+                self.assertTrue(boundary.observe_controller_restored())
+                controller_process = boundary._processes["controller"]
+                self.assertEqual(
+                    controller_process.signals,
+                    [signal.SIGSTOP, signal.SIGCONT])
+                # The drive can open the workstation console.
+                channel = boundary.open_channel()
+                self.assertEqual(channel.timeout,
+                                 arch_identity_run.PROBE_TIMEOUT)
+            finally:
+                failures = boundary.stop()
+            self.assertEqual(failures, [])
+            self.assertTrue(_FakeDisposableDisk.instances[0].closed)
+
+    def test_workstation_login_prompt_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            banner = _FakeSerial.console_banner
+            _FakeSerial.console_banner = b"telos-workstation login: "
+            try:
+                with self.assertRaisesRegex(
+                        ArchIdentityError, "credential login") as caught:
+                    boundary.start()
+            finally:
+                _FakeSerial.console_banner = banner
+            self.assertEqual(caught.exception.check, "arch-joined")
+            # start() failed after spawning; it must have torn down itself.
+            self.assertEqual(boundary._processes, {})
+            self.assertTrue(_FakeDisposableDisk.instances[0].closed)
+
+    def test_wall_clock_expiry_terminates_and_is_reported(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            boundary.start()
+            processes = list(boundary._processes.values())
+            boundary._expire()
+            self.assertTrue(all(item.terminated for item in processes))
+            failures = boundary.stop()
+            self.assertTrue(
+                any("wall-clock bound" in item for item in failures))
+
+    def test_unsafe_seed_media_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            boundary.seed_iso.chmod(0o664)  # group-writable is unsafe
+            with self.assertRaisesRegex(
+                    ArchIdentityError, "seed media") as caught:
+                boundary.start()
+            self.assertEqual(caught.exception.check, "controller-ready")
+            self.assertEqual(boundary._processes, {})
 
 
 if __name__ == "__main__":

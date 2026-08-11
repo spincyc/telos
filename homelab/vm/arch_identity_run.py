@@ -509,103 +509,452 @@ def self_judge(path: Path) -> tuple[bool, str]:
 
 SessionFactory = Callable[[ArchIdentityBundle], ArchIdentitySession]
 
+#: Overall wall-clock bound for one live identity session.  The per-exchange
+#: SerialAutomation timeout only bounds a single console wait; this bound
+#: covers the whole boundary (fabric, Controller convergence, guest drive).
+DEFAULT_DURATION = 1800.0
+MAX_DURATION = 10800.0
+#: Boot-to-console bound for the joined workstation before probes start.
+CONSOLE_READY_TIMEOUT = 300.0
+#: Per-probe console bound once the guest shell is live.
+PROBE_TIMEOUT = 90.0
+
+
+def audit_arch_identity_boot(command: list[str], *, disk: Path) -> None:
+    """Refuse any identity boot that could install, PXE, or write elsewhere.
+
+    Gate 8 proves login on the *already installed* joined system, so the only
+    writable medium is the bundle overlay, no installation media may be
+    attached, and firmware must boot the disk, never the network.
+    """
+    expected = str(Path(disk).resolve())
+    writable = []
+    for index, argument in enumerate(command):
+        if argument == "-cdrom":
+            raise ArchIdentityError(
+                "identity boot must not attach installation media")
+        if argument != "-drive" or index + 1 >= len(command):
+            continue
+        fields = dict(
+            item.split("=", 1)
+            for item in command[index + 1].split(",") if "=" in item)
+        if fields.get("media") == "cdrom":
+            raise ArchIdentityError(
+                "identity boot must not attach installation media")
+        if fields.get("readonly") == "on" or fields.get("if") == "pflash":
+            continue
+        writable.append(fields)
+    if len(writable) != 1:
+        raise ArchIdentityError(
+            "identity boot must expose exactly one writable disk")
+    exposed = writable[0].get("file")
+    if exposed is None or str(Path(exposed).resolve()) != expected:
+        raise ArchIdentityError(
+            "writable disk differs from the authorized bundle overlay")
+    if any("order=n" in item for item in command):
+        raise ArchIdentityError(
+            "identity boot must never PXE; the joined disk is the boot path")
+    if "order=c,menu=off" not in command:
+        raise ArchIdentityError(
+            "identity boot must deterministically boot from disk")
+
+
+def workstation_boot_command(
+    disk: Path, variables: Path, switch_port: int,
+) -> list[str]:
+    """Build the disk-only boot command for the joined Arch workstation.
+
+    No PXE and no installation media: the joined disk is cold-plugged as the
+    same NVMe device (same synthetic serial) the gate-7 installer targeted,
+    so the installed system enumerates the disk it was installed onto.  The
+    gate-7 blocker history proved OVMF auto-discovers a bootable ESP on a
+    cold-plugged NVMe; with the bundle's pristine variables and bootindex=1
+    that auto-discovery makes the disk boot deterministic.
+    """
+    # Imported lazily: topology helpers are never needed by the pure
+    # producer/judge path.
+    from .arch_install_prepare import DISK_SERIAL
+    from .simulated_topology import MACS, _base, audit_qemu_argv
+
+    if not 1 <= switch_port <= 65535:
+        raise ArchIdentityError("switch port is invalid")
+    command = _base("arch-identity", Path(variables), 4096)
+    command += [
+        "-boot", "order=c,menu=off",
+        "-monitor", "none",
+        "-drive",
+        (
+            "if=none,id=osdisk,format=qcow2,cache=none,"
+            f"file={Path(disk).resolve()}"
+        ),
+        "-device", f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1",
+        "-netdev", f"socket,id=factory,connect=127.0.0.1:{switch_port}",
+        "-device", f"e1000e,netdev=factory,mac={MACS['client']}",
+    ]
+    audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
+    audit_arch_identity_boot(command, disk=disk)
+    return command
+
 
 class ArchIdentityBoundary:
     """Live loopback session: fabric, disposable Samba AD, joined Arch guest.
 
     This is the real, unattended path. It boots a loopback userspace switch
-    and gateway, the disposable converged Samba AD Controller (the same
-    disposable-controller convergence the Windows lane uses), and the joined
-    Arch workstation from the bundle disk, then drives the guest over serial.
+    and gateway in identity mode (the gateway's DHCP answers point DNS at the
+    Controller), converges the disposable Samba AD Controller with the same
+    gate-6 machinery the Windows identity lane uses (disposable raw copy of
+    the canonical bootstrap-dc state under its ``.simulation.lock`` flock,
+    in-guest verified seed install, offline factory convergence over the
+    private serial console), boots the joined Arch workstation from the
+    bundle disk, and hands its serial console to ``ArchIdentityDrive``.
 
-    Every heavy dependency is imported inside ``start`` so importing this
-    module (for the producer/judge unit tests) never needs QEMU. Because the
-    joined disk is produced by gate 7 and the converged Controller by gate 6,
-    the live path binds to those artifacts; the producer logic above is proven
-    independently against an injected session.
+    Every heavy dependency is imported inside the start path so importing
+    this module (for the producer/judge unit tests) never needs QEMU. The
+    small ``_spawn``/``_audit``/``_wait_switch_port``/``_connect_qmp`` seams
+    exist so tests can prove the wiring without booting anything.
     """
 
     #: Gate 7 must ship these on the joined disk for the live drive to work.
     GATE7_CONTRACT = (
         f"a secret-free probe helper at {PROBE_HELPER} that runs one lifecycle "
-        "check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL, plus a "
-        "console-login contract for the local break-glass administrator"
+        "check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL, a ttyS0 "
+        "getty that autologins the root console (the probe helper owns all "
+        "credentials; the host never holds one), and a boot loader whose "
+        "default entry reaches the joined Arch system"
     )
 
-    def __init__(self, bundle: ArchIdentityBundle) -> None:
+    def __init__(
+        self, bundle: ArchIdentityBundle, *,
+        duration: float = DEFAULT_DURATION,
+    ) -> None:
         self.bundle = bundle
-        self._runtime = None
+        self.duration = duration
+        #: Overridable seed media path; defaults to the repository seed ISO.
+        self.seed_iso: Path | None = None
+        self._runtime: Path | None = None
+        self._qmp_root: Path | None = None
+        self._port: int | None = None
         self._processes: dict[str, object] = {}
         self._controller_console = None
+        self._controller_disk = None
+        self._controller_qmp = None
+        self._factory_media: Path | None = None
         self._channel: SerialChannel | None = None
-        self._controller_online = True
+        self._controller_online = False
+        self._watchdog = None
+        self._expired = False
+
+    # -- test seams (real implementations are trivially thin) ---------------
+
+    def _spawn(self, role: str, command: list[str], *, pass_fds=(),
+               stdio: bool = False):  # pragma: no cover - live path
+        import subprocess
+
+        streams = subprocess.PIPE if stdio else subprocess.DEVNULL
+        process = subprocess.Popen(
+            command, stdin=streams,
+            stdout=subprocess.PIPE if stdio else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT, pass_fds=pass_fds)
+        self._processes[role] = process
+        return process
+
+    def _audit(self, role: str, pid: int, **kw) -> None:  # pragma: no cover
+        from .simulated_topology import audit_live_process
+
+        audit_live_process(pid, role, **kw)
+
+    def _wait_switch_port(self, name: str, mac: str) -> None:  # pragma: no cover
+        from .factory_runner import wait_for_switch_port
+
+        assert self._runtime is not None
+        wait_for_switch_port(self._runtime / "switch.jsonl", name, mac)
+
+    def _connect_qmp(self, path: Path, pid: int):  # pragma: no cover
+        import time
+
+        from .windows_gui import QmpClient
+
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                return QmpClient.connect(
+                    path, timeout=5.0, expected_peer_pid=pid)
+            except (OSError, RuntimeError):
+                if time.monotonic() >= deadline:
+                    raise ArchIdentityError(
+                        "Controller QMP authentication failed",
+                        check="controller-ready")
+                time.sleep(0.1)
+
+    # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
-        # Imported lazily: these pull QEMU/topology helpers that the pure
-        # producer path (and its tests) must never require.
-        import socket
-        import tempfile
+        # run_lifecycle only calls stop() once start() has returned, so a
+        # partial start must tear down what it already brought up.
+        try:
+            self._start_all()
+        except BaseException:
+            try:
+                self.stop()
+            except BaseException:
+                pass
+            raise
 
-        from .factory_runner import (
-            GATEWAY_MAC, gateway_command, switch_command, wait_for_switch_port,
-        )
+    def _start_all(self) -> None:
+        import tempfile
+        import threading
 
         runtime = Path(tempfile.mkdtemp(prefix="telos-arch-identity-"))
         runtime.chmod(0o700)
         self._runtime = runtime
+        self._watchdog = threading.Timer(self.duration, self._expire)
+        self._watchdog.daemon = True
+        self._watchdog.start()
+        self._start_fabric()
+        self._start_controller()
+        self._start_workstation()
 
+    def _expire(self) -> None:
+        """Wall-clock bound: kill the boundary so every console wait fails."""
+        self._expired = True
+        for process in list(self._processes.values()):
+            try:
+                process.terminate()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - best-effort expiry teardown
+                pass
+
+    def _start_fabric(self) -> None:
+        import socket
+
+        from .factory_runner import (
+            GATEWAY_MAC, gateway_command, switch_command)
+        from .simulated_topology import MACS
+
+        assert self._runtime is not None
         listener = socket.socket()
         try:
-            import subprocess
-
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(("127.0.0.1", 0))
             listener.listen(3)
             self._port = int(listener.getsockname()[1])
-            self._processes["switch"] = subprocess.Popen(
-                switch_command(listener.fileno(), runtime / "switch.jsonl"),
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT, pass_fds=(listener.fileno(),))
-            self._processes["gateway"] = subprocess.Popen(
-                gateway_command(self._port), stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-            wait_for_switch_port(
-                runtime / "switch.jsonl", "gateway", GATEWAY_MAC)
+            self._spawn(
+                "switch",
+                switch_command(
+                    listener.fileno(), self._runtime / "switch.jsonl",
+                    accept_timeout=1200, idle_timeout=self.duration + 60,
+                    identity_mode=True),
+                pass_fds=(listener.fileno(),))
         finally:
             listener.close()
-
-        self._start_controller()
-        self._start_workstation()
+        self._spawn(
+            "gateway",
+            gateway_command(
+                self._port, controller_mac=MACS["controller"],
+                identity_mode=True))
+        self._wait_switch_port("gateway", GATEWAY_MAC)
 
     def _start_controller(self) -> None:
-        # The disposable converged Samba AD Controller bring-up (seed install
-        # then offline convergence over the private serial console) is the same
-        # machinery the Windows identity lane uses; gate 6 owns it. It is bound
-        # here rather than duplicated. Until it is wired into this lane, refuse
-        # loudly instead of pretending the directory is ready.
-        raise ArchIdentityError(
-            "live disposable Samba AD Controller bring-up is not wired into "
-            "the Arch lane yet; it reuses the gate-6 converged-controller "
-            "helpers. Run the producer against an injected session until then.",
-            check="controller-ready",
-        )
+        """Boot and converge the disposable Samba AD Controller.
 
-    def _start_workstation(self) -> None:  # pragma: no cover - live path
-        raise ArchIdentityError(
-            "live joined Arch workstation boot requires gate 7: "
-            + self.GATE7_CONTRACT,
-            check="arch-joined",
-        )
+        Same canonical gate-6 state and machinery as the Windows identity
+        lane: ``DisposableBootDisk`` copies the canonical bootstrap-dc disk
+        (taking the ``.simulation.lock`` flock through its overlay guard),
+        the signed seed is verified and installed in-guest, and the offline
+        factory convergence runs over the private serial console.  Both media
+        are attached and provably released over QMP so the disposable guest
+        never retains the secret-bearing convergence ISO.
+        """
+        import secrets as secrets_module
+        import tempfile
 
-    def open_channel(self) -> SerialChannel:  # pragma: no cover - live path
+        from .automated_controller import DisposableBootDisk
+        from .bootstrap_dc import paths
+        from .serial_automation import SerialAutomation, SerialAutomationError
+        from .simulated_topology import MACS, controller_command
+
+        assert self._runtime is not None and self._port is not None
+        try:
+            canonical = paths(self.bundle.controller_state)
+            self._controller_disk = DisposableBootDisk(
+                canonical["disk"], canonical["vars"],
+                run_root=self._runtime / "controller").prepare()
+            self._qmp_root = Path(
+                tempfile.mkdtemp(prefix="telos-arch-id-qmp-"))
+            self._qmp_root.chmod(0o700)
+            qmp_path = self._qmp_root / "controller.qmp"
+            command = controller_command(
+                self.bundle.controller_state,
+                self._controller_disk.disk, self._controller_disk.vars,
+                self._port, disk_format="raw")
+            command = command + [
+                "-qmp", f"unix:{qmp_path},server=on,wait=off",
+                "-device", "virtio-scsi-pci,id=identityfactorybus",
+            ]
+            process = self._spawn("controller", command, stdio=True)
+            self._audit(
+                "controller", process.pid,
+                disposable_disk=self._controller_disk.disk,
+                disposable_vars=self._controller_disk.vars,
+                forbidden_paths=(canonical["disk"], canonical["vars"]),
+                qmp_socket=qmp_path)
+            password = (
+                "Synthetic-Controller-"
+                + secrets_module.token_urlsafe(24) + "-47!"
+            ).encode("ascii")
+            console = SerialAutomation(
+                process.stdout, process.stdin, password, timeout=120.0)
+            try:
+                console.establish_disposable_controller_session()
+            except SerialAutomationError as error:
+                console.release_password()
+                raise ArchIdentityError(
+                    "Controller session initialization failed",
+                    check="controller-ready") from error
+            self._controller_console = console
+            self._wait_switch_port("controller", MACS["controller"])
+            self._controller_qmp = self._connect_qmp(qmp_path, process.pid)
+            self._install_controller_seed(console)
+            self._converge_controller(console)
+            self._controller_online = True
+        except ArchIdentityError:
+            raise
+        except Exception as error:
+            raise ArchIdentityError(
+                "Controller bring-up failed: " + type(error).__name__,
+                check="controller-ready") from error
+
+    def _install_controller_seed(self, console) -> None:
+        """Attach, verify, install, and provably release the signed seed."""
+        from .factory_runner import DEFAULT_SEED_ISO
+
+        seed = self.seed_iso
+        if seed is None:
+            seed = Path(__file__).resolve().parents[2] / DEFAULT_SEED_ISO
+        if (
+            seed.is_symlink()
+            or not seed.is_file()
+            or seed.stat().st_mode & 0o022
+        ):
+            raise ArchIdentityError(
+                "Controller seed media has an unsafe identity",
+                check="controller-ready")
+        qmp = self._controller_qmp
+        assert qmp is not None
+        qmp.execute("blockdev-add", {
+            "node-name": "identityseedfile",
+            "driver": "file",
+            "filename": str(seed.resolve()),
+        })
+        qmp.execute("blockdev-add", {
+            "node-name": "identityseednode",
+            "driver": "raw",
+            "read-only": True,
+            "file": "identityseedfile",
+        })
+        qmp.execute("device_add", {
+            "driver": "scsi-cd",
+            "id": "identityseedcd",
+            "drive": "identityseednode",
+            "bus": "identityfactorybus.0",
+        })
+        console.install_offline_controller_dependencies()
+        qmp.execute("device_del", {"id": "identityseedcd"})
+        qmp.await_device_deleted("identityseedcd", timeout=30.0)
+        qmp.execute("blockdev-del", {"node-name": "identityseednode"})
+        qmp.execute("blockdev-del", {"node-name": "identityseedfile"})
+
+    def _converge_controller(self, console) -> None:
+        """Run the offline factory convergence and release its media."""
+        import secrets as secrets_module
+
+        from .controller_factory import FactoryBundle
+
+        assert self._runtime is not None
+        nonce = secrets_module.token_hex(32)
+        media_root = self._runtime / "controller-media"
+        media_root.mkdir(mode=0o700)
+        bundle = FactoryBundle(
+            Path(__file__).resolve().parents[2],
+            media_root / "controller-convergence.iso",
+            authorization_nonce=nonce)
+        qmp = self._controller_qmp
+        assert qmp is not None
+        try:
+            bundle.build()
+            self._factory_media = bundle.output
+            qmp.execute("blockdev-add", {
+                "node-name": "identityfactoryfile",
+                "driver": "file",
+                "filename": str(bundle.output.resolve()),
+            })
+            qmp.execute("blockdev-add", {
+                "node-name": "identityfactorynode",
+                "driver": "raw",
+                "read-only": True,
+                "file": "identityfactoryfile",
+            })
+            qmp.execute("device_add", {
+                "driver": "scsi-cd",
+                "id": "identityfactorycd",
+                "drive": "identityfactorynode",
+                "bus": "identityfactorybus.0",
+            })
+            console.converge_disposable_controller(
+                FactoryBundle.guest_command(nonce))
+            qmp.execute("device_del", {"id": "identityfactorycd"})
+            qmp.await_device_deleted("identityfactorycd", timeout=30.0)
+            qmp.execute("blockdev-del", {"node-name": "identityfactorynode"})
+            qmp.execute("blockdev-del", {"node-name": "identityfactoryfile"})
+        finally:
+            bundle.password = ""
+        bundle.output.unlink(missing_ok=True)
+        self._factory_media = None
+        media_root.rmdir()
+
+    def _start_workstation(self) -> None:
+        """Boot the joined workstation from disk and open its console.
+
+        The gate-7 joined disk presents a ttyS0 console per
+        ``GATE7_CONTRACT``.  A ``login:`` prompt is refused loudly: the host
+        never holds a workstation credential, so an image without the root
+        autologin console contract cannot be driven honestly.
+        """
+        from .serial_automation import SerialAutomation, SerialAutomationError
+
+        assert self._port is not None
+        command = workstation_boot_command(
+            self.bundle.disk, self.bundle.firmware, self._port)
+        process = self._spawn("workstation", command, stdio=True)
+        self._audit("client", process.pid, allowed_nic_models=("e1000e",))
+        console = SerialAutomation(
+            process.stdout, process.stdin, None,
+            timeout=CONSOLE_READY_TIMEOUT)
+        try:
+            match = console._wait(
+                rb"(?:^|\n)(?:[^\n]*login:[ \t]*$|[^\n]*[#$][ \t]*$)",
+                "arch-console-ready")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                "joined Arch workstation console never became ready; gate 7 "
+                "must ship " + self.GATE7_CONTRACT,
+                check="arch-joined") from error
+        if b"login:" in match.group(0):
+            raise ArchIdentityError(
+                "joined Arch workstation presented a credential login; the "
+                "identity drive requires " + self.GATE7_CONTRACT,
+                check="arch-joined")
+        console.timeout = PROBE_TIMEOUT
+        self._channel = console
+
+    def open_channel(self) -> SerialChannel:
         if self._channel is None:
             raise ArchIdentityError("Arch serial console is not open")
         return self._channel
 
-    def observe_controller_ready(self) -> bool:  # pragma: no cover
+    def observe_controller_ready(self) -> bool:
         return self._controller_online
 
-    def take_controller_offline(self) -> None:  # pragma: no cover - live path
+    def take_controller_offline(self) -> None:
         import signal as signal_module
 
         process = self._processes.get("controller")
@@ -613,10 +962,10 @@ class ArchIdentityBoundary:
             process.send_signal(signal_module.SIGSTOP)  # type: ignore[attr-defined]
         self._controller_online = False
 
-    def observe_controller_offline(self) -> bool:  # pragma: no cover
+    def observe_controller_offline(self) -> bool:
         return not self._controller_online
 
-    def restore_controller(self) -> None:  # pragma: no cover - live path
+    def restore_controller(self) -> None:
         import signal as signal_module
 
         process = self._processes.get("controller")
@@ -624,25 +973,70 @@ class ArchIdentityBoundary:
             process.send_signal(signal_module.SIGCONT)  # type: ignore[attr-defined]
         self._controller_online = True
 
-    def observe_controller_restored(self) -> bool:  # pragma: no cover
+    def observe_controller_restored(self) -> bool:
         return self._controller_online
 
     def windows_evidence(self) -> list[dict[str, object]]:
         return self.bundle.read_windows_evidence()
 
-    def stop(self) -> list[str]:  # pragma: no cover - live path
+    def stop(self) -> list[str]:
+        import shutil
+
         from .signal_cleanup import terminate_children
 
         failures: list[str] = []
+        if self._watchdog is not None:
+            self._watchdog.cancel()
+            self._watchdog = None
+        if self._controller_console is not None:
+            try:
+                self._controller_console.release_password()
+            except Exception:  # noqa: BLE001 - teardown is reported, not raised
+                failures.append("controller credential release failed")
+            self._controller_console = None
+        self._channel = None
+        if self._controller_qmp is not None:
+            try:
+                self._controller_qmp.close()
+            except Exception:  # noqa: BLE001
+                failures.append("controller QMP close failed")
+            self._controller_qmp = None
         processes = [
             proc for proc in self._processes.values() if proc is not None]
         if processes:
-            failures = terminate_children(processes)  # type: ignore[arg-type]
+            failures += terminate_children(
+                processes, terminate_timeout=8, kill_timeout=3)  # type: ignore[arg-type]
+        self._processes.clear()
+        if self._controller_disk is not None:
+            try:
+                self._controller_disk.close()
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    "controller disk teardown failed: "
+                    + type(error).__name__)
+            self._controller_disk = None
+        if self._factory_media is not None:
+            try:
+                self._factory_media.unlink(missing_ok=True)
+            except OSError:
+                failures.append("convergence media was not removed")
+            self._factory_media = None
+        for attribute in ("_qmp_root", "_runtime"):
+            root = getattr(self, attribute)
+            if root is not None:
+                shutil.rmtree(root, ignore_errors=True)
+                setattr(self, attribute, None)
+        if self._expired:
+            failures.append(
+                f"wall-clock bound of {self.duration:g}s was exceeded")
+        self._controller_online = False
         return failures
 
 
-def _default_session_factory(bundle: ArchIdentityBundle) -> ArchIdentitySession:
-    return ArchIdentityBoundary(bundle)
+def _default_session_factory(
+    bundle: ArchIdentityBundle, *, duration: float = DEFAULT_DURATION,
+) -> ArchIdentitySession:
+    return ArchIdentityBoundary(bundle, duration=duration)
 
 
 def run(
@@ -651,8 +1045,12 @@ def run(
     apply: bool,
     controller_state: Path,
     session_factory: SessionFactory | None = None,
+    duration: float = DEFAULT_DURATION,
 ) -> int:
     """Validate the bundle, gate on ``--apply``, produce and judge evidence."""
+    if not 60 <= duration <= MAX_DURATION:
+        raise ArchIdentityError(
+            f"duration must be between 60 and {MAX_DURATION:g} seconds")
     prepared = ArchIdentityBundle(bundle, controller_state)
     prepared.validate()
 
@@ -660,12 +1058,14 @@ def run(
     print(f"Bundle: {prepared.bundle}")
     print(f"Controller state: {prepared.controller_state}")
     print(f"Realm: {prepared.realm}")
+    print(f"Maximum runtime: {duration:g} seconds")
     print("Installation media, PXE, host networking and UniFi: disabled")
     if not apply:
         print("dry run; repeat with --apply to drive the identity lifecycle")
         return 0
 
-    factory = session_factory or _default_session_factory
+    factory = session_factory or (
+        lambda ready: _default_session_factory(ready, duration=duration))
     with SignalGuard():
         session = factory(prepared)
         events = run_lifecycle(session)
@@ -687,6 +1087,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--bundle", type=Path, required=True)
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
+    result.add_argument("--duration", type=float, default=DEFAULT_DURATION)
     result.add_argument("--apply", action="store_true")
     return result
 
@@ -698,6 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
             args.bundle,
             apply=args.apply,
             controller_state=args.controller_state,
+            duration=args.duration,
         )
     except RunInterrupted as error:
         print(f"arch identity run: {error}", file=sys.stderr)

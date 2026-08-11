@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Prepare one private authorized Arch identity (gate 8) bundle."""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from homelab.vm.arch_identity_prepare import main  # noqa: E402
+
+
+raise SystemExit(main())
