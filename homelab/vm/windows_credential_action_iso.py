@@ -71,9 +71,12 @@ _SCRIPT_FAILED_STAGES = frozenset({
     # Token-proof stages (the process-spawn stages retired with attempts
     # 39-42): compile the LogonUser wrapper, probe reachability, call
     # LogonUser (a rejected credential names its real Win32 code here),
-    # read the token's identity.
-    "logon-compile", "logon-prepare", "logon-call", "logon-result",
-    "identity-read",
+    # read the token's identity. `logon-timeout` is the bounded-logon guard:
+    # attempt 20260811T185946Z hung inside a black-holed frozen-KDC logon and
+    # reported nothing (guest_stage/result_line null -> host TimeoutError), so
+    # the guest now bounds the call and names this stage instead of hanging.
+    "logon-compile", "logon-prepare", "logon-call", "logon-timeout",
+    "logon-result", "identity-read",
 })
 
 
@@ -457,8 +460,13 @@ def parse_action_result(
         raise WindowsCredentialActionError(
             "credential-action result schema is invalid")
     elapsed = result["login_elapsed_seconds"]
+    # A connected logon completes in seconds, but an honest OFFLINE cached
+    # logon against a black-holed frozen DC must first wait out the guest's
+    # bounded DC-locator/Kerberos budget before falling to the local cache,
+    # so the elapsed measurement can legitimately run to the guest bound. The
+    # ceiling tracks the DuplexCredentialActionSerial deadline cap.
     if (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))
-            or not math.isfinite(elapsed) or elapsed < 0 or elapsed > 120):
+            or not math.isfinite(elapsed) or elapsed < 0 or elapsed > 300):
         raise WindowsCredentialActionError(
             "credential-action result schema is invalid")
     if (result["authentication_semantics"] not in _AUTHENTICATION_SEMANTICS

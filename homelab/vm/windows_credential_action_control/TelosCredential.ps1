@@ -198,6 +198,49 @@ public static class TelosCredentialLogon {
         logonError = ok ? 0 : Marshal.GetLastWin32Error();
         return ok;
     }
+    // Bounded logon. A SIGSTOP-frozen controller VM is a SILENT BLACK HOLE,
+    // not a fast-failing offline DC: its kernel is frozen too, so it neither
+    // completes a TCP handshake nor sends an RST -- packets vanish. An
+    // INTERACTIVE domain logon then does NOT fall fast to the local MSV1_0
+    // cache the way a real mobile machine away from home does (which gets a
+    // prompt no-route/DNS failure); instead LogonUser waits out the entire
+    // DC-locator + Kerberos send/retry timeout, which outlasts the host
+    // serial deadline. Attempt 20260811T185946Z proved exactly this: the
+    // guest emitted the material marker, the host released and destroyed the
+    // media, then COM1 went silent -- guest_stage null, result_line null,
+    // host TimeoutError -- because the script was BLOCKED inside this call
+    // and threw nothing. Run the interop logon on a dedicated background
+    // thread and join for a bounded budget so the guest ALWAYS reports a
+    // typed result inside the host budget instead of hanging COM1. The Win32
+    // error is still captured in the SAME interop frame (LogonUserAndError,
+    // on the worker) -- attempts 39/40 proved a cross-statement read renders
+    // 0. Returns 1 success, 2 rejected (logonError set), 0 budget expired.
+    public static int LogonUserBounded(
+        string user, string domain, string password, Int32 logonType,
+        Int32 budgetMilliseconds, out IntPtr token, out Int32 logonError) {
+        IntPtr threadToken = IntPtr.Zero;
+        Int32 threadError = 0;
+        bool threadOk = false;
+        System.Threading.Thread worker = new System.Threading.Thread(
+            delegate() {
+                threadOk = LogonUserAndError(
+                    user, domain, password, logonType,
+                    out threadToken, out threadError);
+            });
+        worker.IsBackground = true;
+        worker.Start();
+        if (worker.Join(budgetMilliseconds)) {
+            token = threadToken;
+            logonError = threadError;
+            return threadOk ? 1 : 2;
+        }
+        // Budget expired. The worker is IsBackground, so an abandoned still-
+        // blocked LogonUser cannot keep the guest process alive; the caller
+        // reports a typed logon-timeout instead of a silent COM1 hang.
+        token = IntPtr.Zero;
+        logonError = 0;
+        return 0;
+    }
     // WindowsIdentity(token).AuthenticationType is empty for a bare
     // LogonUser token (attempt 44). The real package lives in the token's
     // logon session: TokenStatistics.AuthenticationId (a LUID) ->
@@ -309,12 +352,29 @@ public static class TelosCredentialLogon {
     $loginClock = [Diagnostics.Stopwatch]::StartNew()
     $token = [IntPtr]::Zero
     $logonError = 0
-    $ok = [TelosCredentialLogon]::LogonUserAndError(
-        $username, $domain, $password, 2, [ref]$token, [ref]$logonError)
+    # Bound the interactive logon so a black-holed frozen KDC cannot hang
+    # COM1 past the host deadline (see LogonUserBounded). The budget is
+    # generous enough for a genuine offline logon to wait out the DC-locator
+    # timeout and fall to the local cache, yet short enough to leave the host
+    # serial budget room to receive the report. A cached logon that truly
+    # works offline still completes and reports success within it.
+    $logonBudgetMilliseconds = 180000
+    $logonStatus = [TelosCredentialLogon]::LogonUserBounded(
+        $username, $domain, $password, 2, $logonBudgetMilliseconds,
+        [ref]$token, [ref]$logonError)
     $loginClock.Stop()
     $loginElapsedSeconds = [Math]::Round(
         $loginClock.Elapsed.TotalSeconds, 3)
     $password = $null
+    if ($logonStatus -eq 0) {
+        # The logon did not return inside the offline budget. Report a typed
+        # timeout so the host records a diagnosable stage instead of a silent
+        # COM1 TimeoutError; this is a genuine failure of the offline logon,
+        # never fabricated as a pass.
+        $failureStage = 'logon-timeout'
+        throw 'credential action logon did not return within the offline budget'
+    }
+    $ok = ($logonStatus -eq 1)
     $failureStage = 'logon-result'
     if (-not $ok) {
         $failureCode = [int]$logonError

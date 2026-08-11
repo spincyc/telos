@@ -139,6 +139,30 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             adapter._reauthenticate.assert_called_once_with(
                 r".\telosadmin", "private", domain_operator=False)
 
+    def test_credential_serial_timeout_extends_only_dc_offline_actions(self):
+        # A SIGSTOP-frozen controller VM is a silent black hole, so the
+        # guest's bounded interactive logon on the cached/uncached paths must
+        # wait out the DC-locator timeout before falling to the local cache;
+        # those actions get a longer host serial deadline, capped at the
+        # DuplexCredentialActionSerial 300s bound. DC-reachable actions keep
+        # the base timeout.
+        with tempfile.TemporaryDirectory() as name:
+            adapter = self.adapter(Path(name))
+            for action in ("cached-domain-login", "uncached-domain-user-denied"):
+                with self.subTest(action=action):
+                    self.assertEqual(
+                        285.0, adapter._credential_serial_timeout(action))
+            for action in (
+                "connected-domain-login",
+                "operator-local-administrators-check",
+                "local-rescue-login",
+            ):
+                with self.subTest(action=action):
+                    self.assertEqual(
+                        adapter.timeout,
+                        adapter._credential_serial_timeout(action))
+            self.assertLessEqual(285.0, 300.0)
+
     def test_guest_launch_fails_closed_without_run_dialog_reference(self):
         with tempfile.TemporaryDirectory() as name:
             adapter = self.adapter(Path(name))

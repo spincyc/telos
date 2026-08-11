@@ -135,7 +135,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             script.index("$password = [string]$document.password"),
             script.index('"credential-material-loaded"'),
             script.index("TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED"),
-            script.index("LogonUserAndError(\n        $username"),
+            script.index("LogonUserBounded(\n        $username"),
         ]
         self.assertEqual(sorted(positions), positions)
         # The token proof replaced the spawn entirely: none of the
@@ -148,9 +148,11 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertNotIn("TerminateProcess", script)
         self.assertNotIn("EncodedCommand", script)
         # LOGON32_LOGON_INTERACTIVE (2) exercises the same online/cached
-        # distinction the checks judge.
+        # distinction the checks judge, now delivered through the bounded
+        # wrapper with its offline logon budget.
         self.assertIn(
-            "$username, $domain, $password, 2, [ref]$token, [ref]$logonError",
+            "$username, $domain, $password, 2, $logonBudgetMilliseconds,\n"
+            "        [ref]$token, [ref]$logonError",
             script)
         self.assertIn(
             "$action -eq 'uncached-domain-user-denied' -and", script)
@@ -459,6 +461,22 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             parse_action_result(
                 json.dumps({**cached, "authentication_type": "Kerberos"})
                 + "\n",
+                nonce=NONCE, action="cached-domain-login",
+                expected_principal="AD\\student",
+                allowed_authentication_types=allowed)
+        # An honest offline cached logon can run to the guest's bounded logon
+        # budget while it waits out the black-holed frozen KDC before falling
+        # to the local cache, so a multi-minute elapsed is accepted up to the
+        # serial deadline cap; beyond it is rejected.
+        self.assertEqual(175.0, parse_action_result(
+            json.dumps({**cached, "login_elapsed_seconds": 175.0}) + "\n",
+            nonce=NONCE, action="cached-domain-login",
+            expected_principal="AD\\student",
+            allowed_authentication_types=allowed)["login_elapsed_seconds"])
+        with self.assertRaisesRegex(
+                WindowsCredentialActionError, "schema is invalid"):
+            parse_action_result(
+                json.dumps({**cached, "login_elapsed_seconds": 301.0}) + "\n",
                 nonce=NONCE, action="cached-domain-login",
                 expected_principal="AD\\student",
                 allowed_authentication_types=allowed)
@@ -779,6 +797,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             "$failureStage = 'logon-compile'",
             "$failureStage = 'logon-prepare'",
             "$failureStage = 'logon-call'",
+            "$failureStage = 'logon-timeout'",
             "$failureStage = 'logon-result'",
             "$failureStage = 'identity-read'",
         )
@@ -796,11 +815,21 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
         self.assertLess(
             script.index("logonError = ok ? 0 :"),
             script.index("Add-Type -TypeDefinition $source"))
-        call_at = script.index("LogonUserAndError(\n        $username")
+        # The interactive logon is invoked through the BOUNDED wrapper so a
+        # black-holed frozen KDC cannot hang COM1 (attempt 20260811T185946Z);
+        # the wrapper still routes through LogonUserAndError on its worker so
+        # the Win32 error stays captured in the interop frame.
+        call_at = script.index("LogonUserBounded(\n        $username")
         self.assertIn("[ref]$logonError)", script)
         self.assertLess(call_at, script.index("[ref]$logonError)"))
         self.assertLess(call_at, script.index(
             "$failureStage = 'logon-result'"))
+        # A logon that does not return inside the offline budget names the
+        # bounded stage and throws, so the host never sees a silent timeout.
+        self.assertIn("$failureStage = 'logon-timeout'", script)
+        self.assertLess(
+            script.index("$failureStage = 'logon-timeout'"),
+            script.index("$failureStage = 'logon-result'"))
         # The token wrapper routes through the SetLastError=true LogonUser
         # extern.
         self.assertIn(
@@ -809,6 +838,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             script)
         self.assertIn("public static extern bool LogonUser(", script)
         self.assertIn("public static bool LogonUserAndError(", script)
+        self.assertIn("public static int LogonUserBounded(", script)
         # A thrown Win32Exception still yields its bounded NativeErrorCode.
         catch_at = script.index(
             "catch {", script.rindex("$serial.WriteLine(($result"))
@@ -841,7 +871,7 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
                   ',"stage":"logon-call","code":1326}'))
         for stage in (
             "logon-compile", "logon-prepare",
-            "logon-call", "logon-result", "identity-read",
+            "logon-call", "logon-timeout", "logon-result", "identity-read",
         ):
             with self.subTest(stage=stage):
                 self.assertEqual(

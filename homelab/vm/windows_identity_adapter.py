@@ -2010,6 +2010,28 @@ class NativeWindowsAcceptanceAdapter:
             return self.local_identity
         return f"{self.realm.split('.', 1)[0]}\\{principal}"
 
+    # Actions whose LogonUser reaches the domain controller while it is the
+    # SIGSTOP-frozen dependency. A frozen controller VM is a silent black
+    # hole (no handshake, no RST), so the guest's interactive logon must wait
+    # out the whole DC-locator + Kerberos timeout before falling to the local
+    # cache; the guest now bounds that call and always reports, but it needs
+    # a longer host serial deadline than the DC-reachable actions do.
+    # local-rescue-login is excluded: it authenticates a local account
+    # (domain '.') and never touches the controller.
+    _DC_OFFLINE_ACTIONS = frozenset({
+        "cached-domain-login", "uncached-domain-user-denied",
+    })
+    # Comfortably above the guest's 180s bounded-logon budget and below the
+    # DuplexCredentialActionSerial 300s deadline cap, leaving room for the
+    # launch, marker, and media-destruction overhead before the result read.
+    _DC_OFFLINE_SERIAL_TIMEOUT = 285.0
+
+    def _credential_serial_timeout(self, action: str) -> float:
+        if action in self._DC_OFFLINE_ACTIONS:
+            return min(
+                300.0, max(self.timeout, self._DC_OFFLINE_SERIAL_TIMEOUT))
+        return self.timeout
+
     def credential_action(
         self, check: str, principal: str, credential: str,
     ) -> Mapping[str, object]:
@@ -2031,7 +2053,8 @@ class NativeWindowsAcceptanceAdapter:
         self._claim_com1()
         try:
             raw_serial = DuplexCredentialActionSerial.connect(
-                self._serial_socket(), timeout=self.timeout)
+                self._serial_socket(),
+                timeout=self._credential_serial_timeout(action))
         except BaseException as error:
             self._release_com1()
             raise WindowsIdentityAdapterError(
