@@ -4,47 +4,55 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$volumes = @(
-    Get-Volume -FileSystemLabel 'TELOS_CRED' |
-        Where-Object DriveLetter
-)
-if ($volumes.Count -ne 1) {
-    throw 'TELOS_CRED volume count is invalid'
-}
-$volume = $volumes[0]
-$root = $volume.DriveLetter + ':\'
-$document = Get-Content -LiteralPath ($root + 'action.json') -Raw |
-    ConvertFrom-Json
-$actions = @(
-    'connected-domain-login',
-    'cached-domain-login',
-    'local-rescue-login',
-    'operator-local-administrators-check',
-    'uncached-domain-user-denied'
-)
-if ($document.schema_version -ne 1 -or
-    $document.nonce -notmatch '^[a-f0-9]{32}$' -or
-    $actions -notcontains [string]$document.action -or
-    [string]::IsNullOrWhiteSpace($document.username) -or
-    [string]::IsNullOrWhiteSpace($document.domain) -or
-    [string]::IsNullOrWhiteSpace($document.password)) {
-    throw 'credential-action material is invalid'
-}
-
-# Materialize the password and all fixed action inputs before telling the host
-# that the private medium may be detached and destroyed.
-$password = [string]$document.password
-$username = [string]$document.username
-$domain = [string]$document.domain
-$action = [string]$document.action
-$nonce = [string]$document.nonce
-$document = $null
-
+# COM1 first, and one fixed diagnostic line BEFORE any risky work, so a
+# host timeout can split "script never reported" from "script died
+# mid-way": attempt 37 (20260811T134831Z) timed out against a clean
+# desktop and the two cases were indistinguishable. Neither this line nor
+# the failed line below carries authority: the host discards them and
+# still gates media destruction on the nonce-bound material marker alone.
 $serial = [System.IO.Ports.SerialPort]::new('COM1', 115200, 'None', 8, 'One')
 $serial.ReadTimeout = 120000
 $serial.NewLine = "`n"
+$serial.Open()
+$serial.WriteLine('{"schema_version":1,"event":"credential-script-started"}')
+$password = $null
 try {
-    $serial.Open()
+    $volumes = @(
+        Get-Volume -FileSystemLabel 'TELOS_CRED' |
+            Where-Object DriveLetter
+    )
+    if ($volumes.Count -ne 1) {
+        throw 'TELOS_CRED volume count is invalid'
+    }
+    $volume = $volumes[0]
+    $root = $volume.DriveLetter + ':\'
+    $document = Get-Content -LiteralPath ($root + 'action.json') -Raw |
+        ConvertFrom-Json
+    $actions = @(
+        'connected-domain-login',
+        'cached-domain-login',
+        'local-rescue-login',
+        'operator-local-administrators-check',
+        'uncached-domain-user-denied'
+    )
+    if ($document.schema_version -ne 1 -or
+        $document.nonce -notmatch '^[a-f0-9]{32}$' -or
+        $actions -notcontains [string]$document.action -or
+        [string]::IsNullOrWhiteSpace($document.username) -or
+        [string]::IsNullOrWhiteSpace($document.domain) -or
+        [string]::IsNullOrWhiteSpace($document.password)) {
+        throw 'credential-action material is invalid'
+    }
+
+    # Materialize the password and all fixed action inputs before telling
+    # the host that the private medium may be detached and destroyed.
+    $password = [string]$document.password
+    $username = [string]$document.username
+    $domain = [string]$document.domain
+    $action = [string]$document.action
+    $nonce = [string]$document.nonce
+    $document = $null
+
     $serial.WriteLine(
         '{"schema_version":1,"event":"credential-material-loaded","nonce":"' +
         $nonce + '"}'
@@ -164,7 +172,12 @@ $record | ConvertTo-Json -Compress |
         }
     }
     $gatewayReachable = $false
-    $gatewayRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
+    # Audit finding alongside the StrictMode sweep: with
+    # $ErrorActionPreference = 'Stop', Get-NetRoute THROWS when no default
+    # route matches (offline fault phases), which would fail the whole
+    # action instead of recording gateway_reachable = false.
+    $gatewayRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' `
+        -ErrorAction SilentlyContinue |
         Where-Object { $_.NextHop -ne '0.0.0.0' } |
         Sort-Object RouteMetric, InterfaceMetric |
         Select-Object -First 1
@@ -285,6 +298,18 @@ $record | ConvertTo-Json -Compress |
         failure_classification = 'none'
     }
     $serial.WriteLine(($result | ConvertTo-Json -Compress))
+}
+catch {
+    # Never serialize the exception: it may contain private guest state.
+    # One fixed, credential-free breadcrumb turns a silent COM1 into a
+    # typed mid-script failure on the host.
+    try {
+        $serial.WriteLine(
+            '{"schema_version":1,"event":"credential-script-failed"}')
+    }
+    catch {
+    }
+    throw
 }
 finally {
     $password = $null

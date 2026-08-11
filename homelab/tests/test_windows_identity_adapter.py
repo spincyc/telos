@@ -891,11 +891,16 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             subject, "build_credential_action_iso",
         ), mock.patch.object(
             subject, "CredentialActionMediaChannel",
-        ), mock.patch.object(
+        ) as channel_type, mock.patch.object(
             subject, "execute_credential_action",
             side_effect=WindowsCredentialActionError(
                 "private execution detail"),
-        ):
+        ) as execute:
+            channel_type.return_value = mock.Mock(
+                state=mock.Mock(value="attached"),
+                attached=True, node_added=True, parent_added=True,
+                child_added=True, destroyed=False,
+            )
             raw_serial = mock.Mock(closed=False)
             connect.return_value = raw_serial
             qmp = mock.Mock()
@@ -915,6 +920,60 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                     adapter.credential_action(
                         "windows-standard-online", "student", "secret")
 
+                # The terminal frame is still retained at failure.
+                self.assertEqual(
+                    ["identity-credential-action-"
+                     "connected-domain-login.ppm"],
+                    [
+                        Path(call.args[0]).name
+                        for call in qmp.screenshot.call_args_list
+                    ],
+                )
+
+                # Attempt 37 could not even prove the media was attached:
+                # the channel-state breadcrumb records the lifecycle.
+                import json
+                breadcrumb = json.loads((
+                    Path(name) / "credential-action-evidence"
+                    / "credential-action-connected-domain-login-channel.json"
+                ).read_text())
+                self.assertEqual(
+                    {
+                        "schema_version": 1,
+                        "action": "connected-domain-login",
+                        "state": "attached",
+                        "attached": True,
+                        "node_added": True,
+                        "parent_added": True,
+                        "child_added": True,
+                        "destroyed": False,
+                    },
+                    breadcrumb,
+                )
+
+                # The wrapped launch retains one early witness frame a
+                # fixed 5 s after the Run-dialog launch: the launcher
+                # console is visible while it polls, splitting "nothing
+                # launched" from "script died later".
+                launched = execute.call_args.kwargs["launch_guest"]
+                adapter.launch_guest = mock.Mock()
+                ordering = mock.Mock()
+                ordering.attach_mock(adapter.launch_guest, "launch")
+                with mock.patch.object(subject.time, "sleep") as sleep:
+                    ordering.attach_mock(sleep, "sleep")
+                    ordering.attach_mock(qmp.screenshot, "screenshot")
+                    qmp.screenshot.reset_mock()
+                    launched("powershell -NoP ...")
+                self.assertEqual(
+                    mock.call.launch("powershell -NoP ..."),
+                    ordering.mock_calls[0])
+                self.assertEqual(
+                    mock.call.sleep(5.0), ordering.mock_calls[1])
+                self.assertEqual(
+                    "identity-credential-action-"
+                    "connected-domain-login-launch.ppm",
+                    Path(ordering.mock_calls[2].args[0]).name)
+
         diagnostic = caught.exception.diagnostic
         self.assertEqual("windows-standard-online", diagnostic.check)
         self.assertEqual(
@@ -924,13 +983,6 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             "WindowsCredentialActionError", diagnostic.error_type)
         self.assertNotIn("private execution detail", str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
-        self.assertEqual(
-            ["identity-credential-action-connected-domain-login.ppm"],
-            [
-                Path(call.args[0]).name
-                for call in qmp.screenshot.call_args_list
-            ],
-        )
 
     def test_regular_file_is_not_accepted_as_com1_transport(self):
         with tempfile.TemporaryDirectory() as name:

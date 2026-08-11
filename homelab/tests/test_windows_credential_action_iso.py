@@ -480,6 +480,216 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
             self.assertTrue(serial.closed)
             self.assertIs(CredentialActionMediaState.RELEASED, channel.state)
 
+    def test_started_line_is_tolerated_and_never_authorizes_release(self):
+        """The diagnostic started line carries no authority: release still
+        happens only after the nonce-bound material marker."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "action.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+            result = {
+                "schema_version": 1,
+                "event": "credential-action-result",
+                "nonce": NONCE,
+                "action": MATERIAL["action"],
+                "result": "pass",
+                "principal": "AD\\acceptance-operator",
+                "authenticated": True,
+                "local_administrators_member": False,
+                "authentication_type": "Kerberos",
+                "authentication_semantics": "cached-domain",
+                "cache_evidence": "offline-cache-proven",
+                "login_elapsed_seconds": 1.25,
+                "local_profile_available": True,
+                "domain_reachable": False,
+                "controller_reachable": False,
+                "gateway_reachable": True,
+                "failure_classification": "none",
+            }
+            released = []
+
+            def launch(_command):
+                guest.sendall(
+                    b'{"schema_version":1,'
+                    b'"event":"credential-script-started"}\n')
+                self.assertEqual([], released)
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            def guest_result():
+                self.assertEqual(
+                    f"TELOS_CREDENTIAL_ACTION_MEDIA_DESTROYED {NONCE}\n",
+                    guest.recv(256).decode())
+                released.append(True)
+                guest.sendall((json.dumps(result) + "\n").encode())
+
+            import threading
+            worker = threading.Thread(target=guest_result)
+            worker.start()
+            observed = execute_credential_action(
+                channel=channel,
+                serial=serial,
+                action=MATERIAL["action"],
+                expected_principal="AD\\acceptance-operator",
+                allowed_authentication_types=frozenset({"Kerberos"}),
+                launch_guest=launch,
+                await_device_deleted=lambda _: None,
+            )
+            worker.join()
+            guest.close()
+            self.assertEqual(result, observed)
+            self.assertIs(CredentialActionMediaState.RELEASED, channel.state)
+
+    def test_started_without_marker_is_a_typed_mid_script_failure(self):
+        """Attempt 37 (20260811T134831Z) rendered a raw TimeoutError that
+        could not split a dead launcher from a dying script. A started line
+        followed by silence is now the typed mid-script class."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "action.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host, timeout=0.3)
+
+            def launch(_command):
+                guest.sendall(
+                    b'{"schema_version":1,'
+                    b'"event":"credential-script-started"}\n')
+
+            with self.assertRaisesRegex(
+                WindowsCredentialActionError,
+                "started but delivered no material marker",
+            ):
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            guest.close()
+            self.assertTrue(serial.closed)
+            self.assertTrue(channel.destroyed)
+
+    def test_failed_line_is_a_typed_guest_failure_at_both_positions(self):
+        """The fixed failed line converts a silent COM1 close into a typed
+        guest failure, before and after material release."""
+        for started_first, expected in (
+            (True, "failed before releasing material after starting"),
+            (False, "failed before releasing material"),
+        ):
+            with self.subTest(started_first=started_first):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = self.private_root(temporary)
+                    iso = root / "action.iso"
+                    iso.write_bytes(b"private")
+                    iso.chmod(0o600)
+                    channel = CredentialActionMediaChannel(
+                        FakeQmp(), iso, NONCE)
+                    host, guest = socket.socketpair()
+                    serial = DuplexCredentialActionSerial(host)
+
+                    def launch(_command, send_started=started_first):
+                        if send_started:
+                            guest.sendall(
+                                b'{"schema_version":1,'
+                                b'"event":"credential-script-started"}\n')
+                        guest.sendall(
+                            b'{"schema_version":1,'
+                            b'"event":"credential-script-failed"}\n')
+
+                    with self.assertRaisesRegex(
+                            WindowsCredentialActionError, expected):
+                        execute_credential_action(
+                            channel=channel, serial=serial,
+                            action=MATERIAL["action"],
+                            expected_principal="AD\\acceptance-operator",
+                            allowed_authentication_types=frozenset(
+                                {"Kerberos"}),
+                            launch_guest=launch,
+                            await_device_deleted=lambda _: None,
+                        )
+                    guest.close()
+                    self.assertTrue(channel.destroyed)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / "action.iso"
+            iso.write_bytes(b"private")
+            iso.chmod(0o600)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+
+            def launch(_command):
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            def guest_result():
+                guest.recv(256)
+                guest.sendall(
+                    b'{"schema_version":1,'
+                    b'"event":"credential-script-failed"}\n')
+
+            import threading
+            worker = threading.Thread(target=guest_result)
+            worker.start()
+            with self.assertRaisesRegex(
+                    WindowsCredentialActionError,
+                    "failed after material release"):
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            worker.join()
+            guest.close()
+            self.assertTrue(serial.closed)
+
+    def test_script_reports_before_risky_work_and_on_failure(self):
+        """The guest script opens COM1 and writes the started line BEFORE
+        volume discovery or material reads, and its catch writes the fixed
+        failed line; neither carries a nonce or any dynamic content."""
+        script = Path(
+            "homelab/vm/windows_credential_action_control/"
+            "TelosCredential.ps1"
+        ).read_text(encoding="utf-8")
+        started_at = script.index(
+            '{"schema_version":1,"event":"credential-script-started"}')
+        self.assertLess(script.index("$serial.Open()"), started_at)
+        self.assertLess(started_at, script.index("Get-Volume"))
+        self.assertLess(started_at, script.index("action.json"))
+        failed_at = script.index(
+            '{"schema_version":1,"event":"credential-script-failed"}')
+        result_write_at = script.rindex("$serial.WriteLine(($result")
+        terminal_catch_at = script.index("catch {", result_write_at)
+        self.assertLess(result_write_at, terminal_catch_at)
+        self.assertLess(terminal_catch_at, failed_at)
+        self.assertLess(failed_at, script.rindex("finally {"))
+        # The offline fault phases must record an unreachable gateway, not
+        # throw: Get-NetRoute raises under ErrorActionPreference Stop when
+        # no default route matches.
+        self.assertIn(
+            "Get-NetRoute -DestinationPrefix '0.0.0.0/0' `\n"
+            "        -ErrorAction SilentlyContinue",
+            script)
+
     def test_composition_closes_serial_and_cleans_media_on_result_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.private_root(temporary)

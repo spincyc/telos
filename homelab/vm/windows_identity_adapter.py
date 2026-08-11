@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+import json
 import os
 import socket
 import stat
@@ -219,6 +220,40 @@ def _retain_single_frame(qmp, evidence: Path, name: str, enabled) -> None:
             frame.chmod(0o600)
         except OSError:
             pass
+    except (KeyboardInterrupt, SystemExit, RunInterrupted):
+        raise
+    except BaseException:
+        return
+
+
+def _retain_credential_channel_state(
+    evidence: Path, action: str, channel,
+) -> None:
+    """Best-effort media-lifecycle breadcrumb; secret-free; never raises.
+
+    Attempt 37 (20260811T134831Z) could not even prove whether the
+    credential ISO had been attached: the QMP exchange is unlogged and the
+    channel state died with the process. Booleans and the state enum only.
+    """
+    try:
+        evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        record = {
+            "schema_version": 1,
+            "action": action,
+            "state": getattr(
+                getattr(channel, "state", None), "value", None),
+            **{
+                name: bool(getattr(channel, name, False))
+                for name in (
+                    "attached", "node_added", "parent_added",
+                    "child_added", "destroyed",
+                )
+            },
+        }
+        target = evidence / f"credential-action-{action}-channel.json"
+        target.write_text(
+            json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+        target.chmod(0o600)
     except (KeyboardInterrupt, SystemExit, RunInterrupted):
         raise
     except BaseException:
@@ -2020,6 +2055,28 @@ class NativeWindowsAcceptanceAdapter:
             if action == "local-rescue-login"
             else frozenset({"Kerberos", "Negotiate", "NTLM"})
         )
+        evidence = self.private_root / "credential-action-evidence"
+        retain_frames = getattr(
+            self.rotation_plan, "post_join_retain_submit_frames", 0)
+
+        def launch_and_witness(command: str) -> None:
+            # Attempt 37 (20260811T134831Z) timed out against a CLEAN
+            # desktop: by frame time the launcher console was long gone, so
+            # "Run dialog executed nothing", "media poll exhausted" and
+            # "script died early" were indistinguishable. One early frame a
+            # fixed 5 s after the launch shows the launcher console while
+            # it polls (or its absence). Secret-free -- the credential
+            # travels only on the private ISO, never through the GUI -- and
+            # gated on the same integer frame flag as every retention. The
+            # fixed sleep is charged against the 120 s serial budget; the
+            # guest's own lines buffer in the socket meanwhile.
+            self.launch_guest(command)
+            if type(retain_frames) is int and retain_frames > 0:
+                time.sleep(5.0)
+                _retain_single_frame(
+                    qmp, evidence,
+                    f"credential-action-{action}-launch", retain_frames)
+
         try:
             return execute_credential_action(
                 channel=channel,
@@ -2027,7 +2084,7 @@ class NativeWindowsAcceptanceAdapter:
                 action=action,
                 expected_principal=self._expected_principal(principal, action),
                 allowed_authentication_types=allowed,
-                launch_guest=self.launch_guest,
+                launch_guest=launch_and_witness,
                 await_device_deleted=self.await_device_deleted,
             )
         except (KeyboardInterrupt, SystemExit, RunInterrupted):
@@ -2035,18 +2092,17 @@ class NativeWindowsAcceptanceAdapter:
         except BaseException as error:
             # Attempt 36's first live connected-domain-login died here and
             # rendered nothing. Name the coordinate, and retain one
-            # secret-safe terminal frame (the credential travels only on
-            # the private ISO, never through the GUI) so a silent guest is
-            # diagnosable next run. Gated on the same integer frame-count
-            # flag as every other retention; never displaces the failure.
+            # secret-safe terminal frame plus the media-lifecycle
+            # breadcrumb so a silent guest is diagnosable next run. Gated
+            # on the same integer frame-count flag as every other
+            # retention; never displaces the failure.
             _retain_single_frame(
                 qmp,
-                self.private_root / "credential-action-evidence",
+                evidence,
                 f"credential-action-{action}",
-                getattr(
-                    self.rotation_plan,
-                    "post_join_retain_submit_frames", 0),
+                retain_frames,
             )
+            _retain_credential_channel_state(evidence, action, channel)
             raise WindowsIdentityAdapterError(
                 "credential action execution failed: "
                 f"{type(error).__name__}",

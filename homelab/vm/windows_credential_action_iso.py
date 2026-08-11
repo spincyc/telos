@@ -48,6 +48,14 @@ ACTION_NODE = "telos-credential-action-media"
 ACTION_DEVICE = "telos-credential-action-cd"
 ACTION_PARENT = "telos-credential-action-bot"
 ACTION_BUS = f"{ACTION_PARENT}.0"
+# Fixed diagnostic-only lines the guest script emits around its risky work.
+# They carry no nonce and no authority -- media destruction is still gated
+# exclusively on the nonce-bound material marker -- but they split a silent
+# COM1 timeout into "script never reported" (raw TimeoutError), "script
+# started then died" and "script failed mid-way" (typed), which attempt 37
+# (20260811T134831Z) could not distinguish from a clean-desktop frame.
+SCRIPT_STARTED_EVENT = '{"schema_version":1,"event":"credential-script-started"}'
+SCRIPT_FAILED_EVENT = '{"schema_version":1,"event":"credential-script-failed"}'
 _RESULT_KEYS = {
     "schema_version", "event", "nonce", "action", "result",
     "principal", "authenticated", "local_administrators_member",
@@ -658,14 +666,33 @@ def execute_credential_action(
     try:
         channel.attach()
         launch_guest(launch_credential_action_command())
+        # The first read stays a raw timeout when nothing ever arrives:
+        # that is the "launcher or script never reported" class.
         marker = serial.read_line()
+        script_started = False
+        if marker.rstrip("\n") == SCRIPT_STARTED_EVENT:
+            script_started = True
+            try:
+                marker = serial.read_line()
+            except TimeoutError:
+                raise WindowsCredentialActionError(
+                    "credential-action script started but delivered "
+                    "no material marker") from None
+        if marker.rstrip("\n") == SCRIPT_FAILED_EVENT:
+            raise WindowsCredentialActionError(
+                "credential-action script failed before releasing material"
+                + (" after starting" if script_started else ""))
         channel.release_after_marker(
             marker,
             await_device_deleted=await_device_deleted,
             send_release=serial.send_release,
         )
+        result_line = serial.read_line()
+        if result_line.rstrip("\n") == SCRIPT_FAILED_EVENT:
+            raise WindowsCredentialActionError(
+                "credential-action script failed after material release")
         result = parse_action_result(
-            serial.read_line(),
+            result_line,
             nonce=channel.nonce,
             action=action,
             expected_principal=expected_principal,
