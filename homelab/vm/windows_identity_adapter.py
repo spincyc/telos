@@ -1009,7 +1009,42 @@ class NativeWindowsAcceptanceAdapter:
                 "submit-focus-calibration", capture_submit_focus)
             raise WindowsLocalReauthenticationError("calibration-required")
 
+        def reestablish_sign_in_form() -> None:
+            # Gate-6 root cause fix. On the domain-operator path the
+            # Controller (and, on the diagnostic path, the post-submit
+            # diagnostic) arm runs between the initial UPN entry above and
+            # the secret submission below. That arm is slow -- tens of
+            # seconds of sudo prompt, watcher launch and a multi-phase
+            # prearm handshake -- and the Windows "Other user" sign-in form
+            # times out back to the lock screen inside that window. Without
+            # this step the secret and its activation land on the lock
+            # screen, not the form, so no interactive logon ever fires (the
+            # retained submit-pre/post-activation frames showed the lock
+            # screen clock, not the credential form). Re-run the exact
+            # wake -> account selection -> UPN entry -> password-target proof
+            # so the secret is typed into a live, focused form.
+            #
+            # This only re-establishes GUI focus. It does not arm, does not
+            # touch the watcher and does not move the submission fence: the
+            # controller watcher's observation window stays anchored to the
+            # begin_submission fence sent after submit_secret types the
+            # secret, so re-waking here changes nothing about what the
+            # watcher observes. The secret itself is still typed exactly
+            # once, below, after disable_durable_capture and guarded by the
+            # same _prove_secret_entry_departure proof.
+            _run_local_reauthentication_operation("wake", wake)
+            _run_local_reauthentication_operation(
+                "select-local-account", select_local_account)
+            _run_local_reauthentication_operation(
+                "type-public-username", normalize_public_username)
+            _run_local_reauthentication_operation(
+                "prove-password-target", prove_password_target)
+
         def submit_secret() -> None:
+            if domain_operator:
+                # The arm(s) above can outlast the sign-in form; re-establish
+                # it before the secret is typed. See reestablish_sign_in_form.
+                reestablish_sign_in_form()
             _run_local_reauthentication_operation(
                 "type-secret", interaction.disable_durable_capture)
             _run_local_reauthentication_operation(

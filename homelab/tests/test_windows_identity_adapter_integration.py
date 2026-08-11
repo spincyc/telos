@@ -1238,6 +1238,17 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.observe(sign_in, mock.ANY),
                 mock.call.controller_arm(),
                 mock.call.arm(),
+                # The slow controller and diagnostic arms above can time the
+                # "Other user" sign-in form out to the lock screen, so the
+                # form is re-established (wake -> account selection -> UPN
+                # entry -> password-target proof) before the secret is typed.
+                # wake_after_lock_keys and account keys are empty here, so
+                # only the UPN normalization backspace and the Tab-to-password
+                # proof are visible on this ordering mock.
+                mock.call.key("backspace", timeout=mock.ANY),
+                mock.call.key("tab", timeout=mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
                 mock.call.disable(),
                 mock.call.type_secret("private", timeout=mock.ANY),
                 mock.call.prove_departure(
@@ -1263,6 +1274,116 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         diagnostic.__enter__.assert_called_once_with()
         diagnostic.__exit__.assert_called_once_with(None, None, None)
         self.assertFalse(adapter._com1_owned)
+
+    @mock.patch.object(subject, "_prove_secret_entry_departure")
+    @mock.patch.object(subject, "_GuiInteraction")
+    @mock.patch.object(subject, "_private_evidence_root")
+    @mock.patch.object(subject, "_load_references")
+    @mock.patch.object(subject, "ControllerAuthDiagnosticSession")
+    def test_slow_arm_reestablishes_sign_in_form_before_secret(
+        self, controller_type, load_references, private_evidence_root,
+        interaction_type, prove_departure,
+    ):
+        # Gate-6 root cause and its fix. The domain-operator arm runs between
+        # the initial UPN entry and the secret submission, and it is slow --
+        # the Windows "Other user" sign-in form times out back to the lock
+        # screen during it, so a secret typed straight after the arm lands on
+        # the lock screen and no interactive logon ever fires. The fix
+        # re-establishes the form (re-wake -> re-select account -> re-enter
+        # UPN -> re-prove the password target) after the arm and immediately
+        # before the secret. This test stands the slow arm in with a clock
+        # jump and asserts that a full form-establishing step is issued after
+        # the arm and before the secret, and that the submission fence still
+        # follows the secret (not the arm), so the watcher's observation
+        # window is unchanged.
+        sign_in = mock.Mock(
+            state_kind="sign-in",
+            state="focused password field for domain account "
+            "operator@FACTORY.TEST",
+        )
+        load_references.return_value = (
+            sign_in, mock.sentinel.desktop,
+            mock.sentinel.security, mock.sentinel.change,
+        )
+        private_evidence_root.return_value = self.root / "reauth-evidence"
+        now = [0.0]
+
+        controller = controller_type.return_value
+        controller.armed = True
+        controller.result.return_value = ControllerAuthResult(
+            code=ControllerAuthCode.NO_EVENT)
+
+        def slow_arm():
+            # Stand in for the real arm's tens of seconds (sudo prompt,
+            # watcher launch, multi-phase prearm handshake) during which the
+            # sign-in form reverts to the lock screen.
+            now[0] += 30.0
+
+        controller.arm.side_effect = slow_arm
+
+        interaction = interaction_type.return_value
+        ordering = mock.Mock()
+        ordering.attach_mock(controller.arm, "controller_arm")
+        ordering.attach_mock(interaction.key, "key")
+        ordering.attach_mock(interaction.observe, "observe")
+        ordering.attach_mock(interaction.disable_durable_capture, "disable")
+        ordering.attach_mock(interaction.type_secret, "type_secret")
+        ordering.attach_mock(
+            controller.begin_submission, "controller_begin_submission")
+
+        adapter = self.adapter(
+            timeout=120,
+            clock=lambda: now[0],
+            rotation_plan=mock.Mock(
+                initial_sign_in_delay=0,
+                lock_settle_delay=0,
+                # Distinct wake and account keys make the re-established form
+                # unambiguous in the recorded ordering.
+                wake_after_lock_keys=("spc",),
+                post_join_operator_account_keys=("up",),
+                post_join_operator_account_calibrated=True,
+                post_join_operator_sign_in_manifest=None,
+                checkpoint_timeout=11,
+            ),
+        )
+
+        adapter.reauthenticate_domain_operator(
+            "operator@FACTORY.TEST", "private", "a" * 32)
+
+        # The secret is still typed exactly once.
+        interaction.type_secret.assert_called_once_with(
+            "private", timeout=mock.ANY)
+
+        calls = ordering.mock_calls
+        arm_index = calls.index(mock.call.controller_arm())
+        secret_index = calls.index(
+            mock.call.type_secret("private", timeout=mock.ANY))
+        fence_index = calls.index(mock.call.controller_begin_submission())
+
+        # The form is proven once before the arm...
+        self.assertIn(
+            mock.call.key("tab", timeout=mock.ANY), calls[:arm_index])
+        # ...and fully re-established after the arm, before the secret:
+        # re-wake, re-select the account, re-enter the UPN (the visible
+        # backspace of its normalization) and re-prove the password target,
+        # then disable durable capture, and only then type the secret.
+        self.assertEqual(
+            calls[arm_index + 1:secret_index],
+            [
+                mock.call.key("spc", timeout=mock.ANY),
+                mock.call.key("up", timeout=mock.ANY),
+                mock.call.key("backspace", timeout=mock.ANY),
+                mock.call.key("tab", timeout=mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
+                mock.call.observe(sign_in, mock.ANY),
+                mock.call.disable(),
+            ],
+        )
+        # The submission fence still follows the secret, not the arm, so the
+        # controller watcher's observation window is unchanged by the fix.
+        self.assertLess(secret_index, fence_index)
+        self.assertEqual(
+            adapter.controller_auth_result.code, ControllerAuthCode.NO_EVENT)
 
     @mock.patch.object(subject, "_prove_secret_entry_departure")
     @mock.patch.object(subject, "_GuiInteraction")
