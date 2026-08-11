@@ -263,6 +263,7 @@ class AuditTests(unittest.TestCase):
             "-boot", "order=c,menu=off",
             "-monitor", "none",
             "-qmp", "unix:/tmp/telos-db/db.qmp,server=on,wait=off",
+            "-device", "VGA",
             "-drive",
             f"if=none,id=osdisk,format=qcow2,cache=none,file={overlay}",
             "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001",
@@ -301,7 +302,7 @@ class AuditTests(unittest.TestCase):
     def test_the_nvme_must_be_cold_plugged_with_the_authorized_serial(self):
         command = self.command(self.overlay.resolve())
         del command[-2:]
-        with self.assertRaisesRegex(RuntimeError, "exactly one NVMe"):
+        with self.assertRaisesRegex(RuntimeError, "one cold-plugged NVMe"):
             da.audit_dualboot_boot_boundary(
                 command, disk=self.overlay, serial="TELOS-WIN-0001")
         wrong = self.command(self.overlay.resolve())
@@ -309,6 +310,21 @@ class AuditTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "authorized overlay and"):
             da.audit_dualboot_boot_boundary(
                 wrong, disk=self.overlay, serial="TELOS-WIN-0001")
+
+    def test_the_display_device_is_required_and_bounded(self):
+        # screendump needs a display device (with -nodefaults there is none
+        # and the live runs retained zero frames); the audit requires
+        # exactly one VGA and refuses any further device.
+        command = self.command(self.overlay.resolve())
+        missing = [item for item in command if item != "VGA"]
+        missing.remove("-device")
+        with self.assertRaisesRegex(RuntimeError, "one VGA display"):
+            da.audit_dualboot_boot_boundary(
+                missing, disk=self.overlay, serial="TELOS-WIN-0001")
+        doubled = self.command(self.overlay.resolve()) + ["-device", "VGA"]
+        with self.assertRaisesRegex(RuntimeError, "one VGA display"):
+            da.audit_dualboot_boot_boundary(
+                doubled, disk=self.overlay, serial="TELOS-WIN-0001")
 
     def test_boot_order_must_pin_the_disk(self):
         command = [
@@ -695,11 +711,53 @@ class ObserveBootTests(unittest.TestCase):
             os.close(write_fd)
 
         observation, stdin, _qmp = self._observe("arch-select", feeder)
-        # The Arch config entry renders first, so its digit key is 1.
-        self.assertEqual(b"1", bytes(stdin.data))
+        # The countdown is paused first (nondestructive up-arrow), then the
+        # Arch config entry renders first, so its digit key is 1.
+        self.assertEqual(da.MENU_PAUSE_KEY + b"1", bytes(stdin.data))
         self.assertEqual("1", observation.selection)
         self.assertIsNotNone(observation.kernel_handoff_at)
         self.assertIsNotNone(observation.login_prompt_at)
+
+    def test_countdown_is_paused_before_the_digit_is_computed(self):
+        # A partial render (only the Arch row drawn so far) must already
+        # pause the five-second countdown, while the digit is only sent
+        # once both operating systems are listed — so a slow render can
+        # never lose the window and a premature digit can never pick the
+        # wrong row.
+        partial = (
+            b"\x1b[2J\x1b[001;001H"
+            + _menu_cell(27, da.MENU_ARCH_ENTRY, selected=False))
+        rest = (
+            _menu_cell(28, da.MENU_WINDOWS_ENTRY, selected=True)
+            + _menu_cell(29, da.MENU_FIRMWARE_ENTRY, selected=False))
+
+        premature: list = []
+
+        def feeder(write_fd, stdin):
+            os.write(write_fd, BDS_LINUX + partial)
+            for _ in range(5000):
+                if da.MENU_PAUSE_KEY in bytes(stdin.data):
+                    break
+                time.sleep(0.001)
+            # Cover a full observe tick: a digit computed from the partial
+            # render would surface within this window.
+            time.sleep(0.4)
+            if b"1" in bytes(stdin.data).replace(da.MENU_PAUSE_KEY, b""):
+                premature.append(bytes(stdin.data))
+            os.write(write_fd, rest)
+            for _ in range(5000):
+                if bytes(stdin.data).endswith(b"1"):
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"EFI stub: Booting the kernel\r\n")
+            time.sleep(0.2)
+            os.close(write_fd)
+
+        observation, stdin, _qmp = self._observe("arch-select", feeder)
+        self.assertEqual([], premature)
+        self.assertEqual(da.MENU_PAUSE_KEY + b"1", bytes(stdin.data))
+        self.assertEqual("1", observation.selection)
+        self.assertIsNotNone(observation.kernel_handoff_at)
 
     def test_arch_selection_without_a_getty_records_the_absence(self):
         def feeder(write_fd, stdin):
@@ -795,6 +853,21 @@ class BuildEventsTests(unittest.TestCase):
             if event["check"] == "windows-default-boot")
         self.assertEqual("fail", default["result"])
         self.assertIs(False, default["windows_menu_listed"])
+
+    def test_zero_retained_frames_fail_closed(self):
+        # A screendump failure (the live zero-frame runs) must fail the
+        # default-boot check and be refused by the judge, never silently
+        # pass with frames_retained=0.
+        boot1 = happy_boot1()
+        boot1.frames = 0
+        events = happy_events(boot1=boot1)
+        default = next(
+            event for event in events
+            if event["check"] == "windows-default-boot")
+        self.assertEqual("fail", default["result"])
+        self.assertEqual(0, default["frames_retained"])
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            judge_mod.judge(CONTRACT, events)
 
     def test_windows_login_is_never_claimed(self):
         events = happy_events()
@@ -983,6 +1056,7 @@ class RunTests(unittest.TestCase):
             "-boot", "order=c,menu=off",
             "-monitor", "none",
             "-qmp", f"unix:{self.qmp_parent}/db.qmp,server=on,wait=off",
+            "-device", "VGA",
             "-drive",
             (
                 "if=none,id=osdisk,format=qcow2,cache=none,"

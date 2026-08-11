@@ -19,6 +19,7 @@ builds) into tmpfs, joins, and removes it.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -116,6 +117,25 @@ NVRAM_LINUX_LOADER = "\\EFI\\systemd\\systemd-bootx64.efi"
 NVRAM_WINDOWS_LOADER = "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
 NVRAM_ENTRIES_MARKER = "TELOS ARCH NVRAM ENTRIES AUTHORED"
 NVRAM_ORDER_MARKER = "TELOS ARCH NVRAM LINUX FIRST"
+
+# Windows Boot Manager recognizes a Boot#### entry as its own by this
+# optional-data blob — the "WINDOWS" signature plus the well-known
+# {bootmgr} object reference "BCDOBJECT={9dea862c-5cdd-4e70-acc1-
+# f32b344d4795}" — not by the device path alone.  The 2026-08-11 gate-10 v2
+# live run proved the consequence of omitting it: our authored entry had a
+# byte-identical device path but no blob, so Windows' first boot created
+# its own entry in the first free slot and promoted it ahead of Linux,
+# leaving the second cold boot menuless.  The blob below was extracted
+# verbatim from that run's Windows-authored entry; every field is
+# install-independent (the GUID is the fixed {bootmgr} BCD object), so
+# authoring it makes Windows adopt the pre-created entry and leave
+# BootOrder alone.
+NVRAM_WINDOWS_OPTIONAL_DATA = bytes.fromhex(
+    "57494e444f5753000100000088000000780000004200430044004f0042004a00"
+    "4500430054003d007b00390064006500610038003600320063002d0035006300"
+    "640064002d0034006500370030002d0061006300630031002d00660033003200"
+    "6200330034003400640034003700390035007d00000000000100000010000000"
+    "040000007fff0400")
 
 # Gate 8 invokes this fixed, secret-free helper for every Arch lifecycle
 # check (vm.arch_identity_run.PROBE_HELPER).
@@ -830,6 +850,9 @@ def render_installer(
         storage_host=storage_host, login_bound=login_bound)
     pam_system_auth = _PAM_SYSTEM_AUTH
     probe_path = PROBE_HELPER_PATH
+    windows_optdata_b64 = base64.b64encode(
+        NVRAM_WINDOWS_OPTIONAL_DATA).decode("ascii")
+    windows_optdata_bytes = len(NVRAM_WINDOWS_OPTIONAL_DATA)
     local_rescue = principals["local_rescue"]
     daily_admin = principals["daily_admin"]
     standard_user = principals["standard"]
@@ -1082,8 +1105,22 @@ done
 previous_order=$(efibootmgr | sed -nE 's/^BootOrder:[[:space:]]*//p')
 efibootmgr -c -d "$disk" -p "$esp_number" -L '{NVRAM_LINUX_LABEL}' \\
   -l '{NVRAM_LINUX_LOADER}' >/dev/null
+# The Windows entry must carry Windows Boot Manager's own optional-data
+# blob (WINDOWS signature + fixed BCDOBJECT GUID): without it Windows'
+# first boot treats the entry as foreign, creates its own, and promotes
+# it ahead of Linux — proven live on 2026-08-11.  Fail closed if the
+# constant does not decode to its exact recorded size.
+printf '%s' '{windows_optdata_b64}' | base64 -d \\
+  > /run/telos-nvram-windows.optdata
+[[ "$(wc -c < /run/telos-nvram-windows.optdata)" -eq \\
+    {windows_optdata_bytes} ]] || {{
+  echo "Windows NVRAM optional data failed to decode" >&2
+  exit 1
+}}
 efibootmgr -c -d "$disk" -p "$esp_number" -L '{NVRAM_WINDOWS_LABEL}' \\
-  -l '{NVRAM_WINDOWS_LOADER}' >/dev/null
+  -l '{NVRAM_WINDOWS_LOADER}' \\
+  -@ /run/telos-nvram-windows.optdata >/dev/null
+rm -f /run/telos-nvram-windows.optdata
 linux_entry=$(nvram_entry_numbers '{NVRAM_LINUX_LABEL}')
 windows_entry=$(nvram_entry_numbers '{NVRAM_WINDOWS_LABEL}')
 hex4='[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]'

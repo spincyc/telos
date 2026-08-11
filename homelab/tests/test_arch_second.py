@@ -1,7 +1,9 @@
+import base64
 import inspect
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 import unittest
 
@@ -11,7 +13,7 @@ from workstations.arch_second import (
     CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64,
     MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, MSR, NVRAM_ENTRIES_MARKER,
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
-    NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER,
+    NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
     PROBE_CHECKS, PROBE_HELPER_PATH, STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
@@ -622,7 +624,8 @@ class ArchSecondTests(unittest.TestCase):
             block)
         self.assertIn(
             f"efibootmgr -c -d \"$disk\" -p \"$esp_number\" "
-            f"-L '{NVRAM_WINDOWS_LABEL}' \\\n  -l '{NVRAM_WINDOWS_LOADER}'",
+            f"-L '{NVRAM_WINDOWS_LABEL}' \\\n  -l '{NVRAM_WINDOWS_LOADER}' "
+            f"\\\n  -@ /run/telos-nvram-windows.optdata",
             block)
         # The loader paths point at exactly the ESP files the install proved.
         self.assertEqual(
@@ -668,6 +671,42 @@ class ArchSecondTests(unittest.TestCase):
                 self.assertIn(guard, block)
                 self.assertLess(block.index(guard), first_mutation)
         self.assertEqual(4, block.count("exit 1\n}", 0, first_mutation))
+
+    def test_windows_entry_carries_the_windows_optional_data(self):
+        # Windows Boot Manager adopts a pre-created entry only when it
+        # carries the WINDOWS/BCDOBJECT optional-data blob (live-proven
+        # 2026-08-11: identical device path without the blob was treated as
+        # foreign, Windows recreated its entry and self-promoted, and the
+        # second cold boot lost the menu).  The constant must be exactly
+        # the recorded 136-byte blob referencing the fixed {bootmgr} GUID.
+        blob = NVRAM_WINDOWS_OPTIONAL_DATA
+        self.assertEqual(136, len(blob))
+        self.assertTrue(blob.startswith(b"WINDOWS\x00"))
+        self.assertEqual(len(blob), struct.unpack_from("<I", blob, 12)[0])
+        self.assertIn(
+            "BCDOBJECT={9dea862c-5cdd-4e70-acc1-f32b344d4795}".encode(
+                "utf-16-le"),
+            blob)
+        script, block = self._nvram_block()
+        # The blob travels base64 inside the heredoc-delivered script, is
+        # size-verified before use (fail-closed), feeds only the Windows
+        # entry, and is removed afterwards.
+        encoded = base64.b64encode(blob).decode("ascii")
+        self.assertIn(f"printf '%s' '{encoded}' | base64 -d", block)
+        self.assertIn(
+            "Windows NVRAM optional data failed to decode", block)
+        self.assertIn(f"-eq \\\n    {len(blob)} ]]", block)
+        self.assertEqual(1, block.count("-@ /run/telos-nvram-windows.optdata"))
+        self.assertIn("rm -f /run/telos-nvram-windows.optdata", block)
+        decode = block.index("| base64 -d")
+        create = block.index("-@ /run/telos-nvram-windows.optdata")
+        cleanup = block.index("rm -f /run/telos-nvram-windows.optdata")
+        self.assertLess(decode, create)
+        self.assertLess(create, cleanup)
+        # The Linux entry stays blob-free.
+        linux_create = block.index(f"-L '{NVRAM_LINUX_LABEL}'")
+        self.assertNotIn(
+            "-@", block[linux_create:block.index(f"-l '{NVRAM_LINUX_LOADER}'")])
 
     def test_nvram_markers_print_only_after_verification(self):
         script, block = self._nvram_block()

@@ -126,6 +126,11 @@ _MENU_ROW = re.compile(
 # "Linux Boot Manager" entry first for the NVRAM order to be proven.
 _BDS_STARTING = re.compile(
     r'BdsDxe: starting Boot[0-9A-Fa-f]{4} "([^"\r\n]+)"')
+# Any keypress pauses the systemd-boot countdown; up-arrow is
+# nondestructive (it only moves the highlight), so the arch-select boot
+# sends it the instant the menu renders to decouple digit selection from
+# the five-second window.
+MENU_PAUSE_KEY = b"\x1b[A"
 
 CONTRACT = lifecycle.load_json(lifecycle.CONTRACT)
 REQUIRED_CHECKS: tuple[str, ...] = tuple(CONTRACT["required_checks"])
@@ -367,9 +372,16 @@ def audit_dualboot_boot_boundary(
         value for value in devices
         if value.split(",", 1)[0] == "nvme"
     ]
-    if len(nvme) != 1 or len(devices) != 1:
+    # Exactly one cold-plugged NVMe (the boot path) plus one VGA display
+    # device: with -nodefaults QEMU has no console at all, and QMP
+    # screendump fails on every call without one — the first two live runs
+    # retained zero frames for exactly that reason.  VGA is not a boot
+    # path, so the disk-only boundary is unchanged.
+    display = [value for value in devices if value == "VGA"]
+    if len(nvme) != 1 or len(display) != 1 or len(devices) != 2:
         raise DualbootAcceptanceError(
-            "acceptance boot must cold-plug exactly one NVMe disk device")
+            "acceptance boot must carry exactly one cold-plugged NVMe disk "
+            "device and one VGA display device")
     fields = dict(
         item.split("=", 1) for item in nvme[0].split(",") if "=" in item)
     if fields.get("drive") != "osdisk" or fields.get("serial") != serial:
@@ -394,6 +406,9 @@ def qemu_dualboot_command(
         "-boot", "order=c,menu=off",
         "-monitor", "none",
         "-qmp", f"unix:{Path(qmp_socket).resolve()},server=on,wait=off",
+        # The frame evidence needs a display device: with -nodefaults there
+        # is none, and screendump fails on every call (proven live twice).
+        "-device", "VGA",
         "-drive",
         (
             "if=none,id=osdisk,format=qcow2,cache=none,"
@@ -582,9 +597,11 @@ def observe_boot(
     """Watch one cold boot on serial without ever guessing an outcome.
 
     ``mode`` is ``windows-default`` (send no input; prove the menu handed off
-    by itself) or ``arch-select`` (send the systemd-boot digit key for the
-    Arch entry once the menu lists it, then watch for the Linux EFI-stub
-    handoff and a bounded getty window).  Timestamps are host-monotonic; the
+    by itself) or ``arch-select`` (pause the countdown with a nondestructive
+    up-arrow the instant the menu renders, then send the systemd-boot digit
+    key for the Arch entry once both operating systems are listed, then
+    watch for the Linux EFI-stub handoff and a bounded getty window).
+    Timestamps are host-monotonic; the
     handoff instant for the no-input boot is the last serial output before
     ``quiesce`` seconds of silence, because Windows Boot Manager prints
     nothing to the OVMF serial console after taking over.
@@ -608,6 +625,7 @@ def observe_boot(
     handoff_confirm_until: float | None = None
     login_until: float | None = None
     running_sampled = False
+    countdown_paused = False
     next_frame = started
     frame_failures = 0
     while time.monotonic() < deadline:
@@ -674,6 +692,17 @@ def observe_boot(
                     and now >= handoff_confirm_until):
                 break
         else:
+            if (observation.selection is None
+                    and not countdown_paused
+                    and observation.menu_first is not None
+                    and process.stdin is not None):
+                # Stop the five-second countdown the instant any menu row
+                # renders, before waiting for the full render: the pause is
+                # nondestructive and buys the digit selection unlimited
+                # margin against the timeout.
+                process.stdin.write(MENU_PAUSE_KEY)
+                process.stdin.flush()
+                countdown_paused = True
             if (observation.selection is None
                     and observation.menu_first is not None
                     and MENU_ARCH_ENTRY in observation.entries
