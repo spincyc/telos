@@ -1,6 +1,6 @@
 # Local workstation factory state
 
-Document version: `20260811.001`
+Document version: `20260811.002`
 
 Status: active implementation
 
@@ -303,8 +303,33 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   domain-joined machine's timed-out lock screen — it requires the Secure
   Attention Sequence. `dea0472` prepends `Ctrl+Alt+Del`
   (`interaction.chord("ctrl","alt","delete")`, as the change-password flow
-  already uses) to the re-establish. Attempt 25
-  (`20260811T005919Z-c6d2f4c73061`) is the validation run.
+  already uses) to the re-establish. Attempts 25-27 still showed the lock
+  screen; instrumented frames (attempt 28, commit `86616a9`) captured the
+  re-establish step by step and proved the fix path: `Ctrl+Alt+Del` ALONE
+  instantly restores the "Other user" form with the operator UPN intact
+  and the password field focused and empty. The prior full re-entry
+  (wake/select/UPN + observe waits) was actively harmful — it typed stray
+  keys into the focused password field and its observe waits re-timed-out
+  the form. Commit `b627bda` reduced the re-establish to exactly the SAS.
+  REMAINING (attempt 29, `20260811T015138Z-3b6eed30a3b1`): the
+  `reestablish-after-cad` frame is now a perfect clean focused empty form,
+  but the `submit-pre-activation` frame (after `type_secret` +
+  `_prove_secret_entry_departure`) is the lock screen AGAIN. Diagnosis:
+  after the SAS transition the secret keystrokes do not appear to land in
+  the field, so `_prove_secret_entry_departure`
+  (`windows_identity_adapter.py:371`) loops to its full `remaining()`
+  timeout waiting for dots that never show, and the form times out during
+  that ~30-60s wait. TWO CANDIDATE FIXES to try next: (a) a short settle
+  after the SAS before `type_secret` so the freshly surfaced form is
+  input-ready — use a FIXED bounded sleep that does NOT consume the submit
+  budget via `remaining()` (a naive `remaining()`-consuming settle broke
+  the tight budget in
+  `test_reviewed_submit_focus_timeout_never_issues_return`); or (b) verify
+  the departure-proof `sign_in` reference geometry/crop still matches the
+  post-SAS field (a stale reference would also loop). Add an
+  after-`type_secret` frame to confirm which before choosing. This is the
+  only remaining step for gate 6; the root cause and the form recovery are
+  solved.
 - The `receipt-unavailable` producer is identified. Attempts six
   (`20260810T132254Z-3a2af77f9c4f`) and seven (`20260810T133851Z-f48a348ade9b`)
   both reproduced the established coordinate and both rendered
