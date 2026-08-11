@@ -557,6 +557,9 @@ def default_acceptance_factory(boundary: NativeProcessBoundary):
             if reviewed_submit_focus else None
         ),
         post_join_retain_submit_frames=10,
+        post_join_operator_desktop_manifest=(
+            REFERENCE_ROOT / "post-join-operator-desktop.json"
+        ),
     )
     command = PublicPowerShellLaunchPlan(
         desktop=references["desktop"],
