@@ -85,7 +85,7 @@ except ImportError:  # Direct execution from homelab/vm.
 
 from homelab.workstations.arch_second import (
     JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL, JOIN_VERIFIED_MARKER,
-    SYNTHETIC_DOMAIN)
+    NVRAM_ENTRIES_MARKER, NVRAM_ORDER_MARKER, SYNTHETIC_DOMAIN)
 
 
 MAX_DURATION = 10800
@@ -865,13 +865,18 @@ def _validate_lifecycle(serial: str, disk_serial: str = DISK_SERIAL) -> None:
         VERIFY_PASS_MARKER,
         PRESERVED_MARKER,
         COMPLETE_MARKER,
-        # ESP-state proofs printed from inside the heredoc-delivered
-        # installer: NVRAM entries are not provable in the hot-attach boot
-        # (no Windows auto-entry yet, chroot cannot write EFI variables);
-        # the dual-boot acceptance gate proves cold-boot NVRAM behavior.
+        # ESP-state and NVRAM proofs printed from inside the
+        # heredoc-delivered installer.  The install boot runs in the live
+        # archiso, whose efivarfs IS writable (the chroot's is not), so the
+        # installer authors "Linux Boot Manager" and "Windows Boot Manager"
+        # itself and verifies the Linux-first BootOrder before printing the
+        # NVRAM markers; the dual-boot acceptance gate then proves the
+        # cold-boot behavior of exactly that authored NVRAM.
         "TELOS ARCH BOOTLOADER LINUX PRESENT",
         "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
         "TELOS ARCH DEFAULT auto-windows",
+        NVRAM_ENTRIES_MARKER,
+        NVRAM_ORDER_MARKER,
     )
     missing = [marker for marker in required if marker not in serial]
     if missing:

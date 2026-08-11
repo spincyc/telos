@@ -119,6 +119,8 @@ GOOD_SERIAL = "\n".join((
     "TELOS ARCH BOOTLOADER LINUX PRESENT",
     "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
     "TELOS ARCH DEFAULT auto-windows",
+    "TELOS ARCH NVRAM ENTRIES AUTHORED",
+    "TELOS ARCH NVRAM LINUX FIRST",
 ))
 
 
@@ -357,9 +359,24 @@ class ArchInstallRunTests(unittest.TestCase):
             "TELOS ARCH BOOTLOADER LINUX PRESENT",
             "TELOS ARCH BOOTLOADER WINDOWS PRESERVED",
             "TELOS ARCH DEFAULT auto-windows",
+            "TELOS ARCH NVRAM ENTRIES AUTHORED",
+            "TELOS ARCH NVRAM LINUX FIRST",
         ))
         with self.assertRaisesRegex(RuntimeError, "before archiso was live"):
             arch_install_run._validate_lifecycle(transcript)
+
+    def test_lifecycle_requires_the_nvram_authoring_markers(self):
+        # The installer authors the NVRAM from the live archiso (writable
+        # efivarfs) and proves Linux-first BootOrder; a transcript without
+        # either script-emitted proof marker is not an accepted install.
+        for marker in (
+                "TELOS ARCH NVRAM ENTRIES AUTHORED",
+                "TELOS ARCH NVRAM LINUX FIRST",
+        ):
+            transcript = GOOD_SERIAL.replace(marker, "")
+            with self.subTest(marker=marker):
+                with self.assertRaisesRegex(RuntimeError, "markers missing"):
+                    arch_install_run._validate_lifecycle(transcript)
 
     def test_hot_attach_adds_virtio_blk_with_the_authorized_serial(self):
         qmp = _FakeQmp()

@@ -92,6 +92,31 @@ JOIN_MEDIA_LABEL = "TELOS_JOIN"
 JOIN_MEDIA_CONSUMED_MARKER = "TELOS ARCH JOIN MEDIA CONSUMED"
 JOIN_VERIFIED_MARKER = "TELOS ARCH JOIN VERIFIED"
 
+# systemd-boot menu titles the gate-10 acceptance keys on.  The Arch title is
+# authored by this installer's loader entry below; the Windows title is what
+# systemd-boot's auto-detection renders for the gate-5 image's
+# \EFI\Microsoft\Boot\bootmgfw.efi (calibrated against the live gate-10
+# boot-1 serial transcript of 2026-08-11, which listed "Arch Linux LTS",
+# "Windows 11", and the firmware-recovery entry).
+MENU_ARCH_TITLE = "Arch Linux LTS"
+MENU_WINDOWS_TITLE = "Windows 11"
+
+# UEFI NVRAM boot entries the installer authors from the live archiso, where
+# efivarfs is writable (the gate-7 post-step efibootmgr proved it; the chroot
+# cannot write EFI variables).  Authoring "Windows Boot Manager" before the
+# first Windows boot is what preserves the five-second systemd-boot menu:
+# Windows self-promotes to BootOrder first only when its first boot has to
+# CREATE that entry (the live gate-10 boot-2 booted it directly, menuless);
+# finding the entry already present leaves BootOrder alone.  The markers
+# print from inside the heredoc-delivered installer script, so the serial
+# echo of a dispatched command can never fake them.
+NVRAM_LINUX_LABEL = "Linux Boot Manager"
+NVRAM_WINDOWS_LABEL = "Windows Boot Manager"
+NVRAM_LINUX_LOADER = "\\EFI\\systemd\\systemd-bootx64.efi"
+NVRAM_WINDOWS_LOADER = "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
+NVRAM_ENTRIES_MARKER = "TELOS ARCH NVRAM ENTRIES AUTHORED"
+NVRAM_ORDER_MARKER = "TELOS ARCH NVRAM LINUX FIRST"
+
 # Gate 8 invokes this fixed, secret-free helper for every Arch lifecycle
 # check (vm.arch_identity_run.PROBE_HELPER).
 PROBE_HELPER_PATH = "/usr/local/sbin/homelab-arch-identity-probe"
@@ -995,7 +1020,7 @@ arch-chroot /mnt systemctl enable sssd serial-getty@ttyS0.service
 arch-chroot /mnt bootctl install
 root_uuid=$(blkid -s UUID -o value "$ARCH_PART")
 cat > /mnt/boot/loader/entries/arch-linux-lts.conf <<EOF
-title Arch Linux LTS
+title {MENU_ARCH_TITLE}
 linux /vmlinuz-linux-lts
 initrd /initramfs-linux-lts.img
 options root=UUID=$root_uuid rw console=tty0 console=ttyS0,115200
@@ -1006,17 +1031,82 @@ timeout 5
 editor no
 EOF
 grep -q '^default auto-windows$' /mnt/boot/loader/loader.conf
-# NVRAM entries cannot be proven in this boot: the disk was hot-attached
-# after firmware init (no Windows auto-entry yet) and the chroot cannot
-# write EFI variables. The install proves the ESP state it authored; the
-# dual-boot acceptance gate proves the cold-boot NVRAM behavior. These
-# markers print from inside this heredoc-delivered script, so the serial
-# echo of a dispatched command can never fake them.
+# ESP-state proofs.  All markers below print from inside this
+# heredoc-delivered script, so the serial echo of a dispatched command can
+# never fake them.
 [ -f /mnt/boot/EFI/systemd/systemd-bootx64.efi ]
 echo "TELOS ARCH BOOTLOADER LINUX PRESENT"
 [ -f /mnt/boot/EFI/Microsoft/Boot/bootmgfw.efi ]
 echo "TELOS ARCH BOOTLOADER WINDOWS PRESERVED"
 echo "TELOS ARCH DEFAULT auto-windows"
+
+# ---- UEFI NVRAM boot entries (gate-10 five-second-menu contract) ----
+# Authored here in the live archiso: efivarfs is writable in this
+# environment (the gate-7 post-step efibootmgr proved it) and not in the
+# chroot.  Windows self-promotes to BootOrder first only when its first
+# boot must CREATE its own NVRAM entry; authoring "Windows Boot Manager"
+# now, behind "Linux Boot Manager", is what lets the five-second
+# systemd-boot menu survive the first Windows boot.  Fail closed: without
+# writable efivarfs the install must not pretend the NVRAM was authored.
+[[ -d /sys/firmware/efi/efivars ]] || {{
+  echo "efivarfs is unavailable; NVRAM boot entries cannot be authored" >&2
+  exit 1
+}}
+mountpoint -q /sys/firmware/efi/efivars || {{
+  echo "efivarfs is not mounted; NVRAM boot entries cannot be authored" >&2
+  exit 1
+}}
+command -v efibootmgr >/dev/null || {{
+  echo "efibootmgr is unavailable; NVRAM boot entries cannot be authored" >&2
+  exit 1
+}}
+esp_number="${{ESP_PART#"$disk"}}"
+esp_number="${{esp_number#p}}"
+[[ "$esp_number" =~ ^[0-9]+$ ]] || {{
+  echo "cannot derive the ESP partition number from $ESP_PART" >&2
+  exit 1
+}}
+nvram_entry_numbers() {{
+  efibootmgr | sed -nE "s/^Boot([0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])\\*?[[:space:]]+$1([[:space:]].*)?\\$/\\1/p"
+}}
+# Idempotent: any pre-existing entry carrying a managed label is deleted
+# before its replacement is created, so a re-run never accumulates
+# duplicates.  The surviving order is captured after those deletions so
+# the final BootOrder preserves every unmanaged entry behind the managed
+# pair (efibootmgr -B already drops deleted entries from BootOrder).
+for label in '{NVRAM_WINDOWS_LABEL}' '{NVRAM_LINUX_LABEL}'; do
+  for number in $(nvram_entry_numbers "$label"); do
+    efibootmgr -b "$number" -B >/dev/null
+  done
+done
+previous_order=$(efibootmgr | sed -nE 's/^BootOrder:[[:space:]]*//p')
+efibootmgr -c -d "$disk" -p "$esp_number" -L '{NVRAM_LINUX_LABEL}' \\
+  -l '{NVRAM_LINUX_LOADER}' >/dev/null
+efibootmgr -c -d "$disk" -p "$esp_number" -L '{NVRAM_WINDOWS_LABEL}' \\
+  -l '{NVRAM_WINDOWS_LOADER}' >/dev/null
+linux_entry=$(nvram_entry_numbers '{NVRAM_LINUX_LABEL}')
+windows_entry=$(nvram_entry_numbers '{NVRAM_WINDOWS_LABEL}')
+hex4='[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]'
+[[ "$linux_entry" == $hex4 && "$windows_entry" == $hex4 ]] || {{
+  echo "NVRAM boot entries were not authored exactly once" >&2
+  exit 1
+}}
+echo "{NVRAM_ENTRIES_MARKER}"
+order="$linux_entry,$windows_entry"
+for number in ${{previous_order//,/ }}; do
+  [[ "$number" == $hex4 ]] || continue
+  [[ "$number" == "$linux_entry" || "$number" == "$windows_entry" ]] && \\
+    continue
+  order="$order,$number"
+done
+efibootmgr -o "$order" >/dev/null
+# No -q: grep must drain the pipe, or its early exit would SIGPIPE
+# efibootmgr and pipefail would turn a successful write into a failure.
+efibootmgr | grep "^BootOrder: $order\\$" >/dev/null || {{
+  echo "NVRAM boot order verification failed" >&2
+  exit 1
+}}
+echo "{NVRAM_ORDER_MARKER}"
 sync
 echo "Arch installed; Windows partitions and filesystems were not modified."
 """

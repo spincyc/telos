@@ -8,7 +8,10 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64, MSR,
+    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64,
+    MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, MSR, NVRAM_ENTRIES_MARKER,
+    NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
+    NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER,
     PROBE_CHECKS, PROBE_HELPER_PATH, STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
@@ -587,6 +590,106 @@ class ArchSecondTests(unittest.TestCase):
             PROFILE_OVERLAYS["workstation-install"],
         ).packages
         self.assertIn("cifs-utils", required)
+
+    def test_menu_titles_are_the_live_calibrated_exports(self):
+        # Gate 10 keys on these exact rendered titles (live boot-1 serial,
+        # 2026-08-11): the authored config entry and systemd-boot's
+        # auto-detected Windows title.  The loader entry uses the export so
+        # installer and acceptance runner cannot drift.
+        self.assertEqual("Arch Linux LTS", MENU_ARCH_TITLE)
+        self.assertEqual("Windows 11", MENU_WINDOWS_TITLE)
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(f"title {MENU_ARCH_TITLE}\n", script)
+
+    def _nvram_block(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        return script, script.split(
+            "UEFI NVRAM boot entries (gate-10 five-second-menu contract)")[1]
+
+    def test_nvram_entries_are_authored_linux_first(self):
+        script, block = self._nvram_block()
+        # Both managed entries are created against the verified disk and the
+        # ESP partition number derived from the proven $ESP_PART assignment.
+        self.assertIn(
+            f"efibootmgr -c -d \"$disk\" -p \"$esp_number\" "
+            f"-L '{NVRAM_LINUX_LABEL}' \\\n  -l '{NVRAM_LINUX_LOADER}'",
+            block)
+        self.assertIn(
+            f"efibootmgr -c -d \"$disk\" -p \"$esp_number\" "
+            f"-L '{NVRAM_WINDOWS_LABEL}' \\\n  -l '{NVRAM_WINDOWS_LOADER}'",
+            block)
+        # The loader paths point at exactly the ESP files the install proved.
+        self.assertEqual(
+            NVRAM_LINUX_LOADER.replace("\\", "/"),
+            "/EFI/systemd/systemd-bootx64.efi")
+        self.assertEqual(
+            NVRAM_WINDOWS_LOADER.replace("\\", "/"),
+            "/EFI/Microsoft/Boot/bootmgfw.efi")
+        # BootOrder is Linux, then Windows, then surviving unmanaged entries.
+        self.assertIn('order="$linux_entry,$windows_entry"', block)
+        self.assertIn('efibootmgr -o "$order"', block)
+        self.assertIn('order="$order,$number"', block)
+
+    def test_nvram_authoring_is_idempotent(self):
+        _script, block = self._nvram_block()
+        # Pre-existing entries carrying the managed labels are deleted before
+        # replacements are created, so a re-run never accumulates duplicates,
+        # and the surviving order is captured only after those deletions.
+        delete = block.index('efibootmgr -b "$number" -B')
+        capture = block.index("previous_order=$(efibootmgr")
+        create = block.index("efibootmgr -c ")
+        self.assertLess(delete, capture)
+        self.assertLess(capture, create)
+        self.assertIn(
+            f"for label in '{NVRAM_WINDOWS_LABEL}' '{NVRAM_LINUX_LABEL}'; do",
+            block)
+        # Exactly-once verification precedes the entries marker.
+        self.assertIn(
+            "NVRAM boot entries were not authored exactly once", block)
+
+    def test_nvram_authoring_fails_closed_without_efivarfs(self):
+        _script, block = self._nvram_block()
+        # Every guard (present, mounted, tool available, ESP number derived)
+        # exits nonzero BEFORE any efibootmgr mutation.
+        first_mutation = block.index("efibootmgr -b")
+        for guard in (
+            "[[ -d /sys/firmware/efi/efivars ]] || {",
+            "mountpoint -q /sys/firmware/efi/efivars || {",
+            "command -v efibootmgr >/dev/null || {",
+            '[[ "$esp_number" =~ ^[0-9]+$ ]] || {',
+        ):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, block)
+                self.assertLess(block.index(guard), first_mutation)
+        self.assertEqual(4, block.count("exit 1\n}", 0, first_mutation))
+
+    def test_nvram_markers_print_only_after_verification(self):
+        script, block = self._nvram_block()
+        # The markers are script-emitted (heredoc-delivered), never part of a
+        # dispatched echo, and each prints only after its verification: the
+        # entries marker after the exactly-once check, the order marker after
+        # the re-read BootOrder grep.
+        entries_marker = block.index(f'echo "{NVRAM_ENTRIES_MARKER}"')
+        order_marker = block.index(f'echo "{NVRAM_ORDER_MARKER}"')
+        self.assertLess(
+            block.index("NVRAM boot entries were not authored exactly once"),
+            entries_marker)
+        self.assertLess(entries_marker, order_marker)
+        self.assertLess(
+            block.index("NVRAM boot order verification failed"), order_marker)
+        # The order verification re-reads efibootmgr output, and drains the
+        # pipe (no grep -q) so pipefail cannot turn success into SIGPIPE.
+        verify = block.index('efibootmgr | grep "^BootOrder: $order\\$"')
+        self.assertLess(block.index('efibootmgr -o "$order"'), verify)
+        self.assertLess(verify, order_marker)
+        self.assertEqual(1, script.count(NVRAM_ENTRIES_MARKER))
+        self.assertEqual(1, script.count(NVRAM_ORDER_MARKER))
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):

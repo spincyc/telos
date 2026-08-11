@@ -2,25 +2,30 @@
 """Gate-10 dual-boot acceptance: prepare and run cold-boot proof bundles.
 
 The completed gate-7 bundle retains ``arch.qcow2`` (a dual-boot install
-overlaying the persistent gate-5 ``windows.qcow2``).  Prepare overlays that
-retained output with a fresh ``dualboot.qcow2`` so acceptance never mutates a
-gate artifact, pairs it with pristine OVMF variables, and pins a QEMU command
-whose only boot path is the cold-plugged NVMe carrying the authorized serial
-(deliberately the inverse of the gate-7 install boundary: here the disk MUST
-be firmware-bootable and PXE/media MUST be absent).
+overlaying the persistent gate-5 ``windows.qcow2``) and its post-install
+``OVMF_VARS.fd`` — the NVRAM the installer authored from the live archiso
+("Linux Boot Manager" first, then "Windows Boot Manager").  Prepare overlays
+that retained output with a fresh ``dualboot.qcow2`` so acceptance never
+mutates a gate artifact, pairs it by default with the gate-7 installed OVMF
+variables (matching physical persistence; ``--pristine-vars`` is a flagged
+escape hatch), and pins a QEMU command whose only boot path is the
+cold-plugged NVMe carrying the authorized serial (deliberately the inverse of
+the gate-7 install boundary: here the disk MUST be firmware-bootable and
+PXE/media MUST be absent).
 
 Run performs two cold boots against that overlay:
 
-* Boot 1 sends no input and proves the systemd-boot menu appears, lists both
-  operating systems plus the firmware recovery choice, and hands off to the
-  Windows default within the five-second policy.  Windows prints nothing on
-  serial after handoff, so the proof is menu + elimination (no Linux handoff
-  markers) + retained framebuffer captures; the evidence says
-  ``boot-observed``, never login-proven.
+* Boot 1 sends no input and proves the firmware started the authored Linux
+  entry first, the systemd-boot menu rendered with both operating systems
+  plus the firmware recovery choice, and the Windows default took over
+  within the five-second policy.  Windows prints nothing on serial after
+  handoff, so the proof is menu + elimination (no Linux handoff markers) +
+  retained framebuffer captures; the guest is sampled running over QMP while
+  the default handoff is awaited (before any shutdown), and the evidence
+  says ``boot-observed``, never login-proven.
 * Boot 2 selects the Arch entry with a systemd-boot digit key over serial and
-  watches for the Linux EFI-stub handoff and a bounded ttyS0 getty window.
-  The gate-7 installer writes no ``console=ttyS0`` into the Arch entry, so
-  the login surface is expected to be honestly absent until that seam moves.
+  watches for the Linux EFI-stub handoff and a bounded ttyS0 getty window
+  (the installed entry carries ``console=ttyS0,115200``).
 
 After both boots the overlay's GPT is re-read host-side (``qemu-img dd`` of
 the first MiB, CRC-verified parse) and compared against the prepared baseline
@@ -69,7 +74,8 @@ except ImportError:  # Direct execution from homelab/vm.
     from windows_install_contract import SAFE_SERIAL, sha256
 
 from homelab.workstations import dualboot_acceptance as lifecycle
-from homelab.workstations.arch_second import EXPECTED
+from homelab.workstations.arch_second import (
+    EXPECTED, MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, NVRAM_LINUX_LABEL)
 from homelab.workstations.layout import MIB, build_record
 
 
@@ -86,13 +92,20 @@ EVENTS_NAME = "dualboot-events.jsonl"
 MIN_DURATION = 60
 MAX_DURATION = 10800
 
-# systemd-boot entry titles the gate-7 install produces: the sorted config
-# entry first, then the auto-detected Windows and firmware-recovery entries.
-MENU_WINDOWS_ENTRY = "Windows Boot Manager"
-MENU_ARCH_ENTRY = "Arch Linux"
+# systemd-boot entry titles the gate-7 install produces, taken from the
+# arch_second exports so runner and installer cannot drift: the authored
+# config entry, the auto-detected Windows title (live-calibrated), and the
+# firmware-recovery entry.
+MENU_WINDOWS_ENTRY = MENU_WINDOWS_TITLE
+MENU_ARCH_ENTRY = MENU_ARCH_TITLE
 MENU_FIRMWARE_ENTRY = "Reboot Into Firmware Interface"
 KNOWN_MENU_ENTRIES = (
     MENU_ARCH_ENTRY, MENU_WINDOWS_ENTRY, MENU_FIRMWARE_ENTRY)
+# How the prepared bundle sourced its OVMF variables; only the gate-7
+# installed NVRAM matches physical persistence and can pass the judge's
+# nvram-linux-first check.
+VARS_SOURCE_GATE7 = lifecycle.VARS_SOURCE_GATE7
+VARS_SOURCE_PRISTINE = "pristine"
 # The Linux EFI stub prints on the OVMF console (and therefore serial) before
 # ExitBootServices; Windows Boot Manager prints nothing there.  Any of these
 # proves a Linux kernel handoff took place.
@@ -100,6 +113,19 @@ ARCH_HANDOFF_MARKERS = (
     "EFI stub", "Loading Linux", "Loading initial ramdisk", "Welcome to Arch")
 _LOGIN_PROMPT = re.compile(r"[\w.-]+ login:")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+# One rendered menu cell, exactly the shape the live boot-1 serial showed:
+# systemd-boot addresses the cursor (ESC[row;colH), emits attribute runs,
+# then draws the space-padded title.  Plain log text — OVMF's
+# ``BdsDxe: starting Boot0004 "Windows Boot Manager"`` — has no cursor
+# addressing and no padding, so it can never count as a rendered entry.
+_MENU_ROW = re.compile(
+    r"\x1b\[([0-9]{1,3});[0-9]{1,3}H"
+    r"(?:\x1b\[[0-9;?]*m)*"
+    r"( +[^\x1b\r\n]*? +)(?=\x1b|\r|\n|$)")
+# The firmware's boot-entry handoff line; boot 1 must start the authored
+# "Linux Boot Manager" entry first for the NVRAM order to be proven.
+_BDS_STARTING = re.compile(
+    r'BdsDxe: starting Boot[0-9A-Fa-f]{4} "([^"\r\n]+)"')
 
 CONTRACT = lifecycle.load_json(lifecycle.CONTRACT)
 REQUIRED_CHECKS: tuple[str, ...] = tuple(CONTRACT["required_checks"])
@@ -239,6 +265,13 @@ def inspect_gate7_bundle(path: Path) -> dict:
     if disk.is_symlink() or not disk.is_file():
         raise DualbootAcceptanceError(
             "gate-7 bundle is missing its installed dual-boot disk")
+    # The bundle's post-install OVMF variables carry the NVRAM the installer
+    # authored (Linux Boot Manager first); acceptance boots consume them by
+    # default because that is what persists on physical hardware.
+    variables = path / VARS_NAME
+    if variables.is_symlink() or not variables.is_file():
+        raise DualbootAcceptanceError(
+            "gate-7 bundle is missing its post-install OVMF variables")
     probe = subprocess.run(
         ["qemu-img", "info", "--output=json", str(disk)],
         check=True, capture_output=True, text=True)
@@ -263,6 +296,8 @@ def inspect_gate7_bundle(path: Path) -> dict:
         "virtual_size": virtual_size,
         "backing": str(backing_path.resolve()),
         "backing_sha256": sha256(backing_path),
+        "vars_path": str(variables.resolve()),
+        "vars_sha256": sha256(variables),
         "result_status": result["status"],
         "result_phase": result["phase"],
     }
@@ -384,16 +419,30 @@ def prepare(args: argparse.Namespace) -> Path:
     run_root.chmod(0o700)
 
     gate7 = inspect_gate7_bundle(args.gate7_bundle)
-    ovmf_source = args.ovmf_vars
-    if ovmf_source is None:
-        pair = ovmf_pair()
-        if pair is None:
+    pristine = bool(getattr(args, "pristine_vars", False))
+    if pristine:
+        # Flagged escape hatch: pristine variables do not match physical
+        # persistence, and the judge's nvram-linux-first check will refuse
+        # the gate for a bundle prepared this way.
+        ovmf_source = args.ovmf_vars
+        if ovmf_source is None:
+            pair = ovmf_pair()
+            if pair is None:
+                raise DualbootAcceptanceError(
+                    "pristine OVMF variables template was not found")
+            ovmf_source = pair[1]
+        vars_source = VARS_SOURCE_PRISTINE
+    else:
+        if args.ovmf_vars is not None:
             raise DualbootAcceptanceError(
-                "pristine OVMF variables template was not found")
-        ovmf_source = pair[1]
+                "--ovmf-vars overrides the pristine template and requires "
+                "--pristine-vars; the default consumes the gate-7 "
+                "installed NVRAM")
+        ovmf_source = Path(gate7["vars_path"])
+        vars_source = VARS_SOURCE_GATE7
     if ovmf_source.is_symlink() or not ovmf_source.is_file():
         raise DualbootAcceptanceError(
-            "OVMF variables template must be a regular non-symlink file")
+            "OVMF variables source must be a regular non-symlink file")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run = run_root / f"run-{stamp}-{secrets.token_hex(6)}"
@@ -436,6 +485,7 @@ def prepare(args: argparse.Namespace) -> Path:
             "external_access": False,
             "pxe": False,
             "media": False,
+            "pristine_vars": pristine,
             "authorization": {
                 "disk_serial": DISK_SERIAL,
                 "overlay": overlay_record,
@@ -445,6 +495,8 @@ def prepare(args: argparse.Namespace) -> Path:
                 "qemu_argv_sha256": _argv_digest(command),
                 "layout": record,
                 "boot_policy": CONTRACT["boot_policy"],
+                "vars_source": vars_source,
+                "vars_sha256": sha256(variables),
             },
         }
         private_file(
@@ -478,6 +530,7 @@ class BootObservation:
     selection_at: float | None = None
     kernel_handoff_at: float | None = None
     login_prompt_at: float | None = None
+    firmware_entry: str | None = None
     guest_running: bool = False
     frames: int = 0
 
@@ -493,13 +546,31 @@ def _plain(text: str) -> str:
     return _ANSI.sub("", text).replace("\r", "")
 
 
-def _menu_entries(plain: str) -> list[str]:
-    """Known menu entries in first-render (top-to-bottom) order."""
-    found = [
-        (plain.find(title), title)
-        for title in KNOWN_MENU_ENTRIES if title in plain
-    ]
-    return [title for _position, title in sorted(found)]
+def _menu_entries(raw: str) -> list[str]:
+    """Known titles the menu actually rendered, in on-screen row order.
+
+    Parses the raw (escape-bearing) transcript for positioned, space-padded
+    menu cells — the real rendered menu — so firmware chatter that merely
+    mentions an entry label can never fake a menu listing (the live boot-2
+    transcript contained ``"Windows Boot Manager"`` inside a BdsDxe line
+    while no menu ever rendered).  Row order is the on-screen order, which
+    is also the systemd-boot digit-key order.
+    """
+    rows: dict[str, int] = {}
+    for match in _MENU_ROW.finditer(raw):
+        title = match.group(2).strip()
+        if title in KNOWN_MENU_ENTRIES and title not in rows:
+            rows[title] = int(match.group(1))
+    return sorted(rows, key=rows.get)
+
+
+def _query_running(qmp, process: subprocess.Popen[bytes]) -> bool:
+    """One bounded QMP liveness sample; fall back to the host process."""
+    try:
+        status = qmp.execute("query-status", timeout=10)
+        return status.get("return", {}).get("status") == "running"
+    except (WindowsGuiError, OSError):
+        return process.poll() is None
 
 
 def observe_boot(
@@ -517,6 +588,11 @@ def observe_boot(
     handoff instant for the no-input boot is the last serial output before
     ``quiesce`` seconds of silence, because Windows Boot Manager prints
     nothing to the OVMF serial console after taking over.
+
+    ``guest_running`` is sampled over QMP the moment the awaited handoff is
+    reached — while the guest is still being observed, before any shutdown —
+    never after the observation window closes (the first live run sampled
+    after the clean shutdown and honestly recorded a false negative).
     """
     if mode not in ("windows-default", "arch-select"):
         raise DualbootAcceptanceError(f"unknown boot mode: {mode}")
@@ -531,6 +607,7 @@ def observe_boot(
     deadline = started + timeout
     handoff_confirm_until: float | None = None
     login_until: float | None = None
+    running_sampled = False
     next_frame = started
     frame_failures = 0
     while time.monotonic() < deadline:
@@ -563,11 +640,17 @@ def observe_boot(
             capture.write_bytes(transcript)
             capture.chmod(0o600)
             observation.last_output = now
-        plain = _plain(transcript.decode("utf-8", errors="replace"))
-        if observation.menu_first is None and any(
-                title in plain for title in KNOWN_MENU_ENTRIES):
+        raw = transcript.decode("utf-8", errors="replace")
+        plain = _plain(raw)
+        # Only a really rendered menu (positioned, padded cells) counts;
+        # a title substring inside firmware log text never does.
+        observation.entries = _menu_entries(raw)
+        if observation.menu_first is None and observation.entries:
             observation.menu_first = now
-        observation.entries = _menu_entries(plain)
+        if observation.firmware_entry is None:
+            started = _BDS_STARTING.search(plain)
+            if started:
+                observation.firmware_entry = started.group(1)
         if observation.kernel_handoff_at is None and any(
                 marker in plain for marker in ARCH_HANDOFF_MARKERS):
             observation.kernel_handoff_at = now
@@ -581,8 +664,12 @@ def observe_boot(
                     and now - observation.last_output >= quiesce):
                 # The menu went quiet without input: the default entry took
                 # over.  Keep watching so a late Linux handoff still counts
-                # against the Windows-default claim.
+                # against the Windows-default claim, and sample guest
+                # liveness NOW — while the handoff is awaited — because a
+                # post-shutdown sample can only report a dead guest.
                 handoff_confirm_until = now + confirm
+                observation.guest_running = _query_running(qmp, process)
+                running_sampled = True
             if (handoff_confirm_until is not None
                     and now >= handoff_confirm_until):
                 break
@@ -601,6 +688,10 @@ def observe_boot(
                     and observation.kernel_handoff_at is not None):
                 login_until = min(
                     deadline, observation.kernel_handoff_at + login_wait)
+                # Same discipline as the default boot: liveness is sampled
+                # at the awaited handoff, never after the window closes.
+                observation.guest_running = _query_running(qmp, process)
+                running_sampled = True
             if login_until is not None and (
                     observation.login_prompt_at is not None
                     or now >= login_until):
@@ -608,12 +699,10 @@ def observe_boot(
     capture.write_bytes(transcript)
     capture.chmod(0o600)
     observation.transcript = transcript.decode("utf-8", errors="replace")
-    try:
-        status = qmp.execute("query-status", timeout=10)
-        observation.guest_running = (
-            status.get("return", {}).get("status") == "running")
-    except (WindowsGuiError, OSError):
-        observation.guest_running = process.poll() is None
+    if not running_sampled:
+        # No awaited handoff was reached; a final in-window sample (still
+        # before any shutdown) is the honest last resort.
+        observation.guest_running = _query_running(qmp, process)
     return observation
 
 
@@ -690,6 +779,12 @@ def _bundle(path: Path) -> tuple[dict, list[str]]:
     required = (overlay, path / VARS_NAME)
     if any(item.is_symlink() or not item.is_file() for item in required):
         raise DualbootAcceptanceError("dual-boot bundle is incomplete or unsafe")
+    # The judged vars_source claim is only honest if the vars about to boot
+    # are the exact bytes prepare copied from the recorded source; a swap
+    # after prepare (pristine for gate-7-installed, say) is refused here.
+    if sha256(path / VARS_NAME) != authorized.get("vars_sha256"):
+        raise DualbootAcceptanceError(
+            "dual-boot OVMF variables differ from authorization")
     return authorization, command
 
 
@@ -766,6 +861,7 @@ def build_events(
     gpt_baseline: dict,
     gpt_after: dict | None,
     expected_sizes_mib: list[int],
+    vars_source: str | None = None,
     windows_clean_shutdown: bool = False,
     arch_clean_shutdown: bool = False,
 ) -> list[dict]:
@@ -774,6 +870,9 @@ def build_events(
     A stage that never ran renders ``not-run``; a stage that ran and did not
     prove its claim renders ``fail``.  Only a live observation renders
     ``pass``, so the judge can trust every field it validates.
+    ``vars_source`` is the prepared bundle's OVMF-variables provenance; only
+    the gate-7 installed NVRAM can prove ``nvram-linux-first``, so a missing
+    or pristine source honestly fails that check.
     """
     events: list[dict] = []
 
@@ -781,6 +880,22 @@ def build_events(
         events.append({
             "check": check, "result": result, "external_access": False,
             **fields})
+
+    if boot1 is None:
+        emit("nvram-linux-first", "not-run",
+             reason="windows-default boot never started")
+    else:
+        menu_rendered = boot1.menu_first is not None
+        passed = (
+            vars_source == VARS_SOURCE_GATE7
+            and boot1.firmware_entry == NVRAM_LINUX_LABEL
+            and menu_rendered
+        )
+        emit(
+            "nvram-linux-first", "pass" if passed else "fail",
+            vars_source=vars_source,
+            firmware_entry=boot1.firmware_entry,
+            menu_rendered=menu_rendered)
 
     if boot1 is None:
         emit("windows-default-boot", "not-run",
@@ -843,12 +958,12 @@ def build_events(
         fields: dict[str, object] = {
             "login_prompt_observed": prompt, "login_driven": False}
         if not prompt:
-            # Honest known gap: the gate-7 installer writes no console=ttyS0
-            # into the Arch entry, so the installed system presents no serial
-            # getty for this run to observe.
+            # The installed entry carries console=ttyS0,115200 and the getty
+            # is enabled; an absent prompt is recorded honestly, not
+            # explained away.
             fields["reason"] = (
-                "no ttyS0 getty observed; installed Arch boot entry carries "
-                "no console=ttyS0")
+                "no ttyS0 getty login prompt observed within the bounded "
+                "window")
         emit(
             "arch-console-login-surface", "pass" if prompt else "fail",
             **fields)
@@ -970,6 +1085,7 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
                 gpt_baseline=authorized["gpt_baseline"],
                 gpt_after=gpt_after,
                 expected_sizes_mib=authorized["expected_sizes_mib"],
+                vars_source=authorized.get("vars_source"),
                 windows_clean_shutdown=windows_clean,
                 arch_clean_shutdown=arch_clean)
             private_file(
@@ -1031,9 +1147,15 @@ def parser() -> argparse.ArgumentParser:
         "--gate7-bundle", type=Path, required=True,
         help="completed gate-7 run bundle whose arch.qcow2 is overlaid")
     prepare_parser.add_argument(
+        "--pristine-vars", action="store_true",
+        help="escape hatch: boot fresh no-boot-entry OVMF variables instead "
+        "of the gate-7 installed NVRAM; flagged in the authorization and "
+        "refused by the nvram-linux-first judge check")
+    prepare_parser.add_argument(
         "--ovmf-vars", type=Path, default=None,
-        help="override the pristine OVMF variables template; defaults to "
-        "the firmware's fresh no-boot-entry vars")
+        help="with --pristine-vars, override the pristine OVMF variables "
+        "template; the default consumes the gate-7 bundle's post-install "
+        "OVMF_VARS.fd")
     prepare_parser.add_argument("--layout", type=Path, default=DEFAULT_LAYOUT)
     prepare_parser.add_argument(
         "--workstation-profile", type=Path, default=DEFAULT_WORKSTATION)
@@ -1060,7 +1182,14 @@ def main(argv: list[str] | None = None) -> int:
         print("Boundary: private run state; gate-7 inputs are never mutated")
         print("Disk: fresh dualboot.qcow2 overlay; cold-plugged, bootable")
         print("Network and installation media: absent by construction")
-        if ovmf_pair() is None and args.ovmf_vars is None:
+        if args.pristine_vars:
+            print(
+                "OVMF variables: PRISTINE (escape hatch; the "
+                "nvram-linux-first check will refuse the gate)")
+        else:
+            print("OVMF variables: gate-7 installed NVRAM (Linux first)")
+        if (args.pristine_vars and ovmf_pair() is None
+                and args.ovmf_vars is None):
             print("note: OVMF firmware was not found on this host")
         if not args.apply:
             print("dry run; repeat with --apply to prepare the private bundle")

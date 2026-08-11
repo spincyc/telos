@@ -12,6 +12,7 @@
     "measured_handoff_bounds_seconds": [3, 15]
   },
   "required_checks": [
+    "nvram-linux-first",
     "windows-default-boot",
     "five-second-policy",
     "arch-menu-selectable",

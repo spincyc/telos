@@ -18,7 +18,8 @@ import zlib
 
 from homelab.vm import dualboot_acceptance as da
 from homelab.workstations import dualboot_acceptance as judge_mod
-from homelab.workstations.arch_second import EXPECTED
+from homelab.workstations.arch_second import (
+    EXPECTED, MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, NVRAM_LINUX_LABEL)
 from homelab.workstations.layout import GIB, MIB
 
 
@@ -75,6 +76,7 @@ def happy_boot1() -> da.BootObservation:
         transcript="menu", menu_first=100.0, last_output=105.2,
         entries=[da.MENU_ARCH_ENTRY, da.MENU_WINDOWS_ENTRY,
                  da.MENU_FIRMWARE_ENTRY],
+        firmware_entry=NVRAM_LINUX_LABEL,
         guest_running=True, frames=2)
 
 
@@ -84,28 +86,38 @@ def happy_boot2() -> da.BootObservation:
         entries=[da.MENU_ARCH_ENTRY, da.MENU_WINDOWS_ENTRY,
                  da.MENU_FIRMWARE_ENTRY],
         selection="1", selection_at=12.0, kernel_handoff_at=13.0,
-        login_prompt_at=20.0, guest_running=True, frames=1)
+        login_prompt_at=20.0, firmware_entry=NVRAM_LINUX_LABEL,
+        guest_running=True, frames=1)
 
 
-def happy_events():
+def happy_events(**overrides):
     gpt = da.parse_gpt(make_gpt(SIZES))
-    return da.build_events(
+    keywords = dict(
         boot1=happy_boot1(), boot2=happy_boot2(), gpt_baseline=gpt,
         gpt_after=gpt, expected_sizes_mib=SIZES,
+        vars_source=da.VARS_SOURCE_GATE7,
         windows_clean_shutdown=True, arch_clean_shutdown=True)
+    keywords.update(overrides)
+    return da.build_events(**keywords)
 
 
 class _FakeQmp:
-    """Record QMP calls; screenshot writes a stub frame like QEMU would."""
+    """Record QMP calls; screenshot writes a stub frame like QEMU would.
 
-    def __init__(self) -> None:
+    ``status`` is mutable so a test can prove WHEN liveness was sampled:
+    a feeder that flips it to ``shutdown`` mid-run distinguishes a sample
+    taken while awaiting the handoff from one taken after the window.
+    """
+
+    def __init__(self, status: str = "running") -> None:
         self.calls: list = []
+        self.status = status
         self.closed = False
 
     def execute(self, command, arguments=None, *, timeout=None):
         self.calls.append((command, arguments, timeout))
         if command == "query-status":
-            return {"return": {"status": "running"}}
+            return {"return": {"status": self.status}}
         return {}
 
     def screenshot(self, path: Path) -> None:
@@ -150,11 +162,43 @@ def _digest(command):
         json.dumps(command, separators=(",", ":")).encode()).hexdigest()
 
 
+def _menu_cell(row: int, title: str, *, selected: bool) -> bytes:
+    """One positioned, attribute-run, space-padded menu cell (live shape)."""
+    attributes = (
+        b"\x1b[1m\x1b[30m\x1b[47m\x1b[0m\x1b[30m\x1b[47m" if selected
+        else b"\x1b[1m\x1b[37m\x1b[40m\x1b[0m\x1b[37m\x1b[40m")
+    return b"\x1b[%03d;103H" % row + attributes + f"{title:^36}".encode()
+
+
+# One systemd-boot menu render modeled on the REAL gate-10 boot-1 serial
+# transcript of 2026-08-11 (cursor-positioned rows at column 103 with
+# attribute runs and space padding, the Windows default highlighted, a
+# countdown line below): its shape is copied, not its bytes.
 MENU = (
-    b"\x1b[2J\x1b[1;1H"
-    b"  Arch Linux LTS\r\n"
-    b"\x1b[7mWindows Boot Manager\x1b[27m\r\n"
-    b"  Reboot Into Firmware Interface\r\n"
+    b"\x1b[2J\x1b[001;001H"
+    + _menu_cell(27, da.MENU_ARCH_ENTRY, selected=False)
+    + _menu_cell(28, da.MENU_WINDOWS_ENTRY, selected=True)
+    + _menu_cell(29, da.MENU_FIRMWARE_ENTRY, selected=False)
+    + _menu_cell(31, "Boot in 5s.", selected=False)
+)
+
+# OVMF's firmware handoff lines: entry labels appear only as plain quoted
+# log text, never as rendered menu cells.  BDS_LINUX models the fixed boot-1
+# shape once the installer-authored NVRAM is first; BDS_WINDOWS_DIRECT
+# models the observed menuless boot-2 regression (Windows self-promoted).
+_BDS_DEVICE = (
+    b'HD(1,GPT,CA2548AC-278B-4457-ADFB-0ED0703C3197,0x800,0x200000)')
+BDS_LINUX = (
+    b'BdsDxe: loading Boot0003 "Linux Boot Manager" from ' + _BDS_DEVICE
+    + b'/\\EFI\\systemd\\systemd-bootx64.efi\r\n'
+    b'BdsDxe: starting Boot0003 "Linux Boot Manager" from ' + _BDS_DEVICE
+    + b'/\\EFI\\systemd\\systemd-bootx64.efi\r\n'
+)
+BDS_WINDOWS_DIRECT = (
+    b'BdsDxe: loading Boot0004 "Windows Boot Manager" from ' + _BDS_DEVICE
+    + b'/\\EFI\\Microsoft\\Boot\\bootmgfw.efi\r\n'
+    b'BdsDxe: starting Boot0004 "Windows Boot Manager" from ' + _BDS_DEVICE
+    + b'/\\EFI\\Microsoft\\Boot\\bootmgfw.efi\r\n'
 )
 
 
@@ -314,6 +358,9 @@ class PrepareTests(unittest.TestCase):
         bundle = root / "gate7"
         bundle.mkdir(mode=0o700)
         (bundle / "arch.qcow2").write_bytes(b"gate7-disk")
+        # The post-install OVMF variables carrying the installer-authored
+        # NVRAM; the default prepare must consume exactly these.
+        (bundle / "OVMF_VARS.fd").write_bytes(b"gate7-installed-vars")
         (bundle / "evidence").mkdir(mode=0o700)
         (bundle / "evidence" / "result.json").write_text(json.dumps({
             "schema": 1, "status": "observed",
@@ -337,16 +384,20 @@ class PrepareTests(unittest.TestCase):
             raise AssertionError(f"unexpected subprocess: {command}")
         return run
 
-    def arguments(self, root: Path, bundle: Path):
-        variables = root / "template-vars.fd"
-        variables.write_bytes(b"pristine-vars")
+    def arguments(self, root: Path, bundle: Path, *extra: str):
         return da.parser().parse_args([
             "prepare", "--gate7-bundle", str(bundle),
-            "--ovmf-vars", str(variables),
             "--layout", str(LAYOUT),
             "--workstation-profile", str(WORKSTATION),
             "--run-root", str(root / "runs"), "--apply",
+            *extra,
         ])
+
+    def pristine_arguments(self, root: Path, bundle: Path):
+        variables = root / "template-vars.fd"
+        variables.write_bytes(b"pristine-vars")
+        return self.arguments(
+            root, bundle, "--pristine-vars", "--ovmf-vars", str(variables))
 
     def test_gate7_refusals(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -364,6 +415,11 @@ class PrepareTests(unittest.TestCase):
             (bundle / "evidence" / "result.json").write_text(json.dumps({
                 "schema": 1, "status": "observed",
                 "phase": "arch-installed-windows-preserved"}))
+            (bundle / "OVMF_VARS.fd").unlink()
+            with self.assertRaisesRegex(
+                    RuntimeError, "post-install OVMF variables"):
+                da.inspect_gate7_bundle(bundle)
+            (bundle / "OVMF_VARS.fd").write_bytes(b"gate7-installed-vars")
             (bundle / "arch.qcow2").unlink()
             with self.assertRaisesRegex(RuntimeError, "missing its installed"):
                 da.inspect_gate7_bundle(bundle)
@@ -404,6 +460,11 @@ class PrepareTests(unittest.TestCase):
                 run_dir = da.prepare(arguments)
             self.assertTrue((run_dir / "dualboot.qcow2").is_file())
             self.assertTrue((run_dir / "OVMF_VARS.fd").is_file())
+            # The default vars are the gate-7 installed NVRAM, byte for
+            # byte, and the authorization records their provenance.
+            self.assertEqual(
+                b"gate7-installed-vars",
+                (run_dir / "OVMF_VARS.fd").read_bytes())
             creates = [
                 call.args[0] for call in spawn.call_args_list
                 if call.args[0][:2] == ["qemu-img", "create"]
@@ -419,7 +480,16 @@ class PrepareTests(unittest.TestCase):
             self.assertIs(False, authorization["external_access"])
             self.assertIs(False, authorization["pxe"])
             self.assertIs(False, authorization["media"])
+            self.assertIs(False, authorization["pristine_vars"])
             authorized = authorization["authorization"]
+            self.assertEqual(
+                da.VARS_SOURCE_GATE7, authorized["vars_source"])
+            self.assertEqual(
+                hashlib.sha256(b"gate7-installed-vars").hexdigest(),
+                authorized["vars_sha256"])
+            self.assertEqual(
+                authorized["gate7"]["vars_sha256"],
+                authorized["vars_sha256"])
             command = json.loads(
                 (run_dir / "qemu-command.json").read_text())["argv"]
             self.assertEqual(
@@ -435,6 +505,54 @@ class PrepareTests(unittest.TestCase):
                 serial=authorized["disk_serial"])
             serialized = json.dumps(authorization)
             self.assertNotIn("password", serialized.lower())
+
+    def test_pristine_vars_escape_hatch_is_flagged_in_authorization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = self.gate7(root)
+            arguments = self.pristine_arguments(root, bundle)
+            with mock.patch.object(
+                    da.subprocess, "run",
+                    side_effect=self.fake_qemu_img(root)), \
+                    mock.patch.object(
+                        da, "read_gpt_region",
+                        return_value=make_gpt(SIZES)), \
+                    mock.patch.object(
+                        da, "inspect_overlay",
+                        side_effect=lambda path: {
+                            "path": str(Path(path).resolve()),
+                            "format": "qcow2",
+                            "backing": str(
+                                (bundle / "arch.qcow2").resolve()),
+                            "sha256": CONST,
+                        }):
+                run_dir = da.prepare(arguments)
+            self.assertEqual(
+                b"pristine-vars", (run_dir / "OVMF_VARS.fd").read_bytes())
+            authorization = json.loads(
+                (run_dir / "authorization.json").read_text())
+            self.assertIs(True, authorization["pristine_vars"])
+            self.assertEqual(
+                "pristine",
+                authorization["authorization"]["vars_source"])
+
+    def test_ovmf_vars_override_requires_the_pristine_flag(self):
+        # Without --pristine-vars an --ovmf-vars override would silently
+        # bypass the gate-7 installed NVRAM; prepare refuses it instead.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = self.gate7(root)
+            variables = root / "template-vars.fd"
+            variables.write_bytes(b"pristine-vars")
+            arguments = self.arguments(
+                root, bundle, "--ovmf-vars", str(variables))
+            with mock.patch.object(
+                    da.subprocess, "run",
+                    side_effect=self.fake_qemu_img(root)):
+                with self.assertRaisesRegex(
+                        RuntimeError, "requires\\s+--pristine-vars"):
+                    da.prepare(arguments)
+            self.assertEqual([], list((root / "runs").iterdir()))
 
     def test_prepare_removes_its_run_directory_on_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -454,11 +572,12 @@ class PrepareTests(unittest.TestCase):
 
 class ObserveBootTests(unittest.TestCase):
     def _observe(self, mode, feeder, *, timeout=10.0, frames=False,
-                 **overrides):
+                 qmp=None, **overrides):
         read_fd, write_fd = os.pipe()
         stdin = _Recorder()
         process = _FakeProcess(read_fd, stdin)
-        qmp = _FakeQmp()
+        if qmp is None:
+            qmp = _FakeQmp()
         worker = threading.Thread(target=feeder, args=(write_fd, stdin))
         worker.start()
         try:
@@ -482,10 +601,7 @@ class ObserveBootTests(unittest.TestCase):
 
     def test_windows_default_boot_is_observed_without_any_input(self):
         def feeder(write_fd, _stdin):
-            os.write(
-                write_fd,
-                b'BdsDxe: starting Boot0002 '
-                b'"UEFI QEMU NVMe Ctrl TELOS-WIN-0001"\r\n')
+            os.write(write_fd, BDS_LINUX)
             for _ in range(3):
                 os.write(write_fd, MENU)
                 time.sleep(0.05)
@@ -501,6 +617,7 @@ class ObserveBootTests(unittest.TestCase):
             [da.MENU_ARCH_ENTRY, da.MENU_WINDOWS_ENTRY,
              da.MENU_FIRMWARE_ENTRY],
             observation.entries)
+        self.assertEqual(NVRAM_LINUX_LABEL, observation.firmware_entry)
         self.assertIsNone(observation.selection)
         self.assertIsNone(observation.kernel_handoff_at)
         self.assertIsNone(observation.login_prompt_at)
@@ -508,6 +625,45 @@ class ObserveBootTests(unittest.TestCase):
         self.assertGreaterEqual(observation.frames, 1)
         self.assertEqual(b"", bytes(stdin.data))
         self.assertIsNotNone(observation.measured_menu_seconds)
+
+    def test_firmware_log_text_never_counts_as_a_rendered_menu(self):
+        # The live boot-2 regression shape: Windows self-promoted and booted
+        # directly, so the only occurrence of a boot-entry label is inside
+        # OVMF's BdsDxe log line.  That text must not count as a menu.
+        def feeder(write_fd, _stdin):
+            os.write(write_fd, BDS_WINDOWS_DIRECT)
+            time.sleep(0.4)
+            os.close(write_fd)
+
+        observation, stdin, _qmp = self._observe(
+            "windows-default", feeder, timeout=1.0)
+        self.assertEqual([], observation.entries)
+        self.assertIsNone(observation.menu_first)
+        self.assertEqual("Windows Boot Manager", observation.firmware_entry)
+        self.assertEqual(b"", bytes(stdin.data))
+
+    def test_guest_running_is_sampled_while_awaiting_the_handoff(self):
+        # The first live run sampled liveness after the clean shutdown and
+        # recorded a false negative.  The feeder flips the guest status to
+        # ``shutdown`` after the handoff instant but well before the confirm
+        # window closes: only a sample taken while awaiting the handoff can
+        # still observe ``running``.
+        qmp = _FakeQmp()
+
+        def feeder(write_fd, _stdin):
+            os.write(write_fd, BDS_LINUX)
+            os.write(write_fd, MENU)
+            time.sleep(1.5)
+            qmp.status = "shutdown"
+            time.sleep(1.5)
+            os.close(write_fd)
+
+        observation, _stdin, qmp = self._observe(
+            "windows-default", feeder, qmp=qmp,
+            quiesce=0.4, confirm=2.5)
+        self.assertTrue(observation.guest_running)
+        self.assertIn(
+            "query-status", [call[0] for call in qmp.calls])
 
     def test_a_linux_handoff_on_the_default_boot_is_recorded(self):
         def feeder(write_fd, _stdin):
@@ -584,8 +740,61 @@ class BuildEventsTests(unittest.TestCase):
             all(event["result"] == "pass" for event in events))
         verdict = judge_mod.judge(CONTRACT, events)
         self.assertEqual("pass", verdict["result"])
-        self.assertEqual(7, verdict["checks"])
+        self.assertEqual(8, verdict["checks"])
         self.assertIs(False, verdict["windows_login_proven"])
+
+    def test_menu_titles_come_from_the_arch_second_exports(self):
+        # Runner and installer share one source of truth for the rendered
+        # titles the acceptance keys on (calibrated against the live boot-1
+        # serial), so a title change cannot silently split them.
+        self.assertEqual(MENU_ARCH_TITLE, da.MENU_ARCH_ENTRY)
+        self.assertEqual(MENU_WINDOWS_TITLE, da.MENU_WINDOWS_ENTRY)
+        self.assertEqual(NVRAM_LINUX_LABEL, judge_mod.NVRAM_LINUX_LABEL)
+        self.assertEqual(
+            da.VARS_SOURCE_GATE7, judge_mod.VARS_SOURCE_GATE7)
+
+    def test_pristine_vars_fail_the_nvram_check(self):
+        events = happy_events(vars_source="pristine")
+        nvram = next(
+            event for event in events
+            if event["check"] == "nvram-linux-first")
+        self.assertEqual("fail", nvram["result"])
+        self.assertEqual("pristine", nvram["vars_source"])
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            judge_mod.judge(CONTRACT, events)
+
+    def test_a_missing_vars_source_fails_closed(self):
+        events = happy_events(vars_source=None)
+        nvram = next(
+            event for event in events
+            if event["check"] == "nvram-linux-first")
+        self.assertEqual("fail", nvram["result"])
+
+    def test_a_wrong_firmware_entry_fails_the_nvram_check(self):
+        # The pristine-vars regression shape: OVMF auto-created its own NVMe
+        # entry instead of starting the authored Linux Boot Manager.
+        boot1 = happy_boot1()
+        boot1.firmware_entry = "UEFI QEMU NVMe Ctrl TELOS-WIN-0001 1"
+        events = happy_events(boot1=boot1)
+        nvram = next(
+            event for event in events
+            if event["check"] == "nvram-linux-first")
+        self.assertEqual("fail", nvram["result"])
+        self.assertEqual(
+            "UEFI QEMU NVMe Ctrl TELOS-WIN-0001 1", nvram["firmware_entry"])
+
+    def test_an_unrendered_windows_title_fails_the_default_boot_check(self):
+        # windows_menu_listed comes only from rendered menu parsing now; an
+        # entries list without the Windows title (as in the menuless live
+        # boot 2) must fail even when everything else held.
+        boot1 = happy_boot1()
+        boot1.entries = [da.MENU_ARCH_ENTRY, da.MENU_FIRMWARE_ENTRY]
+        events = happy_events(boot1=boot1)
+        default = next(
+            event for event in events
+            if event["check"] == "windows-default-boot")
+        self.assertEqual("fail", default["result"])
+        self.assertIs(False, default["windows_menu_listed"])
 
     def test_windows_login_is_never_claimed(self):
         events = happy_events()
@@ -601,7 +810,8 @@ class BuildEventsTests(unittest.TestCase):
         gpt = da.parse_gpt(make_gpt(SIZES))
         events = da.build_events(
             boot1=boot1, boot2=happy_boot2(), gpt_baseline=gpt,
-            gpt_after=gpt, expected_sizes_mib=SIZES)
+            gpt_after=gpt, expected_sizes_mib=SIZES,
+            vars_source=da.VARS_SOURCE_GATE7)
         default = next(
             event for event in events
             if event["check"] == "windows-default-boot")
@@ -616,7 +826,8 @@ class BuildEventsTests(unittest.TestCase):
             gpt = da.parse_gpt(make_gpt(SIZES))
             events = da.build_events(
                 boot1=boot1, boot2=happy_boot2(), gpt_baseline=gpt,
-                gpt_after=gpt, expected_sizes_mib=SIZES)
+                gpt_after=gpt, expected_sizes_mib=SIZES,
+                vars_source=da.VARS_SOURCE_GATE7)
             policy = next(
                 event for event in events
                 if event["check"] == "five-second-policy")
@@ -629,18 +840,20 @@ class BuildEventsTests(unittest.TestCase):
         gpt = da.parse_gpt(make_gpt(SIZES))
         events = da.build_events(
             boot1=happy_boot1(), boot2=boot2, gpt_baseline=gpt,
-            gpt_after=gpt, expected_sizes_mib=SIZES)
+            gpt_after=gpt, expected_sizes_mib=SIZES,
+            vars_source=da.VARS_SOURCE_GATE7)
         surface = next(
             event for event in events
             if event["check"] == "arch-console-login-surface")
         self.assertEqual("fail", surface["result"])
-        self.assertIn("console=ttyS0", surface["reason"])
+        self.assertIn("ttyS0", surface["reason"])
 
     def test_stages_that_never_ran_render_not_run(self):
         gpt = da.parse_gpt(make_gpt(SIZES))
         events = da.build_events(
             boot1=happy_boot1(), boot2=None, gpt_baseline=gpt,
-            gpt_after=None, expected_sizes_mib=SIZES)
+            gpt_after=None, expected_sizes_mib=SIZES,
+            vars_source=da.VARS_SOURCE_GATE7)
         by_check = {event["check"]: event for event in events}
         self.assertEqual("not-run", by_check["arch-menu-selectable"]["result"])
         self.assertEqual(
@@ -653,7 +866,8 @@ class BuildEventsTests(unittest.TestCase):
         moved = da.parse_gpt(make_gpt([1024, 16, 186098, 72955, 2048]))
         events = da.build_events(
             boot1=happy_boot1(), boot2=happy_boot2(), gpt_baseline=baseline,
-            gpt_after=moved, expected_sizes_mib=SIZES)
+            gpt_after=moved, expected_sizes_mib=SIZES,
+            vars_source=da.VARS_SOURCE_GATE7)
         unchanged = next(
             event for event in events
             if event["check"] == "partitions-unchanged")
@@ -726,6 +940,26 @@ class JudgeTests(unittest.TestCase):
             tuple(CONTRACT["required_checks"]), da.REQUIRED_CHECKS)
         self.assertEqual(
             tuple(CONTRACT["required_checks"]), judge_mod.REQUIRED_CHECKS)
+        self.assertEqual("nvram-linux-first", judge_mod.REQUIRED_CHECKS[0])
+
+    def test_nvram_evidence_fields_are_each_fail_closed(self):
+        for field, value, message in (
+                ("vars_source", "pristine", "gate-7 installed"),
+                ("vars_source", None, "gate-7 installed"),
+                ("firmware_entry",
+                 "UEFI QEMU NVMe Ctrl TELOS-WIN-0001 1",
+                 "Linux Boot Manager"),
+                ("menu_rendered", False, "render its menu"),
+                ("menu_rendered", None, "render its menu"),
+        ):
+            events = happy_events()
+            nvram = next(
+                event for event in events
+                if event["check"] == "nvram-linux-first")
+            nvram[field] = value
+            with self.subTest(field=field, value=value):
+                with self.assertRaisesRegex(ValueError, message):
+                    judge_mod.judge(CONTRACT, events)
 
 
 class RunTests(unittest.TestCase):
@@ -782,6 +1016,8 @@ class RunTests(unittest.TestCase):
                 "qemu_argv_sha256": _digest(command),
                 "layout": {},
                 "boot_policy": CONTRACT["boot_policy"],
+                "vars_source": da.VARS_SOURCE_GATE7,
+                "vars_sha256": CONST,
             },
         }
         (root / "authorization.json").write_text(json.dumps(authorization))
@@ -860,6 +1096,23 @@ class RunTests(unittest.TestCase):
                         RuntimeError, "prepared|pin"):
                     da._bundle(bundle)
 
+    def test_bundle_rejects_swapped_ovmf_variables(self):
+        # A vars swap after prepare (pristine for gate-7-installed) would
+        # falsify the judged vars_source claim; the run refuses to boot it.
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = self.bundle(Path(temporary) / "bundle")
+            target = (bundle / "OVMF_VARS.fd").resolve()
+
+            def by_path(path, target=target):
+                return "z" * 64 if Path(path).resolve() == target else CONST
+
+            patches = self._mocks(bundle)
+            with patches[0], mock.patch.object(
+                    da, "sha256", side_effect=by_path):
+                with self.assertRaisesRegex(
+                        RuntimeError, "OVMF variables differ"):
+                    da._bundle(bundle)
+
     def test_bundle_rejects_altered_gate7_inputs(self):
         for altered in ("arch.qcow2", "windows.qcow2"):
             with tempfile.TemporaryDirectory() as temporary:
@@ -907,7 +1160,7 @@ class RunTests(unittest.TestCase):
                 for line in (evidence / da.EVENTS_NAME).read_text().splitlines()
                 if line.strip()
             ]
-            self.assertEqual(7, len(events))
+            self.assertEqual(8, len(events))
             judge_mod.judge(CONTRACT, events)
             self.assertFalse(self.qmp_parent.exists())
 

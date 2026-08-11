@@ -20,6 +20,7 @@ from typing import Any, Iterable
 CONTRACT = Path(__file__).with_name("dualboot_acceptance.json")
 
 REQUIRED_CHECKS = (
+    "nvram-linux-first",
     "windows-default-boot",
     "five-second-policy",
     "arch-menu-selectable",
@@ -30,6 +31,14 @@ REQUIRED_CHECKS = (
 )
 DEFERRED_IDS = ("windows-login-driven", "arch-authenticated-login")
 _HEX64 = frozenset("0123456789abcdef")
+
+# The NVRAM the gate-7 installer authored (test-pinned to the arch_second
+# exports so the labels cannot drift): the acceptance boots must consume the
+# installed OVMF variables, and boot 1's firmware must hand off to the
+# "Linux Boot Manager" entry first — that Linux-first order is what keeps the
+# five-second menu policy alive once Windows has booted.
+NVRAM_LINUX_LABEL = "Linux Boot Manager"
+VARS_SOURCE_GATE7 = "gate7-installed"
 
 
 class EvidenceError(ValueError):
@@ -136,6 +145,17 @@ def judge(contract: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
         if event.get("check") in required
     }
     boot_policy = contract["boot_policy"]
+
+    nvram = by_check["nvram-linux-first"]
+    if nvram.get("vars_source") != VARS_SOURCE_GATE7:
+        raise EvidenceError(
+            "acceptance vars are not the gate-7 installed NVRAM")
+    if nvram.get("firmware_entry") != NVRAM_LINUX_LABEL:
+        raise EvidenceError(
+            "firmware did not start the Linux Boot Manager entry first")
+    if nvram.get("menu_rendered") is not True:
+        raise EvidenceError(
+            "systemd-boot did not render its menu after the firmware handoff")
 
     default = by_check["windows-default-boot"]
     if default.get("default_os") != boot_policy["default_os"]:
