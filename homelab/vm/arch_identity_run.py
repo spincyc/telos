@@ -15,11 +15,22 @@ ever recorded; only the pass/fail of each marker is retained.
 Structure:
 
 * ``ArchIdentityBundle`` validates a prepared, isolated bundle fail-closed.
-* ``ArchIdentityDrive`` drives one serial console through the seven Arch
-  lifecycle proofs, returning only booleans.
+* ``drive_boot_menu``/``login_operator``/``elevate_operator`` take the live
+  workstation from power-on to a root shell: the systemd-boot menu is driven
+  over serial to the Arch entry (the gate-7 disk keeps the Windows default;
+  a missed window is power-cycled over QMP), the staged operator logs in on
+  the ttyS0 getty, and one echo-suppressed ``sudo -S`` elevation follows.
+  The per-run operator credential is staged on the disposable Controller by
+  ``controller_principals`` exactly as the Windows lane does; it lives only
+  in memory.  A bounded, redacted workstation transcript and the secret-free
+  menu/login facts are retained in the bundle evidence on success and
+  failure alike.
+* ``ArchIdentityDrive`` drives one serial console through the ordered Arch
+  lifecycle proofs, returning only booleans (plus the one measured login
+  duration the storage-absent proof reports).
 * ``run_lifecycle`` orchestrates an ``ArchIdentitySession`` (boundary +
   controller outage control + peer Windows evidence) and assembles the full
-  ordered 18-check evidence stream.
+  ordered required-check evidence stream.
 * ``run`` validates the bundle, gates on ``--apply``, produces the evidence
   file, and self-judges it with the real ``identity_lifecycle`` judge.
 
@@ -89,12 +100,106 @@ CHECK_DETAILS: dict[str, dict[str, object]] = {
     "controller-restored": {"authority_reachable": True},
     "windows-secure-channel-restored": {"secure_channel": True},
     "arch-identity-restored": {"identity_lookup": True},
+    "arch-storage-attached": {
+        "storage_reachable": True, "mount_state": "mounted",
+        "storage_access": "authorized"},
+    "arch-storage-denied": {
+        "storage_reachable": True, "mount_state": "refused",
+        "storage_access": "denied", "foreign_share": True},
+    "arch-storage-absent-login": {
+        "storage_reachable": False, "mount_state": "absent",
+        "login": "allowed", "login_path_independent": True,
+        "login_bound_seconds": CONTRACT["login_bound_seconds"]},
+}
+
+# Fields the judge requires that are *measured live* rather than templated:
+# the guest probe prints the observed login duration as a token-scoped data
+# line and the producer merges it into the event.  A passing event without
+# its measurement is refused rather than fabricated.
+MEASURED_CHECK_FIELDS: dict[str, tuple[str, ...]] = {
+    "arch-storage-absent-login": ("login_seconds",),
 }
 
 # The joined guest exposes a fixed, secret-free probe helper. Each invocation
 # runs exactly one lifecycle check and prints a token-scoped marker. The probe
 # owns the SSSD/Kerberos/sudo commands; this host only reads its verdict.
 PROBE_HELPER = "/usr/local/sbin/homelab-arch-identity-probe"
+
+# The daily administrator is the principal the live drive logs in as on the
+# ttyS0 getty.  The name comes from the shared lifecycle contract; the
+# credential is the per-run synthetic one staged on the disposable Controller
+# (controller_principals), held in memory only and never recorded.
+OPERATOR_PRINCIPAL = str(CONTRACT["principals"]["daily_administrator"]["name"])
+
+# Gate 7 grants the operator a *passworded* sudoers rule
+# ("operator ALL=(ALL:ALL) ALL" in workstations/arch_second.py — no NOPASSWD),
+# so the probe helper's `sudo -n` self-elevation cannot succeed from a fresh
+# operator session.  The drive therefore elevates exactly once with `sudo -S`
+# fed the staged credential echo-suppressed (stty -echo around the send), and
+# hands the probes an already-root shell: the probe skips self-elevation when
+# `id -u` is 0.  This decision is pinned by tests against the rendered gate-7
+# sudoers rule.
+
+#: Gate 7 must ship these on the joined disk for the live drive to work.
+GATE7_CONTRACT = (
+    f"a secret-free probe helper at {PROBE_HELPER} that runs one lifecycle "
+    "check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL, a systemd-boot "
+    "menu rendered on ttyS0 listing the Arch and Windows entries behind the "
+    "Windows-default five-second window (gate-7 acceptance requires the "
+    "Windows default), a passworded serial getty on ttyS0 that accepts the "
+    "staged operator's SSSD domain login, and a passworded operator sudoers "
+    "rule for the drive's single sudo -S elevation"
+)
+
+# Distinct, named boot-phase refusals.  Every one of these is fail-closed: a
+# menu that never renders, a selection that keeps missing its window, a getty
+# that never appears, a refused login, and a failed elevation each abort the
+# run with its own message so the next run knows exactly where it stopped.
+MENU_NEVER_RENDERED_FAILURE = (
+    "systemd-boot menu never rendered on the workstation serial console; "
+    "gate 7 must ship " + GATE7_CONTRACT)
+MENU_WINDOW_MISSED_FAILURE = (
+    "systemd-boot Arch selection missed the five-second menu window even "
+    "after a QMP power-cycle retry")
+GETTY_NEVER_APPEARED_FAILURE = (
+    "ttyS0 getty never appeared after the Arch kernel handoff; gate 7 must "
+    "ship " + GATE7_CONTRACT)
+LOGIN_REFUSED_FAILURE = (
+    "operator login on the ttyS0 getty was refused with the staged "
+    "credential")
+SUDO_ELEVATION_FAILURE = (
+    "operator sudo -S elevation did not yield a root shell for the probes")
+
+#: Retained workstation console evidence (bounded + redacted, no secrets).
+WORKSTATION_LOG_FILENAME = "workstation-serial.log"
+BOOT_FACTS_FILENAME = "workstation-boot.json"
+TRANSCRIPT_RETENTION_BYTES = 4 * 1024 * 1024
+
+#: Dead in-subnet address the ``unas`` storage label is repointed to for the
+#: storage-absent proof: DNS resolution stays healthy (identity services keep
+#: running) while every SMB connection attempt fails fast.
+STORAGE_ABSENT_ADDRESS = "10.1.31.14"
+
+#: Bound for the Linux EFI-stub handoff after the Arch entry digit is sent; a
+#: miss means the five-second Windows-default window won and the guest must be
+#: power-cycled over QMP rather than waited out inside Windows.
+HANDOFF_TIMEOUT = 45.0
+#: Bounded getty credential attempts (SSSD may still be connecting when the
+#: first prompt renders; pam_faillock caps the useful retries anyway).
+LOGIN_ATTEMPTS = 3
+
+
+def new_boot_facts() -> dict[str, object]:
+    """Secret-free workstation boot/login lifecycle facts for the evidence."""
+    return {
+        "menu_seen": False,
+        "entry_selected": None,
+        "menu_retries": 0,
+        "handoff_seen": False,
+        "getty_seen": False,
+        "login_completed": False,
+        "sudo_elevated": False,
+    }
 
 
 class ArchIdentityError(RuntimeError):
@@ -268,7 +373,7 @@ def validate_windows_evidence(
 
 
 # --------------------------------------------------------------------------
-# Serial drive: seven bounded Arch proofs.
+# Serial drive: bounded Arch proofs.
 # --------------------------------------------------------------------------
 
 class SerialChannel(Protocol):
@@ -345,6 +450,51 @@ class ArchIdentityDrive:
         """After reconnect, SSSD resolves the directory identity again."""
         return self._probe("arch-identity-restored")
 
+    def prove_storage_attached(self) -> bool:
+        """The reachable per-user SMB share mounts with the user's identity."""
+        return self._probe("arch-storage-attached")
+
+    def prove_storage_denied(self) -> bool:
+        """A foreign user's share is refused while storage is reachable."""
+        return self._probe("arch-storage-denied")
+
+    def prove_storage_absent_login(self) -> tuple[bool, int | None]:
+        """With the storage target absent, login stays bounded and allowed.
+
+        The guest probe prints one token-scoped data line with the measured
+        login duration before its verdict; both are read here.  A ``PASS``
+        without the measurement is refused — the judge requires the observed
+        seconds and this producer never fabricates them.
+        """
+        from homelab.workstations.arch_second import (
+            STORAGE_LOGIN_SECONDS_MARKER)
+
+        check = "arch-storage-absent-login"
+        token = self.channel.token
+        command = f"{PROBE_HELPER} {check} {token}".encode("ascii")
+        self.channel._send(command, f"arch-probe-{check}-sent")
+        data_prefix = f"{STORAGE_LOGIN_SECONDS_MARKER}{token}=".encode(
+            "ascii")
+        verdict_prefix = (
+            f"__TELOS_ARCH_{self._marker_key(check)}_{token}=".encode(
+                "ascii"))
+        pattern = (
+            rb"(?:" + re.escape(data_prefix) + rb"([0-9]+)|"
+            + re.escape(verdict_prefix) + rb"(PASS|FAIL)\b)")
+        seconds: int | None = None
+        while True:
+            match = self.channel._wait(pattern, f"arch-probe-{check}-observed")
+            if match.group(1) is not None:
+                seconds = int(match.group(1))
+                continue
+            passed = match.group(2) == b"PASS"
+            break
+        if passed and seconds is None:
+            raise ArchIdentityError(
+                f"{check} passed without its measured login duration",
+                check=check)
+        return passed, seconds
+
 
 # --------------------------------------------------------------------------
 # Session orchestration.
@@ -372,6 +522,8 @@ class ArchIdentitySession(Protocol):
 
     def observe_controller_restored(self) -> bool: ...
 
+    def make_storage_unreachable(self) -> None: ...
+
     def windows_evidence(self) -> list[dict[str, object]]: ...
 
     def stop(self) -> list[str]: ...
@@ -380,15 +532,21 @@ class ArchIdentitySession(Protocol):
 def assemble_evidence(
     outcomes: Mapping[str, bool],
     windows_events: list[dict[str, object]],
+    *,
+    measurements: Mapping[str, Mapping[str, object]] | None = None,
 ) -> list[dict[str, object]]:
-    """Compose the full ordered 18-check evidence stream.
+    """Compose the full ordered required-check evidence stream.
 
     Arch and Controller checks come from ``outcomes`` (live observations);
     Windows checks are merged verbatim from validated peer evidence. The order
     is the contract's required order, so a well-formed pass stream is exactly
-    the shape the judge accepts.
+    the shape the judge accepts.  ``measurements`` carries the live-observed
+    fields of ``MEASURED_CHECK_FIELDS``; a passing check missing one is
+    refused rather than fabricated.
     """
     windows_by_check = {str(item["check"]): item for item in windows_events}
+    measured = {key: dict(value) for key, value in
+                (measurements or {}).items()}
     events: list[dict[str, object]] = []
     for check in REQUIRED_CHECKS:
         if check in WINDOWS_CHECKS:
@@ -398,7 +556,12 @@ def assemble_evidence(
             raise ArchIdentityError(
                 f"lifecycle observation is missing for {check}", check=check)
         result = "pass" if outcomes[check] else "fail"
-        events.append(event(check, result, **CHECK_DETAILS[check]))
+        extra = measured.get(check, {})
+        for name in MEASURED_CHECK_FIELDS.get(check, ()):
+            if result == "pass" and name not in extra:
+                raise ArchIdentityError(
+                    f"{check} passed without measured {name}", check=check)
+        events.append(event(check, result, **CHECK_DETAILS[check], **extra))
     return events
 
 
@@ -458,7 +621,33 @@ def run_lifecycle(
         _probe_check(
             outcomes, "arch-identity-restored", drive.prove_identity_restored)
 
-        events = assemble_evidence(outcomes, session.windows_evidence())
+        # Gate 9: the reachable-storage proofs run against the live target
+        # (after the operator login primed the Kerberos ticket the sec=krb5
+        # mounts need), then the target is made unreachable so the bounded,
+        # storage-independent login can be proven honestly.
+        _probe_check(
+            outcomes, "arch-storage-attached", drive.prove_storage_attached)
+        _probe_check(
+            outcomes, "arch-storage-denied", drive.prove_storage_denied)
+        session.make_storage_unreachable()
+        measurements: dict[str, dict[str, object]] = {}
+        try:
+            passed, seconds = drive.prove_storage_absent_login()
+        except (lifecycle.EvidenceError, ArchIdentityError):
+            raise
+        except Exception as error:  # bounded serial failure: name the stage
+            raise ArchIdentityError(
+                "arch-storage-absent-login proof failed on the console: "
+                + type(error).__name__,
+                check="arch-storage-absent-login") from error
+        outcomes["arch-storage-absent-login"] = passed
+        if seconds is not None:
+            measurements["arch-storage-absent-login"] = {
+                "login_seconds": seconds}
+
+        events = assemble_evidence(
+            outcomes, session.windows_evidence(),
+            measurements=measurements)
     except BaseException as error:  # noqa: BLE001 - re-raised after teardown
         primary = error
     finally:
@@ -560,7 +749,8 @@ def audit_arch_identity_boot(command: list[str], *, disk: Path) -> None:
 
 
 def workstation_boot_command(
-    disk: Path, variables: Path, switch_port: int,
+    disk: Path, variables: Path, switch_port: int, *,
+    qmp_socket: Path | None = None,
 ) -> list[str]:
     """Build the disk-only boot command for the joined Arch workstation.
 
@@ -570,6 +760,10 @@ def workstation_boot_command(
     gate-7 blocker history proved OVMF auto-discovers a bootable ESP on a
     cold-plugged NVMe; with the bundle's pristine variables and bootindex=1
     that auto-discovery makes the disk boot deterministic.
+
+    ``qmp_socket`` (mirroring the dual-boot lane) pins a private QMP socket
+    so a missed systemd-boot window can be power-cycled with ``system_reset``
+    instead of being waited out inside Windows.
     """
     # Imported lazily: topology helpers are never needed by the pure
     # producer/judge path.
@@ -582,6 +776,14 @@ def workstation_boot_command(
     command += [
         "-boot", "order=c,menu=off",
         "-monitor", "none",
+    ]
+    if qmp_socket is not None:
+        if len(str(Path(qmp_socket)).encode()) > 100:
+            raise ArchIdentityError(
+                "QMP socket path exceeds the AF_UNIX length bound")
+        command += [
+            "-qmp", f"unix:{Path(qmp_socket)},server=on,wait=off"]
+    command += [
         "-drive",
         (
             "if=none,id=osdisk,format=qcow2,cache=none,"
@@ -594,6 +796,224 @@ def workstation_boot_command(
     audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
     audit_arch_identity_boot(command, disk=disk)
     return command
+
+
+# --------------------------------------------------------------------------
+# Boot drive: systemd-boot menu, getty login, single sudo -S elevation.
+# --------------------------------------------------------------------------
+
+def _send_raw(console, value: bytes, event: str) -> None:
+    """Write raw bytes without the line terminator ``_send`` appends.
+
+    systemd-boot boots the numbered entry on the bare digit key; a trailing
+    newline would be typed ahead into the booted system's console.
+    """
+    console.writer.write(value)
+    console.writer.flush()
+    console.events.append(event)
+
+
+def drive_boot_menu(
+    console, facts: dict[str, object], *,
+    reset: Callable[[], object],
+    attempts: int = 2,
+    menu_timeout: float | None = None,
+    handoff_timeout: float = HANDOFF_TIMEOUT,
+) -> None:
+    """Select the Arch entry on the serial systemd-boot menu, fail-closed.
+
+    Mirrors the dual-boot acceptance lane (``dualboot_acceptance``): the menu
+    entries are parsed from the serial render, the digit key for the Arch
+    entry is sent raw within the five-second Windows-default window, and the
+    Linux EFI-stub handoff markers prove the selection took.  A missed window
+    means Windows is booting silently; the guest is power-cycled via *reset*
+    (QMP ``system_reset``) and the menu is driven once more.  Every terminal
+    outcome is a distinct, named failure.
+    """
+    from .dualboot_acceptance import (
+        ARCH_HANDOFF_MARKERS, MENU_ARCH_ENTRY, MENU_WINDOWS_ENTRY,
+        _menu_entries, _plain)
+    from .serial_automation import SerialAutomationError
+
+    arch = re.escape(MENU_ARCH_ENTRY.encode("ascii"))
+    windows = re.escape(MENU_WINDOWS_ENTRY.encode("ascii"))
+    menu_pattern = (
+        rb"(?s)(?:" + arch + rb".*" + windows + rb"|"
+        + windows + rb".*" + arch + rb")")
+    handoff_pattern = rb"(?:" + rb"|".join(
+        re.escape(marker.encode("ascii"))
+        for marker in ARCH_HANDOFF_MARKERS) + rb")"
+    original = console.timeout
+    try:
+        for attempt in range(max(1, attempts)):
+            if menu_timeout is not None:
+                console.timeout = menu_timeout
+            try:
+                match = console._wait(menu_pattern, "arch-menu-rendered")
+            except SerialAutomationError as error:
+                raise ArchIdentityError(
+                    MENU_NEVER_RENDERED_FAILURE, check="arch-joined",
+                ) from error
+            facts["menu_seen"] = True
+            entries = _menu_entries(
+                _plain(match.group(0).decode("utf-8", "replace")))
+            if MENU_ARCH_ENTRY not in entries:
+                raise ArchIdentityError(
+                    MENU_NEVER_RENDERED_FAILURE, check="arch-joined")
+            digit = str(entries.index(MENU_ARCH_ENTRY) + 1)
+            _send_raw(
+                console, digit.encode("ascii"), "arch-menu-entry-selected")
+            facts["entry_selected"] = digit
+            console.timeout = handoff_timeout
+            try:
+                console._wait(handoff_pattern, "arch-handoff-observed")
+            except SerialAutomationError as error:
+                if attempt + 1 >= max(1, attempts):
+                    raise ArchIdentityError(
+                        MENU_WINDOW_MISSED_FAILURE, check="arch-joined",
+                    ) from error
+                # The Windows default won the window; never wait it out.
+                facts["menu_retries"] = int(facts.get("menu_retries", 0)) + 1
+                console.buffer = b""
+                reset()
+                console.events.append("arch-workstation-power-cycled")
+                continue
+            facts["handoff_seen"] = True
+            return
+    finally:
+        console.timeout = original
+
+
+def login_operator(
+    console, facts: dict[str, object], *,
+    attempts: int = LOGIN_ATTEMPTS,
+    getty_timeout: float | None = None,
+) -> None:
+    """Log the staged operator in on the ttyS0 getty, fail-closed.
+
+    The username is sent at the getty prompt; ``login``(1) reads the
+    credential with terminal echo disabled, so the staged secret never
+    enters the serial transcript.  A getty that never appears and a login
+    that stays refused are distinct, named failures.
+    """
+    from .serial_automation import SerialAutomationError
+
+    if console.password is None:
+        raise ArchIdentityError(
+            "operator credential is unavailable for the getty login",
+            check="arch-joined")
+    login_prompt = rb"(?:^|\n)[\w.-]+ login:"
+    original = console.timeout
+    if getty_timeout is not None:
+        console.timeout = getty_timeout
+    try:
+        try:
+            console._wait(login_prompt, "arch-getty-observed")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                GETTY_NEVER_APPEARED_FAILURE, check="arch-joined") from error
+        facts["getty_seen"] = True
+        for attempt in range(max(1, attempts)):
+            console._send(
+                OPERATOR_PRINCIPAL.encode("ascii"),
+                "arch-login-username-sent")
+            try:
+                console._wait(
+                    rb"(?:^|\n)Password:", "arch-login-password-prompt")
+                console._send(console.password, "arch-login-password-sent")
+                outcome = console._wait(
+                    rb"(?:^|\n)(?:(Login incorrect)|[^\n]*\$[ \t]*$)",
+                    "arch-login-outcome")
+            except SerialAutomationError as error:
+                raise ArchIdentityError(
+                    LOGIN_REFUSED_FAILURE, check="arch-joined") from error
+            if outcome.group(1) is None:
+                facts["login_completed"] = True
+                return
+            if attempt + 1 >= max(1, attempts):
+                break
+            try:
+                console._wait(login_prompt, "arch-getty-observed")
+            except SerialAutomationError as error:
+                raise ArchIdentityError(
+                    LOGIN_REFUSED_FAILURE, check="arch-joined") from error
+        raise ArchIdentityError(LOGIN_REFUSED_FAILURE, check="arch-joined")
+    finally:
+        console.timeout = original
+
+
+def elevation_command(token: str) -> tuple[bytes, bytes, bytes]:
+    """The single echo-suppressed ``sudo -S`` elevation, token-scoped.
+
+    Returns ``(command, ready_marker, failure_prefix)``.  Echo is provably
+    off (the ready marker only prints after ``stty -echo`` succeeded) before
+    the credential is written, ``sudo -S`` reads it from stdin, and the
+    failure prefix only ever carries an exit code — never a secret.  The
+    command deliberately never uses ``sudo -n``: the gate-7 operator rule is
+    passworded.
+    """
+    tok = token.encode("ascii")
+    ready = b"__TELOS_ARCH_SUDO_READY_" + tok + b"__"
+    failed = b"__TELOS_ARCH_SUDO_RC_" + tok + b"="
+    command = (
+        b"stty -echo && printf '\\n" + ready + b"\\n' && "
+        b"sudo -k -S -p '' -i; __telos_rc=$?; stty echo; "
+        b"printf '\\n" + failed + b"%s\\n' \"$__telos_rc\""
+    )
+    return command, ready, failed
+
+
+def elevate_operator(
+    console, facts: dict[str, object], *,
+    timeout: float | None = None,
+) -> None:
+    """Elevate the logged-in operator to a root shell for the probes.
+
+    The gate-7 sudoers rule is passworded, so the staged credential is fed
+    once through ``sudo -S`` with terminal echo suppressed, and the root
+    shell is proven with a token-scoped ``id -u`` echo before any probe
+    runs.  Any other outcome is the named elevation failure.
+    """
+    from .serial_automation import SerialAutomationError
+
+    if console.password is None:
+        raise ArchIdentityError(
+            "operator credential is unavailable for sudo elevation",
+            check="arch-joined")
+    command, ready, failed = elevation_command(console.token)
+    proof = b"__TELOS_ARCH_ROOT_" + console.token.encode("ascii") + b"="
+    original = console.timeout
+    if timeout is not None:
+        console.timeout = timeout
+    try:
+        try:
+            console._send(command, "arch-sudo-command-sent")
+            console._wait(
+                rb"(?:^|\n)" + re.escape(ready) + rb"\s*(?:\n|$)",
+                "arch-sudo-echo-off")
+            console._send(console.password, "arch-sudo-password-sent")
+            outcome = console._wait(
+                rb"(?:^|\n)(?:" + re.escape(failed)
+                + rb"([0-9]+)|[^\n]*#[ \t]*$)",
+                "arch-sudo-outcome")
+            if outcome.group(1) is not None:
+                raise ArchIdentityError(
+                    SUDO_ELEVATION_FAILURE, check="arch-joined")
+            console._send(
+                b"printf '\\n" + proof + b"%s\\n' \"$(id -u)\"",
+                "arch-root-proof-requested")
+            verdict = console._wait(
+                rb"(?:^|\n)" + re.escape(proof) + rb"([0-9]+)\s*(?:\n|$)",
+                "arch-root-verified")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                SUDO_ELEVATION_FAILURE, check="arch-joined") from error
+        if verdict.group(1) != b"0":
+            raise ArchIdentityError(
+                SUDO_ELEVATION_FAILURE, check="arch-joined")
+        facts["sudo_elevated"] = True
+    finally:
+        console.timeout = original
 
 
 class ArchIdentityBoundary:
@@ -615,13 +1035,7 @@ class ArchIdentityBoundary:
     """
 
     #: Gate 7 must ship these on the joined disk for the live drive to work.
-    GATE7_CONTRACT = (
-        f"a secret-free probe helper at {PROBE_HELPER} that runs one lifecycle "
-        "check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL, a ttyS0 "
-        "getty that autologins the root console (the probe helper owns all "
-        "credentials; the host never holds one), and a boot loader whose "
-        "default entry reaches the joined Arch system"
-    )
+    GATE7_CONTRACT = GATE7_CONTRACT
 
     def __init__(
         self, bundle: ArchIdentityBundle, *,
@@ -643,6 +1057,14 @@ class ArchIdentityBoundary:
         self._controller_online = False
         self._watchdog = None
         self._expired = False
+        #: Per-run synthetic principal credentials, memory-only.  They are
+        #: staged on the disposable Controller (whose copy is destroyed at
+        #: stop) and dropped from memory during teardown; they never reach
+        #: evidence or logs.
+        self._principals: dict[str, str] = {}
+        self._workstation_console = None
+        self._workstation_qmp = None
+        self._boot_facts: dict[str, object] = new_boot_facts()
 
     # -- test seams (real implementations are trivially thin) ---------------
 
@@ -815,6 +1237,9 @@ class ArchIdentityBoundary:
             self._controller_qmp = self._connect_qmp(qmp_path, process.pid)
             self._install_controller_seed(console)
             self._converge_controller(console)
+            # Controller up and converged -> principals staged -> only then
+            # may the workstation boot (its SSSD login needs them).
+            self._stage_principals()
             self._controller_online = True
         except ArchIdentityError:
             raise
@@ -822,6 +1247,50 @@ class ArchIdentityBoundary:
             raise ArchIdentityError(
                 "Controller bring-up failed: " + type(error).__name__,
                 check="controller-ready") from error
+
+    def _stage_principals(self) -> None:
+        """Stage the per-run synthetic principals on the disposable Controller.
+
+        Mirrors the Windows lane's ``windows_identity_adapter``
+        ``stage_principals``: the principal protocol runs over the already
+        authenticated Controller console (``ControllerPrincipalSerial`` with
+        its ``console`` swapped for the shared session), the POSIX contract
+        is ``controller_principals.POSIX_ALLOCATION``, and each credential is
+        generated in memory with the Windows lane's shape (locale-independent
+        prefix plus 128 bits of entropy).  Credentials are echo-suppressed on
+        the wire by the principal protocol and never recorded; the Controller
+        copy is disposable, so teardown drops the in-memory values rather
+        than driving a serial destroy against a possibly-stopped guest.
+        """
+        import secrets as secrets_module
+
+        from .controller_principals import (
+            ControllerPrincipalError,
+            ControllerPrincipalSerial,
+            POSIX_ALLOCATION,
+        )
+
+        process = self._processes.get("controller")
+        console = self._controller_console
+        if process is None or console is None:
+            raise ArchIdentityError(
+                "Controller console is unavailable for principal staging",
+                check="controller-ready")
+        values = {
+            name: "T7a" + secrets_module.token_hex(16)
+            for name in POSIX_ALLOCATION["users"]
+        }
+        serial = ControllerPrincipalSerial(
+            process.stdout, process.stdin, timeout=120.0)  # type: ignore[attr-defined]
+        serial.console = console
+        try:
+            serial.stage(values)
+        except ControllerPrincipalError as error:
+            values.clear()
+            raise ArchIdentityError(
+                "Controller principal staging failed",
+                check="controller-ready") from error
+        self._principals = values
 
     def _install_controller_seed(self, console) -> None:
         """Attach, verify, install, and provably release the signed seed."""
@@ -912,37 +1381,45 @@ class ArchIdentityBoundary:
         media_root.rmdir()
 
     def _start_workstation(self) -> None:
-        """Boot the joined workstation from disk and open its console.
+        """Boot the joined workstation, select Arch, and log the operator in.
 
-        The gate-7 joined disk presents a ttyS0 console per
-        ``GATE7_CONTRACT``.  A ``login:`` prompt is refused loudly: the host
-        never holds a workstation credential, so an image without the root
-        autologin console contract cannot be driven honestly.
+        The gate-7 disk keeps the gate-7 acceptance default (``loader.conf``
+        boots Windows after five seconds) and renders its systemd-boot menu
+        on ttyS0, so the drive selects the Arch entry over serial within the
+        window — power-cycling over QMP on a miss instead of waiting inside
+        Windows — waits for the passworded ttyS0 getty, logs in as the
+        staged operator, and elevates once with echo-suppressed ``sudo -S``
+        so the secret-free probes run from a root shell.
         """
-        from .serial_automation import SerialAutomation, SerialAutomationError
+        from .serial_automation import SerialAutomation
 
-        assert self._port is not None
+        assert self._port is not None and self._qmp_root is not None
+        if OPERATOR_PRINCIPAL not in self._principals:
+            raise ArchIdentityError(
+                "workstation boot requires the staged operator principal",
+                check="arch-joined")
+        qmp_path = self._qmp_root / "workstation.qmp"
         command = workstation_boot_command(
-            self.bundle.disk, self.bundle.firmware, self._port)
+            self.bundle.disk, self.bundle.firmware, self._port,
+            qmp_socket=qmp_path)
         process = self._spawn("workstation", command, stdio=True)
         self._audit("client", process.pid, allowed_nic_models=("e1000e",))
-        console = SerialAutomation(
-            process.stdout, process.stdin, None,
-            timeout=CONSOLE_READY_TIMEOUT)
         try:
-            match = console._wait(
-                rb"(?:^|\n)(?:[^\n]*login:[ \t]*$|[^\n]*[#$][ \t]*$)",
-                "arch-console-ready")
-        except SerialAutomationError as error:
+            self._workstation_qmp = self._connect_qmp(qmp_path, process.pid)
+        except ArchIdentityError as error:
             raise ArchIdentityError(
-                "joined Arch workstation console never became ready; gate 7 "
-                "must ship " + self.GATE7_CONTRACT,
+                "workstation QMP authentication failed",
                 check="arch-joined") from error
-        if b"login:" in match.group(0):
-            raise ArchIdentityError(
-                "joined Arch workstation presented a credential login; the "
-                "identity drive requires " + self.GATE7_CONTRACT,
-                check="arch-joined")
+        console = SerialAutomation(
+            process.stdout, process.stdin,
+            self._principals[OPERATOR_PRINCIPAL].encode("ascii"),
+            timeout=CONSOLE_READY_TIMEOUT)
+        self._workstation_console = console
+        drive_boot_menu(
+            console, self._boot_facts,
+            reset=lambda: self._workstation_qmp.execute("system_reset"))
+        login_operator(console, self._boot_facts)
+        elevate_operator(console, self._boot_facts)
         console.timeout = PROBE_TIMEOUT
         self._channel = console
 
@@ -976,8 +1453,85 @@ class ArchIdentityBoundary:
     def observe_controller_restored(self) -> bool:
         return self._controller_online
 
+    def make_storage_unreachable(self) -> None:
+        """Repoint the ``unas`` storage label at a dead in-subnet address.
+
+        The gate-7 probe resolves the optional storage target by its stable
+        DNS label, so absence is toggled in DNS alone: over the retained
+        Controller console, ``samba-tool dns update`` moves the ``unas`` A
+        record from the Controller address to ``STORAGE_ABSENT_ADDRESS``.
+        Kerberos, LDAP, and DNS identity services stay online throughout;
+        only the storage target dies.  Every failure is fail-closed and
+        bound to the storage-absent check.
+        """
+        import secrets as secrets_module
+
+        from .controller_factory import FactorySpec
+        from .serial_automation import SerialAutomationError
+        from homelab.workstations.arch_second import STORAGE_HOST_LABEL
+
+        console = self._controller_console
+        if console is None or console.password is None:
+            raise ArchIdentityError(
+                "Controller console is unavailable to remove the storage "
+                "target", check="arch-storage-absent-login")
+        spec = FactorySpec()
+        token = secrets_module.token_hex(16).encode("ascii")
+        sudo_prompt = b"__TELOS_STORAGE_DNS_SUDO_" + token + b"__"
+        result = b"__TELOS_STORAGE_DNS_RC_" + token + b"="
+        command = (
+            b"sudo -k -S -p '" + sudo_prompt + b"' samba-tool dns update "
+            b"127.0.0.1 " + spec.domain.encode("ascii") + b" "
+            + STORAGE_HOST_LABEL.encode("ascii") + b" A "
+            + spec.address.encode("ascii") + b" "
+            + STORAGE_ABSENT_ADDRESS.encode("ascii") + b" -P; "
+            b"__telos_rc=$?; printf '\\n" + result
+            + b"%s\\n' \"$__telos_rc\""
+        )
+        try:
+            console._send(b"", "storage-dns-shell-requested")
+            console._wait(
+                rb"(?:^|\n)[^\n]*\$\s*$", "storage-dns-shell-ready")
+            console._send(command, "storage-dns-command-sent")
+            console._wait(
+                rb"(?:^|[\r\n])" + re.escape(sudo_prompt) + rb"\s*$",
+                "storage-dns-sudo-prompt")
+            console._send(console.password, "storage-dns-password-sent")
+            match = console._wait(
+                rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
+                "storage-dns-rc-observed")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                "storage DNS removal failed on the Controller console",
+                check="arch-storage-absent-login") from error
+        if int(match.group(1)) != 0:
+            raise ArchIdentityError(
+                "storage DNS removal returned " + match.group(1).decode(
+                    "ascii"),
+                check="arch-storage-absent-login")
+
     def windows_evidence(self) -> list[dict[str, object]]:
         return self.bundle.read_windows_evidence()
+
+    def _retain_workstation_evidence(self, transcript: bytes) -> None:
+        """Keep a bounded, redacted transcript and secret-free boot facts.
+
+        Mirrors ``arch_install_run._sanitize_log``: only a bounded tail is
+        kept, secret-shaped values are redacted, and the files are private.
+        The facts record the menu/login lifecycle (menu-seen, entry-selected,
+        getty-seen, login-completed, retries, elevation) and nothing else.
+        """
+        from .simulation_evidence import private_file, redact
+
+        evidence = self.bundle.evidence_path.parent
+        private_file(
+            evidence / WORKSTATION_LOG_FILENAME,
+            redact(transcript[-TRANSCRIPT_RETENTION_BYTES:]))
+        payload = {"schema": 1, **self._boot_facts}
+        private_file(
+            evidence / BOOT_FACTS_FILENAME,
+            (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
+                "utf-8"))
 
     def stop(self) -> list[str]:
         import shutil
@@ -994,6 +1548,11 @@ class ArchIdentityBoundary:
             except Exception:  # noqa: BLE001 - teardown is reported, not raised
                 failures.append("controller credential release failed")
             self._controller_console = None
+        if self._workstation_console is not None:
+            try:
+                self._workstation_console.release_password()
+            except Exception:  # noqa: BLE001
+                failures.append("workstation credential release failed")
         self._channel = None
         if self._controller_qmp is not None:
             try:
@@ -1001,12 +1560,30 @@ class ArchIdentityBoundary:
             except Exception:  # noqa: BLE001
                 failures.append("controller QMP close failed")
             self._controller_qmp = None
+        if self._workstation_qmp is not None:
+            try:
+                self._workstation_qmp.close()
+            except Exception:  # noqa: BLE001
+                failures.append("workstation QMP close failed")
+            self._workstation_qmp = None
         processes = [
             proc for proc in self._processes.values() if proc is not None]
         if processes:
             failures += terminate_children(
                 processes, terminate_timeout=8, kill_timeout=3)  # type: ignore[arg-type]
         self._processes.clear()
+        # Success and failure alike retain the bounded, redacted workstation
+        # transcript plus the secret-free menu/login lifecycle facts.
+        if self._workstation_console is not None:
+            try:
+                self._retain_workstation_evidence(bytes(
+                    getattr(self._workstation_console, "transcript", b"")))
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    "workstation evidence retention failed: "
+                    + type(error).__name__)
+            self._workstation_console = None
+        self._principals = {}
         if self._controller_disk is not None:
             try:
                 self._controller_disk.close()
