@@ -187,6 +187,107 @@ class WindowsIdentityRunTests(unittest.TestCase):
         self.assertEqual("UnexpectedError", diagnostic.error_type)
         self.assertNotIn("private destroy detail", str(caught.exception))
 
+    def test_acceptance_check_names_which_check_and_phase(self):
+        """Attempt 47 collapsed a fault-phase failure to
+        scoped-acceptance.acceptance/UnexpectedError. acceptance_check binds
+        the failure to its exact check and phase."""
+        Diag = windows_identity_run.IdentityFailureDiagnostic
+        for check in (
+            "controller-offline", "windows-cached-login",
+            "windows-uncached-denied", "windows-services-restored",
+            "windows-identity-acceptance",
+        ):
+            for phase in (
+                "observe", "static-probe", "credential-action",
+                "fault-transition", "aggregate",
+            ):
+                with self.subTest(check=check, phase=phase):
+                    d = Diag.acceptance_check(
+                        check, phase, "WindowsIdentityObservationError")
+                    self.assertEqual(check, d.check)
+                    self.assertEqual(f"acceptance.{phase}", d.operation)
+                    self.assertEqual(
+                        "WindowsIdentityObservationError", d.error_type)
+        # An unknown check or phase fails closed.
+        self.assertEqual(
+            "unknown-check",
+            Diag.acceptance_check("nope", "observe", "OSError").check)
+        self.assertEqual(
+            "unknown-operation",
+            Diag.acceptance_check(
+                "controller-offline", "nope", "OSError").operation)
+        # A non-allowlisted type renders as the unexpected marker.
+        self.assertEqual(
+            "UnexpectedError",
+            Diag.acceptance_check(
+                "controller-offline", "observe", "KeyError").error_type)
+        # FaultPhaseError and the observation/publication types are now
+        # allowlisted so a real fault-phase failure names its type.
+        for type_name in (
+            "FaultPhaseError", "WindowsIdentityObservationError",
+            "EvidencePublicationError",
+        ):
+            self.assertEqual(
+                type_name,
+                Diag.acceptance_check(
+                    "controller-offline", "observe", type_name).error_type)
+
+    def test_scoped_acceptance_surfaces_a_wrapped_faultphase_diagnostic(self):
+        """A FaultPhaseError re-wrap must not swallow the originating
+        fault-phase check: run_scoped_acceptance surfaces the inner
+        diagnostic it carries."""
+        from homelab.vm.windows_identity_faults import FaultPhaseError
+        Diag = windows_identity_run.IdentityFailureDiagnostic
+        inner = Diag.acceptance_check(
+            "windows-cached-login", "credential-action",
+            "WindowsCredentialActionError")
+        fault = FaultPhaseError(
+            "Windows identity fault phases failed; phase: X",
+            diagnostic=inner)
+        material = PrivateIdentityMaterial(
+            Path("/private/publication.iso"),
+            Path("/private"),
+            rotate_guest=mock.Mock(),
+            stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock(),
+        )
+        material._new_local = "replacement"
+
+        def failing_acceptance(_local, _principals):
+            raise fault
+
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                material._new_local, failing_acceptance)
+        self.assertIs(inner, caught.exception.diagnostic)
+        self.assertEqual("windows-cached-login", caught.exception.diagnostic.check)
+        self.assertEqual(
+            "acceptance.credential-action",
+            caught.exception.diagnostic.operation)
+
+    def test_scoped_acceptance_walks_the_cause_chain_for_a_diagnostic(self):
+        """When the raised wrapper itself carries no diagnostic, the cause
+        chain is walked for the originating one."""
+        Diag = windows_identity_run.IdentityFailureDiagnostic
+        inner = Diag.acceptance_check(
+            "controller-offline", "observe",
+            "WindowsIdentityObservationError")
+        try:
+            raise WindowsIdentityRunError("named", diagnostic=inner)
+        except WindowsIdentityRunError as origin:
+            wrapper = RuntimeError("opaque wrapper")
+            wrapper.__cause__ = origin
+        material = PrivateIdentityMaterial(
+            Path("/private/publication.iso"), Path("/private"),
+            rotate_guest=mock.Mock(), stage_principals=mock.Mock(),
+            destroy_principals=mock.Mock())
+        material._new_local = "replacement"
+        with self.assertRaises(WindowsIdentityRunError) as caught:
+            material.run_scoped_acceptance(
+                material._new_local,
+                lambda _l, _p: (_ for _ in ()).throw(wrapper))
+        self.assertIs(inner, caught.exception.diagnostic)
+
     def test_credential_action_diagnostic_binds_exact_pairs_and_phases(self):
         """Every (check, action) pair from the adapter's map renders under
         its own check; anything else fails closed to unknown."""

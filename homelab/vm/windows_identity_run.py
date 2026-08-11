@@ -140,6 +140,8 @@ class IdentityFailureDiagnostic:
         "ControllerJoinMaterialError",
         "ControllerJoinReturnCode",
         "ControllerPrincipalError",
+        "EvidencePublicationError",
+        "FaultPhaseError",
         "OSError",
         "SerialAutomationError",
         "TimeoutError",
@@ -148,10 +150,33 @@ class IdentityFailureDiagnostic:
         "WindowsGuestProbeError",
         "WindowsIdentityAdapterError",
         "WindowsIdentityGuiError",
+        "WindowsIdentityObservationError",
         "WindowsIdentityOrchestratorError",
         "WindowsJoinIsoError",
         "WindowsLocalReauthenticationError",
         "WindowsPublicCommandError",
+    })
+    # The 24 required acceptance checks, in contract order. A failure at any
+    # check between windows-daily-admin and the final aggregate used to
+    # collapse to scoped-acceptance.acceptance/UnexpectedError (attempt 47);
+    # acceptance_check() names WHICH check and its phase instead.
+    _ACCEPTANCE_CHECKS = frozenset({
+        "controller-ready", "windows-joined", "windows-standard-online",
+        "windows-daily-admin", "domain-admin-separate",
+        "windows-rebooted-joined", "windows-cached-policy",
+        "controller-offline", "windows-cached-login",
+        "windows-cached-admin-login", "windows-uncached-denied",
+        "windows-local-rescue", "controller-restored",
+        "windows-secure-channel-restored", "windows-update-policy",
+        "gateway-offline", "update-source-offline",
+        "optional-storage-offline", "optional-storage-access-denied",
+        "ad-dns-offline", "combined-dependencies-offline",
+        "windows-services-restored", "windows-diagnostics-sanitized",
+        "windows-identity-acceptance",
+    })
+    _ACCEPTANCE_PHASES = frozenset({
+        "observe", "static-probe", "credential-action",
+        "fault-transition", "aggregate",
     })
     # Exact (check, guest credential action) pairs, mirroring the adapter's
     # check-to-action map including the combined-dependencies split.
@@ -215,6 +240,24 @@ class IdentityFailureDiagnostic:
             f"scoped-acceptance.{phase}",
             error_type,
         )
+
+    @classmethod
+    def acceptance_check(
+        cls, check: str, phase: str, error_type: str,
+    ) -> "IdentityFailureDiagnostic":
+        """Name WHICH acceptance check raised, and in which phase.
+
+        Attempt 47 failed somewhere in the fault phases (checks 8-24) and
+        rendered scoped-acceptance.acceptance/UnexpectedError -- the check
+        identity and the real exception type were both swallowed by the
+        FaultPhaseError re-wrap. This binds the failure to its exact check.
+        """
+        if check not in cls._ACCEPTANCE_CHECKS or phase not in (
+                cls._ACCEPTANCE_PHASES):
+            return cls("unknown-check", "unknown-operation", "UnexpectedError")
+        if error_type not in cls._ERROR_TYPES:
+            error_type = "UnexpectedError"
+        return cls(check, f"acceptance.{phase}", error_type)
 
     @classmethod
     def join_material(
@@ -614,6 +657,12 @@ class IdentityFailureDiagnostic:
                     "scoped-acceptance.acceptance",
                     "scoped-acceptance.principal-destruction",
                 }
+            )
+            and not (
+                self.check in self._ACCEPTANCE_CHECKS
+                and self.operation.startswith("acceptance.")
+                and self.operation.removeprefix("acceptance.")
+                in self._ACCEPTANCE_PHASES
             )
             and (self.check, self.operation)
             != ("unknown-check", "unknown-operation")
@@ -2401,6 +2450,19 @@ class PrivateIdentityMaterial:
                 if isinstance(candidate, IdentityFailureDiagnostic)
                 else None
             )
+            if diagnostic is None:
+                # Walk the cause/context chain: a wrapper (e.g.
+                # FaultPhaseError) may not itself carry the diagnostic while
+                # an inner acceptance-check failure does.
+                seen = set()
+                walker: BaseException | None = source
+                while walker is not None and id(walker) not in seen:
+                    seen.add(id(walker))
+                    inner = getattr(walker, "diagnostic", None)
+                    if isinstance(inner, IdentityFailureDiagnostic):
+                        diagnostic = inner
+                        break
+                    walker = walker.__cause__ or walker.__context__
             if diagnostic is None:
                 # No-bare-coordinates convention: attempt 36 rendered only
                 # the wrapper type because this producer forwarded

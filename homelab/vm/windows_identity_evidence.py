@@ -68,6 +68,39 @@ class StrictIdentityEvidenceCollector:
             return None
         return self._checks[len(self._events)]
 
+    @property
+    def passed_checks(self) -> tuple[str, ...]:
+        """Names of the checks recorded so far, in contract order."""
+        return tuple(event["check"] for event in self._events)
+
+    def write_progress(self, path: Path) -> None:
+        """Best-effort, secret-free record of how far acceptance got.
+
+        Attempt 47 failed somewhere between check 4 and the aggregate with
+        no evidence of how far it reached. Only public check names and
+        counts are written; never observation data. Never raises.
+        """
+        try:
+            record = {
+                "schema_version": 1,
+                "kind": "windows-identity-acceptance-progress",
+                "run_id": self.run_id,
+                "passed_count": len(self._events),
+                "total_checks": len(self._checks),
+                "passed_checks": list(self.passed_checks),
+                "next_check": self.next_check,
+            }
+            target = Path(path)
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+            try:
+                target.chmod(0o600)
+            except OSError:
+                pass
+        except BaseException:
+            return
+
     def record(
         self,
         check: str,

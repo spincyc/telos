@@ -87,6 +87,33 @@ class WindowsIdentityFaultTests(unittest.TestCase):
         self.assertNotIn(
             "observe:combined-dependencies-offline", recorder.events)
 
+    def test_faultphase_error_preserves_the_originating_diagnostic(self):
+        """Attempt 47: a fault-phase failure collapsed to a generic
+        coordinate. FaultPhaseError now carries the originating error's
+        diagnostic so the acceptance layer names the fault-phase check."""
+        sentinel = object()
+
+        class DiagnosedError(RuntimeError):
+            diagnostic = sentinel
+
+        recorder = Recorder()
+        original_observe = recorder.observe
+
+        def observe(check):
+            original_observe(check)
+            if check == "controller-offline":
+                raise DiagnosedError("controller-offline observation failed")
+
+        recorder.observe = observe
+        with self.assertRaises(FaultPhaseError) as caught:
+            run_fault_phases(recorder.operations())
+        self.assertIs(sentinel, caught.exception.diagnostic)
+        # A failure with no diagnostic leaves the attribute None, not absent.
+        plain = Recorder(failure="gateway-offline")
+        with self.assertRaises(FaultPhaseError) as caught:
+            run_fault_phases(plain.operations())
+        self.assertIsNone(caught.exception.diagnostic)
+
     def test_combined_failure_restores_every_dependency_in_reverse_order(self):
         recorder = Recorder(failure="combined-dependencies-offline")
         with self.assertRaises(FaultPhaseError):

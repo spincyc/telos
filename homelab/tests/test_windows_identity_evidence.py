@@ -114,6 +114,36 @@ class WindowsIdentityEvidenceTests(unittest.TestCase):
                 EvidencePublicationError, "sealed"):
             collector.publish()
 
+    def test_collector_progress_records_how_far_acceptance_got(self):
+        """Attempt 47 was blind between check 4 and the aggregate.
+        write_progress persists the passed checks and the in-progress one
+        (public names only), and never raises."""
+        import json
+        collector = self.collector()
+        # Record the first two checks, then capture progress mid-stream.
+        for event in self.events[:2]:
+            observation = {
+                field: value for field, value in event.items()
+                if field in acceptance.FIELD_SETS[event["check"]]
+            }
+            collector.record(
+                event["check"], observation,
+                observed_at=event["observed_at"])
+        self.assertEqual(
+            ("controller-ready", "windows-joined"),
+            collector.passed_checks)
+        progress_path = self.root / "acceptance-progress.json"
+        collector.write_progress(progress_path)
+        record = json.loads(progress_path.read_text())
+        self.assertEqual(2, record["passed_count"])
+        self.assertEqual(24, record["total_checks"])
+        self.assertEqual(
+            ["controller-ready", "windows-joined"], record["passed_checks"])
+        self.assertEqual("windows-standard-online", record["next_check"])
+        self.assertEqual(0o600, progress_path.stat().st_mode & 0o777)
+        # Never raises even when the target directory cannot be created.
+        collector.write_progress(self.root / "nope" / "\x00" / "p.json")
+
     def test_collector_rejects_reordering_extra_fields_and_early_publish(self):
         collector = self.collector()
         with self.assertRaisesRegex(

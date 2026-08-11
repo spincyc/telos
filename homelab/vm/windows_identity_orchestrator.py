@@ -411,20 +411,49 @@ def _record(
     fault_record: Mapping[str, object] | None = None,
     diagnostics_scan: Mapping[str, object] | None = None,
 ) -> None:
-    context = ObservationRecords(
-        static_probes=_validated_static_probes(callbacks, check),
-        credential_actions=_credential_contexts(
-            callbacks, check, local_credential, principals),
-        join_proof=join_proof,
-        fault_record=fault_record,
-        diagnostics_scan=diagnostics_scan,
-    )
     try:
-        fields = map_exact_observation(check, context)
-    except WindowsIdentityObservationError as error:
+        context = ObservationRecords(
+            static_probes=_validated_static_probes(callbacks, check),
+            credential_actions=_credential_contexts(
+                callbacks, check, local_credential, principals),
+            join_proof=join_proof,
+            fault_record=fault_record,
+            diagnostics_scan=diagnostics_scan,
+        )
+        try:
+            fields = map_exact_observation(check, context)
+        except WindowsIdentityObservationError as error:
+            raise WindowsIdentityOrchestratorError(
+                f"{check} exact observation is invalid: {error}",
+                diagnostic=IdentityFailureDiagnostic.acceptance_check(
+                    check, "observe", type(error).__name__),
+            ) from error
+        collector.record(check, fields)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as error:
+        # Attempt 47: a failure at any check between windows-daily-admin and
+        # the aggregate collapsed to scoped-acceptance.acceptance because the
+        # exception carried no diagnostic. Every acceptance step now names
+        # its check. An inner failure that already carries a precise
+        # diagnostic (e.g. a credential action's execute coordinate) is
+        # preserved; anything else is bound to this check.
+        if (
+            isinstance(error, WindowsIdentityRunError)
+            and isinstance(error.diagnostic, IdentityFailureDiagnostic)
+        ):
+            raise
+        phase = (
+            "credential-action"
+            if type(error).__name__ in {
+                "WindowsCredentialActionError", "WindowsIdentityAdapterError"}
+            else "observe"
+        )
         raise WindowsIdentityOrchestratorError(
-            f"{check} exact observation is invalid: {error}") from error
-    collector.record(check, fields)
+            f"{check} acceptance step failed",
+            diagnostic=IdentityFailureDiagnostic.acceptance_check(
+                check, phase, type(error).__name__),
+        ) from error
 
 
 def _post_reboot_proof(
@@ -997,15 +1026,26 @@ def execute_windows_identity_acceptance(
             destroy_join_principal=destroy_join_principal,
         )
 
-    production = execute_production_identity_acceptance(
-        boundary=boundary,
-        plan=rotation_plan,
-        publication=publication,
-        private_parent=private_root,
-        stage_principals=stage_principals,
-        destroy_principals=destroy_principals,
-        run_acceptance=acceptance,
-    )
+    progress_path = Path(private_root) / "acceptance-progress.json"
+    try:
+        production = execute_production_identity_acceptance(
+            boundary=boundary,
+            plan=rotation_plan,
+            publication=publication,
+            private_parent=private_root,
+            stage_principals=stage_principals,
+            destroy_principals=destroy_principals,
+            run_acceptance=acceptance,
+        )
+    except BaseException:
+        # Persist how far acceptance got before the raise (public check
+        # names/counts only) so a failure deep in the 24-check stream is no
+        # longer blind between check 4 and the aggregate (attempt 47).
+        if collector is not None:
+            collector.write_progress(progress_path)
+        raise
+    if collector is not None:
+        collector.write_progress(progress_path)
     if (
         collector is None
         or faults is None

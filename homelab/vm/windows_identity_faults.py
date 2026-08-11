@@ -7,7 +7,17 @@ from typing import Callable, Protocol
 
 
 class FaultPhaseError(RuntimeError):
-    """A dependency fault phase did not reach a restored terminal state."""
+    """A dependency fault phase did not reach a restored terminal state.
+
+    Carries the originating failure's diagnostic (when it had one) so the
+    acceptance layer can name WHICH fault-phase check raised instead of
+    collapsing to a generic coordinate (attempt 47). Stored as a bare
+    object to avoid importing the diagnostic type here.
+    """
+
+    def __init__(self, message: str, *, diagnostic: object = None) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
 
 
 class RuntimeFaultBoundary(Protocol):
@@ -175,7 +185,10 @@ def run_fault_phases(
             details.append(f"phase: {type(primary).__name__}")
         details.extend(cleanup_failures)
         raise FaultPhaseError(
-            "Windows identity fault phases failed; " + "; ".join(details)
+            "Windows identity fault phases failed; " + "; ".join(details),
+            # Preserve the originating check's diagnostic so the acceptance
+            # layer names which fault-phase check raised.
+            diagnostic=getattr(primary, "diagnostic", None),
         ) from primary
     if not driver.receipt.all_dependencies_restored:
         raise FaultPhaseError(
