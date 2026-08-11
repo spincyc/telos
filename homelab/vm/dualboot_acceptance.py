@@ -107,10 +107,15 @@ KNOWN_MENU_ENTRIES = (
 VARS_SOURCE_GATE7 = lifecycle.VARS_SOURCE_GATE7
 VARS_SOURCE_PRISTINE = "pristine"
 # The Linux EFI stub prints on the OVMF console (and therefore serial) before
-# ExitBootServices; Windows Boot Manager prints nothing there.  Any of these
-# proves a Linux kernel handoff took place.
+# ExitBootServices, and the installed entry boots ``console=ttyS0,115200`` so
+# the kernel keeps printing to serial afterward; Windows Boot Manager prints
+# nothing there.  Any of these proves a Linux kernel handoff took place.  The
+# bare word "Linux" is deliberately excluded — the menu title "Arch Linux
+# LTS" contains it — so every marker is a boot-time-only phrase.
 ARCH_HANDOFF_MARKERS = (
-    "EFI stub", "Loading Linux", "Loading initial ramdisk", "Welcome to Arch")
+    "EFI stub", "Loading Linux", "Loading initial ramdisk",
+    "Welcome to Arch", "Linux version", "Booting the kernel",
+    "Booting Linux")
 _LOGIN_PROMPT = re.compile(r"[\w.-]+ login:")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 # One rendered menu cell, exactly the shape the live boot-1 serial showed:
@@ -118,19 +123,30 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 # then draws the space-padded title.  Plain log text — OVMF's
 # ``BdsDxe: starting Boot0004 "Windows Boot Manager"`` — has no cursor
 # addressing and no padding, so it can never count as a rendered entry.
+# Group 2 captures the attribute run so the highlighted (inverse-video)
+# entry can be told apart from the dim ones.
 _MENU_ROW = re.compile(
     r"\x1b\[([0-9]{1,3});[0-9]{1,3}H"
-    r"(?:\x1b\[[0-9;?]*m)*"
+    r"((?:\x1b\[[0-9;?]*m)*)"
     r"( +[^\x1b\r\n]*? +)(?=\x1b|\r|\n|$)")
+# systemd-boot draws the selected entry with a white background (SGR 47);
+# every other entry keeps the black background (SGR 40).  The live boot-1
+# and boot-2 transcripts both show the selected row as ...[30m[47m... and
+# the rest as ...[37m[40m....
+_MENU_HIGHLIGHT_ATTR = re.compile(r"\x1b\[4?7m")
 # The firmware's boot-entry handoff line; boot 1 must start the authored
 # "Linux Boot Manager" entry first for the NVRAM order to be proven.
 _BDS_STARTING = re.compile(
     r'BdsDxe: starting Boot[0-9A-Fa-f]{4} "([^"\r\n]+)"')
-# Any keypress pauses the systemd-boot countdown; up-arrow is
-# nondestructive (it only moves the highlight), so the arch-select boot
-# sends it the instant the menu renders to decouple digit selection from
-# the five-second window.
-MENU_PAUSE_KEY = b"\x1b[A"
+# systemd-boot serial keys.  A digit key does NOT boot the Nth entry — it
+# is a type-ahead search over titles (the live boot-2 proved a "1" keypress
+# selected nothing and Arch never booted).  The reliable path is cursor
+# navigation to the highlighted target then Enter.  Any keypress also stops
+# the five-second countdown, and the arrow keys are nondestructive, so the
+# first Up both pauses the countdown and begins navigating.
+MENU_UP_KEY = b"\x1b[A"
+MENU_DOWN_KEY = b"\x1b[B"
+MENU_ENTER_KEY = b"\r"
 
 CONTRACT = lifecycle.load_json(lifecycle.CONTRACT)
 REQUIRED_CHECKS: tuple[str, ...] = tuple(CONTRACT["required_checks"])
@@ -568,22 +584,44 @@ def _menu_entries(raw: str) -> list[str]:
     menu cells — the real rendered menu — so firmware chatter that merely
     mentions an entry label can never fake a menu listing (the live boot-2
     transcript contained ``"Windows Boot Manager"`` inside a BdsDxe line
-    while no menu ever rendered).  Row order is the on-screen order, which
-    is also the systemd-boot digit-key order.
+    while no menu ever rendered).  Row order is the on-screen order, taken
+    from the first render so it is stable while the highlight moves.
     """
     rows: dict[str, int] = {}
     for match in _MENU_ROW.finditer(raw):
-        title = match.group(2).strip()
+        title = match.group(3).strip()
         if title in KNOWN_MENU_ENTRIES and title not in rows:
             rows[title] = int(match.group(1))
     return sorted(rows, key=rows.get)
 
 
+def _menu_highlighted(raw: str) -> str | None:
+    """The title systemd-boot last drew highlighted (inverse video), if any.
+
+    systemd-boot re-renders the whole menu on every cursor move, so the last
+    highlighted cell in the accumulated transcript is the current selection.
+    Returns None until a highlighted known entry has been rendered.
+    """
+    highlighted: str | None = None
+    for match in _MENU_ROW.finditer(raw):
+        title = match.group(3).strip()
+        if title in KNOWN_MENU_ENTRIES and _MENU_HIGHLIGHT_ATTR.search(
+                match.group(2)):
+            highlighted = title
+    return highlighted
+
+
 def _query_running(qmp, process: subprocess.Popen[bytes]) -> bool:
-    """One bounded QMP liveness sample; fall back to the host process."""
+    """One bounded QMP liveness sample; fall back to the host process.
+
+    ``QmpClient.execute`` already returns the unwrapped ``return`` payload
+    (``{"status": "running", ...}``), so the status is read directly — the
+    earlier double-unwrap (``status["return"]["status"]``) always yielded
+    ``None`` and reported every live guest as not running.
+    """
     try:
         status = qmp.execute("query-status", timeout=10)
-        return status.get("return", {}).get("status") == "running"
+        return status.get("status") == "running"
     except (WindowsGuiError, OSError):
         return process.poll() is None
 
@@ -593,6 +631,7 @@ def observe_boot(
     mode: str, qmp, frames_dir: Path | None, timeout: float,
     quiesce: float = 3.0, confirm: float = 45.0, login_wait: float = 120.0,
     frame_interval: float = 10.0, max_frames: int = 360,
+    nav_interval: float = 1.0,
 ) -> BootObservation:
     """Watch one cold boot on serial without ever guessing an outcome.
 
@@ -626,6 +665,7 @@ def observe_boot(
     login_until: float | None = None
     running_sampled = False
     countdown_paused = False
+    last_nav_at = started
     next_frame = started
     frame_failures = 0
     while time.monotonic() < deadline:
@@ -688,31 +728,54 @@ def observe_boot(
                 handoff_confirm_until = now + confirm
                 observation.guest_running = _query_running(qmp, process)
                 running_sampled = True
+            elif (handoff_confirm_until is not None
+                    and not observation.guest_running):
+                # Re-sample across the confirm window (still strictly before
+                # any shutdown): Windows boots silently, so one sample can
+                # land in a transient state; any single running observation
+                # during the session proves the guest booted.
+                observation.guest_running = _query_running(qmp, process)
             if (handoff_confirm_until is not None
                     and now >= handoff_confirm_until):
                 break
         else:
             if (observation.selection is None
-                    and not countdown_paused
                     and observation.menu_first is not None
                     and process.stdin is not None):
-                # Stop the five-second countdown the instant any menu row
-                # renders, before waiting for the full render: the pause is
-                # nondestructive and buys the digit selection unlimited
-                # margin against the timeout.
-                process.stdin.write(MENU_PAUSE_KEY)
-                process.stdin.flush()
-                countdown_paused = True
-            if (observation.selection is None
-                    and observation.menu_first is not None
-                    and MENU_ARCH_ENTRY in observation.entries
-                    and MENU_WINDOWS_ENTRY in observation.entries
-                    and process.stdin is not None):
-                digit = str(observation.entries.index(MENU_ARCH_ENTRY) + 1)
-                process.stdin.write(digit.encode("ascii"))
-                process.stdin.flush()
-                observation.selection = digit
-                observation.selection_at = now
+                if not countdown_paused:
+                    # Any keypress stops the five-second countdown; Up is
+                    # nondestructive (it only moves the highlight), so the
+                    # first Up both pauses the countdown the instant the
+                    # menu renders and begins navigating toward Arch.
+                    process.stdin.write(MENU_UP_KEY)
+                    process.stdin.flush()
+                    countdown_paused = True
+                    last_nav_at = now
+                elif now - last_nav_at >= nav_interval:
+                    # Closed-loop cursor navigation: a systemd-boot digit
+                    # key is a title type-ahead, not a row selector (the
+                    # live boot-2 proved a "1" keypress booted nothing).
+                    # Drive the highlight to the Arch row from the parsed
+                    # inverse-video state, one step per re-render, then
+                    # Enter — which is what actually boots the entry.
+                    entries = observation.entries
+                    highlighted = _menu_highlighted(raw)
+                    if (MENU_ARCH_ENTRY in entries
+                            and MENU_WINDOWS_ENTRY in entries
+                            and highlighted in entries):
+                        target = entries.index(MENU_ARCH_ENTRY)
+                        current = entries.index(highlighted)
+                        if current == target:
+                            process.stdin.write(MENU_ENTER_KEY)
+                            process.stdin.flush()
+                            observation.selection = str(target + 1)
+                            observation.selection_at = now
+                        else:
+                            process.stdin.write(
+                                MENU_UP_KEY if current > target
+                                else MENU_DOWN_KEY)
+                            process.stdin.flush()
+                            last_nav_at = now
             if (observation.selection is not None and login_until is None
                     and observation.kernel_handoff_at is not None):
                 login_until = min(
@@ -979,7 +1042,7 @@ def build_events(
             "arch-menu-selectable",
             "pass" if boot2.selection is not None and handoff else "fail",
             entry=MENU_ARCH_ENTRY,
-            selection_method="menu-digit",
+            selection_method=lifecycle.SELECTION_METHOD,
             selection_key=boot2.selection,
             kernel_handoff=handoff,
             clean_shutdown=arch_clean_shutdown)

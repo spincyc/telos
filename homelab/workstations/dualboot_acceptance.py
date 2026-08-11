@@ -40,6 +40,12 @@ _HEX64 = frozenset("0123456789abcdef")
 NVRAM_LINUX_LABEL = "Linux Boot Manager"
 VARS_SOURCE_GATE7 = "gate7-installed"
 
+# How the runner selects the Arch entry on the serial systemd-boot menu.  A
+# digit key is a title type-ahead in systemd-boot, not a row selector (the
+# 2026-08-11 live boot-2 proved a "1" keypress booted nothing); the proven
+# method is cursor navigation to the highlighted target then Enter.
+SELECTION_METHOD = "menu-arrow-enter"
+
 
 class EvidenceError(ValueError):
     """Evidence does not prove the dual-boot acceptance contract."""
@@ -191,7 +197,7 @@ def judge(contract: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
             "measured menu-to-handoff time is outside the policy bounds")
 
     selectable = by_check["arch-menu-selectable"]
-    if selectable.get("selection_method") != "menu-digit":
+    if selectable.get("selection_method") != SELECTION_METHOD:
         raise EvidenceError("Arch selection method is not the proven one")
     entry = selectable.get("entry")
     if not isinstance(entry, str) or not entry.startswith("Arch"):

@@ -117,7 +117,11 @@ class _FakeQmp:
     def execute(self, command, arguments=None, *, timeout=None):
         self.calls.append((command, arguments, timeout))
         if command == "query-status":
-            return {"return": {"status": self.status}}
+            # QmpClient.execute returns the UNWRAPPED ``return`` payload, so
+            # query-status yields {"status": ...} directly — not nested under
+            # another "return" key.  The fake must mirror that exactly, or a
+            # double-unwrap bug in the runner passes here and fails live.
+            return {"status": self.status, "running": self.status == "running"}
         return {}
 
     def screenshot(self, path: Path) -> None:
@@ -200,6 +204,65 @@ BDS_WINDOWS_DIRECT = (
     b'BdsDxe: starting Boot0004 "Windows Boot Manager" from ' + _BDS_DEVICE
     + b'/\\EFI\\Microsoft\\Boot\\bootmgfw.efi\r\n'
 )
+
+_MENU_ROWS = (da.MENU_ARCH_ENTRY, da.MENU_WINDOWS_ENTRY, da.MENU_FIRMWARE_ENTRY)
+
+
+def _render_menu(highlight: int) -> bytes:
+    """A full systemd-boot menu render with *highlight* row inverse-video."""
+    cells = b"\x1b[2J\x1b[001;001H"
+    for index, title in enumerate(_MENU_ROWS):
+        cells += _menu_cell(20 + index, title, selected=(index == highlight))
+    return cells
+
+
+def systemd_boot_feeder(
+    *, handoff: bytes = b"EFI stub: Booting the kernel\r\n",
+    login: bytes | None = None, default: int = 1, arch: int = 0,
+    hold: float = 0.6,
+):
+    """A fake systemd-boot menu that only boots the Arch row on Enter.
+
+    Models the live boot-2 systemd-boot: the menu renders with the Windows
+    row highlighted (the ``default auto-windows`` policy), cursor keys move
+    the highlight (non-wrapping, as sd-boot does at the ends), a DIGIT key
+    does nothing (systemd-boot treats it as a title type-ahead, never a row
+    selector), and only Enter on the Arch row boots and emits the handoff.
+    """
+    def feeder(write_fd, stdin):
+        highlight = default
+        os.write(write_fd, BDS_LINUX + _render_menu(highlight))
+        consumed = 0
+        booted = False
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline and not booted:
+            data = bytes(stdin.data)
+            chunk = data[consumed:]
+            index = 0
+            while index < len(chunk):
+                if chunk[index:index + 3] == da.MENU_UP_KEY:
+                    highlight = max(0, highlight - 1)
+                    os.write(write_fd, _render_menu(highlight))
+                    index += 3
+                elif chunk[index:index + 3] == da.MENU_DOWN_KEY:
+                    highlight = min(len(_MENU_ROWS) - 1, highlight + 1)
+                    os.write(write_fd, _render_menu(highlight))
+                    index += 3
+                elif chunk[index:index + 1] == da.MENU_ENTER_KEY:
+                    if highlight == arch:
+                        os.write(write_fd, handoff)
+                        if login is not None:
+                            os.write(write_fd, login)
+                        booted = True
+                    index += 1
+                else:
+                    # A stray digit (type-ahead) selects and boots nothing.
+                    index += 1
+            consumed = len(data)
+            time.sleep(0.01)
+        time.sleep(0.1)
+        os.close(write_fd)
+    return feeder
 
 
 class GptTests(unittest.TestCase):
@@ -609,6 +672,7 @@ class ObserveBootTests(unittest.TestCase):
                     confirm=overrides.pop("confirm", 0.2),
                     login_wait=overrides.pop("login_wait", 0.3),
                     frame_interval=overrides.pop("frame_interval", 0.05),
+                    nav_interval=overrides.pop("nav_interval", 0.05),
                     **overrides)
         finally:
             worker.join()
@@ -681,6 +745,27 @@ class ObserveBootTests(unittest.TestCase):
         self.assertIn(
             "query-status", [call[0] for call in qmp.calls])
 
+    def test_query_running_reads_the_unwrapped_qmp_return_shape(self):
+        # QmpClient.execute returns the unwrapped ``return`` payload, so
+        # query-status yields {"status": "running"} directly.  The runner
+        # must read status at the top level; the earlier double-unwrap
+        # reported every live guest as not running (the live boot-1 false
+        # negative).  A process fallback covers a QMP error.
+        running = _FakeQmp("running")
+        stopped = _FakeQmp("shutdown")
+        alive = mock.Mock()
+        alive.poll.return_value = None
+        self.assertTrue(da._query_running(running, alive))
+        self.assertFalse(da._query_running(stopped, alive))
+
+        class _Boom:
+            def execute(self, *a, **k):
+                raise da.WindowsGuiError("gone")
+        self.assertTrue(da._query_running(_Boom(), alive))
+        dead = mock.Mock()
+        dead.poll.return_value = 0
+        self.assertFalse(da._query_running(_Boom(), dead))
+
     def test_a_linux_handoff_on_the_default_boot_is_recorded(self):
         def feeder(write_fd, _stdin):
             os.write(write_fd, MENU)
@@ -695,85 +780,121 @@ class ObserveBootTests(unittest.TestCase):
         self.assertIsNotNone(observation.kernel_handoff_at)
         self.assertEqual(b"", bytes(stdin.data))
 
-    def test_arch_selection_sends_the_menu_digit_and_sees_the_handoff(self):
-        def feeder(write_fd, stdin):
-            os.write(write_fd, MENU)
-            for _ in range(5000):
-                if stdin.data:
-                    break
-                time.sleep(0.001)
-            os.write(
-                write_fd,
+    def test_arch_selection_navigates_to_arch_and_enters(self):
+        # Models the live boot-2 systemd-boot: the default highlight is
+        # Windows, the runner pauses the countdown and drives the highlight
+        # to Arch, then Enter boots it and the EFI-stub handoff appears.
+        feeder = systemd_boot_feeder(
+            handoff=(
                 b"EFI stub: Loaded initrd from LINUX_EFI_INITRD_MEDIA_GUID"
-                b" device path\r\n")
-            os.write(write_fd, b"\r\ntelos-workstation login: ")
-            time.sleep(0.2)
-            os.close(write_fd)
-
+                b" device path\r\n"),
+            login=b"\r\ntelos-workstation login: ")
         observation, stdin, _qmp = self._observe("arch-select", feeder)
-        # The countdown is paused first (nondestructive up-arrow), then the
-        # Arch config entry renders first, so its digit key is 1.
-        self.assertEqual(da.MENU_PAUSE_KEY + b"1", bytes(stdin.data))
+        keys = bytes(stdin.data)
+        # A digit key is never sent — it would only trigger a title
+        # type-ahead in systemd-boot and boot nothing.
+        self.assertNotIn(b"1", keys)
+        # Up moves Windows->Arch, then Enter boots the highlighted Arch row.
+        self.assertIn(da.MENU_UP_KEY, keys)
+        self.assertIn(da.MENU_ENTER_KEY, keys)
+        # Enter is the last key sent — it is what actually boots the entry.
+        self.assertTrue(keys.endswith(da.MENU_ENTER_KEY))
         self.assertEqual("1", observation.selection)
+        self.assertIsNotNone(observation.selection_at)
         self.assertIsNotNone(observation.kernel_handoff_at)
         self.assertIsNotNone(observation.login_prompt_at)
 
-    def test_countdown_is_paused_before_the_digit_is_computed(self):
-        # A partial render (only the Arch row drawn so far) must already
-        # pause the five-second countdown, while the digit is only sent
-        # once both operating systems are listed — so a slow render can
-        # never lose the window and a premature digit can never pick the
-        # wrong row.
-        partial = (
-            b"\x1b[2J\x1b[001;001H"
-            + _menu_cell(27, da.MENU_ARCH_ENTRY, selected=False))
-        rest = (
-            _menu_cell(28, da.MENU_WINDOWS_ENTRY, selected=True)
-            + _menu_cell(29, da.MENU_FIRMWARE_ENTRY, selected=False))
+    def test_arch_selection_only_enters_once_arch_is_highlighted(self):
+        # Enter must never be sent while a non-Arch row is highlighted, or
+        # it would boot Windows.  With Arch two rows above the default the
+        # runner must step up twice and Enter only after Arch is inverse.
+        enter_on_wrong: list = []
 
-        premature: list = []
+        base = systemd_boot_feeder(
+            handoff=b"Linux version 6.12.0-arch1\r\n", default=2, arch=0)
 
         def feeder(write_fd, stdin):
-            os.write(write_fd, BDS_LINUX + partial)
-            for _ in range(5000):
-                if da.MENU_PAUSE_KEY in bytes(stdin.data):
-                    break
-                time.sleep(0.001)
-            # Cover a full observe tick: a digit computed from the partial
-            # render would surface within this window.
-            time.sleep(0.4)
-            if b"1" in bytes(stdin.data).replace(da.MENU_PAUSE_KEY, b""):
-                premature.append(bytes(stdin.data))
-            os.write(write_fd, rest)
-            for _ in range(5000):
-                if bytes(stdin.data).endswith(b"1"):
-                    break
-                time.sleep(0.001)
-            os.write(write_fd, b"EFI stub: Booting the kernel\r\n")
-            time.sleep(0.2)
+            # Wrap the base feeder to assert no Enter arrives on rows 1/2.
+            highlight = 2
+            os.write(write_fd, BDS_LINUX + _render_menu(highlight))
+            consumed = 0
+            booted = False
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline and not booted:
+                data = bytes(stdin.data)
+                chunk = data[consumed:]
+                index = 0
+                while index < len(chunk):
+                    if chunk[index:index + 3] == da.MENU_UP_KEY:
+                        highlight = max(0, highlight - 1)
+                        os.write(write_fd, _render_menu(highlight))
+                        index += 3
+                    elif chunk[index:index + 3] == da.MENU_DOWN_KEY:
+                        highlight = min(2, highlight + 1)
+                        os.write(write_fd, _render_menu(highlight))
+                        index += 3
+                    elif chunk[index:index + 1] == da.MENU_ENTER_KEY:
+                        if highlight != 0:
+                            enter_on_wrong.append(highlight)
+                        else:
+                            os.write(
+                                write_fd, b"Linux version 6.12.0-arch1\r\n")
+                            booted = True
+                        index += 1
+                    else:
+                        index += 1
+                consumed = len(data)
+                time.sleep(0.01)
+            time.sleep(0.1)
             os.close(write_fd)
 
         observation, stdin, _qmp = self._observe("arch-select", feeder)
-        self.assertEqual([], premature)
-        self.assertEqual(da.MENU_PAUSE_KEY + b"1", bytes(stdin.data))
+        self.assertEqual([], enter_on_wrong)
+        self.assertEqual(bytes(stdin.data).count(da.MENU_ENTER_KEY), 1)
         self.assertEqual("1", observation.selection)
         self.assertIsNotNone(observation.kernel_handoff_at)
 
     def test_arch_selection_without_a_getty_records_the_absence(self):
-        def feeder(write_fd, stdin):
-            os.write(write_fd, MENU)
-            for _ in range(5000):
-                if stdin.data:
-                    break
-                time.sleep(0.001)
-            os.write(write_fd, b"EFI stub: Booting the kernel\r\n")
-            time.sleep(0.8)
-            os.close(write_fd)
-
+        feeder = systemd_boot_feeder(
+            handoff=b"EFI stub: Booting the kernel\r\n", login=None)
         observation, _stdin, _qmp = self._observe("arch-select", feeder)
         self.assertEqual("1", observation.selection)
         self.assertIsNotNone(observation.kernel_handoff_at)
         self.assertIsNone(observation.login_prompt_at)
+
+    def test_a_digit_keypress_never_boots_and_fails_closed(self):
+        # Regression for the live boot-2: if the runner had kept sending a
+        # digit, systemd-boot would type-ahead and boot nothing, so no
+        # handoff is ever observed and the check honestly fails.  This feeder
+        # ignores Enter entirely (as if the runner only sent digits) and the
+        # observation must carry no kernel handoff.
+        def feeder(write_fd, stdin):
+            highlight = 1
+            os.write(write_fd, BDS_LINUX + _render_menu(highlight))
+            consumed = 0
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                data = bytes(stdin.data)
+                chunk = data[consumed:]
+                index = 0
+                while index < len(chunk):
+                    if chunk[index:index + 3] in (
+                            da.MENU_UP_KEY, da.MENU_DOWN_KEY):
+                        highlight = max(0, min(2, highlight + (
+                            -1 if chunk[index:index + 3] == da.MENU_UP_KEY
+                            else 1)))
+                        os.write(write_fd, _render_menu(highlight))
+                        index += 3
+                    else:
+                        # Enter and digits alike boot nothing here.
+                        index += 1
+                consumed = len(data)
+                time.sleep(0.01)
+            os.close(write_fd)
+
+        observation, _stdin, _qmp = self._observe(
+            "arch-select", feeder, timeout=1.5, login_wait=0.3)
+        self.assertIsNone(observation.kernel_handoff_at)
 
     def test_a_menu_that_never_appears_is_bounded_and_honest(self):
         def feeder(write_fd, _stdin):
@@ -810,6 +931,23 @@ class BuildEventsTests(unittest.TestCase):
         self.assertEqual(NVRAM_LINUX_LABEL, judge_mod.NVRAM_LINUX_LABEL)
         self.assertEqual(
             da.VARS_SOURCE_GATE7, judge_mod.VARS_SOURCE_GATE7)
+
+    def test_selection_method_is_the_arrow_enter_method(self):
+        # The emitted arch-menu-selectable evidence names the proven cursor
+        # method (not the type-ahead digit), and the judge validates against
+        # the same single source of truth.
+        self.assertEqual("menu-arrow-enter", judge_mod.SELECTION_METHOD)
+        events = happy_events()
+        selectable = next(
+            event for event in events
+            if event["check"] == "arch-menu-selectable")
+        self.assertEqual(
+            judge_mod.SELECTION_METHOD, selectable["selection_method"])
+        judge_mod.judge(CONTRACT, events)
+        # A stale "menu-digit" method is refused by the judge.
+        selectable["selection_method"] = "menu-digit"
+        with self.assertRaisesRegex(ValueError, "selection method"):
+            judge_mod.judge(CONTRACT, events)
 
     def test_pristine_vars_fail_the_nvram_check(self):
         events = happy_events(vars_source="pristine")
