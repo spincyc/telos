@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Acquire or offline-verify the workstation pacman repository cache.
+
+``build`` is the ONLINE acquire phase: it resolves the workstation-install
+dependency closure through the host's signed mirrors, refuses unsigned
+archives, runs ``repo-add``, and writes the byte-binding receipt.
+``verify`` is offline: it re-proves the ignored cache against its receipt
+and the checked-in package contract without any network dependency.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import workstation_repo  # noqa: E402
+
+
+def _require_ignored(path: Path) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    if subprocess.run(
+        ["git", "-C", str(repository), "check-ignore", "--quiet",
+         str(path.absolute())],
+        check=False,
+    ).returncode:
+        raise workstation_repo.WorkstationRepoError(
+            "workstation repository cache must be covered by ignore rules")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    build = commands.add_parser(
+        "build", help="online acquire: download, repo-add, and seal")
+    verify = commands.add_parser(
+        "verify", help="offline: re-prove the cache against its receipt")
+    for command in (build, verify):
+        command.add_argument(
+            "--repo", type=Path, default=workstation_repo.DEFAULT_REPO)
+        command.add_argument(
+            "--contract", type=Path,
+            default=workstation_repo.DEFAULT_CONTRACT)
+    build.add_argument(
+        "--pacman-config", type=Path,
+        default=workstation_repo.DEFAULT_PACMAN_CONFIG)
+    build.add_argument(
+        "--plan", action="store_true",
+        help="print the networked acquire phases without downloading")
+    args = parser.parse_args()
+
+    if args.command == "build":
+        packages = workstation_repo.resolve_contract_packages(args.contract)
+        if args.plan:
+            for command in workstation_repo.command_plan(
+                    packages, Path("<temporary-stage>"), args.pacman_config):
+                print(" ".join(command))
+            return 0
+        _require_ignored(args.repo)
+        summary = workstation_repo.build(
+            args.repo, contract=args.contract,
+            pacman_config=args.pacman_config)
+        print(
+            f"built {args.repo}: {summary['packages']} signed packages, "
+            f"{summary['bytes']} bytes, receipt {summary['receipt_sha256']}")
+        return 0
+
+    summary = workstation_repo.verify_repo(
+        args.repo,
+        contract_packages=workstation_repo.resolve_contract_packages(
+            args.contract),
+    )
+    print(
+        f"verified {args.repo}: {summary['packages']} signed packages, "
+        f"{summary['bytes']} bytes, receipt {summary['receipt_sha256']}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (
+        OSError, ValueError, RuntimeError, subprocess.CalledProcessError,
+    ) as error:
+        raise SystemExit(f"error: {error}")

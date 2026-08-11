@@ -142,6 +142,7 @@ class MediaMakeTests(unittest.TestCase):
             launcher.chmod(0o755)
             fetchers = (
                 clone / "homelab/media/fetch-arch",
+                clone / "homelab/bin/homelab-media-workstation-repo",
                 clone / "homelab/bin/homelab-fetch-wimboot",
                 clone / "homelab/bin/homelab-fetch-windows",
             )
@@ -171,6 +172,14 @@ class MediaMakeTests(unittest.TestCase):
                 [[Path(call[0]).name, *call[1:]] for call in calls],
                 [
                     ["fetch-arch"],
+                    [
+                        "homelab-media-workstation-repo",
+                        "build",
+                        "--contract",
+                        "homelab/package-contract.json",
+                        "--repo",
+                        "homelab/var/media/arch/workstation-repo",
+                    ],
                     ["homelab-fetch-wimboot", "--output", "homelab/var/media/wimboot"],
                     [
                         "homelab-fetch-windows",

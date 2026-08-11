@@ -62,6 +62,7 @@ WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
 WINDOWS_INSTALL_SOURCE ?= homelab/var/media/windows/install-source
 FACTORY_MEDIA_SEAL ?= homelab/var/media/factory-media-seal.json
 FACTORY_ARCH_SOURCE_CACHE ?= homelab/var/media/arch/extracted
+WORKSTATION_REPO ?= homelab/var/media/arch/workstation-repo
 # A Controller release needs a purpose-built mkarchiso netboot tree. The
 # convergence seed is a data disc and is never substituted for this payload.
 FACTORY_CONTROLLER_SOURCE ?= homelab/var/media/controller/netboot
@@ -117,6 +118,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-converge-check homelab-bootstrap-deps \
 	homelab-media homelab-media-arch homelab-media-windows \
 	homelab-media-windows-25h2-en-us \
+	homelab-media-workstation-repo \
 	homelab-stage-windows-source \
 	homelab-media-wimboot homelab-bootstrap-seed \
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
@@ -291,10 +293,20 @@ homelab-bootstrap-deps: install-dependencies-arch
 # Microsoft requires an interactive consumer-media link, so the aggregate
 # target stops at that explicit gate until the operator supplies its ISO and
 # the digest printed by Microsoft's verification table.
-homelab-media: homelab-media-arch homelab-media-wimboot homelab-media-windows
+homelab-media: homelab-media-arch homelab-media-workstation-repo \
+	homelab-media-wimboot homelab-media-windows
 
 homelab-media-arch:
 	@homelab/media/fetch-arch
+
+# Resolve the full workstation-install dependency closure through the host's
+# signed mirrors with the same machinery as the Controller seed, build a
+# pacman repository database, and bind every byte in a receipt. Online;
+# acquire phase only. The offline gate and publication re-verify the receipt.
+homelab-media-workstation-repo:
+	@homelab/bin/homelab-media-workstation-repo build \
+		--contract homelab/package-contract.json \
+		--repo '$(WORKSTATION_REPO)'
 
 homelab-media-windows:
 	@if { [ -n '$(WINDOWS_ISO)' ] && [ -z '$(WINDOWS_SHA256)' ]; } || \
@@ -356,6 +368,9 @@ homelab-factory-offline-check:
 		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
 		--wimboot '$(WIMBOOT)' \
 		--wimboot-metadata homelab/media/wimboot.json >/dev/null
+	@homelab/bin/homelab-media-workstation-repo verify \
+		--contract homelab/package-contract.json \
+		--repo '$(WORKSTATION_REPO)' >/dev/null
 	@printf '%s\n' \
 		'PASS: required local inputs verify without acquisition' \
 		'Network isolation is enforced by the lifecycle runner, not this cache check.'
@@ -1022,6 +1037,7 @@ help:
 		'make homelab-check        Fast honest verification for homelab edits' \
 		'make homelab-lab          Report whether the QEMU lab can run' \
 		'make homelab-media        Fresh-fetch official disposable media' \
+		'make homelab-media-workstation-repo  Acquire the offline workstation pacman repo' \
 		'make homelab-bootstrap-seed  Build the isolated Controller seed ISO' \
 		'make homelab-bootstrap-vm-boot  Boot the installed Controller disk' \
 		'make homelab-bootstrap-network-plan NETWORK_CONFIG=<private JSON>' \

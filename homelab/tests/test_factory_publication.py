@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from homelab.lib import pxe_release_set, windows_install_source
+from homelab.lib import workstation_repo
+from homelab.tests.test_workstation_repo import make_repo
 from homelab.vm import factory_publication
 
 
@@ -45,8 +47,15 @@ class FactoryPublicationTests(unittest.TestCase):
         self.ipxe.write_bytes(b"verified first stage")
         self.seed = self.root / "seed.iso"
         self.seed.write_bytes(b"verified seed")
+        self.workstation_repo = self.root / "workstation-repo"
+        make_repo(
+            self.workstation_repo,
+            workstation_repo.resolve_contract_packages(),
+            extra_packages=("glibc",))
 
     def stage(self, destination, **kwargs):
+        if kwargs.get("target", "arch-workstation") == "arch-workstation":
+            kwargs.setdefault("workstation_repo", self.workstation_repo)
         def repair(_seed, repair_root):
             repair_root.mkdir()
             package = repair_root / "tftp-hpa-5.2-11-x86_64.pkg.tar.zst"
@@ -280,6 +289,74 @@ class FactoryPublicationTests(unittest.TestCase):
                 factory_publication.PublicationError, "ipxe.efi"):
             self.stage(destination)
         self.assertFalse(destination.exists())
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_workstation_repo_is_served_and_receipt_bound(self, _verify):
+        destination = self.root / "publication"
+        receipt = self.stage(destination)
+        served = destination / "www" / "arch" / "workstation-repo"
+        database = served / workstation_repo.DATABASE
+        self.assertTrue(database.is_file())
+        # Every served repository byte is bound by the publication checksums
+        # the publisher enforces with --strict before serving.
+        sums = (destination / "SHA256SUMS").read_text()
+        self.assertIn(f"www/arch/workstation-repo/{workstation_repo.DATABASE}",
+                      sums)
+        self.assertIn("www/arch/workstation-repo/receipt.json", sums)
+        bound = receipt["workstation_repo"]
+        self.assertEqual(bound["path"], "www/arch/workstation-repo")
+        self.assertEqual(
+            bound["receipt_sha256"],
+            factory_publication.digest(
+                self.workstation_repo / workstation_repo.RECEIPT_NAME))
+        self.assertGreater(bound["packages"], 0)
+        # The served path matches the URL the rendered installer bakes in.
+        from homelab.workstations.arch_second import WORKSTATION_REPO_URL
+        self.assertEqual(
+            WORKSTATION_REPO_URL,
+            "http://10.1.31.2/arch/workstation-repo")
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_missing_workstation_repo_fails_closed_before_copy(self, _verify):
+        destination = self.root / "publication"
+        with self.assertRaisesRegex(
+                factory_publication.PublicationError,
+                "homelab-media-workstation-repo"):
+            self.stage(
+                destination, workstation_repo=self.root / "absent-repo")
+        self.assertFalse(destination.exists())
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_tampered_workstation_repo_fails_closed(self, _verify):
+        database = self.workstation_repo / workstation_repo.DATABASE
+        database.write_bytes(b"altered database")
+        destination = self.root / "publication"
+        with self.assertRaisesRegex(
+                factory_publication.PublicationError, "unsealed"):
+            self.stage(destination)
+        self.assertFalse(destination.exists())
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_windows_target_neither_requires_nor_accepts_the_repo(
+        self, _verify,
+    ):
+        private = self.root / "run-abc123"
+        private.mkdir(mode=0o700)
+        for name in factory_publication.PRIVATE_WINDOWS_FILES:
+            (private / name).write_text(f"private {name}\n")
+        destination = self.root / "publication"
+        receipt = self.stage(
+            destination, target="windows", private_windows_inputs=private)
+        self.assertIsNone(receipt["workstation_repo"])
+        self.assertFalse(
+            (destination / "www" / "arch" / "workstation-repo").exists())
+        with self.assertRaisesRegex(
+                factory_publication.PublicationError,
+                "arch-workstation target"):
+            self.stage(
+                self.root / "publication-2", target="windows",
+                private_windows_inputs=private,
+                workstation_repo=self.workstation_repo)
 
     def test_extracts_one_receipt_bound_signed_tftp_archive(self):
         package = b"package"

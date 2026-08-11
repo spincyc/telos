@@ -32,6 +32,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
         for target in (
             "homelab-factory-deps",
             "homelab-factory-media",
+            "homelab-media-workstation-repo",
             "homelab-factory-cache-seal",
             "homelab-factory-offline-check",
             "homelab-factory-controller-bundle",
@@ -85,6 +86,24 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "git ",
         ):
             self.assertNotIn(forbidden, text)
+
+    def test_workstation_repo_acquire_is_online_only_and_receipt_bound(self):
+        text = recipe("homelab-media-workstation-repo")
+        self.assertIn("homelab-media-workstation-repo build", text)
+        self.assertIn("WORKSTATION_REPO", text)
+        self.assertIn("package-contract.json", text)
+        # Acquisition is part of the aggregate acquire phase.
+        aggregate = re.search(
+            r"^homelab-media:(.*(?:\\\n.*)*)$", MAKEFILE, re.MULTILINE)
+        self.assertIsNotNone(aggregate)
+        self.assertIn(
+            "homelab-media-workstation-repo", aggregate.group(1))
+
+    def test_offline_check_refuses_an_unsealed_workstation_repo(self):
+        text = recipe("homelab-factory-offline-check")
+        self.assertIn("homelab-media-workstation-repo verify", text)
+        self.assertNotIn("homelab-media-workstation-repo build", text)
+        self.assertIn("WORKSTATION_REPO", text)
 
     def test_cache_seal_verifies_and_binds_all_media_inputs(self):
         text = recipe("homelab-factory-cache-seal")

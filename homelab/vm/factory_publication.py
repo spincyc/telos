@@ -12,7 +12,9 @@ import tempfile
 from pathlib import Path
 
 try:
-    from homelab.lib import pxe_release_set, windows_install_source
+    from homelab.lib import (
+        pxe_release_set, windows_install_source,
+        workstation_repo as workstation_repo_lib)
     from homelab.vm.controller_factory import (
         FactorySpec, nginx_config, tftp_unit)
 except ModuleNotFoundError as error:
@@ -21,6 +23,7 @@ except ModuleNotFoundError as error:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
     import pxe_release_set
     import windows_install_source
+    import workstation_repo as workstation_repo_lib
     from controller_factory import FactorySpec, nginx_config, tftp_unit
 
 
@@ -30,6 +33,13 @@ class PublicationError(RuntimeError):
 
 TFTP_PACKAGE = re.compile(
     r"^packages/(tftp-hpa-[A-Za-z0-9.+_-]+-x86_64\.pkg\.tar\.zst)$")
+# The offline workstation pacman repository (gate 7's pacstrap source).  It
+# is staged under this stable www path so nginx (root /srv/http/homelab,
+# location /) serves it at http://10.1.31.2/arch/workstation-repo — the same
+# fixed fabric address every PXE fetch of this publication already uses.
+WORKSTATION_REPO_WWW = "arch/workstation-repo"
+DEFAULT_WORKSTATION_REPO = workstation_repo_lib.DEFAULT_REPO
+PACKAGE_CONTRACT = Path(__file__).resolve().parents[1] / "package-contract.json"
 PRIVATE_WINDOWS_FILES = frozenset({
     "boot.ipxe", "install.bat", "mount-source.vbs", "winpeshl.ini",
     "windows-layout.txt", "Autounattend.xml", "install-password.txt",
@@ -145,6 +155,7 @@ def stage(
     ipxe_binary: Path | None = None, target: str = "arch-workstation",
     private_windows_inputs: Path | None = None,
     windows_source: Path | None = None,
+    workstation_repo: Path | None = None,
 ) -> dict:
     """Copy only manifest-verified selected bytes into a private staging tree."""
     releases = Path(releases).resolve()
@@ -171,6 +182,30 @@ def stage(
     ipxe = _ipxe_binary(ipxe_binary)
     if target not in ("arch-workstation", "windows"):
         raise PublicationError(f"unsupported PXE publication target: {target}")
+    # Gate 7's in-guest pacstrap has no internet mirror on the isolated
+    # fabric; the arch-workstation target therefore refuses to publish
+    # without the receipt-proven offline workstation repository.
+    repo_summary = None
+    repo_source = None
+    if target == "arch-workstation":
+        repo_source = Path(
+            workstation_repo if workstation_repo is not None
+            else DEFAULT_WORKSTATION_REPO)
+        try:
+            repo_summary = workstation_repo_lib.verify_repo(
+                repo_source,
+                contract_packages=workstation_repo_lib
+                .resolve_contract_packages(PACKAGE_CONTRACT),
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            raise PublicationError(
+                "workstation package repository is missing or unsealed "
+                f"({error}); acquire it online with "
+                "'make homelab-media-workstation-repo'") from error
+    elif workstation_repo is not None:
+        raise PublicationError(
+            "the workstation package repository belongs to the "
+            "arch-workstation target")
     private_source = None
     if private_windows_inputs is not None:
         private_source = Path(private_windows_inputs)
@@ -223,6 +258,8 @@ def stage(
         for release_target in pxe_release_set.TARGETS:
             source = release_set / "targets" / release_target / version
             shutil.copytree(source, www / release_target / version)
+        if repo_source is not None:
+            shutil.copytree(repo_source, www / WORKSTATION_REPO_WWW)
         bootstrap = www / "boot" / "boot.ipxe"
         bootstrap.parent.mkdir()
         selected_boot = f"{target}/{version}/boot.ipxe"
@@ -439,6 +476,13 @@ def stage(
                     "bytes": verified_windows_source["bytes"],
                     "file_count": verified_windows_source["file_count"],
                 } if verified_windows_source is not None else None),
+            "workstation_repo": (
+                {
+                    "path": f"www/{WORKSTATION_REPO_WWW}",
+                    "receipt_sha256": repo_summary["receipt_sha256"],
+                    "packages": repo_summary["packages"],
+                    "bytes": repo_summary["bytes"],
+                } if repo_summary is not None else None),
             "selected_manifest_sha256": selected["manifest_sha256"],
             "bootstrap": "www/boot/boot.ipxe",
             "offline_repair": repair,

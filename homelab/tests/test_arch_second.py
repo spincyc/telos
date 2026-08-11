@@ -8,14 +8,16 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64, MSR, PROBE_CHECKS,
-    PROBE_HELPER_PATH, STORAGE_HOST_LABEL, STORAGE_LOGIN_SECONDS_MARKER,
-    STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT, SYNTHETIC_DOMAIN,
-    SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY, Disk,
+    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64, MSR,
+    PROBE_CHECKS, PROBE_HELPER_PATH, STORAGE_HOST_LABEL,
+    STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
+    SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
+    WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
     InstallContractError, Partition, parse_lsblk, render_installer,
     validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
+from lib.workstation_repo import REPO_NAME
 
 MIB = 1024**2
 SIZES = (1024, 16, 300 * 1024, 100 * 1024, 2048)
@@ -386,6 +388,82 @@ class ArchSecondTests(unittest.TestCase):
             hostname="workstation", expected_sizes_mib=SIZES,
         )
         self.assertIn(f"realm = {spec.realm}", script)
+
+    def test_offline_repo_defaults_match_the_factory_publication(self):
+        from vm.controller_factory import FactorySpec
+        from vm.factory_publication import WORKSTATION_REPO_WWW
+
+        # The fixed fabric address is the one every PXE fetch of the
+        # publication already uses; the URL path is the exact www location
+        # factory_publication stages the receipt-bound repository under.
+        self.assertEqual(CONTROLLER_ADDRESS, FactorySpec().address)
+        self.assertEqual(
+            WORKSTATION_REPO_URL,
+            f"http://{CONTROLLER_ADDRESS}/{WORKSTATION_REPO_WWW}")
+        # The pacman section name is the repo-add database stem; both come
+        # from lib.workstation_repo so they cannot drift apart.
+        self.assertEqual(WORKSTATION_REPO_NAME, REPO_NAME)
+
+    def test_stock_mirrorlist_is_replaced_never_appended(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        # Replacement, not appending: both pacman entry points are
+        # overwritten before pacstrap can consult any internet mirror.
+        self.assertIn("cat > /etc/pacman.d/mirrorlist <<", script)
+        self.assertIn("cat > /etc/pacman.conf <<", script)
+        self.assertNotIn(">> /etc/pacman.d/mirrorlist", script)
+        self.assertNotIn(">> /etc/pacman.conf", script)
+        server_lines = [
+            line for line in script.splitlines()
+            if line.startswith("Server = ")
+        ]
+        self.assertEqual(
+            server_lines, [f"Server = {WORKSTATION_REPO_URL}"])
+        # Only the Controller repository section exists; the stock internet
+        # repositories are gone rather than shadowed.
+        self.assertIn(f"[{WORKSTATION_REPO_NAME}]", script)
+        self.assertNotIn("[core]", script)
+        self.assertNotIn("[extra]", script)
+        self.assertNotIn("[multilib]", script)
+        # ADR 0075 signed-package policy: exactly the Controller seed's
+        # signature levels (homelab/seed/pacman.conf).
+        self.assertIn("SigLevel = Required DatabaseOptional", script)
+        self.assertIn("LocalFileSigLevel = Required", script)
+        # The replacement happens before the sole pacstrap invocation.
+        self.assertLess(
+            script.index("cat > /etc/pacman.d/mirrorlist"),
+            script.index("\npacstrap -K"))
+        self.assertLess(
+            script.index("cat > /etc/pacman.conf"),
+            script.index("\npacstrap -K"))
+
+    def test_repo_url_override_flows_into_both_entry_points(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+            package_repo_url="http://10.1.31.2:8080/other/repo",
+        )
+        self.assertIn("Server = http://10.1.31.2:8080/other/repo", script)
+        self.assertNotIn(WORKSTATION_REPO_URL + "\n", script)
+
+    def test_rejects_invalid_package_repo_urls(self):
+        for url in (
+            "",
+            "https://mirror.example.org/repo",
+            "http://10.1.31.2/repo'; rm -rf /",
+            "http://10.1.31.2/repo with space",
+            "http://10.1.31.2/arch/workstation-repo/",
+            "ftp://10.1.31.2/repo",
+            "http://10.1.31.2/$repo/$arch",
+        ):
+            with self.assertRaises(InstallContractError):
+                render_installer(
+                    disk_path="/dev/vda", disk_serial="LAPTOP-1",
+                    hostname="workstation", expected_sizes_mib=SIZES,
+                    package_repo_url=url,
+                )
 
     def test_rejects_invalid_realm_parameters(self):
         for overrides in (

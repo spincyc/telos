@@ -32,6 +32,8 @@ command starts.
 The aggregate target obtains, or starts acquisition of:
 
 - the current official Arch Linux x86-64 installation ISO;
+- the signed workstation package repository (the full dependency closure of
+  the `workstation-install` package contract, with a `repo-add` database);
 - the pinned official iPXE `wimboot` release; and
 - the current official Windows 11 x64 multi-edition ISO.
 
@@ -39,6 +41,7 @@ Individual targets are useful when resuming a failed or interactive download:
 
 ```sh
 make homelab-media-arch
+make homelab-media-workstation-repo
 make homelab-media-wimboot
 make homelab-media-windows
 make homelab-stage-windows-source
@@ -60,6 +63,16 @@ official checksum manifest and its detached OpenPGP signature is valid under
 the pinned Arch release-signing fingerprint. The key is resolved from Arch's
 official Web Key Directory into an isolated keyring; a same-name key from a
 general-purpose keyserver is not sufficient.
+
+The workstation package repository is acquired with the same signed-download
+machinery as the Controller seed: pacman resolves the full dependency closure
+of the checked-in `workstation-install` contract through the build host's
+official mirrors under `SigLevel Required`, every archive must carry a
+detached signature, and a receipt binds every byte, the resolved contract,
+and the `repo-add` database. The offline gate
+(`make homelab-factory-offline-check`) and factory publication refuse a
+missing, tampered, or contract-drifted repository; the disposable Controller
+serves it over HTTP so gate 7's `pacstrap` never needs an internet mirror.
 
 `wimboot` is downloaded from the pinned release asset in the official
 `ipxe/wimboot` GitHub repository. Its byte count and SHA-256 must match the

@@ -34,6 +34,9 @@ from lib.package_contract import (  # noqa: E402
     load_registry,
     merge_contract,
 )
+from lib.workstation_repo import (  # noqa: E402
+    REPO_NAME as WORKSTATION_REPO_NAME,
+)
 
 
 ESP = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
@@ -64,6 +67,23 @@ SAFE_PRINCIPAL = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # suite pins this module's defaults to FactorySpec so they cannot drift.
 SYNTHETIC_DOMAIN = "ad.factory.test"
 SYNTHETIC_WORKGROUP = "FACTORY"
+
+# The disposable Controller's fixed fabric address.  It mirrors
+# vm.controller_factory FactorySpec.address (test-pinned) and is the same
+# literal address every PXE fetch of the publication already proves: the
+# published bootstrap chains http://10.1.31.2/... (vm/factory_publication)
+# and archiso pulled its root filesystem from it before this script ran.
+CONTROLLER_ADDRESS = "10.1.31.2"
+# The stable www path vm.factory_publication stages the offline workstation
+# pacman repository under (WORKSTATION_REPO_WWW); nginx serves the staged
+# tree rooted at "/", so the guest-visible repository URL is fixed.
+WORKSTATION_REPO_URL = (
+    f"http://{CONTROLLER_ADDRESS}/arch/workstation-repo")
+# A quote-free, heredoc-safe absolute http URL: pacman config values take no
+# quoting, so the grammar refuses spaces, quotes, and control characters.
+SAFE_REPO_URL = re.compile(
+    r"^http://[A-Za-z0-9][A-Za-z0-9.-]{0,127}(?::[0-9]{1,5})?"
+    r"(?:/[A-Za-z0-9._-]+)*$")
 
 # One-use machine-join credential media.  The label matches the volume id the
 # Windows lane's vm.windows_join_iso.build_join_iso emits, so the same private
@@ -735,6 +755,7 @@ def render_installer(
     realm_dns_domain: str = SYNTHETIC_DOMAIN,
     realm_workgroup: str = SYNTHETIC_WORKGROUP,
     join_media_label: str = JOIN_MEDIA_LABEL,
+    package_repo_url: str = WORKSTATION_REPO_URL,
 ) -> str:
     """Render the destructive stage with its validation embedded before mkfs.
 
@@ -744,6 +765,11 @@ def render_installer(
     which the runner attaches after archiso is live and destroys after the
     ``TELOS ARCH JOIN MEDIA CONSUMED`` marker.  The credential exists only in
     tmpfs and is removed before the installer finishes.
+
+    ``pacstrap`` never reaches an internet mirror: the script replaces the
+    live environment's mirrorlist and pacman.conf so *package_repo_url* —
+    by default the disposable Controller's receipt-bound workstation
+    repository at the fixed fabric address — is the sole package source.
     """
     if not SAFE_DISK.fullmatch(disk_path):
         raise InstallContractError("disk path must be a simple /dev path")
@@ -762,12 +788,15 @@ def render_installer(
         raise InstallContractError("realm workgroup is invalid")
     if not SAFE_LABEL.fullmatch(join_media_label):
         raise InstallContractError("join media label is invalid")
+    if not SAFE_REPO_URL.fullmatch(package_repo_url):
+        raise InstallContractError("package repository URL is invalid")
     realm = realm_dns_domain.upper()
     principals = _identity_principals()
     login_bound = _identity_login_bound()
     storage_host = f"{STORAGE_HOST_LABEL}.{realm_dns_domain}"
     sizes = ",".join(str(size) for size in expected_sizes_mib)
     packages = " ".join(_workstation_packages())
+    repo_name = WORKSTATION_REPO_NAME
     krb5_conf = _render_krb5(realm)
     smb_conf = _render_smb(realm, realm_workgroup)
     sssd_conf = _render_sssd(realm_dns_domain, realm)
@@ -820,6 +849,38 @@ mkfs.ext4 -F -L ARCH_ROOT "$ARCH_PART"
 mount "$ARCH_PART" /mnt
 mkdir -p /mnt/boot
 mount "$ESP_PART" /mnt/boot
+
+# ---- Offline package source (factory offline contract) ----
+# The isolated fabric resolves no internet mirror, so the stock archiso
+# mirrorlist can only fail DNS (proven live: pacstrap died retrieving
+# core.db/extra.db).  Replace -- never append to -- both pacman entry
+# points so the Controller's receipt-bound workstation repository is the
+# sole reachable package source.  The packages are official signed
+# archives, so the signature policy stays exactly the Controller seed's
+# (homelab/seed/pacman.conf, ADR 0075): SigLevel Required, verified
+# against the archiso keyring; only the repo-add database itself is
+# unsigned, hence DatabaseOptional.  pacstrap copies this mirrorlist into
+# the installed system, which keeps the factory exercise offline;
+# provisioning real internet mirrors is a later, online fleet concern.
+cat > /etc/pacman.d/mirrorlist <<'TELOS_MIRROR_EOF'
+# Managed by Telos gate 7 (workstations/arch_second.py).
+# Sole package source: the disposable Controller's workstation repository.
+Server = {package_repo_url}
+TELOS_MIRROR_EOF
+cat > /etc/pacman.conf <<'TELOS_PACMAN_EOF'
+# Managed by Telos gate 7 (workstations/arch_second.py).  The stock
+# repositories are deliberately absent: the replaced mirrorlist above is
+# the only server list, and this is the only repository section.
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Required
+ParallelDownloads = 5
+
+[{repo_name}]
+Include = /etc/pacman.d/mirrorlist
+TELOS_PACMAN_EOF
+
 pacstrap -K /mnt {packages}
 genfstab -U /mnt >> /mnt/etc/fstab
 printf '%s\\n' "$hostname" > /mnt/etc/hostname
