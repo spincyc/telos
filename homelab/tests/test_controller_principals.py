@@ -113,7 +113,8 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         for attribute in (
                 "sAMAccountName", "userPrincipalName", "userAccountControl",
                 "msDS-User-Account-Control-Computed", "accountExpires",
-                "lockoutTime", "badPwdCount", "pwdLastSet", "objectSid"):
+                "lockoutTime", "badPwdCount", "pwdLastSet", "objectSid",
+                "uidNumber", "gidNumber", "loginShell", "unixHomeDirectory"):
             self.assertIn(f'"{attribute}"', program)
         self.assertIn("expected_upn = name + \"@\" + realm", program)
         self.assertIn("FLAG_MOD_REPLACE", program)
@@ -127,6 +128,106 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         self.assertIn("sid_values[0] in sids", program)
         self.assertIn("rollback_failures = []", program)
         self.assertIn('"staged principal rollback failed: "', program)
+
+    def test_posix_allocation_is_pinned_for_sssd_id_mapping_off(self):
+        # ADR 0055: UID and GID come from the directory.  These numbers are
+        # the stable cross-machine identities; changing them orphans every
+        # file an Arch Workstation ever wrote.  Users are base 10000 plus
+        # roster position; groups are base 10000 plus well-known AD RID.
+        self.assertEqual(
+            {
+                "users": {
+                    "student": {
+                        "uidNumber": 10000,
+                        "gidNumber": 10513,
+                        "loginShell": "/bin/bash",
+                        "unixHomeDirectory": "/home/student",
+                    },
+                    "operator": {
+                        "uidNumber": 10001,
+                        "gidNumber": 10513,
+                        "loginShell": "/bin/bash",
+                        "unixHomeDirectory": "/home/operator",
+                    },
+                    "directory-admin": {
+                        "uidNumber": 10002,
+                        "gidNumber": 10513,
+                        "loginShell": "/bin/bash",
+                        "unixHomeDirectory": "/home/directory-admin",
+                    },
+                },
+                "groups": {
+                    "Domain Users": 10513,
+                    "Domain Admins": 10512,
+                },
+            },
+            controller_principals.POSIX_ALLOCATION,
+        )
+        # Re-deriving the allocation must reproduce the pinned numbers.
+        self.assertEqual(
+            controller_principals.POSIX_ALLOCATION,
+            controller_principals._posix_allocation(),
+        )
+
+    def test_stage_program_bakes_and_verifies_posix_attributes(self):
+        program = controller_principals._STAGE_PROGRAM
+        self.assertNotIn("@POSIX_JSON@", program)
+        self.assertIn(
+            json.dumps(
+                controller_principals.POSIX_ALLOCATION,
+                sort_keys=True, separators=(",", ":"),
+            ),
+            program,
+        )
+        # The users are created with the directory-stored POSIX attributes.
+        for keyword in (
+                'uidnumber=unix["uidNumber"]',
+                'gidnumber=unix["gidNumber"]',
+                'loginshell=unix["loginShell"]',
+                'unixhome=unix["unixHomeDirectory"]'):
+            self.assertIn(keyword, program)
+        # The privilege and primary groups receive their gidNumber before
+        # any user exists, and both writes are verified read-back.
+        self.assertIn(
+            '"(&(objectClass=group)(sAMAccountName=" + group + "))"',
+            program)
+        self.assertIn("posix group is not stored exactly once", program)
+        self.assertIn("posix group gidNumber is invalid", program)
+        # Every staged user is verified to carry the exact allocation.
+        for message in (
+                "staged principal uidNumber is invalid",
+                "staged principal gidNumber is invalid",
+                "staged principal login shell is invalid",
+                "staged principal unix home is invalid"):
+            self.assertIn(message, program)
+
+    def test_posix_allocation_rejects_collisions(self):
+        validate = controller_principals._validated_posix_allocation
+        base = controller_principals.POSIX_ALLOCATION
+
+        def variant(**changes):
+            users = {
+                name: dict(attrs) for name, attrs in base["users"].items()
+            }
+            groups = dict(base["groups"])
+            for name, attrs in changes.pop("users", {}).items():
+                users[name].update(attrs)
+            groups.update(changes.pop("groups", {}))
+            return {"users": users, "groups": groups}
+
+        self.assertEqual(base, validate(variant()))
+        with self.assertRaisesRegex(ValueError, "uidNumber .*collides"):
+            validate(variant(users={"operator": {"uidNumber": 10000}}))
+        with self.assertRaisesRegex(ValueError, "gidNumber .*collides"):
+            validate(variant(groups={"Domain Admins": 10513}))
+        with self.assertRaisesRegex(ValueError, "ranges collide"):
+            validate(variant(users={"student": {"uidNumber": 10512}}))
+        with self.assertRaisesRegex(ValueError, "not a staged group"):
+            validate(variant(users={"student": {"gidNumber": 10999}}))
+        with self.assertRaisesRegex(ValueError, "uidNumber is out of range"):
+            validate(variant(users={"student": {"uidNumber": 999}}))
+        with self.assertRaisesRegex(ValueError, "gidNumber is out of range"):
+            validate(variant(groups={"Domain Users": 100}))
 
     def test_destroy_program_proves_every_principal_absent(self):
         program = controller_principals._DESTROY_PROGRAM

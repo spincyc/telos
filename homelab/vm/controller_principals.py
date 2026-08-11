@@ -29,10 +29,77 @@ class ControllerPrincipalResult:
 _ROLES = ("student", "operator", "directory-admin")
 _SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
+# ADR 0055: UID and GID come from the directory.  The Arch Workstation lane
+# runs SSSD with ``ldap_id_mapping = False`` (identity_client role), so a
+# principal without directory-stored POSIX attributes cannot log in at all.
+# The allocation is deterministic and public:
+#
+#   users:  uidNumber = 10000 + position in the pinned _ROLES roster
+#   groups: gidNumber = 10000 + the group's well-known Active Directory RID
+#           (Domain Admins 512 -> 10512, Domain Users 513 -> 10513)
+#
+# Every user's gidNumber is the Domain Users gidNumber because Domain Users
+# (RID 513) is each account's Active Directory primary group.  The base sits
+# far above the workstations' first local ordinary-user UID (1000, the
+# break-glass account), which ADR 0055 requires to stay local.
+_POSIX_BASE = 10000
+_POSIX_LOGIN_SHELL = "/bin/bash"
+_POSIX_PRIMARY_GROUP = "Domain Users"
+# "Domain Admins" is the privilege group the Arch identity probe resolves
+# with getent (workstations/arch_second.py); both groups must own a
+# gidNumber before any SSSD client can resolve them.
+_POSIX_GROUP_RIDS = {"Domain Users": 513, "Domain Admins": 512}
+
+
+def _posix_allocation() -> dict[str, dict]:
+    """Derive the deterministic POSIX allocation from the pinned roster."""
+    groups = {
+        name: _POSIX_BASE + rid for name, rid in _POSIX_GROUP_RIDS.items()
+    }
+    users = {
+        name: {
+            "uidNumber": _POSIX_BASE + index,
+            "gidNumber": groups[_POSIX_PRIMARY_GROUP],
+            "loginShell": _POSIX_LOGIN_SHELL,
+            "unixHomeDirectory": "/home/" + name,
+        }
+        for index, name in enumerate(_ROLES)
+    }
+    return {"users": users, "groups": groups}
+
+
+def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
+    """Refuse any POSIX allocation whose identifiers could collide."""
+    users = allocation["users"]
+    groups = allocation["groups"]
+    uids = [user["uidNumber"] for user in users.values()]
+    gids = list(groups.values())
+    if any(not isinstance(uid, int) or uid < _POSIX_BASE for uid in uids):
+        raise ValueError("Controller POSIX uidNumber is out of range")
+    if any(not isinstance(gid, int) or gid < _POSIX_BASE for gid in gids):
+        raise ValueError("Controller POSIX gidNumber is out of range")
+    if len(set(uids)) != len(uids):
+        raise ValueError("Controller POSIX uidNumber allocation collides")
+    if len(set(gids)) != len(gids):
+        raise ValueError("Controller POSIX gidNumber allocation collides")
+    if set(uids) & set(gids):
+        raise ValueError(
+            "Controller POSIX user and group identifier ranges collide")
+    for user in users.values():
+        if user["gidNumber"] not in gids:
+            raise ValueError(
+                "Controller POSIX primary group is not a staged group")
+    return {"users": dict(users), "groups": dict(groups)}
+
+
+POSIX_ALLOCATION = _validated_posix_allocation(_posix_allocation())
+
 # These programs run inside the disposable Controller.  Their source is
 # encoded only to make it safe to place in one shell word; it contains no
-# instance data or credential.
-_STAGE_PROGRAM = r"""
+# instance data or credential.  The @POSIX_JSON@ token is substituted below
+# with the public, deterministic POSIX_ALLOCATION; secrets still travel
+# exclusively over stdin.
+_STAGE_PROGRAM_TEMPLATE = r"""
 import json
 import sys
 
@@ -45,6 +112,7 @@ values = json.load(sys.stdin)
 expected = {"student", "operator", "directory-admin"}
 if set(values) != expected:
     raise ValueError("unexpected principal roster")
+posix = json.loads('@POSIX_JSON@')
 lp = LoadParm()
 lp.load_default()
 samdb = SamDB(session_info=system_session(), lp=lp)
@@ -60,16 +128,47 @@ attributes = [
     "badPwdCount",
     "pwdLastSet",
     "objectSid",
+    "uidNumber",
+    "gidNumber",
+    "loginShell",
+    "unixHomeDirectory",
 ]
 
 def integers(record, attribute):
     return [int(str(value)) for value in record.get(attribute, [])]
 
+def strings(record, attribute):
+    return [str(value) for value in record.get(attribute, [])]
+
 try:
+    # Groups first, so no staged user ever carries a gidNumber the
+    # directory cannot resolve.  Replacing a deterministic gidNumber is
+    # idempotent, so a failed stage needs no group rollback: the next
+    # stage rewrites identical numbers and the Controller is disposable.
+    for group in sorted(posix["groups"]):
+        gid = posix["groups"][group]
+        expression = "(&(objectClass=group)(sAMAccountName=" + group + "))"
+        results = samdb.search(
+            expression=expression, attrs=["sAMAccountName", "gidNumber"])
+        if len(results) != 1:
+            raise RuntimeError("posix group is not stored exactly once")
+        update = Message()
+        update.dn = results[0].dn
+        update["gidNumber"] = MessageElement(
+            str(gid), FLAG_MOD_REPLACE, "gidNumber")
+        samdb.modify(update)
+        results = samdb.search(expression=expression, attrs=["gidNumber"])
+        if len(results) != 1 or integers(results[0], "gidNumber") != [gid]:
+            raise RuntimeError("posix group gidNumber is invalid")
     for name in ("student", "operator", "directory-admin"):
+        unix = posix["users"][name]
         samdb.newuser(
             name, values[name],
             force_password_change_at_next_login_req=False,
+            uidnumber=unix["uidNumber"],
+            gidnumber=unix["gidNumber"],
+            loginshell=unix["loginShell"],
+            unixhome=unix["unixHomeDirectory"],
         )
         created.append(name)
         expression = "(sAMAccountName=" + name + ")"
@@ -131,6 +230,15 @@ try:
         if len(sid_values) != 1 or not sid_values[0] or sid_values[0] in sids:
             raise RuntimeError("staged principal SID is invalid")
         sids.add(sid_values[0])
+        unix = posix["users"][name]
+        if integers(record, "uidNumber") != [unix["uidNumber"]]:
+            raise RuntimeError("staged principal uidNumber is invalid")
+        if integers(record, "gidNumber") != [unix["gidNumber"]]:
+            raise RuntimeError("staged principal gidNumber is invalid")
+        if strings(record, "loginShell") != [unix["loginShell"]]:
+            raise RuntimeError("staged principal login shell is invalid")
+        if strings(record, "unixHomeDirectory") != [unix["unixHomeDirectory"]]:
+            raise RuntimeError("staged principal unix home is invalid")
 except BaseException:
     rollback_failures = []
     for name in reversed(created):
@@ -154,6 +262,14 @@ except BaseException:
             + ",".join(rollback_failures))
     raise
 """
+
+# The allocation is validated host-side (collision-free) before it is baked
+# into the guest program.  JSON never contains a single quote, so the
+# substitution stays one safe Python string literal.
+_STAGE_PROGRAM = _STAGE_PROGRAM_TEMPLATE.replace(
+    "@POSIX_JSON@",
+    json.dumps(POSIX_ALLOCATION, sort_keys=True, separators=(",", ":")),
+)
 
 _DESTROY_PROGRAM = r"""
 import json
