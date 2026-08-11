@@ -389,6 +389,94 @@ class ArchInstallRunTests(unittest.TestCase):
         self.assertIn(b"lsblk -dno SERIAL", stdin.data)
         self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
 
+    def test_drive_installer_answers_the_getty_login_then_hot_attaches(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+        attach_calls: list = []
+
+        def attach() -> None:
+            events.append(("attach", None))
+            attach_calls.append(1)
+
+        # The PXE archiso stops at a getty login prompt, not a root shell.
+        os.write(
+            write_fd, b"Arch Linux 7.0.14-arch1-1 (ttyS0)\n\narchiso login: ")
+
+        def feeder() -> None:
+            # Once the runner answers the login with `root`, the getty echoes it
+            # and drops to the passwordless root shell the runner waits for.
+            for _ in range(5000):
+                if b"root\n" in stdin.data:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"root\n[root@archiso ~]# ")
+            for _ in range(5000):
+                if attach_calls and b"bash /root/arch-install.sh" in stdin.data:
+                    break
+                time.sleep(0.001)
+            os.write(write_fd, b"\nTELOS ARCH INSTALL COMPLETE\n")
+            os.close(write_fd)
+
+        worker = threading.Thread(target=feeder)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                transcript = arch_install_run.drive_installer(
+                    process, capture, verify_script="verify",
+                    installer_script="installer", serial="TELOS-WIN-0001",
+                    attach=attach, timeout=10)
+        finally:
+            worker.join()
+            os.close(read_fd)
+        self.assertEqual(attach_calls, [1])
+        # The very first byte sent to the guest is the login answer.
+        writes = [payload for kind, payload in events if kind == "write"]
+        self.assertEqual(writes[0], b"root\n")
+        # Ordering: login `root` -> hot-attach -> installer bytes.
+        login_index = next(
+            index for index, (kind, payload) in enumerate(events)
+            if kind == "write" and payload == b"root\n")
+        attach_index = events.index(("attach", None))
+        installer_index = next(
+            index for index, (kind, payload) in enumerate(events)
+            if kind == "write" and b"bash /root/arch-install.sh" in payload)
+        self.assertLess(login_index, attach_index)
+        self.assertLess(attach_index, installer_index)
+        self.assertIn(b"lsblk -dno SERIAL", stdin.data)
+        self.assertIn("TELOS ARCH INSTALL COMPLETE", transcript)
+
+    def test_drive_installer_fails_closed_when_login_never_yields_a_shell(self):
+        read_fd, write_fd = os.pipe()
+        events: list = []
+        stdin = _Recorder(events)
+        process = _FakeProcess(read_fd, stdin)
+
+        def attach() -> None:
+            events.append(("attach", None))
+
+        # A getty login that is answered but never produces a root shell.
+        os.write(write_fd, b"archiso login: ")
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                capture = Path(temporary) / "serial.log"
+                with self.assertRaisesRegex(
+                        RuntimeError, "root shell was never reached"):
+                    arch_install_run.drive_installer(
+                        process, capture, verify_script="verify",
+                        installer_script="installer", serial="TELOS-WIN-0001",
+                        attach=attach, timeout=1)
+        finally:
+            os.close(write_fd)
+            os.close(read_fd)
+        # `root` was sent to answer the login, but no destructive step ran: no
+        # hot-attach and no installer bytes reached the guest.
+        self.assertIn(("write", b"root\n"), events)
+        self.assertNotIn(("attach", None), events)
+        self.assertNotIn(b"bash /root/arch-install.sh", stdin.data)
+
     def test_drive_installer_propagates_a_hot_attach_failure(self):
         read_fd, write_fd = os.pipe()
         process = _FakeProcess(read_fd, _Recorder([]))

@@ -244,6 +244,24 @@ def _validate_lifecycle(serial: str, disk_serial: str = DISK_SERIAL) -> None:
             "workstation did not use exactly one PXE firmware boot")
 
 
+# archiso's PXE image reaches a getty `login:` prompt on ttyS0 with no serial
+# autologin drop-in; its live root has an empty password. These matchers mirror
+# _at_root_prompt (end-of-transcript anchored, no MULTILINE) so login is only
+# answered while the prompt is the last thing the guest emitted.
+_LOGIN_PROMPT = re.compile(rb"[\w.-]+ login:[ \t]*$")
+_PASSWORD_PROMPT = re.compile(rb"[Pp]assword:[ \t]*$")
+
+
+def _at_login_prompt(transcript: bytes | bytearray) -> bool:
+    """Match a getty ``<hostname> login:`` prompt awaiting a username."""
+    return _LOGIN_PROMPT.search(transcript) is not None
+
+
+def _at_password_prompt(transcript: bytes | bytearray) -> bool:
+    """Match a login ``Password:`` prompt awaiting the (empty) live password."""
+    return _PASSWORD_PROMPT.search(transcript) is not None
+
+
 def _heredoc(target: str, payload: str) -> bytes:
     """Deliver an exact file into the guest via a base64 heredoc."""
     encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
@@ -261,12 +279,17 @@ def drive_installer(
 ) -> str:
     """Drive the Arch live shell and return the captured serial transcript.
 
-    When archiso first reaches its root prompt the install-target NVMe is
-    absent (it was never cold-plugged).  *attach* hot-plugs it over QMP before
-    any installer step runs; a bounded in-guest lsblk gate then proves the
-    authorized serial is present, so the destructive installer only ever sees
-    the one intended target.  An *attach* failure propagates for fail-closed
-    teardown.
+    The PXE archiso boots to a getty ``archiso login:`` prompt on ttyS0 with no
+    serial autologin, so this first answers that login (username ``root``; the
+    live root has an empty password) and waits for the root shell.  An image
+    that already dropped straight to a root shell is honoured without sending a
+    spurious login.  When archiso first reaches its root prompt the
+    install-target NVMe is absent (it was never cold-plugged).  *attach*
+    hot-plugs it over QMP before any installer step runs; a bounded in-guest
+    lsblk gate then proves the authorized serial is present, so the destructive
+    installer only ever sees the one intended target.  An *attach* failure
+    propagates for fail-closed teardown, and a login that never yields a shell
+    within *timeout* fails closed with a clear error.
     """
     import select
     if process.stdin is None or process.stdout is None:
@@ -300,6 +323,8 @@ def drive_installer(
     ]
     began = False
     dispatched = False
+    login_sent = False
+    password_sent = False
     while time.monotonic() < deadline:
         if process.poll() is not None:
             break
@@ -314,15 +339,32 @@ def drive_installer(
                 capture.write_bytes(transcript)
                 capture.chmod(0o600)
         text = transcript.decode("utf-8", errors="replace")
-        if not began and _at_root_prompt(transcript):
-            # archiso is live: hot-attach the install target before any step so
-            # its serial is present when the installer greps lsblk.
-            attach()
-            for command in steps:
-                process.stdin.write(command)
-            process.stdin.flush()
-            began = True
-            dispatched = True
+        if not began:
+            if _at_root_prompt(transcript):
+                # archiso is live at a root shell (getty login answered, or an
+                # image that autologged in): hot-attach the install target
+                # before any step so its serial is present when the installer
+                # greps lsblk.
+                attach()
+                for command in steps:
+                    process.stdin.write(command)
+                process.stdin.flush()
+                began = True
+                dispatched = True
+            elif not login_sent and _at_login_prompt(transcript):
+                # Answer the getty login; the live root has no password, so this
+                # yields the root shell the branch above waits for.
+                process.stdin.write(b"root\n")
+                process.stdin.flush()
+                login_sent = True
+            elif (login_sent and not password_sent
+                    and _at_password_prompt(transcript)):
+                # The PXE live image should not ask for a password, but if a
+                # variant does the live root's password is empty: answer with a
+                # bare line rather than stalling until the deadline.
+                process.stdin.write(b"\n")
+                process.stdin.flush()
+                password_sent = True
         if dispatched and (COMPLETE_MARKER in text or FAIL_MARKER in text):
             # Give the boot-entry proof and teardown lines a brief moment to
             # arrive before the guest powers off.
@@ -340,6 +382,10 @@ def drive_installer(
             break
     capture.write_bytes(transcript)
     capture.chmod(0o600)
+    if not began:
+        raise RuntimeError(
+            "Arch live root shell was never reached: the archiso getty login "
+            "was not completed before the deadline")
     return transcript.decode("utf-8", errors="replace")
 
 
