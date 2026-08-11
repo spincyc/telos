@@ -1184,6 +1184,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         interaction = interaction_type.return_value
         ordering = mock.Mock()
         ordering.attach_mock(interaction.observe, "observe")
+        ordering.attach_mock(interaction.chord, "chord")
         ordering.attach_mock(diagnostic.arm, "arm")
         ordering.attach_mock(interaction.disable_durable_capture, "disable")
         ordering.attach_mock(interaction.type_secret, "type_secret")
@@ -1232,6 +1233,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.assertEqual("a" * 32, diagnostic_arguments["nonce"])
         self.assertEqual(
             [
+                mock.call.chord("ctrl", "a", timeout=mock.ANY),
                 mock.call.key("backspace", timeout=mock.ANY),
                 mock.call.key("tab", timeout=mock.ANY),
                 mock.call.observe(sign_in, mock.ANY),
@@ -1239,16 +1241,12 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 mock.call.controller_arm(),
                 mock.call.arm(),
                 # The slow controller and diagnostic arms above can time the
-                # "Other user" sign-in form out to the lock screen, so the
-                # form is re-established (wake -> account selection -> UPN
-                # entry -> password-target proof) before the secret is typed.
-                # wake_after_lock_keys and account keys are empty here, so
-                # only the UPN normalization backspace and the Tab-to-password
-                # proof are visible on this ordering mock.
-                mock.call.key("backspace", timeout=mock.ANY),
-                mock.call.key("tab", timeout=mock.ANY),
-                mock.call.observe(sign_in, mock.ANY),
-                mock.call.observe(sign_in, mock.ANY),
+                # "Other user" sign-in form out to the lock screen, so it is
+                # re-established before the secret by exactly the Secure
+                # Attention Sequence -- instrumented frames proved Ctrl+Alt+Del
+                # alone restores the form with the UPN intact and the password
+                # field focused and empty.
+                mock.call.chord("ctrl", "alt", "delete", timeout=mock.ANY),
                 mock.call.disable(),
                 mock.call.type_secret("private", timeout=mock.ANY),
                 mock.call.prove_departure(
@@ -1325,6 +1323,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         ordering = mock.Mock()
         ordering.attach_mock(controller.arm, "controller_arm")
         ordering.attach_mock(interaction.key, "key")
+        ordering.attach_mock(interaction.chord, "chord")
         ordering.attach_mock(interaction.observe, "observe")
         ordering.attach_mock(interaction.disable_durable_capture, "disable")
         ordering.attach_mock(interaction.type_secret, "type_secret")
@@ -1363,19 +1362,17 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         # The form is proven once before the arm...
         self.assertIn(
             mock.call.key("tab", timeout=mock.ANY), calls[:arm_index])
-        # ...and fully re-established after the arm, before the secret:
-        # re-wake, re-select the account, re-enter the UPN (the visible
-        # backspace of its normalization) and re-prove the password target,
-        # then disable durable capture, and only then type the secret.
+        # ...and re-established after the arm, before the secret, by exactly
+        # the Secure Attention Sequence and nothing else (instrumented
+        # frames proved Ctrl+Alt+Del alone restores the form with the UPN
+        # intact and the password field focused and empty; the old full
+        # re-entry polluted the field and re-timed-out the form). Then
+        # disable durable capture, and only then type the secret.
         self.assertEqual(
             calls[arm_index + 1:secret_index],
             [
-                mock.call.key("spc", timeout=mock.ANY),
-                mock.call.key("up", timeout=mock.ANY),
-                mock.call.key("backspace", timeout=mock.ANY),
-                mock.call.key("tab", timeout=mock.ANY),
-                mock.call.observe(sign_in, mock.ANY),
-                mock.call.observe(sign_in, mock.ANY),
+                mock.call.chord(
+                    "ctrl", "alt", "delete", timeout=mock.ANY),
                 mock.call.disable(),
             ],
         )

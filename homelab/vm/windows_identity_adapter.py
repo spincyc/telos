@@ -1016,37 +1016,25 @@ class NativeWindowsAcceptanceAdapter:
             # the secret submission below. That arm is slow -- tens of
             # seconds of sudo prompt, watcher launch and a multi-phase
             # prearm handshake -- and the Windows "Other user" sign-in form
-            # times out back to the lock screen inside that window. Without
-            # this step the secret and its activation land on the lock
-            # screen, not the form, so no interactive logon ever fires (the
-            # retained submit-pre/post-activation frames showed the lock
-            # screen clock, not the credential form). Re-run the exact
-            # wake -> account selection -> UPN entry -> password-target proof
-            # so the secret is typed into a live, focused form.
+            # times out back to the lock screen inside that window. The
+            # secret and its activation then land on the lock screen, not
+            # the form, so no interactive logon ever fires.
             #
-            # This only re-establishes GUI focus. It does not arm, does not
-            # touch the watcher and does not move the submission fence: the
-            # controller watcher's observation window stays anchored to the
-            # begin_submission fence sent after submit_secret types the
-            # secret, so re-waking here changes nothing about what the
-            # watcher observes. The secret itself is still typed exactly
-            # once, below, after disable_durable_capture and guarded by the
-            # same _prove_secret_entry_departure proof.
+            # Instrumented frames (attempt 28) proved the exact recovery:
+            # a single Ctrl+Alt+Del (the Secure Attention Sequence a
+            # domain-joined lock screen requires) instantly restores the
+            # form with the operator UPN still present AND the password
+            # field focused and empty. Re-running the full establishment
+            # after it was actively harmful -- the extra wake/select/UPN
+            # keys typed into the focused password field (garbage dots) and
+            # their observe waits took long enough to time the form out
+            # again. So do exactly the SAS and nothing else, then let
+            # submit_secret type the secret straight into the focused,
+            # empty password field.
             #
-            # A domain-joined machine's lock screen requires the Secure
-            # Attention Sequence to surface the sign-in form: a plain key
-            # does not dismiss a timed-out lock screen (attempt 24's
-            # re-established frame was still the lock-screen clock). Send
-            # Ctrl+Alt+Del first, as the change-password flow already does.
-            # Then send only the wake keys -- NOT the full wake(), whose
-            # initial_delay would sleep the freshly surfaced form back into
-            # a timeout before the UPN is re-entered (attempt 25's frame was
-            # still the clock even after the SAS). Calibration already ran
-            # once, so it is not repeated here.
-            def rewake() -> None:
-                for key in wake_keys:
-                    interaction.key(key, timeout=remaining("wake"))
-
+            # This only restores GUI focus: it does not arm, does not touch
+            # the watcher and does not move the submission fence, so the
+            # watcher's observation window stays anchored to begin_submission.
             frames_enabled = getattr(
                 plan, "post_join_retain_submit_frames", 0)
             _run_local_reauthentication_operation(
@@ -1056,19 +1044,6 @@ class NativeWindowsAcceptanceAdapter:
             _retain_single_frame(
                 self._qmp(), evidence, "reestablish-after-cad",
                 frames_enabled)
-            _run_local_reauthentication_operation("wake", rewake)
-            _retain_single_frame(
-                self._qmp(), evidence, "reestablish-after-wake",
-                frames_enabled)
-            _run_local_reauthentication_operation(
-                "select-local-account", select_local_account)
-            _run_local_reauthentication_operation(
-                "type-public-username", normalize_public_username)
-            _retain_single_frame(
-                self._qmp(), evidence, "reestablish-after-upn",
-                frames_enabled)
-            _run_local_reauthentication_operation(
-                "prove-password-target", prove_password_target)
 
         def submit_secret() -> None:
             if domain_operator:
