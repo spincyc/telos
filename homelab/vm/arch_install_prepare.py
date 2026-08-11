@@ -44,6 +44,12 @@ DEFAULT_WINDOWS_DISK = Path(
     "run-20260728T114233Z-afecdf7cc9d0/windows.qcow2")
 DEFAULT_RUNS = Path("homelab/var/factory/arch-installs")
 DISK_SERIAL = "TELOS-WIN-0001"
+# A cold-plugged, empty PCIe root port that provides the one hotplug-capable
+# slot the install-target NVMe is realised into.  q35's root complex (pcie.0)
+# does not support PCIe hotplug, so device_add onto pcie.0 fails; a root port
+# present at boot does.  This carries no disk device at boot, only the slot.
+DISK_PORT_ID = "telosdiskport"
+DISK_PORT_CHASSIS = 1
 DISK_BYTES = 256 * GIB
 GUEST_DISK = "/dev/nvme0n1"
 DEFAULT_HOSTNAME = "telos-workstation"
@@ -258,7 +264,10 @@ def qemu_arch_install_command(
     nothing but the NIC to boot, so a network-only ``order=n`` boot is
     deterministic even though the overlaid persistent disk still carries a
     bootable Windows ESP.  The runner hot-attaches the NVMe device (carrying
-    *serial*) over QMP once archiso reaches its live root prompt.
+    *serial*) over QMP once archiso reaches its live root prompt.  A single
+    empty ``pcie-root-port`` is cold-plugged onto ``pcie.0`` to supply the one
+    hotplug-capable slot that device_add needs (q35's root complex itself does
+    not support PCIe hotplug); it carries no disk at boot.
     """
     if not 1 <= switch_port <= 65535:
         raise ArchInstallPrepareError("switch port is invalid")
@@ -279,6 +288,13 @@ def qemu_arch_install_command(
         (
             "if=none,id=osdisk,format=qcow2,cache=none,"
             f"file={Path(disk).resolve()}"
+        ),
+        # An empty hotplug-capable PCIe slot the NVMe is hot-attached into once
+        # archiso is live; the disk backend above stays detached at boot.
+        "-device",
+        (
+            f"pcie-root-port,id={DISK_PORT_ID},bus=pcie.0,"
+            f"chassis={DISK_PORT_CHASSIS}"
         ),
         "-netdev",
         f"socket,id=factory,connect=127.0.0.1:{switch_port}",

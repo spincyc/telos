@@ -363,6 +363,9 @@ class ArchInstallRunTests(unittest.TestCase):
         self.assertEqual(arguments["drive"], "osdisk")
         self.assertEqual(arguments["serial"], "TELOS-WIN-0001")
         self.assertEqual(arguments["id"], "osdisk-nvme")
+        # The NVMe must land in the cold-plugged hotplug root port, not the
+        # q35 root complex pcie.0, which does not support PCIe hotplug.
+        self.assertEqual(arguments["bus"], arch_install_run.DISK_PORT_ID)
         self.assertIsNotNone(timeout)
         self.assertGreater(timeout, 0)
 

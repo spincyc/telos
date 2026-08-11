@@ -77,11 +77,27 @@ class ArchInstallPrepareTests(unittest.TestCase):
             self.assertIn("if=none,id=osdisk", joined)
             self.assertIn(str(disk.resolve()), joined)
             self.assertNotIn("-device nvme", joined)
+            device_values = [
+                item for index, item in enumerate(command)
+                if index and command[index - 1] == "-device"]
             self.assertFalse(
-                any(item.split(",", 1)[0] == "nvme"
-                    for index, item in enumerate(command)
-                    if index and command[index - 1] == "-device"))
+                any(value.split(",", 1)[0]
+                    in ("nvme", "ide-hd", "scsi-hd", "virtio-blk")
+                    for value in device_values))
             self.assertNotIn("bootindex=", joined)
+            # Exactly one empty PCIe hotplug slot sits on pcie.0 so the runner's
+            # device_add can realise the NVMe into it; q35's pcie.0 root complex
+            # itself does not support PCIe hotplug.  It carries no disk at boot.
+            root_ports = [
+                value for value in device_values
+                if value.split(",", 1)[0] == "pcie-root-port"]
+            self.assertEqual(len(root_ports), 1)
+            fields = dict(
+                item.split("=", 1)
+                for item in root_ports[0].split(",") if "=" in item)
+            self.assertEqual(fields["bus"], "pcie.0")
+            self.assertEqual(fields["id"], arch_install_prepare.DISK_PORT_ID)
+            self.assertIn("chassis", fields)
             self.assertIn("e1000e,netdev=factory", joined)
             self.assertIn("socket,id=factory,connect=127.0.0.1:31415", joined)
             # The install boot is network-only so PXE deterministically wins.
@@ -102,14 +118,25 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 "-boot", "order=n,menu=off",
                 "-drive",
                 f"if=none,id=osdisk,format=qcow2,file={disk.resolve()}",
+                # An empty hotplug slot is not a disk device: the audit accepts
+                # it while still rejecting any real cold-plugged disk device.
+                "-device",
+                f"pcie-root-port,id={arch_install_prepare.DISK_PORT_ID},"
+                "bus=pcie.0,chassis=1",
             ]
             arch_install_prepare.audit_arch_boot_boundary(
                 good, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
-            cold = good + [
-                "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001"]
-            with self.assertRaisesRegex(RuntimeError, "hot-plugged"):
-                arch_install_prepare.audit_arch_boot_boundary(
-                    cold, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
+            for cold_device in (
+                "nvme,drive=osdisk,serial=TELOS-WIN-0001",
+                "ide-hd,drive=osdisk",
+                "scsi-hd,drive=osdisk",
+                "virtio-blk,drive=osdisk",
+            ):
+                cold = good + ["-device", cold_device]
+                with self.assertRaisesRegex(RuntimeError, "hot-plugged"):
+                    arch_install_prepare.audit_arch_boot_boundary(
+                        cold, disk=disk,
+                        serial=arch_install_prepare.DISK_SERIAL)
 
     def test_qemu_command_rejects_oversize_qmp_socket(self):
         with tempfile.TemporaryDirectory() as temporary:

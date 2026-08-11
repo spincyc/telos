@@ -24,8 +24,8 @@ from typing import Callable
 
 try:
     from .arch_install_prepare import (
-        DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME,
-        audit_arch_boot_boundary, inspect_overlay)
+        DISK_PORT_ID, DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME,
+        VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
     from .factory_publication import stage as stage_publication
@@ -40,8 +40,8 @@ try:
     from .windows_install_contract import sha256
 except ImportError:  # Direct execution from homelab/vm.
     from arch_install_prepare import (
-        DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME, VERIFY_NAME,
-        audit_arch_boot_boundary, inspect_overlay)
+        DISK_PORT_ID, DISK_SERIAL, INSTALLER_NAME, OVERLAY_NAME, VARS_NAME,
+        VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
     from factory_publication import stage as stage_publication
@@ -170,12 +170,15 @@ def hot_attach_disk(
     The overlay is already present as the detached ``osdisk`` block backend
     (the boot argv carries no ``-device nvme``).  A single bounded
     ``device_add`` realises it as an NVMe device exposing *serial*, which is
-    exactly the serial the arch_second installer greps out of lsblk.  Any QMP
-    fault raises, so the caller tears the run down fail-closed.
+    exactly the serial the arch_second installer greps out of lsblk.  The
+    device is targeted at the cold-plugged ``pcie-root-port`` (``bus``) rather
+    than the q35 root complex ``pcie.0``, which does not support PCIe hotplug.
+    Any QMP fault raises, so the caller tears the run down fail-closed.
     """
     try:
         qmp.execute("device_add", {
             "driver": "nvme",
+            "bus": DISK_PORT_ID,
             "drive": NVME_BACKEND_ID,
             "serial": serial,
             "id": NVME_DEVICE_ID,
