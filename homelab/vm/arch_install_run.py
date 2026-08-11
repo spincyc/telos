@@ -341,7 +341,7 @@ def drive_installer(
     dispatched = False
     login_sent = False
     password_sent = False
-    probe_sent = False
+    probe_last = None
     while time.monotonic() < deadline:
         if process.poll() is not None:
             break
@@ -357,18 +357,17 @@ def drive_installer(
                 capture.chmod(0o600)
         text = transcript.decode("utf-8", errors="replace")
         if not began:
-            if probe_sent:
-                if sentinel in text:
-                    # The sentinel proves the root shell is live and reading
-                    # stdin despite interleaved kernel spam: hot-attach the
-                    # install target before any step so its serial is present
-                    # when the installer greps lsblk, then drive the installer.
-                    attach()
-                    for command in steps:
-                        process.stdin.write(command)
-                    process.stdin.flush()
-                    began = True
-                    dispatched = True
+            if probe_last is not None and sentinel in text:
+                # The sentinel proves the root shell is live and reading
+                # stdin despite interleaved kernel spam: hot-attach the
+                # install target before any step so its serial is present
+                # when the installer greps lsblk, then drive the installer.
+                attach()
+                for command in steps:
+                    process.stdin.write(command)
+                process.stdin.flush()
+                began = True
+                dispatched = True
             elif not login_sent and _at_login_prompt(transcript):
                 # Answer the getty login; the live root has no password, so this
                 # yields the root shell the sentinel handshake then confirms.
@@ -386,13 +385,16 @@ def drive_installer(
             elif login_sent or _at_root_prompt(transcript):
                 # The getty login was answered (or an autologin image dropped
                 # straight to a root shell): echo the readiness sentinel and
-                # wait for it to surface anywhere in the transcript. Sending it
-                # before attaching keeps the ordering root -> ready -> attach ->
-                # installer; the shell buffers our line through login, so the
-                # nonce prints as soon as it is actually accepting commands.
-                process.stdin.write(probe)
-                process.stdin.flush()
-                probe_sent = True
+                # wait for it to surface anywhere in the transcript. A single
+                # probe sent right after ``root`` is consumed as login echo
+                # before the shell exists, so re-send it on an interval until
+                # the shell actually executes it and prints ``...=ready``.
+                # Ordering stays root -> ready -> attach -> installer.
+                now = time.monotonic()
+                if probe_last is None or now - probe_last >= 3.0:
+                    process.stdin.write(probe)
+                    process.stdin.flush()
+                    probe_last = now
         if dispatched and (COMPLETE_MARKER in text or FAIL_MARKER in text):
             # Give the boot-entry proof and teardown lines a brief moment to
             # arrive before the guest powers off.
