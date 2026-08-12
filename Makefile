@@ -142,7 +142,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-deps homelab-factory-media \
 	homelab-factory-cache-seal homelab-factory-offline-check \
 	homelab-factory-controller-bundle homelab-factory-pxe \
-	homelab-factory-verify \
+	homelab-factory-verify homelab-pxe-authority-audit \
 	homelab-factory-recover homelab-factory-recover-judge \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
@@ -418,6 +418,21 @@ homelab-factory-verify:
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
 			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)'); \
 	fi
+
+# Gate 4 (PXE authority boundary): render the read-only PXE authority verdict
+# from a run's switch.jsonl. It never boots, connects, installs, or mutates any
+# evidence. SWITCH names the switch evidence log (one or more may be given via
+# the shell); TOPOLOGY optionally overrides the default factory fabric; AUDIT_JSON
+# optionally persists the full result JSON outside the retained evidence. Exit
+# status is 0 PASS, 1 FAIL, 3 NOT-PROVABLE.
+homelab-pxe-authority-audit:
+	@if [ -z '$(SWITCH)' ]; then \
+		echo 'require SWITCH=<path to a run'\''s evidence switch.jsonl>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-pxe-authority-audit audit $(SWITCH) \
+		$(if $(TOPOLOGY),--topology '$(TOPOLOGY)') \
+		$(if $(AUDIT_JSON),--json '$(AUDIT_JSON)')
 
 # Lifecycle recovery (gate 11): exercise controller restart/loss, PXE release
 # rollback, failed-install recovery, broken-boot repair, directory/DNS loss,

@@ -316,5 +316,76 @@ class CompareRunsTests(unittest.TestCase):
         self.assertTrue(comparison["equivalent"])
 
 
+CONTROLLER_MAC = "52:54:00:31:11:12"
+WORKSTATION_MAC = "52:54:00:31:12:12"
+
+CLEAN_GATE4_SWITCH = "\n".join(
+    json.dumps(event) for event in (
+        {"event": "switch-ready", "ports": [
+            {"port": "gateway", "mac": GATEWAY_MAC},
+            {"port": "controller", "mac": CONTROLLER_MAC},
+            {"port": "workstation", "mac": WORKSTATION_MAC}]},
+        {"event": "port-connected", "port": "gateway", "mac": GATEWAY_MAC,
+         "generation": 1},
+        {"event": "port-connected", "port": "controller", "mac": CONTROLLER_MAC,
+         "generation": 1},
+        {"event": "port-connected", "port": "workstation",
+         "mac": WORKSTATION_MAC, "generation": 1},
+        {"event": "dhcp", "kind": "DISCOVER", "peer": "workstation",
+         "source_mac": WORKSTATION_MAC, "client_mac": WORKSTATION_MAC},
+        {"event": "dhcp", "kind": "OFFER", "peer": "gateway",
+         "source_mac": GATEWAY_MAC, "client_mac": WORKSTATION_MAC,
+         "delivered_to": "workstation"},
+        {"event": "dhcp", "kind": "ACK", "peer": "gateway",
+         "source_mac": GATEWAY_MAC, "client_mac": WORKSTATION_MAC,
+         "delivered_to": "workstation"},
+        {"event": "flow", "peer": "workstation", "delivered_to": "controller",
+         "ethertype": 0x0800, "ip_protocol": 17, "src_port": 2070,
+         "dst_port": 69},
+        {"event": "flow", "peer": "controller", "delivered_to": "gateway",
+         "ethertype": 0x0800, "ip_protocol": 17, "src_port": 40000,
+         "dst_port": 53},
+    )
+) + "\n"
+
+
+class PxeAuthorityAuditWiringTests(VerifyRunTests):
+    """The gate-4 audit runs automatically during factory-verify (read-only)."""
+
+    def test_clean_switch_embeds_gate4_pass(self):
+        receipt = factory_verify.verify_run(
+            self.evidence(switch=CLEAN_GATE4_SWITCH),
+            release_set=self.release_set())
+        audit = receipt["pxe_authority_audit"]
+        self.assertEqual("workstation-factory-gate-4", audit["gate"])
+        self.assertEqual("PASS", audit["verdict"])
+        self.assertEqual("PASS",
+                         audit["checks"]["gate4.controller-approved-flows-only"])
+        # The distinct gate-4 result never perturbs the gate-12 verdict shape.
+        self.assertNotIn("pxe_authority_audit", receipt["checks"])
+
+    def test_rogue_controller_offer_embeds_gate4_fail(self):
+        rogue = CLEAN_GATE4_SWITCH + json.dumps({
+            "event": "dhcp", "kind": "OFFER", "peer": "controller",
+            "source_mac": CONTROLLER_MAC, "client_mac": WORKSTATION_MAC,
+            "blocked": True}) + "\n"
+        receipt = factory_verify.verify_run(self.evidence(switch=rogue))
+        self.assertEqual("FAIL", receipt["pxe_authority_audit"]["verdict"])
+
+    def test_missing_switch_marks_gate4_not_run(self):
+        receipt = factory_verify.verify_run(self.evidence(switch=None))
+        self.assertEqual("NOT-RUN",
+                         receipt["pxe_authority_audit"]["verdict"])
+
+    def test_audit_json_is_written_when_requested(self):
+        out = self.root / "pxe-authority-audit.json"
+        factory_verify.verify_run(
+            self.evidence(switch=CLEAN_GATE4_SWITCH), audit_out=out)
+        written = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual("PASS", written["verdict"])
+        # The full artifact carries the per-check detail, not just the summary.
+        self.assertTrue(any(c["details"] for c in written["checks"]))
+
+
 if __name__ == "__main__":
     unittest.main()

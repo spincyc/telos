@@ -48,8 +48,12 @@ FAIL = "FAIL"
 NOT_RUN = "NOT-RUN"
 
 RESULT = "result.json"
+# The read-only gate-4 audit receipt (homelab/vm/pxe_authority_audit.py) is a
+# permitted finalization artifact when a run embeds it beside its evidence.
+PXE_AUTHORITY_AUDIT = "pxe-authority-audit.json"
 ALLOWED_EVIDENCE = frozenset(
-    {RESULT, "controller-publication.log", "workstation-serial.log", "switch.jsonl"}
+    {RESULT, "controller-publication.log", "workstation-serial.log",
+     "switch.jsonl", PXE_AUTHORITY_AUDIT}
 )
 LOG_FILES = ("controller-publication.log", "workstation-serial.log")
 
@@ -296,6 +300,45 @@ def _check_dhcp_authority(evidence_dir: Path, entries: dict[str, int]) -> dict:
     return _record(PASS, "the simulated gateway was the only DHCP authority")
 
 
+def _pxe_authority_audit(evidence_dir: Path, entries: dict[str, int]) -> dict:
+    """Render the read-only gate-4 PXE authority verdict from switch evidence.
+
+    Delegates entirely to ``pxe_authority_audit`` (never reimplemented here).
+    Returns the auditor's own machine-readable result, or a fail-closed stub
+    when the audit cannot run.  The auditor's native verdict vocabulary
+    (PASS / FAIL / NOT-PROVABLE) is preserved; this is a distinct gate whose
+    result is embedded for the record, not folded into the gate-12 verdict.
+    """
+    if "switch.jsonl" not in entries:
+        return {"gate": "workstation-factory-gate-4", "verdict": NOT_RUN,
+                "detail": "switch evidence not retained"}
+    try:
+        try:
+            from homelab.vm import pxe_authority_audit
+        except ModuleNotFoundError:
+            import pxe_authority_audit  # type: ignore[no-redef]
+        topology = pxe_authority_audit.factory_topology()
+        return pxe_authority_audit.audit_paths(
+            [evidence_dir / "switch.jsonl"], topology)
+    except Exception as exc:  # fail closed: an unrunnable gate is not a pass
+        return {"gate": "workstation-factory-gate-4", "verdict": FAIL,
+                "detail": f"gate-4 audit could not run: {exc}"}
+
+
+def _pxe_authority_summary(result: dict) -> dict:
+    """A size-bounded projection of the gate-4 result for the run receipt."""
+    summary = {"gate": result.get("gate", "workstation-factory-gate-4"),
+               "verdict": result.get("verdict")}
+    if "detail" in result:
+        summary["detail"] = result["detail"]
+    checks = result.get("checks")
+    if isinstance(checks, list):
+        summary["checks"] = {
+            check.get("check"): check.get("verdict")
+            for check in checks if isinstance(check, dict)}
+    return summary
+
+
 def _release_set_identity(release_set: Path) -> dict | None:
     """Read the reproducibility-critical release-set aggregate identity.
 
@@ -393,8 +436,14 @@ def _fail_receipt(evidence_dir: Path, detail: str) -> dict:
     }
 
 
-def verify_run(evidence_dir, *, release_set=None) -> dict:
-    """Validate one retained run's evidence; never mutates, never installs."""
+def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
+    """Validate one retained run's evidence; never mutates, never installs.
+
+    ``audit_out`` optionally names a file (outside the retained evidence) to
+    receive the full gate-4 PXE authority audit JSON.  Its verdict is always
+    embedded in the receipt regardless; passing ``audit_out`` only additionally
+    persists the standalone artifact.
+    """
     evidence_dir = Path(evidence_dir)
     try:
         entries = _list_evidence(evidence_dir)
@@ -470,6 +519,13 @@ def verify_run(evidence_dir, *, release_set=None) -> dict:
         identity = _release_set_identity(Path(release_set))
         if identity is not None:
             receipt["release_set"] = identity
+
+    audit_result = _pxe_authority_audit(evidence_dir, entries)
+    receipt["pxe_authority_audit"] = _pxe_authority_summary(audit_result)
+    if audit_out is not None:
+        Path(audit_out).write_text(
+            json.dumps(audit_result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
     return receipt
 
 
@@ -580,6 +636,10 @@ def parser() -> argparse.ArgumentParser:
         "--compare-with", type=Path, default=None,
         help="a second retained run to compare receipts against")
     result.add_argument(
+        "--audit-json", type=Path, default=None,
+        help="also write the full gate-4 PXE authority audit JSON to this "
+        "path (its verdict is embedded in the receipt regardless)")
+    result.add_argument(
         "--plan", action="store_true",
         help="dry run: list the checks without emitting a receipt")
     return result
@@ -598,7 +658,8 @@ def main(argv: list[str] | None = None) -> int:
         print("repeat with APPLY=1 to emit the receipt and PASS/FAIL/NOT-RUN summary")
         return 0
 
-    receipt = verify_run(args.evidence, release_set=args.release_set)
+    receipt = verify_run(
+        args.evidence, release_set=args.release_set, audit_out=args.audit_json)
     if args.compare_with is not None:
         other = verify_run(args.compare_with, release_set=args.release_set)
         comparison = compare_runs(receipt, other)

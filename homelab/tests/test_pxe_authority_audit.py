@@ -262,6 +262,126 @@ class ApprovedFlowTests(AuditHelper):
             self.verdicts(result)[audit.CHECK_APPROVED_FLOWS], "FAIL")
 
 
+class RealisticFlowTests(AuditHelper):
+    """The approved-flows check on the real AD DC + PXE service surface.
+
+    These mirror the actual per-delivery flows recorded by real gate-7 arch
+    and windows domain-join runs: AD services answered over both TCP and UDP,
+    reply legs to ephemeral client ports, TFTP data transfers, the controller
+    as a DNS/NTP/DHCP client of the gateway, RPC, NetBIOS, and ambient
+    link-local traffic.  A clean run must PASS; a rogue must still FAIL.
+    """
+
+    def approved(self, *flows):
+        events = clean_run_events()
+        events.extend(flows)
+        return self.verdicts(self.audit(events))[audit.CHECK_APPROVED_FLOWS]
+
+    def test_ad_services_over_udp_are_approved(self):
+        # CLDAP (389/udp) and Kerberos (88/udp) with their ephemeral replies.
+        self.assertEqual("PASS", self.approved(
+            flow("workstation", "controller", protocol=17,
+                 src_port=41576, dst_port=389),
+            flow("controller", "workstation", protocol=17,
+                 src_port=389, dst_port=41576),
+            flow("workstation", "controller", protocol=17,
+                 src_port=37961, dst_port=88),
+            flow("controller", "workstation", protocol=17,
+                 src_port=88, dst_port=37961),
+        ))
+
+    def test_netbios_and_rpc_are_approved(self):
+        self.assertEqual("PASS", self.approved(
+            flow("controller", "workstation", protocol=17,
+                 src_port=137, dst_port=137),           # NetBIOS name (nmbd)
+            flow("workstation", "controller", protocol=6,
+                 src_port=53032, dst_port=139),          # NetBIOS session
+            flow("controller", "workstation", protocol=6,
+                 src_port=139, dst_port=53032),
+            flow("workstation", "controller", protocol=6,
+                 src_port=61573, dst_port=135),          # RPC endpoint mapper
+            flow("workstation", "controller", protocol=6,
+                 src_port=61582, dst_port=49153),        # dynamic RPC endpoint
+            flow("controller", "workstation", protocol=6,
+                 src_port=49153, dst_port=61582),
+        ))
+
+    def test_controller_as_gateway_client_reply_is_approved(self):
+        # The controller queries the gateway's resolver/clock; the reply lands
+        # on the controller's ephemeral port and must not be a violation.
+        self.assertEqual("PASS", self.approved(
+            flow("controller", "gateway", protocol=17,
+                 src_port=51192, dst_port=123),
+            flow("gateway", "controller", protocol=17,
+                 src_port=123, dst_port=51192),
+            flow("controller", "gateway", protocol=17,
+                 src_port=53132, dst_port=53),
+            flow("gateway", "controller", protocol=17,
+                 src_port=53, dst_port=53132),
+        ))
+
+    def test_controller_dhcp_client_lease_is_approved(self):
+        # The controller acquiring its own lease from the gateway is a client,
+        # not a competing authority.
+        self.assertEqual("PASS", self.approved(
+            flow("controller", "gateway", protocol=17,
+                 src_port=68, dst_port=67),
+            flow("gateway", "controller", protocol=17,
+                 src_port=67, dst_port=68),
+        ))
+
+    def test_controller_serving_dhcp_still_fails(self):
+        # But the controller sourcing the server port is a rogue authority.
+        result = self.approved(
+            flow("controller", "workstation", protocol=17,
+                 src_port=67, dst_port=68))
+        self.assertEqual("FAIL", result)
+
+    def test_tftp_data_phase_is_approved_when_correlated(self):
+        self.assertEqual("PASS", self.approved(
+            flow("workstation", "controller", protocol=17,
+                 src_port=1308, dst_port=69),            # read request
+            flow("controller", "workstation", protocol=17,
+                 src_port=51132, dst_port=1308),         # data (server TID)
+            flow("workstation", "controller", protocol=17,
+                 src_port=1308, dst_port=51132),         # ack
+        ))
+
+    def test_uncorrelated_ephemeral_pair_to_controller_fails(self):
+        # The same ephemeral-to-ephemeral shape without a preceding TFTP read
+        # request is not an approved transfer.
+        self.assertEqual("FAIL", self.approved(
+            flow("controller", "workstation", protocol=17,
+                 src_port=51132, dst_port=1308)))
+
+    def test_ambient_link_local_traffic_is_approved(self):
+        self.assertEqual("PASS", self.approved(
+            flow("controller", "workstation", ethertype=0x86DD),   # IPv6 ND
+            flow("workstation", "controller", ethertype=0x888E),   # EAPOL
+            flow("workstation", "controller", protocol=1),          # ICMP
+            flow("workstation", "controller", protocol=2),          # IGMP
+            flow("workstation", "controller", protocol=17,
+                 src_port=49418, dst_port=5355),                     # LLMNR
+            flow("workstation", "controller", protocol=17,
+                 src_port=5353, dst_port=5353),                      # mDNS
+            flow("workstation", "controller", protocol=17,
+                 src_port=59646, dst_port=1900),                     # SSDP
+        ))
+
+    def test_controller_egress_to_unapproved_service_fails(self):
+        # A controller reaching out to the workstation on a non-service port
+        # (a backdoor client) is a violation even though it stays in-fabric.
+        result = self.approved(
+            flow("controller", "workstation", protocol=6,
+                 src_port=40000, dst_port=4444))
+        self.assertEqual("FAIL", result)
+
+    def test_inbound_unapproved_high_port_still_fails(self):
+        self.assertEqual("FAIL", self.approved(
+            flow("workstation", "controller", protocol=6,
+                 src_port=49000, dst_port=31337)))
+
+
 class EvidenceQualityTests(AuditHelper):
     def test_malformed_json_line_is_refused(self):
         path = self.write_log(
