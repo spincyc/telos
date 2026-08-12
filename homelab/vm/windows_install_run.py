@@ -82,14 +82,29 @@ def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
     private_file(path, redact(data[-maximum:]))
 
 
-def _destroy_private_publication(path: Path) -> str | None:
-    """Remove the ISO that embeds per-run unattend and SMB credentials."""
+def _retain_private_publication(path: Path) -> str | None:
+    """Retain the credential-bearing publication mode-0600 for the identity
+    recovery gate.
+
+    The publication embeds the per-run unattend and the local-rescue
+    credential the identity acceptance's recovery gate must recover and then
+    destroy. Owner decision 2026-08-12: the install HANDS THIS OFF rather than
+    destroying it, so the credential-media destruction proof lives at the
+    identity recovery gate (which destroys it at the end of a successful
+    acceptance) instead of being consumed prematurely at install. It is kept
+    mode-0600 in the ignored bundle; a symlink or non-regular object is a
+    tampering signal and fails closed.
+    """
     try:
         if path.is_symlink():
             return "private publication became a symlink"
-        path.unlink(missing_ok=True)
+        if not path.exists():
+            return "private publication is unavailable for identity handoff"
+        if not path.is_file():
+            return "private publication is not a regular file"
+        os.chmod(path, 0o600)
     except OSError as error:
-        return f"private publication cleanup failed: {type(error).__name__}"
+        return f"private publication handoff failed: {type(error).__name__}"
     return None
 
 
@@ -288,11 +303,12 @@ def run(
             serial_thread.join(timeout=2)
         _sanitize_log(evidence / "controller-publication.log")
         _sanitize_log(evidence / "workstation-serial.log")
-        publication_failure = _destroy_private_publication(
+        publication_failure = _retain_private_publication(
             bundle / "publication.iso")
         if publication_failure:
             failures.append(publication_failure)
-        result["private_publication_destroyed"] = publication_failure is None
+        result["private_publication_retained_for_identity"] = (
+            publication_failure is None)
         if failures:
             result["cleanup_failures"] = failures
         output = evidence / "result.json"

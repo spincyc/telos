@@ -115,20 +115,31 @@ class WindowsInstallRunTests(unittest.TestCase):
             self.assertNotIn(b"should-not-survive", log.read_bytes())
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
-    def test_private_publication_is_destroyed_without_following_symlinks(self):
+    def test_private_publication_is_retained_0600_for_identity_handoff(self):
+        # Owner decision 2026-08-12: the install hands the credential-bearing
+        # recovery publication off to the identity recovery gate (which
+        # destroys it) instead of destroying it here. It is retained mode-0600;
+        # a symlink or a missing publication fails closed.
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             publication = root / "publication.iso"
             publication.write_bytes(b"embedded private inputs")
+            publication.chmod(0o644)
             self.assertIsNone(
-                windows_install_run._destroy_private_publication(publication))
-            self.assertFalse(publication.exists())
+                windows_install_run._retain_private_publication(publication))
+            self.assertTrue(publication.is_file())
+            self.assertEqual(publication.stat().st_mode & 0o777, 0o600)
+            missing = root / "absent.iso"
+            self.assertIn(
+                "unavailable",
+                windows_install_run._retain_private_publication(missing))
             target = root / "target"
             target.write_bytes(b"preserve")
-            publication.symlink_to(target)
+            link = root / "link.iso"
+            link.symlink_to(target)
             self.assertIn(
                 "symlink",
-                windows_install_run._destroy_private_publication(publication))
+                windows_install_run._retain_private_publication(link))
             self.assertTrue(target.exists())
 
     def test_qmp_connection_waits_for_socket_readiness(self):
