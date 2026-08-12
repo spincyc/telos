@@ -161,7 +161,24 @@ def load_identity_reference(
         source_disk_sha256=_sha256(
             guest["source_disk_sha256"], "source disk"),
     )
-    if expected_guest is not None and guest_provenance != expected_guest:
+    if expected_guest is not None and (
+        guest_provenance.release != expected_guest.release
+        or guest_provenance.language != expected_guest.language
+        or guest_provenance.architecture != expected_guest.architecture
+        or guest_provenance.installer_iso_sha256
+        != expected_guest.installer_iso_sha256
+    ):
+        # The reference GUI (sign-in/desktop/prompt frames) is determined by
+        # the Windows VERSION -- the installer ISO -- not by a specific
+        # install's random bytes, so the match requires the release, language,
+        # architecture, and installer ISO digest to agree. It deliberately
+        # does NOT require source_disk_sha256 to equal the runtime disk: that
+        # field records which install the reference was CAPTURED from (kept as
+        # provenance), but a fresh install of the same Windows version presents
+        # a byte-identical GUI. The real guarantee stays the runtime frame
+        # comparison against the sha256-verified reference image; pinning the
+        # exact disk made references single-install and blocked a repeatable
+        # acceptance on a freshly minted disk.
         raise WindowsIdentityReferenceError(
             "reference guest provenance does not match prepared guest")
 

@@ -169,13 +169,16 @@ class WindowsIdentityNavigationTests(unittest.TestCase):
             self.assertIn(("key", "ret"), qmp.events)
 
     def test_guest_mismatch_fails_before_process_or_private_input(self):
+        # A different Windows VERSION (installer ISO) must fail before any
+        # process or private input; the install disk sha is version-portable
+        # and no longer gates the match.
         wrong = expected_guest()
         wrong = GuestProvenance(
             wrong.release,
             wrong.language,
             wrong.architecture,
-            wrong.installer_iso_sha256,
-            "0" * 64,
+            "1" * 64,
+            wrong.source_disk_sha256,
         )
         with tempfile.TemporaryDirectory() as temporary:
             secret = "Recovered-Private-47!"

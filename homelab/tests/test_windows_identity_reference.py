@@ -81,17 +81,23 @@ class WindowsIdentityReferenceTests(unittest.TestCase):
             REFERENCE_ROOT / "sign-in.json", expected_guest=expected)
         self.assertEqual(expected, reference.guest)
 
-        wrong_guest = GuestProvenance(
-            **{
-                **expected.__dict__,
-                "source_disk_sha256": "0" * 64,
-            }
-        )
+        # A DIFFERENT install disk is accepted: the GUI is version-determined,
+        # so references are portable across fresh installs of the same Windows
+        # version (the disk sha is capture provenance, not a runtime gate).
+        other_disk = GuestProvenance(
+            **{**expected.__dict__, "source_disk_sha256": "0" * 64})
+        portable = load_identity_reference(
+            REFERENCE_ROOT / "sign-in.json", expected_guest=other_disk)
+        self.assertEqual(reference.image, portable.image)
+
+        # A different Windows VERSION (installer ISO) is still rejected.
+        wrong_version = GuestProvenance(
+            **{**expected.__dict__, "installer_iso_sha256": "1" * 64})
         with self.assertRaisesRegex(
                 WindowsIdentityReferenceError, "does not match prepared guest"):
             load_identity_reference(
                 REFERENCE_ROOT / "sign-in.json",
-                expected_guest=wrong_guest,
+                expected_guest=wrong_version,
             )
 
     def test_rejects_reference_hash_or_path_substitution(self):
