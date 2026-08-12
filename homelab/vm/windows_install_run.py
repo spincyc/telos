@@ -307,7 +307,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--bundle", type=Path, required=True)
     result.add_argument(
         "--controller-state", type=Path, default=DEFAULT_STATE)
-    result.add_argument("--duration", type=float, default=900)
+    # A real Windows 11 Setup needs ~68 minutes to reach native readiness (the
+    # 2026-07-28 success ran 138 screenshot frames at 30 s each ~= 4111 s), so
+    # the old 900 s default could never complete an install and silently cut
+    # Setup mid-image. Default to a budget comfortably above the observed run.
+    result.add_argument("--duration", type=float, default=7200)
     result.add_argument("--apply", action="store_true")
     return result
 
