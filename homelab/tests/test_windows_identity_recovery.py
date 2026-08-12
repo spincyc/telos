@@ -45,7 +45,10 @@ class WindowsIdentityRecoveryTests(unittest.TestCase):
                     self.assertEqual("S-private-value_123", value)
                     recovery.destroy_publication()
                     self.assertFalse(publication.exists())
-                    self.assertTrue(any(
+                    # The transient credential directory is removed as soon as
+                    # the value is extracted, so it is already gone inside the
+                    # context -- it never persists into the acceptance run.
+                    self.assertFalse(any(
                         path.name.startswith(".credential-")
                         for path in root.iterdir()))
             self.assertFalse(any(

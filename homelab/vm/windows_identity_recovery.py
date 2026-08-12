@@ -80,6 +80,14 @@ class RecoveredLocalCredential(AbstractContextManager[str]):
             self._value = values.pop()
             destination.write_bytes(b"\0" * destination.stat().st_size)
             destination.unlink()
+            # The value is now held only in memory and the extracted file is
+            # destroyed, so the temp directory has served its purpose. Remove
+            # it here rather than hold an empty private directory open across
+            # the whole acceptance run -- an open one tripped the mid-run
+            # secret scan as an unexpected top-level surface (check 17). Later
+            # destroy_publication needs only the retained publication path.
+            shutil.rmtree(self._temporary, ignore_errors=True)
+            self._temporary = None
             return self._value
         except BaseException:
             self.__exit__(None, None, None)
