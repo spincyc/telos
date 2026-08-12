@@ -44,6 +44,45 @@ function Test-TcpPort {
     }
 }
 
+function Get-SecureChannelState {
+    # Test-ComputerSecureChannel (read-only) can report a stale $false for a
+    # short window after a domain controller returns: while the DC was frozen
+    # Netlogon tore the channel down and marked the DC bad with a backoff, and
+    # the read-only test hits that negative cache instead of re-establishing.
+    # The secure channel IS restorable here -- the machine account and its
+    # stored password are unchanged (the outage was a pause, not a trust
+    # break) -- so re-verify with a bounded retry and, only if that never
+    # clears, re-establish once with -Repair. -Repair resets the channel from
+    # the locally stored machine-account secret; it needs no supplied
+    # credentials and is not a rejoin. On the online checks this returns True
+    # on the first probe, so the retry/repair path is never entered there.
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        if ($attempt -gt 0) {
+            Start-Sleep -Seconds 5
+        }
+        try {
+            if (Test-ComputerSecureChannel) {
+                return $true
+            }
+        }
+        catch {
+        }
+    }
+    try {
+        if (Test-ComputerSecureChannel -Repair) {
+            return $true
+        }
+    }
+    catch {
+    }
+    try {
+        return [bool](Test-ComputerSecureChannel)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Resolve-AccountSid {
     param([string]$Account)
     try {
@@ -332,7 +371,7 @@ function Get-Probe {
             $operator = ''
             $operatorLocalAdministrator = $false
             if ($computer.PartOfDomain) {
-                $secure = Test-ComputerSecureChannel
+                $secure = Get-SecureChannelState
                 $operator = 'operator@' + (
                     [string]$computer.Domain
                 ).ToUpperInvariant()
