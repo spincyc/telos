@@ -944,7 +944,10 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
     def test_unattached_channel_fails_closed_before_the_guest_launch(self):
         """A channel that reports itself unattached after attach() must
         raise before the guest is ever asked to poll for the volume."""
-        channel = mock.Mock(attached=False)
+        channel = mock.Mock(
+            attached=False,
+            iso=Path(tempfile.gettempdir())
+            / f"absent-windows-credential-{NONCE}.iso")
         serial = mock.Mock()
         launched = []
         with self.assertRaisesRegex(
@@ -1096,6 +1099,179 @@ class WindowsCredentialActionIsoTests(unittest.TestCase):
 
         self.assertEqual(3, connection.recv.call_count)
         self.assertEqual(1, connection.sendall.call_count)
+
+
+class CredentialActionIsoNeverOutlivesActionTests(unittest.TestCase):
+    """The private credential ISO must be gone from disk on EVERY exit.
+
+    A windows-credential-<nonce>.iso surviving at the attempt top level is the
+    update-source-offline (check 17) blocker: the mid-run secret scan finds the
+    retained credential media and fails. These exercise each execute outcome
+    and assert the nonce-named file is unlinked before the call returns.
+    """
+
+    def private_root(self, temporary):
+        root = Path(temporary) / "private"
+        root.mkdir(mode=0o700)
+        return root
+
+    def _credential_iso(self, root):
+        iso = root / f"windows-credential-{NONCE}.iso"
+        iso.write_bytes(b"private credential media")
+        iso.chmod(0o600)
+        return iso
+
+    def test_successful_action_leaves_no_credential_iso(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = self._credential_iso(root)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+            result = cred_result()
+
+            def launch(_command):
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            def guest_result():
+                guest.recv(256)
+                guest.sendall((json.dumps(result) + "\n").encode())
+
+            import threading
+            worker = threading.Thread(target=guest_result)
+            worker.start()
+            observed = execute_credential_action(
+                channel=channel, serial=serial,
+                action=MATERIAL["action"],
+                expected_principal="AD\\acceptance-operator",
+                allowed_authentication_types=frozenset(
+                    {"Kerberos", "Negotiate", "NTLM"}),
+                launch_guest=launch,
+                await_device_deleted=lambda _: None,
+            )
+            worker.join()
+            guest.close()
+            self.assertEqual(result, observed)
+            self.assertFalse(iso.exists())
+
+    def test_guest_failure_before_marker_leaves_no_credential_iso(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = self._credential_iso(root)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+
+            def launch(_command):
+                guest.sendall(
+                    b'{"schema_version":1,'
+                    b'"event":"credential-script-failed"}\n')
+
+            with self.assertRaisesRegex(
+                    WindowsCredentialActionError, "script failed"):
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            guest.close()
+            self.assertFalse(iso.exists())
+
+    def test_serial_timeout_leaves_no_credential_iso(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = self._credential_iso(root)
+            channel = CredentialActionMediaChannel(FakeQmp(), iso, NONCE)
+            serial = mock.Mock()
+            serial.closed = False
+            serial.read_line.side_effect = TimeoutError("no guest line")
+
+            def close():
+                serial.closed = True
+
+            serial.close.side_effect = close
+            with self.assertRaises(TimeoutError):
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=lambda _command: None,
+                    await_device_deleted=lambda _: None,
+                )
+            self.assertFalse(iso.exists())
+
+    def test_cleanup_gap_still_sweeps_the_credential_iso(self):
+        """The concrete leak the guard closes: a media-teardown failure leaves
+        cleanup's node_added set, so its inode-destroy block is skipped and the
+        credential file would survive. The final guard unlinks it anyway,
+        without masking the primary teardown failure."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = self._credential_iso(root)
+            # blockdev-del fails during release AND again during cleanup, so
+            # neither release_after_marker nor cleanup reaches _destroy_owned_iso.
+            channel = CredentialActionMediaChannel(
+                FakeQmp("blockdev-del"), iso, NONCE)
+            host, guest = socket.socketpair()
+            serial = DuplexCredentialActionSerial(host)
+
+            def launch(_command):
+                guest.sendall((json.dumps({
+                    "schema_version": 1,
+                    "event": "credential-material-loaded",
+                    "nonce": NONCE,
+                }) + "\n").encode())
+
+            with self.assertRaises(WindowsCredentialActionError):
+                execute_credential_action(
+                    channel=channel, serial=serial,
+                    action=MATERIAL["action"],
+                    expected_principal="AD\\acceptance-operator",
+                    allowed_authentication_types=frozenset({"Kerberos"}),
+                    launch_guest=launch,
+                    await_device_deleted=lambda _: None,
+                )
+            guest.close()
+            # The inode-destroy never ran (node teardown failed), yet the
+            # credential file must not survive the action.
+            self.assertFalse(channel.destroyed)
+            self.assertFalse(iso.exists())
+
+    def test_guard_does_not_unlink_an_unexpected_object_on_clean_return(self):
+        """The guard removes only the private mode-0600 credential file. On a
+        clean return it fails closed on anything else at the nonce path rather
+        than blindly unlinking by name."""
+        from homelab.vm.windows_credential_action_iso import (
+            _final_credential_iso_guard,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            iso = root / f"windows-credential-{NONCE}.iso"
+            iso.write_bytes(b"not the private media")
+            iso.chmod(0o644)
+            channel = mock.Mock(iso=iso)
+            with self.assertRaisesRegex(
+                    WindowsCredentialActionError, "identity is invalid"):
+                _final_credential_iso_guard(channel)
+            self.assertTrue(iso.exists())
+
+    def test_guard_is_a_noop_when_the_credential_iso_is_absent(self):
+        from homelab.vm.windows_credential_action_iso import (
+            _final_credential_iso_guard,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            channel = mock.Mock(iso=root / f"windows-credential-{NONCE}.iso")
+            # No exception: the common happy-path shape after the inode destroy.
+            _final_credential_iso_guard(channel)
 
 
 if __name__ == "__main__":

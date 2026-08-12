@@ -12,6 +12,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from enum import Enum
@@ -815,7 +816,82 @@ class CredentialActionMediaChannel:
                 "credential-action ISO cleanup failed; " + "; ".join(failures))
 
 
+def _final_credential_iso_guard(channel: CredentialActionMediaChannel) -> None:
+    """Guarantee the nonce-named credential ISO never outlives the action.
+
+    The inode-verified ``_destroy_owned_iso`` remains the authority; this is
+    the belt-and-braces guarantee that no ``windows-credential-<nonce>.iso``
+    survives on disk on ANY exit path -- success, guest failure, timeout, or a
+    cleanup gap that never reached the inode destroy (for example an attach
+    that failed before the ownership descriptor was opened, which leaves the
+    file with ``_descriptor is None`` so ``cleanup`` skips its ISO block). A
+    credential-action ISO reaching the mid-run secret scan is exactly the
+    update-source-offline (check 17) blocker, so the credential must be gone
+    before the action returns.
+
+    Only a private mode-0600 regular file at the exact nonce path is removed;
+    absence is success. When an exception is already propagating the removal
+    stays best-effort and never masks the primary failure; on a clean return a
+    still-present or identity-changed credential file fails closed.
+    """
+    iso = channel.iso
+    pending = sys.exc_info()[1] is not None
+    try:
+        info = iso.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        if pending:
+            return
+        raise WindowsCredentialActionError(
+            "retained credential-action ISO could not be inspected") from error
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or stat.S_IMODE(iso.parent.stat().st_mode) != 0o700):
+        # The nonce path holds something other than the private ISO this
+        # action created. Never unlink an unexpected object by name; fail
+        # closed on a clean return, but do not mask a primary failure.
+        if pending:
+            return
+        raise WindowsCredentialActionError(
+            "retained credential-action ISO identity is invalid")
+    try:
+        iso.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        if pending:
+            return
+        raise WindowsCredentialActionError(
+            "retained credential-action ISO could not be removed") from error
+
+
 def execute_credential_action(
+    *,
+    channel: CredentialActionMediaChannel,
+    serial: DuplexCredentialActionSerial,
+    action: str,
+    expected_principal: str,
+    allowed_authentication_types: frozenset[str],
+    launch_guest: Callable[[str], None],
+    await_device_deleted: Callable[[str], None],
+) -> dict[str, object]:
+    """Run one handoff and proof, then guarantee the ISO is gone from disk."""
+    try:
+        return _run_credential_action(
+            channel=channel,
+            serial=serial,
+            action=action,
+            expected_principal=expected_principal,
+            allowed_authentication_types=allowed_authentication_types,
+            launch_guest=launch_guest,
+            await_device_deleted=await_device_deleted,
+        )
+    finally:
+        _final_credential_iso_guard(channel)
+
+
+def _run_credential_action(
     *,
     channel: CredentialActionMediaChannel,
     serial: DuplexCredentialActionSerial,

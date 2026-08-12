@@ -479,6 +479,54 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 configuration.callbacks.scan_secrets(
                     ("one", "two", "three", "four"))
 
+    def test_scanner_names_a_retained_credential_action_iso(self):
+        # A leaked windows-credential-<nonce>.iso at the attempt top level is a
+        # credential leak (the one-use media carries the credential). It must
+        # never be allowlisted, and the scan names it explicitly rather than
+        # degrading to the generic surface error -- the exact update-source-
+        # offline (check 17) failure mode.
+        with tempfile.TemporaryDirectory() as name:
+            boundary, bundle = self.prepared(Path(name))
+            configuration = self.factory(boundary, bundle)
+            runtime = boundary.attempt / "runtime"
+            (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+            for relative in (
+                "switch.jsonl", "windows-qemu.log",
+                "controller/controller.raw", "controller/OVMF_VARS.fd",
+                "controller/guard/controller-overlay.qcow2",
+                "controller/guard/OVMF_VARS.fd",
+            ):
+                (runtime / relative).write_bytes(b"clean")
+            for surface in (
+                "rotation-evidence", "public-command-evidence",
+                "post-join-reauthentication",
+            ):
+                target = boundary.attempt / surface
+                target.mkdir(mode=0o700)
+                proof = (
+                    "post-join-generic-prompt.ppm"
+                    if surface == "post-join-reauthentication"
+                    else "proof.ppm"
+                )
+                (target / proof).write_bytes(b"clean")
+            leaked = boundary.attempt / ("windows-credential-" + "ab" * 16
+                                         + ".iso")
+            leaked.write_bytes(b"leaked credential media")
+            leaked.chmod(0o600)
+            boundary.qmp_root = Path(name) / "qmp"
+            boundary.qmp_root.mkdir(mode=0o700)
+            boundary.serial_socket = boundary.qmp_root / "windows.serial"
+            self.bind_live_serial(boundary.serial_socket)
+            boundary.port = 31415
+            boundary.processes["windows"] = mock.Mock(
+                poll=mock.Mock(return_value=None))
+            with self.assertRaisesRegex(
+                WindowsIdentityFactoryError,
+                "credential-action ISO retained at scan time",
+            ):
+                configuration.callbacks.scan_secrets(
+                    ("one", "two", "three", "four"))
+
     def test_scanner_rejects_unallowlisted_post_join_ppm(self):
         with tempfile.TemporaryDirectory() as name:
             boundary, bundle = self.prepared(Path(name))

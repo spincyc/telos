@@ -40,6 +40,9 @@ REFERENCE_ROOT = (
 REFERENCE_NAMES = (
     "sign-in", "desktop", "security-options", "change-password")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# One-use private credential-action media (windows-credential-<32hex>.iso).
+# It carries a credential and must never be allowlisted by the scan.
+_CREDENTIAL_ACTION_ISO = re.compile(r"windows-credential-[0-9a-f]{32}\.iso")
 
 
 def _sha256(path: Path) -> str:
@@ -399,6 +402,15 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
         unexpected_top = (
             set(entries) - expected_files - allowed_files
             - allowed_directories)
+        # A credential-action ISO at the attempt top level is never a benign
+        # unexpected surface: it is the private one-use media that CARRIES a
+        # credential, so a leaked one reaching this mid-run scan is a credential
+        # leak. Name it explicitly (it must NEVER be allowlisted) so a future
+        # leak identifies itself instead of hiding behind the generic surface
+        # error -- the update-source-offline (check 17) failure mode.
+        if any(_CREDENTIAL_ACTION_ISO.fullmatch(name) for name in entries):
+            raise WindowsIdentityFactoryError(
+                "credential-action ISO retained at scan time")
         if unexpected_top:
             raise WindowsIdentityFactoryError(
                 "attempt contains an unexpected retained surface")
