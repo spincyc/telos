@@ -412,8 +412,12 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
             raise WindowsIdentityFactoryError(
                 "credential-action ISO retained at scan time")
         if unexpected_top:
+            # Name the offending surfaces: they are structural filenames the
+            # run created (never observation data or secrets), so listing them
+            # ends the blind whack-a-mole of one live attempt per surface.
             raise WindowsIdentityFactoryError(
-                "attempt contains an unexpected retained surface")
+                "attempt contains an unexpected retained surface: "
+                + ", ".join(sorted(unexpected_top)))
         for name in allowed_files & set(entries):
             if entries[name].is_symlink() or not entries[name].is_file():
                 raise WindowsIdentityFactoryError(
