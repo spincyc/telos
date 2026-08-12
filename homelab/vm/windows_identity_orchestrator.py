@@ -1088,25 +1088,16 @@ def execute_windows_identity_acceptance(
             destroy_principals=destroy_principals,
             run_acceptance=acceptance,
         )
-    except BaseException as error:
+    except BaseException:
         # Persist how far acceptance got before the raise (public check
         # names/counts only) so a failure deep in the 24-check stream is no
-        # longer blind between check 4 and the aggregate (attempt 47). The
-        # ROOT cause's message is captured too: the top-level error is the
-        # sanitized coordinate, but its cause chain holds the fixed
-        # factory/control message that names which mid-run invariant failed.
+        # longer blind between check 4 and the aggregate (attempt 47). Pass no
+        # explicit detail: the top-level error is the sanitized coordinate and
+        # its cause chain is severed, so the real message is the one
+        # fault_observe already stashed on the collector (which write_progress
+        # falls back to). Passing the sanitized text here would override it.
         if collector is not None:
-            root = error
-            seen: set[int] = set()
-            while id(root) not in seen:
-                seen.add(id(root))
-                nxt = root.__cause__ or root.__context__
-                if nxt is None:
-                    break
-                root = nxt
-            collector.write_progress(
-                progress_path,
-                failure_detail=f"{type(root).__name__}: {root}" or None)
+            collector.write_progress(progress_path)
         raise
     if collector is not None:
         collector.write_progress(progress_path)
