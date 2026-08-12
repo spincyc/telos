@@ -1082,12 +1082,21 @@ def execute_windows_identity_acceptance(
         # Persist how far acceptance got before the raise (public check
         # names/counts only) so a failure deep in the 24-check stream is no
         # longer blind between check 4 and the aggregate (attempt 47). The
-        # raising exception's own message is captured too: the sanitized
-        # coordinate keeps only the type, but the fixed factory/control
-        # messages name which mid-run invariant failed.
+        # ROOT cause's message is captured too: the top-level error is the
+        # sanitized coordinate, but its cause chain holds the fixed
+        # factory/control message that names which mid-run invariant failed.
         if collector is not None:
+            root = error
+            seen: set[int] = set()
+            while id(root) not in seen:
+                seen.add(id(root))
+                nxt = root.__cause__ or root.__context__
+                if nxt is None:
+                    break
+                root = nxt
             collector.write_progress(
-                progress_path, failure_detail=str(error) or None)
+                progress_path,
+                failure_detail=f"{type(root).__name__}: {root}" or None)
         raise
     if collector is not None:
         collector.write_progress(progress_path)
