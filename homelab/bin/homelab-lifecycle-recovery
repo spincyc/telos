@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Exercise the gate-11 lifecycle-recovery scenarios on the loopback lab."""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from homelab.vm.lifecycle_recovery import main  # noqa: E402
+
+
+raise SystemExit(main())

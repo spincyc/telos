@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "gate": 11,
+  "network_policy": {
+    "mode": "local-only",
+    "external_access": "forbidden"
+  },
+  "update_policy": {
+    "operation": "pacman -Syu",
+    "automatic_rollback": false,
+    "recovery_fallback": "linux-lts",
+    "minimum_free_gib": 8,
+    "requires": [
+      "ac_power",
+      "free_space",
+      "official_mirror",
+      "pacman_idle"
+    ]
+  },
+  "dual_boot_entries": {
+    "linux": "Linux Boot Manager",
+    "windows": "Windows Boot Manager",
+    "independent_uefi_entries": true
+  },
+  "required_checks": [
+    "controller-restart",
+    "pxe-release-rollback",
+    "failed-install-recovery",
+    "broken-boot-repair",
+    "directory-dns-loss",
+    "update-failure-rollback",
+    "workstation-remint",
+    "controller-reconstruction"
+  ],
+  "live_boot_checks": [
+    "controller-restart",
+    "failed-install-recovery",
+    "broken-boot-repair",
+    "directory-dns-loss",
+    "controller-reconstruction"
+  ]
+}

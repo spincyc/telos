@@ -143,6 +143,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-cache-seal homelab-factory-offline-check \
 	homelab-factory-controller-bundle homelab-factory-pxe \
 	homelab-factory-verify \
+	homelab-factory-recover homelab-factory-recover-judge \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
@@ -417,6 +418,44 @@ homelab-factory-verify:
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
 			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)'); \
 	fi
+
+# Lifecycle recovery (gate 11): exercise controller restart/loss, PXE release
+# rollback, failed-install recovery, broken-boot repair, directory/DNS loss,
+# update-failure handling, workstation remint, and controller reconstruction.
+# The loopback lab proves the release rollback, the ADR-0075 update gate, and
+# the workstation remint for real; scenarios that need a live guest boot record
+# their observable part and are marked NOT-RUN with a recorded reason. The dry
+# run starts nothing; APPLY=1 writes the run bundle's evidence and result.json.
+# A deferred proof is never promoted to a pass.
+homelab-factory-recover:
+	@if [ -z '$(RECOVERY_RUN)' ]; then \
+		echo 'require RECOVERY_RUN=<fresh run bundle directory>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to exercise recovery and judge'; \
+		$(PYTHON) homelab/bin/homelab-lifecycle-recovery \
+			--run '$(RECOVERY_RUN)' \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			--duration '$(FACTORY_DURATION)'; \
+	else \
+		$(PYTHON) homelab/bin/homelab-lifecycle-recovery \
+			--run '$(RECOVERY_RUN)' \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			--duration '$(FACTORY_DURATION)' --apply; \
+	fi
+
+# Grade a produced recovery evidence stream fail-closed (read-only, no APPLY).
+# A "partial" verdict is honest deferral, not a completed pass.
+homelab-factory-recover-judge:
+	@if [ -z '$(RECOVERY_EVIDENCE)' ]; then \
+		echo 'require RECOVERY_EVIDENCE=<produced recovery-evidence.jsonl>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/workstations/lifecycle_recovery.py \
+		'$(RECOVERY_EVIDENCE)'
 
 homelab-bootstrap-seed:
 	@$(PYTHON) homelab/seed/build.py \
