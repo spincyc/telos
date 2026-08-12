@@ -961,14 +961,12 @@ def _run_acceptance_checks(
         except BaseException as error:
             # The progressive sanitizer severs the cause chain (raise ... from
             # None), so this is the last point the raising exception's own
-            # message is reachable. Record it to the retained progress file
-            # before wrapping: the coordinate keeps only the type, but the
-            # fixed factory/control message names which mid-run invariant
-            # failed (attempt 58 could not otherwise be told apart).
+            # message is reachable. Stash it on the collector so the outer
+            # progress write preserves it instead of overwriting with the
+            # sanitized coordinate (attempts 58-60 kept only the wrapper).
             try:
-                collector.write_progress(
-                    Path(private_root) / "acceptance-progress.json",
-                    failure_detail=f"{type(error).__name__}: {error}")
+                collector.note_failure_detail(
+                    f"{type(error).__name__}: {error}")
             except BaseException:
                 pass
             # `record` already binds an acceptance_check coordinate to every

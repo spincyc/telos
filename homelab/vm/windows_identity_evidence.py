@@ -60,6 +60,18 @@ class StrictIdentityEvidenceCollector:
         self._checks = tuple(FIELD_SETS)
         self._events: list[dict[str, Any]] = []
         self._published = False
+        self._failure_detail: str | None = None
+
+    def note_failure_detail(self, detail: str) -> None:
+        """Stash the first raising message so both progress writers keep it.
+
+        The progressive sanitizer severs the cause chain, so only the handler
+        closest to the raise sees the real factory/control message; recording
+        it here lets the later, outer progress write preserve it instead of
+        overwriting it with the sanitized coordinate.
+        """
+        if self._failure_detail is None and detail:
+            self._failure_detail = str(detail)[:400]
 
     @property
     def next_check(self) -> str | None:
@@ -98,8 +110,10 @@ class StrictIdentityEvidenceCollector:
                 "passed_checks": list(self.passed_checks),
                 "next_check": self.next_check,
             }
-            if failure_detail is not None:
-                record["failure_detail"] = str(failure_detail)[:400]
+            detail = failure_detail if failure_detail is not None \
+                else self._failure_detail
+            if detail is not None:
+                record["failure_detail"] = str(detail)[:400]
             target = Path(path)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_text(
