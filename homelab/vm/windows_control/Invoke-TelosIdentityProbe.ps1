@@ -45,18 +45,20 @@ function Test-TcpPort {
 }
 
 function Get-SecureChannelState {
-    # Test-ComputerSecureChannel (read-only) can report a stale $false for a
-    # short window after a domain controller returns: while the DC was frozen
-    # Netlogon tore the channel down and marked the DC bad with a backoff, and
-    # the read-only test hits that negative cache instead of re-establishing.
-    # The secure channel IS restorable here -- the machine account and its
-    # stored password are unchanged (the outage was a pause, not a trust
-    # break) -- so re-verify with a bounded retry and, only if that never
-    # clears, re-establish once with -Repair. -Repair resets the channel from
-    # the locally stored machine-account secret; it needs no supplied
-    # credentials and is not a rejoin. On the online checks this returns True
-    # on the first probe, so the retry/repair path is never entered there.
-    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+    # Test-ComputerSecureChannel invokes Netlogon's TC_VERIFY, which
+    # re-establishes the machine secure channel on demand when the domain
+    # controller is reachable. After a long controller pause the DC's TCP
+    # ports (88/389/445 -- what controller-restored checks) come back before
+    # Samba's Netlogon RPC endpoint is fully serving again, so an immediate
+    # verify can still report $false. The secure channel IS restorable here:
+    # the machine account and its stored password never changed (the outage
+    # was a pause, not a trust break), so re-verify on a bounded schedule and
+    # return as soon as it clears. This runs entirely read-only in the
+    # operator's non-elevated context (no -Repair, which needs elevation the
+    # UAC-filtered operator lacks). The static-probe deadline is 120s; this
+    # budget stays well under it. On the online checks the first verify
+    # succeeds, so the wait is never entered there.
+    for ($attempt = 0; $attempt -lt 16; $attempt++) {
         if ($attempt -gt 0) {
             Start-Sleep -Seconds 5
         }
@@ -68,19 +70,7 @@ function Get-SecureChannelState {
         catch {
         }
     }
-    try {
-        if (Test-ComputerSecureChannel -Repair) {
-            return $true
-        }
-    }
-    catch {
-    }
-    try {
-        return [bool](Test-ComputerSecureChannel)
-    }
-    catch {
-        return $false
-    }
+    return $false
 }
 
 function Resolve-AccountSid {
