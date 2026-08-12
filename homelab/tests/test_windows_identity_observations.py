@@ -62,6 +62,11 @@ class WindowsIdentityObservationTests(unittest.TestCase):
     }
 
     def test_structured_probes_close_readiness_and_identity_fields(self):
+        # The guest still emits `synthetic_directory` in the raw probe (it is
+        # $false pre-join because a workgroup machine cannot resolve domain
+        # accounts), but it is not part of the controller-ready contract, so
+        # the mapper drops it from the event. The synthetic-directory proof is
+        # asserted post-join at windows-standard-online.
         readiness = map_exact_observation(
             "controller-ready",
             ObservationRecords(static_probes={
@@ -70,7 +75,7 @@ class WindowsIdentityObservationTests(unittest.TestCase):
                     "dns": True,
                     "kerberos": True,
                     "time": True,
-                    "synthetic_directory": True,
+                    "synthetic_directory": False,
                 }),
             }),
         )
@@ -79,7 +84,6 @@ class WindowsIdentityObservationTests(unittest.TestCase):
             "dns": True,
             "kerberos": True,
             "time": True,
-            "synthetic_directory": True,
         }, readiness)
 
         managed = probe("managed-identity-state", {
@@ -159,6 +163,9 @@ class WindowsIdentityObservationTests(unittest.TestCase):
             "elevated": False,
             "identity_resolved": True,
             "cache_primed": True,
+            # All three synthetic accounts resolve post-join; this is where
+            # the synthetic directory is genuinely proven.
+            "synthetic_directory": True,
         }, fields)
         # A logon that is authenticated but only cached does not prime the
         # standard-online check.
@@ -179,6 +186,41 @@ class WindowsIdentityObservationTests(unittest.TestCase):
                     credential_actions={"connected-domain-login": offline},
                 ),
             )
+
+    def test_standard_online_synthetic_directory_needs_all_three_accounts(self):
+        """synthetic_directory is True only when every synthetic account
+        (student, operator, directory-admin) resolves post-join; a directory
+        missing one is not the synthetic lab directory and maps to False."""
+        managed = probe("managed-identity-state", {
+            "standard_identity_resolved": True,
+            "standard_profile_present": True,
+            # directory-admin is absent: not the synthetic roster.
+            "operator_identity_resolved": True,
+            "operator_profile_present": True,
+            "operator_local_administrator": True,
+            "operator_domain_administrator": False,
+            "directory_admin_identity_resolved": False,
+            "directory_admin_domain_administrator": False,
+            "operator_is_directory_admin": False,
+        })
+        login = credential(
+            "connected-domain-login",
+            domain_reachable=True,
+            controller_reachable=True,
+            authentication_semantics="connected-domain",
+            cache_evidence="online-interactive-logon",
+        )
+        fields = map_exact_observation(
+            "windows-standard-online",
+            ObservationRecords(
+                static_probes={"managed-identity-state": managed},
+                credential_actions={"connected-domain-login": login},
+            ),
+        )
+        # The standard user still resolves, so identity_resolved is True, but
+        # the synthetic directory is not proven.
+        self.assertTrue(fields["identity_resolved"])
+        self.assertFalse(fields["synthetic_directory"])
 
     def test_cached_login_is_derived_without_caller_source_labels(self):
         fields = map_exact_observation(

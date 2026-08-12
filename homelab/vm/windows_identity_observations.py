@@ -275,6 +275,11 @@ def derive_observation(
 
     if check == "controller-ready":
         readiness = _probe(records, "controller-readiness")
+        # The guest still emits a `synthetic_directory` bool (validated as a
+        # bool by the serial schema), but it cannot be proven pre-join, so it
+        # is not part of the controller-ready acceptance contract and the
+        # trailing FIELD_SETS filter drops it. The synthetic-directory proof
+        # is asserted post-join at windows-standard-online below.
         fields.update(readiness)
 
     elif check in {"controller-offline", "controller-restored"}:
@@ -345,6 +350,16 @@ def derive_observation(
             "cache_primed": (
                 login["authenticated"] is True
                 and login["authentication_semantics"] == "connected-domain"
+            ),
+            # First post-join check that resolves all three synthetic
+            # accounts by their domain names. Their SIDs prove the DC hosts
+            # the disposable synthetic directory (student, operator,
+            # directory-admin) -- the safety property controller-ready could
+            # not establish before the machine joined the domain.
+            "synthetic_directory": (
+                managed["standard_identity_resolved"] is True
+                and managed["operator_identity_resolved"] is True
+                and managed["directory_admin_identity_resolved"] is True
             ),
         })
 

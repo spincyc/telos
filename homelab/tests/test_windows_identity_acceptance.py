@@ -17,14 +17,14 @@ RUN_ID = "12345678-1234-4123-8123-123456789abc"
 def details():
     return {
         "controller-ready": {
-            "samba_ad": True, "dns": True, "kerberos": True, "time": True,
-            "synthetic_directory": True},
+            "samba_ad": True, "dns": True, "kerberos": True, "time": True},
         "windows-joined": {
             "domain_joined": True, "secure_channel": True,
             "machine_account": True, "join_material": "one-use"},
         "windows-standard-online": {
             "principal_role": "standard", "elevated": False,
-            "identity_resolved": True, "cache_primed": True},
+            "identity_resolved": True, "cache_primed": True,
+            "synthetic_directory": True},
         "windows-daily-admin": {
             "principal_role": "daily-administrator", "local_admin": True,
             "domain_admin": False, "cache_primed": True},
@@ -162,6 +162,7 @@ class WindowsIdentityAcceptanceTests(unittest.TestCase):
     def test_privilege_outage_recovery_and_sanitization_fail_closed(self):
         mutations = (
             ("windows-standard-online", "elevated", True),
+            ("windows-standard-online", "synthetic_directory", False),
             ("windows-daily-admin", "domain_admin", True),
             ("controller-offline", "dns_reachable", True),
             ("windows-uncached-denied", "login", "allowed"),

@@ -295,6 +295,16 @@ function Get-Probe {
             & w32tm.exe /stripchart /computer:$ControllerFqdn /samples:1 `
                 /dataonly | Out-Null
             $time = $LASTEXITCODE -eq 0
+            # controller-readiness runs BEFORE the workstation joins the
+            # domain. A workgroup machine cannot translate DOMAIN\account to a
+            # SID (LSA lookup needs the secure channel a join establishes) nor
+            # search the default-hardened DC anonymously, so this resolution
+            # is expected to be $false pre-join and is deliberately NOT part
+            # of the controller-ready acceptance contract. The synthetic
+            # directory is proven post-join at windows-standard-online, whose
+            # managed-identity-state probe resolves all three accounts by SID.
+            # The bool is still emitted so the serial observation schema is
+            # satisfied; the acceptance mapper drops it from the event.
             $synthetic = @(
                 'student', 'operator', 'directory-admin' |
                     ForEach-Object {

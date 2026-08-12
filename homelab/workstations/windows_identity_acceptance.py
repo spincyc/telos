@@ -17,12 +17,21 @@ BASE_FIELDS = {
     "observed_at", "run_id",
 }
 FIELD_SETS = {
+    # `synthetic_directory` is NOT provable at controller-ready: it runs
+    # before the workstation joins the domain, and a workgroup machine cannot
+    # translate DOMAIN\account names to SIDs (LSA lookup needs the secure
+    # channel a join establishes) nor search the default-hardened Samba AD DC
+    # anonymously. The synthetic-directory proof therefore lives at the first
+    # post-join check that genuinely resolves the three synthetic accounts --
+    # windows-standard-online, whose managed-identity-state probe resolves
+    # student, operator, and directory-admin by their domain names.
     "controller-ready": {
-        "samba_ad", "dns", "kerberos", "time", "synthetic_directory"},
+        "samba_ad", "dns", "kerberos", "time"},
     "windows-joined": {
         "domain_joined", "secure_channel", "machine_account", "join_material"},
     "windows-standard-online": {
-        "principal_role", "elevated", "identity_resolved", "cache_primed"},
+        "principal_role", "elevated", "identity_resolved", "cache_primed",
+        "synthetic_directory"},
     "windows-daily-admin": {
         "principal_role", "local_admin", "domain_admin", "cache_primed"},
     "domain-admin-separate": {"same_principal"},
@@ -184,11 +193,15 @@ def judge(contract: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
 
     by = {event["check"]: event for event in events}
     _expect(by["controller-ready"], samba_ad=True, dns=True, kerberos=True,
-            time=True, synthetic_directory=True)
+            time=True)
     _expect(by["windows-joined"], domain_joined=True, secure_channel=True,
             machine_account=True, join_material="one-use")
+    # synthetic_directory proves the DC hosts the three synthetic accounts.
+    # It is asserted here, post-join, because a workgroup machine cannot
+    # resolve domain accounts before it joins (see FIELD_SETS above).
     _expect(by["windows-standard-online"], principal_role="standard",
-            elevated=False, identity_resolved=True, cache_primed=True)
+            elevated=False, identity_resolved=True, cache_primed=True,
+            synthetic_directory=True)
     _expect(by["windows-daily-admin"],
             principal_role="daily-administrator", local_admin=True,
             domain_admin=False, cache_primed=True)
