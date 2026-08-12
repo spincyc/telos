@@ -230,6 +230,104 @@ class TestPlaybooks(unittest.TestCase):
 
 
 @unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class TestDomainControllerStorage(unittest.TestCase):
+    """Gate 9: the converged Controller serves the optional per-user UNAS share.
+
+    A live gate-8 Arch identity run proves three storage checks against this
+    service: arch-storage-attached (the operator's own share mounts),
+    arch-storage-denied (a foreign user's share is refused), and
+    arch-storage-absent-login (login stays bounded once the target is gone).
+    The first two can only pass if the Controller actually exports a
+    per-user [homes]-style share, maps directory rfc2307 identifiers so the
+    share owner reaches their uidNumber-owned files, and publishes the `unas`
+    authority name so the share is reachable by default.  These are the
+    controller-side properties that make those checks provable.
+    """
+
+    ROLE = ANSIBLE / "roles/domain_controller"
+
+    def defaults(self):
+        return yaml.safe_load((self.ROLE / "defaults/main.yml").read_text())
+
+    def tasks(self):
+        return yaml.safe_load((self.ROLE / "tasks/main.yml").read_text())
+
+    def named(self, name):
+        return next(
+            task for task in self.tasks() if task.get("name") == name)
+
+    def test_per_user_homes_share_is_exported(self):
+        # A [homes]-style per-user share whose valid-users is the connecting
+        # service name (%S) grants only the share owner and refuses everyone
+        # else, which is exactly the genuine denial arch-storage-denied needs.
+        task = self.named("Export optional per-user UNAS home shares")
+        block = task["ansible.builtin.blockinfile"]["block"]
+        self.assertIn("[homes]", block)
+        self.assertIn("path = /srv/unas/%S", block)
+        self.assertIn("valid users = %S", block)
+        self.assertIn("read only = no", block)
+        self.assertIn("browseable = no", block)
+
+    def test_the_share_root_directory_is_created(self):
+        task = self.named("Create the optional per-user UNAS share root")
+        options = task["ansible.builtin.file"]
+        self.assertEqual(options["path"], "/srv/unas")
+        self.assertEqual(options["state"], "directory")
+
+    def test_rfc2307_idmap_lets_the_share_owner_read_their_files(self):
+        # Without smbd mapping SIDs through directory rfc2307 attributes, the
+        # uidNumber-owned share directories staged by controller_principals
+        # would be unreadable by their owners and arch-storage-attached would
+        # fail even with the share exported and reachable.
+        task = self.named(
+            "Map directory rfc2307 identifiers into DC file access")
+        line = task["ansible.builtin.lineinfile"]["line"]
+        self.assertIn("idmap_ldb:use rfc2307 = yes", line)
+        self.assertEqual(task["when"], "homelab_ad_enable_rfc2307 | bool")
+        self.assertTrue(self.defaults()["homelab_ad_enable_rfc2307"])
+
+    def test_provisioning_enables_rfc2307_in_the_directory_schema(self):
+        # The smb.conf idmap line only resolves if the directory schema
+        # actually stores the NIS attributes, which the provision run enables.
+        text = (self.ROLE / "tasks/main.yml").read_text()
+        self.assertIn("'--use-rfc2307' if homelab_ad_enable_rfc2307", text)
+
+    def test_the_unas_name_is_published_when_an_address_is_set(self):
+        task = self.named("Publish the storage authority name in domain DNS")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(
+            argv[:5],
+            ["/usr/bin/samba-tool", "dns", "add", "127.0.0.1",
+             "{{ homelab_ad_dns_domain }}"])
+        self.assertIn("{{ homelab_storage_host_label }}", argv)
+        self.assertIn("A", argv)
+        self.assertIn("{{ homelab_storage_address }}", argv)
+        self.assertEqual(task["when"], "homelab_storage_address | length > 0")
+        # A record that already exists is idempotent, not a failure.
+        self.assertIn("already exists", task["failed_when"])
+
+    def test_the_storage_label_defaults_to_unas_with_no_address(self):
+        defaults = self.defaults()
+        self.assertEqual(defaults["homelab_storage_host_label"], "unas")
+        # The role default publishes nothing; the disposable Controller's
+        # factory vars supply its own address so the share is reachable by
+        # default, and the gate-8 drive repoints it to prove absence.
+        self.assertEqual(defaults["homelab_storage_address"], "")
+
+    def test_the_share_is_applied_before_the_name_is_published(self):
+        # The name must resolve to a Controller already serving the share, so
+        # the share config is flushed (samba restarted) before publication.
+        names = [str(task.get("name", "")) for task in self.tasks()]
+        export = names.index("Export optional per-user UNAS home shares")
+        flush = names.index(
+            "Apply share changes before publishing the storage name")
+        publish = names.index(
+            "Publish the storage authority name in domain DNS")
+        self.assertLess(export, flush)
+        self.assertLess(flush, publish)
+
+
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
 class TestInstanceTemplate(unittest.TestCase):
     """The tracked template must stay in step with what the roles read.
 

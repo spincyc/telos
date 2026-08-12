@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -18,6 +19,26 @@ class ControllerFactoryBundleTests(unittest.TestCase):
         self.assertEqual("FACTORY", spec.netbios)
         self.assertEqual("10.1.31.2", spec.address)
         self.assertNotIn("home.arpa", spec.domain)
+
+    def test_convergence_publishes_reachable_unas_storage_by_default(self):
+        # Gate 9: the disposable Controller is itself the optional UNAS
+        # storage authority.  The convergence vars must set
+        # homelab_storage_address to the Controller's own address so the
+        # domain_controller role publishes `unas -> 10.1.31.2`, making the
+        # per-user [homes] share reachable by default.  Left empty the role
+        # skips publication and arch-storage-attached could never mount.  The
+        # gate-8 drive later repoints the record to make storage absent.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = controller_factory.FactoryBundle(
+                ROOT.parent, root / "factory.iso",
+                authorization_nonce=NONCE)
+            stage = bundle.stage(root / "stage")
+            variables = json.loads((stage / "factory-vars.json").read_text())
+        self.assertEqual(
+            variables["homelab_storage_address"],
+            controller_factory.FactorySpec().address)
+        self.assertEqual("10.1.31.2", variables["homelab_storage_address"])
 
     def test_dedicated_tftp_service_has_no_dhcp_implementation(self):
         text = controller_factory.tftp_unit(ControllerFactoryBundleTests.spec())

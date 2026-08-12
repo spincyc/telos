@@ -201,6 +201,25 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                 "staged principal unix home is invalid"):
             self.assertIn(message, program)
 
+    def test_stage_program_creates_owned_per_user_unas_share_roots(self):
+        # Gate 9: each staged user owns /srv/unas/<name>, owned by the
+        # directory-stored POSIX uid/gid so smbd's rfc2307 mapping grants the
+        # share owner (arch-storage-attached) and denies a foreign user
+        # (arch-storage-denied).  Both the reachable-storage checks depend on
+        # these owned directories existing on the serving Controller.
+        program = controller_principals._STAGE_PROGRAM
+        self.assertIn('path = "/srv/unas/" + name', program)
+        self.assertIn("os.makedirs(path, mode=0o700, exist_ok=True)", program)
+        self.assertIn(
+            'os.chown(path, unix["uidNumber"], unix["gidNumber"])', program)
+        self.assertIn("os.chmod(path, 0o700)", program)
+
+    def test_destroy_program_removes_per_user_unas_share_roots(self):
+        # The disposable Controller's share roots are torn down with the
+        # principals so a reused canonical state never retains stale shares.
+        program = controller_principals._DESTROY_PROGRAM
+        self.assertIn('shutil.rmtree("/srv/unas/" + name', program)
+
     def test_posix_allocation_rejects_collisions(self):
         validate = controller_principals._validated_posix_allocation
         base = controller_principals.POSIX_ALLOCATION
