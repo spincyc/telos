@@ -438,6 +438,72 @@ class WindowsIdentityFactoryTests(unittest.TestCase):
                 "Zzx-Secret-Gamma-93", "Zzx-Secret-Delta-94"))
             self.assertEqual(result["secrets_found"], 0)
 
+    def test_scanner_tolerates_live_runtime_log_growth(self):
+        # The exact check-17 (update-source-offline) scenario: the guest QEMU
+        # and simulated switch keep appending to runtime/windows-qemu.log and
+        # runtime/switch.jsonl while the mid-run scan is walking the tree. The
+        # append-only growth is tolerated, yet the logs' full current content
+        # is still scanned -- a secret appended to a live log is still caught.
+        from homelab.vm import windows_identity_diagnostics as diagnostics
+        real_scan = diagnostics._scan_regular_file
+        for leak in (False, True):
+            with self.subTest(leak=leak), tempfile.TemporaryDirectory(
+            ) as name:
+                boundary, bundle = self.prepared(Path(name))
+                configuration = self.factory(boundary, bundle)
+                runtime = boundary.attempt / "runtime"
+                (runtime / "controller/guard").mkdir(parents=True, mode=0o700)
+                for relative in (
+                    "switch.jsonl", "windows-qemu.log",
+                    "controller/controller.raw", "controller/OVMF_VARS.fd",
+                    "controller/guard/controller-overlay.qcow2",
+                    "controller/guard/OVMF_VARS.fd",
+                ):
+                    (runtime / relative).write_bytes(b'{"line":0}\n')
+                for surface in (
+                    "rotation-evidence", "public-command-evidence",
+                    "post-join-reauthentication",
+                ):
+                    target = boundary.attempt / surface
+                    target.mkdir(mode=0o700)
+                    proof = (
+                        "post-join-generic-prompt.ppm"
+                        if surface == "post-join-reauthentication"
+                        else "proof.ppm"
+                    )
+                    (target / proof).write_bytes(b"clean")
+                secret = "Zzx-Live-Log-Leak-97"
+                if leak:
+                    (runtime / "switch.jsonl").write_bytes(secret.encode())
+
+                def appending_scan(path, needles, **kwargs):
+                    # Model the live switch appending a frame mid-scan.
+                    result = real_scan(path, needles, **kwargs)
+                    with open(runtime / "switch.jsonl", "ab") as handle:
+                        handle.write(b'{"line":"tick"}\n')
+                    with open(runtime / "windows-qemu.log", "ab") as handle:
+                        handle.write(b"qemu: still running\n")
+                    return result
+
+                boundary.qmp_root = Path(name) / "qmp"
+                boundary.qmp_root.mkdir(mode=0o700)
+                boundary.serial_socket = boundary.qmp_root / "windows.serial"
+                self.bind_live_serial(boundary.serial_socket)
+                boundary.port = 31415
+                boundary.processes["windows"] = mock.Mock(
+                    poll=mock.Mock(return_value=None))
+                with mock.patch.object(
+                        diagnostics, "_scan_regular_file",
+                        side_effect=appending_scan):
+                    result = configuration.callbacks.scan_secrets(
+                        (secret, "two", "three", "four"))
+                if leak:
+                    self.assertGreater(result["secrets_found"], 0)
+                    self.assertFalse(result["logs_secret_free"])
+                else:
+                    self.assertEqual(result["secrets_found"], 0)
+                    self.assertTrue(result["logs_secret_free"])
+
     def test_scanner_rejects_a_foreign_runtime_file(self):
         # A runtime file that is neither the fixed set nor a boot-attempt
         # record is still rejected as an unexpected retained path.

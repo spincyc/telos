@@ -538,11 +538,27 @@ def _attempt_inventory(attempt: Path) -> RetainedInventory:
         path for path in files
         if path not in logs and path not in active_media
     )
+    # The attempt directory is scanned mid-acceptance while the guest QEMU and
+    # the simulated switch still own it: runtime/switch.jsonl and
+    # runtime/windows-qemu.log are appended to live. Naming them (by fixed
+    # path, never a heuristic) marks this a live inventory -- their append-only
+    # growth is tolerated and new evidence files appearing after this snapshot
+    # are scanned as found, while every scanned artifact stays strictly
+    # immutable during its scan. Their full current content is still scanned,
+    # so a secret in either log still fails the diagnostics field.
+    live_logs = tuple(
+        path for path in (
+            PurePosixPath("runtime/switch.jsonl"),
+            PurePosixPath("runtime/windows-qemu.log"),
+        )
+        if path in logs
+    )
     return RetainedInventory(
         attempt,
         tracked_artifacts=artifacts,
         logs=logs,
         active_media=active_media,
+        live_logs=live_logs,
     )
 
 
