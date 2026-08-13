@@ -836,6 +836,19 @@ class NativeWindowsAcceptanceAdapter:
             diagnostic_nonce=diagnostic_nonce,
         )
 
+    def reestablish_operator_session(
+        self, principal: str, credential: str,
+    ) -> None:
+        """Re-log the operator in after a reboot, without the auth proofs."""
+        if principal != f"operator@{self.realm}":
+            raise WindowsLocalReauthenticationError("prove-password-target")
+        self._reauthenticate(
+            principal,
+            credential,
+            domain_operator=True,
+            establish_session_only=True,
+        )
+
     def _reauthenticate(
         self,
         principal: str,
@@ -843,7 +856,16 @@ class NativeWindowsAcceptanceAdapter:
         *,
         domain_operator: bool,
         diagnostic_nonce: str | None = None,
+        establish_session_only: bool = False,
     ) -> None:
+        # ``establish_session_only`` re-establishes the operator's interactive
+        # session without the DC-side controller-auth proof or the guest-side
+        # post-submit diagnostic. Those two are the post-join reauth's proofs
+        # that a fresh domain logon reached the controller; the fault-restore
+        # reboot re-login only needs the session back so the remaining checks
+        # can run (and they re-prove connected domain logins themselves), and
+        # the controller-auth arm cannot drive the DC console reliably right
+        # after the controller SIGSTOP/SIGCONT outage.
         plan = self.rotation_plan
         if plan is None:
             raise WindowsLocalReauthenticationError(
@@ -1364,7 +1386,7 @@ class NativeWindowsAcceptanceAdapter:
         self._controller_auth_receive_observation = None
         controller_auth = None
         diagnostic_cleanup_failed = False
-        if domain_operator:
+        if domain_operator and not establish_session_only:
             try:
                 controller_auth = ControllerAuthDiagnosticSession(
                     self._shared_controller_console(),
@@ -1464,7 +1486,11 @@ class NativeWindowsAcceptanceAdapter:
                     controller_auth_arm_subphase=(
                         ControllerAuthArmSubphase.LAUNCH),
                 ) from None
-        if diagnostic_factory is None or not domain_operator:
+        if (
+            diagnostic_factory is None
+            or not domain_operator
+            or establish_session_only
+        ):
             try:
                 submit_secret()
                 if controller_auth is not None:
@@ -2249,6 +2275,7 @@ class NativeWindowsAcceptanceAdapter:
             reauthenticate_local=self.reauthenticate_local,
             reauthenticate_domain_operator=(
                 self.reauthenticate_domain_operator),
+            reestablish_operator_session=self.reestablish_operator_session,
             reboot_guest=self.reboot_guest,
             static_probe=self.static_probe,
             credential_action=self.credential_action,

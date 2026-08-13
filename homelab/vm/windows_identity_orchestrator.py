@@ -84,6 +84,7 @@ class AcceptanceCallbacks:
     open_join_serial: Callable[[], DuplexJoinSerial]
     reauthenticate_local: Callable[[str], None]
     reauthenticate_domain_operator: Callable[[str, str, str], None]
+    reestablish_operator_session: Callable[[str, str], None]
     reboot_guest: Callable[[], None]
     static_probe: Callable[[str], Mapping[str, object]]
     credential_action: Callable[
@@ -999,10 +1000,9 @@ def _run_acceptance_checks(
         # (exactly the post-join reboot re-login, reused here).
         callbacks.reboot_guest()
         try:
-            callbacks.reauthenticate_domain_operator(
+            callbacks.reestablish_operator_session(
                 f"operator@{realm.upper()}",
                 principals["operator"],
-                uuid.uuid4().hex,
             )
         except (KeyboardInterrupt, SystemExit):
             raise
