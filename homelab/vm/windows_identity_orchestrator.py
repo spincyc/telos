@@ -998,11 +998,33 @@ def _run_acceptance_checks(
         # re-establish the operator session the following checks run in
         # (exactly the post-join reboot re-login, reused here).
         callbacks.reboot_guest()
-        callbacks.reauthenticate_domain_operator(
-            f"operator@{realm.upper()}",
-            principals["operator"],
-            uuid.uuid4().hex,
-        )
+        try:
+            callbacks.reauthenticate_domain_operator(
+                f"operator@{realm.upper()}",
+                principals["operator"],
+                uuid.uuid4().hex,
+            )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as error:
+            # The progressive sanitizer severs the cause chain, so name the
+            # exact re-login step here; otherwise the fault-restore reboot's
+            # re-login failure collapses to scoped-acceptance.acceptance.
+            operation = getattr(error, "reauth_operation", None)
+            phase = (
+                f"reboot-reauth-{operation}" if operation else "reboot-reauth")
+            try:
+                collector.note_failure_detail(
+                    f"windows-secure-channel-restored {phase}: "
+                    f"{type(error).__name__}: {error}")
+            except BaseException:
+                pass
+            raise WindowsIdentityOrchestratorError(
+                "fault-restore reboot re-login failed",
+                diagnostic=IdentityFailureDiagnostic.acceptance_check(
+                    "windows-secure-channel-restored", phase,
+                    type(error).__name__),
+            ) from error
 
     faults = run_fault_phases(FaultPhaseOperations(
         set_controller_available=fault_setter(
