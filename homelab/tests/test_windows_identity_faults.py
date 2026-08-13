@@ -29,6 +29,9 @@ class Recorder:
         if self.failure == check:
             raise RuntimeError("observation failed")
 
+    def reboot(self):
+        self.events.append("reboot")
+
     def operations(self):
         return FaultPhaseOperations(
             set_controller_available=self.setter("controller"),
@@ -36,6 +39,7 @@ class Recorder:
             set_update_source_available=self.setter("update-source"),
             set_optional_storage_available=self.setter("optional-storage"),
             observe=self.observe,
+            reboot_and_reauthenticate=self.reboot,
         )
 
 
@@ -52,6 +56,7 @@ class WindowsIdentityFaultTests(unittest.TestCase):
             "observe:windows-local-rescue",
             "restore:controller",
             "observe:controller-restored",
+            "reboot",
             "observe:windows-secure-channel-restored",
             "disable:gateway",
             "observe:gateway-offline",

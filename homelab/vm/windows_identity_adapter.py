@@ -2231,6 +2231,7 @@ class NativeWindowsAcceptanceAdapter:
             reauthenticate_local=self.reauthenticate_local,
             reauthenticate_domain_operator=(
                 self.reauthenticate_domain_operator),
+            reboot_guest=self.boundary.reboot_and_await_readiness,
             static_probe=self.static_probe,
             credential_action=self.credential_action,
             scan_secrets=self.scan_secrets,

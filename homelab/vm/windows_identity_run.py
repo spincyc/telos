@@ -1741,6 +1741,29 @@ class NativeProcessBoundary:
             )
         return process
 
+    def reboot_and_await_readiness(self) -> None:
+        """Hard-reset the running guest and wait until it has rebooted.
+
+        The fault-restore step reboots Windows so the machine secure channel,
+        which Netlogon dropped during the controller outage, re-establishes on
+        boot. The operator probe runs UAC-filtered (non-elevated) and cannot
+        actively reset the channel, and a plain Test-ComputerSecureChannel
+        query does not re-establish it; a reboot restores it unconditionally.
+        `system_reset` keeps the same QEMU process, so the guest drops its
+        switch connection and reconnects -- the existing OS-readiness signal
+        (a fresh switch port plus a DHCP transaction) is the boot-completion
+        proof, exactly as at first boot.
+        """
+        process = self.processes.get("windows")
+        if self.qmp is None or process is None:
+            raise WindowsIdentityRunError(
+                "guest reboot requires a running Windows QEMU and QMP session")
+        evidence = self.runtime / "switch.jsonl"
+        cursor = capture_switch_evidence_cursor(evidence)
+        self.windows_switch_generation = None
+        self.qmp.execute("system_reset")
+        self._wait_for_windows_os_readiness(cursor, process)
+
     def _wait_for_windows_os_readiness(
         self, cursor: SwitchEvidenceCursor,
         process: "subprocess.Popen[bytes] | None" = None,

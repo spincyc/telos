@@ -84,6 +84,7 @@ class AcceptanceCallbacks:
     open_join_serial: Callable[[], DuplexJoinSerial]
     reauthenticate_local: Callable[[str], None]
     reauthenticate_domain_operator: Callable[[str, str, str], None]
+    reboot_guest: Callable[[], None]
     static_probe: Callable[[str], Mapping[str, object]]
     credential_action: Callable[
         [str, str, str], Mapping[str, object]
@@ -992,6 +993,17 @@ def _run_acceptance_checks(
                     check, "observe", type(error).__name__),
             ) from error
 
+    def reboot_and_reauthenticate() -> None:
+        # Reboot the guest so the machine secure channel re-establishes, then
+        # re-establish the operator session the following checks run in
+        # (exactly the post-join reboot re-login, reused here).
+        callbacks.reboot_guest()
+        callbacks.reauthenticate_domain_operator(
+            f"operator@{realm.upper()}",
+            principals["operator"],
+            uuid.uuid4().hex,
+        )
+
     faults = run_fault_phases(FaultPhaseOperations(
         set_controller_available=fault_setter(
             "controller", boundary.set_controller_available),
@@ -1002,6 +1014,7 @@ def _run_acceptance_checks(
         set_optional_storage_available=fault_setter(
             "optional-storage", boundary.set_optional_storage_available),
         observe=fault_observe,
+        reboot_and_reauthenticate=reboot_and_reauthenticate,
     ))
     try:
         diagnostics_scan = callbacks.scan_secrets(

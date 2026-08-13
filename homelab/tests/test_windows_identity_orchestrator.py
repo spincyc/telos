@@ -542,6 +542,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             open_join_serial=mock.Mock(),
             reauthenticate_local=mock.Mock(),
             reauthenticate_domain_operator=mock.Mock(),
+            reboot_guest=mock.Mock(),
             static_probe=lambda action: {
                 "schema_version": 1,
                 "action": action,

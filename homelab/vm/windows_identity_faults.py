@@ -38,6 +38,7 @@ class FaultPhaseOperations:
     set_update_source_available: Callable[[bool], None]
     set_optional_storage_available: Callable[[bool], None]
     observe: Callable[[str], None]
+    reboot_and_reauthenticate: Callable[[], None]
 
 
 @dataclass
@@ -51,6 +52,7 @@ class FaultPhaseReceipt:
 def native_fault_operations(
     boundary: RuntimeFaultBoundary,
     observe: Callable[[str], None],
+    reboot_and_reauthenticate: Callable[[], None] = lambda: None,
 ) -> FaultPhaseOperations:
     """Bind the ordered driver to a real native process boundary."""
     return FaultPhaseOperations(
@@ -59,6 +61,7 @@ def native_fault_operations(
         set_update_source_available=boundary.set_update_source_available,
         set_optional_storage_available=boundary.set_optional_storage_available,
         observe=observe,
+        reboot_and_reauthenticate=reboot_and_reauthenticate,
     )
 
 
@@ -102,6 +105,10 @@ class _Driver:
     def observe(self, check: str) -> None:
         self.operations.observe(check)
         self.receipt.phases.append(check)
+
+    def reboot(self) -> None:
+        self.operations.reboot_and_reauthenticate()
+        self.receipt.phases.append("guest-rebooted")
 
     def cleanup(self) -> list[str]:
         failures: list[str] = []
@@ -147,6 +154,11 @@ def run_fault_phases(
             driver.observe(check)
         driver.restore("controller")
         driver.observe("controller-restored")
+        # The controller is reachable again, but Netlogon tore the machine
+        # secure channel down during the outage and the non-elevated operator
+        # probe cannot actively reset it. Reboot the guest so the channel
+        # re-establishes on boot, then observe it restored.
+        driver.reboot()
         driver.observe("windows-secure-channel-restored")
 
         driver.disable("gateway")
