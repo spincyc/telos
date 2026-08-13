@@ -45,20 +45,15 @@ function Test-TcpPort {
 }
 
 function Get-SecureChannelState {
-    # Test-ComputerSecureChannel invokes Netlogon's TC_VERIFY, which
-    # re-establishes the machine secure channel on demand when the domain
-    # controller is reachable. After a long controller pause the DC's TCP
-    # ports (88/389/445 -- what controller-restored checks) come back before
-    # Samba's Netlogon RPC endpoint is fully serving again, so an immediate
-    # verify can still report $false. The secure channel IS restorable here:
-    # the machine account and its stored password never changed (the outage
-    # was a pause, not a trust break), so re-verify on a bounded schedule and
-    # return as soon as it clears. This runs entirely read-only in the
-    # operator's non-elevated context (no -Repair, which needs elevation the
-    # UAC-filtered operator lacks). The static-probe deadline is 120s; this
-    # budget stays well under it. On the online checks the first verify
-    # succeeds, so the wait is never entered there.
-    for ($attempt = 0; $attempt -lt 16; $attempt++) {
+    # Read-only machine secure-channel check. A plain query does not
+    # re-establish a channel that Netlogon tore down during a long controller
+    # outage; that restoration is driven by the acceptance's fault-restore
+    # step (a guest reboot, which re-establishes the channel unconditionally
+    # on boot) BEFORE this probe runs. A short bounded re-verify here only
+    # covers a brief post-restore settle and is inert on the online checks,
+    # where the first query already returns $true. Stays well under the 120s
+    # static-probe deadline.
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
         if ($attempt -gt 0) {
             Start-Sleep -Seconds 5
         }
