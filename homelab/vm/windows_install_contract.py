@@ -387,12 +387,18 @@ def render_unattend(identity: SyntheticIdentity) -> str:
         <SynchronousCommand
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           wcm:action="add"><Order>3</Order>
+          <CommandLine>reg.exe add &quot;HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU&quot; /v NoAutoUpdate /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Configure automatic updates by policy</Description>
+        </SynchronousCommand>
+        <SynchronousCommand
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          wcm:action="add"><Order>4</Order>
           <CommandLine>cmd.exe /c "(echo TELOS WINDOWS NATIVE READY&amp;dism.exe /online /Get-CurrentEdition&amp;reg.exe query &quot;HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power&quot; /v HiberbootEnabled&amp;powercfg.exe /a) &gt; COM1"</CommandLine>
           <Description>Record native Windows assertions</Description>
         </SynchronousCommand>
         <SynchronousCommand
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-          wcm:action="add"><Order>4</Order>
+          wcm:action="add"><Order>5</Order>
           <CommandLine>shutdown.exe /s /t 0</CommandLine>
           <Description>Leave NTFS cleanly shut down</Description>
         </SynchronousCommand>
