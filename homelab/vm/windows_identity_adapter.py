@@ -764,6 +764,21 @@ class NativeWindowsAcceptanceAdapter:
                 "calibrated public guest command launch failed: "
                 f"{type(error).__name__}") from None
 
+    def reboot_guest(self) -> None:
+        """Cleanly reboot the guest from the operator's session, then wait.
+
+        The operator holds SeShutdownPrivilege even in its non-elevated
+        session, so a Run-dialog `shutdown /r` is a proper clean restart:
+        Windows shuts down, boots straight back to sign-in and rejoins the
+        network, instead of stopping on the post-crash recovery screen an
+        unclean QMP hard reset triggers. The short timer lets the launch proof
+        settle before the reboot begins; the boundary captured the switch
+        cursor first, so the reboot's disconnect/reconnect is the readiness
+        signal it waits on.
+        """
+        self.boundary.reboot_and_await_readiness(
+            lambda: self.launch_guest("shutdown /r /t 30 /f"))
+
     def await_device_deleted(self, device: str) -> None:
         """Await the exact correlated QMP deletion event."""
         if (
@@ -2231,7 +2246,7 @@ class NativeWindowsAcceptanceAdapter:
             reauthenticate_local=self.reauthenticate_local,
             reauthenticate_domain_operator=(
                 self.reauthenticate_domain_operator),
-            reboot_guest=self.boundary.reboot_and_await_readiness,
+            reboot_guest=self.reboot_guest,
             static_probe=self.static_probe,
             credential_action=self.credential_action,
             scan_secrets=self.scan_secrets,

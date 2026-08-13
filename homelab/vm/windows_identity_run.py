@@ -1741,27 +1741,30 @@ class NativeProcessBoundary:
             )
         return process
 
-    def reboot_and_await_readiness(self) -> None:
-        """Hard-reset the running guest and wait until it has rebooted.
+    def reboot_and_await_readiness(
+        self, trigger_reboot: Callable[[], None],
+    ) -> None:
+        """Reboot the running guest via *trigger_reboot* and await its return.
 
         The fault-restore step reboots Windows so the machine secure channel,
         which Netlogon dropped during the controller outage, re-establishes on
-        boot. The operator probe runs UAC-filtered (non-elevated) and cannot
-        actively reset the channel, and a plain Test-ComputerSecureChannel
-        query does not re-establish it; a reboot restores it unconditionally.
-        `system_reset` keeps the same QEMU process, so the guest drops its
-        switch connection and reconnects -- the existing OS-readiness signal
-        (a fresh switch port plus a DHCP transaction) is the boot-completion
-        proof, exactly as at first boot.
+        boot -- the operator probe runs UAC-filtered (non-elevated) and cannot
+        actively reset it, and a plain Test-ComputerSecureChannel query does
+        not re-establish it. The reboot is a CLEAN guest-initiated restart (a
+        QMP system_reset is an unclean reset that lands Windows on its
+        post-crash recovery screen and never rejoins the network). The switch
+        cursor is captured before the trigger so the disconnect/reconnect it
+        causes is observed; the existing first-boot readiness signal (a fresh
+        switch port plus a DHCP transaction) is the boot-completion proof.
         """
         process = self.processes.get("windows")
-        if self.qmp is None or process is None:
+        if process is None:
             raise WindowsIdentityRunError(
-                "guest reboot requires a running Windows QEMU and QMP session")
+                "guest reboot requires a running Windows QEMU")
         evidence = self.runtime / "switch.jsonl"
         cursor = capture_switch_evidence_cursor(evidence)
         self.windows_switch_generation = None
-        self.qmp.execute("system_reset")
+        trigger_reboot()
         self._wait_for_windows_os_readiness(cursor, process)
 
     def _wait_for_windows_os_readiness(
