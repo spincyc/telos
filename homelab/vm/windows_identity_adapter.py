@@ -768,16 +768,19 @@ class NativeWindowsAcceptanceAdapter:
         """Cleanly reboot the guest from the operator's session, then wait.
 
         The operator holds SeShutdownPrivilege even in its non-elevated
-        session, so a Run-dialog `shutdown /r` is a proper clean restart:
-        Windows shuts down, boots straight back to sign-in and rejoins the
-        network, instead of stopping on the post-crash recovery screen an
-        unclean QMP hard reset triggers. The short timer lets the launch proof
-        settle before the reboot begins; the boundary captured the switch
-        cursor first, so the reboot's disconnect/reconnect is the readiness
-        signal it waits on.
+        session, so Restart-Computer is a proper clean restart: Windows shuts
+        down, boots straight back to sign-in and rejoins the network, instead
+        of stopping on the post-crash recovery screen an unclean QMP hard reset
+        triggers. The public-command launcher only accepts a PowerShell
+        invocation, so the reboot is issued as one; the brief Start-Sleep lets
+        the launcher's run-dialog-departed proof settle (a PowerShell window is
+        open, the Run box has closed) before the restart begins, and the
+        boundary waits on the fresh DHCP transaction the reboot produces.
         """
         self.boundary.reboot_and_await_readiness(
-            lambda: self.launch_guest("shutdown /r /t 30 /f"))
+            lambda: self.launch_guest(
+                "powershell -NoProfile -Command "
+                "\"Start-Sleep -Seconds 8; Restart-Computer -Force\""))
 
     def await_device_deleted(self, device: str) -> None:
         """Await the exact correlated QMP deletion event."""

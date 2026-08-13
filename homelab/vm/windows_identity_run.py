@@ -1761,11 +1761,25 @@ class NativeProcessBoundary:
         if process is None:
             raise WindowsIdentityRunError(
                 "guest reboot requires a running Windows QEMU")
+        if self.windows_switch_generation is None:
+            raise WindowsIdentityRunError(
+                "guest reboot requires an established switch generation")
         evidence = self.runtime / "switch.jsonl"
         cursor = capture_switch_evidence_cursor(evidence)
-        self.windows_switch_generation = None
         trigger_reboot()
-        self._wait_for_windows_os_readiness(cursor, process)
+        # A guest reboot does NOT drop the host-side switch socket -- the port
+        # stays connected across the reboot (proven: a mid-run reboot produces
+        # no new port-connected event), so the boot-completion signal is the
+        # fresh DHCP DISCOVER/OFFER/REQUEST/ACK the rebooted guest performs on
+        # the still-valid switch generation, not a new port. A renewal
+        # (REQUEST/ACK) before the reboot cannot satisfy the full transaction.
+        abort = self._windows_boot_abort_reason(evidence, cursor, process)
+        wait_for_plain_dhcp_transaction(
+            evidence, "workstation", MACS["client"],
+            timeout=WINDOWS_OS_READINESS_TIMEOUT, after=cursor,
+            generation=self.windows_switch_generation,
+            gateway_generation=self.gateway_switch_generation,
+            abort=abort)
 
     def _wait_for_windows_os_readiness(
         self, cursor: SwitchEvidenceCursor,
