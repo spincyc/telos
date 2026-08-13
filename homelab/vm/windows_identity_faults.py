@@ -184,6 +184,11 @@ def run_fault_phases(
         driver.restore("update-source")
         driver.restore("gateway")
         driver.restore("controller")
+        # ad-dns-offline and combined-dependencies-offline took the controller
+        # offline again after the first reboot, so Netlogon dropped the machine
+        # secure channel a second time. Reboot again before proving services
+        # restored, exactly as before windows-secure-channel-restored.
+        driver.reboot()
         driver.observe("windows-services-restored")
     except BaseException as error:
         primary = error

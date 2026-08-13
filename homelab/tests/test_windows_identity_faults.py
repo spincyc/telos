@@ -78,6 +78,7 @@ class WindowsIdentityFaultTests(unittest.TestCase):
             "restore:update-source",
             "restore:gateway",
             "restore:controller",
+            "reboot",
             "observe:windows-services-restored",
         ], recorder.events)
         self.assertTrue(receipt.all_dependencies_restored)
