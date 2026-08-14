@@ -28,6 +28,7 @@ try:
     from .serial_automation import SerialAutomation, SerialAutomationError
     from .simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
+        LOCK_NAME,
         PERSISTENT_DISK_NAME,
         PERSISTENT_MARKER_NAME,
         PERSISTENT_VARS_NAME,
@@ -40,6 +41,7 @@ except ImportError:  # Direct execution from homelab/.
     from serial_automation import SerialAutomation, SerialAutomationError
     from simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
+        LOCK_NAME,
         PERSISTENT_DISK_NAME,
         PERSISTENT_MARKER_NAME,
         PERSISTENT_VARS_NAME,
@@ -520,17 +522,42 @@ def destroy(state: Path, confirm: str | None) -> int:
     if not state.exists():
         print(f"{NAME}: already absent")
         return 0
+    # ``ControllerOverlay`` leaves its advisory lock file behind by design, so
+    # any simulation run against this image used to make destruction refuse
+    # forever. Expect the name -- as the persistent instance's own destroy
+    # already does -- but never confuse a stale file for a free disk: take the
+    # lock before erasing anything, or a run in flight would have its disk
+    # removed underneath it. Every other unexpected entry still fails closed,
+    # and a symlink is still refused.
+    lock_path = state / LOCK_NAME
+    expected = set(files.values()) | {lock_path}
     unexpected = [
         entry for entry in state.iterdir()
-        if entry not in files.values() or entry.is_symlink()
+        if entry not in expected or entry.is_symlink()
     ]
     if unexpected:
         print("refusing: state directory contains unexpected files:", file=sys.stderr)
         for entry in unexpected:
             print(f"  {entry}", file=sys.stderr)
         return 2
-    for key in ("disk", "vars", "manifest"):
-        files[key].unlink(missing_ok=True)
+    lock_stream = None
+    if lock_path.is_file():
+        lock_stream = lock_path.open("a")
+        try:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_stream.close()
+            print(f"refusing: {NAME} is open elsewhere; its lock is held. Stop "
+                  "the run using it and retry.", file=sys.stderr)
+            return 2
+    try:
+        for key in ("disk", "vars", "manifest"):
+            files[key].unlink(missing_ok=True)
+        lock_path.unlink(missing_ok=True)
+    finally:
+        if lock_stream is not None:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
+            lock_stream.close()
     state.rmdir()
     print(f"destroyed temporary state at {state}")
     return 0

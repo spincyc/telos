@@ -562,6 +562,43 @@ class BootstrapVmTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertTrue((state / "keep-me").exists())
 
+    def test_destroy_clears_a_stale_simulation_lock(self):
+        """ControllerOverlay leaves its advisory lock file behind by design, so
+        before this was expected, any simulation run against the canonical image
+        made destruction refuse forever -- which is exactly what blocked
+        reinstalling an image whose console password had been lost."""
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            state.mkdir()
+            for key in ("disk", "vars", "manifest"):
+                bootstrap_dc.paths(state)[key].touch()
+            (state / simulation_overlay.LOCK_NAME).touch()
+            self.assertEqual(
+                bootstrap_dc.destroy(state, bootstrap_dc.NAME), 0)
+            self.assertFalse(state.exists())
+
+    def test_destroy_refuses_while_the_lock_is_actually_held(self):
+        """A stale lock file is safe to sweep; a held one is not. Erasing the
+        disk under a live run would destroy it from underneath QEMU, so the
+        presence of the name must never be mistaken for a free disk."""
+        import fcntl
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            state.mkdir()
+            for key in ("disk", "vars", "manifest"):
+                bootstrap_dc.paths(state)[key].touch()
+            lock_path = state / simulation_overlay.LOCK_NAME
+            lock_path.touch()
+            with lock_path.open("a") as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with contextlib.redirect_stderr(io.StringIO()) as captured:
+                    result = bootstrap_dc.destroy(state, bootstrap_dc.NAME)
+                fcntl.flock(held.fileno(), fcntl.LOCK_UN)
+            self.assertEqual(result, 2)
+            self.assertIn("lock is held", captured.getvalue())
+            # The disk must still be there: refusing has to be non-destructive.
+            self.assertTrue(bootstrap_dc.paths(state)["disk"].exists())
+
     def test_create_is_transactional_and_private(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
