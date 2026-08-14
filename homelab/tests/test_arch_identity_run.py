@@ -581,9 +581,12 @@ class WorkstationBootCommandTests(unittest.TestCase):
         self.assertNotIn("-cdrom", command)
         self.assertFalse(any("media=cdrom" in item for item in command))
         # The joined disk is cold-plugged as the NVMe the installer targeted,
-        # firmware-bootable, so OVMF's proven ESP auto-discovery boots it.
-        self.assertIn(
-            f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1", command)
+        # and the boot rides the gate-7 authored NVRAM entries: no bootindex,
+        # whose fw_cfg boot order would compete with them.
+        self.assertIn(f"nvme,drive=osdisk,serial={DISK_SERIAL}", command)
+        self.assertFalse(any("bootindex" in item for item in command))
+        # A display device, so QMP screendump can retain frame evidence.
+        self.assertIn("VGA", command)
         self.assertIn(
             "socket,id=factory,connect=127.0.0.1:23456", command)
         self.assertTrue(

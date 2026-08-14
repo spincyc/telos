@@ -772,9 +772,10 @@ def workstation_boot_command(
     No PXE and no installation media: the joined disk is cold-plugged as the
     same NVMe device (same synthetic serial) the gate-7 installer targeted,
     so the installed system enumerates the disk it was installed onto.  The
-    gate-7 blocker history proved OVMF auto-discovers a bootable ESP on a
-    cold-plugged NVMe; with the bundle's pristine variables and bootindex=1
-    that auto-discovery makes the disk boot deterministic.
+    boot itself rides the gate-7 bundle's authored NVRAM entries rather than
+    ESP auto-discovery, which the live 2026-08-13 run showed starts no
+    bootloader at all here; the argv otherwise matches the gate-10 dual-boot
+    boundary, the only one that renders this menu reliably.
 
     ``qmp_socket`` (mirroring the dual-boot lane) pins a private QMP socket
     so a missed systemd-boot window can be power-cycled with ``system_reset``
@@ -787,10 +788,14 @@ def workstation_boot_command(
 
     if not 1 <= switch_port <= 65535:
         raise ArchIdentityError("switch port is invalid")
-    command = _base("arch-identity", Path(variables), 4096)
+    command = _base("arch-identity", Path(variables), 8192)
     command += [
         "-boot", "order=c,menu=off",
         "-monitor", "none",
+        # The frame evidence needs a display device: with -nodefaults there is
+        # none and every screendump fails, which is exactly why the 2026-08-13
+        # no-menu boot could not be diagnosed from this lane's own artifacts.
+        "-device", "VGA",
     ]
     if qmp_socket is not None:
         if len(str(Path(qmp_socket)).encode()) > 100:
@@ -804,7 +809,10 @@ def workstation_boot_command(
             "if=none,id=osdisk,format=qcow2,cache=none,"
             f"file={Path(disk).resolve()}"
         ),
-        "-device", f"nvme,drive=osdisk,serial={DISK_SERIAL},bootindex=1",
+        # No bootindex: it injects an fw_cfg boot order that competes with the
+        # authored NVRAM entries, and the gate-10 lane -- the one boundary that
+        # renders this menu reliably -- pins no bootindex either.
+        "-device", f"nvme,drive=osdisk,serial={DISK_SERIAL}",
         "-netdev", f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device", f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
