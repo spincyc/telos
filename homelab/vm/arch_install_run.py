@@ -53,7 +53,7 @@ try:
     from .factory_publication import stage as stage_publication
     from .factory_runner import (
         DEFAULT_SEED_ISO, GATEWAY_MAC, PUBLICATION_LABEL, _at_root_prompt,
-        gateway_command, qemu_commands,
+        gateway_command, measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from .serial_automation import SerialAutomation, SerialAutomationError
     from .signal_cleanup import SignalGuard, terminate_children
@@ -73,7 +73,7 @@ except ImportError:  # Direct execution from homelab/vm.
     from factory_publication import stage as stage_publication
     from factory_runner import (
         DEFAULT_SEED_ISO, GATEWAY_MAC, PUBLICATION_LABEL, _at_root_prompt,
-        gateway_command, qemu_commands,
+        gateway_command, measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from homelab.vm.serial_automation import (
         SerialAutomation, SerialAutomationError)
@@ -914,6 +914,50 @@ def _validate_lifecycle(serial: str, disk_serial: str = DISK_SERIAL) -> None:
             "workstation did not use exactly one PXE firmware boot")
 
 
+def acceptance_measurements(
+    *, canonical_unchanged: bool, loopback_only_audited: bool,
+    arch_installed: bool,
+) -> dict:
+    """This install's honest subset of the gate-12 acceptance measurements.
+
+    Emitted: the canonical controller disk/firmware identity (re-hashed by
+    ``ControllerOverlay.verify_canonical`` before the terminal result is
+    composed), the post-offline-gate external-connection count (both guests
+    passed ``audit_live_process``, so the kernel's own view of each argv carries
+    only loopback socket NICs and no external path exists), and the install
+    order this run really performed -- ``["arch-workstation"]``.  Windows was
+    PRESERVED here, not installed, so it has no place in this run's order; the
+    single-OS order renders NOT-RUN, which is the honest verdict for a phase
+    bundle and exists so an aggregate driver can concatenate the phases.
+
+    Deliberately absent:
+
+    * ``guest_disks`` -- the install target is the bundle's authorized overlay
+      over the PERSISTENT gate-5 Windows disk, and the overlay is retained for
+      gate 10; neither is disposable and run-scoped, and a partial inventory
+      would pass the check by omission;
+    * ``default_boot`` -- ``_validate_lifecycle`` requires the installer's
+      ``TELOS ARCH DEFAULT auto-windows`` marker, but that is the AUTHORED
+      loader default, not an observed cold-boot selection.  Gate 10
+      (``dualboot_acceptance``) is what watches a real boot hand off to Windows
+      within the policy window, so it owns this field.  Do not add it here.
+    * ``login`` and ``optional_storage_absence_nonblocking`` -- the machine join
+      is verified in the live installer, but no login is ever driven;
+    * ``host_network_changes`` -- a before/after host-state delta this runner
+      never captures (``host_network_evidence.capture``/``compare_cycle`` is its
+      producer); and
+    * ``artifact_scan`` -- a repository-wide tracked/publishable content scan no
+      runner performs.
+    """
+    return measurement_block(
+        controller_disk_unchanged=True if canonical_unchanged else None,
+        firmware_vars_unchanged=True if canonical_unchanged else None,
+        external_connections_after_offline_gate=(
+            0 if loopback_only_audited else None),
+        install_order=["arch-workstation"] if arch_installed else None,
+    )
+
+
 # archiso's PXE image reaches a getty `login:` prompt on ttyS0 with no serial
 # autologin drop-in; its live root has an empty password. These matchers mirror
 # _at_root_prompt (end-of-transcript anchored, no MULTILINE) so login is only
@@ -1310,6 +1354,11 @@ def run(
                 raise RuntimeError(
                     "Arch lifecycle process failed: " + ", ".join(failed))
             _validate_lifecycle(serial, disk_serial)
+            # The canonical controller identity is re-checked here rather than
+            # left to ``DisposableBootDisk.close``: recording the fact before
+            # the terminal result is composed is what keeps the recorded
+            # measurement and the run's own verdict from disagreeing.
+            overlay.overlay.verify_canonical()
             result = {
                 "schema": 1, "status": "observed",
                 "phase": "arch-installed-windows-preserved",
@@ -1319,6 +1368,11 @@ def run(
                 "controller": dict(controller_facts),
                 "join_media": dict(join_facts),
                 "join_principal_destroyed": destruction.destruction_proved,
+                "measurements": acceptance_measurements(
+                    canonical_unchanged=True,
+                    # Both guests passed audit_live_process above.
+                    loopback_only_audited=True,
+                    arch_installed=True),
             }
             return 0
     except BaseException as error:

@@ -59,9 +59,48 @@ ALLOWED_EVIDENCE = frozenset(
 )
 LOG_FILES = ("controller-publication.log", "workstation-serial.log")
 
+# Two honest pass vocabularies reach retained evidence, and the receipt names
+# which one it read rather than flattening them:
+#
+#   "pass"     an aggregate whole-factory claim (factory_runner.retain_evidence)
+#   "observed" one phase runner's own vocabulary for "this phase ran and its own
+#              lifecycle validation held" -- arch_install_run,
+#              windows_install_run, dualboot_acceptance, lifecycle_recovery, and
+#              arch_identity_prepare.PASS_STATUS all record exactly this
+#
+# Accepting only "pass" made every real phase bundle FAIL for a vocabulary
+# mismatch alone, which is neither a measurement nor a defect in the run.  An
+# "observed" phase bundle is still a narrower assertion than a whole-factory
+# "pass", so the check's detail and the receipt's ``run_status`` block say which
+# was read; nothing upgrades "observed" into "pass".
+AGGREGATE_PASS_STATUS = "pass"
+PHASE_PASS_STATUS = "observed"
+RUN_FAIL_STATUS = "fail"
+PASS_STATUS_SCOPES = {
+    AGGREGATE_PASS_STATUS: "aggregate",
+    PHASE_PASS_STATUS: "phase",
+}
+
 # A credential-like token that survived redaction is a leak, not evidence.
+#
+# The post-delimiter run is same-line whitespace only (``[^\S\r\n]``, never
+# ``\s``, which matches ``\r\n``).  With ``\s*`` a bare ``Password:`` prompt
+# paired with the FIRST TOKEN OF THE NEXT LINE, and on real arch-install
+# evidence that was a 100% false-positive rate: 12 of 23 retained bundles
+# flagged, all 18 matches crossing a line boundary onto a shell-integration
+# escape marker or the next console prompt.
+#
+# The residual gap is deliberate: a secret echoed on the line AFTER its label is
+# no longer detected.  This scanner exists to catch what the redactor missed,
+# and the redactors are same-line by construction
+# (factory_runner._redact, simulation_evidence._SECRET), so a next-line match
+# could never be remediated by redaction -- it produced permanent, unactionable
+# FAILs that train an operator to ignore a fail-closed check.  The controls that
+# do cover that shape are the guests' no-echo credential discipline and
+# mode-0600 retention, not this regex.
 _CREDENTIAL = re.compile(
-    rb"(?i)(?:password|passphrase|token|secret)\s*[:=]\s*(?!\[REDACTED\])\S+"
+    rb"(?i)(?:password|passphrase|token|secret)[^\S\r\n]*[:=]"
+    rb"[^\S\r\n]*(?!\[REDACTED\])\S+"
 )
 
 # Arch is recorded either bare or as the full PXE target name.
@@ -512,9 +551,14 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
         return _fail_receipt(evidence_dir, f"result.json is unreadable: {exc}")
 
     status = result.get("status")
-    if status == "pass":
-        checks["run_status_pass"] = _record(PASS, "the retained run recorded a pass status")
-    elif status == "fail":
+    scope = (
+        PASS_STATUS_SCOPES.get(status) if isinstance(status, str) else None)
+    if scope is not None:
+        checks["run_status_pass"] = _record(
+            PASS,
+            "the retained run recorded a pass status in the "
+            f"{scope} vocabulary ({status})")
+    elif status == RUN_FAIL_STATUS:
         checks["run_status_pass"] = _record(FAIL, "the retained run recorded a fail status")
     else:
         checks["run_status_pass"] = _record(
@@ -550,6 +594,14 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
             name for name, c in checks.items() if c["status"] == NOT_RUN
         ),
         "summary": _summarize(checks),
+        # Which pass vocabulary the evidence used.  A phase runner's "observed"
+        # and an aggregate driver's "pass" both render one PASS check, so the
+        # receipt keeps the distinction here instead of losing it in the counts:
+        # ``scope`` is "phase", "aggregate", or None for a fail/unknown status.
+        "run_status": {
+            "status": status if isinstance(status, str) else None,
+            "scope": scope,
+        },
         # The working trees accepted structurally but not inspected.  Naming
         # them keeps the accept auditable, and makes a changed working-tree set
         # a divergence the repeat comparison reports rather than absorbs.

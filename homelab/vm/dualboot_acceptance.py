@@ -58,6 +58,7 @@ try:
     from .arch_install_prepare import (
         DISK_SERIAL, _expected_sizes_mib, inspect_overlay)
     from .bootstrap_dc import ovmf_pair
+    from .factory_runner import guest_disk, measurement_block
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
     from .simulated_topology import _base
@@ -67,6 +68,7 @@ except ImportError:  # Direct execution from homelab/vm.
     from arch_install_prepare import (
         DISK_SERIAL, _expected_sizes_mib, inspect_overlay)
     from bootstrap_dc import ovmf_pair
+    from factory_runner import guest_disk, measurement_block
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
     from simulated_topology import _base
@@ -1118,6 +1120,53 @@ def build_events(
     return events
 
 
+def acceptance_measurements(*, run: str, events: list[dict]) -> dict:
+    """This acceptance's honest subset of the gate-12 acceptance measurements.
+
+    Called only after both cold boots ran and the judge accepted their evidence,
+    so the two unconditional fields really were observed:
+
+    * ``guest_disks`` -- the guest sees exactly one disk, the fresh
+      ``dualboot.qcow2`` prepare created inside this run's own directory so
+      acceptance can never mutate the gate-7 artifact it backs.  Disposable and
+      run-scoped is the whole point of that overlay, and unlike gates 5 and 7
+      this inventory is complete.
+    * ``external_connections_after_offline_gate`` -- ``audit_dualboot_boot
+      _boundary`` refuses ANY network device (``-netdev``/``-nic``/``-net``/
+      chardev, plus tap/bridge/user/slirp text) and re-audits the
+      digest-pinned argv that is actually launched, so the boots have no
+      external path at all.
+
+    ``default_boot`` comes from the judged ``windows-default-boot`` event rather
+    than from a constant: boot 1 sends no input, and the check passes only when
+    the menu rendered, no Linux handoff appeared, Windows was listed, the guest
+    was sampled running, and a frame was retained.  A run that observed boot 1
+    without proving that records no default-boot claim.
+
+    Deliberately absent: ``controller_disk_unchanged``/``firmware_vars
+    _unchanged`` (gate 10 boots no controller), ``install_order`` (it installs
+    nothing), ``login`` (the evidence is explicitly ``boot-observed``, never
+    ``login-proven``; the Arch check observes a getty PROMPT, not a login),
+    ``optional_storage_absence_nonblocking``, ``host_network_changes`` (a
+    before/after host-state delta this runner never captures), and
+    ``artifact_scan``.
+    """
+    default_os = None
+    for event in events:
+        if (event.get("check") == "windows-default-boot"
+                and event.get("result") == "pass"
+                and isinstance(event.get("default_os"), str)):
+            default_os = event["default_os"]
+    return measurement_block(
+        guest_disks=[
+            guest_disk(
+                OVERLAY_NAME, disposable=True, run_scoped=True, run=run),
+        ],
+        external_connections_after_offline_gate=0,
+        default_boot=default_os,
+    )
+
+
 def run(bundle: Path, *, duration: float, apply: bool) -> int:
     if not MIN_DURATION <= duration <= MAX_DURATION:
         raise DualbootAcceptanceError(
@@ -1196,6 +1245,8 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
                 "windows_clean_shutdown": windows_clean,
                 "arch_clean_shutdown": arch_clean,
                 "partitions_byte_identical": True,
+                "measurements": acceptance_measurements(
+                    run=bundle.name, events=events),
             }
             return 0
     except BaseException as error:

@@ -150,6 +150,11 @@ class VerifyRunTests(unittest.TestCase):
         for name, check in receipt["checks"].items():
             self.assertEqual("PASS", check["status"], name)
         self.assertIn("release_set", receipt)
+        # An aggregate whole-factory claim is named as such in the receipt.
+        self.assertEqual(
+            {"status": "pass", "scope": "aggregate"}, receipt["run_status"])
+        self.assertIn(
+            "aggregate", receipt["checks"]["run_status_pass"]["detail"])
 
     # -- NOT-RUN is never a PASS ------------------------------------------
 
@@ -206,6 +211,39 @@ class VerifyRunTests(unittest.TestCase):
         receipt = factory_verify.verify_run(self.evidence(status="fail"))
         self.assertEqual("FAIL", receipt["checks"]["run_status_pass"]["status"])
         self.assertEqual("FAIL", receipt["verdict"])
+        # A failing run has no pass vocabulary, and the receipt says so rather
+        # than leaving the reader to guess which kind of run it read.
+        self.assertEqual(
+            {"status": "fail", "scope": None}, receipt["run_status"])
+
+    # -- the two pass vocabularies stay distinguishable --------------------
+
+    def test_observed_phase_status_passes_and_is_named_a_phase_claim(self):
+        # Every phase runner records "observed" (arch_install_run,
+        # windows_install_run, dualboot_acceptance, lifecycle_recovery, and
+        # arch_identity_prepare.PASS_STATUS).  Refusing it made every real
+        # phase bundle FAIL on vocabulary alone, which measured nothing.
+        receipt = factory_verify.verify_run(
+            self.evidence(status="observed"), release_set=self.release_set())
+        check = receipt["checks"]["run_status_pass"]
+        self.assertEqual("PASS", check["status"])
+        self.assertIn("phase", check["detail"])
+        self.assertIn("observed", check["detail"])
+        # Recognised, never flattened: the receipt still distinguishes a phase
+        # runner's narrower claim from an aggregate whole-factory pass.
+        self.assertEqual(
+            {"status": "observed", "scope": "phase"}, receipt["run_status"])
+        self.assertNotIn("aggregate", check["detail"])
+
+    def test_an_unrecognized_status_is_still_fail(self):
+        for index, status in enumerate(("prepared", "partial", "", None)):
+            with self.subTest(status=status):
+                receipt = factory_verify.verify_run(
+                    self.evidence(name=f"status-{index}", status=status))
+                self.assertEqual(
+                    "FAIL", receipt["checks"]["run_status_pass"]["status"])
+                self.assertEqual("FAIL", receipt["verdict"])
+                self.assertIsNone(receipt["run_status"]["scope"])
 
     def test_unexpected_file_is_fail(self):
         directory = self.evidence(extra={"secret.bin": b"payload"})
@@ -297,6 +335,61 @@ class VerifyRunTests(unittest.TestCase):
         self.assertNotIn("hunter2", json.dumps(receipt))
         self.assertEqual("FAIL", receipt["verdict"])
 
+    def test_same_line_credential_shapes_are_all_still_detected(self):
+        # Tightening the post-delimiter run must not cost any same-line
+        # detection: these are the shapes a redaction miss actually produces.
+        for index, line in enumerate((
+            "password: hunter2",
+            "password=hunter2",
+            "PASSWORD:hunter2",
+            "passphrase:\thunter2",
+            "token = hunter2",
+            "secret:hunter2",
+            "[root@archiso ~]# echo password=hunter2",
+        )):
+            with self.subTest(line=line):
+                directory = self.evidence(name=f"leak-{index}")
+                (directory / "controller-publication.log").write_text(
+                    line + "\n", encoding="utf-8")
+                receipt = factory_verify.verify_run(directory)
+                self.assertEqual(
+                    "FAIL",
+                    receipt["checks"]["no_secret_material_in_evidence"][
+                        "status"],
+                    line)
+                self.assertNotIn("hunter2", json.dumps(receipt))
+
+    def test_prompt_followed_by_a_next_line_token_is_not_a_leak(self):
+        # The measured defect: with ``\\s*`` after the delimiter, a bare
+        # ``Password:`` prompt paired with the FIRST TOKEN OF THE NEXT LINE.
+        # On real arch-install evidence that flagged 12 of 23 retained bundles,
+        # every one of the 18 matches crossing a line boundary onto a shell
+        # integration escape marker or the next console prompt.
+        for index, tail in enumerate((
+            "\n\x1b]133;D;0\x07\n",
+            "\n[root@archiso ~]# \n",
+            "\r\n[root@archiso ~]# efibootmgr\n",
+            " \r\n\r\n[root@archiso ~]# \n",
+        )):
+            with self.subTest(tail=tail):
+                directory = self.evidence(name=f"prompt-{index}")
+                (directory / "controller-publication.log").write_text(
+                    "[root@archiso ~]# passwd\nPassword:" + tail,
+                    encoding="utf-8")
+                receipt = factory_verify.verify_run(directory)
+                check = receipt["checks"]["no_secret_material_in_evidence"]
+                self.assertEqual("PASS", check["status"], tail)
+
+    def test_a_redacted_value_is_never_reported_as_a_leak(self):
+        directory = self.evidence()
+        (directory / "controller-publication.log").write_text(
+            "password=[REDACTED]\nPassword:\n[root@archiso ~]# \n",
+            encoding="utf-8")
+        receipt = factory_verify.verify_run(directory)
+        self.assertEqual(
+            "PASS",
+            receipt["checks"]["no_secret_material_in_evidence"]["status"])
+
     def test_rogue_dhcp_authority_is_fail(self):
         switch = GOOD_SWITCH + json.dumps({
             "event": "dhcp", "kind": "OFFER", "peer": "gateway",
@@ -326,6 +419,152 @@ class VerifyRunTests(unittest.TestCase):
         receipt = factory_verify.verify_run(self.evidence(measurements=measurements))
         self.assertEqual(
             "FAIL", receipt["checks"]["no_host_network_change"]["status"])
+
+
+class MeasurementProducerTests(VerifyRunTests):
+    """Every real producer's block, judged by the checks that read it.
+
+    Nothing outside these tests used to write a ``measurements`` block at all,
+    which stranded nine of sixteen checks at NOT-RUN and made a PASS verdict
+    unreachable no matter how many gates passed live.  These pin each producer
+    to the fields it can honestly observe AND to the fields it must leave
+    absent, so a later "helpful" addition that turns a NOT-RUN into a
+    fabricated PASS fails here.
+    """
+
+    # Imported through the package so the producers reach their own siblings.
+    def producers(self):
+        from homelab.vm import (
+            arch_install_run, dualboot_acceptance, factory_runner,
+            windows_install_run)
+        return {
+            "factory_runner": factory_runner.acceptance_measurements(
+                canonical_unchanged=True,
+                guest_disks=[
+                    factory_runner.guest_disk(
+                        "controller.raw", disposable=True, run_scoped=True,
+                        run="telos-factory-abc"),
+                    factory_runner.guest_disk(
+                        "workstation.qcow2", disposable=True, run_scoped=True,
+                        run="telos-factory-abc"),
+                ],
+                loopback_only_audited=True),
+            "windows_install_run": windows_install_run
+            .acceptance_measurements(
+                canonical_unchanged=True, loopback_only_audited=True,
+                windows_installed=True),
+            "arch_install_run": arch_install_run.acceptance_measurements(
+                canonical_unchanged=True, loopback_only_audited=True,
+                arch_installed=True),
+            "dualboot_acceptance": dualboot_acceptance
+            .acceptance_measurements(
+                run="run-20260814T000000Z-abcdef",
+                events=[{
+                    "check": "windows-default-boot", "result": "pass",
+                    "default_os": "windows"}]),
+        }
+
+    ALWAYS_ABSENT = (
+        "both_os_online_and_cached_offline_login",
+        "optional_storage_absence_nonblocking",
+        "no_forbidden_artifact_content",
+        # A before/after host-state delta no runner captures; its honest
+        # producer is host_network_evidence.capture/compare_cycle.
+        "no_host_network_change",
+    )
+
+    EXPECTED = {
+        "factory_runner": {
+            "controller_disk_and_firmware_unchanged": "PASS",
+            "guest_disks_disposable_run_scoped": "PASS",
+            "no_external_connection_after_offline_gate": "PASS",
+            "windows_installed_before_arch": "NOT-RUN",
+            "windows_default_boot": "NOT-RUN",
+        },
+        "windows_install_run": {
+            "controller_disk_and_firmware_unchanged": "PASS",
+            # Gate 5's windows.qcow2 is deliberately persistent.
+            "guest_disks_disposable_run_scoped": "NOT-RUN",
+            "no_external_connection_after_offline_gate": "PASS",
+            # One run cannot order Windows against Arch.
+            "windows_installed_before_arch": "NOT-RUN",
+            "windows_default_boot": "NOT-RUN",
+        },
+        "arch_install_run": {
+            "controller_disk_and_firmware_unchanged": "PASS",
+            "guest_disks_disposable_run_scoped": "NOT-RUN",
+            "no_external_connection_after_offline_gate": "PASS",
+            "windows_installed_before_arch": "NOT-RUN",
+            # The authored loader default is configuration; gate 10 owns the
+            # observed default-boot behaviour.
+            "windows_default_boot": "NOT-RUN",
+        },
+        "dualboot_acceptance": {
+            # Gate 10 boots no controller.
+            "controller_disk_and_firmware_unchanged": "NOT-RUN",
+            "guest_disks_disposable_run_scoped": "PASS",
+            "no_external_connection_after_offline_gate": "PASS",
+            "windows_installed_before_arch": "NOT-RUN",
+            "windows_default_boot": "PASS",
+        },
+    }
+
+    def test_each_producer_renders_exactly_its_observed_checks(self):
+        release_set = self.release_set()
+        for name, measurements in self.producers().items():
+            with self.subTest(producer=name):
+                receipt = factory_verify.verify_run(
+                    self.evidence(
+                        name=f"{name}-evidence", status="observed",
+                        measurements=measurements),
+                    release_set=release_set)
+                checks = receipt["checks"]
+                for check, status in self.EXPECTED[name].items():
+                    self.assertEqual(status, checks[check]["status"], check)
+                for check in self.ALWAYS_ABSENT:
+                    self.assertEqual(
+                        "NOT-RUN", checks[check]["status"], check)
+                # A phase bundle can never be a whole-factory PASS, and it must
+                # never be a FAIL for a measurement it honestly did not take.
+                self.assertEqual("NOT-RUN", receipt["verdict"])
+                self.assertEqual(0, receipt["summary"]["fail"])
+
+    def test_a_single_run_install_order_is_not_run_not_pass(self):
+        from homelab.vm import arch_install_run, windows_install_run
+        for module, expected in (
+            (windows_install_run, ["windows"]),
+            (arch_install_run, ["arch-workstation"]),
+        ):
+            with self.subTest(module=module.__name__):
+                block = module.acceptance_measurements(
+                    canonical_unchanged=True, loopback_only_audited=True,
+                    **({"windows_installed": True}
+                       if module is windows_install_run
+                       else {"arch_installed": True}))
+                self.assertEqual(expected, block["install_order"])
+                check = factory_verify._check_windows_before_arch(block)
+                self.assertEqual("NOT-RUN", check["status"])
+                self.assertIn("both Windows and Arch", check["detail"])
+
+    def test_an_unobserved_phase_emits_no_field_at_all(self):
+        from homelab.vm import (
+            arch_install_run, dualboot_acceptance, windows_install_run)
+        self.assertEqual({}, windows_install_run.acceptance_measurements(
+            canonical_unchanged=False, loopback_only_audited=False,
+            windows_installed=False))
+        self.assertEqual({}, arch_install_run.acceptance_measurements(
+            canonical_unchanged=False, loopback_only_audited=False,
+            arch_installed=False))
+        # A dual-boot run whose windows-default-boot check did not pass records
+        # no default-boot claim; the two unconditional fields remain.
+        block = dualboot_acceptance.acceptance_measurements(
+            run="run-1", events=[{
+                "check": "windows-default-boot", "result": "fail",
+                "default_os": "windows"}])
+        self.assertNotIn("default_boot", block)
+        self.assertEqual(
+            {"guest_disks", "external_connections_after_offline_gate"},
+            set(block))
 
 
 class CompareRunsTests(unittest.TestCase):

@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from unittest import mock
 
-from homelab.vm import factory_runner, simulated_topology
+from homelab.vm import factory_runner, factory_verify, simulated_topology
 from homelab.vm.guest_progress_host import PROGRESS_PORT_NAME
 from homelab.vm.guest_progress_protocol import ProtocolConfig
 from homelab.vm.guest_progress_reporter import ProgressReporter, run_over_stream
@@ -694,6 +694,160 @@ class FactoryRunnerTests(unittest.TestCase):
     def test_source_sets_disposable_factory_state_private(self):
         source = Path(factory_runner.__file__).read_text()
         self.assertGreaterEqual(source.count(".chmod(0o600)"), 2)
+
+
+class RedactionPairTests(unittest.TestCase):
+    """``_redact`` and ``factory_verify._CREDENTIAL`` are one matched pair.
+
+    The redactor removes a labelled credential value; the verifier flags one
+    that survived.  They must agree on what a value IS, and both were
+    ``\\s*``-delimited, which matches ``\\r\\n``: a bare ``Password:`` prompt
+    swallowed (redactor) or flagged (verifier) the FIRST TOKEN OF THE NEXT LINE.
+    On real arch-install evidence that was 12 of 23 bundles flagged and all 18
+    matches crossing a line boundary.
+    """
+
+    SAME_LINE = (
+        b"password: hunter2",
+        b"password=hunter2",
+        b"PASSWORD:hunter2",
+        b"passphrase:\thunter2",
+        b"token = hunter2",
+        b"secret:hunter2",
+    )
+    # A prompt, then the next line's first token: never a redactable value.
+    NEXT_LINE = (
+        b"Password:\n[root@archiso ~]# \n",
+        b"Password:\n\x1b]133;D;0\x07\n",
+        b"Password: \r\n\r\n[root@archiso ~]# efibootmgr\n",
+        b"password =\nNEXT-LINE-TOKEN\n",
+    )
+
+    def test_same_line_values_are_redacted_and_the_label_survives(self):
+        for line in self.SAME_LINE:
+            with self.subTest(line=line):
+                redacted = factory_runner._redact(line + b"\n")
+                self.assertNotIn(b"hunter2", redacted)
+                self.assertIn(b"[REDACTED]", redacted)
+                # The prompt itself is evidence and must be kept readable.
+                self.assertIn(line.split(b":")[0].split(b"=")[0], redacted)
+
+    def test_a_next_line_token_is_left_exactly_as_it_was(self):
+        for value in self.NEXT_LINE:
+            with self.subTest(value=value):
+                self.assertEqual(value, factory_runner._redact(value))
+
+    def test_the_verifier_flags_exactly_what_the_redactor_missed(self):
+        for line in self.SAME_LINE:
+            with self.subTest(line=line, redacted=False):
+                # Unredacted: the verifier must see the leak.
+                self.assertTrue(
+                    factory_verify._CREDENTIAL.search(line + b"\n"), line)
+            with self.subTest(line=line, redacted=True):
+                # Redacted: the verifier must not report a leak that is gone.
+                self.assertIsNone(
+                    factory_verify._CREDENTIAL.search(
+                        factory_runner._redact(line + b"\n")), line)
+        for value in self.NEXT_LINE:
+            with self.subTest(value=value):
+                # Neither half of the pair treats a next-line token as a value,
+                # so the verifier can never raise a FAIL the redactor was
+                # structurally unable to remediate.
+                self.assertIsNone(
+                    factory_verify._CREDENTIAL.search(value), value)
+
+
+class MeasurementTests(unittest.TestCase):
+    """The gate-12 measurement vocabulary the retained evidence carries."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_keys_are_exactly_what_the_verifier_reads(self):
+        # The producer's vocabulary is pinned by the consumer's predicates; a
+        # field no check reads is evidence nobody judges.
+        self.assertEqual(factory_runner.MEASUREMENT_KEYS, frozenset({
+            "controller_disk_unchanged", "firmware_vars_unchanged",
+            "guest_disks", "host_network_changes",
+            "external_connections_after_offline_gate", "install_order",
+            "default_boot", "login",
+            "optional_storage_absence_nonblocking", "artifact_scan",
+        }))
+
+    def test_block_drops_unobserved_fields_and_refuses_unknown_ones(self):
+        self.assertEqual(
+            {"default_boot": "windows"},
+            factory_runner.measurement_block(
+                default_boot="windows", install_order=None, login=None))
+        self.assertEqual({}, factory_runner.measurement_block())
+        with self.assertRaisesRegex(RuntimeError, "unknown acceptance"):
+            factory_runner.measurement_block(controller_disk_changed=True)
+        with self.assertRaisesRegex(RuntimeError, "unknown acceptance"):
+            factory_runner.measurement_block(default_bootentry="windows")
+
+    def test_guest_disk_record_carries_the_two_judged_facts(self):
+        self.assertEqual(
+            {"name": "workstation.qcow2", "disposable": True,
+             "run_scoped": True, "run": "telos-factory-abc"},
+            factory_runner.guest_disk(
+                "workstation.qcow2", disposable=True, run_scoped=True,
+                run="telos-factory-abc"))
+        self.assertEqual(
+            {"name": "d.qcow2", "disposable": False, "run_scoped": True},
+            factory_runner.guest_disk(
+                "d.qcow2", disposable=False, run_scoped=True))
+
+    def test_handoff_measurements_grow_with_what_the_run_proved(self):
+        # A run that stopped early retains exactly the subset it reached.
+        self.assertEqual({}, factory_runner.acceptance_measurements())
+        disks = [factory_runner.guest_disk(
+            "workstation.qcow2", disposable=True, run_scoped=True)]
+        self.assertEqual(
+            {"guest_disks": disks},
+            factory_runner.acceptance_measurements(guest_disks=disks))
+        self.assertEqual(
+            {
+                "controller_disk_unchanged": True,
+                "firmware_vars_unchanged": True,
+                "guest_disks": disks,
+                "external_connections_after_offline_gate": 0,
+            },
+            factory_runner.acceptance_measurements(
+                canonical_unchanged=True, guest_disks=disks,
+                loopback_only_audited=True))
+        # A PXE handoff installs nothing and drives no login, so it never
+        # claims an install order, a default boot entry, or a login.
+        for absent in (
+            "install_order", "default_boot", "login", "host_network_changes",
+            "optional_storage_absence_nonblocking", "artifact_scan",
+        ):
+            self.assertNotIn(absent, factory_runner.acceptance_measurements(
+                canonical_unchanged=True, guest_disks=disks,
+                loopback_only_audited=True))
+
+    def test_retained_evidence_embeds_measurements_only_when_supplied(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        block = factory_runner.acceptance_measurements(
+            canonical_unchanged=True, loopback_only_audited=True)
+        passed = factory_runner.retain_evidence(
+            runtime, self.root / "evidence", status="pass",
+            measurements=block)
+        result = json.loads((passed / "result.json").read_text())
+        self.assertEqual(block, result["measurements"])
+        bare = factory_runner.retain_evidence(
+            runtime, self.root / "bare-evidence", status="pass")
+        self.assertNotIn(
+            "measurements",
+            json.loads((bare / "result.json").read_text()))
+        failed = factory_runner.retain_failure_evidence(
+            runtime, self.root / "failure-evidence", RuntimeError("boom"),
+            measurements=block)
+        self.assertEqual(
+            block,
+            json.loads((failed / "result.json").read_text())["measurements"])
 
 
 class WorkstationProgressTests(unittest.TestCase):

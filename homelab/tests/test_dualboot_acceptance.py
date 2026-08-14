@@ -1375,6 +1375,26 @@ class RunTests(unittest.TestCase):
             self.assertEqual(8, len(events))
             judge_mod.judge(CONTRACT, events)
             self.assertFalse(self.qmp_parent.exists())
+            # The gate-12 acceptance measurements this gate can honestly make:
+            # the one disk the guest saw (a fresh overlay in this run's own
+            # directory), the disk-only boundary's zero external connections,
+            # and the observed default-boot entry taken from the judged
+            # windows-default-boot event rather than from a constant.
+            self.assertEqual({
+                "guest_disks": [{
+                    "name": da.OVERLAY_NAME, "disposable": True,
+                    "run_scoped": True, "run": bundle.name}],
+                "external_connections_after_offline_gate": 0,
+                "default_boot": "windows",
+            }, result["measurements"])
+            # Gate 10 boots no controller and drives no login, so it never
+            # claims those measurements.
+            for absent in (
+                "controller_disk_unchanged", "firmware_vars_unchanged",
+                "install_order", "login", "host_network_changes",
+                "optional_storage_absence_nonblocking", "artifact_scan",
+            ):
+                self.assertNotIn(absent, result["measurements"])
 
     def test_an_unproven_check_fails_the_run_but_keeps_the_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1444,6 +1464,31 @@ class RunTests(unittest.TestCase):
         stubborn = mock.Mock()
         stubborn.poll.return_value = None
         self.assertFalse(da.shutdown_guest(_FakeQmp(), stubborn, timeout=0.3))
+
+    def test_default_boot_is_claimed_only_when_boot_one_proved_it(self):
+        # Boot 1 sends no input; the check passes only when the menu rendered,
+        # no Linux handoff appeared, Windows was listed, the guest was sampled
+        # running, and a frame was retained.  Anything less records no claim
+        # rather than a default-boot entry the run never observed.
+        proved = da.acceptance_measurements(run="run-1", events=[{
+            "check": "windows-default-boot", "result": "pass",
+            "default_os": "windows"}])
+        self.assertEqual("windows", proved["default_boot"])
+        for events in (
+            [],
+            [{"check": "windows-default-boot", "result": "fail",
+              "default_os": "windows"}],
+            [{"check": "windows-default-boot", "result": "not-run"}],
+            [{"check": "five-second-policy", "result": "pass"}],
+        ):
+            with self.subTest(events=events):
+                block = da.acceptance_measurements(run="run-1", events=events)
+                self.assertNotIn("default_boot", block)
+                # The two facts the boundary itself establishes still stand.
+                self.assertEqual(
+                    {"guest_disks",
+                     "external_connections_after_offline_gate"},
+                    set(block))
 
     def test_sanitize_log_redacts_and_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:

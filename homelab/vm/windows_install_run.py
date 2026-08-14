@@ -16,7 +16,8 @@ try:
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
     from .factory_runner import (
-        GATEWAY_MAC, activate_publication, capture_serial, gateway_command, qemu_commands,
+        GATEWAY_MAC, activate_publication, capture_serial, gateway_command,
+        measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
@@ -28,7 +29,8 @@ except ImportError:
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
     from factory_runner import (
-        GATEWAY_MAC, activate_publication, capture_serial, gateway_command, qemu_commands,
+        GATEWAY_MAC, activate_publication, capture_serial, gateway_command,
+        measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
@@ -141,6 +143,46 @@ def _validate_lifecycle(serial: str) -> None:
     if pxe_starts != 1:
         raise RuntimeError(
             "workstation did not use exactly one PXE firmware boot")
+
+
+def acceptance_measurements(
+    *, canonical_unchanged: bool, loopback_only_audited: bool,
+    windows_installed: bool,
+) -> dict:
+    """This install's honest subset of the gate-12 acceptance measurements.
+
+    Emitted: the canonical controller disk/firmware identity (re-hashed by
+    ``ControllerOverlay.verify_canonical`` before the terminal result is
+    composed), the post-offline-gate external-connection count (both guests
+    passed ``audit_live_process``, so the kernel's own view of each argv carries
+    only loopback socket NICs and no external path exists), and the install
+    order this run really performed -- ``["windows"]``.  A single-OS order
+    deliberately renders NOT-RUN rather than PASS: one run cannot order Windows
+    against Arch, and the field exists so an aggregate driver can concatenate
+    the phases instead of inventing the sequence.
+
+    Deliberately absent:
+
+    * ``guest_disks`` -- gate 5's ``windows.qcow2`` is the PERSISTENT disk gate 7
+      later overlays, so this run cannot claim every guest disk was disposable
+      and run-scoped, and a partial inventory would pass the check by omission;
+    * ``default_boot`` -- Windows Setup authors its own boot entry, but nothing
+      here observes which entry a cold boot selects (that is gate 10);
+    * ``login`` and ``optional_storage_absence_nonblocking`` -- readiness is
+      proved by the native marker on serial, never by driving a login;
+    * ``host_network_changes`` -- a before/after host-state delta this runner
+      never captures (``host_network_evidence.capture``/``compare_cycle`` is its
+      producer); and
+    * ``artifact_scan`` -- a repository-wide tracked/publishable content scan no
+      runner performs.
+    """
+    return measurement_block(
+        controller_disk_unchanged=True if canonical_unchanged else None,
+        firmware_vars_unchanged=True if canonical_unchanged else None,
+        external_connections_after_offline_gate=(
+            0 if loopback_only_audited else None),
+        install_order=["windows"] if windows_installed else None,
+    )
 
 
 def _qmp_socket_path(command: list[str]) -> Path:
@@ -275,12 +317,22 @@ def run(
             serial = (evidence / "workstation-serial.log").read_text(
                 encoding="utf-8", errors="replace")
             _validate_lifecycle(serial)
+            # The canonical controller identity is re-checked here rather than
+            # left to ``DisposableBootDisk.close``: recording the fact before
+            # the terminal result is composed is what keeps the recorded
+            # measurement and the run's own verdict from disagreeing.
+            overlay.overlay.verify_canonical()
             result = {
                 "schema": 1, "status": "observed",
                 "phase": "native-windows-clean-shutdown",
                 "pxe_firmware_boots": 1,
                 "release_version":
                     authorization["authorization"]["release_version"],
+                "measurements": acceptance_measurements(
+                    canonical_unchanged=True,
+                    # Both guests passed audit_live_process above.
+                    loopback_only_audited=True,
+                    windows_installed=True),
             }
             return 0
     except BaseException as error:

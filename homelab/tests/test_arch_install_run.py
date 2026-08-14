@@ -840,6 +840,33 @@ class ArchInstallRunTests(unittest.TestCase):
             self.assertNotIn(b"should-not-survive", log.read_bytes())
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
+    def test_acceptance_measurements_emit_only_what_this_gate_observed(self):
+        block = arch_install_run.acceptance_measurements(
+            canonical_unchanged=True, loopback_only_audited=True,
+            arch_installed=True)
+        self.assertEqual({
+            "controller_disk_unchanged": True,
+            "firmware_vars_unchanged": True,
+            "external_connections_after_offline_gate": 0,
+            # Windows was preserved here, never installed, so it has no place
+            # in this run's order; a single-OS order is honestly NOT-RUN.
+            "install_order": ["arch-workstation"],
+        }, block)
+        # guest_disks: the install target is the bundle overlay over the
+        # PERSISTENT gate-5 Windows disk and is itself retained for gate 10, so
+        # this run cannot claim every guest disk was disposable and run-scoped.
+        # default_boot: the lifecycle proves the AUTHORED loader default
+        # (TELOS ARCH DEFAULT auto-windows), which is configuration; gate 10
+        # owns the observed cold-boot behaviour.
+        for absent in (
+            "guest_disks", "default_boot", "login", "host_network_changes",
+            "optional_storage_absence_nonblocking", "artifact_scan",
+        ):
+            self.assertNotIn(absent, block)
+        self.assertEqual({}, arch_install_run.acceptance_measurements(
+            canonical_unchanged=False, loopback_only_audited=False,
+            arch_installed=False))
+
     def test_runtime_publication_destroyed_without_following_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -142,6 +142,33 @@ class WindowsInstallRunTests(unittest.TestCase):
                 windows_install_run._retain_private_publication(link))
             self.assertTrue(target.exists())
 
+    def test_acceptance_measurements_emit_only_what_this_gate_observed(self):
+        block = windows_install_run.acceptance_measurements(
+            canonical_unchanged=True, loopback_only_audited=True,
+            windows_installed=True)
+        self.assertEqual({
+            "controller_disk_unchanged": True,
+            "firmware_vars_unchanged": True,
+            "external_connections_after_offline_gate": 0,
+            # One run cannot order Windows against Arch; the field exists so an
+            # aggregate driver concatenates the phases instead of inventing the
+            # sequence, and it renders NOT-RUN rather than PASS on its own.
+            "install_order": ["windows"],
+        }, block)
+        # guest_disks: windows.qcow2 is the PERSISTENT disk gate 7 overlays, so
+        # "all guest disks disposable and run-scoped" is not true of this run
+        # and a partial inventory would pass the check by omission.
+        # login: native readiness is proved by a serial marker, never by
+        # driving a login.
+        for absent in (
+            "guest_disks", "default_boot", "login", "host_network_changes",
+            "optional_storage_absence_nonblocking", "artifact_scan",
+        ):
+            self.assertNotIn(absent, block)
+        self.assertEqual({}, windows_install_run.acceptance_measurements(
+            canonical_unchanged=False, loopback_only_audited=False,
+            windows_installed=False))
+
     def test_qmp_connection_waits_for_socket_readiness(self):
         client = object()
         with mock.patch.object(

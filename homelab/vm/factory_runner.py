@@ -125,15 +125,131 @@ def _switch_events_after(
 
 
 def _redact(value: bytes) -> bytes:
+    """Replace a labelled credential value with a marker, same line only.
+
+    The whitespace runs around the delimiter are same-line only
+    (``[^\\S\\r\\n]``, never ``\\s``, which matches ``\\r\\n``).  With ``\\s*``
+    a bare ``Password:`` prompt swallowed the FIRST TOKEN OF THE NEXT LINE:
+    real retained evidence showed the next console prompt or a shell-integration
+    escape marker replaced by ``[REDACTED]``, corrupting the transcript while
+    redacting nothing.  This is the matched twin of
+    ``factory_verify._CREDENTIAL``: the verifier flags exactly what this misses,
+    so the two patterns must be tightened together or every phase bundle FAILs
+    on a leak the redactor could never have removed.  ``simulation_evidence
+    ._SECRET`` (the redactor the phase runners use) is already same-line.
+    """
     return re.sub(
-        rb"(?i)(password|passphrase|token|secret)(\s*[:=]\s*)\S+",
+        rb"(?i)(password|passphrase|token|secret)([^\S\r\n]*[:=][^\S\r\n]*)\S+",
         rb"\1\2[REDACTED]", value)
+
+
+# --------------------------------------------------------------------------
+# Gate-12 acceptance measurements
+# --------------------------------------------------------------------------
+# ``factory_verify`` renders one acceptance check per field of a retained
+# ``measurements`` block.  The rule the whole block lives by: a runner emits
+# ONLY the fields its own run actually observed.  An absent field stays NOT-RUN
+# in the receipt and is never promoted to PASS, which is the correct outcome for
+# a phase bundle -- one run installs one operating system, so it can honestly
+# claim neither an install order across both nor both systems' logins.  Emitting
+# a field a run did not measure would turn a NOT-RUN into a fabricated PASS,
+# which is the one thing gate 12 exists to prevent.
+
+MEASUREMENT_KEYS = frozenset({
+    "controller_disk_unchanged",
+    "firmware_vars_unchanged",
+    "guest_disks",
+    "host_network_changes",
+    "external_connections_after_offline_gate",
+    "install_order",
+    "default_boot",
+    "login",
+    "optional_storage_absence_nonblocking",
+    "artifact_scan",
+})
+
+
+def measurement_block(**observed: object) -> dict:
+    """Compose a measurements block from observed facts, refusing unknown keys.
+
+    A ``None`` value means "this run did not observe it" and is dropped rather
+    than recorded, so a caller can pass a conditional observation directly.  An
+    unknown key fails closed: the field list is pinned by ``factory_verify``'s
+    ``_check_*`` predicates, and a producer that drifts from it would emit
+    evidence no check ever reads.
+    """
+    block: dict = {}
+    for name, value in observed.items():
+        if name not in MEASUREMENT_KEYS:
+            raise RuntimeError(f"unknown acceptance measurement: {name}")
+        if value is not None:
+            block[name] = value
+    return block
+
+
+def guest_disk(
+    name: str, *, disposable: bool, run_scoped: bool, run: str | None = None,
+) -> dict:
+    """One entry of the ``guest_disks`` inventory.
+
+    ``disposable`` and ``run_scoped`` are the two facts the check reads, and
+    both must be true of EVERY disk a run exposed to a guest for the check to
+    pass -- so a runner that deliberately keeps a persistent disk (gate 5's
+    ``windows.qcow2``, gate 7's retained overlay) records no inventory at all
+    rather than a flattering partial one.
+    """
+    record = {
+        "name": name, "disposable": bool(disposable),
+        "run_scoped": bool(run_scoped),
+    }
+    if run is not None:
+        record["run"] = run
+    return record
+
+
+def acceptance_measurements(
+    *, canonical_unchanged: bool = False,
+    guest_disks: list[dict] | None = None,
+    loopback_only_audited: bool = False,
+) -> dict:
+    """The PXE-handoff run's honest subset of the gate-12 measurements.
+
+    Emitted:
+
+    * the canonical controller disk/firmware identity, but only once
+      ``ControllerOverlay.verify_canonical`` has actually re-hashed both;
+    * the guest disk inventory, which for this runner really is complete --
+      the controller boots a disposable raw copy and the workstation a blank
+      qcow2, both created inside the run's own temporary root and destroyed
+      with it;
+    * the external-connection count, once every guest process has passed
+      ``audit_live_process``: the kernel's view of each argv is proved to carry
+      only loopback socket NICs, and tap/bridge/user/slirp are refused
+      outright, so no path to an external endpoint exists.
+
+    Deliberately absent: ``host_network_changes`` (a before/after host-state
+    delta this runner never captures -- ``host_network_evidence.capture`` plus
+    ``compare_cycle`` is its honest producer, as ``simulated_topology.run``
+    already does), ``install_order`` and ``default_boot`` (a PXE handoff
+    installs nothing and authors no boot entry), ``login`` and
+    ``optional_storage_absence_nonblocking`` (no login is ever driven here),
+    and ``artifact_scan`` (a repository-wide tracked/publishable content scan,
+    which no runner performs).
+    """
+    return measurement_block(
+        controller_disk_unchanged=True if canonical_unchanged else None,
+        firmware_vars_unchanged=True if canonical_unchanged else None,
+        guest_disks=guest_disks,
+        external_connections_after_offline_gate=(
+            0 if loopback_only_audited else None),
+    )
 
 
 def retain_evidence(
     runtime: Path, evidence_root: Path, *, status: str,
     error: BaseException | None = None,
     progress: dict | None = None,
+    measurements: dict | None = None,
 ) -> Path:
     evidence_root = Path(evidence_root)
     if evidence_root.is_symlink():
@@ -163,6 +279,10 @@ def retain_evidence(
             "utf-8", "replace")} if error is not None else {}),
         # Diagnostic observation only; it never alters the status verdict.
         **({"progress": progress} if progress is not None else {}),
+        # The gate-12 acceptance measurements this run observed, embedded only
+        # when supplied so an unobserved field stays absent (NOT-RUN) rather
+        # than becoming a fabricated claim.
+        **({"measurements": measurements} if measurements is not None else {}),
         "retained": retained,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     result.chmod(0o600)
@@ -171,10 +291,11 @@ def retain_evidence(
 
 def retain_failure_evidence(
     runtime: Path, evidence_root: Path, error: BaseException,
-    *, progress: dict | None = None,
+    *, progress: dict | None = None, measurements: dict | None = None,
 ) -> Path:
     return retain_evidence(
-        runtime, evidence_root, status="fail", error=error, progress=progress)
+        runtime, evidence_root, status="fail", error=error, progress=progress,
+        measurements=measurements)
 
 
 def publication_bootstrap_command() -> bytes:
@@ -896,6 +1017,21 @@ def run(
         shutil.copyfile(pair[1], workstation_vars)
         workstation_vars.chmod(0o600)
 
+        # Both guest disks now exist inside this run's own temporary root, which
+        # is destroyed with it: a complete, honest guest-disk inventory.  It is
+        # recorded here rather than at retention so a failure later still
+        # retains exactly the measurements the run had reached.
+        guest_disks = [
+            guest_disk(
+                overlay.disk.name, disposable=True, run_scoped=True,
+                run=runtime.name),
+            guest_disk(
+                workstation_disk.name, disposable=True, run_scoped=True,
+                run=runtime.name),
+        ]
+        loopback_only_audited = False
+        canonical_unchanged = False
+
         listener = socket.socket()
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", 0))
@@ -947,6 +1083,12 @@ def run(
                 if workstation_io:
                     serial_thread = capture_serial(
                         processes[role], workstation_serial)
+            # Every guest the run started has now passed the live re-audit of
+            # the kernel's own view of its argv: loopback socket NICs only, with
+            # tap/bridge/user/slirp refused outright.  No path to an external
+            # endpoint exists, so the post-offline-gate external-connection
+            # count is an observed zero rather than an assumed one.
+            loopback_only_audited = True
             deadline = time.monotonic() + duration
             progress_channel = _WorkstationProgress(
                 progress_root, deadline=deadline)
@@ -968,16 +1110,34 @@ def run(
                     raise RuntimeError(
                         "PXE handoff acceptance failed:\n- "
                         + "\n- ".join(problems))
+                # ControllerOverlay captured both canonical digests at prepare
+                # and re-checks them here.  ``close`` repeats this a moment
+                # later, but only recording the fact BEFORE the pass is written
+                # keeps the two honest: a canonical disk that changed during the
+                # run used to be discovered after a "pass" receipt already
+                # existed.  A change raises and lands in the failure path.
+                overlay.overlay.verify_canonical()
+                canonical_unchanged = True
                 evidence = retain_evidence(
                     runtime, evidence_root, status="pass",
-                    progress=progress_channel.record())
+                    progress=progress_channel.record(),
+                    measurements=acceptance_measurements(
+                        canonical_unchanged=canonical_unchanged,
+                        guest_disks=guest_disks,
+                        loopback_only_audited=loopback_only_audited) or None)
                 print(f"PXE handoff evidence retained at {evidence}")
             return 0
         except BaseException as error:
             evidence = retain_failure_evidence(
                 runtime, evidence_root, error,
                 progress=progress_channel.record()
-                if progress_channel is not None else None)
+                if progress_channel is not None else None,
+                # Exactly the subset the run had reached: a failure never
+                # borrows a measurement it did not get to.
+                measurements=acceptance_measurements(
+                    canonical_unchanged=canonical_unchanged,
+                    guest_disks=guest_disks,
+                    loopback_only_audited=loopback_only_audited) or None)
             print(f"Failure evidence retained at {evidence}", file=sys.stderr)
             raise
         finally:
