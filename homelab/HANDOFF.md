@@ -318,24 +318,25 @@ recovers because Netlogon is told to re-establish, while SSSD goes offline on a
 failed request and returns on its own retry schedule, which can outlast a bounded
 probe. Giving that recovery room fixed it without weakening the proof.
 
-**The open blocker, precisely.** The two `arch-storage-*` checks -- which are
-also gate 9's Arch half, so they are what that gate has been waiting on.
-`arch-storage-absent-login` passes, so the absent-storage path works.
+| 14 | `arch-identity/run-20260814T165752Z-bcb0e1d3fcb3` | 19 of 21. **Kerberos for the storage mount is now solved**; the fault moved to the server's share resolution |
 
-`mount.cifs -o sec=krb5` asks the KDC for a `cifs/<share-host>` ticket, and the
-controller had published the storage alias as a DNS A record with no
-`servicePrincipalName` -- so the KDC answered with an unknown principal and the
-client's upcall failed. Registering the alias SPNs on the controller's own
-computer account (so the ticket is one this DC already holds keys for -- no
-second account, no second keytab) was necessary and is not sufficient. The named
-next suspicion is the credential cache: `mount.cifs` delegates Kerberos to a
-`request-key` upcall that must find *the logged-in user's* ccache, which is what
-`cruid=` is for, and SSSD's configured ccache type decides where that lives and
-who may read it. `arch-storage-denied` mounts the owner's own share first as its
-fail-closed guard, so it shares the root cause.
+**The storage mount's Kerberos is done.** Run 14's own diagnostics show the user
+holding a TGT, the KDC issuing `cifs/unas.ad.factory.test` at `kvno = 1`, the
+upcall helper and its `request-key` config in place, the name resolving and SSSD
+Online. The earlier `ENOKEY` is gone. What remains is `mount error(2)` --
+`ENOENT`, which for an authenticated CIFS session is the server answering *bad
+network name*: `smbd` does not see a share called `operator`. Samba resolves
+`//server/<name>` through its `[homes]` section only when it can look `<name>` up
+as a user *on the server*, and on an AD DC the domain users are not local
+accounts, so that depends on the controller's own name-service reaching the
+directory. That is the layer to fix, and it is controller-side -- which is cheap,
+because the controller role runs fresh on every gate-8 run.
 
-Gate 9 additionally wants UID/GID and timestamp measurements on these checks; the
-probe currently emits booleans plus one login duration.
+**The open blocker, precisely.** The two `arch-storage-*` checks -- gate 9's Arch
+half, and the last thing gate 9 is waiting on. Kerberos is solved (above); the
+server does not resolve the per-user share name for a domain user.
+`arch-storage-denied` mounts the owner's own share first as its fail-closed
+guard, so both move together once the share resolves.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
