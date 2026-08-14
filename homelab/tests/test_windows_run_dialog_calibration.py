@@ -267,10 +267,13 @@ class RunDialogCalibrationTests(unittest.TestCase):
             root = Path(name)
             attempt = root / "attempt-20260728T160000Z-abcdef123456"
             attempt.mkdir(mode=0o700)
+            # A different Windows VERSION (installer ISO) must fail before the
+            # boundary starts; the install disk sha is version-portable and no
+            # longer gates the match.
             expected = guest()
             wrong = GuestProvenance(
                 expected.release, expected.language, expected.architecture,
-                expected.installer_iso_sha256, "0" * 64)
+                "1" * 64, expected.source_disk_sha256)
             boundary = Boundary(attempt, Qmp([]))
             with self.assertRaisesRegex(
                     WindowsRunDialogCalibrationError, "reference is invalid"):
