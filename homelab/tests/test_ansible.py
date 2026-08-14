@@ -251,6 +251,27 @@ class TestPlaybooks(unittest.TestCase):
         # needs a principal to ask the KDC for.
         self.assertIn("GSS-SPNEGO", template)
 
+    def test_identity_client_leaves_the_bind_principal_to_the_keytab(self):
+        # A standing invitation to a wrong fix: on a Samba-joined machine the
+        # keytab carries UPPERCASE HOST/<FQDN> entries while ad_hostname is the
+        # lowercase DNS name, which reads like a case-sensitive Kerberos
+        # mismatch.  It is not one.  SSSD does not bind as ad_hostname: it forks
+        # ldap_child to pick a principal OUT of the keytab, and that pattern list
+        # includes "%S$", which uppercases the short hostname and appends "$" --
+        # so the bind principal is the machine account and no case can disagree.
+        # Pinning ldap_sasl_authid to the FQDN would only make SSSD log
+        # "Configured SASL auth ID not found in keytab" and then use the machine
+        # account anyway, so the option stays absent WITH its reason attached.
+        template = (
+            ANSIBLE / "roles/identity_client/templates/sssd.conf.j2"
+        ).read_text()
+        self.assertNotRegex(template, r"(?m)^ldap_sasl_authid")
+        self.assertIn("ldap_sasl_authid", template)
+        self.assertIn("%S$", template)
+        # Named so a reader can check the derivation against the installer that
+        # shares it, rather than re-deriving it from the keytab.
+        self.assertIn("_machine_principal", template)
+
     def test_controller_network_does_not_enable_the_network_services(self):
         # ADR 0009: dnsmasq and nginx start only after first-boot activation has
         # proved this machine is the sole DHCP authority on its segment.
