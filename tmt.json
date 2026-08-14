@@ -1,5 +1,16 @@
 {
   "tools": {
+    "doc-make-target-drift": {
+      "idempotent": true,
+      "json": true,
+      "lang": "python",
+      "mutates": false,
+      "origin": "local",
+      "purpose": "Report homelab Make targets the docs cite but the Makefile does not define.",
+      "requires": [],
+      "stage": "stable",
+      "usage": "tools/doc-make-target-drift [--json] [--makefile PATH] [--docs PATH ...]"
+    },
     "factory-bundle-firmware-provenance": {
       "idempotent": true,
       "json": true,

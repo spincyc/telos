@@ -62,6 +62,17 @@ A workflow is documented only when:
 - automated checks reject stale commands, leaked private data, broken links,
   and unsupported claims.
 
+Two of those four checks now exist and run in `make check` and
+`make homelab-check`: `tools/doc-make-target-drift` rejects a documented Make
+target the Makefile does not define, and `scripts/site check` rejects leaked
+instance data (real addresses, MACs, disk serials, and RFC 1918 CIDRs judged by
+prefix length as well as network address). A document may declare names it does
+not claim to implement — a `reserved`/`not implemented` paragraph, or a
+`<!-- doc-make-target-drift: proposed -->` marker covering a section — so an
+honest interface proposal stays green while a copy-paste command that would
+fail does not. Broken links are covered by `scripts/site check` for published
+sources only; unsupported claims are still checked by hand.
+
 Screenshots and diagrams should be added where they remove ambiguity. Schematics
 are appropriate for topology, trust boundaries, boot flow, storage layout, and
 state transitions. Other illustrations should use the project-wide drawing

@@ -249,6 +249,7 @@ verify-site:
 
 check: check-tools
 	@$(PYTHON) $(SITE_TOOL) check
+	@tools/doc-make-target-drift
 	@$(PYTHON) scripts/research-library
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
@@ -265,6 +266,7 @@ homelab-test:
 # `check` it needs no TeX toolchain and skips the site and research gates,
 # which cannot be affected by homelab code.
 homelab-check:
+	@tools/doc-make-target-drift
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
 	@$(PYTHON) -m unittest discover -s homelab/tests -t . -q

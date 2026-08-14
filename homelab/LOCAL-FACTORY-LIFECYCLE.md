@@ -305,8 +305,12 @@ not satisfy that gate.
 
 ## Required command surface
 
+<!-- doc-make-target-drift: proposed -->
 The implementation may split internal helpers, but preserves this operator
-surface:
+surface. These are the names this design *requires*, not names that exist
+today: several are still unimplemented, and `tools/doc-make-target-drift`
+therefore treats this section as a proposal rather than a set of runnable
+commands.
 
 | Target | Result |
 |---|---|

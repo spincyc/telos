@@ -83,7 +83,7 @@ online-acquisition/offline-execution split are in
 | Gate | Evidence | Result |
 |---|---|---|
 | Offline controller media and installation | Commit `00a209f` reproducibly builds controller seed SHA-256 `a73a1d5140010fed401c4f9581f87af0989db2eb33106260c9caf8c05b8be212`; the installed `bootstrap-dc` booted from UEFI/systemd-boot on ext4 with locked root and working `local-rescue` sudo. | pass |
-| Installed controller safety gate | `homelab-network-attach-preflight` verified forwarding off, SSH root/password login disabled, authority services masked and inactive, and no provisioning/authority ports listening. | pass |
+| Installed controller safety gate | `/usr/local/sbin/homelab-network-attach-preflight` (an installed helper, not a Make target) verified forwarding off, SSH root/password login disabled, authority services masked and inactive, and no provisioning/authority ports listening. | pass |
 | Manual isolated rehearsal | The operator ran the installed preflight successfully in the disposable controller and powered it off normally. | pass |
 | Unattended isolated rehearsal | `homelab/var/simulation/evidence/20260727T184229Z-1971156-b2907fed/result.json` records controller preflight, single DHCP authority, client continuity, and unchanged host state. | pass |
 | Repeatable simulator implementation | Public commits through `d5a3534` add the unattended loopback rehearsal and its documentation. `make homelab-sim-auto-run APPLY=1` owns a generated memory-only password and does not require the operator's console password. | pass |

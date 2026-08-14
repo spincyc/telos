@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Check that every Make target the homelab docs name actually exists.
+
+Gate 13's definition of done requires automated checks that reject stale
+commands. This is that check for Make targets: it extracts every ``homelab-*``
+target cited in the homelab documentation, diffs it against the targets the
+Makefile really defines, and reports the citations that name nothing.
+
+Docs legitimately name targets that do not exist yet -- ``FACTORY-MAKE-TARGETS``
+is partly an interface proposal, and it marks those names reserved. A citation
+is only a finding when nothing in the same document declares it reserved, so an
+honest proposal stays green while a copy-paste command that would fail does not.
+
+Exit 0 when no citation is stale, 1 when any is (a check-style tool).
+
+Usage: tools/doc-make-target-drift [--json] [--makefile PATH] [--docs PATH ...]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
+
+PROTOCOL_VERSION = 1
+
+#: Where the documentation lives, relative to the repository root.
+DEFAULT_DOCS = ("homelab", "homelab/docs")
+DEFAULT_MAKEFILE = "Makefile"
+
+#: A target definition at the start of a line: ``homelab-thing:``.
+DEFINITION = re.compile(r"^(homelab-[A-Za-z0-9-]+)\s*:", re.MULTILINE)
+#: A citation anywhere in prose, a table cell, or a fenced command. Not
+#: preceded by ``/``: the installed helpers under /usr/local/sbin share the
+#: prefix and are not Make targets.
+CITATION = re.compile(r"(?<![/\w-])homelab-[A-Za-z0-9-]+")
+#: A section the document declares as a proposed surface rather than a claim
+#: that the targets exist. Explicit and greppable, because guessing at prose
+#: ("preserves this operator surface") is how a stale-command check turns into
+#: a pile of false findings nobody reads.
+PROPOSED = "<!-- doc-make-target-drift: proposed -->"
+HEADING = re.compile(r"^#{1,6}\s")
+#: Brace expansion as the docs write it: ``homelab-arch-identity-{prepare,run}``.
+EXPANSION = re.compile(r"\b(homelab-[A-Za-z0-9-]*?)\{([A-Za-z0-9,\s-]+)\}")
+#: A document declares a name reserved by saying so. The declaration is often
+#: a sentence followed by the list it applies to, so the following line counts
+#: as declared too -- otherwise "these do not exist:" plus a list reads as a
+#: findings pile rather than the honest disclosure it is.
+RESERVED = re.compile(
+    r"reserved|not implemented|do(?:es)? not exist|no such target|"
+    r"absent from the Makefile",
+    re.IGNORECASE)
+
+
+def _defined(makefile: Path) -> set[str]:
+    if not makefile.is_file():
+        raise ValueError(f"{makefile} is not a regular file")
+    return set(DEFINITION.findall(makefile.read_text(encoding="utf-8")))
+
+
+def _cited(text: str) -> dict[str, list[int]]:
+    """Every cited target mapped to the 1-based lines citing it.
+
+    Brace expansions are expanded first, then removed, so
+    ``homelab-arch-install-{prepare,run}`` counts as two citations and never
+    also as the truncated stem.
+    """
+    found: dict[str, list[int]] = {}
+    lines = text.splitlines()
+    declared: set[int] = set()
+    # A reserved declaration covers its whole paragraph: the docs write a
+    # sentence and then the list it applies to, sometimes over several lines.
+    for index, line in enumerate(lines):
+        if not RESERVED.search(line):
+            continue
+        start = index
+        while start > 0 and lines[start - 1].strip():
+            start -= 1
+        stop = index
+        while stop + 1 < len(lines) and lines[stop + 1].strip():
+            stop += 1
+        declared |= set(range(start + 1, stop + 2))
+    # A proposed-surface marker covers everything up to the next heading.
+    proposed = False
+    for number, line in enumerate(lines, start=1):
+        if PROPOSED in line:
+            proposed = True
+        elif HEADING.match(line):
+            proposed = False
+        if proposed:
+            declared.add(number)
+    for number, line in enumerate(lines, start=1):
+        if number in declared:
+            continue
+        remainder = line
+        for stem, group in EXPANSION.findall(line):
+            for leaf in group.replace(" ", "").split(","):
+                if leaf:
+                    found.setdefault(stem + leaf, []).append(number)
+        remainder = EXPANSION.sub("", remainder)
+        for name in CITATION.findall(remainder):
+            found.setdefault(name, []).append(number)
+    return found
+
+
+def _documents(roots: list[Path]) -> list[Path]:
+    """Markdown directly under each root, sorted for byte-stable output.
+
+    Not recursive: a root names a documentation directory, so a nested tree of
+    generated or vendored Markdown never silently joins the check.
+    """
+    documents: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            raise ValueError(f"{root} is not a directory")
+        documents.extend(sorted(root.glob("*.md")))
+    return documents
+
+
+def run(makefile: Path, roots: list[Path]) -> dict[str, object]:
+    """Report every documented Make target that the Makefile does not define.
+
+    ``documented`` counts the citations actually judged, so declared-reserved
+    and proposed-surface names are excluded from it as well as from ``stale``.
+    """
+    defined = _defined(makefile)
+    stale: list[dict[str, object]] = []
+    documented: set[str] = set()
+    for document in _documents(roots):
+        cited = _cited(document.read_text(encoding="utf-8"))
+        documented.update(cited)
+        for name in sorted(cited):
+            # A family stem is a real citation: the docs name
+            # homelab-arch-identity when its -prepare/-run/-judge all exist.
+            if name in defined or any(
+                    target.startswith(name + "-") for target in defined):
+                continue
+            stale.append({
+                "document": str(document),
+                "lines": cited[name],
+                "target": name,
+            })
+    return {
+        "defined": len(defined),
+        "documented": len(documented),
+        "stale": stale,
+        "status": "ok" if not stale else "stale",
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="doc-make-target-drift",
+        description=(
+            "Report homelab Make targets the documentation cites but the "
+            "Makefile does not define."
+        ),
+    )
+    parser.add_argument("--makefile", type=Path, default=Path(DEFAULT_MAKEFILE))
+    parser.add_argument(
+        "--docs", type=Path, nargs="+", default=[Path(p) for p in DEFAULT_DOCS],
+        help="documentation directories to scan (non-recursive)")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one compact key-sorted JSON object (cli-v1)",
+    )
+    arguments = parser.parse_args(argv)
+    try:
+        payload = run(arguments.makefile, list(arguments.docs))
+    except Exception as error:
+        # cli-v1 error contract: exactly one compact key-sorted JSON object
+        # on stderr, nothing on stdout, stable code plus exit category.
+        message = str(error) or error.__class__.__name__
+        if arguments.json:
+            print(
+                json.dumps(
+                    {
+                        "code": "internal",
+                        "error": message,
+                        "status": "error",
+                        "v": PROTOCOL_VERSION,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(f"doc-make-target-drift: {message}", file=sys.stderr)
+        return 70
+    if arguments.json:
+        print(
+            json.dumps(
+                {**payload, "v": PROTOCOL_VERSION},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        for finding in payload["stale"]:
+            lines = ",".join(str(number) for number in finding["lines"])
+            print(f"{finding['document']}:{lines}\t{finding['target']}")
+        print(
+            f"defined\t{payload['defined']}\n"
+            f"documented\t{payload['documented']}\n"
+            f"stale\t{len(payload['stale'])}"
+        )
+    return 0 if not payload["stale"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
