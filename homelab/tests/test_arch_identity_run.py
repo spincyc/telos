@@ -42,7 +42,13 @@ from homelab.vm.arch_identity_run import (
     REQUIRED_CHECKS,
     RESCUE_PASSWORD_FAILURE,
     RESCUE_PRINCIPAL,
+    SUDO_CREDENTIAL_REFUSED_FAILURE,
+    SUDO_ECHO_NOT_SUPPRESSED_FAILURE,
     SUDO_ELEVATION_FAILURE,
+    SUDO_EXITED_FAILURE,
+    SUDO_PROMPT_MISSING_FAILURE,
+    SUDO_PROOF_ASKS,
+    SUDO_ROOT_UNPROVEN_FAILURE,
     WINDOWS_CHECKS,
     WORKSTATION_LOG_FILENAME,
     assemble_evidence,
@@ -51,9 +57,11 @@ from homelab.vm.arch_identity_run import (
     drive_boot_menu,
     elevate_operator,
     elevation_command,
+    elevation_outcome_pattern,
     login_operator,
     new_boot_facts,
     rescue_password_command,
+    root_proof_marker,
     run,
     run_lifecycle,
     self_judge,
@@ -93,14 +101,14 @@ CONTROLLER_OUTCOME_CHECKS = (
 
 
 class _FakeMatch:
-    """Match double whose numbered groups are scripted."""
+    """Match double whose numbered *and named* groups are scripted."""
 
     def __init__(self, groups) -> None:
         if not isinstance(groups, dict):
             groups = {1: groups}
         self._groups = groups
 
-    def group(self, index: int = 0):
+    def group(self, index=0):
         return self._groups.get(index)
 
 
@@ -868,7 +876,9 @@ class _FakeSerial:
     menu_render = MENU_ARCH_FIRST
     menu_rerender = MENU_ARCH_FIRST_SELECTED
     login_outcome: bytes | None = None  # group(1): b"Login incorrect"
-    sudo_outcome: bytes | None = None  # group(1): failure return code
+    sudo_outcome: bytes | None = None  # group("rc"): sudo's own exit code
+    #: sudo read the credential and asked again -- its PAM stack refused it.
+    sudo_refused = False
     rescue_outcome = b"0"  # group(1): passwd local-rescue return code
     root_uid = b"0"
     transcript = b""
@@ -888,6 +898,7 @@ class _FakeSerial:
         self.events: list[str] = []
         self.token = "feedfacefeedface"
         self.stalls_served = 0
+        self.sudo_outcomes_served = 0
         type(self).instances.append(self)
 
     def establish_disposable_controller_session(self):
@@ -931,11 +942,20 @@ class _FakeSerial:
         if label == "arch-login-outcome":
             return _FakeMatch({0: b"", 1: type(self).login_outcome})
         if label == "arch-sudo-outcome":
-            return _FakeMatch({0: b"", 1: type(self).sudo_outcome})
+            # The real exchange settles in two passes: the root shell's prompt
+            # says "ask for the proof", the proof answers with the uid.  A
+            # scripted refusal or exit code settles it in one.
+            self.sudo_outcomes_served += 1
+            if type(self).sudo_refused:
+                return _FakeMatch({0: b"", "refused": b"Password:"})
+            if type(self).sudo_outcome is not None:
+                return _FakeMatch({0: b"", "rc": type(self).sudo_outcome})
+            if self.sudo_outcomes_served == 1:
+                return _FakeMatch(
+                    {0: b"", "root_shell": type(self).console_banner})
+            return _FakeMatch({0: b"", "uid": type(self).root_uid})
         if label == "arch-rescue-result":
             return _FakeMatch({0: b"", 1: type(self).rescue_outcome})
-        if label == "arch-root-verified":
-            return _FakeMatch({0: b"", 1: type(self).root_uid})
         if label == "storage-dns-rc-observed":
             return _FakeMatch({0: b"", 1: b"0"})
         return _FakeMatch({0: type(self).console_banner})
@@ -1070,6 +1090,7 @@ class BoundaryWiringTests(unittest.TestCase):
         _FakeSerial.instances = []
         _FakeSerial.login_outcome = None
         _FakeSerial.sudo_outcome = None
+        _FakeSerial.sudo_refused = False
         _FakeSerial.rescue_outcome = b"0"
         _FakeSerial.root_uid = b"0"
         _FakeSerial.transcript = b""
@@ -1222,9 +1243,12 @@ class BoundaryWiringTests(unittest.TestCase):
                     "arch-getty-observed",
                     "arch-login-username-sent", "arch-login-password-prompt",
                     "arch-login-password-sent", "arch-login-outcome",
+                    # The credential is written between sudo's OWN prompt and
+                    # the outcome: never before the reader asked for it.
                     "arch-sudo-command-sent", "arch-sudo-echo-off",
-                    "arch-sudo-password-sent", "arch-sudo-outcome",
-                    "arch-root-proof-requested", "arch-root-verified",
+                    "arch-sudo-password-prompt", "arch-sudo-password-sent",
+                    "arch-sudo-outcome", "arch-root-proof-requested",
+                    "arch-sudo-outcome",
                     "arch-rescue-command-sent", "arch-rescue-echo-off",
                     "arch-rescue-new-password-prompt",
                     "arch-rescue-password-sent",
@@ -1349,11 +1373,46 @@ class BoundaryWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             boundary = self._boundary(Path(name))
             _FakeSerial.sudo_outcome = b"1"
-            with self.assertRaisesRegex(
-                    ArchIdentityError, "sudo -S elevation") as caught:
+            with self.assertRaises(ArchIdentityError) as caught:
                 boundary.start()
+            self.assertEqual(str(caught.exception), SUDO_EXITED_FAILURE)
             self.assertEqual(caught.exception.check, "arch-joined")
             self.assertEqual(boundary._processes, {})
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            # sudo's own exit code is retained, so the next run reads the
+            # layer off the facts instead of re-deriving it from a transcript.
+            self.assertEqual(recorded["sudo_returncode"], 1)
+            self.assertTrue(recorded["sudo_prompt_seen"])
+            self.assertTrue(recorded["sudo_credential_sent"])
+            self.assertFalse(recorded["sudo_credential_refused"])
+            self.assertFalse(recorded["sudo_elevated"])
+
+    def test_workstation_sudo_refusal_indicts_sudo_pam_not_the_value(self):
+        # The 2026-08-14 shape: the getty accepted the credential and sudo
+        # refused it.  That pair is the diagnosis, so it must be readable
+        # straight off the retained facts.
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeSerial.sudo_refused = True
+            with self.assertRaises(ArchIdentityError) as caught:
+                boundary.start()
+            self.assertEqual(
+                str(caught.exception), SUDO_CREDENTIAL_REFUSED_FAILURE)
+            self.assertEqual(caught.exception.check, "arch-joined")
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            self.assertTrue(recorded["login_completed"])
+            self.assertTrue(recorded["sudo_credential_refused"])
+            self.assertFalse(recorded["sudo_elevated"])
+            self.assertIsNone(recorded["sudo_returncode"])
+            # The refusal is detected from sudo's second prompt and aborts
+            # there: the proof line is never typed into it, so pam_faillock
+            # records one failure and the stock deny=3 keeps two in hand.
+            console = _FakeSerial.instances[1]
+            self.assertNotIn("arch-root-proof-requested", console.events)
 
     def test_join_failure_is_named_and_never_blames_the_login(self):
         # The 2026-08-14 live run stopped at the login because the join had
@@ -1985,60 +2044,240 @@ class LoginSequenceTests(SerialTranscriptCase):
             login_operator(console, new_boot_facts(), getty_timeout=0.2)
 
 
+#: sudo(8)'s default lecture, verbatim from the 2026-08-14 live run's
+#: workstation-serial.log, CRLF and all.  It is what the guest prints between
+#: the shell's ready marker and sudo's password prompt, and its "#1)" lines are
+#: what the old outcome pattern mistook for a root shell prompt.
+SUDO_LECTURE = (
+    b"We trust you have received the usual lecture from the local System\r\n"
+    b"Administrator. It usually boils down to these three things:\r\n\r\n"
+    b"    #1) Respect the privacy of others.\r\n"
+    b"    #2) Think before you type.\r\n"
+    b"    #3) With great power comes great responsibility.\r\n\r\n"
+    b"For security reasons, the password you type will not be visible.\r\n\r\n"
+)
+
+
 class ElevationTests(SerialTranscriptCase):
+    """The one exchange the 2026-08-14 live run got wrong, end to end.
+
+    That run proved the domain login works and the elevation still failed:
+    the credential was written when the shell's own pre-sudo marker appeared,
+    so it was gone before sudo read stdin, and the outcome pattern then
+    mistook sudo's lecture for a root prompt 18ms later.  These tests pin both
+    halves of the fix: the credential is written only in response to sudo's
+    own prompt, and every verdict is token-scoped.
+    """
+
     def _ready(self, console) -> bytes:
         return (b"\n__TELOS_ARCH_SUDO_READY_"
                 + console.token.encode("ascii") + b"__\n")
 
-    def _root_proof(self, console, uid: bytes) -> bytes:
-        return (b"\n__TELOS_ARCH_ROOT_"
-                + console.token.encode("ascii") + b"=" + uid + b"\n")
+    def _prompt(self, console) -> bytes:
+        return elevation_command(console.token)[2]
 
-    def test_echo_off_password_root_shell_sequence(self):
+    def _root_proof(self, console, uid: bytes) -> bytes:
+        return b"\n" + root_proof_marker(console.token) + uid + b"\n"
+
+    def test_echo_off_prompt_password_root_shell_sequence(self):
         console, feeder, sink = self._console()
         feeder.write(
             self._ready(console)
-            + b"[root@telos-ws1 ~]# "
+            + SUDO_LECTURE + self._prompt(console)
+            + b"\r\n[root@telos-ws1 ~]# "
             + self._root_proof(console, b"0"))
         facts = new_boot_facts()
         elevate_operator(console, facts, timeout=2.0)
         self.assertTrue(facts["sudo_elevated"])
+        self.assertEqual(facts["sudo_uid"], 0)
+        self.assertTrue(facts["sudo_echo_suppressed"])
+        self.assertTrue(facts["sudo_prompt_seen"])
+        self.assertTrue(facts["sudo_credential_sent"])
+        self.assertTrue(facts["sudo_root_shell_seen"])
+        self.assertFalse(facts["sudo_credential_refused"])
+        self.assertEqual(facts["sudo_proof_asks"], 1)
         sent = self._sent(sink)
         # Echo is provably off before the credential is written, the
-        # elevation is sudo -S (the gate-7 rule is passworded), and the
-        # credential itself never enters the guest transcript.
+        # elevation is sudo -S with its own token-scoped prompt (the gate-7
+        # rule is passworded), and the credential never enters the transcript.
         self.assertIn(b"stty -echo", sent)
-        self.assertIn(b"sudo -k -S -p ''", sent)
+        self.assertIn(b"sudo -k -S -p '" + self._prompt(console) + b"' -i",
+                      sent)
         self.assertNotIn(b"sudo -n", sent)
+        self.assertNotIn(b"-p ''", sent)
         self.assertLess(
             sent.index(b"stty -echo"), sent.index(TEST_CREDENTIAL))
         self.assertNotIn(TEST_CREDENTIAL, console.transcript)
-        self.assertEqual(console.events[:4], [
+        # Exactly one write of the credential, terminated by exactly one
+        # newline: sudo -S reads one line from stdin, and a second newline
+        # would become the next reader's input.
+        self.assertEqual(sent.count(TEST_CREDENTIAL), 1)
+        self.assertIn(TEST_CREDENTIAL + b"\n", sent)
+        self.assertNotIn(TEST_CREDENTIAL + b"\n\n", sent)
+        self.assertNotIn(TEST_CREDENTIAL + b"\r", sent)
+        # The root proof is typed after the credential, never before it.
+        self.assertLess(
+            sent.index(TEST_CREDENTIAL),
+            sent.index(root_proof_marker(console.token)))
+        self.assertEqual(console.events, [
             "arch-sudo-command-sent", "arch-sudo-echo-off",
-            "arch-sudo-password-sent", "arch-sudo-outcome"])
+            "arch-sudo-password-prompt", "arch-sudo-password-sent",
+            "arch-sudo-outcome", "arch-root-proof-requested",
+            "arch-sudo-outcome"])
 
-    def test_sudo_nonzero_return_is_the_named_elevation_failure(self):
+    def test_credential_is_never_written_before_sudo_asks_for_it(self):
+        # THE 2026-08-14 defect.  The shell's ready marker means only that
+        # echo is off; sudo has not been exec'd yet, so a credential written
+        # there is at the mercy of the reader's terminal setup and was in fact
+        # lost.  With no prompt on the console the credential must simply not
+        # be written, and the stop must name the sudoers/policy layer rather
+        # than an authentication failure.
+        console, feeder, sink = self._console()
+        feeder.write(self._ready(console) + SUDO_LECTURE)
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            elevate_operator(console, facts, timeout=0.5)
+        self.assertEqual(str(caught.exception), SUDO_PROMPT_MISSING_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertTrue(facts["sudo_echo_suppressed"])
+        self.assertFalse(facts["sudo_prompt_seen"])
+        self.assertFalse(facts["sudo_credential_sent"])
+        self.assertNotIn(TEST_CREDENTIAL, self._sent(sink))
+
+    def test_sudo_lecture_is_never_mistaken_for_a_root_shell(self):
+        # The lecture arrives between the ready marker and the prompt, and the
+        # old outcome pattern accepted any line ending in "#".  A serial read
+        # that lands on the "#" of "    #1)" ends the buffer there, and "$" in
+        # MULTILINE matches at end-of-string too, so the run took the lecture
+        # for a root prompt.  No prefix of it may match any verdict now.
+        pattern = re.compile(
+            elevation_outcome_pattern("feedfacefeedface"), re.MULTILINE)
+        for length in range(1, len(SUDO_LECTURE) + 1):
+            self.assertIsNone(
+                pattern.search(SUDO_LECTURE[:length]),
+                f"lecture prefix of {length} bytes matched a verdict")
+        # The old pattern did match, at three separate read boundaries.
+        old = re.compile(rb"(?:^|\n)[^\n]*#[ \t]*$", re.MULTILINE)
+        self.assertTrue(any(
+            old.search(SUDO_LECTURE[:length])
+            for length in range(1, len(SUDO_LECTURE) + 1)))
+
+    def test_refused_credential_is_named_and_burns_one_faillock_attempt(self):
+        # sudo asking a second time is proof it read a line and PAM refused
+        # it.  That is its own failure, distinct from a refused getty login,
+        # and the exchange stops there instead of feeding the next prompt.
+        console, feeder, sink = self._console()
+        prompt = self._prompt(console)
+        feeder.write(
+            self._ready(console) + SUDO_LECTURE + prompt
+            + b"\r\nSorry, try again.\r\n" + prompt)
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            elevate_operator(console, facts, timeout=2.0)
+        self.assertEqual(
+            str(caught.exception), SUDO_CREDENTIAL_REFUSED_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertNotEqual(
+            SUDO_CREDENTIAL_REFUSED_FAILURE, LOGIN_REFUSED_FAILURE)
+        self.assertTrue(facts["sudo_credential_refused"])
+        self.assertTrue(facts["sudo_credential_sent"])
+        self.assertFalse(facts["sudo_elevated"])
+        self.assertEqual(facts["sudo_proof_asks"], 0)
+        # One credential write, and nothing typed into the second prompt.
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL), 1)
+        self.assertNotIn("arch-root-proof-requested", console.events)
+
+    def test_a_bare_pam_password_prompt_also_gates_the_write(self):
+        # sudo only substitutes its -p prompt for a PAM prompt it recognises
+        # as the default one, so an unrecognised "Password:" must still gate
+        # the write rather than time out and waste a live run.
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console) + SUDO_LECTURE + b"Password: "
+            + b"\r\n[root@telos-ws1 ~]# "
+            + self._root_proof(console, b"0"))
+        facts = new_boot_facts()
+        elevate_operator(console, facts, timeout=2.0)
+        self.assertTrue(facts["sudo_elevated"])
+        self.assertTrue(facts["sudo_prompt_seen"])
+        self.assertIn(TEST_CREDENTIAL, self._sent(sink))
+
+    def test_sudo_nonzero_return_is_the_named_exit_failure(self):
         console, feeder, _sink = self._console()
         feeder.write(
-            self._ready(console)
+            self._ready(console) + SUDO_LECTURE + self._prompt(console)
             + b"\n__TELOS_ARCH_SUDO_RC_"
             + console.token.encode("ascii") + b"=1\n")
+        facts = new_boot_facts()
         with self.assertRaises(ArchIdentityError) as caught:
-            elevate_operator(console, new_boot_facts(), timeout=2.0)
-        self.assertEqual(str(caught.exception), SUDO_ELEVATION_FAILURE)
+            elevate_operator(console, facts, timeout=2.0)
+        self.assertEqual(str(caught.exception), SUDO_EXITED_FAILURE)
         self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertEqual(facts["sudo_returncode"], 1)
+        self.assertFalse(facts["sudo_credential_refused"])
 
-    def test_non_root_shell_is_the_named_elevation_failure(self):
+    def test_non_root_shell_is_the_named_unproven_root_failure(self):
         console, feeder, _sink = self._console()
         feeder.write(
-            self._ready(console)
-            + b"[operator@telos-ws1 ~]# "
+            self._ready(console) + SUDO_LECTURE + self._prompt(console)
+            + b"\r\n[root@telos-ws1 ~]# "
             + self._root_proof(console, b"1000"))
         facts = new_boot_facts()
         with self.assertRaises(ArchIdentityError) as caught:
             elevate_operator(console, facts, timeout=2.0)
-        self.assertEqual(str(caught.exception), SUDO_ELEVATION_FAILURE)
+        self.assertEqual(str(caught.exception), SUDO_ROOT_UNPROVEN_FAILURE)
+        self.assertEqual(facts["sudo_uid"], 1000)
         self.assertFalse(facts["sudo_elevated"])
+
+    def test_missing_ready_marker_never_writes_the_credential(self):
+        console, feeder, sink = self._console()
+        feeder.write(b"[operator@telos-ws1 ~]$ \n")
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            elevate_operator(console, facts, timeout=0.4)
+        self.assertEqual(
+            str(caught.exception), SUDO_ECHO_NOT_SUPPRESSED_FAILURE)
+        self.assertFalse(facts["sudo_echo_suppressed"])
+        self.assertFalse(facts["sudo_credential_sent"])
+        self.assertNotIn(TEST_CREDENTIAL, self._sent(sink))
+
+    def test_a_silent_root_shell_is_re_asked_a_bounded_number_of_times(self):
+        # A proof line typed into a login shell that has not started reading
+        # yet is the one race the prompt gate cannot cover, so the proof is
+        # re-asked -- but only SUDO_PROOF_ASKS times, and the umbrella failure
+        # still carries the whole per-layer picture.
+        console, feeder, _sink = self._console()
+        feeder.write(
+            self._ready(console) + SUDO_LECTURE + self._prompt(console))
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            elevate_operator(console, facts, timeout=0.9, proof_timeout=0.3)
+        self.assertEqual(str(caught.exception), SUDO_ELEVATION_FAILURE)
+        self.assertEqual(facts["sudo_proof_asks"], SUDO_PROOF_ASKS)
+        self.assertTrue(facts["sudo_credential_sent"])
+        self.assertFalse(facts["sudo_credential_refused"])
+        self.assertIsNone(facts["sudo_returncode"])
+        self.assertEqual(
+            console.events.count("arch-root-proof-requested"),
+            SUDO_PROOF_ASKS)
+
+    def test_the_elevation_never_inherits_an_unbounded_console_timeout(self):
+        # The 2026-08-14 run inherited the 300s console-ready timeout here and
+        # spent five minutes of a live run on an exchange it had already
+        # desynchronised.  The bound is restored on the way out either way.
+        console, feeder, _sink = self._console(timeout=300.0)
+        feeder.write(b"nothing the elevation is waiting for\n")
+        with self.assertRaises(ArchIdentityError):
+            elevate_operator(console, new_boot_facts(), timeout=0.4)
+        self.assertEqual(console.timeout, 300.0)
+
+    def test_elevation_without_a_credential_is_refused(self):
+        console, _feeder, sink = self._console()
+        console.password = None
+        with self.assertRaisesRegex(
+                ArchIdentityError, "credential is unavailable"):
+            elevate_operator(console, new_boot_facts(), timeout=0.2)
+        self.assertEqual(self._sent(sink), b"")
 
 
 class RescuePasswordTests(SerialTranscriptCase):
@@ -2168,8 +2407,13 @@ class SudoPathDecisionTests(unittest.TestCase):
         self.assertNotIn("NOPASSWD", script)
         # The drive therefore elevates once with echo-suppressed sudo -S
         # and hands the probes a root shell; it never relies on sudo -n.
-        command, _ready, _failed = elevation_command("feedfacefeedface")
+        command, _ready, prompt, _failed = elevation_command(
+            "feedfacefeedface")
         self.assertIn(b"sudo -k -S", command)
+        # The credential is written in response to sudo's OWN prompt, so the
+        # prompt has to be a marker the harness can wait for.
+        self.assertIn(b"-p '" + prompt + b"'", command)
+        self.assertIn(b"feedfacefeedface", prompt)
         self.assertIn(b"stty -echo", command)
         self.assertNotIn(b"sudo -n", command)
 

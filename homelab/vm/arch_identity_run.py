@@ -164,6 +164,39 @@ RESCUE_PRINCIPAL = str(CONTRACT["principals"]["local_rescue"]["name"])
 # hands the probes an already-root shell: the probe skips self-elevation when
 # `id -u` is 0.  This decision is pinned by tests against the rendered gate-7
 # sudoers rule.
+#
+# The 2026-08-14 live run taught the rest of the exchange the hard way.  The
+# domain login worked (a home directory was created, an operator prompt
+# rendered) and the elevation still failed with sudo's "Sorry, try again.",
+# because the harness wrote the credential when its OWN pre-sudo `printf`
+# marker appeared -- i.e. before `sudo` had even been exec'd, let alone
+# configured the tty and started reading.  The write was lost, and the next
+# thing the harness typed (the `id -u` proof) became sudo's password.  Two
+# separate defects produced that:
+#
+# 1. The credential must be written only after the READER has asked for it.
+#    ``login``(1) and ``passwd``(1) are driven exactly that way in this module
+#    (``login_operator`` waits for ``Password:``, ``set_rescue_password`` waits
+#    for ``New password:``) and both work; only the elevation gated on a marker
+#    printed by the shell *before* the reader existed.  So the elevation now
+#    gives sudo a token-scoped prompt with `-p` -- the same discipline
+#    ``serial_automation.SerialAutomation.run`` has always used for the
+#    Controller preflight -- and writes the credential only once that prompt is
+#    on the console.  sudo prints the prompt after it has disabled echo on
+#    stdin, so nothing can be discarded by the reader's own terminal setup.
+# 2. Nothing about the outcome may be inferred from an unscoped shell-prompt
+#    heuristic.  The old outcome pattern accepted any line ending in `#`, and
+#    sudo's default lecture ("#1) Respect the privacy of others.") satisfied it
+#    whenever a serial read landed on the `#`; the run then typed a shell
+#    command into sudo's password prompt 18ms after sending the credential,
+#    while the real SSSD authentication at the getty had taken 1.4s.  Every
+#    verdict is now a token-scoped marker or sudo's own re-prompt, and each
+#    outcome names its own layer.
+#
+# Failed sudo attempts feed pam_faillock exactly like failed logins (see
+# LOGIN_ATTEMPTS), so the exchange also refuses to burn attempts: a refusal is
+# detected from sudo's second prompt and aborts immediately, leaving one
+# recorded failure and two of the stock `deny=3` still in hand.
 
 #: Gate 7 must ship these on the join-capable disk for the live drive to work.
 GATE7_CONTRACT = (
@@ -219,6 +252,31 @@ LOGIN_REFUSED_FAILURE = (
     "credential")
 SUDO_ELEVATION_FAILURE = (
     "operator sudo -S elevation did not yield a root shell for the probes")
+# The four ways the elevation can stop, each naming its OWN layer so the next
+# run never has to re-derive which of sudoers, PAM, sudo's exit or the root
+# shell was at fault.  All of them are bound to arch-joined, and every one of
+# them is secret-free: the boot facts carry booleans, sudo's exit code and the
+# observed uid, never the credential.
+SUDO_ECHO_NOT_SUPPRESSED_FAILURE = (
+    "the operator shell never confirmed terminal echo was off before the "
+    "elevation, so the credential was deliberately never written; nothing "
+    "was exposed and the fault is in the operator shell, not in sudo")
+SUDO_PROMPT_MISSING_FAILURE = (
+    "sudo never asked the operator for a password, so the credential was "
+    "never written; that is the sudoers/policy layer (the gate-7 rule, sudo "
+    "itself or its path), never an authentication failure")
+SUDO_CREDENTIAL_REFUSED_FAILURE = (
+    "sudo read the operator credential and asked again: its PAM stack "
+    "refused it. login_completed in the same boot facts records whether the "
+    "ttyS0 getty accepted those same bytes seconds earlier -- if it did, the "
+    "value is right and the fault is sudo's PAM stack, which must reach the "
+    "pam_sss line gate 7 writes into /etc/pam.d/system-auth")
+SUDO_EXITED_FAILURE = (
+    "sudo exited without yielding a root shell; its own exit code is "
+    "retained as sudo_returncode in the workstation boot facts")
+SUDO_ROOT_UNPROVEN_FAILURE = (
+    "the shell sudo yielded did not prove uid 0; the observed uid is "
+    "retained as sudo_uid in the workstation boot facts")
 RESCUE_PASSWORD_FAILURE = (
     "the local-rescue break-glass password was not set from the elevated "
     "console; gate 7 installs that account with a disabled password and the "
@@ -320,6 +378,21 @@ JOIN_TIMEOUT = 420.0
 #: headroom past both; a stop here is bounded, named, and never a login
 #: refusal.
 DOMAIN_ONLINE_TIMEOUT = 300.0
+#: Bound for the single ``sudo -S`` elevation.  Every step of it is local: the
+#: prompt arrives in milliseconds and the one PAM round trip to the disposable
+#: Controller measured 1.4s at the getty on 2026-08-14.  It is bounded on its
+#: own because that run inherited the 300s console-ready timeout and spent five
+#: minutes of a live run waiting on an exchange it had already desynchronised.
+SUDO_ELEVATION_TIMEOUT = 60.0
+#: Bound for one root-proof ask inside that budget.  Two bounded asks cover a
+#: proof line typed into a root login shell that had not started reading yet,
+#: without letting a genuinely dead exchange consume the whole elevation
+#: budget in a single wait.  Three waits of this length fit the budget above.
+SUDO_PROOF_TIMEOUT = 20.0
+#: How many times the root proof may be typed before the elevation fails
+#: closed.  Bounded for the same reason every other retry here is: a live run
+#: must fail fast enough to be worth re-running.
+SUDO_PROOF_ASKS = 2
 #: Bound for the single ``passwd local-rescue`` exchange on the root shell.
 RESCUE_PASSWORD_TIMEOUT = 60.0
 
@@ -361,6 +434,32 @@ def new_boot_facts() -> dict[str, object]:
         "domain_online_observed": False,
         "getty_seen": False,
         "login_completed": False,
+        # The elevation, layer by layer.  The 2026-08-14 run recorded only
+        # ``sudo_elevated: false`` and the next run had to reconstruct the
+        # whole exchange from an ANSI-stripped transcript, so each stage of it
+        # is now its own secret-free fact:
+        #   sudo_echo_suppressed  the operator shell proved echo off, so the
+        #                         credential was safe to write at all;
+        #   sudo_prompt_seen      sudo asked -- past the sudoers/policy layer;
+        #   sudo_credential_sent  the credential was written, and only after
+        #                         the reader asked for it;
+        #   sudo_root_shell_seen  a root shell prompt rendered;
+        #   sudo_credential_refused  sudo read a line and asked again.  Read
+        #                         together with login_completed this is the
+        #                         whole diagnosis: the getty accepting the
+        #                         same bytes proves the value and indicts
+        #                         sudo's PAM stack instead;
+        #   sudo_returncode       sudo's own exit code, when it exited;
+        #   sudo_uid              the uid the elevated shell reported;
+        #   sudo_proof_asks       how many times the root proof was typed.
+        "sudo_echo_suppressed": False,
+        "sudo_prompt_seen": False,
+        "sudo_credential_sent": False,
+        "sudo_root_shell_seen": False,
+        "sudo_credential_refused": False,
+        "sudo_returncode": None,
+        "sudo_uid": None,
+        "sudo_proof_asks": 0,
         "sudo_elevated": False,
         "rescue_password_set": False,
         # Timing.  Every instant in the 2026-08-14 stall investigation had to
@@ -1410,37 +1509,121 @@ def login_operator(
         console.timeout = original
 
 
-def elevation_command(token: str) -> tuple[bytes, bytes, bytes]:
+def elevation_command(token: str) -> tuple[bytes, bytes, bytes, bytes]:
     """The single echo-suppressed ``sudo -S`` elevation, token-scoped.
 
-    Returns ``(command, ready_marker, failure_prefix)``.  Echo is provably
-    off (the ready marker only prints after ``stty -echo`` succeeded) before
-    the credential is written, ``sudo -S`` reads it from stdin, and the
-    failure prefix only ever carries an exit code — never a secret.  The
-    command deliberately never uses ``sudo -n``: the gate-7 operator rule is
-    passworded.
+    Returns ``(command, ready_marker, password_prompt, failure_prefix)``.
+
+    Two independent protections, both learned from the 2026-08-14 live run:
+
+    * Echo is provably off before the credential is written -- the ready
+      marker only prints once ``stty -echo`` succeeded.  That is necessary but
+      NOT sufficient, because the shell prints it before ``sudo`` has even
+      been exec'd.
+    * ``sudo`` is given its own token-scoped prompt with ``-p``, so the
+      credential can be written when *the reader* asks for it rather than when
+      the shell says it is about to start one.  ``sudo``(8) writes that prompt
+      after it has disabled echo on stdin, so a credential written in response
+      to it cannot be discarded by the reader's terminal setup.  This is the
+      discipline ``login``(1) and ``passwd``(1) are already driven with here,
+      and the one ``serial_automation.SerialAutomation.run`` has always used
+      for the Controller preflight.
+
+    ``sudo -S`` reads the credential from stdin and writes the prompt to
+    stderr; both are this one serial console.  The failure prefix only ever
+    carries an exit code -- never a secret.  The command deliberately never
+    uses ``sudo -n``: the gate-7 operator rule is passworded, and proving a
+    passworded elevation is the whole point of the check.
     """
     tok = token.encode("ascii")
     ready = b"__TELOS_ARCH_SUDO_READY_" + tok + b"__"
+    prompt = b"__TELOS_ARCH_SUDO_PROMPT_" + tok + b"__"
     failed = b"__TELOS_ARCH_SUDO_RC_" + tok + b"="
     command = (
         b"stty -echo && printf '\\n" + ready + b"\\n' && "
-        b"sudo -k -S -p '' -i; __telos_rc=$?; stty echo; "
+        b"sudo -k -S -p '" + prompt + b"' -i; __telos_rc=$?; stty echo; "
         b"printf '\\n" + failed + b"%s\\n' \"$__telos_rc\""
     )
-    return command, ready, failed
+    return command, ready, prompt, failed
+
+
+def sudo_prompt_pattern(prompt: bytes) -> bytes:
+    """Match sudo asking for the operator's password, once per ask.
+
+    The token-scoped ``-p`` prompt is the expected form.  ``pam_unix`` supplies
+    its own ``Password:`` prompt and sudo only substitutes ``-p`` for prompts
+    it recognises as that default, so the bare prompt is accepted as well: a
+    localised or otherwise unrecognised PAM prompt must still gate the write
+    rather than time out and waste a live run.  Neither alternative can
+    collide inside this window -- the echoed command line, which does contain
+    the marker literal, is consumed by the ready-marker wait before this one
+    runs, and the only other output here is sudo's lecture.
+    """
+    return (rb"(?:" + re.escape(prompt) + rb"|(?:^|\n)Password:[ \t]*)")
+
+
+def root_proof_marker(token: str) -> bytes:
+    """The token-scoped prefix the elevated shell prints ``id -u`` behind."""
+    return b"__TELOS_ARCH_ROOT_" + token.encode("ascii") + b"="
+
+
+def elevation_outcome_pattern(token: str) -> bytes:
+    """Every elevation verdict, each in its own named group.
+
+    ``uid``/``rc`` are token-scoped markers and ``refused`` is sudo's own
+    re-prompt, so all three are verdicts nothing else on the console can
+    forge.  ``root_shell`` is the one shape-based alternative and it is NOT a
+    verdict: it only says "a root prompt is on the console, ask for the
+    proof", so a guest whose root ``PS1`` differs still converges through the
+    bounded second ask.
+
+    Its predecessor accepted any line ending in ``#``, which sudo's default
+    lecture ("    #1) Respect the privacy of others.") satisfies whenever a
+    serial read lands on the ``#`` -- exactly what desynchronised the
+    2026-08-14 live run 18ms after the credential was written.  Tests pin this
+    pattern against that lecture at every read boundary.
+    """
+    _command, _ready, prompt, failed = elevation_command(token)
+    proof = root_proof_marker(token)
+    return (
+        rb"(?:^|\n)" + re.escape(proof) + rb"(?P<uid>[0-9]+)\s*(?:\n|$)"
+        rb"|(?:^|\n)" + re.escape(failed) + rb"(?P<rc>[0-9]+)\s*(?:\n|$)"
+        rb"|(?P<refused>" + sudo_prompt_pattern(prompt) + rb")"
+        rb"|(?P<root_shell>(?:^|\n)\[root@[^\n]*\]#[ \t]*)"
+    )
 
 
 def elevate_operator(
     console, facts: dict[str, object], *,
     timeout: float | None = None,
+    proof_timeout: float | None = SUDO_PROOF_TIMEOUT,
 ) -> None:
     """Elevate the logged-in operator to a root shell for the probes.
 
     The gate-7 sudoers rule is passworded, so the staged credential is fed
-    once through ``sudo -S`` with terminal echo suppressed, and the root
-    shell is proven with a token-scoped ``id -u`` echo before any probe
-    runs.  Any other outcome is the named elevation failure.
+    once through ``sudo -S`` -- written only after sudo's own prompt is on the
+    console, with terminal echo already provably off -- and the root shell is
+    proven with a token-scoped ``id -u`` echo before any probe runs.
+
+    Every stop names its own layer instead of collapsing into one message,
+    because the 2026-08-14 run left nothing behind that could separate them:
+
+    * no ready marker -> the operator shell, and the credential was never
+      written (``SUDO_ECHO_NOT_SUPPRESSED_FAILURE``);
+    * no prompt -> sudoers/policy, and the credential was never written
+      (``SUDO_PROMPT_MISSING_FAILURE``);
+    * a second prompt -> sudo read the credential and its PAM stack refused it
+      (``SUDO_CREDENTIAL_REFUSED_FAILURE``); the run aborts on that second
+      prompt rather than feeding it, so pam_faillock records one failure and
+      the stock ``deny=3`` keeps two in hand for the later proofs;
+    * an exit code -> sudo gave up, and its own code is retained
+      (``SUDO_EXITED_FAILURE``);
+    * a non-zero uid -> the shell is not root (``SUDO_ROOT_UNPROVEN_FAILURE``).
+
+    The root proof is asked for at most twice, each ask bounded by
+    ``proof_timeout``: an ask typed into a login shell that has not started
+    reading yet is the one race the prompt gate cannot cover, and a second
+    bounded ask costs seconds where a lost one costs a whole live run.
     """
     from .serial_automation import SerialAutomationError
 
@@ -1448,37 +1631,70 @@ def elevate_operator(
         raise ArchIdentityError(
             "operator credential is unavailable for sudo elevation",
             check="arch-joined")
-    command, ready, failed = elevation_command(console.token)
-    proof = b"__TELOS_ARCH_ROOT_" + console.token.encode("ascii") + b"="
+    command, ready, prompt, _failed = elevation_command(console.token)
+    asked = sudo_prompt_pattern(prompt)
+    proof_command = (
+        b"printf '\\n" + root_proof_marker(console.token) + b"%s\\n' "
+        b"\"$(id -u)\"")
+    outcome_pattern = elevation_outcome_pattern(console.token)
     original = console.timeout
     if timeout is not None:
         console.timeout = timeout
     try:
+        console._send(command, "arch-sudo-command-sent")
         try:
-            console._send(command, "arch-sudo-command-sent")
             console._wait(
                 rb"(?:^|\n)" + re.escape(ready) + rb"\s*(?:\n|$)",
                 "arch-sudo-echo-off")
-            console._send(console.password, "arch-sudo-password-sent")
-            outcome = console._wait(
-                rb"(?:^|\n)(?:" + re.escape(failed)
-                + rb"([0-9]+)|[^\n]*#[ \t]*$)",
-                "arch-sudo-outcome")
-            if outcome.group(1) is not None:
-                raise ArchIdentityError(
-                    SUDO_ELEVATION_FAILURE, check="arch-joined")
-            console._send(
-                b"printf '\\n" + proof + b"%s\\n' \"$(id -u)\"",
-                "arch-root-proof-requested")
-            verdict = console._wait(
-                rb"(?:^|\n)" + re.escape(proof) + rb"([0-9]+)\s*(?:\n|$)",
-                "arch-root-verified")
         except SerialAutomationError as error:
             raise ArchIdentityError(
-                SUDO_ELEVATION_FAILURE, check="arch-joined") from error
-        if verdict.group(1) != b"0":
+                SUDO_ECHO_NOT_SUPPRESSED_FAILURE,
+                check="arch-joined") from error
+        facts["sudo_echo_suppressed"] = True
+        # The credential is written only in response to this.
+        try:
+            console._wait(asked, "arch-sudo-password-prompt")
+        except SerialAutomationError as error:
             raise ArchIdentityError(
-                SUDO_ELEVATION_FAILURE, check="arch-joined")
+                SUDO_PROMPT_MISSING_FAILURE, check="arch-joined") from error
+        facts["sudo_prompt_seen"] = True
+        console._send(console.password, "arch-sudo-password-sent")
+        facts["sudo_credential_sent"] = True
+        # One wait loop, three exits.  A verdict marker or a re-prompt settles
+        # the elevation; a root-shell prompt (or a silence the recognised
+        # shapes cannot explain) means "ask for the proof"; a third such pass
+        # is the bounded umbrella failure.
+        console.timeout = console.timeout if proof_timeout is None else min(
+            console.timeout, proof_timeout)
+        while True:
+            silence: SerialAutomationError | None = None
+            try:
+                settled = console._wait(outcome_pattern, "arch-sudo-outcome")
+            except SerialAutomationError as error:
+                settled, silence = None, error
+            if settled is not None and settled.group("root_shell") is None:
+                outcome = settled
+                break
+            if settled is not None:
+                facts["sudo_root_shell_seen"] = True
+            asks = int(facts["sudo_proof_asks"] or 0)
+            if asks >= SUDO_PROOF_ASKS:
+                raise ArchIdentityError(
+                    SUDO_ELEVATION_FAILURE, check="arch-joined") from silence
+            console._send(proof_command, "arch-root-proof-requested")
+            facts["sudo_proof_asks"] = asks + 1
+        if outcome.group("refused") is not None:
+            facts["sudo_credential_refused"] = True
+            raise ArchIdentityError(
+                SUDO_CREDENTIAL_REFUSED_FAILURE, check="arch-joined")
+        if outcome.group("rc") is not None:
+            facts["sudo_returncode"] = int(outcome.group("rc"))
+            raise ArchIdentityError(
+                SUDO_EXITED_FAILURE, check="arch-joined")
+        facts["sudo_uid"] = int(outcome.group("uid"))
+        if facts["sudo_uid"] != 0:
+            raise ArchIdentityError(
+                SUDO_ROOT_UNPROVEN_FAILURE, check="arch-joined")
         facts["sudo_elevated"] = True
     finally:
         console.timeout = original
@@ -2135,7 +2351,11 @@ class ArchIdentityBoundary:
         # 2026-08-14), so the guest's own readiness gate is observed here.
         await_domain_online(console, self._boot_facts)
         login_operator(console, self._boot_facts)
-        elevate_operator(console, self._boot_facts)
+        # Bounded on its own: the 2026-08-14 run inherited the 300s
+        # console-ready timeout here and spent five minutes waiting on an
+        # exchange it had already desynchronised.
+        elevate_operator(
+            console, self._boot_facts, timeout=SUDO_ELEVATION_TIMEOUT)
         self._set_rescue_password()
         console.timeout = PROBE_TIMEOUT
         self._channel = console
