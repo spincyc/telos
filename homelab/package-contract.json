@@ -185,6 +185,7 @@
       "services": [
         "NetworkManager.service",
         "serial-getty@ttyS0.service",
+        "telos-arch-domain-online.service",
         "telos-arch-join-once.service"
       ]
     },

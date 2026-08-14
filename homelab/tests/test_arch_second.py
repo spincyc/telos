@@ -10,18 +10,23 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL,
+    CONTROLLER_ADDRESS, DOMAIN_ONLINE_AFTER_UNITS, DOMAIN_ONLINE_BEFORE_UNITS,
+    DOMAIN_ONLINE_FAILURE_MARKER, DOMAIN_ONLINE_MARKER,
+    DOMAIN_ONLINE_SCRIPT_PATH, DOMAIN_ONLINE_UNIT_NAME,
+    DOMAIN_ONLINE_UNIT_PATH, ESP, JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL,
     JOIN_ONCE_BEFORE_UNITS, JOIN_ONCE_SCRIPT_PATH, JOIN_ONCE_UNIT_NAME,
     JOIN_ONCE_UNIT_PATH, JOIN_VERIFIED_MARKER, JOIN_WAIT_SECONDS,
     JOIN_WAIT_TRIES, LINUX_ROOT_X86_64,
     MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, MSR, NVRAM_ENTRIES_MARKER,
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
-    PROBE_CHECKS, PROBE_HELPER_PATH, SSSD_CACHE_GLOB, STORAGE_HOST_LABEL,
+    PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH, SSSD_CACHE_GLOB,
+    SSSD_SERVICES, STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
     WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
-    InstallContractError, Partition, _render_join_media_stage, parse_lsblk,
+    InstallContractError, Partition, _DOMAIN_STATE_FUNCTIONS,
+    _render_join_media_stage, parse_lsblk,
     render_installer, validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
@@ -845,6 +850,149 @@ class ArchSecondTests(unittest.TestCase):
         # No literal of either shape the runner generates can be present.
         self.assertNotIn("Synthetic-Join-", script)
         self.assertNotRegex(script, r"\btj-[0-9a-f]{16}\b")
+
+    # ---- Boot-time domain-online gate (gate-8 login-readiness contract) ----
+
+    def _rendered(self) -> str:
+        return render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+
+    def test_domain_online_unit_is_installed_and_enabled(self):
+        script = self._rendered()
+        # Root-only script, world-readable unit, enabled at install time --
+        # the same shape as the one-shot join it follows.
+        self.assertIn(
+            f"install -Dm0700 /dev/stdin /mnt{DOMAIN_ONLINE_SCRIPT_PATH}",
+            script)
+        self.assertIn(
+            f"install -Dm0644 /dev/stdin /mnt{DOMAIN_ONLINE_UNIT_PATH}",
+            script)
+        self.assertIn(
+            f"arch-chroot /mnt systemctl enable {DOMAIN_ONLINE_UNIT_NAME}",
+            script)
+        unit = _heredoc_body(script, "TELOS_DOMAIN_UNIT_EOF")
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("RemainAfterExit=no", unit)
+        self.assertIn(f"ExecStart={DOMAIN_ONLINE_SCRIPT_PATH}", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
+
+    def test_domain_online_ordering_is_exactly_as_designed(self):
+        # sssd.service reaching active only means its responders answered
+        # READY=1; the AD backend connects afterwards.  So this unit orders
+        # AFTER sssd (the join unit orders before it) and BEFORE user sessions,
+        # which is what holds serial-getty@ttyS0 -- itself
+        # After=systemd-user-sessions.service -- behind a usable domain.
+        self.assertEqual(DOMAIN_ONLINE_AFTER_UNITS, ("sssd.service",))
+        self.assertEqual(
+            DOMAIN_ONLINE_BEFORE_UNITS, ("systemd-user-sessions.service",))
+        unit = _heredoc_body(self._rendered(), "TELOS_DOMAIN_UNIT_EOF")
+        self.assertIn("After=" + " ".join(DOMAIN_ONLINE_AFTER_UNITS), unit)
+        self.assertIn("Requires=" + " ".join(DOMAIN_ONLINE_AFTER_UNITS), unit)
+        self.assertIn("Before=" + " ".join(DOMAIN_ONLINE_BEFORE_UNITS), unit)
+        # The join unit runs before sssd and this gate after it, so the two
+        # form a chain rather than a race.
+        self.assertIn("sssd.service", JOIN_ONCE_BEFORE_UNITS)
+        # No ordering edge is added against nss-user-lookup.target: sssd
+        # already declares Before= both it and systemd-user-sessions, and
+        # other units (systemd-logind) order AFTER that target, so a new edge
+        # there is exactly how an ordering cycle -- and a silently dropped
+        # systemd job -- would be introduced.
+        directives = [
+            line for line in unit.splitlines()
+            if line.startswith(
+                ("After=", "Before=", "Requires=", "Wants=", "BindsTo="))]
+        self.assertEqual(len(directives), 3)
+        for line in directives:
+            self.assertNotIn("nss-user-lookup.target", line)
+
+    def test_domain_online_gate_fails_closed_on_timeout(self):
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        # Both waits are bounded with the installer's 60 x 2s idiom.
+        self.assertEqual(
+            body.count(f"sleep {JOIN_WAIT_SECONDS}\n"), 2)
+        self.assertIn(f"DOMAIN_WAIT_TRIES='{JOIN_WAIT_TRIES}'", body)
+        self.assertIn(f"for _ in $(seq 1 {JOIN_WAIT_TRIES}); do", body)
+        # Each timeout ends the unit non-zero with its own secret-free reason,
+        # so the boot reports where it stopped instead of presenting a login
+        # prompt nothing can log in to.
+        self.assertIn("exit 1", body)
+        reasons = re.findall(r"fail '([^']+)'", body)
+        self.assertEqual(len(reasons), 2)
+        self.assertEqual(len(set(reasons)), 2)
+        # Order is load-bearing: the principal lookup is what pam_sss needs, so
+        # it is waited on first and the narrower sssctl check follows.  Reaching
+        # the second failure with the first already satisfied isolates an
+        # InfoPipe fault from an identity fault.
+        self.assertIn("never resolved", reasons[0])
+        self.assertIn("Online", reasons[1])
+        # The success marker prints only after BOTH waits converged.
+        ordered = [
+            body.index('[ "$resolved" -eq 1 ] ||'),
+            body.index("await_domain_state Online ||"),
+            body.index(f"printf '%s\\n' '{DOMAIN_ONLINE_MARKER}'"),
+        ]
+        self.assertEqual(ordered, sorted(ordered))
+
+    def test_domain_online_markers_are_secret_free_constants(self):
+        script = self._rendered()
+        body = _heredoc_body(script, "TELOS_DOMAIN_ONLINE_EOF")
+        unit = _heredoc_body(script, "TELOS_DOMAIN_UNIT_EOF")
+        # Both markers come from module constants and print exactly once each,
+        # from the guest's own script -- never from a dispatched echo.
+        self.assertEqual(
+            body.count(f"printf '%s\\n' '{DOMAIN_ONLINE_MARKER}' "
+                       "> /dev/console"), 1)
+        self.assertEqual(
+            body.count(f"printf '%s: %s\\n' '{DOMAIN_ONLINE_FAILURE_MARKER}' "
+                       '"$1" > /dev/console'), 1)
+        self.assertEqual(script.count(DOMAIN_ONLINE_MARKER), 1)
+        # Neither marker is a prefix of the other, so the runner's bounded
+        # wait for success can never match a failure line.
+        self.assertFalse(
+            DOMAIN_ONLINE_FAILURE_MARKER.startswith(DOMAIN_ONLINE_MARKER))
+        self.assertFalse(
+            DOMAIN_ONLINE_MARKER.startswith(DOMAIN_ONLINE_FAILURE_MARKER))
+        # The gate never reads, holds, or names a credential: it authenticates
+        # nothing, it only observes SSSD.  Judged on executable lines, since
+        # the comments explain exactly that property.
+        for text in (body, unit):
+            self.assertNotIn("/run/telos-join", text)
+            for line in text.splitlines():
+                if line.lstrip().startswith("#") or not line.strip():
+                    continue
+                self.assertNotRegex(
+                    line, r"(?i)password|secret|credential",
+                    f"unexpected credential reference: {line!r}")
+
+    def test_probe_and_domain_gate_share_one_domain_state_implementation(self):
+        # Reuse, not a near-duplicate: "online" is defined once on the disk and
+        # rendered verbatim into both the acceptance probe and the boot gate.
+        script = self._rendered()
+        self.assertEqual(script.count(_DOMAIN_STATE_FUNCTIONS), 2)
+        probe = _heredoc_body(script, "TELOS_PROBE_EOF")
+        gate = _heredoc_body(script, "TELOS_DOMAIN_ONLINE_EOF")
+        for body in (probe, gate):
+            self.assertIn(_DOMAIN_STATE_FUNCTIONS, body)
+        # Each caller supplies its own bound: the probe keeps its 30 x 2s (a
+        # 60-try wait would outlive gate 8's own per-probe console bound),
+        # the boot gate uses the installer idiom.
+        self.assertIn(f"DOMAIN_WAIT_TRIES='{PROBE_DOMAIN_WAIT_TRIES}'", probe)
+        self.assertIn(f"DOMAIN_WAIT_TRIES='{JOIN_WAIT_TRIES}'", gate)
+        self.assertNotEqual(PROBE_DOMAIN_WAIT_TRIES, JOIN_WAIT_TRIES)
+
+    def test_sssd_declares_the_ifp_responder_sssctl_needs(self):
+        # Every Online wait on this disk goes through `sssctl domain-status`,
+        # which answers over the InfoPipe responder only.  Without ifp in
+        # services, sssctl reports "InfoPipe operation failed" and nine of the
+        # eleven lifecycle checks could only ever fail closed -- for a reason
+        # that has nothing to do with identity.
+        self.assertEqual(SSSD_SERVICES, ("nss", "pam", "ifp"))
+        script = self._rendered()
+        sssd_conf = _heredoc_body(script, "TELOS_SSSD_EOF")
+        self.assertIn("services = nss, pam, ifp", sssd_conf)
+        self.assertIn('sssctl domain-status "$DOMAIN"', script)
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):

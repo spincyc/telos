@@ -172,7 +172,10 @@ GATE7_CONTRACT = (
     "Windows-default five-second window (gate-7 acceptance requires the "
     "Windows default), an enabled one-shot boot unit that re-joins this run's "
     "freshly provisioned domain from one-use TELOS_JOIN media before sssd and "
-    "before user sessions, a passworded serial getty on ttyS0 that takes the "
+    "before user sessions, a second one-shot unit ordered after sssd and "
+    "before user sessions that holds the login prompt until SSSD's AD "
+    "backend is actually online, a passworded serial getty on ttyS0 that "
+    "takes the "
     "staged operator's SSSD domain login, and a passworded operator sudoers "
     "rule for the drive's single sudo -S elevation"
 )
@@ -199,6 +202,13 @@ JOIN_FAILURE = (
     "on the workstation console; this run provisions a brand-new domain, so "
     "the gate-7 machine account does not exist here and no login can succeed "
     "until the boot-time join unit prints both of its markers")
+DOMAIN_ONLINE_FAILURE = (
+    "SSSD never reported its domain online on the workstation console after "
+    "the in-run join; sssd.service reaching active only means its responders "
+    "answered READY=1, so gate 7 ships a one-shot gate that holds user "
+    "sessions until the AD backend is usable and fails closed otherwise. A "
+    "stop here is a readiness failure, never a refused login: the credential "
+    "was never sent")
 JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE = (
     "the one-use domain-join principal was not provably destroyed on the "
     "disposable Controller; the run refuses to continue with a live join "
@@ -252,6 +262,12 @@ LOGIN_ATTEMPTS = 2
 #: 60 x 2s for the media before it fails closed, and the join plus
 #: ``net ads testjoin`` follow, so the marker waits need real headroom.
 JOIN_TIMEOUT = 420.0
+#: Bound for the guest-side domain-online gate.  That unit waits up to
+#: 60 x 2s for the SSSD domain to report online and then up to another
+#: 60 x 2s for the login principal to resolve, so the marker wait needs
+#: headroom past both; a stop here is bounded, named, and never a login
+#: refusal.
+DOMAIN_ONLINE_TIMEOUT = 300.0
 #: Bound for the single ``passwd local-rescue`` exchange on the root shell.
 RESCUE_PASSWORD_TIMEOUT = 60.0
 
@@ -272,6 +288,11 @@ def new_boot_facts() -> dict[str, object]:
         "join_media_destroyed": False,
         "join_verified": False,
         "join_principal_destroyed": False,
+        # Login readiness: the guest's domain-online gate printed its marker,
+        # so the ttyS0 prompt that follows is backed by a usable AD backend.
+        # The 2026-08-14 run proved a joined guest still refuses the operator
+        # when this is false, so it is recorded next to the join facts.
+        "domain_online_observed": False,
         "getty_seen": False,
         "login_completed": False,
         "sudo_elevated": False,
@@ -1059,6 +1080,39 @@ def drive_boot_menu(
         console.timeout = original
 
 
+def await_domain_online(
+    console, facts: dict[str, object], *,
+    timeout: float | None = DOMAIN_ONLINE_TIMEOUT,
+) -> None:
+    """Observe the guest's domain-online gate, bounded and fail-closed.
+
+    Strictly between the in-run join and the login.  Gate 7 installs a one-shot
+    unit ordered ``After=sssd.service`` and ``Before=systemd-user-sessions.
+    service`` that waits for SSSD's AD backend to be usable and prints
+    ``DOMAIN_ONLINE_MARKER``; because ``serial-getty@ttyS0`` is ordered after
+    user sessions, the login prompt cannot render until that unit finished.  So
+    this wait is not a sleep and not a readiness poll -- it reads the guest's
+    own secret-free proof, and a miss is its OWN named failure rather than a
+    login refusal, because the credential has not been sent yet.
+    """
+    from .serial_automation import SerialAutomationError
+    from homelab.workstations.arch_second import DOMAIN_ONLINE_MARKER
+
+    marker = re.escape(DOMAIN_ONLINE_MARKER.encode("ascii"))
+    original = console.timeout
+    if timeout is not None:
+        console.timeout = timeout
+    try:
+        try:
+            console._wait(marker, "arch-domain-online-observed")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                DOMAIN_ONLINE_FAILURE, check="arch-joined") from error
+        facts["domain_online_observed"] = True
+    finally:
+        console.timeout = original
+
+
 def login_operator(
     console, facts: dict[str, object], *,
     attempts: int = LOGIN_ATTEMPTS,
@@ -1765,14 +1819,16 @@ class ArchIdentityBoundary:
         boots Windows after five seconds) and renders its systemd-boot menu
         on ttyS0, so the drive selects the Arch entry over serial within the
         window — power-cycling over QMP on a miss instead of waiting inside
-        Windows.  The in-run domain join then runs (``_join_workstation``);
-        because the guest's join unit is ordered before
+        Windows.  The in-run domain join then runs (``_join_workstation``),
+        followed by the guest's domain-online gate (``await_domain_online``).
+        Both of those guest units are ordered before
         ``systemd-user-sessions.service`` and ``serial-getty@ttyS0`` is ordered
-        after it, the login prompt cannot appear until the join has finished,
-        so ``login_operator`` needs no readiness logic and no sleeps.  The
-        staged operator then logs in, one echo-suppressed ``sudo -S``
-        elevation follows, and the break-glass password is set from that root
-        shell so the secret-free probes can all pass.
+        after it, so the login prompt cannot appear until the guest has both
+        joined and proven SSSD's AD backend usable; ``login_operator``
+        consequently needs no readiness logic and no sleeps.  The staged
+        operator then logs in, one echo-suppressed ``sudo -S`` elevation
+        follows, and the break-glass password is set from that root shell so
+        the secret-free probes can all pass.
         """
         from .serial_automation import SerialAutomation
 
@@ -1815,6 +1871,10 @@ class ArchIdentityBoundary:
         # anybody in until its join unit has finished, and nobody can log in at
         # all until this run's directory knows this machine.
         self._join_workstation()
+        # And strictly between the join and the login: a joined guest whose
+        # SSSD backend is still connecting refuses the operator (proven
+        # 2026-08-14), so the guest's own readiness gate is observed here.
+        await_domain_online(console, self._boot_facts)
         login_operator(console, self._boot_facts)
         elevate_operator(console, self._boot_facts)
         self._set_rescue_password()

@@ -258,6 +258,10 @@ class NonAnsibleServiceParityTests(unittest.TestCase):
             # The one-shot in-run domain join: gate 8 boots into a freshly
             # provisioned domain, so the disk must re-join before sssd starts.
             "telos-arch-join-once.service",
+            # The one-shot login-readiness gate: sssd.service reaching active
+            # does not mean its AD backend is online, so this holds user
+            # sessions -- and the ttyS0 getty -- until the domain is usable.
+            "telos-arch-domain-online.service",
         }))
         profile_declared = frozenset().union(*(
             self.declared(overlay)

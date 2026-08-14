@@ -20,7 +20,10 @@ Because gate 8 provisions a brand-new domain on every run, the disk ships a
 join-*capable* identity client rather than a permanently joined one: the same
 one-use-media consumption is also installed as an enabled one-shot boot unit
 (``JOIN_ONCE_UNIT_NAME``) that re-joins before sssd and before user sessions,
-which is what makes the gate-8 login possible at all.
+which is what makes the gate-8 login possible at all.  A second one-shot unit
+(``DOMAIN_ONLINE_UNIT_NAME``) then holds user sessions -- and therefore the
+ttyS0 login prompt -- until SSSD's AD backend is actually *usable*, which
+``sssd.service`` reaching active does not prove.
 """
 
 from __future__ import annotations
@@ -134,9 +137,65 @@ JOIN_ONCE_BEFORE_UNITS = ("sssd.service", "systemd-user-sessions.service")
 # The stale SSSD cache from the install-time join.  It was primed against the
 # PREVIOUS domain's SID, so it is wiped while sssd is still stopped.
 SSSD_CACHE_GLOB = "/var/lib/sss/db/*"
-# Bounded loop shape shared by every wait in the join path: 60 tries, 2s apart.
+# Bounded loop shape shared by every wait in the identity boot path: 60 tries,
+# 2s apart.
 JOIN_WAIT_TRIES = 60
 JOIN_WAIT_SECONDS = 2
+
+# Boot-time SSSD domain-online gate (the gate-8 login-readiness contract).
+#
+# Why this exists, from the live run of 2026-08-14 (bundle
+# run-20260814T124858Z-0ac6c279561b): the boot-time re-join above worked in
+# full -- ``join_media_consumed``, ``join_verified`` and
+# ``join_principal_destroyed`` are all true in that run's
+# ``evidence/workstation-boot.json``, and the serial transcript shows
+# ``TELOS ARCH JOIN VERIFIED`` (so ``net ads testjoin`` passed in-guest against
+# the fresh directory) -- and ``operator`` was STILL refused on the getty.
+#
+# The reason is that ``sssd.service`` is ``Type=notify`` and its monitor sends
+# READY=1 once the ``nss``/``pam`` responders are up, NOT when the AD provider
+# has finished its DNS/LDAP/GSSAPI connection to the freshly provisioned
+# Controller.  In that transcript "Started System Security Services Daemon" is
+# followed within a second by "Started Serial Getty on ttyS0" and the login
+# prompt, and the harness types the credential immediately.  ``pam_sss`` then
+# finds the domain still offline, and offline authentication needs a cached
+# credential that CANNOT exist here: the join unit has just wiped the identity
+# cache (``SSSD_CACHE_GLOB``) and the operator password is generated fresh per
+# run, so nothing was ever cached.  The refusal is deterministic and no retry
+# count or ``LOGIN_ATTEMPTS`` bump can fix it.
+#
+# So a second one-shot unit waits, bounded, for the backend to be usable and
+# fails closed otherwise.  Ordering it before ``systemd-user-sessions.service``
+# is what makes this a gate rather than a hint: ``serial-getty@ttyS0`` is
+# ``After=systemd-user-sessions.service``, so the login prompt cannot render
+# until this unit has finished, and gate 8 needs no readiness logic or sleeps.
+DOMAIN_ONLINE_SCRIPT_PATH = "/usr/local/sbin/telos-arch-domain-online"
+DOMAIN_ONLINE_UNIT_NAME = "telos-arch-domain-online.service"
+DOMAIN_ONLINE_UNIT_PATH = f"/etc/systemd/system/{DOMAIN_ONLINE_UNIT_NAME}"
+# Ordering, and why it cannot cycle.  Checked against the exact unit files this
+# install ships: ``sssd.service`` from the offline workstation repository's
+# sssd-2.13.1-1 package declares only ``Before=systemd-user-sessions.service
+# nss-user-lookup.target`` plus ``Wants=nss-user-lookup.target``, and systemd's
+# ``systemd-user-sessions.service`` declares only ``After=remote-fs.target
+# nss-user-lookup.target network.target home.mount`` with no ``Before=`` at
+# all.  Adding sssd -> this unit -> systemd-user-sessions therefore adds two
+# edges that both run in the same direction as every existing edge, and nothing
+# reachable from ``systemd-user-sessions.service`` is ordered before sssd, so
+# the graph stays acyclic.  This unit deliberately does NOT order itself
+# against ``nss-user-lookup.target``: that target is pulled in by sssd's own
+# ``Wants=`` and other units (``systemd-logind.service``) order after it, so
+# inserting a new edge there is exactly how a silent ordering cycle -- and a
+# silently dropped job -- would be created.
+DOMAIN_ONLINE_AFTER_UNITS = ("sssd.service",)
+DOMAIN_ONLINE_BEFORE_UNITS = ("systemd-user-sessions.service",)
+DOMAIN_ONLINE_MARKER = "TELOS ARCH DOMAIN ONLINE"
+# Printed with a secret-free reason when the bounded wait gives up, so a boot
+# that stops here says where it stopped on the only channel gate 8 reads.
+DOMAIN_ONLINE_FAILURE_MARKER = "TELOS ARCH DOMAIN NOT ONLINE"
+# The probe helper's own domain-state wait keeps its established 30 x 2s bound:
+# gate 8 allows PROBE_TIMEOUT (90s) per probe, so the 60-try installer idiom
+# would let a single check outlive its own console bound.
+PROBE_DOMAIN_WAIT_TRIES = 30
 
 # systemd-boot menu titles the gate-10 acceptance keys on.  The Arch title is
 # authored by this installer's loader entry below; the Windows title is what
@@ -480,13 +539,30 @@ def _render_smb(realm: str, workgroup: str) -> str:
     kerberos method = secrets and keytab"""
 
 
+# The SSSD responders this client runs.  ``nss`` and ``pam`` are the login
+# path and mirror the ansible template; ``ifp`` is required *here* and not
+# there because gate 8's acceptance probe is the only consumer of
+# ``sssctl domain-status``, and that command answers over the InfoPipe
+# responder alone.  Verified against the very sssctl this install ships
+# (sssd-2.13.1-1 in the offline workstation repository), whose own diagnostic
+# reads "InfoPipe operation failed. Check that SSSD is running and the
+# InfoPipe responder is enabled. Make sure 'ifp' is listed in the 'services'
+# option in sssd.conf."  Without it, D-Bus activation of sssd-ifp.service is
+# the only thing that could answer, which is an undeclared unit and an
+# unproven path; nine of the eleven lifecycle checks wait for Online first, so
+# leaving it to chance would make them fail closed for a reason that has
+# nothing to do with identity.
+SSSD_SERVICES = ("nss", "pam", "ifp")
+
+
 def _render_sssd(domain: str, realm: str) -> str:
     """Mirror ansible/roles/identity_client/templates/sssd.conf.j2."""
     return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
 [sssd]
 domains = {domain}
 config_file_version = 2
-services = nss, pam
+# ifp answers sssctl domain-status, which every gate-8 Online wait depends on.
+services = {", ".join(SSSD_SERVICES)}
 
 [domain/{domain}]
 id_provider = ad
@@ -537,6 +613,27 @@ session    optional                                     pam_sss.so
 session    optional                                     pam_permit.so"""
 
 
+# The one SSSD domain-state implementation on the installed disk.  It is
+# rendered into BOTH the guest probe helper below and the boot-time
+# domain-online gate, so those two can never drift apart: one definition of
+# what "online" means, one bounded-loop shape, and one place to change if
+# SSSD's reporting ever does.  Each caller supplies ``DOMAIN`` and its own
+# ``DOMAIN_WAIT_TRIES`` bound (see PROBE_DOMAIN_WAIT_TRIES).
+_DOMAIN_STATE_FUNCTIONS = f"""domain_state() {{
+  sssctl domain-status "$DOMAIN" 2>/dev/null | grep -qi "Online status: $1"
+}}
+
+await_domain_state() {{
+  for _ in $(seq 1 "$DOMAIN_WAIT_TRIES"); do
+    # A lookup no cache can serve forces SSSD to test the backend.
+    getent passwd "telos-probe-trigger-$$" >/dev/null 2>&1 || true
+    domain_state "$1" && return 0
+    sleep {JOIN_WAIT_SECONDS}
+  done
+  return 1
+}}"""
+
+
 # The guest-side lifecycle probe.  @TOKENS@ are substituted at render time
 # with validated, quote-free values.  Every check is answered honestly from
 # what a credential-free root session can observe; anything unprovable is a
@@ -562,6 +659,7 @@ RESCUE_USER='@RESCUE_USER@'
 STORAGE_HOST='@STORAGE_HOST@'
 STORAGE_PROBE_ROOT='@STORAGE_PROBE_ROOT@'
 LOGIN_BOUND_SECONDS='@LOGIN_BOUND@'
+DOMAIN_WAIT_TRIES='@DOMAIN_WAIT_TRIES@'
 
 usage() {
   echo 'usage: homelab-arch-identity-probe <check> <token>' >&2
@@ -590,19 +688,7 @@ verdict() {
   printf '__TELOS_ARCH_%s_%s=%s\\n' "$key" "$token" "$1"
 }
 
-domain_state() {
-  sssctl domain-status "$DOMAIN" 2>/dev/null | grep -qi "Online status: $1"
-}
-
-await_domain_state() {
-  for _ in $(seq 1 30); do
-    # A lookup no cache can serve forces SSSD to test the backend.
-    getent passwd "telos-probe-trigger-$$" >/dev/null 2>&1 || true
-    domain_state "$1" && return 0
-    sleep 2
-  done
-  return 1
-}
+@DOMAIN_STATE_FUNCTIONS@
 
 resolved_by_sssd() {
   getent passwd "$1" >/dev/null 2>&1 &&
@@ -829,6 +915,9 @@ def _render_probe(
         "@STORAGE_HOST@": storage_host,
         "@STORAGE_PROBE_ROOT@": STORAGE_PROBE_ROOT,
         "@LOGIN_BOUND@": str(login_bound),
+        "@DOMAIN_WAIT_TRIES@": str(PROBE_DOMAIN_WAIT_TRIES),
+        # Shared with the boot-time domain-online gate, never re-implemented.
+        "@DOMAIN_STATE_FUNCTIONS@": _DOMAIN_STATE_FUNCTIONS,
     }
     text = _PROBE_TEMPLATE
     for token, value in replacements.items():
@@ -954,6 +1043,113 @@ WantedBy=multi-user.target
 """
 
 
+def _render_domain_online_script(
+    *, realm_dns_domain: str, login_principal: str,
+) -> str:
+    """Emit the boot-time SSSD domain-online gate the one-shot unit runs.
+
+    Two conditions, both bounded, both fail-closed, and deliberately in this
+    order.  Resolving *the* login principal comes first because that is exactly
+    what ``pam_sss`` needs and it is honest evidence rather than a warm-up: the
+    join unit wiped the identity cache while sssd was still stopped, so a
+    successful lookup can only have been served by the live directory.
+    ``await_domain_state Online`` -- the shared implementation the acceptance
+    probe already uses, so "online" means one thing on this disk -- follows as
+    the narrower check: reaching it with the lookup already successful isolates
+    an ``sssctl``/InfoPipe fault from an identity fault, which matters because
+    nine of the eleven lifecycle checks wait on that same primitive.
+
+    ``set -e`` is deliberately absent: every wait below tests commands that are
+    *expected* to fail while it converges, and errexit would turn the first
+    such probe into an exit.  Every terminal path instead calls ``fail``.
+    """
+    return f"""#!/usr/bin/env bash
+# Managed by Telos gate 7 (workstations/arch_second.py).  Boot-time SSSD
+# domain-online gate.  See DOMAIN_ONLINE_UNIT_NAME in that module for why the
+# ttyS0 login prompt has to wait for this: sssd.service reaching active only
+# means its responders answered READY=1, not that the AD backend is usable, and
+# the 2026-08-14 live run was refused a login one second after that point with
+# an identity cache the join unit had just wiped.
+set -uo pipefail
+
+DOMAIN='{realm_dns_domain}'
+DOMAIN_WAIT_TRIES='{JOIN_WAIT_TRIES}'
+LOGIN_PRINCIPAL='{login_principal}'
+
+# Failures print to /dev/console, not only to the journal: ttyS0 is the only
+# channel gate 8 can read, and a readiness stop that said nothing there would
+# be exactly the undiagnosable failure this unit exists to end.  Both markers
+# are secret-free -- a principal name and a fixed reason, never a credential.
+fail() {{
+  printf '%s: %s\\n' '{DOMAIN_ONLINE_FAILURE_MARKER}' "$1" > /dev/console
+  exit 1
+}}
+
+{_DOMAIN_STATE_FUNCTIONS}
+
+# The condition pam_sss actually needs, waited on FIRST: this principal has to
+# be answerable.  That is proof and not a warm-up, because the join unit wiped
+# the identity cache while sssd was still stopped -- so a successful lookup can
+# only have been served by the live directory.
+resolved=0
+for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
+  if getent passwd "$LOGIN_PRINCIPAL" >/dev/null 2>&1; then
+    resolved=1
+    break
+  fi
+  sleep {JOIN_WAIT_SECONDS}
+done
+[ "$resolved" -eq 1 ] ||
+  fail 'the directory login principal never resolved through SSSD'
+
+# Then the shared domain-state view every gate-8 lifecycle check also waits on.
+# It normally converges the instant the lookup above did, so reaching this line
+# and failing means something narrower and worth naming: sssctl cannot answer,
+# which would make nine of the eleven acceptance checks fail closed for a
+# reason that has nothing to do with identity.  Say that on the console now
+# rather than hand gate 8 an unexplained arch-joined FAIL later.
+await_domain_state Online ||
+  fail 'sssctl never reported the SSSD domain Online (is the ifp responder up?)'
+
+printf '%s\\n' '{DOMAIN_ONLINE_MARKER}' > /dev/console
+"""
+
+
+def _render_domain_online_unit() -> str:
+    """Emit the domain-online gate unit; its ordering is the login gate."""
+    after = " ".join(DOMAIN_ONLINE_AFTER_UNITS)
+    before = " ".join(DOMAIN_ONLINE_BEFORE_UNITS)
+    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+[Unit]
+Description=Telos SSSD domain-online gate before user sessions
+# sssd.service is Type=notify and its monitor answers READY=1 once the nss and
+# pam responders are up; the AD provider's DNS, LDAP and Kerberos connection to
+# the freshly provisioned Controller completes asynchronously *after* that.  So
+# ordering after sssd is not enough on its own -- this unit is what turns
+# "started" into "usable".  Requires= makes an sssd that never starts a failure
+# here rather than a 120-second wait for a backend that cannot appear.
+Requires={after}
+After={after}
+# The login gate.  serial-getty@ttyS0 is After=systemd-user-sessions.service
+# (systemd's own unit; visible in the 2026-08-14 transcript, where "Finished
+# Permit User Sessions" precedes "Started Serial Getty on ttyS0"), so ordering
+# before user sessions is what keeps the login prompt behind a usable domain.
+# No new edge is added against nss-user-lookup.target: sssd already declares
+# Before= both it and systemd-user-sessions, and systemd-user-sessions declares
+# no Before= at all, so these two edges run with the existing ones and cannot
+# close a cycle.
+Before={before}
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart={DOMAIN_ONLINE_SCRIPT_PATH}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
 def render_installer(
     *,
     disk_path: str,
@@ -1031,6 +1227,15 @@ def render_installer(
     join_once_script_path = JOIN_ONCE_SCRIPT_PATH
     join_once_unit_path = JOIN_ONCE_UNIT_PATH
     join_once_unit_name = JOIN_ONCE_UNIT_NAME
+    # The login-readiness gate that follows the join: same one-shot shape, and
+    # it reuses the probe helper's own domain-state implementation.
+    domain_online_script = _render_domain_online_script(
+        realm_dns_domain=realm_dns_domain,
+        login_principal=principals["daily_admin"])
+    domain_online_unit = _render_domain_online_unit()
+    domain_online_script_path = DOMAIN_ONLINE_SCRIPT_PATH
+    domain_online_unit_path = DOMAIN_ONLINE_UNIT_PATH
+    domain_online_unit_name = DOMAIN_ONLINE_UNIT_NAME
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 disk={disk_path!r}
@@ -1202,7 +1407,29 @@ install -Dm0644 /dev/stdin /mnt{join_once_unit_path} <<'TELOS_JOIN_UNIT_EOF'
 {join_once_unit}
 TELOS_JOIN_UNIT_EOF
 
+# ---- Boot-time SSSD domain-online gate (gate-8 login-readiness contract) ----
+# The join above proves the directory knows this machine; it does NOT prove
+# SSSD can use it yet.  sssd.service reaching active means only that its nss
+# and pam responders answered READY=1, so on 2026-08-14 the login prompt
+# rendered about a second later, the harness typed the credential, pam_sss
+# found the domain still offline, and offline authentication had no cached
+# credential to fall back on -- the join unit had just wiped the cache and the
+# operator password is generated fresh every run.  This unit closes that window
+# by holding systemd-user-sessions (and therefore the ttyS0 getty) until the
+# backend is online AND the login principal resolves.  Root-only script,
+# mode-0644 unit, and it fails closed on timeout rather than presenting a login
+# prompt nothing can log in to.
+install -Dm0700 /dev/stdin /mnt{domain_online_script_path} \\
+    <<'TELOS_DOMAIN_ONLINE_EOF'
+{domain_online_script}
+TELOS_DOMAIN_ONLINE_EOF
+install -Dm0644 /dev/stdin /mnt{domain_online_unit_path} \\
+    <<'TELOS_DOMAIN_UNIT_EOF'
+{domain_online_unit}
+TELOS_DOMAIN_UNIT_EOF
+
 arch-chroot /mnt systemctl enable {join_once_unit_name}
+arch-chroot /mnt systemctl enable {domain_online_unit_name}
 arch-chroot /mnt systemctl enable sssd serial-getty@ttyS0.service
 
 arch-chroot /mnt bootctl install

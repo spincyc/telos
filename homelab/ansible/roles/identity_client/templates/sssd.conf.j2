@@ -2,7 +2,12 @@
 [sssd]
 domains = {{ homelab_identity_domain }}
 config_file_version = 2
-services = nss, pam
+# ifp is not optional decoration: sssctl domain-status talks to the InfoPipe
+# responder and refuses without it ("Make sure 'ifp' is listed in the
+# 'services' option"). The workstation installer's acceptance probe waits on
+# that command before nine of its eleven identity checks, so omitting ifp made
+# them unpassable. Keep the fleet template and the installer in step.
+services = nss, pam, ifp
 
 [domain/{{ homelab_identity_domain }}]
 id_provider = ad

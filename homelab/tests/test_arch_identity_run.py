@@ -26,6 +26,8 @@ from homelab.vm.arch_identity_run import (
     ArchIdentityError,
     BOOT_FACTS_FILENAME,
     CHECK_DETAILS,
+    DOMAIN_ONLINE_FAILURE,
+    DOMAIN_ONLINE_TIMEOUT,
     GETTY_NEVER_APPEARED_FAILURE,
     JOIN_FAILURE,
     JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE,
@@ -45,6 +47,7 @@ from homelab.vm.arch_identity_run import (
     WORKSTATION_LOG_FILENAME,
     assemble_evidence,
     audit_arch_identity_boot,
+    await_domain_online,
     drive_boot_menu,
     elevate_operator,
     elevation_command,
@@ -1118,15 +1121,19 @@ class BoundaryWiringTests(unittest.TestCase):
                     staging.staged[OPERATOR_PRINCIPAL].encode("ascii"))
                 # The workstation boot carries the QMP power-cycle socket.
                 self.assertIn("-qmp", commands["workstation"])
-                # Menu -> in-run join -> getty -> login -> elevation ->
-                # break-glass password, in order, over serial.  The join sits
-                # strictly between the menu drive and the login: no login can
-                # succeed until this run's directory knows this machine.
+                # Menu -> in-run join -> domain-online gate -> getty -> login
+                # -> elevation -> break-glass password, in order, over serial.
+                # The join sits strictly between the menu drive and the login:
+                # no login can succeed until this run's directory knows this
+                # machine.  The readiness marker sits strictly between the join
+                # and the getty: a joined guest whose SSSD backend is still
+                # connecting refuses the operator deterministically.
                 self.assertEqual(workstation_console.events, [
                     "arch-menu-rendered", "arch-menu-entry-selected",
                     "arch-menu-rerendered", "arch-menu-entry-committed",
                     "arch-handoff-observed",
                     "arch-join-media-consumed", "arch-join-verified",
+                    "arch-domain-online-observed",
                     "arch-getty-observed",
                     "arch-login-username-sent", "arch-login-password-prompt",
                     "arch-login-password-sent", "arch-login-outcome",
@@ -1160,6 +1167,7 @@ class BoundaryWiringTests(unittest.TestCase):
                     "join_media_built", "join_media_attached",
                     "join_media_consumed", "join_media_destroyed",
                     "join_verified", "join_principal_destroyed",
+                    "domain_online_observed",
                 ):
                     self.assertTrue(facts[name], name)
                 # The staged credential reached the ISO builder, never a fact.
@@ -1540,6 +1548,83 @@ class MenuDriveTests(SerialTranscriptCase):
                 menu_timeout=0.5, handoff_timeout=0.3)
         self.assertEqual(str(caught.exception), MENU_NEVER_RENDERED_FAILURE)
         self.assertEqual(caught.exception.check, "arch-joined")
+
+
+class DomainOnlineGateTests(SerialTranscriptCase):
+    """The gate-7 readiness marker, observed between join and login."""
+
+    def _marker(self) -> bytes:
+        from homelab.workstations.arch_second import DOMAIN_ONLINE_MARKER
+
+        return b"\n" + DOMAIN_ONLINE_MARKER.encode("ascii") + b"\n"
+
+    def test_marker_is_observed_and_recorded(self):
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._marker() + GETTY + PASSWORD_PROMPT + OPERATOR_SHELL)
+        facts = new_boot_facts()
+        self.assertFalse(facts["domain_online_observed"])
+        await_domain_online(console, facts, timeout=2.0)
+        self.assertTrue(facts["domain_online_observed"])
+        self.assertEqual(console.events, ["arch-domain-online-observed"])
+        # The gate is observation only: nothing is typed at the guest, so it
+        # cannot consume a login attempt or a pam_faillock slot.
+        self.assertEqual(self._sent(sink), b"")
+        # And the marker is consumed before the getty prompt, so the login that
+        # follows still finds its own prompt in the buffer.
+        login_operator(console, facts, getty_timeout=2.0, attempts=1)
+        self.assertTrue(facts["getty_seen"])
+        self.assertTrue(facts["login_completed"])
+        self.assertEqual(console.events, [
+            "arch-domain-online-observed", "arch-getty-observed",
+            "arch-login-username-sent", "arch-login-password-prompt",
+            "arch-login-password-sent", "arch-login-outcome"])
+
+    def test_absent_marker_is_its_own_named_failure_not_a_login_refusal(self):
+        # The whole point of the named failure: a guest that never proves its
+        # domain usable must not be reported as a refused credential, because
+        # the credential was never sent.
+        console, feeder, sink = self._console()
+        feeder.write(
+            b"\n[  OK  ] Started System Security Services Daemon.\n" + GETTY)
+        feeder.close()
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            await_domain_online(console, facts, timeout=0.5)
+        self.assertEqual(str(caught.exception), DOMAIN_ONLINE_FAILURE)
+        self.assertNotEqual(str(caught.exception), LOGIN_REFUSED_FAILURE)
+        # It says so in as many words, so a transcript-reading human is not
+        # left inferring which stage stopped.
+        self.assertIn("never a refused login", DOMAIN_ONLINE_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertFalse(facts["domain_online_observed"])
+        self.assertFalse(facts["login_completed"])
+        self.assertEqual(self._sent(sink), b"")
+
+    def test_failure_marker_alone_does_not_satisfy_the_gate(self):
+        # Gate 7 prints a distinct secret-free reason when its bounded wait
+        # gives up; that line must never be mistaken for the success marker.
+        from homelab.workstations.arch_second import (
+            DOMAIN_ONLINE_FAILURE_MARKER)
+
+        console, feeder, _sink = self._console()
+        feeder.write(
+            b"\n" + DOMAIN_ONLINE_FAILURE_MARKER.encode("ascii")
+            + b": the SSSD domain never reported Online\n")
+        feeder.close()
+        with self.assertRaises(ArchIdentityError) as caught:
+            await_domain_online(console, new_boot_facts(), timeout=0.5)
+        self.assertEqual(str(caught.exception), DOMAIN_ONLINE_FAILURE)
+
+    def test_default_bound_covers_both_guest_side_waits(self):
+        # The guest waits up to 60 x 2s for Online and then up to 60 x 2s for
+        # the principal to resolve; a host bound below that would blame the
+        # harness for a guest that was still converging.
+        from homelab.workstations.arch_second import (
+            JOIN_WAIT_SECONDS, JOIN_WAIT_TRIES)
+
+        self.assertGreater(
+            DOMAIN_ONLINE_TIMEOUT, 2 * JOIN_WAIT_TRIES * JOIN_WAIT_SECONDS)
 
 
 class LoginSequenceTests(SerialTranscriptCase):
