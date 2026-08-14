@@ -84,6 +84,19 @@ SYNTHETIC_WORKGROUP = "FACTORY"
 # published bootstrap chains http://10.1.31.2/... (vm/factory_publication)
 # and archiso pulled its root filesystem from it before this script ran.
 CONTROLLER_ADDRESS = "10.1.31.2"
+# The disposable Controller's DNS label inside the synthetic realm, so
+# ``{CONTROLLER_HOSTNAME}.{realm_dns_domain}`` is the one domain controller this
+# fabric ever has.  It mirrors vm.controller_factory FactorySpec.hostname
+# (test-pinned, and the same value that spec writes into the Controller's own
+# /etc/hostname and /etc/hosts), and the live gate-8 run of 2026-08-14 printed
+# it back from the guest as ``net ads info``'s "LDAP server name:
+# bootstrap-dc.ad.factory.test".  It is a synthetic name in a reserved
+# ``.test`` domain, never a real host: real instance data lives only in the
+# gitignored overlay.  SSSD's ``ad_server`` needs the NAME and not
+# CONTROLLER_ADDRESS above, because libsss_ad warns "ad_server [%s] is detected
+# as IP address, this can cause GSSAPI/GSS-SPNEGO problems" -- a bare address
+# gives it no principal to ask the KDC for.
+CONTROLLER_HOSTNAME = "bootstrap-dc"
 # The stable www path vm.factory_publication stages the offline workstation
 # pacman repository under (WORKSTATION_REPO_WWW); nginx serves the staged
 # tree rooted at "/", so the guest-visible repository URL is fixed.
@@ -216,8 +229,18 @@ DOMAIN_ONLINE_DIAGNOSTIC_MARKER = "TELOS ARCH DOMAIN DIAGNOSTIC"
 # Per-field bound.  A diagnostic that hung would replace the named failure it
 # exists to explain, so every field is timeout-bound and flattened to one line.
 DIAGNOSTIC_COMMAND_SECONDS = 10
-# One line per field, capped so a 115200-baud transcript stays readable.
-DIAGNOSTIC_LINE_COLUMNS = 200
+# One line per field, capped so a 115200-baud transcript stays readable.  The
+# cap was 200 for exactly one live run, and 200 ate the evidence: the
+# 2026-08-14 transcript (run-20260814T140142Z-587985cdf83f) truncated
+# ``domain-status`` at "Discovered AD Domain Controller servers: " -- the single
+# field that would have said whether SSSD found a DC at all -- and also cut
+# ``sssd-config`` mid-way through its second validator finding and
+# ``keytab-principals`` before the host principals.  512 covers the longest of
+# those three in full (the flattened domain-status runs about 210 characters, a
+# two-finding config-check about 370) and still costs under 5 ms of serial time
+# per field, and only on the failure path.  A field whose whole purpose is to
+# name a layer must not be cut off before it names it.
+DIAGNOSTIC_LINE_COLUMNS = 512
 # What a field prints when its command answered nothing at all.  An unresolved
 # getent and an unprinted field must not look alike on the console.
 DIAGNOSTIC_EMPTY_FIELD = "(no output)"
@@ -229,6 +252,17 @@ DIAGNOSTIC_EMPTY_FIELD = "(no output)"
 DIAGNOSTIC_SSSD_DEBUG_LEVEL = 7
 DIAGNOSTIC_SSSD_LOG_LINES = 40
 DIAGNOSTIC_SSSD_LOG_DIR = "/var/log/sssd"
+# The log is read from BOTH ends, and the head is the half that names a layer.
+# Raising the debug level here cannot recover a decision the backend already
+# took: the AD provider chooses its servers when sssd starts, which is two
+# minutes before this gate gives up, and everything after that is retry noise.
+# The 2026-08-14 transcript proved it -- all forty tailed lines were the same
+# "SSSD is offline"/"Backend is offline!" pair repeating at the wait loop's own
+# 2-second cadence, and the startup decisions had scrolled out of the window.
+# So the first lines of the domain log are printed too, under their own field
+# name, because that is where "which server did you try, and what happened" is
+# written.
+DIAGNOSTIC_SSSD_LOG_HEAD_LINES = 40
 # The host keytab and the SSSD helper children that can read it.  Arch's
 # sssd-2.13.1-1 runs the daemon as ``User=sssd`` and grants
 # ``cap_dac_read_search`` to individual helper binaries in its post_install
@@ -608,18 +642,59 @@ def _render_smb(realm: str, workgroup: str) -> str:
 SSSD_SERVICES = ("nss", "pam", "ifp")
 
 
-def _render_sssd(domain: str, realm: str) -> str:
+def _render_sssd(
+    domain: str, realm: str, *, controller_fqdn: str, client_fqdn: str,
+) -> str:
     """Mirror ansible/roles/identity_client/templates/sssd.conf.j2."""
     return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
 [sssd]
 domains = {domain}
-config_file_version = 2
 # ifp answers sssctl domain-status, which every gate-8 Online wait depends on.
 services = {", ".join(SSSD_SERVICES)}
+
+# offline_credentials_expiration is a PAM responder option, not a domain one.
+# It sat in [domain/...] for one live run and SSSD silently ignored it there:
+# the 2026-08-14 gate-8 transcript printed `sssctl config-check` saying
+# "[rule/allowed_domain_options]: Attribute 'offline_credentials_expiration' is
+# not allowed", and /usr/share/sssd/cfg_rules.ini in the sssd-2.13.1-1 package
+# this disk installs lists the option under [rule/allowed_pam_options] alone.
+# ADR 0071's whole point is that the value is stated rather than inherited, so
+# it has to be stated in the section that reads it.  Zero means no expiration:
+# a machine away at college may be offline indefinitely, and phase 2 owns
+# stronger revocation than a cache lifetime.
+[pam]
+offline_credentials_expiration = 0
 
 [domain/{domain}]
 id_provider = ad
 access_provider = ad
+# Discovery, pinned rather than discovered.  SSSD's AD provider locates a
+# domain controller ONLY by DNS SRV lookup (_ldap._tcp.<ad_domain>, plus the
+# site-specific variants it derives from a CLDAP netlogon ping); with no
+# ad_server it logs "No AD server set, will use service discovery!" and has no
+# other way to find one.  Samba's `net ads` does not share that constraint --
+# it falls back to a NetBIOS <1C> broadcast for the workgroup, which this flat
+# simulated segment floods -- so `net ads info` and `net ads join` can succeed
+# on a fabric where SSSD's discovery does not, and the 2026-08-14 gate-8 run
+# showed exactly that asymmetry: the join verified in eight seconds and SSSD
+# then sat Offline for two minutes with "AD Domain Controller: not connected".
+# This fabric has exactly one domain controller and the factory already knows
+# its name, so naming it removes SRV discovery, CLDAP site discovery and the
+# whole failover-plugin path from the login gate's critical section.  The name
+# and not the address: libsss_ad warns "ad_server [%s] is detected as IP
+# address, this can cause GSSAPI/GSS-SPNEGO problems", because the SASL bind
+# needs a principal to ask the KDC for.
+ad_server = {controller_fqdn}
+# The client's own fully qualified name, for the same reason.  /etc/hostname
+# carries the short name, so without this SSSD calls gethostname(), gets
+# "telos-ws1", and has to expand it by resolving it back -- "The hostname [%s]
+# has been expanded to FQDN [%s]. If sssd should really use the short hostname,
+# please set ad_hostname explicitly."  That expansion depends on the A record
+# `net ads join` may or may not have registered for this machine, which nothing
+# in this project verifies.  sssd-ad(5) says ad_hostname "must match the
+# hostname for which the keytab was issued", and `net ads join` issues
+# host/<short>.<realm dns domain>, which is exactly this.
+ad_hostname = {client_fqdn}
 # Samba-AD interop, read off the packages this install ships (2026-08-14).
 # SSSD defaults ad_gpo_access_control to "enforcing", which makes every
 # interactive login depend on fetching GPOs from SYSVOL over SMB.  That fetch
@@ -640,10 +715,10 @@ ad_domain = {domain}
 krb5_realm = {realm}
 realmd_tags = manages-system joined-with-samba
 cache_credentials = True
-# ADR 0071: SSSD defines zero as no expiration. A disconnected machine cannot
-# learn that an AD account was disabled; phase 2 owns stronger revocation.
+# ADR 0071: the offline lifetime itself is stated in [pam] above, where SSSD
+# reads it.  This is the domain half of the same decision -- keep the Kerberos
+# password so an offline login can happen at all.
 krb5_store_password_if_offline = True
-offline_credentials_expiration = 0
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
 # Which follows directly from the line above, against a Samba AD DC.  Reading
@@ -1130,7 +1205,8 @@ WantedBy=multi-user.target
 
 
 def _render_domain_online_script(
-    *, realm_dns_domain: str, login_principal: str,
+    *, realm_dns_domain: str, realm: str, login_principal: str,
+    controller_fqdn: str, client_fqdn: str,
 ) -> str:
     """Emit the boot-time SSSD domain-online gate the one-shot unit runs.
 
@@ -1162,11 +1238,17 @@ def _render_domain_online_script(
 set -uo pipefail
 
 DOMAIN='{realm_dns_domain}'
+REALM='{realm}'
 DOMAIN_WAIT_TRIES='{JOIN_WAIT_TRIES}'
 LOGIN_PRINCIPAL='{login_principal}'
 PRIMARY_GROUP='{DIRECTORY_PRIMARY_GROUP}'
 ADMIN_GROUP='{DIRECTORY_ADMIN_GROUP}'
 HOST_KEYTAB='{HOST_KEYTAB_PATH}'
+# The two names sssd.conf now pins (ad_server and ad_hostname).  The gate
+# reports on exactly the names SSSD was configured with, so a diagnostic can
+# never disagree with the configuration it is diagnosing.
+AD_SERVER='{controller_fqdn}'
+AD_HOSTNAME='{client_fqdn}'
 
 # One diagnostic field: a bounded command, its output flattened to a single
 # length-capped console line, prefixed with the diagnostic marker so a human or
@@ -1208,6 +1290,43 @@ diagnose() {{
   # two separate "the user is missing" from "its group is missing".
   say primary-group getent group "$PRIMARY_GROUP"
   say admin-group getent group "$ADMIN_GROUP"
+  # Name resolution, which the 2026-08-14 run had to infer and could not.  SSSD
+  # reads /etc/resolv.conf through its own c-ares resolver, so what that file
+  # says IS what SSSD's discovery had to work with -- and nothing on this disk
+  # writes it: NetworkManager fills it in from the DHCP answer.  It carries a
+  # nameserver list and a search domain, never a credential.
+  say resolver cat /etc/resolv.conf
+  # The two A records the pinned configuration now depends on: ad_server's and
+  # ad_hostname's.  getent is the right probe and not a shortcut -- it walks the
+  # same nsswitch path SSSD's own hostname expansion does.
+  say resolver-controller getent hosts "$AD_SERVER"
+  say resolver-client getent hosts "$AD_HOSTNAME"
+  # Whether SRV discovery was ever possible here, which is the question the
+  # ad_server pin routes around rather than answers.  `net lookup` is the only
+  # SRV-capable tool the package contract puts on this disk -- bind's host and
+  # dig belong to the controller-domain overlay, and neither systemd-resolved
+  # nor any resolver library CLI is installed -- and it reads the same
+  # /etc/resolv.conf SSSD does.  Read it as a near-probe and not an identical
+  # one: net queries _ldap._tcp.dc._msdcs.<domain> and
+  # _kerberos._tcp.dc._msdcs.<realm> (verified in the shipped libads strings),
+  # while SSSD's AD provider queries _ldap._tcp.<domain>.  Samba's provisioning
+  # writes both families into one zone, so an answer here means the zone is
+  # reachable and answering SRV at all -- which is the layer this was unable to
+  # name in the 2026-08-14 run -- and roles/domain_controller verifies the exact
+  # _ldap._tcp.<domain> record SSSD needs, from the client-facing address, at
+  # convergence.  A missing record prints "Didn't find the ldap server!" or
+  # "Didn't find the kerberos server!".  The KDC field is not decoration either:
+  # krb5.conf sets dns_lookup_kdc = true, so a login's Kerberos leg still
+  # depends on SRV even with LDAP pinned.
+  say discovery-ldap-srv net lookup ldap "$DOMAIN"
+  say discovery-kdc-srv net lookup kdc "$REALM"
+  # The CLDAP netlogon ping, which is the OTHER half of SSSD's discovery: with
+  # ad_enable_dns_sites at its True default the AD provider pings a discovered
+  # DC to learn its site and then re-queries the site-specific SRV records.  Its
+  # reply names the forest, the domain, the DC and the client site, so this one
+  # field separates "DNS answered nothing" from "DNS answered and the netlogon
+  # reply was unusable".
+  say discovery-netlogon net ads lookup
   # Arch runs sssd as User=sssd, so the root-only host keytab is reachable only
   # through the file capabilities its helper children carry.  Together these
   # three fields say whether a GSSAPI bind was ever possible at all -- a
@@ -1225,13 +1344,29 @@ diagnose() {{
   say directory-primary-group net ads search -P \\
     "(sAMAccountName=$PRIMARY_GROUP)" sAMAccountName gidNumber
   # Last, SSSD's own account of it: raise the log level, force one more lookup
-  # so the reason is recorded at that level, then print the bounded tail.
+  # so the reason is recorded at that level, then print the log from both ends.
+  #
+  # The raise is reported as a field rather than discarded.  It was discarded for
+  # one live run and the forty tailed lines that came back carried no
+  # trace-level entry at all, which left "the level never changed" and "the
+  # backend had nothing further to say" indistinguishable.  sssctl prints nothing
+  # on success, so "(no output)" here means the level took.
   debug_level='{DIAGNOSTIC_SSSD_DEBUG_LEVEL}'
-  timeout {DIAGNOSTIC_COMMAND_SECONDS} sssctl debug-level "$debug_level" \\
-    >/dev/null 2>&1
+  say sssd-debug-level sssctl debug-level "$debug_level"
   getent passwd "$LOGIN_PRINCIPAL" >/dev/null 2>&1 || true
   domain_log='{DIAGNOSTIC_SSSD_LOG_DIR}/sssd_'"$DOMAIN"'.log'
   if [ -r "$domain_log" ]; then
+    # The head first, because that is where the AD provider recorded which
+    # servers it resolved and what it did with them -- decisions taken when sssd
+    # started, two minutes before this gate gave up and unreachable from any
+    # tail.  Then the tail, for the most recent state.  Two field names, so a
+    # reader never has to guess which end of the log a line came from.
+    head -n {DIAGNOSTIC_SSSD_LOG_HEAD_LINES} "$domain_log" |
+      cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
+      while IFS= read -r entry; do
+        printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' \\
+          sssd-log-start "$entry" > /dev/console
+      done
     tail -n {DIAGNOSTIC_SSSD_LOG_LINES} "$domain_log" |
       cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
       while IFS= read -r entry; do
@@ -1368,12 +1503,20 @@ def render_installer(
     principals = _identity_principals()
     login_bound = _identity_login_bound()
     storage_host = f"{STORAGE_HOST_LABEL}.{realm_dns_domain}"
+    # The realm's one domain controller and this machine, both fully qualified.
+    # SSSD is told exactly these two names (ad_server, ad_hostname) and the
+    # boot-time gate reports on exactly these two names, so the diagnostic can
+    # never disagree with the configuration it is diagnosing.
+    controller_fqdn = f"{CONTROLLER_HOSTNAME}.{realm_dns_domain}"
+    client_fqdn = f"{hostname}.{realm_dns_domain}"
     sizes = ",".join(str(size) for size in expected_sizes_mib)
     packages = " ".join(_workstation_packages())
     repo_name = WORKSTATION_REPO_NAME
     krb5_conf = _render_krb5(realm)
     smb_conf = _render_smb(realm, realm_workgroup)
-    sssd_conf = _render_sssd(realm_dns_domain, realm)
+    sssd_conf = _render_sssd(
+        realm_dns_domain, realm,
+        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
     probe = _render_probe(
         domain=realm_dns_domain, principals=principals,
         storage_host=storage_host, login_bound=login_bound)
@@ -1400,8 +1543,9 @@ def render_installer(
     # The login-readiness gate that follows the join: same one-shot shape, and
     # it reuses the probe helper's own domain-state implementation.
     domain_online_script = _render_domain_online_script(
-        realm_dns_domain=realm_dns_domain,
-        login_principal=principals["daily_admin"])
+        realm_dns_domain=realm_dns_domain, realm=realm,
+        login_principal=principals["daily_admin"],
+        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
     domain_online_unit = _render_domain_online_unit()
     domain_online_script_path = DOMAIN_ONLINE_SCRIPT_PATH
     domain_online_unit_path = DOMAIN_ONLINE_UNIT_PATH

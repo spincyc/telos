@@ -337,6 +337,34 @@
       - "127.0.0.1"
   changed_when: false
 
+- name: Verify LDAP service discovery from the client-facing address
+  # The loopback query above proves the SRV records exist in the zone. It does
+  # not prove Samba's internal DNS answers them on the address a client asks,
+  # and that was the only unverified link in the 2026-08-14 gate-8 failure: an
+  # Arch workstation joined this directory, read the operator out of it over
+  # LDAP, and SSSD still reported "AD Domain Controller: not connected" --
+  # because SSSD's AD provider locates a controller by SRV lookup alone, while
+  # Samba's `net ads` can fall back to a NetBIOS broadcast. Nothing anywhere
+  # asked the question this task asks.
+  #
+  # Asking it by name rather than by address keeps the role free of an address
+  # literal (ADR 0046, and scripts/site check enforces it): this host's own
+  # fully qualified name resolves to its client-facing address -- the "Resolve
+  # the permanent Controller name before mutation" task above has already
+  # required that -- so `host` sends the query there and not to loopback.
+  # Fail-closed by construction: host exits non-zero on NXDOMAIN, SERVFAIL,
+  # REFUSED and timeout alike, so a directory whose DNS clients cannot use it
+  # fails convergence here instead of twenty minutes later in a guest serial
+  # log.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/host
+      - -t
+      - SRV
+      - "_ldap._tcp.{{ homelab_ad_dns_domain }}"
+      - "{{ homelab_ad_expected_hostname }}.{{ homelab_ad_dns_domain }}"
+  changed_when: false
+
 - name: Refuse an existing directory with a different realm
   ansible.builtin.assert:
     that:

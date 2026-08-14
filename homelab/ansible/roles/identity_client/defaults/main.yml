@@ -9,6 +9,17 @@ homelab_identity_domain: ""
 homelab_identity_realm: ""
 homelab_identity_netbios_domain: ""
 
+# The fully qualified name of the domain controller SSSD should talk to, e.g.
+# "dc1.example.test". Empty means fall back to DNS SRV service discovery, which
+# is correct for a site with several controllers -- but SSSD's AD provider has
+# NO other way to find one, while Samba's `net ads` can fall back to a NetBIOS
+# broadcast. A join that verifies therefore proves nothing about whether SSSD
+# can discover the same controller, and the gate-8 run of 2026-08-14 hit exactly
+# that gap. Name the controller wherever there is one to name. The real value
+# lives in the gitignored instance overlay (ADR 0046); the factory installer
+# (workstations/arch_second.py) sets its own synthetic equivalent.
+homelab_identity_domain_controller: ""
+
 # ADR 0071 permits indefinite cached logon for machines away at college.
 # SSSD defines zero as no expiration; keep the value explicit so a package
 # default cannot silently shorten the offline lifetime.

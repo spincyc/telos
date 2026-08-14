@@ -205,6 +205,51 @@ class TestPlaybooks(unittest.TestCase):
             "{{ homelab_identity_offline_credentials_expiration_days }}",
             template,
         )
+        # In the [pam] section, where SSSD reads it.  It sat in [domain/...]
+        # until 2026-08-14, where SSSD ignores it: the gate-8 transcript printed
+        # `sssctl config-check` reporting "[rule/allowed_domain_options]:
+        # Attribute 'offline_credentials_expiration' is not allowed", and the
+        # shipped /usr/share/sssd/cfg_rules.ini lists the option under
+        # [rule/allowed_pam_options] alone.  An ignored option states nothing.
+        self.assertLess(template.index("[pam]"),
+                        template.index("offline_credentials_expiration"))
+        self.assertLess(template.index("offline_credentials_expiration"),
+                        template.index("[domain/{{ homelab_identity_domain }}]"))
+        # The option SSSD 2.13 removed outright, absent as an assignment.
+        self.assertNotRegex(template, r"(?m)^config_file_version")
+
+    def test_identity_client_can_name_the_domain_controller(self):
+        # SSSD's AD provider locates a domain controller ONLY by DNS SRV lookup;
+        # Samba's `net ads` also falls back to a NetBIOS broadcast.  So a join
+        # that verifies proves nothing about whether SSSD can find the same
+        # controller, which is exactly the gap the gate-8 run of 2026-08-14 fell
+        # into -- the join succeeded and SSSD reported "AD Domain Controller: not
+        # connected" for two minutes.  Naming the controller removes SRV and
+        # CLDAP site discovery from the login path.
+        defaults = self.load("roles/identity_client/defaults/main.yml")
+        self.assertIn("homelab_identity_domain_controller", defaults)
+        # Empty by default: SRV discovery is the correct mechanism for a site
+        # with several controllers, and a wrong name is worse than none.
+        self.assertEqual(defaults["homelab_identity_domain_controller"], "")
+        template = (
+            ANSIBLE / "roles/identity_client/templates/sssd.conf.j2"
+        ).read_text()
+        self.assertIn(
+            "{% if homelab_identity_domain_controller | length > 0 %}",
+            template)
+        self.assertIn(
+            "ad_server = {{ homelab_identity_domain_controller }}", template)
+        # The client's own fully qualified name, composed the same way the
+        # workstation installer composes it, because hostname(5) carries the
+        # short name and sssd-ad(5) requires ad_hostname to match the hostname
+        # the keytab was issued for.
+        self.assertIn(
+            "ad_hostname = {{ ansible_hostname }}."
+            "{{ homelab_identity_domain }}", template)
+        # A name, never an address: SSSD warns that an ad_server which looks
+        # like an IP address breaks GSSAPI/GSS-SPNEGO, because the SASL bind
+        # needs a principal to ask the KDC for.
+        self.assertIn("GSS-SPNEGO", template)
 
     def test_controller_network_does_not_enable_the_network_services(self):
         # ADR 0009: dnsmasq and nginx start only after first-boot activation has
@@ -325,6 +370,80 @@ class TestDomainControllerStorage(unittest.TestCase):
             "Publish the storage authority name in domain DNS")
         self.assertLess(export, flush)
         self.assertLess(flush, publish)
+
+
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class TestDomainControllerDiscovery(unittest.TestCase):
+    """A directory its clients cannot discover must fail convergence.
+
+    The gate-8 run of 2026-08-14 got a joined Arch workstation that read the
+    operator out of this directory over LDAP -- uidNumber, gidNumber, shell,
+    home -- while SSSD reported "AD Domain Controller: not connected" and
+    refused every login.  SSSD's AD provider locates a controller by DNS SRV
+    lookup and nothing else, whereas Samba's `net ads` can fall back to a
+    NetBIOS broadcast, so the join proved nothing about the SRV path.  The role
+    verified `_ldap._tcp.<domain>` on loopback only, which proves the records
+    exist in the zone but not that Samba's internal DNS answers them on the
+    address a client actually queries.  Nothing anywhere asked that question.
+    """
+
+    ROLE = ANSIBLE / "roles/domain_controller"
+
+    def tasks(self):
+        return yaml.safe_load((self.ROLE / "tasks/main.yml").read_text())
+
+    def named(self, name):
+        return next(
+            task for task in self.tasks() if task.get("name") == name)
+
+    def test_srv_discovery_is_verified_from_the_client_facing_address(self):
+        task = self.named(
+            "Verify LDAP service discovery from the client-facing address")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:4], [
+            "/usr/bin/host", "-t", "SRV",
+            "_ldap._tcp.{{ homelab_ad_dns_domain }}"])
+        # Asked by name, not by address: this host's own fully qualified name
+        # resolves to its client-facing address, so the query leaves loopback
+        # without putting an address literal in the role (ADR 0046).
+        self.assertEqual(
+            argv[4],
+            "{{ homelab_ad_expected_hostname }}.{{ homelab_ad_dns_domain }}")
+        self.assertNotIn("127.0.0.1", argv)
+        # Fail-closed: no failed_when and no ignore_errors, so NXDOMAIN,
+        # SERVFAIL, REFUSED and timeout all stop convergence.  `host` exits
+        # non-zero on each.
+        self.assertNotIn("failed_when", task)
+        self.assertNotIn("ignore_errors", task)
+        self.assertIs(task["changed_when"], False)
+
+    def test_the_loopback_srv_check_is_kept_as_well(self):
+        # The two checks answer different questions and neither subsumes the
+        # other: loopback says the zone holds the records, the client-facing
+        # address says a client can get them.  The 2026-08-14 failure lived
+        # precisely in the gap between those two statements.
+        loopback = self.named("Verify LDAP service discovery")
+        self.assertIn("127.0.0.1", loopback["ansible.builtin.command"]["argv"])
+        names = [str(task.get("name", "")) for task in self.tasks()]
+        self.assertLess(
+            names.index("Verify LDAP service discovery"),
+            names.index(
+                "Verify LDAP service discovery from the client-facing address"))
+
+    def test_the_dns_backend_that_serves_those_records_is_pinned(self):
+        # SAMBA_INTERNAL is what makes the SRV records the DC's own responsibility
+        # rather than a separate BIND instance's, so the checks above are checks
+        # on this role's output.  The role asserts it rather than assuming it.
+        defaults = yaml.safe_load(
+            (self.ROLE / "defaults/main.yml").read_text())
+        self.assertEqual(defaults["homelab_ad_dns_backend"], "SAMBA_INTERNAL")
+        conditions = str([task.get("ansible.builtin.assert")
+                          for task in self.tasks()])
+        self.assertIn("homelab_ad_dns_backend == 'SAMBA_INTERNAL'", conditions)
+        # And UDP/TCP 53 stay in the documented port set the surrounding
+        # firewall role consumes; a client that cannot reach 53 cannot discover.
+        self.assertIn(53, defaults["homelab_ad_udp_ports"])
+        self.assertIn(53, defaults["homelab_ad_tcp_ports"])
 
 
 @unittest.skipUnless(yaml, "PyYAML is not installed on this host")

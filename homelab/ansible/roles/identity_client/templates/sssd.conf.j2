@@ -1,7 +1,13 @@
 # Managed by Ansible (roles/identity_client). Edits are overwritten.
 [sssd]
 domains = {{ homelab_identity_domain }}
-config_file_version = 2
+# config_file_version is deliberately absent. SSSD removed it: it appears
+# nowhere in sssd-2.13.1 -- not in sssd.conf(5), not in the shipped
+# /usr/share/sssd/cfg_rules.ini -- and `sssctl config-check` reports
+# "[rule/allowed_sssd_options]: Attribute 'config_file_version' is not allowed
+# in section 'sssd'". A config-check that always reports findings is a
+# diagnostic nobody reads, and the workstation's boot-time gate prints that
+# command verbatim on failure.
 # ifp is not optional decoration: sssctl domain-status talks to the InfoPipe
 # responder and refuses without it ("Make sure 'ifp' is listed in the
 # 'services' option"). The workstation installer's acceptance probe waits on
@@ -9,9 +15,42 @@ config_file_version = 2
 # them unpassable. Keep the fleet template and the installer in step.
 services = nss, pam, ifp
 
+# ADR 0071 permits indefinite cached logon for machines away at college, and
+# SSSD defines zero as no expiration. This is a PAM responder option: SSSD
+# lists it under [rule/allowed_pam_options] alone, so in [domain/...] it is
+# silently ignored -- which is where it sat until 2026-08-14, defeating the
+# whole point of stating it. A disconnected machine cannot learn that an AD
+# account was disabled; phase 2 owns stronger revocation.
+[pam]
+offline_credentials_expiration = {{ homelab_identity_offline_credentials_expiration_days }}
+
 [domain/{{ homelab_identity_domain }}]
 id_provider = ad
 access_provider = ad
+{% if homelab_identity_domain_controller | length > 0 %}
+# Discovery, pinned rather than discovered. SSSD's AD provider can locate a
+# domain controller only by DNS SRV lookup (_ldap._tcp.<ad_domain>, plus the
+# site-specific variants a CLDAP netlogon ping yields); with no ad_server it
+# logs "No AD server set, will use service discovery!" and has no other way.
+# Samba's `net ads` is not equally constrained -- it falls back to a NetBIOS
+# <1C> broadcast for the workgroup -- so a join can verify on a network where
+# SSSD's discovery finds nothing, which is exactly what the gate-8 run of
+# 2026-08-14 showed. Naming the controller takes SRV and site discovery out of
+# the login path. The NAME and not an address: SSSD warns "ad_server [%s] is
+# detected as IP address, this can cause GSSAPI/GSS-SPNEGO problems", because
+# the SASL bind needs a principal to ask the KDC for. Left empty this falls
+# back to discovery, which is the right behaviour for a site with several
+# controllers. Keep the fleet template and the installer in step.
+ad_server = {{ homelab_identity_domain_controller }}
+{% endif %}
+# The client's own fully qualified name. hostname(5) usually carries the short
+# name, and without this SSSD calls gethostname() and then has to expand what
+# it gets by resolving it back ("The hostname [%s] has been expanded to FQDN
+# [%s]. If sssd should really use the short hostname, please set ad_hostname
+# explicitly"), which depends on the A record the join may or may not have
+# registered. sssd-ad(5): ad_hostname "must match the hostname for which the
+# keytab was issued", and `net ads join` issues host/<short>.<domain>.
+ad_hostname = {{ ansible_hostname }}.{{ homelab_identity_domain }}
 # Samba-AD interop. SSSD defaults ad_gpo_access_control to "enforcing", which
 # makes every interactive login depend on fetching GPOs from SYSVOL over SMB.
 # Arch's sssd package runs the daemon as User=sssd and grants
@@ -28,10 +67,10 @@ ad_domain = {{ homelab_identity_domain }}
 krb5_realm = {{ homelab_identity_realm | upper }}
 realmd_tags = manages-system joined-with-samba
 cache_credentials = True
-# ADR 0071: SSSD defines zero as no expiration. A disconnected machine cannot
-# learn that an AD account was disabled; phase 2 owns stronger revocation.
+# ADR 0071: the offline lifetime itself is stated in [pam] above, where SSSD
+# reads it. This is the domain half of the same decision -- keep the Kerberos
+# password so an offline login can happen at all.
 krb5_store_password_if_offline = True
-offline_credentials_expiration = {{ homelab_identity_offline_credentials_expiration_days }}
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
 # Which follows directly, against a Samba AD DC: directory-stored ids mean

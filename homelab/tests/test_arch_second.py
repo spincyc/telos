@@ -10,9 +10,11 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    CONTROLLER_ADDRESS, DIAGNOSTIC_COMMAND_SECONDS, DIAGNOSTIC_EMPTY_FIELD,
+    CONTROLLER_ADDRESS, CONTROLLER_HOSTNAME,
+    DIAGNOSTIC_COMMAND_SECONDS, DIAGNOSTIC_EMPTY_FIELD,
     DIAGNOSTIC_LINE_COLUMNS, DIAGNOSTIC_SSSD_DEBUG_LEVEL,
-    DIAGNOSTIC_SSSD_LOG_DIR, DIAGNOSTIC_SSSD_LOG_LINES,
+    DIAGNOSTIC_SSSD_LOG_DIR, DIAGNOSTIC_SSSD_LOG_HEAD_LINES,
+    DIAGNOSTIC_SSSD_LOG_LINES,
     DIRECTORY_ADMIN_GROUP, DIRECTORY_PRIMARY_GROUP,
     DOMAIN_ONLINE_AFTER_UNITS, DOMAIN_ONLINE_BEFORE_UNITS,
     DOMAIN_ONLINE_DIAGNOSTIC_MARKER,
@@ -418,11 +420,19 @@ class ArchSecondTests(unittest.TestCase):
         spec = FactorySpec()
         self.assertEqual(SYNTHETIC_DOMAIN, spec.domain)
         self.assertEqual(SYNTHETIC_WORKGROUP, spec.netbios)
+        # sssd.conf's ad_server names this controller, so the label has to be
+        # the label the factory actually gives it -- FactorySpec writes the same
+        # value into the Controller's /etc/hostname and /etc/hosts, and gate 8
+        # printed it back as `net ads info`'s "LDAP server name".
+        self.assertEqual(CONTROLLER_HOSTNAME, spec.hostname)
+        self.assertEqual(
+            f"{CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}", spec.fqdn)
         script = render_installer(
             disk_path="/dev/vda", disk_serial="LAPTOP-1",
             hostname="workstation", expected_sizes_mib=SIZES,
         )
         self.assertIn(f"realm = {spec.realm}", script)
+        self.assertIn(f"ad_server = {spec.fqdn}", script)
 
     def test_offline_repo_defaults_match_the_factory_publication(self):
         from vm.controller_factory import FactorySpec
@@ -1039,6 +1049,67 @@ class ArchSecondTests(unittest.TestCase):
         self.assertNotIn("ad_gpo_access_control = disabled", sssd_conf)
         self.assertIn("gpo_child", sssd_conf)
 
+    def test_sssd_pins_the_domain_controller_instead_of_discovering_it(self):
+        # The gate-8 asymmetry of 2026-08-14, stated as configuration: SSSD's AD
+        # provider can locate a controller ONLY by DNS SRV lookup, while Samba's
+        # `net ads` also falls back to a NetBIOS <1C> broadcast that this flat
+        # simulated segment floods.  So `net ads join` verified in eight seconds
+        # and read the operator out of the directory complete with uidNumber,
+        # while SSSD sat Offline for two minutes reporting "AD Domain
+        # Controller: not connected".  A join that verifies proves nothing about
+        # SSSD's discovery, and this fabric has exactly one controller whose
+        # name the factory already knows.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        self.assertIn(
+            f"\nad_server = {CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}\n",
+            sssd_conf)
+        # The NAME, never CONTROLLER_ADDRESS: libsss_ad warns "ad_server [%s] is
+        # detected as IP address, this can cause GSSAPI/GSS-SPNEGO problems",
+        # because the SASL bind needs a principal to ask the KDC for.
+        self.assertNotIn(f"ad_server = {CONTROLLER_ADDRESS}", sssd_conf)
+        # And the reason travels with the option: a bare hostname reads like a
+        # convenience somebody may helpfully replace with discovery again.
+        self.assertIn("service discovery", sssd_conf)
+        self.assertIn("GSS-SPNEGO", sssd_conf)
+
+    def test_sssd_states_this_machines_own_fully_qualified_name(self):
+        # /etc/hostname carries the short name, so without ad_hostname SSSD
+        # calls gethostname() and then has to expand what it gets by resolving
+        # it back -- which depends on an A record `net ads join` may or may not
+        # have registered, and which nothing in this project verifies.
+        # sssd-ad(5): ad_hostname "must match the hostname for which the keytab
+        # was issued", and net ads join issues host/<short>.<domain>.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="telos-ws1", expected_sizes_mib=SIZES,
+        )
+        sssd_conf = _heredoc_body(script, "TELOS_SSSD_EOF")
+        self.assertIn(f"\nad_hostname = telos-ws1.{SYNTHETIC_DOMAIN}\n",
+                      sssd_conf)
+        # It tracks the argument, so a differently named machine cannot inherit
+        # another machine's principal.
+        self.assertNotIn("ad_hostname = workstation.", sssd_conf)
+
+    def test_sssd_config_carries_only_options_this_sssd_accepts(self):
+        # `sssctl config-check` is printed verbatim by the boot-time gate, so a
+        # config that always produces findings makes that field unreadable.  The
+        # 2026-08-14 transcript reported two, and both were real:
+        # config_file_version does not exist in sssd-2.13.1 (absent from
+        # sssd.conf(5) and from the shipped /usr/share/sssd/cfg_rules.ini), and
+        # offline_credentials_expiration is a PAM responder option that SSSD
+        # silently ignored in [domain/...] -- defeating the entire point of ADR
+        # 0071 stating it rather than inheriting it.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        self.assertNotRegex(sssd_conf, r"(?m)^config_file_version")
+        sections = re.findall(r"^\[([^\]]+)\]$", sssd_conf, re.M)
+        self.assertEqual(
+            sections, ["sssd", "pam", f"domain/{SYNTHETIC_DOMAIN}"])
+        pam = sssd_conf[sssd_conf.index("\n[pam]\n"):
+                        sssd_conf.index(f"\n[domain/{SYNTHETIC_DOMAIN}]\n")]
+        self.assertIn("\noffline_credentials_expiration = 0\n", pam)
+        # Zero is the decision, not a default that happened to agree with it.
+        self.assertIn("ADR 0071", sssd_conf)
+
     def test_sssd_interop_options_match_the_fleet_template(self):
         # The installer and roles/identity_client deliberately mirror each
         # other; 847c400 already had to repair one drift between them.  Both
@@ -1054,6 +1125,29 @@ class ArchSecondTests(unittest.TestCase):
             with self.subTest(option=option):
                 self.assertIn(f"\n{option}\n", sssd_conf)
                 self.assertIn(f"\n{option}\n", template)
+        # The discovery pins are the same kind of load-bearing option, and the
+        # fleet expresses them through role variables rather than literals: a
+        # site with several controllers leaves ad_server empty and keeps SRV
+        # discovery, which is why the template guards it.
+        self.assertIn(
+            "ad_server = {{ homelab_identity_domain_controller }}", template)
+        self.assertIn(
+            "{% if homelab_identity_domain_controller | length > 0 %}",
+            template)
+        self.assertIn(
+            "ad_hostname = {{ ansible_hostname }}."
+            "{{ homelab_identity_domain }}", template)
+        # And the two config-check findings are fixed in both files, not one.
+        # Matched as an assignment, not a substring: the template names the
+        # removed option in a comment on purpose, so a reader cannot re-add it
+        # believing it was merely forgotten.
+        self.assertNotRegex(template, r"(?m)^config_file_version")
+        self.assertLess(
+            template.index("[pam]"),
+            template.index("offline_credentials_expiration"))
+        self.assertLess(
+            template.index("offline_credentials_expiration"),
+            template.index("[domain/{{ homelab_identity_domain }}]"))
 
     def test_the_privilege_group_name_has_one_definition(self):
         # The acceptance probe resolves it and the boot gate reports on it, so
@@ -1089,9 +1183,12 @@ class ArchSecondTests(unittest.TestCase):
         fields = re.findall(r"^ +say ([a-z-]+) ", body, re.M)
         self.assertEqual(fields, [
             "sssd-unit", "sssd-config", "domain-status", "login-principal",
-            "primary-group", "admin-group", "host-keytab",
-            "keytab-principals", "sssd-child-caps", "directory-info",
-            "directory-user", "directory-primary-group", "sssd-log",
+            "primary-group", "admin-group",
+            "resolver", "resolver-controller", "resolver-client",
+            "discovery-ldap-srv", "discovery-kdc-srv", "discovery-netlogon",
+            "host-keytab", "keytab-principals", "sssd-child-caps",
+            "directory-info", "directory-user", "directory-primary-group",
+            "sssd-debug-level", "sssd-log",
         ])
         # The three layers a reader has to be able to separate: SSSD's own
         # view, the local keytab the GSSAPI bind needs, and the directory's
@@ -1111,6 +1208,74 @@ class ArchSecondTests(unittest.TestCase):
         # so a reader greps one field either way.
         self.assertIn("sssd-log \"$entry\" > /dev/console", body)
         self.assertIn(f"say sssd-log ls -l '{DIAGNOSTIC_SSSD_LOG_DIR}'", body)
+
+    def test_diagnostics_name_the_resolver_and_the_srv_records(self):
+        # The 2026-08-14 field set could not distinguish "SSSD never found a
+        # domain controller" from "SSSD found one and could not use it", because
+        # it said nothing at all about name resolution -- and SSSD's AD provider
+        # finds a controller by DNS SRV lookup and nothing else.  Six fields now
+        # cover that layer: what resolver SSSD was handed, whether the two names
+        # sssd.conf pins resolve, whether SRV answers at all, and what the CLDAP
+        # netlogon ping (the site half of discovery) replies.
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn("say resolver cat /etc/resolv.conf", body)
+        self.assertIn('say resolver-controller getent hosts "$AD_SERVER"', body)
+        self.assertIn('say resolver-client getent hosts "$AD_HOSTNAME"', body)
+        # net lookup is the only SRV-capable tool the package contract installs
+        # on a workstation: bind (host, dig) is a controller-domain package, and
+        # no resolver CLI ships otherwise.
+        self.assertIn('say discovery-ldap-srv net lookup ldap "$DOMAIN"', body)
+        self.assertIn('say discovery-kdc-srv net lookup kdc "$REALM"', body)
+        self.assertIn("say discovery-netlogon net ads lookup", body)
+        installed = merge_contract(
+            load_registry(
+                Path(__file__).resolve().parents[1] / "package-contract.json"
+            ),
+            PROFILE_OVERLAYS["workstation-install"],
+        ).packages
+        self.assertNotIn("bind", installed)
+        self.assertIn("samba", installed)
+        # The gate reports on exactly the names sssd.conf was given, so a
+        # diagnostic can never disagree with the configuration it diagnoses.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        for variable, option in (("AD_SERVER", "ad_server"),
+                                 ("AD_HOSTNAME", "ad_hostname")):
+            with self.subTest(option=option):
+                value = re.search(
+                    rf"^{variable}='([^']+)'$", body, re.M).group(1)
+                self.assertIn(f"\n{option} = {value}\n", sssd_conf)
+
+    def test_diagnostics_read_the_sssd_log_from_the_start_as_well(self):
+        # A tail cannot recover a decision the AD provider took at startup, two
+        # minutes before this gate gives up.  The 2026-08-14 transcript is the
+        # proof: all forty tailed lines were the same "SSSD is offline" pair
+        # repeating at the wait loop's own cadence, and every discovery message
+        # had scrolled out.  So the head is printed too, under its own field
+        # name, and the debug-level raise is reported instead of discarded --
+        # that run could not tell "the level never changed" from "the backend
+        # had nothing more to say".
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(f"head -n {DIAGNOSTIC_SSSD_LOG_HEAD_LINES}", body)
+        self.assertIn("sssd-log-start \"$entry\" > /dev/console", body)
+        self.assertIn('say sssd-debug-level sssctl debug-level "$debug_level"',
+                      body)
+        self.assertNotIn("sssctl debug-level \"$debug_level\" \\", body)
+        # Head before tail: the startup decisions lead, the current state
+        # follows, so the transcript reads in the order the failure happened.
+        self.assertLess(body.index("sssd-log-start"), body.index("say sssd-log"))
+
+    def test_diagnostic_line_cap_survives_the_fields_that_matter(self):
+        # 200 columns truncated `domain-status` at exactly "Discovered AD Domain
+        # Controller servers: " in the 2026-08-14 transcript -- the one field
+        # that would have said whether discovery found anything -- and also cut
+        # `sssd-config` mid-finding and `keytab-principals` before the host
+        # principals.  A cap that eats the evidence is worse than no cap.
+        self.assertGreaterEqual(DIAGNOSTIC_LINE_COLUMNS, 512)
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        # One cap, applied to every field and to both log windows, so no field
+        # can be quietly exempted from the bound.
+        self.assertEqual(
+            body.count(f"cut -c1-{DIAGNOSTIC_LINE_COLUMNS}"), 3)
 
     def test_diagnostics_run_only_after_a_failure_and_only_from_fail(self):
         body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
