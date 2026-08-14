@@ -250,6 +250,91 @@
           valid users = %S
   notify: restart samba ad dc
 
+- name: Resolve directory identities in the Controller's own name service
+  # smbd only resolves //<server>/<name> through [homes] by looking <name> up
+  # as a user ON THIS HOST.  smb.conf(5) states it plainly: when no explicit
+  # section matches, "the requested section name is treated as a username and
+  # looked up in the local password file", and the clone is refused outright
+  # when that lookup returns nothing.  On an AD DC the domain accounts are not
+  # local accounts, so with no directory source in nsswitch.conf
+  # getpwnam("operator") misses, find_service() gives up, and smbd answers the
+  # tree connect with STATUS_BAD_NETWORK_NAME.
+  #
+  # The 2026-08-14 gate-8 run is why this task exists.  Both reachable-storage
+  # checks failed with "mount error(2): No such file or directory" and
+  # "CIFS: VFS: cifs_mount failed w/return code = -2" *after the session had
+  # already authenticated*: the client held a TGT, this KDC issued
+  # cifs/unas.<domain> (kvno = 1, the alias SPN registered below), the
+  # cifs.spnego upcall helper and its request-key rule were both in place, the
+  # name resolved, and SSSD reported Online.  -2 is ENOENT, which on an
+  # authenticated CIFS session is the server reporting a bad network name --
+  # the share `operator` did not exist as far as smbd was concerned.  Arch
+  # ships `passwd: files systemd`, and nothing in this repository had ever
+  # given this host any way to see a domain user.
+  #
+  # winbind goes LAST so /etc/passwd and nss-systemd still answer first: a
+  # local account can never be shadowed by a directory account of the same
+  # name, and only a lookup miss costs a socket round trip.  What serves it is
+  # the AD DC's own internal winbindd inside samba.service -- winbind.service
+  # is the domain-member daemon, must not run on a DC, and stays stopped.
+  #
+  # Samba is restarted because glibc reads nsswitch.conf once per process: an
+  # smbd started before this edit would keep the old database list and the
+  # share would stay unresolvable until something else happened to restart it.
+  ansible.builtin.lineinfile:
+    path: /etc/nsswitch.conf
+    backrefs: true
+    regexp: '^({{ item }}:(?!.*\bwinbind\b).*)$'
+    line: '\1 winbind'
+  loop:
+    - passwd
+    - group
+  notify: restart samba ad dc
+
+- name: Require both Controller identity databases to consult the directory
+  # backrefs makes a regexp that matches nothing a silent no-op, so the edit
+  # above is proven rather than assumed: an nsswitch.conf whose passwd or group
+  # line this role cannot recognise fails convergence here instead of
+  # resurfacing as an unresolvable share in a guest serial log twenty minutes
+  # later.  grep exits non-zero when the source is absent, so this is
+  # fail-closed by construction.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/grep
+      - -Eq
+      - "^{{ item }}:.*[[:space:]]winbind([[:space:]]|$)"
+      - /etc/nsswitch.conf
+  loop:
+    - passwd
+    - group
+  changed_when: false
+
+- name: Present directory identities unqualified to the Controller
+  # The other half of the same [homes] lookup.  winbindd's default name form is
+  # DOMAIN\user, so getpwnam("operator") would still miss even with the
+  # database in place, while a client mounting //unas/operator can only ever
+  # send the bare account name.  It also makes `valid users = %S` compare the
+  # bare share name against the bare connecting name, which is what keeps the
+  # foreign-share refusal a genuine authorization decision instead of a name
+  # mismatch that would refuse the owner too.
+  #
+  # Deliberately NOT paired with `winbind nss info = rfc2307`: [homes] also
+  # needs a non-empty home-directory field, and the default `template homedir`
+  # supplies one for every domain account, whereas rfc2307 would supply one
+  # only for accounts that carry unixHomeDirectory.  The served path stays
+  # `path = /srv/unas/%S` either way, so where the share lives is independent
+  # of the login home the directory hands SSSD (/home/<user>).  That
+  # independence is why [homes] is the right mechanism and an explicitly named
+  # share is not: the share name must be the account name, and this role is
+  # never told the roster -- the disposable principals are staged later, over
+  # the Controller serial, by homelab/vm/controller_principals.py.
+  ansible.builtin.lineinfile:
+    path: "{{ homelab_ad_smb_conf }}"
+    insertafter: '^\[global\]'
+    regexp: '^\s*winbind use default domain'
+    line: "        winbind use default domain = yes"
+  notify: restart samba ad dc
+
 - name: Register the storage authority name as a Kerberos service alias
   # A Kerberos SMB client asks the KDC for a service ticket named after the UNC
   # host it was handed, so an A record alone cannot make this share mountable
@@ -296,6 +381,64 @@
 
 - name: Apply share changes before publishing the storage name
   ansible.builtin.meta: flush_handlers
+
+- name: Verify the per-user share exists as a service with the staged path
+  # Proves the blockinfile above became a real service section with the path
+  # the staged per-user directories actually live under, rather than a comment
+  # block that happened to parse.  Runs after the flush, so this is the same
+  # file the restarted daemon just loaded.  Fail-closed: testparm exits
+  # non-zero on an unknown section, and a path that is not /srv/unas/%S would
+  # serve somewhere the share owner does not own.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/testparm
+      - --suppress-prompt
+      - --section-name=homes
+      - --parameter-name=path
+  register: homelab_unas_share_path
+  changed_when: false
+  failed_when: >-
+    homelab_unas_share_path.rc != 0 or
+    '/srv/unas/%S' not in homelab_unas_share_path.stdout
+
+- name: Verify the Controller resolves an unqualified directory identity
+  # The check the 2026-08-14 gate-8 failure had nowhere to fail: [homes] can
+  # only clone a share for a name this host can resolve to a passwd entry, and
+  # nothing anywhere asked whether it could.  Asked with the built-in domain
+  # administrator because it is the one directory account that exists at
+  # convergence time -- the acceptance principals are staged much later -- and
+  # the property is the name service itself, not any particular account.
+  #
+  # Bounded retries rather than a single shot: the samba restart above takes the
+  # internal winbindd down with it, and a lookup issued in that window would
+  # fail for a reason that is not a defect.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/getent
+      - passwd
+      - "{{ homelab_ad_nss_probe_principal }}"
+  register: homelab_ad_nss_probe
+  changed_when: false
+  until: homelab_ad_nss_probe.rc == 0
+  retries: 12
+  delay: 5
+
+- name: Require a home-directory field the per-user share can clone from
+  # smbd reads pw_dir before it clones [homes] and refuses the clone when that
+  # field is empty, even though the served path comes from `path = /srv/unas/%S`
+  # and not from pw_dir.  A passwd entry alone is therefore not enough, so the
+  # field is asserted rather than assumed.
+  ansible.builtin.assert:
+    that:
+      - homelab_ad_nss_probe.stdout_lines | length >= 1
+      - homelab_ad_nss_probe.stdout_lines[0].split(':') | length == 7
+      - homelab_ad_nss_probe.stdout_lines[0].split(':')[5] | length > 0
+    fail_msg: >-
+      {{ homelab_ad_nss_probe_principal }} resolves on this Controller but
+      without a usable home-directory field, so smbd cannot clone the [homes]
+      section and every //{{ homelab_storage_host_label }}/<user> mount will be
+      refused with a bad network name. Check `winbind nss info` and
+      `template homedir`.
 
 - name: Publish the storage authority name in domain DNS
   ansible.builtin.command:

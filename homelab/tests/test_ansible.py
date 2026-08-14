@@ -431,6 +431,160 @@ class TestDomainControllerStorage(unittest.TestCase):
 
 
 @unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class TestDomainControllerShareNameResolution(unittest.TestCase):
+    """A [homes] share only resolves for a name the DC can look up itself.
+
+    smb.conf(5): when no explicit section matches a tree connect, "the
+    requested section name is treated as a username and looked up in the local
+    password file".  The domain accounts of an AD DC are not local accounts, so
+    that lookup can only succeed through a directory source in nsswitch.conf.
+
+    The gate-8 run of 2026-08-14 is the live proof.  Both reachable-storage
+    checks failed with "mount error(2): No such file or directory" and
+    "CIFS: VFS: cifs_mount failed w/return code = -2" AFTER the session had
+    authenticated: the client held a TGT, the KDC issued cifs/unas.<domain>
+    (kvno = 1), the cifs.spnego upcall helper and its request-key rule were
+    present, the name resolved and SSSD was Online.  -2 is ENOENT, which on an
+    authenticated CIFS session is the server answering bad network name -- the
+    share `operator` did not exist as far as smbd was concerned.  Arch ships
+    `passwd: files systemd`; nothing had ever given the Controller a way to see
+    a domain user, and no task anywhere asked whether it could.
+    """
+
+    ROLE = ANSIBLE / "roles/domain_controller"
+
+    def tasks(self):
+        return yaml.safe_load((self.ROLE / "tasks/main.yml").read_text())
+
+    def named(self, name):
+        return next(
+            task for task in self.tasks() if task.get("name") == name)
+
+    def test_the_identity_databases_gain_a_directory_source(self):
+        task = self.named(
+            "Resolve directory identities in the Controller's own name service")
+        options = task["ansible.builtin.lineinfile"]
+        self.assertEqual(options["path"], "/etc/nsswitch.conf")
+        # Both databases: smbd needs the passwd entry for the share clone and
+        # the group entry for the owner's primary group.
+        self.assertEqual(task["loop"], ["passwd", "group"])
+        self.assertIn("{{ item }}:", options["regexp"])
+        # Appended, never rewritten: /etc/passwd and nss-systemd keep answering
+        # first, so a directory account can never shadow a local one, and only
+        # a lookup miss reaches winbind.
+        self.assertTrue(options["backrefs"])
+        self.assertEqual(options["line"], r"\1 winbind")
+        # Idempotent by lookahead rather than by rewriting the line.
+        self.assertIn(r"(?!.*\bwinbind\b)", options["regexp"])
+        # glibc reads nsswitch.conf once per process, so an smbd started before
+        # this edit would keep the old database list.
+        self.assertEqual(task["notify"], "restart samba ad dc")
+
+    def test_the_nsswitch_edit_is_proven_rather_than_assumed(self):
+        # backrefs makes a regexp that matches nothing a silent no-op, which is
+        # exactly the shape of failure that hid for a day: convergence reports
+        # ok and the fault surfaces in a guest serial log instead.
+        task = self.named(
+            "Require both Controller identity databases to consult the "
+            "directory")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:2], ["/usr/bin/grep", "-Eq"])
+        self.assertIn("winbind", argv[2])
+        self.assertIn("{{ item }}", argv[2])
+        self.assertEqual(argv[3], "/etc/nsswitch.conf")
+        self.assertEqual(task["loop"], ["passwd", "group"])
+        # Fail-closed: grep exits non-zero when the source is absent.
+        self.assertNotIn("failed_when", task)
+        self.assertNotIn("ignore_errors", task)
+        self.assertIs(task["changed_when"], False)
+
+    def test_unqualified_names_are_what_the_share_lookup_receives(self):
+        # winbindd's default name form is DOMAIN\user, so getpwnam("operator")
+        # misses even with the database in place, while a client mounting
+        # //unas/operator can only ever send the bare account name.  The same
+        # setting makes `valid users = %S` compare bare name against bare name,
+        # which is what keeps the foreign-share refusal an authorization
+        # decision rather than a name mismatch that would refuse the owner too.
+        task = self.named(
+            "Present directory identities unqualified to the Controller")
+        options = task["ansible.builtin.lineinfile"]
+        self.assertEqual(options["path"], "{{ homelab_ad_smb_conf }}")
+        self.assertIn("winbind use default domain = yes", options["line"])
+        self.assertEqual(options["insertafter"], r"^\[global\]")
+        self.assertEqual(task["notify"], "restart samba ad dc")
+
+    def test_the_nss_change_precedes_the_restart_that_applies_it(self):
+        names = [str(task.get("name", "")) for task in self.tasks()]
+        flush = names.index(
+            "Apply share changes before publishing the storage name")
+        for name in (
+            "Resolve directory identities in the Controller's own name service",
+            "Present directory identities unqualified to the Controller",
+        ):
+            self.assertLess(names.index(name), flush)
+
+    def test_the_share_section_is_verified_against_the_staged_path(self):
+        # A blockinfile that parsed as something other than a service section,
+        # or a path that no longer matches where controller_principals.py
+        # creates and chowns the per-user directories, would serve somewhere the
+        # share owner does not own.
+        task = self.named(
+            "Verify the per-user share exists as a service with the staged path")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[0], "/usr/bin/testparm")
+        self.assertIn("--section-name=homes", argv)
+        self.assertIn("--parameter-name=path", argv)
+        self.assertIn("/srv/unas/%S", task["failed_when"])
+        self.assertIn("rc != 0", task["failed_when"])
+        self.assertIs(task["changed_when"], False)
+
+    def test_the_domain_identity_lookup_is_verified_on_the_controller(self):
+        task = self.named(
+            "Verify the Controller resolves an unqualified directory identity")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:3], [
+            "/usr/bin/getent", "passwd",
+            "{{ homelab_ad_nss_probe_principal }}"])
+        # The samba restart takes the internal winbindd down with it, so a
+        # single shot could fail for a reason that is not a defect.
+        self.assertIn("rc == 0", task["until"])
+        self.assertGreater(task["retries"], 1)
+        self.assertGreater(task["delay"], 0)
+        self.assertIs(task["changed_when"], False)
+        self.assertNotIn("ignore_errors", task)
+        # An account that exists at convergence time: the acceptance principals
+        # are staged much later, over the Controller serial.
+        defaults = yaml.safe_load(
+            (self.ROLE / "defaults/main.yml").read_text())
+        self.assertEqual(
+            defaults["homelab_ad_nss_probe_principal"], "Administrator")
+
+    def test_the_home_directory_field_the_clone_needs_is_asserted(self):
+        # smbd reads pw_dir before cloning [homes] and refuses the clone when
+        # that field is empty, even though the served path comes from
+        # `path = /srv/unas/%S` and never from pw_dir.  A passwd entry alone is
+        # therefore not proof.
+        task = self.named(
+            "Require a home-directory field the per-user share can clone from")
+        conditions = str(task["ansible.builtin.assert"]["that"])
+        self.assertIn("homelab_ad_nss_probe.stdout_lines", conditions)
+        self.assertIn("split(':')[5] | length > 0", conditions)
+
+    def test_resolution_is_proven_before_the_name_is_published(self):
+        # The storage name must never resolve to a Controller that cannot serve
+        # a share under it, which is the same rule the alias SPN already obeys.
+        names = [str(task.get("name", "")) for task in self.tasks()]
+        publish = names.index(
+            "Publish the storage authority name in domain DNS")
+        for name in (
+            "Verify the per-user share exists as a service with the staged path",
+            "Verify the Controller resolves an unqualified directory identity",
+            "Require a home-directory field the per-user share can clone from",
+        ):
+            self.assertLess(names.index(name), publish)
+
+
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
 class TestDomainControllerDiscovery(unittest.TestCase):
     """A directory its clients cannot discover must fail convergence.
 

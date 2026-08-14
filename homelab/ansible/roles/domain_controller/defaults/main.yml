@@ -52,3 +52,11 @@ homelab_ad_rpc_dynamic_tcp_range: 49152-65535
 # address skips publication.
 homelab_storage_host_label: unas
 homelab_storage_address: ""
+
+# The directory account the role resolves through its own name service to prove
+# smbd can clone the per-user [homes] share for a domain user. It must be an
+# account that already exists at convergence time, which the built-in domain
+# administrator is and the acceptance principals are not: they are staged much
+# later over the Controller serial. Override it only if the built-in account has
+# been renamed.
+homelab_ad_nss_probe_principal: Administrator
