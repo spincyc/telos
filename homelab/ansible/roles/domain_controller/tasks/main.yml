@@ -691,7 +691,8 @@
                'name': item.name,
                'role': item.role,
                'password_file': item.password_file,
-               'reset_password': (item.reset_password | default(false)) | bool,
+               'reset_password': item.reset_password is defined
+                                 and (item.reset_password | bool),
                'create': item.name | lower not in (
                  homelab_ad_existing_users.stdout_lines | map('trim')
                  | map('lower') | list),
@@ -734,7 +735,7 @@
           password file already on the target, one per account. Remove each
           file once its account exists; a later run needs a file only for an
           account the directory does not have yet.
-      loop: "{{ homelab_ad_account_password.results | default([]) }}"
+      loop: "{{ homelab_ad_account_password.results }}"
       no_log: true
 
     - name: Converge the durable accounts with an ephemeral credential feeder
@@ -785,7 +786,7 @@
           changed_when: >-
             homelab_ad_account_convergence.rc == 0 and
             ((homelab_ad_account_convergence.stdout | from_json).changed
-             | default(false) | bool)
+             | bool)
           no_log: true
       always:
         - name: Remove the durable account driver
@@ -933,7 +934,7 @@
           is not the account's uidNumber means idmap.ldb holds a stale
           allocated mapping: check `idmap_ldb:use rfc2307`, then flush the
           winbind cache and re-run.
-      loop: "{{ homelab_ad_account_nss.results | default([]) }}"
+      loop: "{{ homelab_ad_account_nss.results }}"
       loop_control:
         label: "{{ item.item.name }}"
 
@@ -959,6 +960,6 @@
           missing, or is not owned exclusively by that account's directory
           POSIX identity, so its per-user share would serve files its owner
           cannot read or another account can.
-      loop: "{{ homelab_ad_account_share.results | default([]) }}"
+      loop: "{{ homelab_ad_account_share.results }}"
       loop_control:
         label: "{{ item.item.name }}"

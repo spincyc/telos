@@ -661,6 +661,154 @@ class TestDomainControllerDiscovery(unittest.TestCase):
 
 
 @unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class TestDurableDirectoryAccounts(unittest.TestCase):
+    """A persistent instance must keep accounts that can actually log in.
+
+    The acceptance path stages a synthetic roster over the serial console and
+    destroys it with the Controller. A persistent instance keeps its directory
+    across bring-ups, so the accounts have to be converged by the role -- and
+    every property gate 8 proved necessary for the disposable roster is
+    necessary for them too: rfc2307 POSIX attributes in the directory (SSSD
+    runs with `ldap_id_mapping = False`, so an account without them cannot log
+    in at all), a per-user storage directory owned by the account's own
+    uidNumber, and a name this Controller can itself resolve.
+
+    These tests protect the ordering and the coupling to the [homes] share.
+    The account contract itself, its refusals and its allocation rule live in
+    test_domain_controller_role.py.
+    """
+
+    ROLE = ANSIBLE / "roles/domain_controller"
+    BLOCK = "Converge the declared durable directory accounts"
+
+    def tasks(self):
+        return yaml.safe_load((self.ROLE / "tasks/main.yml").read_text())
+
+    def defaults(self):
+        return yaml.safe_load((self.ROLE / "defaults/main.yml").read_text())
+
+    def block(self):
+        return next(task for task in self.tasks()
+                    if task.get("name") == self.BLOCK)
+
+    def named(self, name):
+        pending = list(self.block()["block"])
+        while pending:
+            task = pending.pop(0)
+            for section in ("block", "rescue", "always"):
+                pending[0:0] = task.get(section, [])
+            if task.get("name") == name:
+                return task
+        raise AssertionError(name)
+
+    def order(self):
+        return [str(task.get("name", "")) for task in self.tasks()]
+
+    def test_the_durable_accounts_share_the_root_the_homes_service_serves(self):
+        # If these two ever diverge, the share would serve a directory the
+        # account does not own -- the same class of fault as a path that no
+        # longer matches where controller_principals.py chowns its own.
+        export = next(task for task in self.tasks()
+                      if task.get("name")
+                      == "Export optional per-user UNAS home shares")
+        served = export["ansible.builtin.blockinfile"]["block"]
+        root = self.defaults()["homelab_ad_account_share_root"]
+        self.assertIn(f"path = {root}/%S", served)
+        create = self.named(
+            "Create each durable account's per-user storage directory")
+        options = create["ansible.builtin.file"]
+        self.assertEqual(
+            options["path"],
+            "{{ homelab_ad_account_share_root }}/{{ item.name }}")
+        # Numeric owner and group, from the directory-stored POSIX identity:
+        # the same chown controller_principals.py performs, and it must not
+        # depend on the name service being warm.
+        self.assertEqual(options["owner"], "{{ item.uidNumber }}")
+        self.assertEqual(options["group"], "{{ item.gidNumber }}")
+        self.assertEqual(options["mode"], "0700")
+
+    def test_the_accounts_are_converged_after_the_directory_is_proven(self):
+        # Everything the section depends on -- a running directory, the winbind
+        # source in nsswitch.conf, the flushed restart, and the refusal of a
+        # directory that is not the declared one -- happens above it.
+        order = self.order()
+        for earlier in (
+            "Enable the Samba AD DC",
+            "Resolve directory identities in the Controller's own name service",
+            "Apply share changes before publishing the storage name",
+            "Verify the Controller resolves an unqualified directory identity",
+            "Refuse an existing directory with a different realm",
+        ):
+            with self.subTest(after=earlier):
+                self.assertLess(order.index(earlier), order.index(self.BLOCK))
+
+    def test_the_accounts_are_verified_in_the_directory_and_in_the_name_service(self):
+        # Two different questions, and the 2026-08-14 gate-8 failure lived in
+        # exactly this kind of gap: what the directory stores is what an SSSD
+        # client reads over LDAP, while what this host resolves is what smbd
+        # uses to clone [homes]. Neither answers the other.
+        posix = self.named(
+            "Verify each durable account's POSIX attributes in the directory")
+        argv = posix["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:3], ["/usr/bin/samba-tool", "user", "show"])
+        for attribute in ("uidNumber", "gidNumber", "loginShell",
+                          "unixHomeDirectory"):
+            with self.subTest(attribute=attribute):
+                self.assertIn(attribute, argv[4])
+                self.assertIn(f"'{attribute}: '", posix["failed_when"])
+        self.assertIn("rc != 0", posix["failed_when"])
+        self.assertIs(posix["changed_when"], False)
+        self.assertNotIn("ignore_errors", posix)
+
+        resolution = self.named(
+            "Verify the Controller resolves every durable account by name")
+        self.assertEqual(resolution["ansible.builtin.command"]["argv"][:2],
+                         ["/usr/bin/getent", "passwd"])
+        # The samba restart above takes the internal winbindd down with it, so
+        # a single shot could fail for a reason that is not a defect.
+        self.assertIn("rc == 0", resolution["until"])
+        self.assertGreater(resolution["retries"], 1)
+        self.assertGreater(resolution["delay"], 0)
+        self.assertIs(resolution["changed_when"], False)
+        self.assertNotIn("ignore_errors", resolution)
+
+    def test_the_privilege_group_membership_is_verified_not_assumed(self):
+        # ADR 0055/0063: the domain administrator is a Domain Admins member,
+        # never root and never the local break-glass account. A created but
+        # unprivileged administrator looks like a working account until the day
+        # it is needed.
+        task = self.named(
+            "Verify every durable administrator is a Domain Admins member")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:3],
+                         ["/usr/bin/samba-tool", "group", "listmembers"])
+        self.assertEqual(argv[3], "{{ homelab_ad_posix_admin_group }}")
+        self.assertIn("administrator", task["failed_when"])
+        self.assertIs(task["changed_when"], False)
+        self.assertNotIn("ignore_errors", task)
+
+    def test_both_well_known_groups_carry_a_posix_gid(self):
+        # A user's primary gid comes from Domain Users, and the Arch identity
+        # probe resolves Domain Admins by name, so both need a gidNumber before
+        # any client with ldap_id_mapping = False can resolve either.
+        task = self.named(
+            "Verify the well-known groups carry the POSIX gid clients resolve")
+        self.assertEqual(task["ansible.builtin.command"]["argv"][:3],
+                         ["/usr/bin/samba-tool", "group", "show"])
+        self.assertIn("gidNumber", task["failed_when"])
+        self.assertEqual(set(self.defaults()["homelab_ad_posix_group_rids"]),
+                         {"Domain Users", "Domain Admins"})
+
+    def test_no_durable_account_task_can_run_without_a_declared_roster(self):
+        # The disposable Controller's factory variables declare no durable
+        # account, so this gate is what keeps the acceptance path -- 21 of 21
+        # checks as of 2026-08-14 -- byte-for-byte unchanged.
+        self.assertEqual(self.block()["when"],
+                         "homelab_ad_directory_accounts | length > 0")
+        self.assertEqual(self.defaults()["homelab_ad_directory_accounts"], [])
+
+
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
 class TestInstanceTemplate(unittest.TestCase):
     """The tracked template must stay in step with what the roles read.
 

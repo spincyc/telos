@@ -6,11 +6,18 @@ import shlex
 import threading
 import unittest
 
+from pathlib import Path
+
 from homelab.vm import controller_principals
 from homelab.vm.controller_principals import (
     ControllerPrincipalError,
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
+)
+from homelab.workstations.arch_second import (
+    CONTRACT_ROLES,
+    DIRECTORY_ROLES,
+    identity_roster,
 )
 from homelab.vm.serial_automation import (
     SerialAutomation,
@@ -19,11 +26,19 @@ from homelab.vm.serial_automation import (
 from homelab.vm.controller_factory import FactoryBundle
 
 
+# The three directory principals this module stages, taken from the resolved
+# roster rather than written out, so the suite proves the same thing whether or
+# not the owner has a private overlay under homelab/instance/identity/.  The
+# pinned synthetic names are asserted separately, against the contract read with
+# the overlay explicitly out of the way (CONTRACT_ROSTER below).
+ROLES = controller_principals._ROLES
 VALUES = {
-    "student": "Student-secret-47!",
-    "operator": "Operator-secret-47!",
-    "directory-admin": "Directory-secret-47!",
+    name: f"Secret-{index}-47!" for index, name in enumerate(ROLES)
 }
+# The contract's own roster, resolved with no overlay: what the acceptance path
+# must always be, byte for byte.
+CONTRACT_ROSTER = identity_roster(
+    overlay_path=Path(__file__).with_name("no-such-identity-overlay.json"))
 
 
 class ControllerPrincipalSerialTests(unittest.TestCase):
@@ -133,7 +148,11 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         # ADR 0055: UID and GID come from the directory.  These numbers are
         # the stable cross-machine identities; changing them orphans every
         # file an Arch Workstation ever wrote.  Users are base 10000 plus
-        # roster position; groups are base 10000 plus well-known AD RID.
+        # ROLE position; groups are base 10000 plus well-known AD RID.
+        #
+        # Pinned against the contract roster with the private overlay
+        # explicitly out of the way, so this is the acceptance path's
+        # allocation whether or not this machine has an overlay.
         self.assertEqual(
             {
                 "users": {
@@ -161,9 +180,9 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
                     "Domain Admins": 10512,
                 },
             },
-            controller_principals.POSIX_ALLOCATION,
+            controller_principals._posix_allocation(CONTRACT_ROSTER),
         )
-        # Re-deriving the allocation must reproduce the pinned numbers.
+        # Re-deriving the live allocation must reproduce the live roster.
         self.assertEqual(
             controller_principals.POSIX_ALLOCATION,
             controller_principals._posix_allocation(),
@@ -236,15 +255,15 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
 
         self.assertEqual(base, validate(variant()))
         with self.assertRaisesRegex(ValueError, "uidNumber .*collides"):
-            validate(variant(users={"operator": {"uidNumber": 10000}}))
+            validate(variant(users={ROLES[1]: {"uidNumber": 10000}}))
         with self.assertRaisesRegex(ValueError, "gidNumber .*collides"):
             validate(variant(groups={"Domain Admins": 10513}))
         with self.assertRaisesRegex(ValueError, "ranges collide"):
-            validate(variant(users={"student": {"uidNumber": 10512}}))
+            validate(variant(users={ROLES[0]: {"uidNumber": 10512}}))
         with self.assertRaisesRegex(ValueError, "not a staged group"):
-            validate(variant(users={"student": {"gidNumber": 10999}}))
+            validate(variant(users={ROLES[0]: {"gidNumber": 10999}}))
         with self.assertRaisesRegex(ValueError, "uidNumber is out of range"):
-            validate(variant(users={"student": {"uidNumber": 999}}))
+            validate(variant(users={ROLES[0]: {"uidNumber": 999}}))
         with self.assertRaisesRegex(ValueError, "gidNumber is out of range"):
             validate(variant(groups={"Domain Users": 100}))
 
@@ -275,13 +294,13 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             io.BytesIO(), io.BytesIO(),
         )
         with self.assertRaisesRegex(ValueError, "roster"):
-            serial.stage({"student": "value"})
+            serial.stage({ROLES[0]: "value"})
         duplicate = dict(VALUES)
-        duplicate["operator"] = duplicate["student"]
+        duplicate[ROLES[1]] = duplicate[ROLES[0]]
         with self.assertRaisesRegex(ValueError, "distinct"):
             serial.stage(duplicate)
         multiline = dict(VALUES)
-        multiline["operator"] = "unsafe\nvalue"
+        multiline[ROLES[1]] = "unsafe\nvalue"
         with self.assertRaisesRegex(ValueError, "credential"):
             serial.stage(multiline)
 
@@ -297,7 +316,7 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             serial = ControllerPrincipalSerial(
                 left.makefile("rb"), left.makefile("wb"))
             with self.assertRaisesRegex(ValueError, "roster"):
-                serial.destroy(("student", "operator"))
+                serial.destroy(ROLES[:2])
         finally:
             left.close()
             right.close()
@@ -470,6 +489,163 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
             right.close()
         thread.join(timeout=1)
         self.assertFalse(thread.is_alive())
+
+
+class RosterOverlayTests(unittest.TestCase):
+    """The staged roster follows the ONE loader, and its UIDs follow the ROLE.
+
+    These exercise the derivation functions directly rather than reloading the
+    module, so nothing global is mutated and the proofs stay honest about what
+    they cover: the allocation, the guest programs and the wire roster.
+    """
+
+    def test_no_overlay_reproduces_todays_roster_and_uids_exactly(self):
+        # The acceptance path, byte for byte.  If this ever needs editing, gate
+        # 6 and gate 8 both have to be re-proven and every file an Arch
+        # Workstation wrote under the old UIDs is orphaned.
+        self.assertEqual(
+            {
+                "standard_user": "student",
+                "daily_administrator": "operator",
+                "domain_administrator": "directory-admin",
+                "local_rescue": "local-rescue",
+            },
+            CONTRACT_ROSTER,
+        )
+        self.assertEqual(
+            ("student", "operator", "directory-admin"),
+            tuple(CONTRACT_ROSTER[role] for role in DIRECTORY_ROLES),
+        )
+        allocation = controller_principals._posix_allocation(CONTRACT_ROSTER)
+        self.assertEqual(
+            {"student": 10000, "operator": 10001, "directory-admin": 10002},
+            {name: user["uidNumber"]
+             for name, user in allocation["users"].items()},
+        )
+        self.assertEqual(
+            {10513}, {user["gidNumber"]
+                      for user in allocation["users"].values()})
+        # The break-glass account owns no directory UID at all: it is the local
+        # 1000 that ADR 0055 requires to stay local.
+        self.assertNotIn(
+            CONTRACT_ROSTER["local_rescue"], allocation["users"])
+
+    def _renamed(self) -> dict[str, str]:
+        # Placeholder names in the same shape the owner's real overlay uses.
+        return {
+            "standard_user": "roster-a",
+            "daily_administrator": "roster-b",
+            "domain_administrator": "roster-c",
+            "local_rescue": "roster-d",
+        }
+
+    def test_an_overlay_renames_the_roster_without_moving_a_uid(self):
+        renamed = self._renamed()
+        allocation = controller_principals._posix_allocation(renamed)
+        self.assertEqual(
+            {"roster-a": 10000, "roster-b": 10001, "roster-c": 10002},
+            {name: user["uidNumber"]
+             for name, user in allocation["users"].items()},
+        )
+        # The UID belongs to the ROLE, so a rename moves no number.
+        for role, index in zip(DIRECTORY_ROLES, range(3)):
+            self.assertEqual(
+                controller_principals._posix_allocation(
+                    CONTRACT_ROSTER)["users"][
+                        CONTRACT_ROSTER[role]]["uidNumber"],
+                allocation["users"][renamed[role]]["uidNumber"],
+                role,
+            )
+        self.assertEqual(
+            {"roster-a": "/home/roster-a", "roster-b": "/home/roster-b",
+             "roster-c": "/home/roster-c"},
+            {name: user["unixHomeDirectory"]
+             for name, user in allocation["users"].items()},
+        )
+        self.assertEqual(
+            controller_principals._validated_posix_allocation(allocation),
+            allocation)
+
+    def test_a_renamed_roster_reaches_both_guest_programs(self):
+        # A stale hardcoded name left in a guest program would fail as
+        # "unexpected principal roster" inside a disposable VM, so the roster is
+        # substituted into BOTH programs and neither retains a literal name.
+        renamed = self._renamed()
+        roles = tuple(renamed[role] for role in DIRECTORY_ROLES)
+        roster_json = controller_principals._roster_json(
+            roles, renamed["domain_administrator"])
+        allocation = controller_principals._posix_allocation(renamed)
+        for template in (
+            controller_principals._STAGE_PROGRAM_TEMPLATE,
+            controller_principals._DESTROY_PROGRAM_TEMPLATE,
+        ):
+            program = controller_principals._substituted(
+                template, roster_json, allocation)
+            self.assertNotIn("@ROSTER_JSON@", program)
+            self.assertIn('"order":["roster-a","roster-b","roster-c"]', program)
+            for name in CONTRACT_ROSTER.values():
+                self.assertNotIn(name, program, name)
+        staged = controller_principals._substituted(
+            controller_principals._STAGE_PROGRAM_TEMPLATE,
+            roster_json, allocation)
+        self.assertIn('"domain_administrator":"roster-c"', staged)
+        self.assertIn(
+            'samdb.add_remove_group_members(\n'
+            '        "Domain Admins", [roster["domain_administrator"]]',
+            staged)
+
+    def test_the_live_programs_carry_the_live_roster_and_no_placeholder(self):
+        for program in (controller_principals._STAGE_PROGRAM,
+                        controller_principals._DESTROY_PROGRAM):
+            self.assertNotIn("@ROSTER_JSON@", program)
+            self.assertNotIn("@POSIX_JSON@", program)
+            self.assertIn(controller_principals._ROSTER_JSON, program)
+
+    def test_an_unsafe_or_colliding_roster_is_refused(self):
+        # Gate one: the shared loader refuses anything that would need quoting
+        # in a shell word, a sudoers rule, an SMB share name or a Kerberos
+        # principal, and refuses two roles sharing a name.
+        from homelab.workstations.arch_second import IdentityRosterError
+        for unsafe in ("who; reboot", "WHO", "0who", "who root", "", "a" * 33):
+            with self.subTest(name=unsafe):
+                with self.assertRaisesRegex(
+                        IdentityRosterError, "safely representable"):
+                    self._roster_with(standard_user=unsafe)
+        with self.assertRaisesRegex(IdentityRosterError, "not distinct"):
+            self._roster_with(standard_user=CONTRACT_ROSTER["local_rescue"])
+        # Gate two, deliberately kept: this module re-checks the same names
+        # before baking them into a guest program.
+        self.assertIsNone(
+            controller_principals._SAFE_NAME.fullmatch("who; reboot"))
+        for name in controller_principals._ROLES:
+            self.assertIsNotNone(
+                controller_principals._SAFE_NAME.fullmatch(name), name)
+
+    def _roster_with(self, **overrides):
+        import json as json_module
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            overlay = Path(root) / "principals.json"
+            overlay.write_text(json_module.dumps({
+                "schema_version": 1,
+                "principals": {
+                    role: {"name": name} for role, name in overrides.items()
+                },
+            }), encoding="utf-8")
+            return identity_roster(overlay_path=overlay)
+
+    def test_the_wire_roster_and_the_credentials_follow_the_live_roster(self):
+        # ``stage``/``destroy`` accept EXACTLY the resolved roster, so a caller
+        # holding a stale name is refused on this side of the console.
+        serial = ControllerPrincipalSerial(io.BytesIO(), io.BytesIO())
+        with self.assertRaisesRegex(ValueError, "roster"):
+            serial.destroy(tuple(self._renamed()[role]
+                                 for role in DIRECTORY_ROLES))
+        with self.assertRaisesRegex(ValueError, "roster"):
+            serial.stage({self._renamed()[role]: "Secret-47!"
+                          for role in DIRECTORY_ROLES})
+        self.assertEqual(set(ROLES), set(VALUES))
+        self.assertEqual(len(CONTRACT_ROLES), 4)
 
 
 if __name__ == "__main__":

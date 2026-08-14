@@ -1456,9 +1456,11 @@ class BoundaryWiringTests(unittest.TestCase):
                                  arch_identity_run.CONSOLE_READY_TIMEOUT)
                 staging = _FakePrincipalSerial.instances[0]
                 self.assertIs(staging.console, _FakeSerial.instances[0])
+                # Exactly the three DIRECTORY principals the shared roster
+                # loader resolved, whether or not this machine has a private
+                # overlay; the pinned synthetic names live in RosterTests.
                 self.assertEqual(
-                    sorted(staging.staged),
-                    ["directory-admin", "operator", "student"])
+                    sorted(staging.staged), sorted(POSIX_ALLOCATION["users"]))
                 workstation_console = _FakeSerial.instances[1]
                 self.assertEqual(
                     workstation_console.password,
@@ -3073,6 +3075,103 @@ class EvidenceRetentionTests(unittest.TestCase):
             failures = boundary.stop()
             self.assertTrue(any(
                 "evidence retention failed" in item for item in failures))
+
+
+class RosterTests(unittest.TestCase):
+    """The drive's principals come from the ONE loader, and a roster mismatch
+    fails closed with a named error before any lifecycle check runs."""
+
+    def test_the_drive_reads_its_principals_from_the_shared_roster(self):
+        # Not from the contract directly: the names this host types at the getty
+        # must be the names gate 7 baked onto the disk it is driving.
+        from workstations.arch_second import identity_roster as loader
+        self.assertEqual(ROSTER, loader())
+        self.assertEqual(OPERATOR_PRINCIPAL, ROSTER["daily_administrator"])
+        self.assertEqual(RESCUE_PRINCIPAL, ROSTER["local_rescue"])
+        # The staged directory roster and the login principal agree.
+        self.assertIn(OPERATOR_PRINCIPAL, POSIX_ALLOCATION["users"])
+        # The break-glass account is never a directory principal (ADR 0055).
+        self.assertNotIn(RESCUE_PRINCIPAL, POSIX_ALLOCATION["users"])
+
+    def test_the_contract_roster_is_the_acceptance_roster(self):
+        # Pinned with the private overlay explicitly out of the way, so this
+        # holds on a machine that has one and on a machine that does not.
+        from workstations.arch_second import identity_roster as loader
+        contract = loader(
+            overlay_path=Path(__file__).with_name("no-such-overlay.json"))
+        self.assertEqual(
+            {
+                "standard_user": "student",
+                "daily_administrator": "operator",
+                "domain_administrator": "directory-admin",
+                "local_rescue": "local-rescue",
+            },
+            contract,
+        )
+
+    def test_roster_confirmation_is_the_first_exchange_and_passes_when_equal(
+            self):
+        channel = FakeSerialChannel({})
+        drive = ArchIdentityDrive(channel)
+        self.assertEqual(ROSTER_FINGERPRINT, drive.confirm_roster())
+        self.assertEqual(
+            [f"/usr/local/sbin/homelab-arch-identity-probe "
+             f"{PROBE_ROSTER_VERB} {channel.token}".encode("ascii")],
+            channel.sent)
+        # And it is the first thing a whole lifecycle does on the console.
+        session = FakeSession()
+        run_lifecycle(session)
+        self.assertIn(PROBE_ROSTER_VERB.encode("ascii"),
+                      session.channel.sent[0])
+
+    def test_a_disk_installed_under_another_roster_fails_closed(self):
+        # A disk carries its roster baked in (probe helper, sudoers rules,
+        # break-glass useradd), so driving it with different names would refuse a
+        # login for a user that never existed and indict the credential path.
+        other = "0" * 16
+        self.assertNotEqual(other, ROSTER_FINGERPRINT)
+        session = FakeSession(roster_fingerprint=other)
+        with self.assertRaises(ArchIdentityError) as caught:
+            run_lifecycle(session)
+        self.assertIn("different identity roster", str(caught.exception))
+        self.assertIn(ROSTER_MISMATCH_FAILURE.split(";")[0],
+                      str(caught.exception))
+        self.assertEqual("arch-joined", caught.exception.check)
+        # Named with digests only: no real account name reaches a transcript.
+        for name in ROSTER.values():
+            self.assertNotIn(name, str(caught.exception))
+        # Nothing beyond the roster exchange was attempted, and the guest was
+        # torn down.
+        self.assertEqual(1, len(session.channel.sent))
+        self.assertIn("stop", session.events)
+
+    def test_a_disk_that_reports_no_roster_at_all_fails_closed(self):
+        # A disk installed before the roster verb existed answers the verb with
+        # a usage error and no marker.  That must be reported as a stale disk,
+        # not as an anonymous console timeout.
+        session = FakeSession(drive_results={PROBE_ROSTER_VERB: "TIMEOUT"})
+        with self.assertRaises(ArchIdentityError) as caught:
+            run_lifecycle(session)
+        self.assertIn("never reported an identity-roster fingerprint",
+                      str(caught.exception))
+        self.assertIn(ROSTER_UNREPORTED_FAILURE.split(";")[0],
+                      str(caught.exception))
+
+    def test_the_rendered_probe_reports_the_hosts_own_fingerprint(self):
+        # Host and guest must derive the same digest from the same roster, or
+        # every converging run would stop at the comparison above.
+        from workstations.arch_second import (
+            PROBE_ROSTER_MARKER as MARKER, render_installer)
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation",
+            expected_sizes_mib=(1024, 16, 307200, 102400, 2048))
+        self.assertIn(f"ROSTER_FINGERPRINT='{ROSTER_FINGERPRINT}'", script)
+        self.assertIn(
+            f"printf '{MARKER}%s=%s\\n' \"$token\" \"$ROSTER_FINGERPRINT\"",
+            script)
+        # And the drive builds its wait pattern from that same one definition.
+        self.assertIn(MARKER, arch_identity_run.PROBE_ROSTER_MARKER)
 
 
 if __name__ == "__main__":

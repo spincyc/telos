@@ -3,8 +3,10 @@ import inspect
 import json
 from pathlib import Path
 import re
+import shutil
 import struct
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -406,8 +408,11 @@ class ArchSecondTests(unittest.TestCase):
         self.assertIn(
             "printf '__TELOS_ARCH_%s_%s=%s\\n' \"$key\" \"$token\" \"$1\"",
             script)
-        for principal in ("student", "operator", "directory-admin",
-                          "local-rescue"):
+        # Every principal the resolved roster names is baked in.  Read from the
+        # loader rather than written out, so the suite proves the same thing on
+        # a machine that has a private overlay and on one that does not; the
+        # pinned synthetic names live in RosterLoaderTests below.
+        for principal in identity_roster().values():
             self.assertIn(principal, script)
 
     def test_join_secret_never_enters_the_rendered_script(self):
@@ -640,9 +645,12 @@ class ArchSecondTests(unittest.TestCase):
         self.assertEqual(len(fstab_lines), 1)
         line = fstab_lines[0]
         device, mountpoint, fstype, options = line.split()[:4]
+        # The share belongs to whichever principal the resolved roster names as
+        # the standard user, so this holds with or without a private overlay.
+        standard = identity_roster()["standard_user"]
         self.assertEqual(
-            device, f"//{STORAGE_HOST_LABEL}.{SYNTHETIC_DOMAIN}/student")
-        self.assertEqual(mountpoint, f"{STORAGE_MOUNT_ROOT}/student")
+            device, f"//{STORAGE_HOST_LABEL}.{SYNTHETIC_DOMAIN}/{standard}")
+        self.assertEqual(mountpoint, f"{STORAGE_MOUNT_ROOT}/{standard}")
         self.assertEqual(fstype, "cifs")
         flags = options.split(",")
         # Structural login independence: the systemd fstab generator can
@@ -650,7 +658,8 @@ class ArchSecondTests(unittest.TestCase):
         for flag in ("nofail", "x-systemd.automount", "_netdev", "soft",
                      "x-systemd.mount-timeout=10s", "sec=krb5"):
             self.assertIn(flag, flags)
-        self.assertIn(f"mkdir -p /mnt{STORAGE_MOUNT_ROOT}/student", script)
+        self.assertIn(
+            f"mkdir -p /mnt{STORAGE_MOUNT_ROOT}/{standard}", script)
         # No hard dependency shapes: nothing may require, order after, or
         # boot-block on the optional storage.
         self.assertNotIn("x-systemd.requires", script)
@@ -1677,6 +1686,295 @@ class ArchSecondTests(unittest.TestCase):
                 disk_path="/dev/nvme0n1", disk_serial="LAPTOP-1",
                 hostname="bad;reboot", expected_sizes_mib=SIZES,
             )
+
+
+class RosterLoaderTests(unittest.TestCase):
+    """The ONE principal-roster loader: contract defaults, private overlay.
+
+    Real account names are instance data (ADR 0046) and live only in the
+    gitignored ``homelab/instance/identity/principals.json``.  Every overlay
+    here is written to a temporary directory, so these tests never depend on --
+    and never touch -- the owner's real overlay.
+    """
+
+    ABSENT = Path("/nonexistent/telos/identity/principals.json")
+
+    def contract_roster(self) -> dict[str, str]:
+        return identity_roster(overlay_path=self.ABSENT)
+
+    def overlay(self, document) -> Path:
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        path = Path(root) / "principals.json"
+        path.write_text(
+            document if isinstance(document, str) else json.dumps(document),
+            encoding="utf-8")
+        return path
+
+    def named(self, **overrides) -> dict[str, str]:
+        return identity_roster(overlay_path=self.overlay({
+            "schema_version": 1,
+            "principals": {
+                role: {"name": name} for role, name in overrides.items()},
+        }))
+
+    # ---- No overlay: byte-identical to the pinned acceptance roster ----
+
+    def test_no_overlay_means_the_synthetic_acceptance_roster_exactly(self):
+        # Gates 6 and 8 assert these names.  If this needs editing, both gates
+        # have to be re-proven and every file written under the old directory
+        # UIDs is orphaned (vm/controller_principals POSIX_ALLOCATION).
+        self.assertEqual(
+            {
+                "standard_user": "student",
+                "daily_administrator": "operator",
+                "domain_administrator": "directory-admin",
+                "local_rescue": "local-rescue",
+            },
+            self.contract_roster(),
+        )
+        # And the contract file itself still carries them, so the default is a
+        # tracked fact and not a Python literal.
+        contract = json.loads(
+            identity_contract_path().read_text(encoding="utf-8"))
+        self.assertEqual(
+            self.contract_roster(),
+            {role: contract["principals"][role]["name"]
+             for role in CONTRACT_ROLES},
+        )
+
+    def test_an_empty_overlay_changes_nothing(self):
+        # The instance-example template ships exactly this shape, so copying it
+        # (make homelab-instance) cannot alter a single name.
+        self.assertEqual(
+            self.contract_roster(),
+            identity_roster(overlay_path=self.overlay(
+                {"schema_version": 1, "principals": {}})),
+        )
+        self.assertEqual(
+            self.contract_roster(),
+            identity_roster(overlay_path=self.overlay(
+                {"schema_version": 1})),
+        )
+
+    def test_the_shipped_template_is_inert(self):
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "instance-example" / "identity" / "principals.json")
+        self.assertEqual(
+            self.contract_roster(), identity_roster(overlay_path=template))
+        document = json.loads(template.read_text(encoding="utf-8"))
+        self.assertEqual({}, document["principals"])
+        # Every placeholder in the worked example is a placeholder, not a name.
+        for declaration in document["_example_principals"].values():
+            self.assertRegex(declaration["name"], r"^<[a-z-]+>$")
+
+    def test_the_overlay_lives_only_in_the_gitignored_instance_tree(self):
+        overlay = identity_overlay_path()
+        homelab = Path(__file__).resolve().parents[1]
+        self.assertEqual(
+            homelab / "instance" / "identity" / "principals.json", overlay)
+        # /homelab/instance/ is gitignored (ADR 0046); the template beside it is
+        # what is tracked.
+        ignore = (homelab.parent / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("/homelab/instance/", ignore.splitlines())
+
+    # ---- With an overlay: the roster is renamed ----
+
+    def test_an_overlay_renames_the_roster(self):
+        renamed = self.named(
+            standard_user="roster-a", domain_administrator="roster-c")
+        self.assertEqual(
+            {
+                "standard_user": "roster-a",
+                "daily_administrator": "operator",
+                "domain_administrator": "roster-c",
+                "local_rescue": "local-rescue",
+            },
+            renamed,
+        )
+        # All four roles are nameable, independently and optionally.
+        self.assertEqual(
+            {
+                "standard_user": "roster-a",
+                "daily_administrator": "roster-b",
+                "domain_administrator": "roster-c",
+                "local_rescue": "roster-d",
+            },
+            self.named(
+                standard_user="roster-a", daily_administrator="roster-b",
+                domain_administrator="roster-c", local_rescue="roster-d"),
+        )
+
+    def test_a_renamed_roster_reaches_the_installed_disk(self):
+        renamed = self.named(
+            standard_user="roster-a", domain_administrator="roster-c")
+        script = self.render(renamed)
+        for name in renamed.values():
+            self.assertIn(name, script)
+        self.assertIn("STANDARD_USER='roster-a'", script)
+        self.assertIn("DOMAIN_ADMIN='roster-c'", script)
+        # The renamed standard user owns the optional per-user share.
+        self.assertIn(f"{STORAGE_MOUNT_ROOT}/roster-a", script)
+        # The daily administrator's passworded sudoers rule follows the name --
+        # and is still passworded: no NOPASSWD is introduced anywhere.
+        self.assertIn("operator ALL=(ALL:ALL) ALL", script)
+        self.assertNotIn("NOPASSWD", script)
+        # Nothing renamed is left behind under its synthetic name.  Checked on
+        # the probe's own assignments rather than the whole script, which
+        # carries unrelated English prose.
+        probe = _heredoc_body(script, "TELOS_PROBE_EOF")
+        assignments = re.findall(r"(?m)^([A-Z_]+)='([^']*)'$", probe)
+        self.assertEqual(
+            {"STANDARD_USER": "roster-a", "DAILY_ADMIN": "operator",
+             "DOMAIN_ADMIN": "roster-c", "RESCUE_USER": "local-rescue"},
+            {key: value for key, value in assignments
+             if key in {"STANDARD_USER", "DAILY_ADMIN", "DOMAIN_ADMIN",
+                        "RESCUE_USER"}},
+        )
+        for role in ("standard_user", "domain_administrator"):
+            self.assertNotIn(
+                self.contract_roster()[role],
+                [value for _, value in assignments])
+
+    def render(self, roster) -> str:
+        """Render the installer as if *roster* were the resolved roster."""
+        import unittest.mock as mock
+        with mock.patch(
+            "workstations.arch_second.identity_roster",
+            return_value=dict(roster),
+        ):
+            return render_installer(
+                disk_path="/dev/vda", disk_serial="LAPTOP-1",
+                hostname="workstation", expected_sizes_mib=SIZES,
+            )
+
+    # ---- Refusals: every one of them fail-closed and distinctly named ----
+
+    def test_an_unsafe_name_is_refused(self):
+        # These names flow into shell words, sudoers rules, SMB share names and
+        # Kerberos principals.  Anything that would need quoting is refused
+        # rather than escaped, which is why SAFE_PRINCIPAL exists.
+        for unsafe in (
+            "who; reboot", "who root", "WHO", "0who", "-who", "who$",
+            "who'", 'who"', "who\n", "", "a" * 33, "who.admin", "who_admin",
+        ):
+            with self.subTest(name=unsafe):
+                self.assertIsNone(SAFE_PRINCIPAL.fullmatch(unsafe))
+                with self.assertRaisesRegex(
+                        IdentityRosterError, "safely representable"):
+                    self.named(standard_user=unsafe)
+        for wrong_type in (None, 47, True, ["who"], {"name": "who"}):
+            with self.subTest(name=wrong_type):
+                with self.assertRaisesRegex(
+                        IdentityRosterError, "safely representable"):
+                    self.named(standard_user=wrong_type)
+
+    def test_a_colliding_name_is_refused(self):
+        # Two roles sharing a name collapses the very separation the lifecycle
+        # proves (daily administrator vs domain administrator; local rescue vs
+        # any directory account) and would collide in the POSIX allocation.
+        with self.assertRaisesRegex(IdentityRosterError, "not distinct"):
+            self.named(standard_user="operator")
+        with self.assertRaisesRegex(IdentityRosterError, "not distinct"):
+            self.named(
+                daily_administrator="roster-x", domain_administrator="roster-x")
+        with self.assertRaisesRegex(IdentityRosterError, "not distinct"):
+            self.named(local_rescue="student")
+
+    def test_a_malformed_overlay_is_refused_never_silently_defaulted(self):
+        # A file that exists and cannot be understood must stop the build: a
+        # fallback to the synthetic names would install accounts the owner did
+        # not ask for, under a name they would not recognise.
+        cases = (
+            ("not json at all", "unreadable JSON"),
+            ('["who"]', "not a JSON object"),
+            ('{"principals": {}}', "schema_version"),
+            ('{"schema_version": 2, "principals": {}}', "schema_version"),
+            ('{"schema_version": 1, "principal": {}}', "unknown key"),
+            ('{"schema_version": 1, "principals": []}', "not a JSON object"),
+            ('{"schema_version": 1, "principals": {"root": {"name": "who"}}}',
+             "unknown role"),
+            ('{"schema_version": 1, "principals": {"standard_user": "who"}}',
+             "not a JSON object"),
+            ('{"schema_version": 1, "principals": {"standard_user": '
+             '{"name": "who", "domain_role": "administrator"}}}',
+             "may only set"),
+            ('{"schema_version": 1, "principals": {"standard_user": {}}}',
+             "declares no name"),
+        )
+        for document, message in cases:
+            with self.subTest(document=document):
+                with self.assertRaisesRegex(IdentityRosterError, message):
+                    identity_roster(overlay_path=self.overlay(document))
+        # Every refusal is an InstallContractError too, so an installer caller
+        # that already handles contract refusals cannot miss one -- but the
+        # distinct class means a roster fault never reads as disk geometry.
+        self.assertTrue(issubclass(IdentityRosterError, InstallContractError))
+
+    def test_documentation_keys_are_allowed_because_json_has_no_comments(self):
+        roster = identity_roster(overlay_path=self.overlay({
+            "_documentation": "read me",
+            "_example_principals": {"standard_user": {"name": "<who>"}},
+            "schema_version": 1,
+            "principals": {
+                "_note": "ignored",
+                "standard_user": {"_why": "the kid", "name": "roster-a"},
+            },
+        }))
+        self.assertEqual("roster-a", roster["standard_user"])
+        self.assertEqual("operator", roster["daily_administrator"])
+
+    def test_a_symlinked_or_directory_overlay_is_refused(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        real = self.overlay({"schema_version": 1, "principals": {}})
+        link = root / "principals.json"
+        link.symlink_to(real)
+        with self.assertRaisesRegex(IdentityRosterError, "regular file"):
+            identity_roster(overlay_path=link)
+        directory = root / "as-a-directory.json"
+        directory.mkdir()
+        with self.assertRaisesRegex(IdentityRosterError, "regular file"):
+            identity_roster(overlay_path=directory)
+
+    # ---- The fingerprint the disk carries ----
+
+    def test_the_fingerprint_identifies_the_roster_and_nothing_else(self):
+        contract = self.contract_roster()
+        self.assertEqual(
+            identity_roster_fingerprint(contract),
+            identity_roster_fingerprint(contract))
+        self.assertRegex(
+            identity_roster_fingerprint(contract),
+            f"^[0-9a-f]{{{ROSTER_FINGERPRINT_LENGTH}}}$")
+        renamed = dict(contract, standard_user="roster-a")
+        self.assertNotEqual(
+            identity_roster_fingerprint(contract),
+            identity_roster_fingerprint(renamed))
+        # It carries no account name: that is the point of using a digest for a
+        # value that travels on a retained console transcript.
+        for name in contract.values():
+            self.assertNotIn(name, identity_roster_fingerprint(contract))
+
+    def test_the_rendered_probe_carries_the_rendered_rosters_fingerprint(self):
+        renamed = self.named(standard_user="roster-a")
+        script = self.render(renamed)
+        self.assertIn(
+            f"ROSTER_FINGERPRINT='{identity_roster_fingerprint(renamed)}'",
+            script)
+        self.assertNotIn("@ROSTER_FINGERPRINT@", script)
+        self.assertNotIn("@ROSTER_VERB@", script)
+        self.assertNotIn("@ROSTER_MARKER@", script)
+        # The verb is accepted before any elevation, and answers with the
+        # fingerprint instead of a verdict.
+        probe = _heredoc_body(script, "TELOS_PROBE_EOF")
+        self.assertLess(
+            probe.index(f'if [ "$check" = \'{PROBE_ROSTER_VERB}\' ]; then'),
+            probe.index('exec sudo -n --'))
+        self.assertIn(f"{PROBE_ROSTER_VERB}|", probe)
+        self.assertIn(PROBE_ROSTER_MARKER, probe)
+        self.assertNotIn(PROBE_ROSTER_VERB, PROBE_CHECKS)
 
 
 if __name__ == "__main__":
