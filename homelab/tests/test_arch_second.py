@@ -345,6 +345,37 @@ class ArchSecondTests(unittest.TestCase):
         self.assertIn("operator ALL=(ALL:ALL) ALL", script)
         self.assertNotIn("passwd local-rescue", script)
         self.assertNotIn("chpasswd", script)
+        # Disabled, not empty: useradd with no -p leaves "!" in /etc/shadow,
+        # so `passwd -S` reports L and only an authorized console session can
+        # turn that into the P the arch-local-rescue probe requires.
+        self.assertNotIn("passwd -d", script)
+        self.assertNotIn("--password", script)
+
+    def test_password_stack_asks_through_pam_sss_before_pam_unix(self):
+        # Load-bearing for gate 8, and it cost a live run to learn: this
+        # ordering is what makes `passwd local-rescue` -- a files-only account
+        # -- print pam_sss's "New Password:" rather than pam_unix's lowercase
+        # "New password:".  pam_sss collects the value BEFORE it discovers the
+        # account is not a domain one, and Arch's shadow ships
+        # /etc/pam.d/passwd as "password include system-auth", so its wording
+        # is what reaches the console.  vm/arch_identity_run's
+        # rescue_prompt_pattern accepts both wordings; if this ordering is ever
+        # reversed, that comment is what needs rereading, not the pattern.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        stack = [
+            line for line in script.splitlines()
+            if line.startswith("password ") and "pam_" in line
+        ]
+        self.assertTrue(stack)
+        sss = next(i for i, line in enumerate(stack) if "pam_sss.so" in line)
+        unix = next(i for i, line in enumerate(stack) if "pam_unix.so" in line)
+        self.assertLess(sss, unix)
+        # And pam_unix is the module that actually writes /etc/shadow, so it
+        # must stay required rather than optional.
+        self.assertIn("required", stack[unix].split())
 
     def test_probe_helper_is_installed_and_covers_the_contract(self):
         script = render_installer(
