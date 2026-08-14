@@ -53,6 +53,69 @@ homelab_ad_rpc_dynamic_tcp_range: 49152-65535
 homelab_storage_host_label: unas
 homelab_storage_address: ""
 
+# Durable directory accounts for a PERSISTENT instance (ADR 0055).
+#
+# Empty by default, and every task that acts on this list is gated on it being
+# non-empty, so a run that declares nothing behaves exactly as this role did
+# before durable accounts existed. That is deliberate: the disposable
+# acceptance Controller must stay untouched, because its roster is synthetic,
+# per-run, and staged much later over the serial console by
+# homelab/vm/controller_principals.py.
+#
+# Declare the roster in the gitignored instance overlay (ADR 0046), in the
+# order the POSIX identifiers should be allocated. Each entry:
+#
+#   - name: <account>            # sAMAccountName, [a-z][a-z0-9-]{0,62}
+#     role: standard             # or `administrator`: a Domain Admins member
+#     password_file: /run/secrets/homelab-ad-<account>
+#     reset_password: false      # optional; see the rotation switch below
+#
+# This role is never given a password value, only the path of a root-owned
+# 0600 file that already exists on the target. An account that already exists
+# is left alone: its password, its SID and its group memberships survive
+# re-convergence, which is the whole point of a persistent instance.
+homelab_ad_directory_accounts: []
+
+# The POSIX allocation rule, stated once.
+#
+# It is the SAME rule homelab/vm/controller_principals.py implements for the
+# disposable acceptance roster (_POSIX_BASE, _POSIX_LOGIN_SHELL,
+# _POSIX_PRIMARY_GROUP, _POSIX_GROUP_RIDS), and
+# homelab/tests/test_domain_controller_role.py fails if the two ever disagree
+# -- a second allocation would hand the workstation different UIDs than the
+# acceptance path proves, and file ownership under /srv/unas would break.
+#
+#   users:  uidNumber = homelab_ad_posix_base + position in the declared roster
+#   groups: gidNumber = homelab_ad_posix_base + well-known Active Directory RID
+#           (Domain Admins 512 -> 10512, Domain Users 513 -> 10513)
+#
+# Every user's gidNumber is the Domain Users gidNumber because Domain Users
+# (RID 513) is each account's Active Directory primary group. The base sits far
+# above a workstation's first local ordinary-user UID (1000, the break-glass
+# account), which ADR 0055 requires to stay local.
+#
+# Position is what the identifier is derived from, so REORDERING the roster
+# renumbers the accounts and orphans everything they own. Append; never insert.
+homelab_ad_posix_base: 10000
+homelab_ad_posix_login_shell: /bin/bash
+homelab_ad_posix_home_root: /home
+homelab_ad_posix_primary_group: Domain Users
+homelab_ad_posix_admin_group: Domain Admins
+homelab_ad_posix_group_rids:
+  Domain Users: 513
+  Domain Admins: 512
+
+# A password already set in the directory is never rewritten. Rotation takes
+# two keys: this switch, and `reset_password: true` on the individual account.
+# Return it to false immediately afterwards, exactly as with first
+# provisioning.
+homelab_ad_account_password_reset_enabled: false
+
+# Where the per-user [homes] share directories live. This must stay the root of
+# the `path = /srv/unas/%S` service exported below, and it is the same root
+# controller_principals.py creates and chowns for the acceptance roster.
+homelab_ad_account_share_root: /srv/unas
+
 # The directory account the role resolves through its own name service to prove
 # smbd can clone the per-user [homes] share for a domain user. It must be an
 # account that already exists at convergence time, which the built-in domain

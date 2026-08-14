@@ -572,3 +572,393 @@
       The existing Samba database does not describe
       {{ homelab_ad_netbios_domain }} / {{ homelab_ad_realm }}. Ansible will
       not rename or replace a directory.
+
+# ---------------------------------------------------------------------------
+# Durable directory accounts (ADR 0055)
+#
+# Everything below is inert unless the instance declares a roster, and runs
+# last on purpose: the realm assertion above has already refused a directory
+# that is not the declared one, samba.service is up, its handlers are flushed,
+# and nsswitch.conf already consults the directory -- so `getent` here asks the
+# same name service smbd asks when it clones [homes].
+#
+# The disposable acceptance Controller declares nothing, so its synthetic
+# per-run roster (staged over the serial by homelab/vm/controller_principals.py,
+# 21/21 checks as of 2026-08-14) is untouched by every task in this section.
+#
+# Why this is not just "samba-tool user create":
+#   * `samba-tool user create <name> <password>` takes the password
+#     POSITIONALLY, which puts it in the process table for every local user to
+#     read, and in Ansible's own task log. Omitting it makes samba-tool prompt
+#     on a terminal that does not exist under Ansible. So account creation goes
+#     through the same shape first provisioning already uses: a root-owned 0700
+#     driver, installed and removed around one invocation, which opens the
+#     protected file itself and hands the value to Samba's in-process API. The
+#     role passes PATHS, never values.
+#   * The directory must survive relaunching, so nothing here re-creates an
+#     account that exists or rewrites a password that is already set. The
+#     first-provisioning skip above (`when: not homelab_ad_database.stat.exists`)
+#     keeps the domain SID and krbtgt across a bring-up; these tasks keep the
+#     accounts, their SIDs and their credentials across the same bring-up.
+- name: Converge the declared durable directory accounts
+  when: homelab_ad_directory_accounts | length > 0
+  block:
+    - name: Validate the declared durable account roster
+      # Position in the roster IS the uidNumber, so a duplicate or a renamed
+      # entry silently renumbers accounts and orphans everything they own. The
+      # length bound is what keeps the user range below the group range: gids
+      # are base+512 and base+513, so a roster of 512 or more would collide
+      # with Domain Admins.
+      ansible.builtin.assert:
+        that:
+          - homelab_ad_posix_base | int >= 10000
+          - homelab_ad_directory_accounts | length < 512
+          - homelab_ad_directory_accounts | map(attribute='name', default='')
+            | select('match', '^[a-z][a-z0-9-]{0,62}$') | list | length ==
+            homelab_ad_directory_accounts | length
+          - homelab_ad_directory_accounts | map(attribute='name', default='')
+            | unique | list | length == homelab_ad_directory_accounts | length
+          - homelab_ad_directory_accounts | map(attribute='role', default='')
+            | select('in', ['standard', 'administrator']) | list | length ==
+            homelab_ad_directory_accounts | length
+          - homelab_ad_posix_primary_group in homelab_ad_posix_group_rids
+          - homelab_ad_posix_admin_group in homelab_ad_posix_group_rids
+          - homelab_ad_account_share_root | length > 0
+        fail_msg: >-
+          homelab_ad_directory_accounts is not a usable roster. Every entry
+          needs a lower-case name matching ^[a-z][a-z0-9-]{0,62}$, unique
+          across the roster, and an explicit role of `standard` or
+          `administrator`. Append to the roster; never reorder or remove an
+          entry, because position determines uidNumber.
+
+    - name: Require a password-file path for every declared durable account
+      # A path, not a value: the file itself is staged out of band, root-owned
+      # and 0600, and is only required to EXIST for an account that does not
+      # exist yet. Declared in aggregate so no individual path reaches the log.
+      ansible.builtin.assert:
+        that:
+          - homelab_ad_directory_accounts
+            | map(attribute='password_file', default='')
+            | map('trim') | select('equalto', '') | list | length == 0
+        fail_msg: >-
+          Every durable account needs its own password_file path (prefer a /run
+          path). Do not put the password itself in inventory, Git, an Ansible
+          variable, or a command line.
+
+    - name: List the directory accounts that already exist
+      # What makes the whole section idempotent, and what decides which
+      # accounts need a credential at all: an account already in the directory
+      # keeps its password, so the operator can delete its file after the
+      # account is created and re-converge for years without staging a secret
+      # again.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/samba-tool
+          - user
+          - list
+      register: homelab_ad_existing_users
+      changed_when: false
+
+    - name: Start the durable POSIX allocation from an empty plan
+      ansible.builtin.set_fact:
+        homelab_ad_account_plan: []
+        homelab_ad_account_group_plan: {}
+
+    - name: Derive the durable POSIX group allocation from the well-known RIDs
+      # gidNumber = base + RID, the same rule controller_principals.py applies
+      # to the acceptance roster. Both groups must carry a gidNumber before any
+      # SSSD client running with ldap_id_mapping = False can resolve them, and
+      # a user's primary gid comes from Domain Users.
+      ansible.builtin.set_fact:
+        homelab_ad_account_group_plan: >-
+          {{ homelab_ad_account_group_plan
+             | combine({item.key: homelab_ad_posix_base | int
+                                  + (item.value | int)}) }}
+      loop: "{{ homelab_ad_posix_group_rids | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Derive the durable POSIX allocation from the declared roster order
+      # uidNumber = base + position, gidNumber = the Domain Users gid, shell and
+      # unixHomeDirectory from the same defaults controller_principals.py pins.
+      # A workstation running SSSD with ldap_id_mapping = False cannot log an
+      # account in at all without these four attributes stored in the
+      # directory, which is why they are computed here rather than left to a
+      # client-side template.
+      ansible.builtin.set_fact:
+        homelab_ad_account_plan: >-
+          {{ homelab_ad_account_plan + [{
+               'name': item.name,
+               'role': item.role,
+               'password_file': item.password_file,
+               'reset_password': (item.reset_password | default(false)) | bool,
+               'create': item.name | lower not in (
+                 homelab_ad_existing_users.stdout_lines | map('trim')
+                 | map('lower') | list),
+               'uidNumber': (homelab_ad_posix_base | int) + (position | int),
+               'gidNumber': homelab_ad_account_group_plan[
+                 homelab_ad_posix_primary_group],
+               'loginShell': homelab_ad_posix_login_shell,
+               'unixHomeDirectory': homelab_ad_posix_home_root
+                                    ~ '/' ~ item.name,
+             }] }}
+      loop: "{{ homelab_ad_directory_accounts }}"
+      loop_control:
+        index_var: position
+        label: "{{ item.name }}"
+
+    - name: Inspect the password file of every durable account to be created
+      # no_log because stat returns a checksum of the file it inspected, which
+      # for a one-line password file is a hash of the password itself.
+      ansible.builtin.stat:
+        path: "{{ item.password_file }}"
+        get_checksum: false
+      loop: "{{ homelab_ad_account_plan | selectattr('create') | list }}"
+      register: homelab_ad_account_password
+      no_log: true
+
+    - name: Require a protected password file for every new durable account
+      # The same refusal first provisioning makes for the domain administrator,
+      # per account. The driver re-checks all of it as root at the moment it
+      # opens the file; this is the check that stops convergence before
+      # anything is installed on the target.
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+          - item.stat.uid == 0
+          - item.stat.mode == '0600'
+          - item.stat.size > 0
+        fail_msg: >-
+          Creating a durable directory account requires a root-owned 0600
+          password file already on the target, one per account. Remove each
+          file once its account exists; a later run needs a file only for an
+          account the directory does not have yet.
+      loop: "{{ homelab_ad_account_password.results | default([]) }}"
+      no_log: true
+
+    - name: Converge the durable accounts with an ephemeral credential feeder
+      block:
+        - name: Create the local helper directory for the account driver
+          ansible.builtin.file:
+            path: /usr/local/libexec
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Install the durable account driver
+          ansible.builtin.copy:
+            src: provision-accounts.py
+            dest: /usr/local/libexec/homelab-provision-accounts
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Create and converge the durable directory accounts
+          # The plan carries names, POSIX identifiers and password-file PATHS.
+          # The driver opens each file itself and hands what it reads to
+          # Samba's in-process API, so no credential enters argv, the process
+          # table, the environment, an Ansible variable, or this task's log.
+          ansible.builtin.command:
+            argv:
+              - /usr/local/libexec/homelab-provision-accounts
+              - --plan-json
+              - "{{ homelab_ad_account_plan | to_json }}"
+              - --groups-json
+              - "{{ homelab_ad_account_group_plan | to_json }}"
+              - --primary-group
+              - "{{ homelab_ad_posix_primary_group }}"
+              - --admin-group
+              - "{{ homelab_ad_posix_admin_group }}"
+              - --posix-base
+              - "{{ homelab_ad_posix_base }}"
+              - --diagnostic-file
+              - /run/homelab-provision-accounts.status
+              - "{{ '--allow-password-reset'
+                    if homelab_ad_account_password_reset_enabled | bool
+                    else '--refuse-password-reset' }}"
+          register: homelab_ad_account_convergence
+          # The driver reports its own change decision, so a converged
+          # directory reports ok rather than changed on every run. `and`
+          # short-circuits, so a failed run never reaches from_json.
+          changed_when: >-
+            homelab_ad_account_convergence.rc == 0 and
+            ((homelab_ad_account_convergence.stdout | from_json).changed
+             | default(false) | bool)
+          no_log: true
+      always:
+        - name: Remove the durable account driver
+          ansible.builtin.file:
+            path: /usr/local/libexec/homelab-provision-accounts
+            state: absent
+
+    - name: Create each durable account's per-user storage directory
+      # The gate-9 [homes] share serves /srv/unas/%S, and smbd maps the
+      # connecting account through the directory's rfc2307 attributes, so the
+      # directory must be owned by the account's uidNumber for the owner to
+      # reach their own files. Numeric owner and group deliberately: this is
+      # the same chown controller_principals.py performs for the acceptance
+      # roster, and it must not depend on the name service being warm.
+      ansible.builtin.file:
+        path: "{{ homelab_ad_account_share_root }}/{{ item.name }}"
+        state: directory
+        owner: "{{ item.uidNumber }}"
+        group: "{{ item.gidNumber }}"
+        mode: "0700"
+      loop: "{{ homelab_ad_account_plan }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Verify each durable account's POSIX attributes in the directory
+      # This is what an SSSD client with ldap_id_mapping = False reads over
+      # LDAP. Without all four attributes the account cannot log in at all, and
+      # a half-provisioned account must stop convergence here rather than
+      # surface as an unusable workstation. Fail-closed: samba-tool exits
+      # non-zero on a missing account, and each expected value must appear.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/samba-tool
+          - user
+          - show
+          - "{{ item.name }}"
+          - --attributes=sAMAccountName,uidNumber,gidNumber,loginShell,unixHomeDirectory
+      register: homelab_ad_account_posix
+      changed_when: false
+      failed_when: >-
+        homelab_ad_account_posix.rc != 0 or
+        ('uidNumber: ' ~ item.uidNumber) not in homelab_ad_account_posix.stdout or
+        ('gidNumber: ' ~ item.gidNumber) not in homelab_ad_account_posix.stdout or
+        ('loginShell: ' ~ item.loginShell) not in homelab_ad_account_posix.stdout or
+        ('unixHomeDirectory: ' ~ item.unixHomeDirectory)
+        not in homelab_ad_account_posix.stdout
+      loop: "{{ homelab_ad_account_plan }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Verify the well-known groups carry the POSIX gid clients resolve
+      # A user's primary gid comes from Domain Users, and the Arch identity
+      # probe resolves Domain Admins by name (workstations/arch_second.py), so
+      # both groups need a gidNumber before any client with
+      # ldap_id_mapping = False can resolve either.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/samba-tool
+          - group
+          - show
+          - "{{ item.key }}"
+          - --attributes=sAMAccountName,gidNumber
+      register: homelab_ad_group_posix
+      changed_when: false
+      failed_when: >-
+        homelab_ad_group_posix.rc != 0 or
+        ('gidNumber: ' ~ item.value) not in homelab_ad_group_posix.stdout
+      loop: "{{ homelab_ad_account_group_plan | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Verify every durable administrator is a Domain Admins member
+      # ADR 0055/0063: the domain administrator is a Domain Admins member with
+      # passworded sudo on the workstation, never root and never the local
+      # break-glass account. The sudo half lives in the workstation lane; this
+      # is the directory half, and it is asserted rather than assumed because a
+      # created-but-unprivileged administrator looks like a working account
+      # until the day it is needed.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/samba-tool
+          - group
+          - listmembers
+          - "{{ homelab_ad_posix_admin_group }}"
+      register: homelab_ad_admin_members
+      changed_when: false
+      failed_when: >-
+        homelab_ad_admin_members.rc != 0 or
+        (homelab_ad_account_plan | selectattr('role', 'equalto', 'administrator')
+         | map(attribute='name')
+         | reject('in', homelab_ad_admin_members.stdout_lines | map('trim')
+                        | map('lower') | list)
+         | list | length > 0)
+
+    - name: Verify the Controller resolves every durable account by name
+      # The check the 2026-08-14 gate-8 failure had nowhere to fail, applied to
+      # the accounts that must actually log in: smbd can only clone [homes] for
+      # a name THIS host resolves to a passwd entry, and an account nobody can
+      # resolve is an account nobody can log in as. Bounded retries because the
+      # samba restart earlier in this role takes the internal winbindd with it.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/getent
+          - passwd
+          - "{{ item.name }}"
+      register: homelab_ad_account_nss
+      changed_when: false
+      until: homelab_ad_account_nss.rc == 0
+      retries: 12
+      delay: 5
+      loop: "{{ homelab_ad_account_plan }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require the resolved identity to be the directory's own POSIX one
+      # uid and gid are read from the START of the passwd line and the home
+      # directory from the END, on purpose: a display name may legally contain
+      # a colon, which shifts every field after GECOS but none before it.
+      #
+      # The uid is asserted exactly, because /srv/unas/<name> is owned by that
+      # number and a mismatch means the share owner cannot read their own
+      # files. The gid is only required to be present and numeric here: with
+      # `idmap_ldb:use rfc2307 = yes` winbindd should return the Domain Users
+      # gidNumber, but if anything resolved that group before it carried one,
+      # idmap.ldb may hold an allocated mapping instead. The authoritative
+      # gidNumber check is the directory one above; this one asks whether the
+      # account resolves at all.
+      #
+      # The shell field is deliberately NOT compared with loginShell: this role
+      # does not set `winbind nss info = rfc2307` (see the reason above the
+      # `winbind use default domain` task), so winbindd answers from
+      # `template shell` here while SSSD on the workstation reads loginShell
+      # out of the directory. Comparing them would fail on a correct system.
+      ansible.builtin.assert:
+        that:
+          - item.stdout_lines | length >= 1
+          - item.stdout_lines[0].split(':') | length >= 7
+          - item.stdout_lines[0].split(':')[2] | int == item.item.uidNumber
+          - item.stdout_lines[0].split(':')[3] | int > 0
+          - item.stdout_lines[0].split(':')[-2] | length > 0
+        fail_msg: >-
+          A durable account resolves on this Controller with an identity that
+          is not the one stored in the directory, or without a home-directory
+          field. smbd cannot clone [homes] without that field, and a uid that
+          is not the account's uidNumber means idmap.ldb holds a stale
+          allocated mapping: check `idmap_ldb:use rfc2307`, then flush the
+          winbind cache and re-run.
+      loop: "{{ homelab_ad_account_nss.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Verify each per-user storage directory belongs to its account
+      ansible.builtin.stat:
+        path: "{{ homelab_ad_account_share_root }}/{{ item.name }}"
+      register: homelab_ad_account_share
+      changed_when: false
+      loop: "{{ homelab_ad_account_plan }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require each per-user storage directory to be owned and private
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+          - item.stat.uid == item.item.uidNumber
+          - item.stat.gid == item.item.gidNumber
+          - item.stat.mode == '0700'
+        fail_msg: >-
+          A durable account's {{ homelab_ad_account_share_root }} directory is
+          missing, or is not owned exclusively by that account's directory
+          POSIX identity, so its per-user share would serve files its owner
+          cannot read or another account can.
+      loop: "{{ homelab_ad_account_share.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
