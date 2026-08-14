@@ -1177,8 +1177,29 @@ DEFAULT_DURATION = 1800.0
 MAX_DURATION = 10800.0
 #: Boot-to-console bound for the joined workstation before probes start.
 CONSOLE_READY_TIMEOUT = 300.0
-#: Per-probe console bound once the guest shell is live.
-PROBE_TIMEOUT = 90.0
+#: Per-probe console bound once the guest shell is live.  It must cover the sum
+#: of every bounded step the LONGEST check can take, or a probe that is about to
+#: report a diagnosed FAIL would instead be cut off and reported as a bare
+#: console timeout -- losing exactly the evidence the diagnostics exist to
+#: produce.  The worst case is arch-storage-denied, from the rendered probe's own
+#: bounds (workstations/arch_second.py):
+#:
+#:   domain-state wait      30 x 2s   = 60s   (PROBE_DOMAIN_WAIT_TRIES)
+#:   reachability probe               =  5s
+#:   own-share mount                  = 20s
+#:   failure diagnostics    8 x 10s   = 80s   (DIAGNOSTIC_COMMAND_SECONDS)
+#:   foreign-share mount              = 20s
+#:   refusal field                    = 10s
+#:                                     ----
+#:                                      195s
+#:
+#: 240s leaves headroom without being open-ended, and it costs a CONVERGING run
+#: nothing: the 2026-08-14 live drive answered all eleven probes in 102s of
+#: console time, the slowest single probe taking 62s.  The runaway case stays
+#: bounded by the whole-session DEFAULT_DURATION above, which is the right place
+#: for that bound.  Each console wait gets this budget separately, so a check
+#: that prints measured data lines resets it per line rather than sharing one.
+PROBE_TIMEOUT = 240.0
 
 
 def audit_arch_identity_boot(command: list[str], *, disk: Path) -> None:

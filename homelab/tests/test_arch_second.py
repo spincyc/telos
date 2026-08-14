@@ -30,7 +30,8 @@ from workstations.arch_second import (
     MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, MSR, NVRAM_ENTRIES_MARKER,
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
-    PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH, SSSD_CACHE_GLOB,
+    PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH,
+    PROBE_LOOKUP_WAIT_TRIES, SSSD_CACHE_GLOB,
     SSSD_CHILD_BINARIES, SSSD_CHILD_LOG_NAMES, SSSD_SERVICES,
     STORAGE_ATTACHED_MEASUREMENT_MARKERS, STORAGE_DIAGNOSTIC_MARKER,
     STORAGE_HOST_LABEL, STORAGE_MOUNT_ERROR_PATH,
@@ -694,10 +695,15 @@ class ArchSecondTests(unittest.TestCase):
         body = script.split("check_arch_identity_restored()")[1].split(
             "\n}\n")[0]
         self.assertIn("await_domain_state Online", body)
-        self.assertIn('for _ in $(seq 1 "$DOMAIN_WAIT_TRIES"); do', body)
+        self.assertIn('for _ in $(seq 1 "$LOOKUP_WAIT_TRIES"); do', body)
         self.assertIn(
             'getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 && return 0', body)
         self.assertIn(f"sleep {JOIN_WAIT_SECONDS}", body)
+        self.assertIn(f"LOOKUP_WAIT_TRIES='{PROBE_LOOKUP_WAIT_TRIES}'", script)
+        # Long enough to outlast the 15s nss negative-cache default, and
+        # deliberately shorter than the domain-state wait it follows.
+        self.assertGreater(PROBE_LOOKUP_WAIT_TRIES * JOIN_WAIT_SECONDS, 15)
+        self.assertLess(PROBE_LOOKUP_WAIT_TRIES, PROBE_DOMAIN_WAIT_TRIES)
         # Fail-closed: the loop's only exit without a successful lookup is a
         # diagnosed failure.
         self.assertIn("return 1", body)

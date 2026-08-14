@@ -205,10 +205,20 @@ DOMAIN_ONLINE_MARKER = "TELOS ARCH DOMAIN ONLINE"
 # Printed with a secret-free reason when the bounded wait gives up, so a boot
 # that stops here says where it stopped on the only channel gate 8 reads.
 DOMAIN_ONLINE_FAILURE_MARKER = "TELOS ARCH DOMAIN NOT ONLINE"
-# The probe helper's own domain-state wait keeps its established 30 x 2s bound:
-# gate 8 allows PROBE_TIMEOUT (90s) per probe, so the 60-try installer idiom
-# would let a single check outlive its own console bound.
+# The probe helper's own domain-state wait keeps its established 30 x 2s bound.
+# The drive's per-probe console bound (vm/arch_identity_run.PROBE_TIMEOUT) is
+# sized to cover this wait plus every other bounded step of the longest check,
+# so that a diagnosed FAIL is never replaced by a bare console timeout -- the
+# arithmetic is stated there.
 PROBE_DOMAIN_WAIT_TRIES = 30
+# The probe's second bounded wait: the identity lookup in
+# ``arch-identity-restored``.  It is separate from, and much shorter than, the
+# domain-state wait because it is sized against ONE thing -- nss_sss's negative
+# cache, whose ``entry_negative_timeout`` default is 15 s in the sssd-2.13.1-1
+# this disk installs.  ``arch-uncached-denied`` deliberately queried this very
+# principal moments earlier while the Controller was down, so the miss it proved
+# is cached; 10 x 2 s outlasts that window with margin and still fails closed.
+PROBE_LOOKUP_WAIT_TRIES = 10
 
 # Failure diagnostics for the domain-online gate.
 #
@@ -826,6 +836,13 @@ ad_gpo_access_control = permissive
 # `[rule/allowed_domain_options]` entries in the cfg_rules.ini this package
 # ships, checked there rather than assumed -- the section an option belongs to
 # has already cost this gate one live run.
+#
+# KNOWN DRIFT, stated rather than hidden: this triple is load-bearing on real
+# hardware for the reason above, so by the mirroring rule this file follows
+# (see test_sssd_interop_options_match_the_fleet_template) it belongs in
+# ansible/roles/identity_client/templates/sssd.conf.j2 as well.  It is not
+# there yet; adding it was outside the boundary of the change that introduced
+# it here.  Mirror it before treating the fleet role as equivalent.
 offline_timeout = 5
 offline_timeout_max = 20
 offline_timeout_random_offset = 0
@@ -975,6 +992,7 @@ STORAGE_PROBE_ROOT='@STORAGE_PROBE_ROOT@'
 STORAGE_MOUNT_ERROR='@STORAGE_MOUNT_ERROR@'
 LOGIN_BOUND_SECONDS='@LOGIN_BOUND@'
 DOMAIN_WAIT_TRIES='@DOMAIN_WAIT_TRIES@'
+LOOKUP_WAIT_TRIES='@LOOKUP_WAIT_TRIES@'
 
 usage() {
   echo 'usage: homelab-arch-identity-probe <check> <token>' >&2
@@ -1141,7 +1159,7 @@ check_arch_identity_restored() {
     note_domain_state
     return 1
   }
-  for _ in $(seq 1 "$DOMAIN_WAIT_TRIES"); do
+  for _ in $(seq 1 "$LOOKUP_WAIT_TRIES"); do
     getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 && return 0
     sleep @JOIN_WAIT_SECONDS@
   done
@@ -1199,6 +1217,10 @@ storage_unmount() {
 # klist print principal names, key version numbers and ticket flags; neither
 # prints key material, and neither takes a password.
 storage_diagnose() {
+  # Which of the mounts a check performs these fields belong to.  The denial
+  # check attempts two, so without this the following fields would be
+  # unattributable in the transcript.
+  note attempt echo "//$STORAGE_HOST/$1 as $2"
   note mount-error cat "$STORAGE_MOUNT_ERROR"
   note ticket runuser -u "$2" -- klist
   note service-ticket runuser -u "$2" -- kvno "cifs/$STORAGE_HOST"
@@ -1373,6 +1395,7 @@ def _render_probe(
         "@STORAGE_MOUNT_ERROR@": STORAGE_MOUNT_ERROR_PATH,
         "@LOGIN_BOUND@": str(login_bound),
         "@DOMAIN_WAIT_TRIES@": str(PROBE_DOMAIN_WAIT_TRIES),
+        "@LOOKUP_WAIT_TRIES@": str(PROBE_LOOKUP_WAIT_TRIES),
         # The same per-try sleep the shared domain-state wait uses, so the
         # probe's second bounded wait (the identity lookup) cannot drift into a
         # different shape from the first.

@@ -338,6 +338,43 @@ class ProducerJudgeAgreementTests(unittest.TestCase):
             static = {k: v for k, v in fields.items() if k not in measured}
             self.assertEqual(static, CHECK_DETAILS[check], check)
 
+    def test_probe_console_bound_covers_the_longest_probe(self):
+        # A probe that is about to report a diagnosed FAIL must not be cut off
+        # and reported as a bare console timeout: that loses exactly the
+        # evidence the diagnostics exist to produce, which is what cost the
+        # 2026-08-14 run its storage diagnosis.  The bound is therefore derived
+        # from the rendered probe's own bounds, not chosen.
+        from workstations.arch_second import (
+            DIAGNOSTIC_COMMAND_SECONDS, PROBE_DOMAIN_WAIT_TRIES,
+            PROBE_LOOKUP_WAIT_TRIES, JOIN_WAIT_SECONDS, render_installer)
+        domain_wait = PROBE_DOMAIN_WAIT_TRIES * JOIN_WAIT_SECONDS
+        # arch-storage-denied: domain wait, reachability, two bounded mounts,
+        # the eight-field failure diagnosis and the refusal field.  The field
+        # count is read off the rendered probe so adding a field cannot quietly
+        # push the longest check past its own console bound.
+        fields = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation",
+            expected_sizes_mib=(1024, 16, 307200, 102400, 2048),
+        ).split("storage_diagnose() {")[1].split("\n}\n")[0].count("\n  note")
+        self.assertEqual(fields, 8)
+        worst_storage = (
+            domain_wait + 5 + 20 + fields * DIAGNOSTIC_COMMAND_SECONDS
+            + 20 + DIAGNOSTIC_COMMAND_SECONDS)
+        # arch-identity-restored: two bounded waits and two diagnostic fields.
+        worst_identity = (
+            domain_wait + PROBE_LOOKUP_WAIT_TRIES * JOIN_WAIT_SECONDS
+            + 2 * DIAGNOSTIC_COMMAND_SECONDS)
+        self.assertGreaterEqual(
+            arch_identity_run.PROBE_TIMEOUT, worst_storage)
+        self.assertGreaterEqual(
+            arch_identity_run.PROBE_TIMEOUT, worst_identity)
+        # The lookup wait is deliberately the SHORTER of the two: it is sized
+        # against the 15s nss negative-cache window, not against a reconnect.
+        self.assertLess(
+            PROBE_LOOKUP_WAIT_TRIES * JOIN_WAIT_SECONDS, domain_wait)
+        self.assertGreater(PROBE_LOOKUP_WAIT_TRIES * JOIN_WAIT_SECONDS, 15)
+
     def test_judge_graded_measurements_are_in_the_fixture(self):
         # login_seconds is graded by the judge, so the judge's own fixture must
         # carry it.  The three arch-storage-attached measurements are NOT graded
