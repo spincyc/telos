@@ -12,6 +12,18 @@ services = nss, pam, ifp
 [domain/{{ homelab_identity_domain }}]
 id_provider = ad
 access_provider = ad
+# Samba-AD interop. SSSD defaults ad_gpo_access_control to "enforcing", which
+# makes every interactive login depend on fetching GPOs from SYSVOL over SMB.
+# Arch's sssd package runs the daemon as User=sssd and grants
+# cap_dac_read_search to ldap_child, krb5_child and sssd_pam only; gpo_child
+# gets none, yet it must read the host keytab (mode 0600 root:root, as
+# net ads join writes it) to authenticate that fetch. Enforcing mode would
+# refuse every login for a reason unrelated to identity. Permissive keeps the
+# evaluation and SSSD's syslog warning while letting the login through. No GPO
+# is authored anywhere in this project and ad_gpo_implicit_deny stays False, so
+# enforcing could never grant less than this -- only deny everything. Keep the
+# fleet template and the installer (workstations/arch_second.py) in step.
+ad_gpo_access_control = permissive
 ad_domain = {{ homelab_identity_domain }}
 krb5_realm = {{ homelab_identity_realm | upper }}
 realmd_tags = manages-system joined-with-samba
@@ -22,6 +34,16 @@ krb5_store_password_if_offline = True
 offline_credentials_expiration = {{ homelab_identity_offline_credentials_expiration_days }}
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
+# Which follows directly, against a Samba AD DC: directory-stored ids mean
+# every user lookup must return uidNumber and gidNumber, and SSSD asks the AD
+# Global Catalog (port 3268) first. The AD schema Samba ships defines
+# UidNumber and GidNumber without isMemberOfPartialAttributeSet -- not
+# replicated to the Global Catalog -- so a GC answer can never carry a POSIX
+# identity. SSSD detects that itself during its subdomain refresh, but a lookup
+# arriving first still goes to the GC, so state it here. Nothing is lost:
+# sssd-ad(5) needs the Global Catalog only for trusted-domain users and
+# cross-domain group memberships, and this is one domain with no trusts.
+ad_enable_gc = False
 fallback_homedir = /home/%u
 default_shell = /bin/bash
 use_fully_qualified_names = False

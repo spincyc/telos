@@ -10,10 +10,16 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    CONTROLLER_ADDRESS, DOMAIN_ONLINE_AFTER_UNITS, DOMAIN_ONLINE_BEFORE_UNITS,
+    CONTROLLER_ADDRESS, DIAGNOSTIC_COMMAND_SECONDS, DIAGNOSTIC_EMPTY_FIELD,
+    DIAGNOSTIC_LINE_COLUMNS, DIAGNOSTIC_SSSD_DEBUG_LEVEL,
+    DIAGNOSTIC_SSSD_LOG_DIR, DIAGNOSTIC_SSSD_LOG_LINES,
+    DIRECTORY_ADMIN_GROUP, DIRECTORY_PRIMARY_GROUP,
+    DOMAIN_ONLINE_AFTER_UNITS, DOMAIN_ONLINE_BEFORE_UNITS,
+    DOMAIN_ONLINE_DIAGNOSTIC_MARKER,
     DOMAIN_ONLINE_FAILURE_MARKER, DOMAIN_ONLINE_MARKER,
     DOMAIN_ONLINE_SCRIPT_PATH, DOMAIN_ONLINE_UNIT_NAME,
-    DOMAIN_ONLINE_UNIT_PATH, ESP, JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL,
+    DOMAIN_ONLINE_UNIT_PATH, ESP, HOST_KEYTAB_PATH,
+    JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL,
     JOIN_ONCE_BEFORE_UNITS, JOIN_ONCE_SCRIPT_PATH, JOIN_ONCE_UNIT_NAME,
     JOIN_ONCE_UNIT_PATH, JOIN_VERIFIED_MARKER, JOIN_WAIT_SECONDS,
     JOIN_WAIT_TRIES, LINUX_ROOT_X86_64,
@@ -21,7 +27,7 @@ from workstations.arch_second import (
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
     PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH, SSSD_CACHE_GLOB,
-    SSSD_SERVICES, STORAGE_HOST_LABEL,
+    SSSD_CHILD_BINARIES, SSSD_SERVICES, STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
     WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
@@ -34,6 +40,10 @@ from lib.workstation_repo import REPO_NAME
 
 MIB = 1024**2
 SIZES = (1024, 16, 300 * 1024, 100 * 1024, 2048)
+# The fleet template the installer's rendered sssd.conf deliberately mirrors.
+SSSD_TEMPLATE = (
+    Path(__file__).resolve().parents[1]
+    / "ansible/roles/identity_client/templates/sssd.conf.j2")
 GUIDS = (ESP, MSR, WINDOWS, LINUX_ROOT_X86_64, WINDOWS_RECOVERY)
 FILESYSTEMS = ("vfat", None, "ntfs", None, "ntfs")
 
@@ -993,6 +1003,167 @@ class ArchSecondTests(unittest.TestCase):
         sssd_conf = _heredoc_body(script, "TELOS_SSSD_EOF")
         self.assertIn("services = nss, pam, ifp", sssd_conf)
         self.assertIn('sssctl domain-status "$DOMAIN"', script)
+
+    # ---- Samba-AD interop in sssd.conf (gate-8 identity contract) ----
+
+    def test_sssd_never_asks_the_global_catalog_for_posix_ids(self):
+        # Directory-stored ids (ldap_id_mapping = False, ADR 0055) mean every
+        # user lookup must return uidNumber and gidNumber, and SSSD asks the AD
+        # Global Catalog on port 3268 FIRST by default.  The AD schema Samba
+        # ships defines UidNumber and GidNumber without
+        # isMemberOfPartialAttributeSet -- not replicated to the Global Catalog
+        # -- so a GC answer can never carry a POSIX identity.  SSSD 2.13 detects
+        # that itself, but only inside its subdomain refresh, which a first
+        # lookup can beat and Samba's incomplete Global Catalog can fail
+        # outright.  So it is stated, not raced.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        self.assertIn("\nldap_id_mapping = False\n", sssd_conf)
+        self.assertIn("\nad_enable_gc = False\n", sssd_conf)
+        # And the reason travels with the option, because a bare "False" reads
+        # like a tuning knob somebody may helpfully remove.
+        self.assertIn("isMemberOfPartialAttributeSet", sssd_conf)
+
+    def test_sssd_never_lets_gpo_retrieval_deny_every_login(self):
+        # access_provider = ad defaults ad_gpo_access_control to enforcing,
+        # which makes every login depend on fetching GPOs from SYSVOL over SMB.
+        # gpo_child performs that fetch and must read the host keytab, yet
+        # Arch's sssd runs as User=sssd and grants cap_dac_read_search to
+        # ldap_child, krb5_child and sssd_pam only -- while net ads join writes
+        # the keytab mode 0600 root:root.  Enforcing mode would therefore deny
+        # every login for a reason unrelated to identity.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        self.assertIn("\naccess_provider = ad\n", sssd_conf)
+        self.assertIn("\nad_gpo_access_control = permissive\n", sssd_conf)
+        # Permissive, not disabled: the evaluation and SSSD's syslog warning
+        # survive, so a future GPO regime can be switched back on knowingly.
+        self.assertNotIn("ad_gpo_access_control = disabled", sssd_conf)
+        self.assertIn("gpo_child", sssd_conf)
+
+    def test_sssd_interop_options_match_the_fleet_template(self):
+        # The installer and roles/identity_client deliberately mirror each
+        # other; 847c400 already had to repair one drift between them.  Both
+        # Samba-AD interop options are load-bearing on real hardware too, so
+        # neither file may carry them alone.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        template = SSSD_TEMPLATE.read_text(encoding="utf-8")
+        for option in ("ad_enable_gc = False",
+                       "ad_gpo_access_control = permissive",
+                       "ldap_id_mapping = False",
+                       "id_provider = ad",
+                       "access_provider = ad"):
+            with self.subTest(option=option):
+                self.assertIn(f"\n{option}\n", sssd_conf)
+                self.assertIn(f"\n{option}\n", template)
+
+    def test_the_privilege_group_name_has_one_definition(self):
+        # The acceptance probe resolves it and the boot gate reports on it, so
+        # "domain admins" is spelled once in the module and substituted into
+        # both -- a rename cannot leave one of them behind.
+        self.assertEqual(DIRECTORY_ADMIN_GROUP, "domain admins")
+        self.assertEqual(DIRECTORY_PRIMARY_GROUP, "domain users")
+        script = self._rendered()
+        probe = _heredoc_body(script, "TELOS_PROBE_EOF")
+        gate = _heredoc_body(script, "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(f"ADMIN_GROUP='{DIRECTORY_ADMIN_GROUP}'", probe)
+        self.assertIn(f"ADMIN_GROUP='{DIRECTORY_ADMIN_GROUP}'", gate)
+        self.assertNotIn("@ADMIN_GROUP@", script)
+        # vm/controller_principals stages a gidNumber on both groups; with
+        # ldap_id_mapping = False a primary group without one makes an
+        # otherwise complete user unresolvable, which is why the gate reports
+        # the primary group as evidence rather than as decoration.
+        self.assertIn(f"PRIMARY_GROUP='{DIRECTORY_PRIMARY_GROUP}'", gate)
+
+    # ---- Gate diagnostics (so the next failure names its own layer) ----
+
+    def test_domain_online_failure_prints_bounded_diagnostics(self):
+        # The 2026-08-14 run cost a whole install-plus-boot cycle to learn one
+        # sentence.  Every bounded wait that gives up now also prints evidence,
+        # and every field is itself bounded: a diagnostic that hung would
+        # replace the named failure it exists to explain.
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(
+            f'value="$(timeout {DIAGNOSTIC_COMMAND_SECONDS} "$@" 2>&1 |',
+            body)
+        self.assertIn(f"cut -c1-{DIAGNOSTIC_LINE_COLUMNS})", body)
+        self.assertIn(f'"${{value:-{DIAGNOSTIC_EMPTY_FIELD}}}"', body)
+        fields = re.findall(r"^ +say ([a-z-]+) ", body, re.M)
+        self.assertEqual(fields, [
+            "sssd-unit", "sssd-config", "domain-status", "login-principal",
+            "primary-group", "admin-group", "host-keytab",
+            "keytab-principals", "sssd-child-caps", "directory-info",
+            "directory-user", "directory-primary-group", "sssd-log",
+        ])
+        # The three layers a reader has to be able to separate: SSSD's own
+        # view, the local keytab the GSSAPI bind needs, and the directory's
+        # answer over LDAP on the DC rather than the Global Catalog.
+        self.assertIn(f'klist -k "$HOST_KEYTAB"', body)
+        self.assertIn(f"HOST_KEYTAB='{HOST_KEYTAB_PATH}'", body)
+        self.assertIn("getcap " + " ".join(SSSD_CHILD_BINARIES), body)
+        self.assertIn(
+            'net ads search -P "(sAMAccountName=$LOGIN_PRINCIPAL)"', body)
+        self.assertIn("uidNumber gidNumber", body)
+        # SSSD's own account of it, at a level that records decisions and
+        # filters, with a bounded tail.
+        self.assertIn(f"debug_level='{DIAGNOSTIC_SSSD_DEBUG_LEVEL}'", body)
+        self.assertIn(f"tail -n {DIAGNOSTIC_SSSD_LOG_LINES}", body)
+        self.assertIn(f"{DIAGNOSTIC_SSSD_LOG_DIR}/sssd_", body)
+        # The log tail and the "no log to read" fallback share one field name,
+        # so a reader greps one field either way.
+        self.assertIn("sssd-log \"$entry\" > /dev/console", body)
+        self.assertIn(f"say sssd-log ls -l '{DIAGNOSTIC_SSSD_LOG_DIR}'", body)
+
+    def test_diagnostics_run_only_after_a_failure_and_only_from_fail(self):
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        # Exactly one call site, inside fail(), after the reason and before the
+        # exit: a converging boot pays nothing, and no path can exit without
+        # having printed its evidence.
+        calls = re.findall(r"^  diagnose$", body, re.M)
+        self.assertEqual(len(calls), 1)
+        reason = body.index(
+            f"printf '%s: %s\\n' '{DOMAIN_ONLINE_FAILURE_MARKER}'")
+        ordered = [
+            body.index("fail() {"),
+            reason,
+            body.index("\n  diagnose\n"),
+            body.index("\n  exit 1\n"),
+        ]
+        self.assertEqual(ordered, sorted(ordered))
+        # The success marker never appears inside the diagnostic block.
+        self.assertLess(body.index("diagnose() {"), reason)
+
+    def test_diagnostic_marker_can_never_forge_or_shadow_a_gate_marker(self):
+        # vm/arch_identity_run.await_domain_online waits on a bare substring
+        # match for the success marker, so a diagnostic line that contained it
+        # would report a domain that never came online.
+        self.assertNotIn(DOMAIN_ONLINE_MARKER, DOMAIN_ONLINE_DIAGNOSTIC_MARKER)
+        self.assertNotIn(
+            DOMAIN_ONLINE_FAILURE_MARKER, DOMAIN_ONLINE_DIAGNOSTIC_MARKER)
+        self.assertNotIn(DOMAIN_ONLINE_DIAGNOSTIC_MARKER, DOMAIN_ONLINE_MARKER)
+        self.assertNotIn(
+            DOMAIN_ONLINE_DIAGNOSTIC_MARKER, DOMAIN_ONLINE_FAILURE_MARKER)
+        script = self._rendered()
+        self.assertEqual(script.count(DOMAIN_ONLINE_MARKER), 1)
+
+    def test_diagnostics_are_secret_free_by_construction(self):
+        # The gate authenticates nothing, so no credential exists in the
+        # process to leak; the executable lines are held to that.  klist -k
+        # prints principal names and key versions, never key material, and
+        # `net` reads the machine credential without printing it.
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        start = body.index("diagnose() {")
+        block = body[start:body.index("\nfail() {", start)]
+        for line in block.splitlines():
+            if line.lstrip().startswith("#") or not line.strip():
+                continue
+            self.assertNotRegex(
+                line, r"(?i)password|secret|credential",
+                f"unexpected credential reference: {line!r}")
+            self.assertNotIn("-U ", line)
+            self.assertNotIn("/run/telos-join", line)
+        # klist never dumps keys, and no field reads a key table other than the
+        # host keytab.
+        self.assertNotIn("klist -e", block)
+        self.assertNotIn("-K", block)
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):

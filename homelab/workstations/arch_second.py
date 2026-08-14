@@ -197,6 +197,59 @@ DOMAIN_ONLINE_FAILURE_MARKER = "TELOS ARCH DOMAIN NOT ONLINE"
 # would let a single check outlive its own console bound.
 PROBE_DOMAIN_WAIT_TRIES = 30
 
+# Failure diagnostics for the domain-online gate.
+#
+# Why they exist: the live run of 2026-08-14 (bundle
+# run-20260814T131951Z-83e2612decf0) spent a whole install-plus-boot cycle to
+# learn one sentence -- "the directory login principal never resolved through
+# SSSD" -- with the machine join fully proven in the same transcript
+# (``join_verified`` true, ``net ads testjoin`` passed in-guest).  A reason
+# without evidence cannot say WHICH layer failed, so the gate now prints a
+# compact, bounded, secret-free field set before it exits.  It prints only from
+# the failure path, so a converging boot pays nothing for it.
+#
+# The marker is deliberately not a prefix of, and does not contain, either gate
+# marker: vm/arch_identity_run.await_domain_online waits on a bare substring
+# match for DOMAIN_ONLINE_MARKER, so a diagnostic line that contained it would
+# forge success.
+DOMAIN_ONLINE_DIAGNOSTIC_MARKER = "TELOS ARCH DOMAIN DIAGNOSTIC"
+# Per-field bound.  A diagnostic that hung would replace the named failure it
+# exists to explain, so every field is timeout-bound and flattened to one line.
+DIAGNOSTIC_COMMAND_SECONDS = 10
+# One line per field, capped so a 115200-baud transcript stays readable.
+DIAGNOSTIC_LINE_COLUMNS = 200
+# What a field prints when its command answered nothing at all.  An unresolved
+# getent and an unprinted field must not look alike on the console.
+DIAGNOSTIC_EMPTY_FIELD = "(no output)"
+# SSSD's own account of the failure.  Level 7 is 'trace function': it records
+# the backend's decisions and the LDAP filters it sent, which is what names the
+# layer.  Higher levels add wire detail without adding a reason.  Nothing in
+# this gate authenticates, so no credential exists in the process to reach the
+# log at any level.
+DIAGNOSTIC_SSSD_DEBUG_LEVEL = 7
+DIAGNOSTIC_SSSD_LOG_LINES = 40
+DIAGNOSTIC_SSSD_LOG_DIR = "/var/log/sssd"
+# The host keytab and the SSSD helper children that can read it.  Arch's
+# sssd-2.13.1-1 runs the daemon as ``User=sssd`` and grants
+# ``cap_dac_read_search`` to individual helper binaries in its post_install
+# scriptlet, while ``net ads join`` writes the keytab mode 0600 root:root.  So
+# whether a GSSAPI bind was ever possible is a property of these files, not of
+# the directory, and a failing gate should say so rather than leave it inferred.
+HOST_KEYTAB_PATH = "/etc/krb5.keytab"
+SSSD_CHILD_BINARIES = (
+    "/usr/lib/sssd/sssd/ldap_child",
+    "/usr/lib/sssd/sssd/gpo_child",
+)
+# The two directory groups this disk names, defined once and used by both the
+# acceptance probe and the gate's diagnostics.  The primary group is evidence
+# rather than decoration: with ``ldap_id_mapping = False`` a user whose primary
+# group carries no ``gidNumber`` cannot resolve even when the user object is
+# complete, so "the user is missing" and "its primary group is missing" are
+# different faults that must not look alike.  vm/controller_principals stages
+# ``gidNumber`` on both (POSIX_ALLOCATION).
+DIRECTORY_PRIMARY_GROUP = "domain users"
+DIRECTORY_ADMIN_GROUP = "domain admins"
+
 # systemd-boot menu titles the gate-10 acceptance keys on.  The Arch title is
 # authored by this installer's loader entry below; the Windows title is what
 # systemd-boot's auto-detection renders for the gate-5 image's
@@ -567,6 +620,22 @@ services = {", ".join(SSSD_SERVICES)}
 [domain/{domain}]
 id_provider = ad
 access_provider = ad
+# Samba-AD interop, read off the packages this install ships (2026-08-14).
+# SSSD defaults ad_gpo_access_control to "enforcing", which makes every
+# interactive login depend on fetching GPOs from SYSVOL over SMB.  That fetch
+# is done by /usr/lib/sssd/sssd/gpo_child, which reads the host keytab to
+# authenticate -- and on this disk it cannot: Arch's sssd-2.13.1-1 runs the
+# daemon as User=sssd and its post_install scriptlet grants
+# cap_dac_read_search to ldap_child, krb5_child and sssd_pam only, while
+# net ads join writes /etc/krb5.keytab mode 0600 root:root.  Enforcing mode
+# would therefore refuse every login for a reason that has nothing to do with
+# identity.  Permissive keeps the evaluation and SSSD's syslog warning ("user
+# would have been denied GPO-based logon access...") while letting the login
+# through, and it also covers the site-autodiscovery failure SSSD reports as
+# "GPO will not work".  Nothing in this project authors a GPO and
+# ad_gpo_implicit_deny stays at its False default, so enforcing mode could
+# never grant less than this -- only deny everything.
+ad_gpo_access_control = permissive
 ad_domain = {domain}
 krb5_realm = {realm}
 realmd_tags = manages-system joined-with-samba
@@ -577,6 +646,20 @@ krb5_store_password_if_offline = True
 offline_credentials_expiration = 0
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
+# Which follows directly from the line above, against a Samba AD DC.  Reading
+# ids from the directory means every user lookup must return uidNumber and
+# gidNumber, and by default SSSD asks the AD Global Catalog (port 3268) FIRST.
+# The AD schema Samba ships (setup/ad-schema/MS-AD_Schema_2K8_R2_Attributes)
+# defines UidNumber and GidNumber with no isMemberOfPartialAttributeSet -- that
+# is, deliberately not replicated to the Global Catalog -- so a GC answer can
+# never carry a POSIX identity.  SSSD 2.13 probes that very attribute and
+# disables the GC itself, but the probe runs inside its subdomain refresh: a
+# lookup that arrives first, or a refresh that Samba's incomplete Global
+# Catalog fails outright, still queries the GC and finds no POSIX identity.
+# State it here instead of racing that probe.  Nothing is lost: this is a
+# single-domain forest with no trusts, and sssd-ad(5) needs the Global Catalog
+# only for trusted-domain users and cross-domain group memberships.
+ad_enable_gc = False
 fallback_homedir = /home/%u
 default_shell = /bin/bash
 use_fully_qualified_names = False
@@ -651,7 +734,7 @@ _PROBE_TEMPLATE = """\
 set -u
 
 DOMAIN='@DOMAIN@'
-ADMIN_GROUP='domain admins'
+ADMIN_GROUP='@ADMIN_GROUP@'
 STANDARD_USER='@STANDARD_USER@'
 DAILY_ADMIN='@DAILY_ADMIN@'
 DOMAIN_ADMIN='@DOMAIN_ADMIN@'
@@ -908,6 +991,9 @@ def _render_probe(
     """Substitute validated, quote-free values into the probe template."""
     replacements = {
         "@DOMAIN@": domain,
+        # One definition of the privilege group's name on this disk, shared
+        # with the boot gate's diagnostics.
+        "@ADMIN_GROUP@": DIRECTORY_ADMIN_GROUP,
         "@STANDARD_USER@": principals["standard"],
         "@DAILY_ADMIN@": principals["daily_admin"],
         "@DOMAIN_ADMIN@": principals["domain_admin"],
@@ -1063,6 +1149,9 @@ def _render_domain_online_script(
     *expected* to fail while it converges, and errexit would turn the first
     such probe into an exit.  Every terminal path instead calls ``fail``.
     """
+    # Absolute, space-free paths from a module constant, so this stays one safe
+    # shell word list and never needs quoting.
+    diagnostic_child_binaries = " ".join(SSSD_CHILD_BINARIES)
     return f"""#!/usr/bin/env bash
 # Managed by Telos gate 7 (workstations/arch_second.py).  Boot-time SSSD
 # domain-online gate.  See DOMAIN_ONLINE_UNIT_NAME in that module for why the
@@ -1075,13 +1164,94 @@ set -uo pipefail
 DOMAIN='{realm_dns_domain}'
 DOMAIN_WAIT_TRIES='{JOIN_WAIT_TRIES}'
 LOGIN_PRINCIPAL='{login_principal}'
+PRIMARY_GROUP='{DIRECTORY_PRIMARY_GROUP}'
+ADMIN_GROUP='{DIRECTORY_ADMIN_GROUP}'
+HOST_KEYTAB='{HOST_KEYTAB_PATH}'
+
+# One diagnostic field: a bounded command, its output flattened to a single
+# length-capped console line, prefixed with the diagnostic marker so a human or
+# a later evidence extractor can grep the set out of the ttyS0 transcript.  The
+# bound matters as much as the field: a diagnostic that hung would replace the
+# named failure it exists to explain.
+say() {{
+  field="$1"
+  shift
+  value="$(timeout {DIAGNOSTIC_COMMAND_SECONDS} "$@" 2>&1 |
+           tr -s '[:space:]' ' ' | cut -c1-{DIAGNOSTIC_LINE_COLUMNS})"
+  # An empty answer is itself a finding, so it is named: "the lookup returned
+  # nothing" and "the field was never printed" must not look alike.
+  printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' "$field" \\
+    "${{value:-{DIAGNOSTIC_EMPTY_FIELD}}}" > /dev/console
+}}
+
+# Why this block exists: the live run of 2026-08-14 stopped here and said only
+# that the login principal never resolved, which cost an entire
+# install-plus-boot cycle without naming a layer.  These fields walk outward
+# from SSSD to the directory, so the next failure names its own layer from the
+# transcript alone -- and they run only after a bounded wait has already given
+# up, so a converging boot pays nothing for them.
+#
+# Secret-free by construction, and it is the gate's shape that guarantees it
+# rather than a rule to remember: this unit only ever LOOKS UP identities and
+# authenticates nothing, so no credential exists in the process to leak.
+# klist -k lists principal names and key versions, never key material; getent
+# prints POSIX fields, never hashes; net reads the machine credential from
+# secrets.tdb without printing it; and the SSSD log is raised only to
+# trace-function level, which records LDAP filters and backend decisions.
+diagnose() {{
+  say sssd-unit systemctl is-active sssd.service
+  say sssd-config sssctl config-check
+  say domain-status sssctl domain-status "$DOMAIN"
+  say login-principal getent passwd "$LOGIN_PRINCIPAL"
+  # With ldap_id_mapping = False a user whose primary group carries no
+  # gidNumber cannot resolve even when the user object is complete, so these
+  # two separate "the user is missing" from "its group is missing".
+  say primary-group getent group "$PRIMARY_GROUP"
+  say admin-group getent group "$ADMIN_GROUP"
+  # Arch runs sssd as User=sssd, so the root-only host keytab is reachable only
+  # through the file capabilities its helper children carry.  Together these
+  # three fields say whether a GSSAPI bind was ever possible at all -- a
+  # question about local files, not about the directory.
+  say host-keytab ls -l "$HOST_KEYTAB"
+  say keytab-principals klist -k "$HOST_KEYTAB"
+  say sssd-child-caps getcap {diagnostic_child_binaries}
+  # The directory's own answer, over LDAP on the DC itself rather than the
+  # Global Catalog, authenticated with the machine credential the join already
+  # proved.  If these carry uidNumber and gidNumber while the getent fields
+  # above did not, the fault is in SSSD and not in the directory.
+  say directory-info net ads info
+  say directory-user net ads search -P "(sAMAccountName=$LOGIN_PRINCIPAL)" \\
+    sAMAccountName uidNumber gidNumber loginShell unixHomeDirectory
+  say directory-primary-group net ads search -P \\
+    "(sAMAccountName=$PRIMARY_GROUP)" sAMAccountName gidNumber
+  # Last, SSSD's own account of it: raise the log level, force one more lookup
+  # so the reason is recorded at that level, then print the bounded tail.
+  debug_level='{DIAGNOSTIC_SSSD_DEBUG_LEVEL}'
+  timeout {DIAGNOSTIC_COMMAND_SECONDS} sssctl debug-level "$debug_level" \\
+    >/dev/null 2>&1
+  getent passwd "$LOGIN_PRINCIPAL" >/dev/null 2>&1 || true
+  domain_log='{DIAGNOSTIC_SSSD_LOG_DIR}/sssd_'"$DOMAIN"'.log'
+  if [ -r "$domain_log" ]; then
+    tail -n {DIAGNOSTIC_SSSD_LOG_LINES} "$domain_log" |
+      cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
+      while IFS= read -r entry; do
+        printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' \\
+          sssd-log "$entry" > /dev/console
+      done
+  else
+    say sssd-log ls -l '{DIAGNOSTIC_SSSD_LOG_DIR}'
+  fi
+}}
 
 # Failures print to /dev/console, not only to the journal: ttyS0 is the only
 # channel gate 8 can read, and a readiness stop that said nothing there would
-# be exactly the undiagnosable failure this unit exists to end.  Both markers
-# are secret-free -- a principal name and a fixed reason, never a credential.
+# be exactly the undiagnosable failure this unit exists to end.  The reason
+# comes first so the verdict leads the transcript, then the evidence.  Both
+# markers are secret-free -- a principal name and a fixed reason, never a
+# credential.
 fail() {{
   printf '%s: %s\\n' '{DOMAIN_ONLINE_FAILURE_MARKER}' "$1" > /dev/console
+  diagnose
   exit 1
 }}
 
