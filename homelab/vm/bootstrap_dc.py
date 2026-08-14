@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -16,11 +18,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 try:
-    from .network import socket_network_args
+    from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
+    from .simulation_overlay import (
+        DESTROY_CONFIRMATION_PREFIX,
+        PERSISTENT_DISK_NAME,
+        PERSISTENT_MARKER_NAME,
+        PERSISTENT_VARS_NAME,
+        PersistentControllerInstance,
+    )
 except ImportError:  # Direct execution from homelab/.
-    from network import socket_network_args
+    from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
+    from simulation_overlay import (
+        DESTROY_CONFIRMATION_PREFIX,
+        PERSISTENT_DISK_NAME,
+        PERSISTENT_MARKER_NAME,
+        PERSISTENT_VARS_NAME,
+        PersistentControllerInstance,
+    )
 
 
 NAME = "bootstrap-dc"
@@ -29,6 +45,18 @@ MEMORY_MIB = 8192
 DISK_SIZE = "80G"
 DISK_SERIAL = "TELOS-BOOTSTRAP-DC1"
 DEFAULT_STATE = Path("build/homelab/vm/bootstrap-dc")
+#: Persistent instances live under their own root, never under DEFAULT_STATE.
+#: ``simulation_overlay.assert_persistent_state_separate`` refuses the canonical
+#: acceptance state whatever root and instance a caller names, so this default
+#: is a convenience and not the safety property.
+DEFAULT_PERSISTENT_ROOT = Path("build/homelab/vm/persistent-dc")
+#: A persistent instance listens on its own loopback segment. Sharing the
+#: acceptance port would let a forgotten persistent guest hold 127.0.0.1:12961
+#: and make an acceptance run fail to bind; separate ports keep the two
+#: simulations from touching each other at all. One persistent instance may be
+#: up at a time, and a second one fails loudly on bind rather than silently
+#: joining the first one's segment.
+PERSISTENT_SOCKET_PORT = DEFAULT_PORT + 10
 REPOSITORY = Path(__file__).resolve().parents[2]
 SYS_CLASS_NET = Path("/sys/class/net")
 _NET_NAME = re.compile(r"^[a-zA-Z0-9_.-]{1,15}$")
@@ -55,6 +83,16 @@ def paths(state: Path) -> dict[str, Path]:
         "disk": state / "bootstrap-dc.qcow2",
         "vars": state / "OVMF_VARS.fd",
         "manifest": state / "manifest.json",
+    }
+
+
+def persistent_paths(state: Path) -> dict[str, Path]:
+    """File layout of a persistent instance: disjoint names from ``paths``."""
+    return {
+        "state": state,
+        "disk": state / PERSISTENT_DISK_NAME,
+        "vars": state / PERSISTENT_VARS_NAME,
+        "marker": state / PERSISTENT_MARKER_NAME,
     }
 
 
@@ -185,13 +223,22 @@ def qemu_command(
     seed_iso: Path | None = None,
     network_config: dict[str, str] | None = None,
     verify_host_network: bool = False,
+    *,
+    files: dict[str, Path] | None = None,
+    socket_port: int = DEFAULT_PORT,
+    name: str = NAME,
 ) -> list[str]:
-    files = paths(state)
+    # ``files``, ``socket_port`` and ``name`` let a persistent instance reuse
+    # this command shape without renaming its disk to the acceptance name,
+    # without sharing the acceptance loopback segment, and while staying
+    # distinguishable in ``ps``. Omitting them keeps the acceptance layout, so
+    # every existing caller is byte-for-byte unchanged.
+    files = paths(state) if files is None else files
     pair = ovmf_pair()
     code = pair[0] if pair else Path("/usr/share/edk2/x64/OVMF_CODE.4m.fd")
     command = [
         "qemu-system-x86_64",
-        "-name", NAME,
+        "-name", name,
         "-machine", "q35,accel=kvm",
         "-cpu", "host",
         "-smp", str(VCPUS),
@@ -212,7 +259,7 @@ def qemu_command(
     ]
     if network_config is None:
         command += socket_network_args(
-            role="listen", mac="52:54:00:11:11:11")
+            role="listen", mac="52:54:00:11:11:11", port=socket_port)
     else:
         command += tap_network_args(
             network_config, verify_host=verify_host_network)
@@ -434,6 +481,163 @@ def destroy(state: Path, confirm: str | None) -> int:
     return 0
 
 
+def _persistent_state(root: Path, instance: str) -> Path:
+    """Resolve one instance directory, refusing a name that could traverse."""
+    if not PersistentControllerInstance.valid_instance_name(instance):
+        raise ValueError(
+            "instance must be 1-32 lowercase letters, digits, or hyphens and "
+            "must not start or end with a hyphen")
+    return Path(root) / instance
+
+
+def _persistent_running(target: PersistentControllerInstance) -> bool | None:
+    """Whether the instance lock is held; ``None`` when it cannot be probed."""
+    if not target.lock_path.is_file():
+        return False
+    try:
+        with target.lock_path.open("a+b") as stream:
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        return None
+    return False
+
+
+def persistent_up(
+    root: Path,
+    instance: str,
+    apply: bool,
+    *,
+    canonical_state: Path = DEFAULT_STATE,
+) -> int:
+    """Create when absent, then boot one persistent controller instance.
+
+    Persistence is requested here and nowhere else: no runner infers it, and the
+    disposable acceptance path never reaches this function. The instance's own
+    disk is booted in place and is not hash-fenced, which is exactly why the
+    acceptance canonical is refused before anything is printed or created.
+    """
+    try:
+        state = _persistent_state(root, instance)
+        target = PersistentControllerInstance(state, instance=instance)
+        canonical = paths(canonical_state)
+        target.assert_separate(canonical["disk"])
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    files = persistent_paths(state)
+    existing = target.exists()
+    try:
+        command = qemu_command(
+            state, None, files=files, socket_port=PERSISTENT_SOCKET_PORT,
+            name=f"persistent-dc-{instance}")
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"persistent controller instance: {instance}")
+    print(f"state: {state}")
+    print("mode: persistent; this disk is the durable directory and is not "
+          "hash-fenced")
+    if existing:
+        print("bring-up: reuse the retained directory state")
+    else:
+        print(f"bring-up: seed {files['disk']} from {canonical['disk']}")
+    print(f"acceptance canonical: {canonical['state']} is read-only here and "
+          "is never a persistent target")
+    print(" ".join(str(part) for part in command))
+    if not apply:
+        print("dry run; repeat with --apply")
+        return 0
+
+    problems = [f"{tool} is not installed" for tool in
+                ("qemu-system-x86_64", "qemu-img") if not shutil.which(tool)]
+    if not existing:
+        problems += [str(canonical[key]) + " is missing"
+                     for key in ("disk", "vars")
+                     if not _regular_file(canonical[key])]
+    if problems:
+        for problem in problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+    try:
+        if not existing:
+            marker = target.create(canonical["disk"], canonical["vars"])
+            print(f"seeded {instance} from "
+                  f"{marker['seeded_from']['disk_sha256']}")
+        target.prepare()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    try:
+        returncode = subprocess.run(command, check=False).returncode
+    except BaseException:
+        # Release the lock on interruption, but never let a teardown error hide
+        # why the run stopped.
+        with contextlib.suppress(BaseException):
+            target.close()
+        raise
+    try:
+        target.close()
+    except (RuntimeError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"{instance}: guest exited; directory state retained at {state}")
+    return returncode
+
+
+def persistent_status(root: Path, instance: str) -> int:
+    try:
+        state = _persistent_state(root, instance)
+        target = PersistentControllerInstance(state, instance=instance)
+        target.assert_separate()
+        marker = target.read_marker() if target.exists() else None
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    running = _persistent_running(target)
+    print(f"persistent controller instance {instance}: "
+          f"{'ready' if marker else 'absent or incomplete'}")
+    print(f"state: {state}")
+    if marker:
+        print(f"created: {marker['created_utc']}")
+        print(f"seeded from: {marker['seeded_from']['disk']} "
+              f"({marker['seeded_from']['disk_sha256']})")
+    print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
+    print("hash fence: none by design; the disk is the durable directory state")
+    return 0 if marker else 1
+
+
+def persistent_destroy(root: Path, instance: str, confirm: str | None) -> int:
+    try:
+        state = _persistent_state(root, instance)
+        target = PersistentControllerInstance(state, instance=instance)
+        target.assert_separate()
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    # Demand the confirmation before reporting anything about the instance, as
+    # the disposable destroy does. ``PersistentControllerInstance.destroy``
+    # checks it again against the marker's own name, which is the authority.
+    expected = f"{DESTROY_CONFIRMATION_PREFIX} {instance}"
+    if confirm != expected:
+        print(f"error: refusing to erase a directory server; pass the exact "
+              f"confirmation: {expected}", file=sys.stderr)
+        return 2
+    if not state.exists():
+        print(f"persistent controller instance {instance}: already absent")
+        return 0
+    try:
+        removed = target.destroy(confirm)
+    except (RuntimeError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"destroyed persistent controller instance {instance} at {removed}")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description="Safe lifecycle for the isolated bootstrap-dc guest")
@@ -466,6 +670,23 @@ def parser() -> argparse.ArgumentParser:
     )
     destroy_parser = commands.add_parser("destroy")
     destroy_parser.add_argument("--confirm")
+    # Persistent instances are a separate, explicitly named verb set. No
+    # existing subcommand can reach them and none of them can reach the
+    # disposable acceptance state.
+    for name in ("persistent-up", "persistent-status", "persistent-destroy"):
+        persistent_parser = commands.add_parser(name)
+        persistent_parser.add_argument(
+            "--instance", required=True,
+            help="stable instance name; one directory server per name")
+        persistent_parser.add_argument(
+            "--persistent-root", type=Path, default=DEFAULT_PERSISTENT_ROOT,
+            help="root holding persistent instances; never the acceptance state")
+        if name == "persistent-up":
+            persistent_parser.add_argument("--apply", action="store_true")
+        if name == "persistent-destroy":
+            persistent_parser.add_argument(
+                "--confirm",
+                help="required exact acknowledgement: 'DESTROY <instance>'")
     return result
 
 
@@ -480,6 +701,15 @@ def main(argv: list[str] | None = None) -> int:
             args.network_config, args.network_receipt, args.confirm)
     if command == "destroy":
         return destroy(args.state_dir, args.confirm)
+    if command == "persistent-up":
+        return persistent_up(
+            args.persistent_root, args.instance, args.apply,
+            canonical_state=args.state_dir)
+    if command == "persistent-status":
+        return persistent_status(args.persistent_root, args.instance)
+    if command == "persistent-destroy":
+        return persistent_destroy(
+            args.persistent_root, args.instance, args.confirm)
     return status(args.state_dir)
 
 

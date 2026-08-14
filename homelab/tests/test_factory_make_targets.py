@@ -21,6 +21,17 @@ def recipe(target: str) -> str:
     return match.group("body")
 
 
+def commands(target: str) -> str:
+    """Only a target's recipe lines.
+
+    ``recipe`` also swallows the comment block that introduces the *next*
+    target, which is fine for presence checks and wrong for absence checks.
+    """
+    return "".join(
+        line for line in recipe(target).splitlines(keepends=True)
+        if line.startswith("\t"))
+
+
 class FactoryMakeTargetTests(unittest.TestCase):
     def test_supportable_targets_are_phony(self):
         phony = re.search(
@@ -158,6 +169,74 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertNotIn("--apply", text)
         for forbidden in ("qemu", "fetch-", "curl", "wget"):
             self.assertNotIn(forbidden, text)
+
+    def test_persistent_targets_are_phony_and_opt_in_by_name(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)",
+            MAKEFILE,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(phony)
+        for target in (
+            "homelab-factory-persistent-plan",
+            "homelab-factory-persistent-status",
+            "homelab-factory-persistent-up",
+            "homelab-factory-persistent-destroy",
+        ):
+            with self.subTest(target=target):
+                self.assertIn(target, phony.group("body"))
+                text = recipe(target)
+                # Persistence is never inferred: without a named instance every
+                # persistent target refuses instead of guessing one.
+                self.assertIn("require PERSISTENT_DC=<instance name>", text)
+                self.assertIn("PERSISTENT_DC_ROOT", text)
+        # PERSISTENT_DC has no default value, so a bare `make` cannot bring a
+        # persistent instance up by accident.
+        self.assertRegex(MAKEFILE, r"(?m)^PERSISTENT_DC \?=\s*$")
+
+    def test_persistent_plan_and_status_are_read_only(self):
+        for target in ("homelab-factory-persistent-plan",
+                       "homelab-factory-persistent-status"):
+            with self.subTest(target=target):
+                text = commands(target)
+                self.assertNotIn("--apply", text)
+                self.assertNotIn("--confirm", text)
+
+    def test_persistent_up_is_apply_gated(self):
+        text = recipe("homelab-factory-persistent-up")
+        self.assertIn("APPLY", text)
+        self.assertIn("dry run", text)
+        self.assertEqual(1, text.count("--apply"))
+        self.assertIn("bootstrap_dc.py persistent-up", text)
+        self.assertIn("--instance '$(PERSISTENT_DC)'", text)
+
+    def test_persistent_destroy_requires_apply_instance_and_confirmation(self):
+        text = commands("homelab-factory-persistent-destroy")
+        self.assertIn("APPLY", text)
+        self.assertIn("refusing destruction", text)
+        self.assertIn("CONFIRM='DESTROY <instance>'", text)
+        self.assertIn("--confirm '$(CONFIRM)'", text)
+        self.assertNotIn("--apply", text)
+
+    def test_no_acceptance_target_reaches_the_persistent_mode(self):
+        # The disposable acceptance path must not change behaviour at all, so no
+        # gate target may mention the persistent instance variables or verbs.
+        for target in (
+            "homelab-factory-sim-run",
+            "homelab-factory-sim-plan",
+            "homelab-factory-verify",
+            "homelab-factory-recover",
+            "homelab-bootstrap-vm-run",
+            "homelab-bootstrap-vm-boot",
+            "homelab-bootstrap-vm-destroy",
+            "homelab-sim-run",
+            "homelab-sim-auto-run",
+        ):
+            with self.subTest(target=target):
+                text = commands(target)
+                for forbidden in ("PERSISTENT_DC", "persistent-up",
+                                  "persistent-destroy"):
+                    self.assertNotIn(forbidden, text)
 
     def test_release_set_build_consumes_the_verified_seal(self):
         text = recipe("homelab-pxe-release-set")

@@ -1,4 +1,5 @@
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -90,6 +91,78 @@ class GeometryTests(unittest.TestCase):
         }):
             with self.assertRaisesRegex(RuntimeError, "exactly one"):
                 instance._esp_offset()
+
+
+class DisposablePathUnchangedTests(unittest.TestCase):
+    """The persistent instance mode must not have moved the disposable path.
+
+    Gate 3 requires a *fresh offline-installed disposable* controller, gate 8
+    requires a freshly provisioned domain every run, and gate 12 destroys the
+    disposable state and repeats. So the disposable boot disk must still be a
+    throwaway sparse raw copy, must still hash-fence the canonical, and must
+    still delete itself.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.canonical_disk = self.root / "bootstrap-dc.qcow2"
+        self.canonical_disk.write_bytes(b"canonical disk")
+        self.canonical_vars = self.root / "OVMF_VARS.fd"
+        self.canonical_vars.write_bytes(b"canonical vars")
+        self.proc = self.root / "proc"
+        self.proc.mkdir()
+
+    def prepared(self):
+        from simulation_overlay import ControllerOverlay
+
+        boot = DisposableBootDisk(
+            self.canonical_disk, self.canonical_vars,
+            run_root=self.root / "run")
+        # Keep the audit off the host's real /proc without changing behaviour.
+        boot.overlay = ControllerOverlay(
+            self.canonical_disk, self.canonical_vars,
+            run_root=self.root / "run" / "guard", proc_root=self.proc)
+        self.calls = []
+
+        def fake(argv, **_kwargs):
+            self.calls.append(list(argv))
+            if argv[0] == "qemu-img" and argv[1] in {"create", "convert"}:
+                Path(argv[-1]).write_bytes(b"disposable copy")
+            return subprocess.CompletedProcess(argv, 0)
+
+        patcher = patch("subprocess.run", side_effect=fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with patch.object(DisposableBootDisk, "_inject_entry"):
+            boot.prepare()
+        return boot
+
+    def test_disposable_disk_is_still_a_sparse_raw_throwaway(self):
+        boot = self.prepared()
+        convert = next(argv for argv in self.calls if argv[1] == "convert")
+        self.assertEqual(convert[convert.index("-O") + 1], "raw")
+        self.assertIn("-S", convert)
+        self.assertEqual(convert[-1], str(boot.disk))
+        self.assertTrue(boot.disk.name.endswith(".raw"))
+        self.assertIn("format=raw", boot.qemu_disk_drive())
+        boot.close()
+
+    def test_disposable_close_still_fences_the_canonical_and_deletes_state(self):
+        boot = self.prepared()
+        self.canonical_disk.write_bytes(b"tampered")
+        with self.assertRaisesRegex(RuntimeError, "changed during simulation"):
+            boot.close()
+        self.assertFalse(boot.disk.exists())
+        self.assertFalse(boot.vars.exists())
+
+    def test_disposable_clean_close_deletes_the_copies(self):
+        boot = self.prepared()
+        boot.close()
+        self.assertFalse(boot.disk.exists())
+        self.assertFalse(boot.vars.exists())
+        self.assertTrue(self.canonical_disk.is_file())
 
 
 class ConstructionTests(unittest.TestCase):

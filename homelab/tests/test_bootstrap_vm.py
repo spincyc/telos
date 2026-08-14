@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vm import bootstrap_dc
+from vm import bootstrap_dc, simulation_overlay
 
 
 class BootstrapVmTests(unittest.TestCase):
@@ -638,6 +638,179 @@ class BootstrapVmTests(unittest.TestCase):
             (state / "manifest.json").chmod(0o644)
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(bootstrap_dc.run(state, None, False), 2)
+
+
+class PersistentControllerCliTests(unittest.TestCase):
+    """The operator entry point for a directory that survives relaunch."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.canonical = self.root / "canonical"
+        self.canonical.mkdir()
+        files = bootstrap_dc.paths(self.canonical)
+        for key in ("disk", "vars", "manifest"):
+            files[key].write_bytes(b"canonical " + key.encode())
+            files[key].chmod(0o600)
+        self.persistent_root = self.root / "persistent"
+
+    def call(self, *argv, expect):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = bootstrap_dc.main(list(argv))
+        self.assertEqual(result, expect, err.getvalue() or out.getvalue())
+        return out.getvalue(), err.getvalue()
+
+    def _fake_qemu_img(self, argv, **_kwargs):
+        if argv[1] in {"create", "convert"}:
+            Path(argv[-1]).write_bytes(b"seeded")
+        return subprocess.CompletedProcess(argv, 0)
+
+    def test_default_acceptance_command_is_unchanged_by_the_new_options(self):
+        # The persistent mode added keyword-only options to qemu_command. The
+        # disposable acceptance command must be identical without them.
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))):
+            command = bootstrap_dc.qemu_command(Path("/state"), None)
+        joined = " ".join(command)
+        self.assertIn(f"-name {bootstrap_dc.NAME}", joined)
+        self.assertIn("listen=127.0.0.1:12961", joined)
+        self.assertIn("/state/bootstrap-dc.qcow2", joined)
+        self.assertNotIn("persistent", joined)
+
+    def test_persistent_plan_is_a_dry_run_that_creates_and_boots_nothing(self):
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(bootstrap_dc.subprocess, "run") as run:
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                expect=0)
+        run.assert_not_called()
+        self.assertFalse(self.persistent_root.exists())
+        self.assertIn("dry run; repeat with --apply", out)
+        self.assertIn("is not hash-fenced", out)
+        self.assertIn("persistent-dc.qcow2", out)
+        self.assertIn("-name persistent-dc-lab-dc1", out)
+        # Its own loopback segment, never the acceptance run's port.
+        self.assertIn(
+            f"listen=127.0.0.1:{bootstrap_dc.PERSISTENT_SOCKET_PORT}", out)
+        self.assertNotIn("listen=127.0.0.1:12961", out)
+
+    def test_persistent_run_against_the_acceptance_state_is_refused(self):
+        # Naming the acceptance canonical itself, by the two spellings an
+        # operator could reach it with: as the instance directory, and as the
+        # persistent root that contains it.
+        with mock.patch.object(bootstrap_dc.subprocess, "run") as run:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", self.canonical.name,
+                "--persistent-root", str(self.canonical.parent),
+                "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+            _, err = self.call(
+                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "persistent-up", "--instance", "bootstrap-dc",
+                "--persistent-root",
+                str(bootstrap_dc.DEFAULT_STATE.parent), "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+        run.assert_not_called()
+        self.assertEqual(
+            bootstrap_dc.paths(self.canonical)["disk"].read_bytes(),
+            b"canonical disk")
+
+    def test_persistent_up_seeds_then_boots_the_instance_disk_in_place(self):
+        state = self.persistent_root / "lab-dc1"
+        guests = []
+
+        # bootstrap_dc.subprocess and simulation_overlay.subprocess are the one
+        # module object, so a single dispatching patch serves both the seeding
+        # qemu-img calls and the guest launch.
+        def dispatch(argv, **kwargs):
+            if argv[0] == "qemu-img":
+                return self._fake_qemu_img(argv, **kwargs)
+            guests.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"), \
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run", side_effect=dispatch):
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--apply", expect=0)
+        self.assertEqual(len(guests), 1)
+        argv = guests[0]
+        self.assertIn("qemu-system-x86_64", argv[0])
+        self.assertIn(
+            f"file={state / 'persistent-dc.qcow2'}", " ".join(argv))
+        # The durable state survives the run, and the lock is released.
+        self.assertTrue((state / "persistent-dc.qcow2").is_file())
+        self.assertTrue((state / "persistent-instance.json").is_file())
+        self.assertIn("directory state retained at", out)
+        self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=0)
+
+    def test_persistent_status_reports_an_absent_instance(self):
+        out, _ = self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=1)
+        self.assertIn("absent or incomplete", out)
+
+    def test_persistent_destroy_requires_the_exact_confirmation(self):
+        with mock.patch(
+                "vm.simulation_overlay.subprocess.run",
+                side_effect=self._fake_qemu_img):
+            instance = simulation_overlay.PersistentControllerInstance(
+                self.persistent_root / "lab-dc1", instance="lab-dc1")
+            instance.create(
+                bootstrap_dc.paths(self.canonical)["disk"],
+                bootstrap_dc.paths(self.canonical)["vars"])
+        for wrong in ("destroy lab-dc1", "DESTROY other", "lab-dc1"):
+            with self.subTest(wrong=wrong):
+                _, err = self.call(
+                    "persistent-destroy", "--instance", "lab-dc1",
+                    "--persistent-root", str(self.persistent_root),
+                    "--confirm", wrong, expect=2)
+                self.assertIn("DESTROY lab-dc1", err)
+                self.assertTrue(instance.disk.is_file())
+        _, err = self.call(
+            "persistent-destroy", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=2)
+        self.assertIn("DESTROY lab-dc1", err)
+        out, _ = self.call(
+            "persistent-destroy", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root),
+            "--confirm", "DESTROY lab-dc1", expect=0)
+        self.assertIn("destroyed persistent controller instance", out)
+        self.assertFalse(instance.state.exists())
+        out, _ = self.call(
+            "persistent-destroy", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root),
+            "--confirm", "DESTROY lab-dc1", expect=0)
+        self.assertIn("already absent", out)
+
+    def test_persistent_subcommands_require_an_instance_name(self):
+        for command in (
+            "persistent-up", "persistent-status", "persistent-destroy",
+        ):
+            with self.subTest(command=command):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        bootstrap_dc.main([command])
+        _, err = self.call(
+            "persistent-up", "--instance", "../escape", expect=2)
+        self.assertIn("instance must be", err)
 
 
 if __name__ == "__main__":

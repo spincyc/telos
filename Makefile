@@ -78,6 +78,15 @@ FACTORY_TARGET ?= arch-workstation
 # Gate 12 (repeatability): the second twice-through run's retained evidence,
 # compared against FACTORY_EVIDENCE by homelab-factory-verify.
 FACTORY_COMPARE_EVIDENCE ?=
+# Persistent controller instances: a directory server that can be brought up,
+# used, shut down, and brought up again with the same domain and accounts. This
+# is NOT the acceptance path. Every gate still boots a disposable copy of
+# FACTORY_CONTROLLER_STATE and hash-fences it, so a persistent instance always
+# lives under its own root and the tooling refuses the canonical acceptance
+# state outright. PERSISTENT_DC is the stable instance name and has no default:
+# persistence must be asked for by name, never inferred.
+PERSISTENT_DC_ROOT ?= build/homelab/vm/persistent-dc
+PERSISTENT_DC ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -148,6 +157,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-verify homelab-pxe-authority-audit \
 	homelab-factory-recover homelab-factory-recover-judge \
 	homelab-factory-sim-plan homelab-factory-sim-run \
+	homelab-factory-persistent-plan homelab-factory-persistent-status \
+	homelab-factory-persistent-up homelab-factory-persistent-destroy \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -713,6 +724,74 @@ homelab-factory-sim-run: homelab-sim-deps
 		$(PYTHON) homelab/vm/factory_runner.py --duration '$(FACTORY_DURATION)' --target '$(FACTORY_TARGET)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(WORKSTATION_ISO),--workstation-iso '$(WORKSTATION_ISO)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') --apply; \
 	fi
 
+# A persistent Controller instance: the one mode whose disk is meant to change.
+# Its state directory is its own, its disk name is disjoint from the acceptance
+# canonical's, it takes an exclusive lock so one directory can never be opened
+# by two runs, and bootstrap_dc.py refuses outright to run persistently against
+# the acceptance canonical (build/homelab/vm/bootstrap-dc) — an accidental
+# persistent run there would provision a domain onto the disk gates 3, 8 and 12
+# require to be freshly installed every time.
+#
+# The disposable path is untouched: nothing here runs unless PERSISTENT_DC names
+# an instance, and no acceptance target references these.
+homelab-factory-persistent-plan:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+		--instance '$(PERSISTENT_DC)' \
+		--persistent-root '$(PERSISTENT_DC_ROOT)' \
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)')
+
+homelab-factory-persistent-status:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-status \
+		--instance '$(PERSISTENT_DC)' \
+		--persistent-root '$(PERSISTENT_DC_ROOT)'
+
+# Creates the instance from the canonical image when absent (read-only against
+# the canonical, under the same strict fence the disposable path uses), then
+# boots it in place. Bringing it up again later reuses the same domain SID,
+# krbtgt, and accounts, which is the whole point of the mode.
+homelab-factory-persistent-up:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to create and boot the persistent instance'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)'); \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			--apply; \
+	fi
+
+# Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
+# stable instance name, and the exact confirmation carrying that name.
+homelab-factory-persistent-destroy:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo "refusing destruction; require APPLY=1 PERSISTENT_DC=<instance> CONFIRM='DESTROY <instance>'" >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-destroy \
+		--instance '$(PERSISTENT_DC)' \
+		--persistent-root '$(PERSISTENT_DC_ROOT)' \
+		--confirm '$(CONFIRM)'
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1117,6 +1196,12 @@ help:
 		'make homelab-sim-repeat APPLY=1 SIM_CYCLES=2' \
 		'make homelab-factory-sim-plan  Plan the bounded factory skeleton' \
 		'make homelab-factory-sim-run APPLY=1 FACTORY_DURATION=120' \
+		'make homelab-factory-persistent-plan PERSISTENT_DC=<name>' \
+		'                         Plan a persistent Controller instance' \
+		'make homelab-factory-persistent-up APPLY=1 PERSISTENT_DC=<name>' \
+		'                         Create when absent, then boot it in place' \
+		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
+		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/' \

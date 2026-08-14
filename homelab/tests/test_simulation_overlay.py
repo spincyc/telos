@@ -1,5 +1,6 @@
-"""Safety tests for disposable controller simulation state."""
+"""Safety tests for disposable and persistent controller simulation state."""
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -390,6 +391,379 @@ class TestControllerOverlay(unittest.TestCase):
         ):
             overlay.prepare()
         self.assertFalse(overlay.vars.exists())
+
+
+class TestPersistentControllerInstance(unittest.TestCase):
+    """A controller whose directory survives shutdown, without weakening the
+    disposable acceptance fence."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.canonical = self.root / "canonical"
+        self.canonical.mkdir()
+        self.disk = self.canonical / simulation_overlay.ACCEPTANCE_DISK_NAME
+        self.disk.write_bytes(b"canonical disk")
+        self.vars = self.canonical / "OVMF_VARS.fd"
+        self.vars.write_bytes(b"canonical vars")
+        self.proc = self.root / "proc"
+        self.proc.mkdir()
+        self.instances = self.root / "instances"
+
+    def _fake_qemu_img(self, argv, **_kwargs):
+        # qemu-img create writes the guard overlay; qemu-img convert writes the
+        # instance's independent copy; qemu-img info is the lock probe.
+        if argv[1] in {"create", "convert"}:
+            Path(argv[-1]).write_bytes(b"seeded from canonical")
+        return subprocess.CompletedProcess(argv, 0)
+
+    def _patch_qemu_img(self):
+        patch = mock.patch.object(
+            simulation_overlay.subprocess, "run",
+            side_effect=self._fake_qemu_img)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def instance(self, name="lab-dc1", state=None):
+        return simulation_overlay.PersistentControllerInstance(
+            self.instances / name if state is None else state,
+            instance=name, proc_root=self.proc)
+
+    def seeded(self, name="lab-dc1"):
+        self._patch_qemu_img()
+        target = self.instance(name)
+        target.create(self.disk, self.vars)
+        return target
+
+    # -- opt-in ----------------------------------------------------------
+    def test_persistent_mode_is_never_inferred_from_state_on_disk(self):
+        # A directory that merely holds a controller disk is not a persistent
+        # instance: bring-up requires the instance's own marker, so persistence
+        # can only be entered by explicitly creating one.
+        state = self.instances / "lab-dc1"
+        state.mkdir(parents=True)
+        (state / simulation_overlay.PERSISTENT_DISK_NAME).write_bytes(b"disk")
+        (state / "OVMF_VARS.fd").write_bytes(b"vars")
+        target = self.instance()
+        self.assertFalse(target.exists())
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid,
+            "not a persistent controller instance",
+        ):
+            target.prepare()
+
+    def test_marker_must_declare_the_schema_mode_and_matching_instance(self):
+        target = self.seeded()
+        for broken in (
+            {"schema": 2, "mode": "persistent", "instance": "lab-dc1"},
+            {"schema": 1, "mode": "disposable", "instance": "lab-dc1"},
+            {"schema": 1, "mode": "persistent", "instance": "other"},
+            {"schema": 1, "mode": "persistent", "instance": "../escape"},
+            ["not", "an", "object"],
+        ):
+            with self.subTest(broken=broken):
+                target.marker.write_text(json.dumps(broken), encoding="utf-8")
+                with self.assertRaises(
+                        simulation_overlay.PersistentInstanceInvalid):
+                    target.prepare()
+        target.marker.write_text("{not json", encoding="utf-8")
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "cannot read"
+        ):
+            target.prepare()
+
+    def test_instance_names_cannot_traverse_or_hide(self):
+        for bad in ("", "../escape", "Lab-DC1", "-lead", "trail-", "a" * 33,
+                    "with/slash", None):
+            with self.subTest(bad=bad):
+                self.assertFalse(
+                    simulation_overlay.PersistentControllerInstance
+                    .valid_instance_name(bad))
+        for good in ("a", "lab-dc1", "a" * 32):
+            with self.subTest(good=good):
+                self.assertTrue(
+                    simulation_overlay.PersistentControllerInstance
+                    .valid_instance_name(good))
+
+    # -- the acceptance canonical is protected ---------------------------
+    def test_persistent_run_against_the_acceptance_state_is_refused(self):
+        # Every spelling of the reserved acceptance state, plus a canonical in a
+        # non-default location, plus a directory that merely holds the
+        # acceptance artefacts. Each must fail closed before anything is
+        # created, locked, or booted.
+        reserved = simulation_overlay.acceptance_state_candidates()
+        self.assertTrue(reserved)
+        for candidate in reserved:
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(
+                        simulation_overlay.AcceptanceStateProtected):
+                    self.instance(state=candidate).assert_separate()
+                with self.assertRaises(
+                        simulation_overlay.AcceptanceStateProtected):
+                    self.instance(state=candidate / "inside").assert_separate()
+                with self.assertRaises(
+                        simulation_overlay.AcceptanceStateProtected):
+                    self.instance(state=candidate.parent).assert_separate()
+        # The parent of whichever canonical disk this operation was handed.
+        with self.assertRaises(simulation_overlay.AcceptanceStateProtected):
+            self.instance(state=self.canonical).assert_separate(self.disk)
+        # And any directory carrying the disposable acceptance artefacts, even
+        # when its path is not on the reserved list at all.
+        stray = self.root / "stray"
+        stray.mkdir()
+        (stray / simulation_overlay.ACCEPTANCE_DISK_NAME).write_bytes(b"disk")
+        with self.assertRaisesRegex(
+            simulation_overlay.AcceptanceStateProtected, "acceptance artefact"
+        ):
+            self.instance(state=stray).assert_separate()
+
+    def test_create_and_destroy_refuse_the_acceptance_state(self):
+        self._patch_qemu_img()
+        canonical_state = simulation_overlay.acceptance_state_candidates()[0]
+        with self.assertRaises(simulation_overlay.AcceptanceStateProtected):
+            self.instance(state=canonical_state).create(self.disk, self.vars)
+        with self.assertRaises(simulation_overlay.AcceptanceStateProtected):
+            self.instance(state=canonical_state).destroy("DESTROY lab-dc1")
+        with self.assertRaises(simulation_overlay.AcceptanceStateProtected):
+            self.instance(state=self.canonical).create(self.disk, self.vars)
+        self.assertEqual(self.disk.read_bytes(), b"canonical disk")
+
+    def test_symlinked_persistent_state_is_refused(self):
+        self.instances.mkdir()
+        real = self.root / "elsewhere"
+        real.mkdir()
+        link = self.instances / "lab-dc1"
+        link.symlink_to(real)
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "symlink"
+        ):
+            self.instance().assert_separate()
+
+    # -- creation is fenced, the canonical is not mutated ----------------
+    def test_creation_copies_the_canonical_under_the_strict_fence(self):
+        calls = []
+
+        def record(argv, **kwargs):
+            calls.append(list(argv))
+            return self._fake_qemu_img(argv, **kwargs)
+
+        with mock.patch.object(
+                simulation_overlay.subprocess, "run", side_effect=record):
+            target = self.instance()
+            marker = target.create(self.disk, self.vars)
+        convert = next(argv for argv in calls if argv[1] == "convert")
+        # An independent qcow2, never a backing-file reference to the canonical.
+        self.assertEqual(convert[convert.index("-O") + 1], "qcow2")
+        self.assertNotIn("-b", convert)
+        self.assertNotIn(str(self.disk), convert)
+        # Written into a dot-prefixed staging directory and renamed into place,
+        # so an interrupted creation cannot leave a half-seeded instance.
+        self.assertEqual(
+            Path(convert[-1]).name, simulation_overlay.PERSISTENT_DISK_NAME)
+        self.assertNotEqual(Path(convert[-1]).parent, target.state)
+        self.assertTrue(Path(convert[-1]).parent.name.startswith(".lab-dc1."))
+        self.assertEqual(
+            marker["seeded_from"]["disk_sha256"],
+            simulation_overlay.sha256(self.disk))
+        self.assertEqual(marker["mode"], "persistent")
+        self.assertEqual(self.disk.read_bytes(), b"canonical disk")
+        self.assertEqual(self.vars.read_bytes(), b"canonical vars")
+        self.assertEqual(target.state.stat().st_mode & 0o777, 0o700)
+        for path in (target.disk, target.vars, target.marker):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_creation_fails_and_leaves_nothing_when_the_canonical_moves(self):
+        def moving(argv, **kwargs):
+            result = self._fake_qemu_img(argv, **kwargs)
+            if argv[1] == "convert":
+                self.disk.write_bytes(b"tampered mid-copy")
+            return result
+
+        with mock.patch.object(
+                simulation_overlay.subprocess, "run", side_effect=moving):
+            target = self.instance()
+            with self.assertRaisesRegex(
+                RuntimeError, "canonical controller disk changed"
+            ):
+                target.create(self.disk, self.vars)
+        self.assertFalse(target.state.exists())
+        # No dot-prefixed staging directory is left behind either.
+        self.assertEqual(
+            [entry.name for entry in self.instances.iterdir()], [])
+
+    def test_creation_refuses_a_state_directory_that_already_has_content(self):
+        self._patch_qemu_img()
+        target = self.instance()
+        target.state.mkdir(parents=True)
+        (target.state / "unrelated").write_bytes(b"keep me")
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "already exists"
+        ):
+            target.create(self.disk, self.vars)
+        self.assertEqual(
+            (target.state / "unrelated").read_bytes(), b"keep me")
+
+    def test_creation_requires_a_valid_instance_name(self):
+        self._patch_qemu_img()
+        target = simulation_overlay.PersistentControllerInstance(
+            self.instances / "x", instance="../escape", proc_root=self.proc)
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "instance name"
+        ):
+            target.create(self.disk, self.vars)
+
+    # -- exclusivity -----------------------------------------------------
+    def test_bring_up_takes_an_exclusive_lock_in_its_own_directory(self):
+        target = self.seeded()
+        target.prepare()
+        self.assertEqual(
+            target.lock_path,
+            target.state / simulation_overlay.LOCK_NAME)
+        self.assertTrue(target.lock_path.is_file())
+        # A running instance holds its own lock only: it does not hold the
+        # canonical acceptance lock, so it can neither block an acceptance run
+        # nor be blocked by one.
+        guard = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.root / "guard",
+            proc_root=self.proc)
+        guard.prepare()
+        guard.close()
+        second = self.instance()
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInUse, "already running"
+        ):
+            second.prepare()
+        target.close()
+        # After close the same instance can be brought up again.
+        target.prepare()
+        target.close()
+
+    def test_bring_up_refuses_a_disk_another_process_holds_open(self):
+        target = self.seeded()
+        descriptors = self.proc / "5312" / "fd"
+        descriptors.mkdir(parents=True)
+        (self.proc / "5312" / "comm").write_text("qemu-system-x86\n")
+        (descriptors / "4").symlink_to(target.disk)
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInUse,
+            r"5312 \(qemu-system-x86\)",
+        ):
+            target.prepare()
+        # The lock was released again, so a later legitimate run is not wedged.
+        (descriptors / "4").unlink()
+        target.prepare()
+        target.close()
+
+    def test_close_keeps_the_lock_while_the_disk_is_still_open(self):
+        target = self.seeded()
+        target.prepare()
+        descriptors = self.proc / "77" / "fd"
+        descriptors.mkdir(parents=True)
+        (descriptors / "3").symlink_to(target.disk)
+        with self.assertRaises(simulation_overlay.PersistentInstanceInUse):
+            target.close()
+        self.assertTrue(target.disk.is_file())
+        (descriptors / "3").unlink()
+        target.close()
+
+    def test_bring_up_requires_private_owner_only_state(self):
+        target = self.seeded()
+        target.disk.chmod(0o644)
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid,
+            "must not be group/world accessible",
+        ):
+            target.prepare()
+
+    # -- deliberately no hash fence, and nothing is deleted --------------
+    def test_the_instance_disk_may_change_and_is_never_removed(self):
+        target = self.seeded()
+        target.prepare()
+        target.disk.write_bytes(b"a domain was provisioned here")
+        target.vars.write_bytes(b"firmware variables moved too")
+        target.close()
+        self.assertEqual(
+            target.disk.read_bytes(), b"a domain was provisioned here")
+        self.assertTrue(target.marker.is_file())
+        # ... and the next bring-up accepts the changed disk without complaint.
+        target.prepare()
+        target.close()
+
+    def test_verify_canonical_is_a_tripwire_not_a_silent_pass(self):
+        # Acceptance runners call verify_canonical before writing a pass
+        # receipt. If a persistent instance were ever wired into one of those
+        # paths it must stop loudly rather than record a fence it never had.
+        target = self.seeded()
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "no canonical hash fence"
+        ):
+            target.verify_canonical()
+
+    # -- teardown --------------------------------------------------------
+    def test_destroy_requires_the_exact_instance_named_confirmation(self):
+        target = self.seeded()
+        for wrong in (None, "", "DESTROY", "destroy lab-dc1",
+                      "DESTROY other", "lab-dc1"):
+            with self.subTest(wrong=wrong):
+                with self.assertRaisesRegex(
+                    simulation_overlay.PersistentInstanceInvalid,
+                    "DESTROY lab-dc1",
+                ):
+                    target.destroy(wrong)
+                self.assertTrue(target.disk.is_file())
+        self.assertEqual(target.destroy("DESTROY lab-dc1"), str(target.state))
+        self.assertFalse(target.state.exists())
+
+    def test_destroy_refuses_unexpected_files_and_a_running_instance(self):
+        target = self.seeded()
+        stray = target.state / "operator-notes"
+        stray.write_bytes(b"not ours")
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInvalid, "unexpected files"
+        ):
+            target.destroy("DESTROY lab-dc1")
+        self.assertTrue(target.disk.is_file())
+        stray.unlink()
+        holder = self.instance()
+        holder.prepare()
+        with self.assertRaisesRegex(
+            simulation_overlay.PersistentInstanceInUse, "already running"
+        ):
+            target.destroy("DESTROY lab-dc1")
+        self.assertTrue(target.disk.is_file())
+        holder.close()
+        target.destroy("DESTROY lab-dc1")
+        self.assertFalse(target.state.exists())
+
+    # -- the disposable path is unchanged --------------------------------
+    def test_disposable_overlay_still_fences_and_deletes_its_state(self):
+        # The persistent relaxation is scoped to the persistent class: the
+        # disposable guard keeps hashing the canonical and removing its run
+        # state, and it never learns the persistent filenames.
+        self._patch_qemu_img()
+        overlay = simulation_overlay.ControllerOverlay(
+            self.disk, self.vars, run_root=self.root / "run",
+            proc_root=self.proc)
+        overlay.prepare()
+        self.assertEqual(
+            overlay.canonical_disk_sha256,
+            simulation_overlay.sha256(self.disk))
+        self.assertNotIn(
+            simulation_overlay.PERSISTENT_DISK_NAME, str(overlay.disk))
+        self.disk.write_bytes(b"tampered")
+        with self.assertRaisesRegex(RuntimeError, "changed during simulation"):
+            overlay.close()
+        self.assertFalse(overlay.disk.exists())
+        self.assertFalse(overlay.vars.exists())
+
+    def test_persistent_and_acceptance_filenames_are_disjoint(self):
+        self.assertNotEqual(
+            simulation_overlay.PERSISTENT_DISK_NAME,
+            simulation_overlay.ACCEPTANCE_DISK_NAME)
+        self.assertNotEqual(
+            simulation_overlay.PERSISTENT_MARKER_NAME,
+            simulation_overlay.ACCEPTANCE_MANIFEST_NAME)
 
 
 if __name__ == "__main__":
