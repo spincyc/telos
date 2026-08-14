@@ -25,6 +25,14 @@ homelab_identity_domain_controller: ""
 # default cannot silently shorten the offline lifetime.
 homelab_identity_offline_credentials_expiration_days: 0
 
+# How long a machine whose backend went offline waits before retesting the
+# directory, and the ceiling that doubling climbs to. SSSD's own defaults are
+# 60 and 3600, which leaves a reconnecting machine blind for up to an hour; a
+# live gate-8 run measured 69 seconds and its recovery proof gave up seven
+# seconds early. The 4x ratio between them is the one sssd.conf(5) asks for.
+homelab_identity_offline_timeout_seconds: 5
+homelab_identity_offline_timeout_max_seconds: 20
+
 # The directory owns UID and GID. Enumeration is off because it makes every
 # `ls -l` a directory query.
 homelab_identity_enumerate: false

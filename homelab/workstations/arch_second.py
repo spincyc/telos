@@ -837,12 +837,9 @@ ad_gpo_access_control = permissive
 # ships, checked there rather than assumed -- the section an option belongs to
 # has already cost this gate one live run.
 #
-# KNOWN DRIFT, stated rather than hidden: this triple is load-bearing on real
-# hardware for the reason above, so by the mirroring rule this file follows
-# (see test_sssd_interop_options_match_the_fleet_template) it belongs in
-# ansible/roles/identity_client/templates/sssd.conf.j2 as well.  It is not
-# there yet; adding it was outside the boundary of the change that introduced
-# it here.  Mirror it before treating the fleet role as equivalent.
+# The fleet template carries the same triple, through role defaults, per the
+# mirroring rule this file follows (see
+# test_sssd_interop_options_match_the_fleet_template).
 offline_timeout = 5
 offline_timeout_max = 20
 offline_timeout_random_offset = 0

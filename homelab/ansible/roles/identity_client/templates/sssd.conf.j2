@@ -82,6 +82,20 @@ cache_credentials = True
 # reads it. This is the domain half of the same decision -- keep the Kerberos
 # password so an offline login can happen at all.
 krb5_store_password_if_offline = True
+# Recovery after the authority returns, bounded here rather than left to SSSD's
+# default schedule. sssd.conf(5) states the arithmetic as
+# new_delay = Minimum(old_delay * 2, offline_timeout_max) + random[0..offset],
+# with defaults 60 / 3600 / 30 -- so a machine whose backend went offline does
+# not retest the directory for 60-90s and every further failure doubles that,
+# up to an hour. A live gate-8 run measured 69s and its recovery check gave up
+# seven seconds early. The property worth having is that recovery is prompt,
+# which is what a real machine needs: a laptop reconnecting to the lab should
+# not be blind to the directory for up to an hour. The 4x ratio is the one the
+# man page asks for, and the random offset is off so the wait is deterministic
+# rather than merely short. Mirrors workstations/arch_second.py.
+offline_timeout = {{ homelab_identity_offline_timeout_seconds }}
+offline_timeout_max = {{ homelab_identity_offline_timeout_max_seconds }}
+offline_timeout_random_offset = 0
 # UID and GID come from the directory (ADR 0055), not from a local mapping.
 ldap_id_mapping = False
 # Which follows directly, against a Samba AD DC: directory-stored ids mean
