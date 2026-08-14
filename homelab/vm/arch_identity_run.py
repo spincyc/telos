@@ -245,6 +245,8 @@ BUNDLE_DISK = "arch-workstation.qcow2"
 BUNDLE_FIRMWARE = "OVMF_VARS.fd"
 BUNDLE_AUTHORIZATION = "authorization.json"
 BUNDLE_WINDOWS_EVIDENCE = "windows-evidence.jsonl"
+#: Written by the run, not the producer: the exact argv the workstation booted.
+BUNDLE_QEMU_COMMAND = "qemu-command.json"
 EVIDENCE_DIRNAME = "evidence"
 EVIDENCE_FILENAME = "identity-lifecycle.jsonl"
 
@@ -1492,6 +1494,15 @@ class ArchIdentityBoundary:
         command = workstation_boot_command(
             self.bundle.disk, self.bundle.firmware, self._port,
             qmp_socket=qmp_path)
+        # Retained beside the bundle's authorization, as the install and
+        # dual-boot lanes do: a boot that renders no menu is diagnosed from
+        # the firmware knobs it actually ran with, and reconstructing them
+        # after the fact is exactly what stalled the 2026-08-13 failure.
+        recorded = self.bundle.bundle / BUNDLE_QEMU_COMMAND
+        recorded.write_text(
+            json.dumps({"schema": 1, "argv": command}, indent=2) + "\n",
+            encoding="utf-8")
+        recorded.chmod(0o600)
         process = self._spawn("workstation", command, stdio=True)
         self._audit("client", process.pid, allowed_nic_models=("e1000e",))
         try:

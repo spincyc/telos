@@ -938,6 +938,14 @@ class BoundaryWiringTests(unittest.TestCase):
                 self.assertTrue(
                     any("nvme,drive=osdisk" in item
                         for item in commands["workstation"]))
+                # The exact booted argv is retained beside the bundle, so a
+                # boot that renders no menu is diagnosed from what it ran
+                # with rather than reconstructed afterwards.
+                recorded = boundary.bundle.bundle / "qemu-command.json"
+                self.assertEqual(recorded.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(
+                    json.loads(recorded.read_text(encoding="utf-8")),
+                    {"schema": 1, "argv": commands["workstation"]})
                 self.assertEqual(
                     boundary.switch_waits, ["gateway", "controller"])
                 self.assertEqual(
