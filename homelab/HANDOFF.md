@@ -187,7 +187,39 @@ Do not re-derive these. Both are committed with their evidence.
 Use `tools/factory-bundle-firmware-provenance <bundle> ...` to compare what any
 two bundles actually booted — that pairing is what settled (1).
 
-### The remaining blocker: the design premise is wrong
+### Live progress, 2026-08-14 (four runs, each cheap)
+Every fix below is committed with its evidence. The boot chain and the in-run
+join are PROVEN; the operator login is the one remaining blocker.
+
+| Run | Bundle | Outcome |
+|---|---|---|
+| 1 | `arch-identity/run-20260814T113757Z-11326c51f576` | menu rendered for the first time (gate-7 installed NVRAM), Arch highlighted, never booted |
+| 2 | `arch-identity/run-20260814T115234Z-f792faf46d6e` | no menu again with byte-identical vars: the boot was nondeterministic |
+| 3 | `arch-identity/run-20260814T120114Z-5fafdb4897ff` | argv aligned with gate 10 -> menu, Enter-commit, EFI handoff, ttyS0 getty, `menu_retries: 0`; login refused |
+| 4 | `arch-identity/run-20260814T124858Z-0ac6c279561b` | in-run join proven: `join_media_{built,attached,consumed,destroyed}`, `join_verified`, `join_principal_destroyed` all true; login still refused |
+
+Run 4 used a fresh gate-7 install,
+`arch-installs/run-20260814T124513Z-e0c32ed98202` (`observed`,
+Windows preserved, `TELOS ARCH NVRAM ENTRIES AUTHORED`, join media consumed and
+destroyed), because the one-shot join unit only reaches a disk through a gate-7
+install.
+
+**The open blocker.** Run 4's transcript shows the intended order exactly:
+`TELOS ARCH JOIN MEDIA CONSUMED` -> `TELOS ARCH JOIN VERIFIED` -> the join unit
+finishing -> sssd starting -> the ttyS0 getty -> the prompt. The machine account
+and host keytab are therefore proven good and this is no longer the stale-join
+problem. What remains is that `sssd.service` reaching *active* is not the same as
+its AD backend being *online*: the provider connection completes asynchronously,
+the prompt appears immediately, and `pam_sss` finds the domain offline. Offline
+auth needs a cached credential, which cannot exist -- the disk was installed with
+no user logins and the operator password is generated per run -- so the refusal
+is deterministic and no retry count changes it. The fix under way gates the login
+on an in-guest readiness proof ordered before `systemd-user-sessions.service`,
+the same mechanism the join unit already uses; clock skew against the freshly
+provisioned DC is being ruled out at the same time, since the lifecycle expects
+Kerberos time to be proven.
+
+### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
 `net ads testjoin`. But **every gate-8 run provisions a brand-new domain.** The
 canonical `bootstrap-dc` image carries no provisioned AD, and the controller
@@ -211,22 +243,27 @@ retry count can change it. `net ads testjoin` would fail for the same reason, so
 the freshly provisioned DC, builds a `TELOS_JOIN` ISO, hot-attaches it, and
 drives the join in-guest. Gate 5 does not join at all.
 
-**Next step:** give the Arch lane the same in-run join, reusing the one-use join
-media gates 5-7 already build (`controller_join_material.py`,
-`arch_install_run.run_join_install`, `ArchJoinMedia`). It has to be driven by a
-one-shot boot unit ordered `Before=sssd.service systemd-user-sessions.service`,
-because **there is no pre-login shell on the disk**: `local-rescue` ships a
+**How it was fixed** (`73d7f32`, proven live in run 4): the Arch lane joins
+in-run, reusing the one-use join media gates 5-7 already build
+(`controller_join_material.py`, `arch_install_run.run_join_install`,
+`ArchJoinMedia`). It is driven by a one-shot boot unit ordered
+`Before=sssd.service systemd-user-sessions.service`, because **there is no
+pre-login shell on the disk**: `local-rescue` ships a
 disabled password and gate-7's `loader.conf` sets `editor no`, so neither a
 console login nor a boot-cmdline edit can obtain root before the getty. Since
 `serial-getty@ttyS0` is `After=systemd-user-sessions.service`, that ordering
 makes the login prompt appear only after the join completed — no readiness
 polling needed.
 
-This requires **one fresh gate-7 install**, because the retained bundle predates
-the unit:
+Each installer change requires **one fresh gate-7 install**, because the unit
+only reaches a disk through an install:
 ```
-make homelab-arch-install-prepare APPLY=1 WINDOWS_RUN=<a Windows disk bundle>
-make homelab-arch-install-run APPLY=1 ARCH_RUN=<bundle>
+# Omit WINDOWS_RUN: the default --windows-disk is the standalone base the last
+# passing gate-7 run overlaid. Note WINDOWS_RUN is forwarded as --windows-disk,
+# i.e. a path to a windows.qcow2, not a bundle directory.
+make homelab-arch-install-prepare APPLY=1
+make homelab-arch-install-run APPLY=1 ARCH_RUN=<prepared bundle> FACTORY_DURATION=1800
+# ~4.5 min. The Makefile default duration of 120 is too tight.
 ```
 Rejected alternatives, recorded so they are not retried: pre-seeding the machine
 account on the DC (the machine password lives only in the guest's `secrets.tdb`,
