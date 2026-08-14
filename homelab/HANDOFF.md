@@ -22,7 +22,7 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 5 Windows-first install | — | **PASS** (bundle `homelab/var/factory/windows-installs/run-20260810T145421Z-5b457e50e20b`) |
 | 6 Windows join and login | domain identity + recovery | **PASS — 24/24 contracted checks, proven 2026-08-13** (one deferral: `disable-reenable`; see §2) |
 | 7 Arch-second install | — | **pass** (bundle `arch-installs/run-20260811T141601Z-6941005247e8`) |
-| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — boot, in-run join and domain login all proven 2026-08-14; blocked on sudo elevation (see §3) |
+| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — 18 of 21 checks pass live 2026-08-14; 3 remain (see §3) |
 | 9 Optional storage failure | Windows half live-proven; Arch half waits on gate 8 | **PASS (Windows) / NOT RUN (Arch)** — `optional-storage-offline` and `optional-storage-access-denied` are among the 24 passed checks in the 2026-08-13 gate-6 evidence; the three `arch-smb-*` checks ride inside a gate-8 run. No standalone target by design. (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
@@ -293,15 +293,35 @@ question: QMP reported `status: running` with `reason: timed-out`. The vCPU was
 leaves a firmware spin in the first ESP read as the surviving hypothesis. A 3 MB
 framebuffer capture and the QMP event stream are retained beside it.
 
-**The open blocker, precisely.** `rescue_password_set` is false: the
-`local-rescue` break-glass password is not being set from the elevated console.
-Gate 7 installs that account with a *disabled* password while the
-`arch-local-rescue` check requires `passwd -S` to report `P`, so this step is
-what makes that check passable at all. `passwd` prompts twice, so the run-10
-lesson -- wait for the prompt of the program that reads, never a marker the shell
-printed earlier -- is the first thing to check.
+| 12 | `arch-identity/run-20260814T161054Z-7ed00ab7472a` | **THE PROBES RAN FOR THE FIRST TIME: 18 of 21 checks pass.** All boot-phase facts true. Three fail: `arch-identity-restored`, `arch-storage-attached`, `arch-storage-denied` |
 
-After this step the eleven lifecycle probes run for the first time ever.
+**Both remaining boot-phase failures were the same class of bug**, worth stating
+once because it bit twice in a row. The elevation and the rescue password each
+gated their write on a marker the *shell* printed before the program that would
+read it existed, so the next thing the harness typed became the input. The getty
+login always did it correctly -- wait for the prompt of the program that reads.
+Both now do. The elevation had a second defect: its verdict pattern matched
+sudo's own lecture (a read chunk ending on the `#` of `#1)`), so the harness
+believed it already had root; every verdict is now a token-scoped marker or the
+reader's own re-prompt.
+
+**What 18 passing checks means.** The hard ones are proven live on both operating
+systems: domain join, standard and administrative logins, administrator
+separation, controller-offline cached login, uncached denial, local rescue,
+controller restore, and the Windows secure channel. `arch-storage-absent-login`
+passes too, so the absent-storage path works.
+
+**The open blocker, precisely.** Three checks:
+- `arch-identity-restored` -- runs after the controller is frozen and restored.
+  Its Windows twin passes. SSSD's backend goes offline on a failed request and
+  retries on its own schedule, which can be slower than a bounded probe, so
+  establish what the check actually requires before assuming the Windows lane's
+  reboot-and-reverify transfers.
+- `arch-storage-attached` and `arch-storage-denied` -- gate 9's Arch half riding
+  this gate. The controller side is complete and test-locked, and
+  `arch-storage-absent-login` passes, so look at the client: the `sec=krb5`
+  mount needs a ticket belonging to the logged-in user. Gate 9's required proof
+  also asks for UID/GID and timestamp measurements the probe does not yet emit.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
