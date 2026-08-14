@@ -8,7 +8,9 @@ It reads one retained factory run's evidence (as produced by
 that classifies every acceptance measurement it can check from evidence alone
 as ``PASS``, ``FAIL``, or ``NOT-RUN``.  A measurement that was never recorded
 stays ``NOT-RUN``; it is never promoted to ``PASS``.  Anything unreadable,
-oversized, unexpected, or ambiguous fails closed to ``FAIL``.
+oversized, unexpected, or ambiguous fails closed to ``FAIL``.  The retained
+*artifacts* are the files; the working trees a real run bundle keeps beside
+them are accepted structurally and named in the receipt rather than inspected.
 
 ``compare_runs`` diffs two runs' receipts (including any embedded release-set
 aggregate identity) and classifies every differing byte as either
@@ -106,19 +108,38 @@ def _safe_regular_bytes(path: Path, limit: int) -> bytes:
         os.close(descriptor)
 
 
-def _list_evidence(evidence_dir: Path) -> dict[str, int]:
-    """Enumerate the evidence directory, refusing anything unexpected."""
+def _list_evidence(evidence_dir: Path) -> tuple[dict[str, int], list[str]]:
+    """Enumerate retained artifacts, refusing anything that is not a plain file.
+
+    Returns the retained *files* with their sizes plus the names of the
+    subdirectories that sit beside them.  A real run bundle's ``evidence/``
+    holds working trees next to the retained logs — the staged publication
+    tree, the controller guard directory, per-boot frame captures — so a
+    subdirectory is a structural fact about the bundle, not an unexpected
+    retained artifact, and it must not abort the whole receipt.  It is still
+    never silently ignored: the names are reported so the receipt states
+    exactly what was accepted without being inspected.  Anything that is
+    neither a plain file nor a plain directory (a symlink, socket, FIFO, or
+    device node) has no place in evidence and still fails closed, and an
+    unrecognised *file* is refused by ``ALLOWED_EVIDENCE`` downstream.
+    """
     if evidence_dir.is_symlink() or not evidence_dir.is_dir():
         raise VerifyError("evidence directory is missing or not a directory")
     entries: dict[str, int] = {}
+    subdirectories: list[str] = []
     with os.scandir(evidence_dir) as scan:
         for entry in scan:
-            if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+            if entry.is_symlink():
+                raise VerifyError(f"unexpected evidence entry: {entry.name}")
+            if entry.is_dir(follow_symlinks=False):
+                subdirectories.append(entry.name)
+                continue
+            if not entry.is_file(follow_symlinks=False):
                 raise VerifyError(f"unexpected evidence entry: {entry.name}")
             entries[entry.name] = entry.stat(follow_symlinks=False).st_size
     if RESULT not in entries:
         raise VerifyError("evidence is missing result.json")
-    return entries
+    return entries, sorted(subdirectories)
 
 
 def _measurement(measurements: dict, key: str):
@@ -446,7 +467,7 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
     """
     evidence_dir = Path(evidence_dir)
     try:
-        entries = _list_evidence(evidence_dir)
+        entries, subdirectories = _list_evidence(evidence_dir)
     except VerifyError as exc:
         return _fail_receipt(evidence_dir, str(exc))
 
@@ -454,12 +475,27 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
     checks["evidence_readable"] = _record(PASS, "result.json is present and enumerable")
 
     unexpected = sorted(set(entries) - ALLOWED_EVIDENCE)
+    # Only retained *files* can be an unexpected retained artifact.  The
+    # accompanying working trees are named in the receipt (below) instead, so
+    # accepting them structurally still leaves nothing unaccounted for.
+    accepted = (
+        "evidence contains only the expected retained artifacts"
+        if not subdirectories
+        else "evidence contains only the expected retained artifacts beside "
+        f"{len(subdirectories)} uninspected working "
+        f"director{'y' if len(subdirectories) == 1 else 'ies'}: "
+        f"{', '.join(subdirectories)}"
+    )
     checks["evidence_contents_expected"] = (
         _record(FAIL, f"unexpected evidence file(s): {', '.join(unexpected)}")
         if unexpected
-        else _record(PASS, "evidence contains only the expected retained artifacts")
+        else _record(PASS, accepted)
     )
 
+    # The limit mirrors factory_runner's per-artifact truncation of the logs it
+    # retains, so it governs those files only; it is deliberately not applied
+    # inside a working tree, where a legitimately large sealed release payload
+    # lives and would otherwise fail every real run bundle.
     oversized = sorted(name for name, size in entries.items() if size > EVIDENCE_LIMIT)
     checks["evidence_within_size_limit"] = (
         _record(FAIL, f"oversized evidence file(s): {', '.join(oversized)}")
@@ -514,6 +550,10 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
             name for name, c in checks.items() if c["status"] == NOT_RUN
         ),
         "summary": _summarize(checks),
+        # The working trees accepted structurally but not inspected.  Naming
+        # them keeps the accept auditable, and makes a changed working-tree set
+        # a divergence the repeat comparison reports rather than absorbs.
+        "evidence_subdirectories": subdirectories,
     }
     if release_set is not None:
         identity = _release_set_identity(Path(release_set))
@@ -652,6 +692,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"evidence: {args.evidence}")
         if args.release_set is not None:
             print(f"release set: {args.release_set}")
+        if args.compare_with is not None:
+            # The repeat gate's second run: name it in the plan so an operator
+            # can confirm the comparison is wired before spending a live run.
+            print(f"compare with: {args.compare_with}")
         print("checks:")
         for name in CHECK_NAMES:
             print(f"  - {name}")

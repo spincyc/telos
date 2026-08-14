@@ -6,12 +6,16 @@ guest, touch the network, or require privilege.
 """
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY = ROOT.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "vm"))
 
@@ -63,9 +67,16 @@ class VerifyRunTests(unittest.TestCase):
     def evidence(self, name="20260810T000000Z-1234-pxe-handoff", *,
                  status="pass", measurements=GOOD_MEASUREMENTS,
                  switch=GOOD_SWITCH, logs=True, extra=None,
-                 result_override=None):
+                 result_override=None, subdirectories=None):
         directory = self.root / name
         directory.mkdir()
+        # A real run bundle keeps working trees beside the retained logs; the
+        # mapping's values are the files staged inside each one.
+        for subdirectory, contents in (subdirectories or {}).items():
+            staged = directory / subdirectory
+            staged.mkdir(parents=True)
+            for filename, content in (contents or {}).items():
+                (staged / filename).write_bytes(content)
         result = {"schema": 1, "status": status, "retained": []}
         if measurements is not None:
             result["measurements"] = measurements
@@ -202,6 +213,69 @@ class VerifyRunTests(unittest.TestCase):
         self.assertEqual(
             "FAIL", receipt["checks"]["evidence_contents_expected"]["status"])
         self.assertEqual("FAIL", receipt["verdict"])
+
+    # -- real bundle layout: working trees beside the retained artifacts ---
+
+    # As produced under homelab/var/factory/arch-installs/run-*/evidence: the
+    # four retained files plus a controller guard directory and a staged
+    # publication tree whose sealed payload is far over the retention limit.
+    REAL_BUNDLE_TREES = {
+        "controller/guard": {},
+        "publication": {
+            "release-set.json": b"{}\n",
+            "tftp-hpa-5.2-11-x86_64.pkg.tar.zst":
+                b"x" * (factory_verify.EVIDENCE_LIMIT + 1),
+        },
+    }
+
+    def test_real_run_bundle_working_trees_read_cleanly(self):
+        receipt = factory_verify.verify_run(
+            self.evidence(subdirectories=self.REAL_BUNDLE_TREES),
+            release_set=self.release_set())
+        self.assertEqual("PASS", receipt["verdict"])
+        self.assertEqual(
+            "PASS", receipt["checks"]["evidence_readable"]["status"])
+        self.assertEqual(
+            "PASS", receipt["checks"]["evidence_contents_expected"]["status"])
+        # The limit governs retained artifacts, not a working tree's payload.
+        self.assertEqual(
+            "PASS", receipt["checks"]["evidence_within_size_limit"]["status"])
+        # Accepted structurally, but named: nothing is silently ignored.
+        self.assertEqual(
+            ["controller", "publication"], receipt["evidence_subdirectories"])
+        self.assertIn(
+            "publication",
+            receipt["checks"]["evidence_contents_expected"]["detail"])
+
+    def test_unknown_file_beside_working_tree_is_still_fail(self):
+        directory = self.evidence(
+            subdirectories=self.REAL_BUNDLE_TREES,
+            extra={"secret.bin": b"payload"})
+        receipt = factory_verify.verify_run(directory)
+        self.assertEqual(
+            "FAIL", receipt["checks"]["evidence_contents_expected"]["status"])
+        self.assertIn(
+            "secret.bin",
+            receipt["checks"]["evidence_contents_expected"]["detail"])
+        self.assertEqual("FAIL", receipt["verdict"])
+
+    def test_symlinked_evidence_entry_is_fail(self):
+        directory = self.evidence(subdirectories=self.REAL_BUNDLE_TREES)
+        (directory / "smuggled.log").symlink_to(directory / "switch.jsonl")
+        receipt = factory_verify.verify_run(directory)
+        # A symlink is neither a retained artifact nor a working tree.
+        self.assertEqual("FAIL", receipt["verdict"])
+        self.assertEqual(
+            "FAIL", receipt["checks"]["evidence_readable"]["status"])
+        self.assertEqual(0, receipt["summary"]["pass"])
+
+    def test_fifo_evidence_entry_is_fail(self):
+        directory = self.evidence()
+        os.mkfifo(directory / "pipe")
+        receipt = factory_verify.verify_run(directory)
+        self.assertEqual("FAIL", receipt["verdict"])
+        self.assertEqual(
+            "FAIL", receipt["checks"]["evidence_readable"]["status"])
 
     def test_oversized_evidence_is_fail(self):
         big = b"x" * (factory_verify.EVIDENCE_LIMIT + 1)
@@ -385,6 +459,76 @@ class PxeAuthorityAuditWiringTests(VerifyRunTests):
         self.assertEqual("PASS", written["verdict"])
         # The full artifact carries the per-check detail, not just the summary.
         self.assertTrue(any(c["details"] for c in written["checks"]))
+
+
+class CompareThroughMakeTests(unittest.TestCase):
+    """Gate 12's comparator must be reachable through the Make target.
+
+    A twice-through is worthless if only a direct script call can render the
+    repeat verdict, so these assert the ``--compare-with`` passthrough both in
+    the recipe text and by actually running the target's dry run.
+    """
+
+    MAKEFILE = REPOSITORY / "Makefile"
+    VARIABLE = "FACTORY_COMPARE_EVIDENCE"
+
+    def recipe(self) -> str:
+        """The homelab-factory-verify recipe as one continuation-free block."""
+        text = self.MAKEFILE.read_text(encoding="utf-8")
+        body = text.split("\nhomelab-factory-verify:\n", 1)[1]
+        # A recipe ends at the first line that is neither a tab-indented
+        # command nor blank.
+        lines = []
+        for line in body.splitlines():
+            if line and not line.startswith("\t"):
+                break
+            lines.append(line)
+        return "\n".join(lines).replace("\\\n", " ")
+
+    def test_variable_is_declared(self):
+        text = self.MAKEFILE.read_text(encoding="utf-8")
+        self.assertIn(f"\n{self.VARIABLE} ?=", text)
+
+    def test_both_branches_forward_compare_with(self):
+        recipe = self.recipe()
+        forward = f"$(if $({self.VARIABLE}),--compare-with '$({self.VARIABLE})')"
+        # The dry-run branch and the APPLY=1 branch each forward it.
+        self.assertEqual(2, recipe.count(forward), recipe)
+
+    @unittest.skipUnless(shutil.which("make"), "make is unavailable")
+    def test_dry_run_forwards_compare_with(self):
+        # The dry run only prints the plan, so it needs no real evidence.
+        completed = subprocess.run(
+            ["make", "--no-print-directory", "homelab-factory-verify",
+             "FACTORY_EVIDENCE=run-a/evidence",
+             f"{self.VARIABLE}=run-b/evidence"],
+            cwd=REPOSITORY, capture_output=True, text=True, timeout=120,
+            check=True)
+        self.assertIn("compare with: run-b/evidence", completed.stdout)
+        self.assertIn("evidence: run-a/evidence", completed.stdout)
+
+
+class CompareCliTests(VerifyRunTests):
+    """End-to-end: two retained bundles compared through the CLI."""
+
+    def test_two_bundles_compare_equivalent(self):
+        first = self.evidence(name="run-a", subdirectories={"publication": {}})
+        second = self.evidence(name="run-b", subdirectories={"publication": {}})
+        status = factory_verify.main(
+            [str(first), "--compare-with", str(second)])
+        # Only the evidence directory name differs, which is expected varying.
+        self.assertEqual(0, status)
+
+    def test_differing_working_tree_set_is_divergent(self):
+        first = self.evidence(name="run-a", subdirectories={"publication": {}})
+        second = self.evidence(name="run-b")
+        comparison = factory_verify.compare_runs(
+            factory_verify.verify_run(first), factory_verify.verify_run(second))
+        self.assertFalse(comparison["equivalent"])
+        self.assertTrue(any(
+            difference["path"].startswith("evidence_subdirectories")
+            and difference["classification"] == "divergent"
+            for difference in comparison["differences"]), comparison)
 
 
 if __name__ == "__main__":

@@ -75,6 +75,9 @@ FACTORY_CONTROLLER_BUNDLE ?= homelab/var/factory/controller-convergence.iso
 FACTORY_DURATION ?= 120
 FACTORY_RELEASES ?=
 FACTORY_TARGET ?= arch-workstation
+# Gate 12 (repeatability): the second twice-through run's retained evidence,
+# compared against FACTORY_EVIDENCE by homelab-factory-verify.
+FACTORY_COMPARE_EVIDENCE ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -407,6 +410,9 @@ homelab-factory-pxe: homelab-factory-offline-check
 # Read-only: it never boots, installs, or mutates. The dry run prints the check
 # plan; APPLY=1 emits the receipt and a PASS/FAIL/NOT RUN verdict. A recorded
 # measurement that is absent stays NOT RUN and is never promoted to a pass.
+# FACTORY_COMPARE_EVIDENCE names a second retained run: it renders the gate-12
+# repeat verdict, classifying every differing receipt byte as expected per-run
+# nondeterminism or a genuine divergence, and exits non-zero when any diverges.
 homelab-factory-verify:
 	@if [ -z '$(FACTORY_EVIDENCE)' ]; then \
 		echo 'require FACTORY_EVIDENCE=<retained run evidence directory>' >&2; \
@@ -415,10 +421,13 @@ homelab-factory-verify:
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to validate retained evidence'; \
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
-			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') --plan; \
+			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') \
+			$(if $(FACTORY_COMPARE_EVIDENCE),--compare-with '$(FACTORY_COMPARE_EVIDENCE)') \
+			--plan; \
 	else \
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
-			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)'); \
+			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') \
+			$(if $(FACTORY_COMPARE_EVIDENCE),--compare-with '$(FACTORY_COMPARE_EVIDENCE)'); \
 	fi
 
 # Gate 4 (PXE authority boundary): render the read-only PXE authority verdict
