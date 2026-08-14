@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -40,8 +41,15 @@ from homelab.vm.arch_identity_run import (
     MENU_WINDOW_MISSED_FAILURE,
     OPERATOR_PRINCIPAL,
     REQUIRED_CHECKS,
+    RESCUE_CONFIRM_PROMPT_MISSING_FAILURE,
+    RESCUE_CREDENTIAL_REJECTED_FAILURE,
+    RESCUE_ECHO_NOT_SUPPRESSED_FAILURE,
+    RESCUE_PASSWD_EXITED_FAILURE,
     RESCUE_PASSWORD_FAILURE,
+    RESCUE_PASSWORD_WRITES,
     RESCUE_PRINCIPAL,
+    RESCUE_PROMPT_MISSING_FAILURE,
+    RESCUE_UPDATED_DIAGNOSTIC,
     SUDO_CREDENTIAL_REFUSED_FAILURE,
     SUDO_ECHO_NOT_SUPPRESSED_FAILURE,
     SUDO_ELEVATION_FAILURE,
@@ -60,7 +68,9 @@ from homelab.vm.arch_identity_run import (
     elevation_outcome_pattern,
     login_operator,
     new_boot_facts,
+    rescue_outcome_pattern,
     rescue_password_command,
+    rescue_prompt_pattern,
     root_proof_marker,
     run,
     run_lifecycle,
@@ -879,7 +889,9 @@ class _FakeSerial:
     sudo_outcome: bytes | None = None  # group("rc"): sudo's own exit code
     #: sudo read the credential and asked again -- its PAM stack refused it.
     sudo_refused = False
-    rescue_outcome = b"0"  # group(1): passwd local-rescue return code
+    rescue_outcome = b"0"  # group("rc"): passwd local-rescue return code
+    #: passwd printed its own diagnostic instead of asking again.
+    rescue_diagnostic: bytes | None = None
     root_uid = b"0"
     transcript = b""
     #: Leading ``arch-menu-rendered`` waits that stall: the guest says nothing
@@ -899,6 +911,7 @@ class _FakeSerial:
         self.token = "feedfacefeedface"
         self.stalls_served = 0
         self.sudo_outcomes_served = 0
+        self.rescue_outcomes_served = 0
         type(self).instances.append(self)
 
     def establish_disposable_controller_session(self):
@@ -954,8 +967,20 @@ class _FakeSerial:
                 return _FakeMatch(
                     {0: b"", "root_shell": type(self).console_banner})
             return _FakeMatch({0: b"", "uid": type(self).root_uid})
-        if label == "arch-rescue-result":
-            return _FakeMatch({0: b"", 1: type(self).rescue_outcome})
+        if label == "arch-rescue-outcome":
+            # The real exchange is prompt-driven: pam asks, the credential is
+            # written, pam asks again to confirm, then passwd's own exit code
+            # settles it.  A scripted diagnostic settles it in one pass.
+            self.rescue_outcomes_served += 1
+            if type(self).rescue_diagnostic is not None:
+                return _FakeMatch(
+                    {0: b"", "diag": type(self).rescue_diagnostic})
+            if self.rescue_outcomes_served == 1:
+                return _FakeMatch({0: b"", "new": b"New Password: "})
+            if self.rescue_outcomes_served == 2:
+                return _FakeMatch(
+                    {0: b"", "retype": b"Reenter new Password: "})
+            return _FakeMatch({0: b"", "rc": type(self).rescue_outcome})
         if label == "storage-dns-rc-observed":
             return _FakeMatch({0: b"", 1: b"0"})
         return _FakeMatch({0: type(self).console_banner})
@@ -1092,6 +1117,7 @@ class BoundaryWiringTests(unittest.TestCase):
         _FakeSerial.sudo_outcome = None
         _FakeSerial.sudo_refused = False
         _FakeSerial.rescue_outcome = b"0"
+        _FakeSerial.rescue_diagnostic = None
         _FakeSerial.root_uid = b"0"
         _FakeSerial.transcript = b""
         _FakeSerial.menu_stalls = 0
@@ -1249,11 +1275,17 @@ class BoundaryWiringTests(unittest.TestCase):
                     "arch-sudo-password-prompt", "arch-sudo-password-sent",
                     "arch-sudo-outcome", "arch-root-proof-requested",
                     "arch-sudo-outcome",
+                    # And the break-glass credential is written only into a
+                    # prompt the password stack has just printed: one outcome
+                    # wait per ask, never a write ahead of one.
                     "arch-rescue-command-sent", "arch-rescue-echo-off",
+                    "arch-rescue-outcome",
                     "arch-rescue-new-password-prompt",
                     "arch-rescue-password-sent",
+                    "arch-rescue-outcome",
                     "arch-rescue-password-confirm-prompt",
-                    "arch-rescue-password-confirm-sent",
+                    "arch-rescue-password-sent",
+                    "arch-rescue-outcome",
                     "arch-rescue-result",
                 ])
                 # The Arch entry (listed first) was selected with its raw
@@ -1488,13 +1520,21 @@ class BoundaryWiringTests(unittest.TestCase):
             with self.assertRaises(ArchIdentityError) as caught:
                 boundary.start()
             self.assertEqual(
-                str(caught.exception), RESCUE_PASSWORD_FAILURE)
+                str(caught.exception), RESCUE_PASSWD_EXITED_FAILURE)
             self.assertEqual(caught.exception.check, "arch-local-rescue")
             recorded = json.loads(
                 (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
                 .read_text(encoding="utf-8"))
             self.assertTrue(recorded["sudo_elevated"])
             self.assertFalse(recorded["rescue_password_set"])
+            # passwd's own exit code reaches the evidence, as sudo's does, so
+            # the next run never has to re-derive it from a transcript.
+            self.assertEqual(recorded["rescue_returncode"], 1)
+            self.assertTrue(recorded["rescue_echo_suppressed"])
+            self.assertTrue(recorded["rescue_prompt_seen"])
+            self.assertTrue(recorded["rescue_confirm_prompt_seen"])
+            self.assertEqual(recorded["rescue_credential_writes"], 2)
+            self.assertFalse(recorded["rescue_credential_rejected"])
 
     def test_boot_stall_is_power_cycled_and_self_diagnosing(self):
         # Two of eight gate-8 runs on 2026-08-14 rendered no menu at all with
@@ -2280,6 +2320,20 @@ class ElevationTests(SerialTranscriptCase):
         self.assertEqual(self._sent(sink), b"")
 
 
+# The two wordings that can appear on this disk, verbatim.  pam_sss is the
+# pair the live run of 2026-08-14 actually saw (its README-visible msgids are
+# capitalised differently from pam_unix's) and gate 7 puts it FIRST in the
+# password stack of /etc/pam.d/system-auth.
+PAM_SSS_NEW = b"New Password: "
+PAM_SSS_RETYPE = b"Reenter new Password: "
+PAM_UNIX_NEW = b"New password: "
+PAM_UNIX_RETYPE = b"Retype new password: "
+#: The exact bytes that followed the ready marker in
+#: var/factory/arch-identity/run-20260814T155301Z-4b21f9334459, where the run
+#: then sat out its whole 60s budget and stopped.
+LIVE_RESCUE_TAIL = b"\r\n" + PAM_SSS_NEW
+
+
 class RescuePasswordTests(SerialTranscriptCase):
     """The break-glass password gate 7 deliberately leaves disabled."""
 
@@ -2291,12 +2345,44 @@ class RescuePasswordTests(SerialTranscriptCase):
         return (b"\n__TELOS_ARCH_RESCUE_RC_"
                 + console.token.encode("ascii") + b"=" + code + b"\n")
 
+    def _updated(self) -> bytes:
+        return b"\npasswd: " + RESCUE_UPDATED_DIAGNOSTIC + b"\r\n"
+
+    def test_pam_sss_wording_is_what_the_live_guest_actually_prints(self):
+        # THE 2026-08-14 defect.  The elevation's lesson was "write only after
+        # the reader asks"; this step already did that and still stopped, on
+        # the reader's WORDING.  These are the verbatim bytes off the console.
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console) + LIVE_RESCUE_TAIL
+            + b"\r\n" + PAM_SSS_RETYPE
+            + self._updated() + self._result(console, b"0"))
+        facts = new_boot_facts()
+        set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertTrue(facts["rescue_password_set"])
+        self.assertTrue(facts["rescue_password_updated"])
+        self.assertEqual(facts["rescue_returncode"], 0)
+        self.assertEqual(facts["rescue_credential_writes"], 2)
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL + b"\n"), 2)
+
+    def test_the_predecessor_pattern_could_not_have_matched_that_prompt(self):
+        # Pin the regression itself: the pattern this step used until
+        # 2026-08-14 was case-sensitive lowercase pam_unix wording, so the
+        # capitalised pam_sss prompt on the console could never match it.
+        superseded = re.compile(rb"New password:\s*$", re.MULTILINE)
+        self.assertIsNone(superseded.search(LIVE_RESCUE_TAIL))
+        current = re.compile(rescue_prompt_pattern(), re.MULTILINE)
+        match = current.search(LIVE_RESCUE_TAIL)
+        self.assertIsNotNone(match)
+        self.assertIsNotNone(match.group("new"))
+        self.assertIsNone(match.group("retype"))
+
     def test_password_is_set_with_echo_provably_suppressed(self):
         console, feeder, sink = self._console()
         feeder.write(
             self._ready(console)
-            + b"New password: "
-            + b"\nRetype new password: "
+            + PAM_UNIX_NEW
+            + b"\n" + PAM_UNIX_RETYPE
             + self._result(console, b"0"))
         facts = new_boot_facts()
         set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
@@ -2304,32 +2390,271 @@ class RescuePasswordTests(SerialTranscriptCase):
         sent = self._sent(sink)
         # Echo is provably off before either write, the account is the one the
         # lifecycle contract names, and the credential never enters the
-        # retained transcript.
+        # retained transcript or the retained facts.
         self.assertIn(b"stty -echo", sent)
         self.assertIn(b"passwd " + RESCUE_PRINCIPAL.encode("ascii"), sent)
         self.assertLess(
             sent.index(b"stty -echo"), sent.index(TEST_CREDENTIAL))
         self.assertEqual(sent.count(TEST_CREDENTIAL + b"\n"), 2)
+        self.assertNotIn(TEST_CREDENTIAL + b"\n\n", sent)
+        self.assertNotIn(TEST_CREDENTIAL + b"\r", sent)
         self.assertNotIn(TEST_CREDENTIAL, console.transcript)
+        self.assertNotIn(
+            TEST_CREDENTIAL.decode("ascii"), json.dumps(facts))
         self.assertEqual(console.events, [
             "arch-rescue-command-sent", "arch-rescue-echo-off",
-            "arch-rescue-new-password-prompt", "arch-rescue-password-sent",
-            "arch-rescue-password-confirm-prompt",
-            "arch-rescue-password-confirm-sent", "arch-rescue-result"])
+            "arch-rescue-outcome", "arch-rescue-new-password-prompt",
+            "arch-rescue-password-sent",
+            "arch-rescue-outcome", "arch-rescue-password-confirm-prompt",
+            "arch-rescue-password-sent",
+            "arch-rescue-outcome", "arch-rescue-result"])
 
-    def test_nonzero_passwd_return_is_the_named_failure(self):
+    def test_each_write_follows_the_prompt_it_answers(self):
+        # The ordering the whole exchange turns on.  Nothing past the first
+        # prompt is scripted ahead here: the guest only prints the
+        # confirmation prompt BECAUSE the first write arrived, and only prints
+        # its exit code because the second did.  A credential typed ahead of a
+        # prompt therefore cannot pass this test -- it would time out.
+        console, feeder, sink = self._console()
+        feeder.write(self._ready(console) + LIVE_RESCUE_TAIL)
+        replies = [
+            b"\r\n" + PAM_SSS_RETYPE,
+            self._updated() + self._result(console, b"0"),
+        ]
+        real_send = console._send
+
+        def answering_send(value, event):
+            real_send(value, event)
+            if event == "arch-rescue-password-sent" and replies:
+                feeder.write(replies.pop(0))
+
+        console._send = answering_send
+        facts = new_boot_facts()
+        set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertEqual(replies, [])
+        self.assertTrue(facts["rescue_password_set"])
+        self.assertEqual(facts["rescue_credential_writes"], 2)
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL + b"\n"), 2)
+        self.assertEqual(console.events, [
+            "arch-rescue-command-sent", "arch-rescue-echo-off",
+            "arch-rescue-outcome", "arch-rescue-new-password-prompt",
+            "arch-rescue-password-sent",
+            "arch-rescue-outcome", "arch-rescue-password-confirm-prompt",
+            "arch-rescue-password-sent",
+            "arch-rescue-outcome", "arch-rescue-password-updated",
+            "arch-rescue-outcome", "arch-rescue-result"])
+
+    def test_both_pam_modules_may_ask_and_the_exchange_still_converges(self):
+        # pam_sss asks first and only then discovers local-rescue is not a
+        # domain account; whether pam_unix reuses that authtok or asks its own
+        # pair is a property of the installed module.  Four writes converge.
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console)
+            + b"\r\n" + PAM_SSS_NEW + b"\r\n" + PAM_SSS_RETYPE
+            + b"\r\n" + PAM_UNIX_NEW + b"\r\n" + PAM_UNIX_RETYPE
+            + self._updated() + self._result(console, b"0"))
+        facts = new_boot_facts()
+        set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertTrue(facts["rescue_password_set"])
+        self.assertEqual(facts["rescue_credential_writes"], 4)
+        self.assertEqual(facts["rescue_credential_writes"],
+                         RESCUE_PASSWORD_WRITES)
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL + b"\n"), 4)
+
+    def test_confirmation_prompt_never_satisfies_the_first_prompt(self):
+        # "Reenter new Password:" literally contains "new Password:", so
+        # without the line anchor the two asks would be indistinguishable and
+        # the exchange could not tell a confirmation from a re-ask.
+        pattern = re.compile(rescue_prompt_pattern(), re.MULTILINE)
+        for retype in (PAM_SSS_RETYPE, PAM_UNIX_RETYPE):
+            match = pattern.search(b"\r\n" + retype)
+            self.assertIsNotNone(match, retype)
+            self.assertIsNone(match.group("new"), retype)
+            self.assertIsNotNone(match.group("retype"), retype)
+
+    def test_no_partial_read_of_the_live_tail_forges_a_verdict(self):
+        # The elevation lost a live run to a verdict pattern that matched a
+        # prefix at a serial read boundary.  No prefix of this exchange's own
+        # output may produce an rc or a passwd diagnostic.
+        pattern = re.compile(
+            rescue_outcome_pattern("feedfacefeedface"), re.MULTILINE)
+        stream = (
+            b"\r\n__TELOS_ARCH_RESCUE_READY_feedfacefeedface__\r\n"
+            + PAM_SSS_NEW + b"\r\n" + PAM_SSS_RETYPE
+            + b"\r\npasswd: " + RESCUE_UPDATED_DIAGNOSTIC
+            + b"\r\n__TELOS_ARCH_RESCUE_RC_feedfacefeedface=10\r\n")
+        for length in range(1, len(stream)):
+            match = pattern.search(stream[:length])
+            if match is None:
+                continue
+            if match.group("rc") is not None:
+                self.fail(f"prefix of {length} bytes forged an exit code")
+            if match.group("diag") is not None:
+                self.fail(f"prefix of {length} bytes forged a diagnostic")
+        # The complete stream does settle, and on the real two-digit code.
+        settled = pattern.search(stream)
+        self.assertIsNotNone(settled)
+        tail = pattern.search(
+            b"\n__TELOS_ARCH_RESCUE_RC_feedfacefeedface=10\r\n")
+        self.assertEqual(tail.group("rc"), b"10")
+
+    def test_missing_prompt_never_writes_the_credential(self):
+        # THE named 2026-08-14 stop: echo off, no ask, nothing written.
+        console, feeder, sink = self._console()
+        feeder.write(self._ready(console))
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(
+                console, facts, TEST_CREDENTIAL, timeout=0.5,
+                prompt_timeout=0.3)
+        self.assertEqual(str(caught.exception), RESCUE_PROMPT_MISSING_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-local-rescue")
+        self.assertTrue(facts["rescue_echo_suppressed"])
+        self.assertFalse(facts["rescue_prompt_seen"])
+        self.assertFalse(facts["rescue_credential_sent"])
+        self.assertEqual(facts["rescue_credential_writes"], 0)
+        self.assertNotIn(TEST_CREDENTIAL, self._sent(sink))
+
+    def test_missing_ready_marker_never_writes_the_credential(self):
+        console, feeder, sink = self._console()
+        feeder.write(b"[root@telos-ws1 ~]# \n")
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(
+                console, facts, TEST_CREDENTIAL, timeout=0.4)
+        self.assertEqual(
+            str(caught.exception), RESCUE_ECHO_NOT_SUPPRESSED_FAILURE)
+        self.assertFalse(facts["rescue_echo_suppressed"])
+        self.assertFalse(facts["rescue_credential_sent"])
+        self.assertNotIn(TEST_CREDENTIAL, self._sent(sink))
+
+    def test_a_half_written_exchange_names_the_confirmation(self):
+        console, feeder, sink = self._console()
+        feeder.write(self._ready(console) + LIVE_RESCUE_TAIL)
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(
+                console, facts, TEST_CREDENTIAL, timeout=1.0,
+                prompt_timeout=0.3)
+        self.assertEqual(
+            str(caught.exception), RESCUE_CONFIRM_PROMPT_MISSING_FAILURE)
+        self.assertTrue(facts["rescue_prompt_seen"])
+        self.assertFalse(facts["rescue_confirm_prompt_seen"])
+        self.assertEqual(facts["rescue_credential_writes"], 1)
+        # Exactly one write, and nothing typed after it: a shell command typed
+        # into a reader that is still waiting is how run 10 lost its sudo.
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL + b"\n"), 1)
+
+    def test_a_passwd_diagnostic_is_the_named_rejection(self):
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console) + LIVE_RESCUE_TAIL
+            + b"\r\n" + PAM_SSS_RETYPE
+            + b"\r\npasswd: Authentication token manipulation error\r\n")
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertEqual(
+            str(caught.exception), RESCUE_CREDENTIAL_REJECTED_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-local-rescue")
+        self.assertTrue(facts["rescue_credential_rejected"])
+        self.assertFalse(facts["rescue_password_set"])
+        self.assertFalse(facts["rescue_password_updated"])
+        # The diagnostic never carries the value, and neither does the stop.
+        self.assertNotIn(
+            TEST_CREDENTIAL.decode("ascii"),
+            str(caught.exception) + json.dumps(facts))
+        self.assertEqual(self._sent(sink).count(TEST_CREDENTIAL + b"\n"), 2)
+
+    def test_asking_past_the_write_budget_is_the_named_rejection(self):
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console)
+            + (b"\r\n" + PAM_SSS_NEW + b"\r\n" + PAM_SSS_RETYPE) * 3)
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertEqual(
+            str(caught.exception), RESCUE_CREDENTIAL_REJECTED_FAILURE)
+        self.assertTrue(facts["rescue_credential_rejected"])
+        # Bounded: the value is written RESCUE_PASSWORD_WRITES times, never
+        # once more, however long the stack keeps asking.
+        self.assertEqual(
+            facts["rescue_credential_writes"], RESCUE_PASSWORD_WRITES)
+        self.assertEqual(
+            self._sent(sink).count(TEST_CREDENTIAL + b"\n"),
+            RESCUE_PASSWORD_WRITES)
+
+    def test_nonzero_passwd_return_is_the_named_exit_failure(self):
         console, feeder, _sink = self._console()
         feeder.write(
             self._ready(console)
-            + b"New password: "
-            + b"\nRetype new password: "
+            + PAM_UNIX_NEW
+            + b"\n" + PAM_UNIX_RETYPE
             + self._result(console, b"1"))
         facts = new_boot_facts()
         with self.assertRaises(ArchIdentityError) as caught:
             set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
-        self.assertEqual(str(caught.exception), RESCUE_PASSWORD_FAILURE)
+        self.assertEqual(str(caught.exception), RESCUE_PASSWD_EXITED_FAILURE)
         self.assertEqual(caught.exception.check, "arch-local-rescue")
         self.assertFalse(facts["rescue_password_set"])
+        self.assertEqual(facts["rescue_returncode"], 1)
+        self.assertFalse(facts["rescue_credential_rejected"])
+
+    def test_a_zero_exit_without_an_ask_is_never_recorded_as_set(self):
+        # passwd cannot have set a password it never asked for, whatever it
+        # exited with; the fact must not be fabricated from an exit code.
+        console, feeder, _sink = self._console()
+        feeder.write(self._ready(console) + self._result(console, b"0"))
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertEqual(str(caught.exception), RESCUE_PROMPT_MISSING_FAILURE)
+        self.assertFalse(facts["rescue_password_set"])
+        self.assertEqual(facts["rescue_returncode"], 0)
+
+    def test_every_rescue_failure_names_a_different_layer(self):
+        named = [
+            RESCUE_ECHO_NOT_SUPPRESSED_FAILURE,
+            RESCUE_PROMPT_MISSING_FAILURE,
+            RESCUE_CONFIRM_PROMPT_MISSING_FAILURE,
+            RESCUE_CREDENTIAL_REJECTED_FAILURE,
+            RESCUE_PASSWD_EXITED_FAILURE,
+            RESCUE_PASSWORD_FAILURE,
+        ]
+        self.assertEqual(len(set(named)), len(named))
+        # And none of them is the sudo family's, so a stop can never be read
+        # as the wrong exchange.
+        self.assertEqual(
+            set(named) & {
+                SUDO_ELEVATION_FAILURE, SUDO_CREDENTIAL_REFUSED_FAILURE,
+                SUDO_ECHO_NOT_SUPPRESSED_FAILURE, SUDO_PROMPT_MISSING_FAILURE,
+                SUDO_EXITED_FAILURE, SUDO_ROOT_UNPROVEN_FAILURE},
+            set())
+
+    def test_every_wait_is_bounded_below_the_exchange_budget(self):
+        # The 2026-08-14 run spent its whole 60s budget in ONE wait for a
+        # prompt already on the console.  A per-wait bound is what makes a
+        # live stop cheap, and the console timeout is restored either way.
+        console, feeder, _sink = self._console(timeout=300.0)
+        feeder.write(self._ready(console))
+        started = time.monotonic()
+        with self.assertRaises(ArchIdentityError):
+            set_rescue_password(
+                console, new_boot_facts(), TEST_CREDENTIAL, timeout=30.0,
+                prompt_timeout=0.3)
+        self.assertLess(time.monotonic() - started, 10.0)
+        self.assertEqual(console.timeout, 300.0)
+
+    def test_an_empty_or_multiline_credential_is_refused_before_any_write(self):
+        for bad in (b"", b"one\ntwo", b"one\rtwo"):
+            console, _feeder, sink = self._console()
+            with self.assertRaisesRegex(
+                    ArchIdentityError, "one non-empty line"):
+                set_rescue_password(
+                    console, new_boot_facts(), bad, timeout=0.2)
+            self.assertEqual(self._sent(sink), b"")
 
     def test_command_never_carries_the_secret(self):
         command, ready, result = rescue_password_command("feedfacefeedface")
@@ -2339,6 +2664,9 @@ class RescuePasswordTests(SerialTranscriptCase):
         self.assertIn(b"stty echo;", command)
         self.assertIn(ready, command)
         self.assertIn(result, command)
+        # The prompt wording is pinned to the msgids rescue_prompt_pattern
+        # knows, so a localised guest cannot silently change the exchange.
+        self.assertIn(b"LC_ALL=C passwd", command)
         self.assertNotRegex(
             command.decode("ascii"), r"(?i)password[ ]*=|--stdin|chpasswd")
 

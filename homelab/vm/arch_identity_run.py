@@ -177,7 +177,10 @@ RESCUE_PRINCIPAL = str(CONTRACT["principals"]["local_rescue"]["name"])
 # 1. The credential must be written only after the READER has asked for it.
 #    ``login``(1) and ``passwd``(1) are driven exactly that way in this module
 #    (``login_operator`` waits for ``Password:``, ``set_rescue_password`` waits
-#    for ``New password:``) and both work; only the elevation gated on a marker
+#    for whichever PAM module asks -- see ``rescue_prompt_pattern``, and note
+#    that gating on the reader's prompt is only half the discipline: the
+#    *wording* has to be the wording that reader actually uses, which is what
+#    the run below then stopped on); only the elevation gated on a marker
 #    printed by the shell *before* the reader existed.  So the elevation now
 #    gives sudo a token-scoped prompt with `-p` -- the same discipline
 #    ``serial_automation.SerialAutomation.run`` has always used for the
@@ -289,6 +292,39 @@ RESCUE_PASSWORD_FAILURE = (
     "the local-rescue break-glass password was not set from the elevated "
     "console; gate 7 installs that account with a disabled password and the "
     "arch-local-rescue probe requires passwd -S to report P")
+# The five ways the break-glass exchange can stop, each naming its OWN layer,
+# for the same reason the sudo family above does.  The 2026-08-14 run
+# ``run-20260814T155301Z-4b21f9334459`` reached a proven root shell
+# (``sudo_uid: 0``) and then recorded nothing but ``rescue_password_set:
+# false``, so the next run had to reconstruct the exchange from an
+# ANSI-stripped transcript to find that ``passwd`` HAD asked -- in words the
+# harness was not watching for (``rescue_prompt_pattern``).  Every one of these
+# is secret-free: the facts carry booleans, a write count and passwd's own exit
+# code, never the credential.
+RESCUE_ECHO_NOT_SUPPRESSED_FAILURE = (
+    "the elevated root shell never confirmed terminal echo was off before the "
+    "break-glass password was set, so the credential was deliberately never "
+    "written; nothing was exposed and the fault is in the root shell, not in "
+    "passwd")
+RESCUE_PROMPT_MISSING_FAILURE = (
+    "passwd never asked for the local-rescue account's new password, so the "
+    "credential was never written; that is the passwd/PAM layer (the account "
+    "missing locally, passwd itself, or a password stack that asks in words "
+    "rescue_prompt_pattern does not know), never a rejected credential")
+RESCUE_CONFIRM_PROMPT_MISSING_FAILURE = (
+    "passwd asked for the local-rescue password once, took it, and then "
+    "neither asked for the confirmation nor returned; the exchange stopped "
+    "half-written rather than typing the next command into a live reader")
+RESCUE_CREDENTIAL_REJECTED_FAILURE = (
+    "passwd read the generated break-glass credential and refused it -- it "
+    "printed its own diagnostic, or kept re-asking past the bounded write "
+    "budget.  The value is a fresh 35-character random string and root "
+    "bypasses every strength check this disk installs (the gate-7 password "
+    "stack carries no pam_pwquality), so a stop here indicts the password "
+    "stack rather than the credential")
+RESCUE_PASSWD_EXITED_FAILURE = (
+    "passwd exited without setting the local-rescue password; its own exit "
+    "code is retained as rescue_returncode in the workstation boot facts")
 
 #: Retained workstation console evidence (bounded + redacted, no secrets).
 WORKSTATION_LOG_FILENAME = "workstation-serial.log"
@@ -403,6 +439,29 @@ SUDO_PROOF_TIMEOUT = 20.0
 SUDO_PROOF_ASKS = 2
 #: Bound for the single ``passwd local-rescue`` exchange on the root shell.
 RESCUE_PASSWORD_TIMEOUT = 60.0
+#: Per-wait bound inside that exchange, for the same reason
+#: ``SUDO_PROOF_TIMEOUT`` exists: every step of it is local (``passwd`` prints
+#: its prompt in milliseconds and no PAM round trip leaves the box, because
+#: ``local-rescue`` is a files-only account), and the 2026-08-14 run spent the
+#: whole 60s budget in ONE wait for a prompt that was already on the console.
+#: At most ``RESCUE_PASSWORD_WRITES + 1`` waits of this length can run.
+RESCUE_PROMPT_TIMEOUT = 15.0
+#: How many times the credential may be written into that exchange before it
+#: fails closed.  Two is the expected count, but this disk's password stack can
+#: legitimately ask twice over: gate 7 puts ``pam_sss`` ahead of ``pam_unix``
+#: in ``/etc/pam.d/system-auth``, ``pam_sss`` asks its own pair first and only
+#: then discovers the account is not a domain one, and whether ``pam_unix``
+#: reuses that authtok (``try_first_pass``) or asks its own pair is a property
+#: of the installed module, not of this harness.  Four writes converge either
+#: way; a fifth ask is a refusal, not a stack, and stops the run.  Unlike the
+#: getty and sudo credentials this costs no ``pam_faillock`` headroom --
+#: faillock lives in the auth stack, and this is chauthtok.
+RESCUE_PASSWORD_WRITES = 4
+#: The one diagnostic ``passwd``(1) prints when the change actually landed.
+#: Observed, recorded, and deliberately NOT required: the exit code is the
+#: verdict, and requiring a localised sentence would trade a working live run
+#: for a stricter proof of the same fact.
+RESCUE_UPDATED_DIAGNOSTIC = b"password updated successfully"
 
 
 def new_boot_facts() -> dict[str, object]:
@@ -469,6 +528,32 @@ def new_boot_facts() -> dict[str, object]:
         "sudo_uid": None,
         "sudo_proof_asks": 0,
         "sudo_elevated": False,
+        # The break-glass password, layer by layer, exactly as the elevation
+        # above.  The 2026-08-14 run that first reached a root shell recorded
+        # only ``rescue_password_set: false`` and the diagnosis had to come out
+        # of the transcript, so each stage of this exchange is its own
+        # secret-free fact:
+        #   rescue_echo_suppressed    the root shell proved echo off, so the
+        #                             credential was safe to write at all;
+        #   rescue_prompt_seen        passwd asked for the new password;
+        #   rescue_confirm_prompt_seen  and asked again for the confirmation;
+        #   rescue_credential_sent    the credential was written, and only
+        #                             after a reader had asked for it;
+        #   rescue_credential_writes  how many times -- two means one PAM
+        #                             module asked, four means pam_sss and
+        #                             pam_unix each asked their own pair;
+        #   rescue_credential_rejected  passwd printed its own diagnostic or
+        #                             kept re-asking past the write budget;
+        #   rescue_password_updated   passwd said the change landed;
+        #   rescue_returncode         passwd's own exit code.
+        "rescue_echo_suppressed": False,
+        "rescue_prompt_seen": False,
+        "rescue_confirm_prompt_seen": False,
+        "rescue_credential_sent": False,
+        "rescue_credential_writes": 0,
+        "rescue_credential_rejected": False,
+        "rescue_password_updated": False,
+        "rescue_returncode": None,
         "rescue_password_set": False,
         # Timing.  Every instant in the 2026-08-14 stall investigation had to
         # be reconstructed from file mtimes, so the workstation's power-on
@@ -1724,28 +1809,96 @@ def rescue_password_command(token: str) -> tuple[bytes, bytes, bytes]:
     result = b"__TELOS_ARCH_RESCUE_RC_" + tok + b"="
     command = (
         b"stty -echo && printf '\\n" + ready + b"\\n' && "
-        b"passwd " + RESCUE_PRINCIPAL.encode("ascii")
+        b"LC_ALL=C passwd " + RESCUE_PRINCIPAL.encode("ascii")
         + b"; __telos_rc=$?; stty echo; "
         b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
     )
     return command, ready, result
 
 
+def rescue_prompt_pattern() -> bytes:
+    """Match whichever PAM module asks for the new break-glass password.
+
+    THE 2026-08-14 defect, and it is a different one from the elevation's: this
+    exchange did gate its write on the reader's own prompt, and still stopped,
+    because it gated on the wrong WORDING.  Two modules can ask on this disk
+    and they do not use the same words:
+
+    * ``pam_unix`` asks ``New password:`` / ``Retype new password:``;
+    * ``pam_sss`` asks ``New Password:`` / ``Reenter new Password:``.
+
+    Gate 7 writes ``password [success=1 default=ignore] pam_sss.so`` ahead of
+    ``pam_unix`` in ``/etc/pam.d/system-auth``, and Arch's shadow ships
+    ``/etc/pam.d/passwd`` as ``password include system-auth``, so ``pam_sss``
+    asks FIRST -- for a files-only account it cannot serve, because it only
+    discovers that after it has collected the value.  Run
+    ``run-20260814T155301Z-4b21f9334459`` therefore sat out its whole 60s
+    budget with ``New Password: `` on the console while waiting for the
+    lowercase ``pam_unix`` wording, and stopped without writing anything.  The
+    Controller path (``serial_automation``) matches the lowercase form and has
+    always worked because bootstrap-dc has no ``pam_sss`` in its password
+    stack.
+
+    Both wordings are accepted, case-insensitively, and each alternative is
+    anchored to a line start: without that anchor the confirmation prompt
+    (which literally contains ``new Password:``) would satisfy the
+    first-prompt alternative and the two would be indistinguishable.  Neither
+    alternative may consume a newline, so a prompt is only ever matched on the
+    line it was printed on, and the trailing space is optional so a read that
+    lands on the colon still gates the write -- ``passwd`` is already reading
+    by then.
+    """
+    return (
+        rb"(?:^|\n)(?P<new>(?i:new[ \t]+password:)[ \t]*)"
+        rb"|(?:^|\n)(?P<retype>"
+        rb"(?i:(?:retype|reenter)[ \t]+new[ \t]+password:)[ \t]*)"
+    )
+
+
+def rescue_outcome_pattern(token: str) -> bytes:
+    """Every outcome of the ``passwd local-rescue`` exchange, in named groups.
+
+    ``rc`` is the token-scoped exit-code marker and is the only verdict; both
+    it and ``diag`` require a real newline, so a serial read that lands
+    mid-line can never be mistaken for a complete one -- the mistake that cost
+    the elevation a live run.  ``new``/``retype`` are not verdicts: they say
+    "a reader is asking, write the credential once".
+    """
+    _command, _ready, result = rescue_password_command(token)
+    return (
+        rb"(?:^|\n)" + re.escape(result) + rb"(?P<rc>[0-9]+)[ \t\r]*\n"
+        rb"|(?:^|\n)passwd:[ \t]*(?P<diag>[^\n]*?)[ \t\r]*\n"
+        rb"|" + rescue_prompt_pattern()
+    )
+
+
 def set_rescue_password(
     console, facts: dict[str, object], credential: bytes, *,
     timeout: float | None = None,
+    prompt_timeout: float | None = RESCUE_PROMPT_TIMEOUT,
+    writes: int = RESCUE_PASSWORD_WRITES,
 ) -> None:
     """Set the break-glass password once from the elevated root shell.
 
-    Gate 7 installs ``local-rescue`` with a *disabled* password (mirroring the
-    Controller seed) and nothing else sets it, so the ``arch-local-rescue``
-    probe -- which requires ``passwd -S`` to report ``P`` -- could only ever
-    fail, even after the login works.  ``identity_lifecycle.json`` gives that
-    principal ``domain_role: none``, so no Controller-staged account supplies
-    the credential; the caller generates it per run in memory.  The secret is
-    written only after echo is provably off and ``passwd`` has asked for it, so
-    it never enters the retained serial transcript.  Any other outcome is the
-    named rescue-password failure, bound to the check it would otherwise break.
+    Gate 7 installs ``local-rescue`` with a *disabled* password (``useradd``
+    with no ``-p`` leaves ``!`` in ``/etc/shadow``, so ``passwd -S`` reports
+    ``L``) and nothing else sets it, so the ``arch-local-rescue`` probe --
+    which requires ``passwd -S`` to report ``P`` -- could only ever fail, even
+    after the login works.  ``passwd``(1) is the right tool for exactly that
+    disabled state: root's change replaces the whole field rather than adding
+    to it, so the set password clears the disable and reports ``P``.
+    ``identity_lifecycle.json`` gives the principal ``domain_role: none``, so
+    no Controller-staged account supplies the credential; the caller generates
+    it per run in memory, and it is never retained on the boundary, in the
+    evidence, or in the transcript.
+
+    The exchange is prompt-driven, not step-scripted: one bounded wait loop
+    answers each prompt the password stack prints -- see
+    ``rescue_prompt_pattern`` for why the count is not knowable in advance --
+    and settles only on ``passwd``'s own token-scoped exit code.  Nothing is
+    written before echo is provably off, nothing is written that a reader did
+    not just ask for, every wait is bounded by ``prompt_timeout``, and each
+    distinguishable stop names its own layer.
     """
     from .serial_automation import SerialAutomationError
 
@@ -1753,33 +1906,82 @@ def set_rescue_password(
         raise ArchIdentityError(
             "the local-rescue credential must be one non-empty line",
             check="arch-local-rescue")
-    command, ready, result = rescue_password_command(console.token)
+    command, ready, _result = rescue_password_command(console.token)
+    outcome_pattern = rescue_outcome_pattern(console.token)
     original = console.timeout
     if timeout is not None:
         console.timeout = timeout
     try:
+        console._send(command, "arch-rescue-command-sent")
+        # The ready marker prints only behind a successful ``stty -echo``, so
+        # this wait is what makes echo-off provable before any write.
         try:
-            console._send(command, "arch-rescue-command-sent")
             console._wait(
                 rb"(?:^|\n)" + re.escape(ready) + rb"\s*(?:\n|$)",
                 "arch-rescue-echo-off")
-            console._wait(
-                rb"New password:\s*$", "arch-rescue-new-password-prompt")
-            console._send(credential, "arch-rescue-password-sent")
-            console._wait(
-                rb"Retype new password:\s*$",
-                "arch-rescue-password-confirm-prompt")
-            console._send(
-                credential, "arch-rescue-password-confirm-sent")
-            outcome = console._wait(
-                rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
-                "arch-rescue-result")
         except SerialAutomationError as error:
             raise ArchIdentityError(
-                RESCUE_PASSWORD_FAILURE, check="arch-local-rescue") from error
-        if outcome.group(1) != b"0":
+                RESCUE_ECHO_NOT_SUPPRESSED_FAILURE,
+                check="arch-local-rescue") from error
+        facts["rescue_echo_suppressed"] = True
+        console.timeout = console.timeout if prompt_timeout is None else min(
+            console.timeout, prompt_timeout)
+        written = 0
+        while True:
+            try:
+                settled = console._wait(outcome_pattern, "arch-rescue-outcome")
+            except SerialAutomationError as error:
+                # Name the layer by how far the exchange got.  A silence
+                # before the first ask means nothing was written at all.
+                if not written:
+                    stop = RESCUE_PROMPT_MISSING_FAILURE
+                elif written == 1:
+                    stop = RESCUE_CONFIRM_PROMPT_MISSING_FAILURE
+                else:
+                    stop = RESCUE_PASSWORD_FAILURE
+                raise ArchIdentityError(
+                    stop, check="arch-local-rescue") from error
+            if settled.group("rc") is not None:
+                break
+            if settled.group("diag") is not None:
+                diagnostic = settled.group("diag").strip()
+                if diagnostic == RESCUE_UPDATED_DIAGNOSTIC:
+                    facts["rescue_password_updated"] = True
+                    console.events.append("arch-rescue-password-updated")
+                    continue
+                facts["rescue_credential_rejected"] = True
+                console.events.append("arch-rescue-credential-rejected")
+                raise ArchIdentityError(
+                    RESCUE_CREDENTIAL_REJECTED_FAILURE,
+                    check="arch-local-rescue")
+            if settled.group("new") is not None:
+                facts["rescue_prompt_seen"] = True
+                console.events.append("arch-rescue-new-password-prompt")
+            else:
+                facts["rescue_confirm_prompt_seen"] = True
+                console.events.append("arch-rescue-password-confirm-prompt")
+            # A stack that is still asking past the budget is refusing the
+            # value, not asking again in a new module's words.
+            if written >= writes:
+                facts["rescue_credential_rejected"] = True
+                console.events.append("arch-rescue-credential-rejected")
+                raise ArchIdentityError(
+                    RESCUE_CREDENTIAL_REJECTED_FAILURE,
+                    check="arch-local-rescue")
+            console._send(credential, "arch-rescue-password-sent")
+            written += 1
+            facts["rescue_credential_sent"] = True
+            facts["rescue_credential_writes"] = written
+        console.events.append("arch-rescue-result")
+        facts["rescue_returncode"] = int(settled.group("rc"))
+        if facts["rescue_returncode"] != 0:
             raise ArchIdentityError(
-                RESCUE_PASSWORD_FAILURE, check="arch-local-rescue")
+                RESCUE_PASSWD_EXITED_FAILURE, check="arch-local-rescue")
+        if not written:
+            # ``passwd`` cannot have set anything it never asked for, whatever
+            # it exited with; refuse to record a password that does not exist.
+            raise ArchIdentityError(
+                RESCUE_PROMPT_MISSING_FAILURE, check="arch-local-rescue")
         facts["rescue_password_set"] = True
     finally:
         console.timeout = original
