@@ -67,8 +67,15 @@ class IdentityLifecycleTests(unittest.TestCase):
     def test_contract_is_valid_and_synthetic(self):
         self.assertEqual(lifecycle.validate_contract(self.contract), [])
         names = {item["name"] for item in self.contract["principals"].values()}
-        self.assertNotIn("ksh", names)
-        self.assertNotIn("ksh-root", names)
+        # A positive whitelist, deliberately: the previous form asserted that
+        # specific real account names were absent, which meant writing those
+        # names into a tracked file to guard against exactly that. Naming the
+        # four synthetic principals proves the same property -- the tracked
+        # contract is synthetic -- and leaks nothing. Real names live only in
+        # the gitignored overlay (ADR 0046).
+        self.assertEqual(
+            names,
+            {"student", "operator", "directory-admin", "local-rescue"})
 
     def test_revocation_contract_preserves_the_offline_limit(self):
         revocation = next(

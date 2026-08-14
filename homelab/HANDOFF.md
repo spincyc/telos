@@ -474,7 +474,7 @@ no headroom for a single spurious refusal.
   orphaned (no `identity/`, no `result.json` — so no acceptance had ever
   consumed them), and the standing rule is that a one-use credential is
   destroyed rather than parked. Current state verified:
-  `find /home/ksh/git/claude/telos -name 'publication*.iso' | wc -l` → **0**, and
+  `find . -name 'publication*.iso' | wc -l` → **0**, and
   `find … -name 'install-password*'` → nothing. **No stray one-use credential
   remains in the tree.** If you create a publication stash for cheap iteration
   (see §2), you own deleting it.
@@ -492,7 +492,7 @@ no headroom for a single spurious refusal.
   clean reboot + DHCP boot-wait).
 - `homelab/vm/windows_install_contract.py` — WindowsUpdate AU policy in unattend.
 - `homelab/vm/windows_identity_reference.py` — version-portable references.
-- Memory: `.claude/projects/-home-ksh-git-claude-telos/memory/` — see
+- Memory: the project's Claude memory directory — see
   `gate6-publication-single-use.md`.
 
 ## 7. First moves for the fresh agent
