@@ -339,6 +339,50 @@ proven by gate 6's identity stream, not this gate.**
 
 ---
 
+## The persistent directory instance (not part of any gate)
+
+Everything above is the **acceptance** factory, and its controller is disposable
+on purpose: the canonical image carries no directory, the role provisions one
+whenever `sam.ldb` is absent, and teardown discards the overlay after
+re-verifying the canonical digests. That is what gate 3 requires and what gates 8
+and 12 depend on — and it also means no account can survive relaunching the
+directory.
+
+A **persistent instance** exists alongside it for the case where you want a
+workstation you can log back into. It is opt-in by name, lives in its own state
+directory, boots its own qcow2 with no backing file, and is deliberately *not*
+hash-fenced, because that disk is the durable directory and is expected to
+change. The acceptance canonical keeps its strict fence, and is unreachable as a
+persistent target: instances resolve under their own parent and the name is
+validated, so `PERSISTENT_DC=bootstrap-dc` yields `persistent-dc/bootstrap-dc/`
+rather than the canonical.
+
+```sh
+make homelab-factory-persistent-plan   PERSISTENT_DC=<name>   # read-only
+make homelab-factory-persistent-status PERSISTENT_DC=<name>   # read-only
+make homelab-factory-persistent-up     APPLY=1 PERSISTENT_DC=<name> [SEED_ISO=<iso>]
+make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
+    CONFIRM='DESTROY <name>'
+```
+
+Bring-up creates the instance when it is absent and boots it in place; a second
+bring-up **reuses** the disk rather than re-seeding it, which is what makes the
+directory durable. Boot-in-place was chosen over committing an overlay back
+because a killed run then leaves the disk crash-consistent, recoverable by the
+guest filesystem journal and Samba's own recovery, whereas a kill during a commit
+would tear the whole base image.
+
+Real account names are instance data, so they are named in the gitignored
+overlay, never in a tracked file — see `homelab/instance-example/identity/`.
+Absent that file every account keeps the synthetic contract name, which is
+exactly what the acceptance gates expect.
+
+Two properties worth knowing before you rely on it. Durable account passwords
+enter as **file paths** — root-owned, mode 0600 — and never as values, so nothing
+puts a secret in a template, a log or the process table. And the accounts age
+under the domain's password policy: nothing here sets a never-expiring password,
+because that would hide a real property.
+
 ## Stage 5 — Verify, recover, repeat
 
 ### 5.1 Final verification (read-only; never installs)
