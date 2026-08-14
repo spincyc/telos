@@ -252,8 +252,19 @@ INSTANCE_CODE_PATTERNS = RFC1918_PATTERNS + (
 # deliberately, which is the whole point: the addition is the review.
 INSTANCE_SANCTIONED = re.compile(
     r"""^(?:
-          10\.0\.0\.\d{1,3}                        # generic documentation subnet
-        | 10\.0\.2\.\d{1,3}                        # QEMU user-mode networking
+        # The bare 10/8 network address only. Sanctioning the whole 10.0.0.0/24
+        # was the excuse that let a real default-gateway address sit in a test
+        # unchallenged: a site whose first /24 is 10.0.0.0/24 has every one of
+        # its hosts pre-excused. Code needs the network address (the CIDR
+        # branches below carry the block sizes) and nothing else in that /24;
+        # a synthetic host belongs in 10.1.x, which is sanctioned already.
+          10\.0\.0\.0
+        # QEMU user-mode networking, whose addresses are fixed by QEMU itself:
+        # .2 is its gateway, .3 its DNS, .15 the first guest lease. The whole
+        # /24 was sanctioned and no file used any of it, while 10.0.2.0/24 sits
+        # inside this build host's real supernet -- an unused excuse for 256
+        # real addresses. Widen only for another address QEMU itself fixes.
+        | 10\.0\.2\.(?:2|3|15)
         | 10\.1\.\d{1,3}\.\d{1,3}                  # simulated lab, 10.1.31.0/24 and neighbours
         | 10\.[29]\.1\.\d{1,3}                     # simulated firewall's far networks
         | 172\.(?:16|31)\.\d{1,3}\.\d{1,3}         # generic documentation subnets

@@ -143,9 +143,12 @@ class SimulatedGatewayTests(unittest.TestCase):
         probe = request_ip(17, sim.udp(40000, sim.UDP_PROBE_PORT, b"hello"))
         reply = self.gateway.handle(probe)[0]
         self.assertTrue(reply.endswith(b"sim-ok:hello"))
+        # An off-net destination the gateway has no business answering: an
+        # RFC 5737 documentation address, the range this project already uses
+        # for external peers the simulated firewall denies by default.
         external = request_ip(
             17, sim.udp(40000, sim.UDP_PROBE_PORT, b"hello"),
-            ipaddress.IPv4Address("10.0.0.1"))
+            ipaddress.IPv4Address("203.0.113.9"))
         self.assertEqual(self.gateway.handle(external), [])
 
     def test_icmp_echo(self):
