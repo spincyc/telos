@@ -8,11 +8,15 @@ and serial transcript, and produces the isolated bundle the gate-8 runner
 * ``arch-workstation.qcow2`` — a fresh qcow2 overlay backed by the gate-7
   ``arch.qcow2`` (which itself overlays the retained Windows disk).  The
   install bundle is only ever read; a gate-8 run mutates its own overlay.
-* ``OVMF_VARS.fd`` — pristine firmware variables for the disk boot.  The
-  gate-7 blocker history proved OVMF auto-discovers a bootable ESP on a
-  cold-plugged NVMe (that is exactly why the install boot had to detach the
-  disk), so the identity boot prefers pristine variables plus that proven
-  auto-discovery over inheriting the install bundle's PXE-booted NVRAM.
+* ``OVMF_VARS.fd`` — the gate-7 install bundle's own firmware variables,
+  which carry the ``Linux Boot Manager`` entry ``bootctl`` authored at
+  install.  Pristine variables were tried first, on the theory that OVMF's
+  ESP auto-discovery would find the bootloader; the live gate-8 run of
+  2026-08-13 disproved it — the firmware console reached ttyS0 but no
+  systemd-boot menu ever rendered, because auto-discovery never started the
+  bootloader.  Pairing the authored NVRAM is what the gate-10 dual-boot lane
+  already requires (``VARS_SOURCE_GATE7``), and the 2026-08-14 run rendered
+  the menu with it.  ``--ovmf-vars`` still overrides the source.
 * ``windows-evidence.jsonl`` — the peer Windows lane's lifecycle checks,
   extracted fail-closed from its produced acceptance evidence stream (the
   JSONL published by ``windows_identity_evidence``); only a stream that
@@ -52,9 +56,10 @@ from .arch_identity_run import (
 from .arch_install_prepare import (
     ArchInstallPrepareError,
     OVERLAY_NAME as INSTALL_OVERLAY_NAME,
+    VARS_NAME as INSTALL_VARS_NAME,
     inspect_overlay,
 )
-from .bootstrap_dc import ovmf_pair
+from homelab.workstations.dualboot_acceptance import VARS_SOURCE_GATE7
 from .controller_factory import FactorySpec
 from homelab.workstations.arch_second import JOIN_VERIFIED_MARKER
 
@@ -197,12 +202,16 @@ def prepare(
     events = load_windows_lifecycle_evidence(windows_evidence)
 
     vars_source = ovmf_vars
+    vars_policy = "operator-supplied"
     if vars_source is None:
-        pair = ovmf_pair()
-        if pair is None:
+        # The authored "Linux Boot Manager" NVRAM entry lives in the gate-7
+        # bundle's own variables; pristine variables render no menu at all.
+        vars_source = Path(source["bundle"]) / INSTALL_VARS_NAME
+        vars_policy = VARS_SOURCE_GATE7
+        if not vars_source.is_file():
             raise ArchIdentityPrepareError(
-                "pristine OVMF variables template was not found")
-        vars_source = pair[1]
+                "gate-7 bundle carries no OVMF variables with the authored "
+                "Linux Boot Manager entry; pass --ovmf-vars explicitly")
     _regular(vars_source, "OVMF variables template")
 
     if run_root.is_symlink():
@@ -256,7 +265,7 @@ def prepare(
             "firmware_copy": {
                 "path": str(variables.resolve()),
                 "source": str(vars_source.resolve()),
-                "policy": "pristine-esp-auto-discovery",
+                "policy": vars_policy,
             },
             "windows_evidence_source": str(
                 Path(windows_evidence).resolve()),
@@ -292,8 +301,8 @@ def parser() -> argparse.ArgumentParser:
         help="Kerberos realm the joined guest authenticates against")
     result.add_argument(
         "--ovmf-vars", type=Path, default=None,
-        help="override the pristine OVMF variables template; defaults to the "
-        "firmware's fresh no-boot-entry vars (OVMF auto-discovers the ESP)")
+        help="override the OVMF variables template; defaults to the gate-7 "
+        "bundle's own vars, which carry the authored Linux Boot Manager entry")
     result.add_argument("--apply", action="store_true")
     return result
 

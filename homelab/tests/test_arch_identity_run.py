@@ -31,6 +31,7 @@ from homelab.vm.arch_identity_run import (
     MAX_DURATION,
     MEASURED_CHECK_FIELDS,
     MENU_NEVER_RENDERED_FAILURE,
+    MENU_NOT_COMMITTED_FAILURE,
     MENU_WINDOW_MISSED_FAILURE,
     OPERATOR_PRINCIPAL,
     REQUIRED_CHECKS,
@@ -700,6 +701,21 @@ MENU_WINDOWS_FIRST = (
     + _menu_cell(29, MENU_FIRMWARE_ENTRY, selected=False)
     + _menu_cell(31, "Boot in 5s.", selected=False)
 )
+# The re-render after the highlight moves onto Arch: the countdown line is
+# gone because any keypress cancels it, which is exactly what the live
+# 2026-08-14 gate-8 transcript shows the firmware doing.
+MENU_ARCH_FIRST_SELECTED = (
+    b"\x1b[2J\x1b[001;001H"
+    + _menu_cell(27, MENU_ARCH_ENTRY, selected=True)
+    + _menu_cell(28, MENU_WINDOWS_ENTRY, selected=False)
+    + _menu_cell(29, MENU_FIRMWARE_ENTRY, selected=False)
+)
+MENU_WINDOWS_FIRST_SELECTED = (
+    b"\x1b[2J\x1b[001;001H"
+    + _menu_cell(27, MENU_WINDOWS_ENTRY, selected=False)
+    + _menu_cell(28, MENU_ARCH_ENTRY, selected=True)
+    + _menu_cell(29, MENU_FIRMWARE_ENTRY, selected=False)
+)
 
 
 class _FakeSerial:
@@ -712,6 +728,7 @@ class _FakeSerial:
     instances: list["_FakeSerial"] = []
     console_banner = b"[root@telos-ws1 ~]# "
     menu_render = MENU_ARCH_FIRST
+    menu_rerender = MENU_ARCH_FIRST_SELECTED
     login_outcome: bytes | None = None  # group(1): b"Login incorrect"
     sudo_outcome: bytes | None = None  # group(1): failure return code
     root_uid = b"0"
@@ -755,6 +772,10 @@ class _FakeSerial:
             # parses the rendered entries from there.
             self.transcript = self.transcript + type(self).menu_render
             return _FakeMatch({0: type(self).menu_render})
+        if label == "arch-menu-rerendered":
+            # The highlight has moved onto Arch; Enter now commits it.
+            self.transcript = self.transcript + type(self).menu_rerender
+            return _FakeMatch({0: type(self).menu_rerender})
         if label == "arch-login-outcome":
             return _FakeMatch({0: b"", 1: type(self).login_outcome})
         if label == "arch-sudo-outcome":
@@ -961,6 +982,7 @@ class BoundaryWiringTests(unittest.TestCase):
                 # Menu -> getty -> login -> elevation, in order, over serial.
                 self.assertEqual(workstation_console.events, [
                     "arch-menu-rendered", "arch-menu-entry-selected",
+                    "arch-menu-rerendered", "arch-menu-entry-committed",
                     "arch-handoff-observed", "arch-getty-observed",
                     "arch-login-username-sent", "arch-login-password-prompt",
                     "arch-login-password-sent", "arch-login-outcome",
@@ -969,12 +991,14 @@ class BoundaryWiringTests(unittest.TestCase):
                     "arch-root-proof-requested", "arch-root-verified",
                 ])
                 # The Arch entry (listed first) was selected with its raw
-                # digit key: no newline that would be typed ahead.
+                # digit key and committed with Enter: no newline that would
+                # be typed ahead.
                 self.assertEqual(
-                    workstation_console.writer.getvalue(), b"1")
+                    workstation_console.writer.getvalue(), b"1\r")
                 facts = boundary._boot_facts
                 self.assertTrue(facts["menu_seen"])
                 self.assertEqual(facts["entry_selected"], "1")
+                self.assertTrue(facts["entry_committed"])
                 self.assertTrue(facts["handoff_seen"])
                 self.assertTrue(facts["getty_seen"])
                 self.assertTrue(facts["login_completed"])
@@ -1145,7 +1169,7 @@ class SerialTranscriptCase(unittest.TestCase):
 class MenuDriveTests(SerialTranscriptCase):
     def test_menu_render_digit_handoff_sequence(self):
         console, feeder, sink = self._console()
-        feeder.write(MENU_ARCH_FIRST + HANDOFF)
+        feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED + HANDOFF)
         facts = new_boot_facts()
         resets: list[int] = []
         drive_boot_menu(
@@ -1153,31 +1177,58 @@ class MenuDriveTests(SerialTranscriptCase):
             menu_timeout=2.0, handoff_timeout=2.0)
         self.assertTrue(facts["menu_seen"])
         self.assertEqual(facts["entry_selected"], "1")
+        self.assertTrue(facts["entry_committed"])
         self.assertTrue(facts["handoff_seen"])
         self.assertEqual(facts["menu_retries"], 0)
         self.assertEqual(resets, [])
-        # The raw digit key, nothing else: no newline is typed ahead.
-        self.assertEqual(self._sent(sink), b"1")
+        # Raw keys only, no newline typed ahead: the digit, then the Enter
+        # that actually boots the entry.  The digit already moved the
+        # highlight onto Arch, so no cursor navigation is needed.
+        self.assertEqual(self._sent(sink), b"1\r")
         self.assertEqual(console.events, [
             "arch-menu-rendered", "arch-menu-entry-selected",
-            "arch-handoff-observed"])
+            "arch-menu-entry-committed", "arch-handoff-observed"])
 
     def test_menu_digit_follows_render_order(self):
         console, feeder, sink = self._console()
-        feeder.write(MENU_WINDOWS_FIRST + HANDOFF)
+        feeder.write(
+            MENU_WINDOWS_FIRST + MENU_WINDOWS_FIRST_SELECTED + HANDOFF)
         facts = new_boot_facts()
         drive_boot_menu(
             console, facts, reset=lambda: None,
             menu_timeout=2.0, handoff_timeout=2.0)
         self.assertEqual(facts["entry_selected"], "2")
-        self.assertEqual(self._sent(sink), b"2")
+        self.assertEqual(self._sent(sink), b"2\r")
+
+    def test_uncommitted_entry_power_cycles_once_and_retries(self):
+        console, feeder, sink = self._console()
+        feeder.write(MENU_ARCH_FIRST)  # highlight never leaves Windows
+
+        def reset():
+            feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED + HANDOFF)
+
+        resets: list[int] = []
+        facts = new_boot_facts()
+        drive_boot_menu(
+            console, facts,
+            reset=lambda: (resets.append(1), reset()),
+            menu_timeout=2.0, handoff_timeout=0.3)
+        self.assertEqual(resets, [1])
+        self.assertEqual(facts["menu_retries"], 1)
+        self.assertTrue(facts["entry_committed"])
+        self.assertTrue(facts["handoff_seen"])
+        # Attempt 1: digit, one Up, then no re-render ever arrives, so the
+        # entry is never committed.  Attempt 2 gets the re-render and Enter.
+        self.assertEqual(self._sent(sink), b"1\x1b[A1\r")
+        self.assertIn("arch-workstation-power-cycled", console.events)
 
     def test_missed_window_power_cycles_once_and_retries(self):
         console, feeder, sink = self._console()
-        feeder.write(MENU_ARCH_FIRST)  # no handoff: Windows is booting
+        # Committed, but the EFI stub never speaks: Windows won the window.
+        feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED)
 
         def reset():
-            feeder.write(MENU_ARCH_FIRST + HANDOFF)
+            feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED + HANDOFF)
 
         resets: list[int] = []
         facts = new_boot_facts()
@@ -1188,17 +1239,18 @@ class MenuDriveTests(SerialTranscriptCase):
         self.assertEqual(resets, [1])
         self.assertEqual(facts["menu_retries"], 1)
         self.assertTrue(facts["handoff_seen"])
-        self.assertEqual(self._sent(sink), b"11")
+        self.assertEqual(self._sent(sink), b"1\r1\r")
         self.assertIn("arch-workstation-power-cycled", console.events)
 
     def test_second_miss_is_the_named_window_failure(self):
         console, feeder, _sink = self._console()
-        feeder.write(MENU_ARCH_FIRST)
+        feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED)
         resets: list[int] = []
 
         def reset():
             resets.append(1)
-            feeder.write(MENU_ARCH_FIRST)  # still no handoff
+            # Committed again, and again no handoff.
+            feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED)
 
         with self.assertRaisesRegex(
                 ArchIdentityError,
@@ -1209,6 +1261,27 @@ class MenuDriveTests(SerialTranscriptCase):
         self.assertEqual(caught.exception.check, "arch-joined")
         self.assertEqual(resets, [1])
         self.assertEqual(str(caught.exception), MENU_WINDOW_MISSED_FAILURE)
+
+    def test_never_committed_entry_is_its_own_named_failure(self):
+        # The highlight never settles on Arch: a distinct diagnosis from
+        # "the five-second window was missed", which would be a lie here.
+        console, feeder, _sink = self._console()
+        feeder.write(MENU_ARCH_FIRST)
+        resets: list[int] = []
+
+        def reset():
+            resets.append(1)
+            feeder.write(MENU_ARCH_FIRST)  # highlight stays on Windows
+
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            drive_boot_menu(
+                console, facts, reset=reset,
+                menu_timeout=2.0, handoff_timeout=0.3)
+        self.assertEqual(str(caught.exception), MENU_NOT_COMMITTED_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertFalse(facts["entry_committed"])
+        self.assertEqual(resets, [1])
 
     def test_menu_that_never_renders_is_the_named_menu_failure(self):
         console, feeder, _sink = self._console()

@@ -161,6 +161,10 @@ MENU_NEVER_RENDERED_FAILURE = (
 MENU_WINDOW_MISSED_FAILURE = (
     "systemd-boot Arch selection missed the five-second menu window even "
     "after a QMP power-cycle retry")
+MENU_NOT_COMMITTED_FAILURE = (
+    "the systemd-boot Arch entry was selected but never committed with "
+    "Enter, even after a QMP power-cycle retry; the highlight never settled "
+    "on the Arch row")
 GETTY_NEVER_APPEARED_FAILURE = (
     "ttyS0 getty never appeared after the Arch kernel handoff; gate 7 must "
     "ship " + GATE7_CONTRACT)
@@ -180,10 +184,20 @@ TRANSCRIPT_RETENTION_BYTES = 4 * 1024 * 1024
 #: running) while every SMB connection attempt fails fast.
 STORAGE_ABSENT_ADDRESS = "10.1.31.14"
 
-#: Bound for the Linux EFI-stub handoff after the Arch entry digit is sent; a
+#: Bound for the Linux EFI-stub handoff after the Arch entry is committed; a
 #: miss means the five-second Windows-default window won and the guest must be
 #: power-cycled over QMP rather than waited out inside Windows.
 HANDOFF_TIMEOUT = 45.0
+#: Bound for the systemd-boot menu itself.  Firmware that starts no
+#: bootloader says nothing at all on ttyS0, so waiting out the much longer
+#: console-ready bound buys no evidence -- fail in minutes, not in five.
+MENU_RENDER_TIMEOUT = 120.0
+#: Bounded highlight steps between selecting the Arch entry and committing it.
+#: A keypress stops the countdown, so the menu then waits indefinitely and each
+#: step only needs the next re-render, not another five-second window.
+MENU_COMMIT_STEPS = 8
+#: Per-step bound on that re-render.
+MENU_COMMIT_TIMEOUT = 10.0
 #: Bounded getty credential attempts (SSSD may still be connecting when the
 #: first prompt renders; pam_faillock caps the useful retries anyway).
 LOGIN_ATTEMPTS = 3
@@ -194,6 +208,7 @@ def new_boot_facts() -> dict[str, object]:
     return {
         "menu_seen": False,
         "entry_selected": None,
+        "entry_committed": False,
         "menu_retries": 0,
         "handoff_seen": False,
         "getty_seen": False,
@@ -805,12 +820,62 @@ def workstation_boot_command(
 def _send_raw(console, value: bytes, event: str) -> None:
     """Write raw bytes without the line terminator ``_send`` appends.
 
-    systemd-boot boots the numbered entry on the bare digit key; a trailing
+    The systemd-boot keys are bare bytes (digit, arrow, ``\r``); a trailing
     newline would be typed ahead into the booted system's console.
     """
     console.writer.write(value)
     console.writer.flush()
     console.events.append(event)
+
+
+def _commit_menu_entry(
+    console, entries: list[str], menu_pattern: bytes, *,
+    steps: int = MENU_COMMIT_STEPS,
+    step_timeout: float = MENU_COMMIT_TIMEOUT,
+) -> bool:
+    """Drive the systemd-boot highlight onto Arch and press Enter.
+
+    A digit key selects a menu row but does NOT boot it -- the live gate-8
+    run of 2026-08-14 rendered the menu, moved the highlight onto Arch and
+    then sat there until the harness gave up, and the dual-boot lane recorded
+    the same lesson.  ``\\r`` is what boots the highlighted entry.  The
+    highlight is read back from the raw inverse-video render rather than
+    assumed, so a firmware whose digit key selects nothing still converges by
+    cursor navigation.  Returns whether Enter was sent.
+    """
+    from .dualboot_acceptance import (
+        MENU_ARCH_ENTRY, MENU_DOWN_KEY, MENU_ENTER_KEY, MENU_UP_KEY,
+        _menu_highlighted)
+    from .serial_automation import SerialAutomationError
+
+    target = entries.index(MENU_ARCH_ENTRY)
+    original = console.timeout
+    try:
+        console.timeout = step_timeout
+        for step in range(max(1, steps)):
+            # Read the highlight from a render that reflects the last key.
+            # On the first pass the digit's own re-render may already have
+            # arrived, so a miss there is not yet a failure.
+            try:
+                console._wait(menu_pattern, "arch-menu-rerendered")
+            except SerialAutomationError:
+                if step:
+                    return False
+            highlighted = _menu_highlighted(
+                console.transcript.decode("utf-8", "replace"))
+            if highlighted == MENU_ARCH_ENTRY:
+                _send_raw(console, MENU_ENTER_KEY, "arch-menu-entry-committed")
+                return True
+            if highlighted not in entries:
+                return False
+            _send_raw(
+                console,
+                MENU_UP_KEY if entries.index(highlighted) > target
+                else MENU_DOWN_KEY,
+                "arch-menu-highlight-moved")
+    finally:
+        console.timeout = original
+    return False
 
 
 def drive_boot_menu(
@@ -826,8 +891,9 @@ def drive_boot_menu(
     entries are parsed from the raw escape-bearing serial render (positioned,
     space-padded cells — plain log text mentioning an entry title never
     counts), the digit key for the Arch entry is sent raw within the
-    five-second Windows-default window, and the Linux EFI-stub handoff
-    markers prove the selection took.  A missed window means Windows is
+    five-second Windows-default window, the highlight is then driven onto
+    Arch and committed with Enter, and the Linux EFI-stub handoff markers
+    prove the selection took.  A missed window means Windows is
     booting silently; the guest is power-cycled via *reset* (QMP
     ``system_reset``) and the menu is driven once more.  Every terminal
     outcome is a distinct, named failure.
@@ -869,13 +935,24 @@ def drive_boot_menu(
             _send_raw(
                 console, digit.encode("ascii"), "arch-menu-entry-selected")
             facts["entry_selected"] = digit
+            # The digit key only moves the highlight (and stops the
+            # countdown); Enter is what boots the entry.
+            committed = _commit_menu_entry(
+                console, entries, menu_pattern,
+                step_timeout=min(MENU_COMMIT_TIMEOUT, handoff_timeout))
+            facts["entry_committed"] = committed
             console.timeout = handoff_timeout
             try:
+                if not committed:
+                    raise SerialAutomationError(
+                        "Arch entry was never committed with Enter")
                 console._wait(handoff_pattern, "arch-handoff-observed")
             except SerialAutomationError as error:
                 if attempt + 1 >= max(1, attempts):
                     raise ArchIdentityError(
-                        MENU_WINDOW_MISSED_FAILURE, check="arch-joined",
+                        MENU_WINDOW_MISSED_FAILURE if committed
+                        else MENU_NOT_COMMITTED_FAILURE,
+                        check="arch-joined",
                     ) from error
                 # The Windows default won the window; never wait it out.
                 facts["menu_retries"] = int(facts.get("menu_retries", 0)) + 1
@@ -1422,7 +1499,8 @@ class ArchIdentityBoundary:
         self._workstation_console = console
         drive_boot_menu(
             console, self._boot_facts,
-            reset=lambda: self._workstation_qmp.execute("system_reset"))
+            reset=lambda: self._workstation_qmp.execute("system_reset"),
+            menu_timeout=MENU_RENDER_TIMEOUT)
         login_operator(console, self._boot_facts)
         elevate_operator(console, self._boot_facts)
         console.timeout = PROBE_TIMEOUT

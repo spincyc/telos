@@ -52,6 +52,7 @@ def make_install_bundle(
     with_disk: bool = True,
     with_serial: bool = True,
     join_marker: bool = True,
+    with_vars: bool = True,
 ) -> Path:
     """A synthetic passing gate-7 run directory with a real qcow2 chain."""
     base = root / "windows.qcow2"
@@ -96,6 +97,12 @@ def make_install_bundle(
         serial = evidence / "workstation-serial.log"
         serial.write_text("\n".join(lines) + "\n", encoding="utf-8")
         serial.chmod(0o600)
+    if with_vars:
+        # The variables bootctl wrote at install: they carry the authored
+        # "Linux Boot Manager" entry the identity boot needs.
+        variables = bundle / "OVMF_VARS.fd"
+        variables.write_bytes(b"gate7-installed-ovmf-variables")
+        variables.chmod(0o600)
     return bundle
 
 
@@ -227,6 +234,39 @@ class PrepareTests(unittest.TestCase):
             ovmf_vars=template)
         return install, evidence, template, run
 
+    def test_default_variables_come_from_the_gate7_bundle(self):
+        # Pristine variables render no systemd-boot menu at all: OVMF's ESP
+        # auto-discovery never starts the bootloader (proven by the live
+        # gate-8 run of 2026-08-13).  The gate-7 bundle's own variables carry
+        # the authored "Linux Boot Manager" entry, so they are the default.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            install = make_install_bundle(root)
+            evidence = write_windows_evidence(
+                root / "windows-acceptance.jsonl")
+            run = prepare(
+                install, evidence, run_root=root / "identity-runs")
+            authorization = json.loads(
+                (run / "authorization.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                authorization["firmware_copy"]["policy"], "gate7-installed")
+            self.assertEqual(
+                authorization["firmware_copy"]["source"],
+                str((install / "OVMF_VARS.fd").resolve()))
+            self.assertEqual(
+                (run / "OVMF_VARS.fd").read_bytes(),
+                (install / "OVMF_VARS.fd").read_bytes())
+
+    def test_gate7_bundle_without_variables_is_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            install = make_install_bundle(root, with_vars=False)
+            evidence = write_windows_evidence(
+                root / "windows-acceptance.jsonl")
+            with self.assertRaisesRegex(
+                    ArchIdentityPrepareError, "Linux Boot Manager"):
+                prepare(install, evidence, run_root=root / "identity-runs")
+
     def test_prepared_bundle_round_trips_the_consumer_contract(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -249,7 +289,7 @@ class PrepareTests(unittest.TestCase):
             self.assertTrue(authorization["join_marker_observed"])
             self.assertEqual(
                 authorization["firmware_copy"]["policy"],
-                "pristine-esp-auto-discovery")
+                "operator-supplied")
             self.assertEqual(
                 (run / "OVMF_VARS.fd").read_bytes(), template.read_bytes())
             self.assertEqual(run.stat().st_mode & 0o777, 0o700)
