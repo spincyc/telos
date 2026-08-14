@@ -1,5 +1,8 @@
+import configparser
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +14,7 @@ sys.path.insert(0, str(ROOT / "vm"))
 import controller_factory  # noqa: E402
 
 NONCE = "a" * 64
+GUEST_MAC = "52:54:00:11:11:11"
 
 class ControllerFactoryBundleTests(unittest.TestCase):
     def test_synthetic_identity_is_fixed_and_non_private(self):
@@ -236,6 +240,338 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             with bundle:
                 self.assertTrue(output.exists())
             self.assertFalse(output.exists())
+
+
+class DurableNetworkIdentityTests(unittest.TestCase):
+    """The Controller's address must survive a reboot without re-convergence.
+
+    The convergence payload used to configure the interface imperatively (link
+    rename, ``ip addr add``, ``ip route replace``) and only stop the two network
+    managers. Nothing but the hostname and /etc/hosts was durable, so a
+    persistent instance brought up a second time came back with no address while
+    every console-side check still passed -- a silent, misleading failure.
+    """
+
+    def spec(self):
+        return controller_factory.FactorySpec()
+
+    def script(self):
+        return controller_factory._script(self.spec())
+
+    def test_durable_unit_is_a_networkd_network_matching_by_mac(self):
+        spec = self.spec()
+        unit = controller_factory.network_unit(spec, GUEST_MAC)
+        self.assertTrue(
+            controller_factory.NETWORK_UNIT_PATH.startswith(
+                "/etc/systemd/network/"))
+        self.assertTrue(
+            controller_factory.NETWORK_UNIT_PATH.endswith(".network"))
+        self.assertIn("[Match]", unit)
+        self.assertIn(f"MACAddress={GUEST_MAC}", unit)
+        self.assertIn(f"Address={spec.address}/{spec.prefix}", unit)
+        self.assertIn(f"Gateway={spec.gateway}", unit)
+        # Matching by MAC is what makes the rename unnecessary; a Name= match
+        # would need a .link file to persist a rename nothing depends on.
+        self.assertNotIn("Name=", unit)
+
+    def test_the_durable_unit_is_a_well_formed_networkd_configuration(self):
+        # No guest is available to load it, so the shape is proved offline: it
+        # must parse as the INI systemd-networkd reads, and carry only the two
+        # sections and the directives that systemd's own .network parser knows.
+        parser = configparser.RawConfigParser()
+        parser.optionxform = str
+        parser.read_string(
+            controller_factory.network_unit(self.spec(), GUEST_MAC))
+        self.assertEqual(["Match", "Network"], parser.sections())
+        self.assertEqual(["MACAddress"], parser.options("Match"))
+        self.assertEqual(
+            ["Address", "Gateway", "DHCP", "DHCPServer", "IPv6AcceptRA",
+             "LinkLocalAddressing"],
+            parser.options("Network"))
+
+    def test_the_payload_writes_the_durable_unit_before_it_needs_the_network(self):
+        script = self.script()
+        self.assertIn(
+            f"network_unit={controller_factory.NETWORK_UNIT_PATH}", script)
+        self.assertIn(
+            f"printf '{controller_factory.network_unit(self.spec())}' \"$mac\"",
+            script)
+        # The NTP measurement is the first step that needs the address, so the
+        # durable configuration has to be applied before it.
+        self.assertLess(
+            script.index("network_unit="),
+            script.index("TELOS FACTORY STEP time-sync"))
+
+    def test_the_durable_unit_is_a_printf_format_safe_to_embed(self):
+        # The payload embeds the unit as a single-quoted printf format and fills
+        # the MAC in on the guest, because only the guest knows it. That is only
+        # safe while the text carries exactly one conversion and no quote,
+        # backslash or other percent.
+        text = controller_factory.network_unit(self.spec())
+        self.assertEqual(1, text.count("%"))
+        self.assertIn("MACAddress=%s", text)
+        self.assertNotIn("'", text)
+        self.assertNotIn("\\", text)
+
+    def test_exactly_one_manager_owns_the_interface(self):
+        script = self.script()
+        # NetworkManager is enabled on the canonical Controller image, so
+        # stopping it is not enough: it must be masked or a reboot brings a
+        # second manager back onto the link.
+        self.assertIn(
+            "systemctl mask NetworkManager.service "
+            "NetworkManager-wait-online.service", script)
+        self.assertIn(
+            'if systemctl is-active --quiet NetworkManager.service; then',
+            script)
+        # Stop before mask: whether a masked unit may be stopped is
+        # version-dependent, while a tolerated stop of an already-masked unit
+        # plus the fail-closed check above is not.
+        self.assertLess(
+            script.index("systemctl stop NetworkManager.service"),
+            script.index("systemctl mask NetworkManager.service"))
+        self.assertLess(
+            script.index("systemctl mask NetworkManager.service"),
+            script.index(
+                "if systemctl is-active --quiet NetworkManager.service"))
+        # systemd-networkd is the one owner, and it owns the link on every
+        # later boot too.
+        self.assertIn("systemctl enable systemd-networkd.service", script)
+        # No second manager is ever started, and no separate DHCP client is
+        # introduced by the durable configuration.
+        self.assertNotIn("systemctl start NetworkManager", script)
+        self.assertNotIn("dhcpcd", script)
+        self.assertNotIn("dhclient", script)
+        # The link is only ever flushed while no manager is running.
+        self.assertLess(
+            script.index("systemctl stop systemd-networkd.service 2>/dev/null"),
+            script.index('ip addr flush dev "$iface"'))
+        self.assertLess(
+            script.index('ip addr flush dev "$iface"'),
+            script.index("systemctl restart systemd-networkd.service"))
+
+    def test_no_interface_rename_survives_anywhere(self):
+        # sim0 was a runtime-only name that nothing in the repository referred
+        # to, so the durable configuration matches by MAC and leaves the kernel
+        # name alone rather than persisting a rename with a .link file. The name
+        # may still be named in a comment explaining why it is gone.
+        executable = [
+            line for line in self.script().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        for line in executable:
+            self.assertNotIn("sim0", line)
+        self.assertNotIn(".link", controller_factory.network_unit(self.spec()))
+        self.assertNotIn("ip link set", self.script())
+
+    def test_the_durable_configuration_refuses_dhcp_in_both_directions(self):
+        # Gate 4 proves the simulated gateway is the sole DHCP authority and
+        # that the Controller emits no DHCP. A durable configuration that
+        # started a DHCP client, or answered DHCP, would break that gate.
+        unit = controller_factory.network_unit(self.spec(), GUEST_MAC)
+        self.assertIn("DHCP=no", unit)
+        self.assertIn("DHCPServer=no", unit)
+        self.assertIn("IPv6AcceptRA=no", unit)
+        self.assertNotIn("DHCP=yes", unit)
+        self.assertNotIn("DHCP=ipv4", unit)
+        self.assertNotIn("DHCPServer=yes", unit)
+        # And the payload proves it on the running system rather than trusting
+        # the file: a DHCP client would hold UDP 68, a server UDP 67 or 4011.
+        self.assertIn(
+            "if ss -H -lun | grep -Eq ':(67|68|4011)[[:space:]]'; then",
+            self.script())
+
+    def test_the_payload_still_fails_closed_on_address_and_route(self):
+        spec = self.spec()
+        script = self.script()
+        self.assertIn(
+            f"default route via {spec.gateway} was not installed", script)
+        self.assertIn(
+            f"{spec.address}/{spec.prefix} was not installed on $iface",
+            script)
+
+
+class DurableNetworkStepExecutionTests(unittest.TestCase):
+    """Run the payload's network step offline against stub tools.
+
+    No guest is available, so the step is executed with /sys/class/net,
+    /etc/systemd/network and /etc/hosts redirected into a temporary tree and
+    with systemctl, ip, ss and hostnamectl replaced by recording stubs. That
+    proves the shell logic itself -- what is written, what is started, and what
+    a second run does -- rather than only the generated text.
+    """
+
+    STUBS = {
+        "systemctl": """#!/usr/bin/bash
+printf '%s\\n' "systemctl $*" >>"$TELOS_LOG"
+case "$*" in
+  "is-active --quiet NetworkManager.service")
+    exit 1 ;;
+  "is-active --quiet systemd-networkd.service")
+    if [ -f "$TELOS_STATE/networkd-active" ]; then exit 0; fi
+    exit 1 ;;
+  "restart systemd-networkd.service")
+    : >"$TELOS_STATE/networkd-active"
+    : >"$TELOS_STATE/configured" ;;
+  "stop systemd-networkd.service")
+    rm -f "$TELOS_STATE/networkd-active" ;;
+esac
+exit 0
+""",
+        "ip": """#!/usr/bin/bash
+printf '%s\\n' "ip $*" >>"$TELOS_LOG"
+case "$*" in
+  "addr flush dev "*)
+    rm -f "$TELOS_STATE/configured" ;;
+  "-4 addr show dev "*)
+    if [ -f "$TELOS_STATE/configured" ]; then
+      printf '    inet 10.1.31.2/28 scope global %s\\n' "${*##* }"
+    fi ;;
+  "-4 addr show")
+    printf '1: lo: <LOOPBACK>\\n' ;;
+  "route show default")
+    if [ -f "$TELOS_STATE/configured" ]; then
+      printf 'default via 10.1.31.1 dev enp0s2 proto static\\n'
+    fi ;;
+  "route show")
+    printf '10.1.31.0/28 dev enp0s2 proto kernel\\n' ;;
+esac
+exit 0
+""",
+        "ss": """#!/usr/bin/bash
+printf '%s\\n' "ss $*" >>"$TELOS_LOG"
+if [ -n "${TELOS_FAKE_DHCP:-}" ]; then
+  printf 'UNCONN 0 0 0.0.0.0:68 0.0.0.0:*\\n'
+fi
+exit 0
+""",
+        "hostnamectl": """#!/usr/bin/bash
+printf '%s\\n' "hostnamectl $*" >>"$TELOS_LOG"
+exit 0
+""",
+    }
+
+    def build(self, root: Path, *, mac: str = GUEST_MAC):
+        spec = controller_factory.FactorySpec()
+        script = controller_factory._script(spec)
+        start = script.index("echo 'TELOS FACTORY STEP network'")
+        end = script.index("echo 'TELOS FACTORY STEP time-sync'")
+        region = script[start:end]
+        sysnet = root / "sys/class/net"
+        (sysnet / "lo").mkdir(parents=True)
+        (sysnet / "enp0s2").mkdir(parents=True)
+        (sysnet / "enp0s2/address").write_text(mac + "\n")
+        (sysnet / "lo/address").write_text("00:00:00:00:00:00\n")
+        etcnet = root / "etc/systemd/network"
+        etcnet.parent.mkdir(parents=True)
+        hosts = root / "etc/hosts"
+        region = region.replace("/sys/class/net", str(sysnet))
+        region = region.replace("/etc/systemd/network", str(etcnet))
+        region = region.replace(">/etc/hosts", f">{hosts}")
+        runner = root / "network-step"
+        runner.write_text("#!/usr/bin/bash\nset -euo pipefail\numask 077\n"
+                          + region)
+        runner.chmod(0o755)
+        stubs = root / "bin"
+        stubs.mkdir()
+        for name, body in self.STUBS.items():
+            stub = stubs / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+        state = root / "state"
+        state.mkdir()
+        return {
+            "runner": runner,
+            "unit": etcnet / Path(controller_factory.NETWORK_UNIT_PATH).name,
+            "hosts": hosts,
+            "log": root / "log",
+            "state": state,
+            "stubs": stubs,
+        }
+
+    def run_step(self, paths, **extra):
+        paths["log"].write_text("")
+        environment = dict(os.environ)
+        environment.update({
+            "PATH": f"{paths['stubs']}:{environment['PATH']}",
+            "TELOS_LOG": str(paths["log"]),
+            "TELOS_STATE": str(paths["state"]),
+        })
+        environment.update(extra)
+        completed = subprocess.run(
+            [shutil.which("bash"), str(paths["runner"])],
+            env=environment, capture_output=True, text=True)
+        return completed, paths["log"].read_text()
+
+    def test_the_step_writes_the_durable_unit_and_hands_the_link_to_networkd(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.build(Path(name))
+            completed, log = self.run_step(paths)
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            unit = paths["unit"].read_text()
+            self.assertEqual(
+                controller_factory.network_unit(
+                    controller_factory.FactorySpec(), GUEST_MAC),
+                unit)
+            self.assertEqual(0o644, paths["unit"].stat().st_mode & 0o777)
+            self.assertFalse(
+                paths["unit"].with_suffix(".network.new").exists())
+            self.assertIn(
+                "systemctl mask NetworkManager.service "
+                "NetworkManager-wait-online.service", log)
+            self.assertIn("systemctl stop NetworkManager.service", log)
+            self.assertIn("systemctl enable systemd-networkd.service", log)
+            self.assertIn("systemctl restart systemd-networkd.service", log)
+            self.assertIn("ip addr flush dev enp0s2", log)
+            self.assertNotIn("ip link set", log)
+            self.assertIn("hostnamectl hostname bootstrap-dc", log)
+            self.assertIn(
+                "10.1.31.2 bootstrap-dc.ad.factory.test bootstrap-dc",
+                paths["hosts"].read_text())
+
+    def test_a_second_convergence_does_not_thrash_the_interface(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.build(Path(name))
+            first, _ = self.run_step(paths)
+            self.assertEqual(0, first.returncode, first.stderr)
+            before = paths["unit"].read_text()
+            second, log = self.run_step(paths)
+            self.assertEqual(0, second.returncode, second.stderr)
+            self.assertEqual(before, paths["unit"].read_text())
+            # Already converged: the unit is unchanged, networkd owns the link
+            # and the address and route are present, so nothing is flushed and
+            # nothing is restarted.
+            self.assertNotIn("systemctl restart systemd-networkd.service", log)
+            self.assertNotIn("ip addr flush", log)
+            self.assertNotIn("systemctl stop systemd-networkd.service", log)
+            # Masking and enabling are idempotent and are still asserted.
+            self.assertIn("systemctl mask NetworkManager.service", log)
+            self.assertIn("systemctl enable systemd-networkd.service", log)
+
+    def test_a_drifted_interface_is_reconverged(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.build(Path(name))
+            first, _ = self.run_step(paths)
+            self.assertEqual(0, first.returncode, first.stderr)
+            (paths["state"] / "configured").unlink()
+            second, log = self.run_step(paths)
+            self.assertEqual(0, second.returncode, second.stderr)
+            self.assertIn("systemctl restart systemd-networkd.service", log)
+
+    def test_the_step_fails_closed_on_a_dhcp_socket(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.build(Path(name))
+            completed, _ = self.run_step(paths, TELOS_FAKE_DHCP="1")
+            self.assertEqual(2, completed.returncode)
+            self.assertIn("a DHCP socket is open", completed.stderr)
+
+    def test_the_step_fails_closed_without_a_usable_mac(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.build(Path(name), mac="not-a-mac")
+            completed, _ = self.run_step(paths)
+            self.assertEqual(2, completed.returncode)
+            self.assertIn("no usable MAC address", completed.stderr)
+            self.assertFalse(paths["unit"].exists())
 
 
 if __name__ == "__main__":

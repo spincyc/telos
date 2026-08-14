@@ -60,6 +60,51 @@ WantedBy=multi-user.target
 """
 
 
+#: The durable network configuration lives at a lower number than the
+#: ``20-telos-factory.network`` a published PXE image bakes in
+#: (``factory_publication.py``), so a payload-generated unit written for the NIC
+#: this guest actually has always wins the first-match, and the baked-in one
+#: stays behind it as an inert fallback rather than being clobbered.
+NETWORK_UNIT_PATH = "/etc/systemd/network/10-telos-factory.network"
+
+
+def network_unit(spec: FactorySpec, mac: str = "%s") -> str:
+    """The Controller's durable network identity, owned by systemd-networkd.
+
+    Only the guest knows the MAC the simulator gave its NIC, so the default
+    leaves a single ``printf`` conversion for the convergence payload to fill
+    in on the guest. Passing a MAC renders a concrete unit, which is what the
+    tests assert against.
+
+    Matching by MAC rather than by name is deliberate: it needs no ``.link``
+    file and no interface rename, so the kernel name is left alone.
+
+    ``DHCP=no`` and ``DHCPServer=no`` are stated rather than left to their
+    defaults because they are a gate-4 invariant, not an implementation
+    detail: the simulated gateway is the sole DHCP authority on the segment,
+    and this Controller must neither take a lease nor answer one.
+    ``IPv6AcceptRA=no`` closes the remaining route to a DHCPv6 client.
+
+    No ``DNS=`` is set. Nothing on this image runs systemd-resolved or
+    resolvconf, so the directive would be inert, and /etc/resolv.conf is not
+    this file's business.
+    """
+    return f"""# Telos factory Controller: the durable network identity.
+# systemd-networkd is the single owner of this link; the convergence payload
+# masks NetworkManager so nothing else can claim it after a reboot.
+[Match]
+MACAddress={mac}
+
+[Network]
+Address={spec.address}/{spec.prefix}
+Gateway={spec.gateway}
+DHCP=no
+DHCPServer=no
+IPv6AcceptRA=no
+LinkLocalAddressing=ipv6
+"""
+
+
 def verification_commands(spec: FactorySpec) -> tuple[str, ...]:
     return (
         "samba-tool domain info 127.0.0.1",
@@ -99,25 +144,87 @@ echo 'TELOS FACTORY STEP network'
 iface=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\\n' |
   grep -Ev '^(lo|docker|virbr|br-|tap|veth)' | head -1)
 [[ -n "$iface" ]] || {{ echo "no isolated guest NIC" >&2; exit 2; }}
-systemctl stop NetworkManager.service
-# systemd-networkd re-matches the renamed NIC asynchronously and can flush
-# the manually configured address between these commands; one live run died
-# with "Nexthop has invalid gateway" exactly there. Stop it, then retry the
-# route add over a short bound: right after link-up the kernel may briefly
-# refuse a via-route until the address is usable.
-systemctl stop systemd-networkd.service systemd-networkd.socket 2>/dev/null || true
-ip link set "$iface" down
-ip link set "$iface" name sim0
-ip addr flush dev sim0
-ip addr add {spec.address}/{spec.prefix} dev sim0
-ip link set sim0 up
-for _ in $(seq 1 20); do
-  ip route replace default via {spec.gateway} dev sim0 && break
+mac=$(cat "/sys/class/net/$iface/address")
+printf '%s' "$mac" |
+  grep -Eq '^([0-9a-f]{{2}}:){{5}}[0-9a-f]{{2}}$' || {{
+  echo "guest NIC $iface reports no usable MAC address" >&2; exit 2;
+}}
+# NetworkManager is *enabled* on the canonical Controller image
+# (homelab/seed/install-controller), so merely stopping it lasts until the next
+# boot: a persistent instance would come back with a second manager on this
+# link and take a DHCP lease from the simulated gateway instead of keeping its
+# static identity. Stop it, then mask it so no later boot can start it, then
+# prove it is gone -- two managers on one interface is how a live run died with
+# "Nexthop has invalid gateway". Stopping before masking is deliberate:
+# whether systemd lets a masked unit be stopped is version-dependent, while
+# stopping an already-masked inactive unit only has to be tolerated, and the
+# fail-closed check below is what actually establishes the property.
+systemctl stop NetworkManager.service 2>/dev/null || true
+systemctl mask NetworkManager.service NetworkManager-wait-online.service
+if systemctl is-active --quiet NetworkManager.service; then
+  echo "NetworkManager still owns $iface" >&2; exit 2
+fi
+# One declarative source of truth for the address, the prefix and the default
+# route, applied by systemd-networkd now and re-applied by it on every later
+# boot without re-convergence. Nothing renames the link: sim0 was a
+# runtime-only name that no gate, role, test or document ever referred to, and
+# matching by MAC needs neither a .link file nor a rename.
+install -d -m 0755 /etc/systemd/network
+network_unit={NETWORK_UNIT_PATH}
+printf '{network_unit(spec)}' "$mac" >"$network_unit.new"
+chmod 0644 "$network_unit.new"
+if cmp -s "$network_unit.new" "$network_unit"; then
+  rm -f "$network_unit.new"
+  network_changed=0
+else
+  mv -f "$network_unit.new" "$network_unit"
+  network_changed=1
+fi
+systemctl unmask systemd-networkd.service
+systemctl enable systemd-networkd.service
+# Touch the link only when the observed state is not already the intended one,
+# so a persistent instance's second convergence does not thrash it.
+if [[ "$network_changed" == 1 ]] ||
+   ! systemctl is-active --quiet systemd-networkd.service ||
+   ! ip -4 addr show dev "$iface" |
+     grep -q 'inet {spec.address}/{spec.prefix} ' ||
+   ! ip route show default | grep -q 'via {spec.gateway}'; then
+  # Hand the link over while no manager is running: an installer-time DHCP
+  # lease outlives NetworkManager being stopped, and systemd-networkd must be
+  # the only writer from here on.
+  systemctl stop systemd-networkd.service 2>/dev/null || true
+  ip addr flush dev "$iface"
+  systemctl restart systemd-networkd.service
+fi
+for _ in $(seq 1 60); do
+  if ip -4 addr show dev "$iface" |
+       grep -q 'inet {spec.address}/{spec.prefix} ' &&
+     ip route show default | grep -q 'via {spec.gateway}'; then
+    break
+  fi
   sleep 0.5
 done
-ip route show default | grep -q 'via {spec.gateway}' || {{
-  echo "default route via {spec.gateway} was not installed" >&2; exit 2;
+ip -4 addr show dev "$iface" |
+  grep -q 'inet {spec.address}/{spec.prefix} ' || {{
+  echo "{spec.address}/{spec.prefix} was not installed on $iface" >&2
+  ip -4 addr show
+  systemctl --no-pager --full status systemd-networkd.service || true
+  exit 2
 }}
+ip route show default | grep -q 'via {spec.gateway}' || {{
+  echo "default route via {spec.gateway} was not installed" >&2
+  ip route show
+  systemctl --no-pager --full status systemd-networkd.service || true
+  exit 2
+}}
+# Gate 4 invariant, proved on the durable configuration itself: the simulated
+# gateway is the sole DHCP authority. No DHCP client (UDP 68) may be running
+# and no DHCP or ProxyDHCP answer (UDP 67, 4011) may be served.
+if ss -H -lun | grep -Eq ':(67|68|4011)[[:space:]]'; then
+  echo "a DHCP socket is open on the Controller" >&2
+  ss -H -lunp
+  exit 2
+fi
 hostnamectl hostname {spec.hostname}
 printf '127.0.0.1 localhost\\n{spec.address} {spec.fqdn} {spec.hostname}\\n' >/etc/hosts
 echo 'TELOS FACTORY STEP time-sync'
