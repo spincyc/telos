@@ -103,7 +103,7 @@ class TestInterfaceEligibility(unittest.TestCase):
         # ADR 0010 relocates the Controller while powered off, so the managed
         # interface is often unplugged during provisioning. Absence of carrier
         # is noted, not disqualifying.
-        interface = Interface("eno2", "60:cf:84:77:c6:6e", False, None, False)
+        interface = Interface("eno2", "52:54:00:10:00:02", False, None, False)
         candidate = preflight.assess_interface(interface)
         self.assertTrue(candidate.eligible)
         self.assertIn("no link", candidate.reason)
@@ -160,7 +160,7 @@ class TestSummary(unittest.TestCase):
         return preflight.summary_lines(
             preflight=result, profile="controller", hostname="polycarp",
             target=target, interface=result.eligible_interfaces[0],
-            network_rows=[("Managed subnet", "10.0.7.0/24 (255.255.255.0)"),
+            network_rows=[("Managed subnet", "10.1.31.0/24 (255.255.255.0)"),
                           ("Default router", "none advertised")],
             development_proof=development_proof), target
 

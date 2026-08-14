@@ -5,7 +5,7 @@
         "path": "/dev/sda",
         "type": "disk",
         "model": "USB Flash Disk",
-        "serial": "1123091030912962",
+        "serial": "SYNTHETIC-USB-0001",
         "size": 124623257600,
         "rm": true,
         "rota": true,
@@ -15,7 +15,7 @@
         "path": "/dev/nvme0n1",
         "type": "disk",
         "model": "Samsung SSD 9100 PRO 4TB",
-        "serial": "S7YANJ0Y405056D",
+        "serial": "SYNTHETIC-NVME-0001",
         "size": 4000787030016,
         "rm": false,
         "rota": false,
@@ -26,14 +26,14 @@
   "interfaces": [
     {
       "name": "eno1",
-      "mac": "60:cf:84:77:c6:6f",
+      "mac": "52:54:00:10:00:01",
       "carrier": true,
       "speed": 10000,
       "wireless": false
     },
     {
       "name": "eno2",
-      "mac": "60:cf:84:77:c6:6e",
+      "mac": "52:54:00:10:00:02",
       "carrier": false,
       "speed": null,
       "wireless": false

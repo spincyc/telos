@@ -14,10 +14,10 @@ installer can call it long before it asks anyone to authorize a wipe.
 Deliberate strictness, beyond what ipaddress gives for free:
 
   * An address must be exactly four dotted decimal octets with no leading zeros.
-    "10.0.010.1" is octal in some parsers and decimal in others; a provisioning
+    "10.1.031.1" is octal in some parsers and decimal in others; a provisioning
     tool must not be one of the ambiguous ones.
-  * A CIDR must name the network address itself. "10.0.7.5/24" is rejected
-    rather than silently normalised to 10.0.7.0/24, because an operator who
+  * A CIDR must name the network address itself. "10.1.31.5/24" is rejected
+    rather than silently normalised to 10.1.31.0/24, because an operator who
     typed it may have meant something else.
   * "Usable" excludes the network and broadcast addresses. For /31 and /32
     there are no usable host addresses under that definition, and a plan that
@@ -103,7 +103,7 @@ def _parse_network(value: str, field_name: str) -> ipaddress.IPv4Network:
     if not text:
         raise NetworkPlanError(f"{field_name}: required when Controller network services are enabled")
     if text.count("/") != 1:
-        raise NetworkPlanError(f"{field_name}: {text!r} must be written as address/prefix, for example 10.0.7.0/24")
+        raise NetworkPlanError(f"{field_name}: {text!r} must be written as address/prefix, for example 10.1.31.0/24")
     address_part, _, prefix_part = text.partition("/")
     if not _IPV4_RE.match(address_part):
         raise NetworkPlanError(

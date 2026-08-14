@@ -16,10 +16,10 @@ import dnsmasq  # noqa: E402
 from netplan import build_plan  # noqa: E402
 
 PLAN = build_plan({
-    "managed_ipv4_cidr": "10.0.7.0/24",
-    "controller_ipv4_address": "10.0.7.2",
-    "dhcp_pool_start": "10.0.7.100",
-    "dhcp_pool_end": "10.0.7.200",
+    "managed_ipv4_cidr": "10.1.31.0/24",
+    "controller_ipv4_address": "10.1.31.2",
+    "dhcp_pool_start": "10.1.31.100",
+    "dhcp_pool_end": "10.1.31.200",
 })
 
 
@@ -45,13 +45,13 @@ class TestGeneratedConfiguration(unittest.TestCase):
         self.assertNotIn("bind-dynamic", directives(text))
 
     def test_listens_on_the_controller_address(self):
-        self.assertIn("listen-address=10.0.7.2", render())
+        self.assertIn("listen-address=10.1.31.2", render())
 
     def test_pool_matches_the_validated_plan(self):
-        self.assertIn("dhcp-range=10.0.7.100,10.0.7.200,255.255.255.0,12h", render())
+        self.assertIn("dhcp-range=10.1.31.100,10.1.31.200,255.255.255.0,12h", render())
 
     def test_advertises_the_controller_as_dns(self):
-        self.assertIn("dhcp-option=option:dns-server,10.0.7.2", render())
+        self.assertIn("dhcp-option=option:dns-server,10.1.31.2", render())
 
     def test_never_advertises_a_default_router(self):
         # ADR 0011. A router option with a value here would black-hole every
@@ -61,10 +61,10 @@ class TestGeneratedConfiguration(unittest.TestCase):
         self.assertFalse([l for l in lines if l.startswith("dhcp-option=option:router,")])
 
     def test_publishes_the_controller_fqdn(self):
-        self.assertIn("host-record=polycarp.home.arpa,10.0.7.2", render())
+        self.assertIn("host-record=polycarp.home.arpa,10.1.31.2", render())
 
     def test_refuses_to_lease_the_controller_address(self):
-        self.assertIn("dhcp-host=10.0.7.2,ignore", render())
+        self.assertIn("dhcp-host=10.1.31.2,ignore", render())
 
     def test_no_managed_ipv6(self):
         # ADR 0013.
@@ -93,9 +93,9 @@ class TestPxe(unittest.TestCase):
         self.assertIn("dhcp-boot=tag:bios,undionly.kpxe", text)
 
     def test_breaks_the_ipxe_chainload_loop(self):
-        text = render(http_base_url="http://10.0.7.2/boot")
+        text = render(http_base_url="http://10.1.31.2/boot")
         self.assertIn("dhcp-match=set:ipxe,175", text)
-        self.assertIn("dhcp-boot=tag:ipxe,http://10.0.7.2/boot/boot.ipxe", text)
+        self.assertIn("dhcp-boot=tag:ipxe,http://10.1.31.2/boot/boot.ipxe", text)
 
     def test_says_so_when_no_artifact_service_is_configured(self):
         text = render()
@@ -121,7 +121,7 @@ class TestRejections(unittest.TestCase):
 
     def test_refusals_catch_a_smuggled_default_route(self):
         broken = render().replace(
-            "dhcp-option=option:router\n", "dhcp-option=option:router,10.0.7.1\n")
+            "dhcp-option=option:router\n", "dhcp-option=option:router,10.1.31.1\n")
         self.assertIn("ADR 0011: a default router is advertised", dnsmasq.refusals(PLAN, broken))
 
     def test_refusals_catch_bind_dynamic(self):
@@ -129,7 +129,7 @@ class TestRejections(unittest.TestCase):
         self.assertTrue(any("bind-dynamic" in p for p in dnsmasq.refusals(PLAN, broken)))
 
     def test_refusals_catch_a_pool_that_does_not_match_the_plan(self):
-        broken = render().replace("10.0.7.200", "10.0.7.240")
+        broken = render().replace("10.1.31.200", "10.1.31.240")
         self.assertTrue(any("does not match" in p for p in dnsmasq.refusals(PLAN, broken)))
 
 

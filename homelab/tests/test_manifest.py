@@ -19,14 +19,14 @@ from manifest import ManifestError  # noqa: E402
 from netplan import build_plan  # noqa: E402
 
 FIRMWARE = Firmware(uefi=True, secure_boot="disabled", tpm2=True)
-DISK = Disk("/dev/nvme0n1", "Samsung SSD 9100 PRO 4TB", "S7YANJ0Y405056D",
+DISK = Disk("/dev/nvme0n1", "Samsung SSD 9100 PRO 4TB", "SYNTHETIC-NVME-0001",
             4000787030016, False, False, "nvme")
-NIC = Interface("eno1", "60:cf:84:77:c6:6f", True, 10000, False)
+NIC = Interface("eno1", "52:54:00:10:00:01", True, 10000, False)
 PLAN = build_plan({
-    "managed_ipv4_cidr": "10.0.7.0/24",
-    "controller_ipv4_address": "10.0.7.2",
-    "dhcp_pool_start": "10.0.7.100",
-    "dhcp_pool_end": "10.0.7.200",
+    "managed_ipv4_cidr": "10.1.31.0/24",
+    "controller_ipv4_address": "10.1.31.2",
+    "dhcp_pool_start": "10.1.31.100",
+    "dhcp_pool_end": "10.1.31.200",
 })
 
 
@@ -58,20 +58,20 @@ class TestContents(unittest.TestCase):
         self.assertIs(build(development_proof=False)["development_proof"], False)
 
     def test_records_the_disk_by_serial(self):
-        self.assertEqual(build()["target_disk"]["serial"], "S7YANJ0Y405056D")
+        self.assertEqual(build()["target_disk"]["serial"], "SYNTHETIC-NVME-0001")
 
     def test_records_the_permanent_mac_as_the_interface_identity(self):
         # ADR 0050.
         interface = build()["managed_interface"]
-        self.assertEqual(interface["permanent_mac"], "60:cf:84:77:c6:6f")
+        self.assertEqual(interface["permanent_mac"], "52:54:00:10:00:01")
         self.assertEqual(interface["stable_name"], "lan0")
 
     def test_records_entered_and_derived_network_values(self):
         # ADR 0045 requires both, not just what was typed.
         network = build()["network"]
-        self.assertEqual(network["entered"]["controller_ipv4_address"], "10.0.7.2")
+        self.assertEqual(network["entered"]["controller_ipv4_address"], "10.1.31.2")
         self.assertEqual(network["derived"]["netmask"], "255.255.255.0")
-        self.assertEqual(network["derived"]["dns_server"], "10.0.7.2")
+        self.assertEqual(network["derived"]["dns_server"], "10.1.31.2")
         self.assertIsNone(network["default_router"])
 
     def test_records_observed_firmware_state(self):
@@ -135,7 +135,7 @@ class TestSerialisation(unittest.TestCase):
         stream = noise_before + "\n".join(manifest.console_block(build())) + noise_after
         recovered = manifest.extract_from_console(stream)
         self.assertEqual(recovered["hostname"], "polycarp")
-        self.assertEqual(recovered["target_disk"]["serial"], "S7YANJ0Y405056D")
+        self.assertEqual(recovered["target_disk"]["serial"], "SYNTHETIC-NVME-0001")
 
     def test_missing_manifest_in_output_is_an_error(self):
         with self.assertRaises(ManifestError):

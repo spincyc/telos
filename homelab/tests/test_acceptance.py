@@ -24,7 +24,7 @@ INSTALLER = [sys.executable, str(ROOT / "bin/homelab-install"), "--dry-run", "--
 UEFI_MACHINE = str(ROOT / "tests/fixtures/workstation-usb-plus-nvme.json")
 BIOS_MACHINE = str(ROOT / "tests/fixtures/legacy-bios-awkward-disks.json")
 
-NVME_SERIAL = "S7YANJ0Y405056D"
+NVME_SERIAL = "SYNTHETIC-NVME-0001"
 
 CONTROLLER_ANSWERS = {
     "profile": "controller",
@@ -32,10 +32,10 @@ CONTROLLER_ANSWERS = {
     "target_disk": "1",
     "managed_interface": "1",
     "network_services": "yes",
-    "managed_ipv4_cidr": "10.0.7.0/24",
-    "controller_ipv4_address": "10.0.7.2",
-    "dhcp_pool_start": "10.0.7.100",
-    "dhcp_pool_end": "10.0.7.200",
+    "managed_ipv4_cidr": "10.1.31.0/24",
+    "controller_ipv4_address": "10.1.31.2",
+    "dhcp_pool_start": "10.1.31.100",
+    "dhcp_pool_end": "10.1.31.200",
 }
 
 
@@ -84,7 +84,7 @@ class TestSuccessfulRun(unittest.TestCase):
         self.assertEqual(document["target_disk"]["serial"], NVME_SERIAL)
         self.assertIs(document["development_proof"], True)
         self.assertEqual(document["managed_interface"]["stable_name"], "lan0")
-        self.assertEqual(document["network"]["derived"]["dns_server"], "10.0.7.2")
+        self.assertEqual(document["network"]["derived"]["dns_server"], "10.1.31.2")
 
     def test_it_powers_off_rather_than_rebooting(self):
         # ADR 0010: relocation while powered off is the DHCP-conflict boundary.
@@ -121,14 +121,14 @@ class TestRefusals(unittest.TestCase):
         # The rule that matters most: dnsmasq must never be able to lease the
         # address its own DNS answers on. Answer badly, then correctly.
         answers = dict(CONTROLLER_ANSWERS,
-                       controller_ipv4_address=["10.0.7.150", "10.0.7.2"])
+                       controller_ipv4_address=["10.1.31.150", "10.1.31.2"])
         transcript = install(answers=answers, confirmation=NVME_SERIAL, timeout=30)
         self.assertIn("not accepted", transcript.text)
         self.assertIn("DHCP pool", transcript.text)
         self.assertEqual(transcript.exit_status, 0)
         self.assertEqual(
             pty_driver.manifest_from(transcript)["network"]["entered"]
-                ["controller_ipv4_address"], "10.0.7.2")
+                ["controller_ipv4_address"], "10.1.31.2")
 
     def test_a_bad_hostname_is_rejected_then_accepted(self):
         answers = dict(CONTROLLER_ANSWERS, hostname=["polycarp.home.arpa", "polycarp"])

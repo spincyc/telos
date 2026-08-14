@@ -44,11 +44,11 @@ MANIFEST = {
     "hostname": "controller-a",
     "development_proof": True,
     "managed_interface": {"stable_name": "lan0",
-                          "permanent_mac": "60:cf:84:77:c6:6f"},
-    "network": {"entered": {"managed_ipv4_cidr": "10.0.7.0/24",
-                            "controller_ipv4_address": "10.0.7.2",
-                            "dhcp_pool_start": "10.0.7.100",
-                            "dhcp_pool_end": "10.0.7.200"}},
+                          "permanent_mac": "52:54:00:10:00:01"},
+    "network": {"entered": {"managed_ipv4_cidr": "10.1.31.0/24",
+                            "controller_ipv4_address": "10.1.31.2",
+                            "dhcp_pool_start": "10.1.31.100",
+                            "dhcp_pool_end": "10.1.31.200"}},
 }
 
 
@@ -70,16 +70,16 @@ class TestRenderBridge(unittest.TestCase):
         expected = dnsmasq.render(
             plan, interface="lan0", controller_hostname="controller-a",
             lease_time=dnsmasq.DEFAULT_LEASE_TIME,
-            http_base_url="http://10.0.7.2/boot")
+            http_base_url="http://10.1.31.2/boot")
         self.assertEqual(render()["dnsmasq"], expected)
 
     def test_the_nginx_configuration_is_the_generator_s_own_output(self):
         self.assertEqual(render()["nginx"],
-                         artifacts.render_nginx(listen_address="10.0.7.2"))
+                         artifacts.render_nginx(listen_address="10.1.31.2"))
 
     def test_the_ipxe_script_is_the_generator_s_own_output(self):
         self.assertEqual(render()["ipxe"],
-                         artifacts.render_ipxe(base_url="http://10.0.7.2/boot"))
+                         artifacts.render_ipxe(base_url="http://10.1.31.2/boot"))
 
     def test_the_rendered_configuration_still_passes_its_own_refusals(self):
         # The generator's refusal checks are what catch a decision violation

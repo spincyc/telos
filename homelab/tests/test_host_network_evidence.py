@@ -96,7 +96,7 @@ class HostNetworkEvidenceTests(unittest.TestCase):
                 "ifname": "eno1",
                 "addr_info": [{
                     "family": "inet",
-                    "local": "10.0.7.123",
+                    "local": "10.1.31.123",
                     "valid_life_time": lifetime,
                     "preferred_life_time": lifetime,
                 }],
@@ -108,8 +108,8 @@ class HostNetworkEvidenceTests(unittest.TestCase):
         after = fixture()
         command = ("ip", "-j", "address", "show")
         for snapshot, address_value, lifetime in (
-                (before, "10.0.7.123", 100),
-                (after, "10.0.7.124", 97)):
+                (before, "10.1.31.123", 100),
+                (after, "10.1.31.124", 97)):
             address = next(
                 item for item in snapshot["observations"]
                 if tuple(item["command"]) == command)

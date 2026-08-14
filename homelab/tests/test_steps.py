@@ -17,7 +17,7 @@ from steps import (  # noqa: E402
     Authorization, NotAuthorized, Runner, Step, StepFailed, authorize,
 )
 
-SERIAL = "S7YANJ0Y405056D"
+SERIAL = "SYNTHETIC-NVME-0001"
 DISK = "/dev/nvme0n1"
 
 

@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import firstboot  # noqa: E402
 
-MAC = "60:cf:84:77:c6:6f"
-ADDRESS = "10.0.7.2"
+MAC = "52:54:00:10:00:01"
+ADDRESS = "10.1.31.2"
 
 
 class FakeProbes:
@@ -121,7 +121,7 @@ class TestProbeFailsClosed(unittest.TestCase):
 
     def test_an_offer_reports_a_server(self):
         def offered(*args, **kwargs):
-            return subprocess.CompletedProcess(args[0], 0, stdout="offered 10.0.7.55", stderr="")
+            return subprocess.CompletedProcess(args[0], 0, stdout="offered 10.1.31.55", stderr="")
         self.assertTrue(firstboot.SystemProbes(run=offered)
                         .dhcp_server_responds("lan0", 3))
 

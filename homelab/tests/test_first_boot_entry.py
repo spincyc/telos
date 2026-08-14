@@ -25,11 +25,11 @@ def write_manifest(document):
 class TestExpectations(unittest.TestCase):
     def test_reads_mac_and_address_from_the_manifest(self):
         path = write_manifest({
-            "managed_interface": {"permanent_mac": "60:cf:84:77:c6:6f"},
-            "network": {"entered": {"controller_ipv4_address": "10.0.7.2"}},
+            "managed_interface": {"permanent_mac": "52:54:00:10:00:01"},
+            "network": {"entered": {"controller_ipv4_address": "10.1.31.2"}},
         })
         self.assertEqual(entry.load_expectations(path),
-                         ("60:cf:84:77:c6:6f", "10.0.7.2"))
+                         ("52:54:00:10:00:01", "10.1.31.2"))
 
     def test_a_controller_without_managed_network_has_nothing_to_activate(self):
         # ADR 0008: where external infrastructure owns DHCP, these services

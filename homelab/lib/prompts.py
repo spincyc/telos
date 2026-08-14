@@ -197,7 +197,7 @@ PROMPTS: tuple[Prompt, ...] = (
     Prompt(
         "managed_ipv4_cidr",
         "Managed subnet, as network address and prefix",
-        "For example 10.0.7.0/24. Enter the network address itself, not an "
+        "For example 10.1.31.0/24. Enter the network address itself, not an "
         "address inside it. The netmask, broadcast and DNS server are derived, "
         "never asked for (ADR 0045).",
         _network_field("managed_ipv4_cidr"),

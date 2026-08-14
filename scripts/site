@@ -194,35 +194,127 @@ def published_pdfs() -> set[str]:
 # hostnames and share paths belong in the gitignored instance overlay. This is
 # the fail-closed check that decision requires, and it runs in CI where the
 # overlay does not exist -- so a leak is caught by the absence of an excuse.
-INSTANCE_LEAK_PATTERNS = (
+#
+# The check runs in two passes because the two kinds of file have opposite
+# rules. Published prose may name no address at all; code must name plenty, so
+# there the gate flags every hardware-identifier-shaped token it cannot trace
+# to a sanctioned synthetic range. Scanning only prose is how a captured
+# workstation MAC, a captured disk serial and the real lab subnet reached the
+# tests, the libraries and a fixture unchallenged.
+RFC1918_PATTERNS = (
     (re.compile(r"\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "RFC 1918 10/8 address literal"),
     (re.compile(r"\b192\.168\.\d{1,3}\.\d{1,3}\b"), "RFC 1918 192.168/16 address literal"),
     (re.compile(r"\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b"), "RFC 1918 172.16/12 address literal"),
+)
+INSTANCE_LEAK_PATTERNS = RFC1918_PATTERNS + (
     (re.compile(r"\b[a-z0-9-]+\.unas\b"), "NAS hostname"),
 )
 INSTANCE_SCANNED_ROOTS = ("src/homelab", "homelab/decisions", "site/pages")
+INSTANCE_SCANNED_SUFFIXES = {".md", ".tex", ".json"}
+
+# Pass two: the code that provisions the lab. Globs rather than roots so the
+# top-level homelab narratives are covered without pulling in every sibling
+# tree.
+INSTANCE_CODE_GLOBS = (
+    "homelab/*.md",
+    "homelab/ansible/**/*",
+    "homelab/lib/**/*",
+    "homelab/tests/**/*",
+    "homelab/vm/**/*",
+)
+INSTANCE_CODE_SUFFIXES = {".j2", ".json", ".md", ".ps1", ".py", ".yaml", ".yml"}
+INSTANCE_CODE_PATTERNS = RFC1918_PATTERNS + (
+    (re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b"), "MAC address"),
+    # A vendor disk serial as lsblk reports it: the Samsung-style letter-digit
+    # prefix, or a long digit run in a field that says what it is. The second
+    # needs the field name -- a bare digit run of that length is far more often
+    # a size or an integer bound.
+    (re.compile(r"\bS[0-9][A-Z][0-9A-Z]{11,13}\b"), "vendor disk serial"),
+    (re.compile(r"serial\W{1,8}\d{12,}", re.IGNORECASE), "vendor disk serial"),
+)
+
+# The synthetic ranges this project draws test values from. A token outside
+# this set is assumed captured from real hardware until someone adds it here
+# deliberately, which is the whole point: the addition is the review.
+INSTANCE_SANCTIONED = re.compile(
+    r"""^(?:
+          10\.0\.0\.\d{1,3}                        # generic documentation subnet
+        | 10\.0\.2\.\d{1,3}                        # QEMU user-mode networking
+        | 10\.0\.3\.\d{1,3}                        # simulated off-segment network
+        | 10\.1\.\d{1,3}\.\d{1,3}                  # simulated lab, 10.1.31.0/24 and neighbours
+        | 10\.[29]\.1\.\d{1,3}                     # simulated firewall's far networks
+        | 172\.(?:16|31)\.\d{1,3}\.\d{1,3}         # generic documentation subnets
+        | 192\.168\.\d{1,3}\.\d{1,3}               # generic documentation subnets
+        | 52:54:00(?::[0-9a-f]{2}){3}              # QEMU locally-administered MAC range
+        | (?:aa:bb:cc|00:11:22)(?::[0-9a-f]{2}){3} # placeholder MACs
+        | (?:00:00:00|01:00:00)(?::[0-9a-f]{2}){3} # the null MAC and the switch model's BPDU address
+        # Carve-out: three vendor OUIs invented for the hardware-shape fixtures
+        # before this gate existed. They are not this workstation's interfaces
+        # (checked against /sys/class/net), so they stay until someone reissues
+        # those fixtures in the 52:54:00 range.
+        | (?:00:e0:4c|3c:ec:ef|a0:88:69)(?::[0-9a-f]{2}){3}
+    )$""",
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Carve-outs, per file and per finding so that exempting one class of token
+# never quietly exempts the others. Every entry here is a leak this gate would
+# otherwise report, held open because the file belongs to another owner;
+# exempting them is what lets the gate widen now rather than after they settle.
+# Delete each entry the moment its file is scrubbed.
+INSTANCE_CODE_EXEMPT = {
+    # Still carry the pre-audit lab subnet.
+    "homelab/tests/test_artifacts.py": ("RFC 1918 10/8 address literal",),
+    "homelab/vm/simulated_firewall.py": ("RFC 1918 10/8 address literal",),
+    # Hardware-shape fixtures whose NVMe serials predate this gate, and the
+    # acceptance test that must type them back verbatim. None of them is a disk
+    # in this workstation (checked against /dev/disk/by-id).
+    "homelab/tests/fixtures/uefi-mixed-nvme-sata.json": ("vendor disk serial",),
+    "homelab/tests/fixtures/uefi-single-nvme.json": ("vendor disk serial",),
+    "homelab/tests/test_acceptance.py": ("vendor disk serial",),
+}
 
 
 def check_instance_leaks() -> list[str]:
     """Refuse to publish a source file that names a real machine or address."""
     problems: list[str] = []
-    for root_name in INSTANCE_SCANNED_ROOTS:
-        root = ROOT / root_name
-        if not root.is_dir():
+    prose = sorted(
+        path
+        for root_name in INSTANCE_SCANNED_ROOTS
+        for path in (ROOT / root_name).rglob("*")
+        if path.suffix in INSTANCE_SCANNED_SUFFIXES
+    )
+    problems.extend(scan_for_instance_data(prose, INSTANCE_LEAK_PATTERNS, None))
+    code = sorted(
+        path
+        for glob in INSTANCE_CODE_GLOBS
+        for path in ROOT.glob(glob)
+        if path.suffix in INSTANCE_CODE_SUFFIXES
+    )
+    problems.extend(scan_for_instance_data(code, INSTANCE_CODE_PATTERNS, INSTANCE_SANCTIONED))
+    return problems
+
+
+def scan_for_instance_data(paths, patterns, sanctioned) -> list[str]:
+    """Report every token `patterns` finds that `sanctioned` does not excuse."""
+    problems: list[str] = []
+    for path in paths:
+        if not path.is_file() or path.name.endswith(".example.json"):
             continue
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.suffix not in {".md", ".tex", ".json"}:
-                continue
-            relative = path.relative_to(ROOT).as_posix()
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                for pattern, description in INSTANCE_LEAK_PATTERNS:
-                    match = pattern.search(line)
-                    if match:
-                        problems.append(
-                            f"{relative}:{number}: {description} {match.group(0)!r} "
-                            "in a published source (ADR 0046: use a placeholder and "
-                            "put the real value in homelab/instance/)"
-                        )
+        relative = path.relative_to(ROOT).as_posix()
+        exempt = INSTANCE_CODE_EXEMPT.get(relative, ())
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for pattern, description in patterns:
+                if description in exempt:
+                    continue
+                for match in pattern.finditer(line):
+                    if sanctioned is not None and sanctioned.match(match.group(0)):
+                        continue
+                    problems.append(
+                        f"{relative}:{number}: {description} {match.group(0)!r} "
+                        "in a published source (ADR 0046: use a placeholder and "
+                        "put the real value in homelab/instance/)"
+                    )
     return problems
 
 

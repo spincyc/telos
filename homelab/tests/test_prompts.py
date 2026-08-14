@@ -88,11 +88,11 @@ class TestValidators(unittest.TestCase):
     def test_network_field_rejects_a_cidr_with_host_bits(self):
         prompt = prompts.BY_IDENTIFIER["managed_ipv4_cidr"]
         with self.assertRaisesRegex(AnswerError, "host bits set"):
-            prompt.validate("10.0.7.5/24", {})
+            prompt.validate("10.1.31.5/24", {})
 
     def test_network_field_accepts_a_good_value(self):
         prompt = prompts.BY_IDENTIFIER["managed_ipv4_cidr"]
-        self.assertEqual(prompt.validate(" 10.0.7.0/24 ", {}), "10.0.7.0/24")
+        self.assertEqual(prompt.validate(" 10.1.31.0/24 ", {}), "10.1.31.0/24")
 
     def test_network_field_judges_against_answers_already_given(self):
         # With no subnet answered yet, any syntactically valid address passes.
@@ -101,23 +101,23 @@ class TestValidators(unittest.TestCase):
 
     def test_network_field_uses_the_subnet_once_it_is_known(self):
         prompt = prompts.BY_IDENTIFIER["controller_ipv4_address"]
-        answers = {"managed_ipv4_cidr": "10.0.7.0/24"}
-        self.assertEqual(prompt.validate("10.0.7.2", answers), "10.0.7.2")
+        answers = {"managed_ipv4_cidr": "10.1.31.0/24"}
+        self.assertEqual(prompt.validate("10.1.31.2", answers), "10.1.31.2")
         with self.assertRaisesRegex(AnswerError, "not inside"):
             prompt.validate("192.168.9.2", answers)
 
     def test_network_field_catches_a_controller_inside_the_pool(self):
         # The rule that matters most, reported at the prompt that broke it.
         prompt = prompts.BY_IDENTIFIER["dhcp_pool_end"]
-        answers = {"managed_ipv4_cidr": "10.0.7.0/24",
-                   "controller_ipv4_address": "10.0.7.150",
-                   "dhcp_pool_start": "10.0.7.100"}
+        answers = {"managed_ipv4_cidr": "10.1.31.0/24",
+                   "controller_ipv4_address": "10.1.31.150",
+                   "dhcp_pool_start": "10.1.31.100"}
         with self.assertRaisesRegex(AnswerError, "DHCP pool"):
-            prompt.validate("10.0.7.200", answers)
+            prompt.validate("10.1.31.200", answers)
 
 
 class TestConfirmation(unittest.TestCase):
-    SERIAL = "S4EWNX0T123456A"
+    SERIAL = "SYNTHETIC-SSD-0001"
 
     def test_accepts_the_exact_serial(self):
         self.assertTrue(prompts.confirm_disk_serial(self.SERIAL, self.SERIAL))
