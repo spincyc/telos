@@ -742,7 +742,8 @@ homelab-factory-persistent-plan:
 	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
-		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)')
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
 
 homelab-factory-persistent-status:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
@@ -767,12 +768,14 @@ homelab-factory-persistent-up:
 		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)'); \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
 	else \
 		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
 			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
 			--apply; \
 	fi
 

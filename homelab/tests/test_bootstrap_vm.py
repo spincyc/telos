@@ -761,6 +761,31 @@ class PersistentControllerCliTests(unittest.TestCase):
             "persistent-status", "--instance", "lab-dc1",
             "--persistent-root", str(self.persistent_root), expect=0)
 
+    def test_persistent_seed_medium_is_read_only_and_must_exist(self):
+        seed = self.root / "convergence.iso"
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"), \
+                mock.patch.object(bootstrap_dc.subprocess, "run") as run:
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--seed-iso", str(seed), expect=0)
+            self.assertIn("media=cdrom,readonly=on", out)
+            # An applied bring-up refuses a seed medium that is not there,
+            # before it creates or locks anything.
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--seed-iso", str(seed), "--apply", expect=2)
+        self.assertIn("is missing", err)
+        run.assert_not_called()
+        self.assertFalse(self.persistent_root.exists())
+
     def test_persistent_status_reports_an_absent_instance(self):
         out, _ = self.call(
             "persistent-status", "--instance", "lab-dc1",

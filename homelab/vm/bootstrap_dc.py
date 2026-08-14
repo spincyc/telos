@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -512,6 +513,7 @@ def persistent_up(
     apply: bool,
     *,
     canonical_state: Path = DEFAULT_STATE,
+    seed_iso: Path | None = None,
 ) -> int:
     """Create when absent, then boot one persistent controller instance.
 
@@ -531,8 +533,12 @@ def persistent_up(
     files = persistent_paths(state)
     existing = target.exists()
     try:
+        # A read-only convergence/seed CD is the only extra medium this mode
+        # accepts: installer media would reinstall over the directory this mode
+        # exists to keep.
         command = qemu_command(
-            state, None, files=files, socket_port=PERSISTENT_SOCKET_PORT,
+            state, None, seed_iso, files=files,
+            socket_port=PERSISTENT_SOCKET_PORT,
             name=f"persistent-dc-{instance}")
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -554,6 +560,8 @@ def persistent_up(
 
     problems = [f"{tool} is not installed" for tool in
                 ("qemu-system-x86_64", "qemu-img") if not shutil.which(tool)]
+    if seed_iso is not None and not seed_iso.is_file():
+        problems.append(f"{seed_iso} is missing")
     if not existing:
         problems += [str(canonical[key]) + " is missing"
                      for key in ("disk", "vars")
@@ -579,11 +587,18 @@ def persistent_up(
         with contextlib.suppress(BaseException):
             target.close()
         raise
-    try:
-        target.close()
-    except (RuntimeError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
+    # The guest QEMU has just exited but may still be visible in /proc for an
+    # instant, so retry the release exactly as DisposableBootDisk.close does
+    # rather than failing a good run on a teardown race.
+    for attempt in range(6):
+        try:
+            target.close()
+            break
+        except (RuntimeError, OSError) as error:
+            if attempt == 5:
+                print(f"error: {error}", file=sys.stderr)
+                return 2
+            time.sleep(0.1)
     print(f"{instance}: guest exited; directory state retained at {state}")
     return returncode
 
@@ -683,6 +698,9 @@ def parser() -> argparse.ArgumentParser:
             help="root holding persistent instances; never the acceptance state")
         if name == "persistent-up":
             persistent_parser.add_argument("--apply", action="store_true")
+            persistent_parser.add_argument(
+                "--seed-iso", type=Path,
+                help="read-only convergence/seed CD for a first bring-up")
         if name == "persistent-destroy":
             persistent_parser.add_argument(
                 "--confirm",
@@ -704,7 +722,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "persistent-up":
         return persistent_up(
             args.persistent_root, args.instance, args.apply,
-            canonical_state=args.state_dir)
+            canonical_state=args.state_dir, seed_iso=args.seed_iso)
     if command == "persistent-status":
         return persistent_status(args.persistent_root, args.instance)
     if command == "persistent-destroy":

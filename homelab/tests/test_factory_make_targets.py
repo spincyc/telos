@@ -209,6 +209,10 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertEqual(1, text.count("--apply"))
         self.assertIn("bootstrap_dc.py persistent-up", text)
         self.assertIn("--instance '$(PERSISTENT_DC)'", text)
+        # A first bring-up may carry the read-only convergence medium; never
+        # installer media, which would reinstall over the retained directory.
+        self.assertIn("--seed-iso '$(SEED_ISO)'", text)
+        self.assertNotIn("--iso", text)
 
     def test_persistent_destroy_requires_apply_instance_and_confirmation(self):
         text = commands("homelab-factory-persistent-destroy")
