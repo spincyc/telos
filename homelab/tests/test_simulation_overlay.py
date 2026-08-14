@@ -700,6 +700,112 @@ class TestPersistentControllerInstance(unittest.TestCase):
         ):
             target.verify_canonical()
 
+    # -- the convergence record ------------------------------------------
+    def test_a_seeded_instance_reports_no_directory_until_it_is_converged(self):
+        # Seeding copies an installed Controller, which has no domain at all.
+        # Nothing may read that as a directory server.
+        target = self.seeded()
+        self.assertIsNone(target.convergence())
+        self.assertNotIn(
+            simulation_overlay.PERSISTENT_CONVERGENCE_KEY,
+            target.read_marker())
+
+    def test_a_recorded_convergence_reports_the_durable_domain_sid(self):
+        target = self.seeded()
+        record = {
+            "converged_utc": "2026-08-14T20:00:00+00:00",
+            "realm": "AD.FACTORY.TEST",
+            "domain_sid": "S-1-5-21-11-22-33",
+        }
+        target.record_convergence(record)
+        # Readable by a fresh object, so the claim lives in durable state and
+        # not in this process.
+        again = self.instance()
+        self.assertEqual(again.convergence()["domain_sid"], "S-1-5-21-11-22-33")
+        # The rest of the marker is untouched: still the same instance, still
+        # unfenced, still seeded from the same canonical digest.
+        marker = again.read_marker()
+        self.assertEqual(marker["instance"], "lab-dc1")
+        self.assertEqual(
+            marker["seeded_from"]["disk_sha256"],
+            simulation_overlay.sha256(self.disk))
+
+    def test_a_convergence_record_without_a_canonical_sid_is_refused(self):
+        target = self.seeded()
+        for bad in (
+            {},
+            {"converged_utc": ""},
+            {"converged_utc": "now", "domain_sid": "S-1-5-32-544"},
+            {"converged_utc": "now", "domain_sid": "not a sid"},
+            {"converged_utc": "now", "domain_sid": 1234},
+            "converged",
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(
+                        simulation_overlay.PersistentInstanceInvalid):
+                    target.record_convergence(bad)
+                self.assertIsNone(target.convergence())
+        # A missing SID is allowed and explicit: convergence happened, the SID
+        # could not be read. It must never be silently invented.
+        target.record_convergence(
+            {"converged_utc": "now", "domain_sid": None})
+        self.assertIsNone(target.convergence()["domain_sid"])
+
+    def test_an_interrupted_record_leaves_the_instance_unconverged(self):
+        # The failure that matters: a kill between staging the new marker and
+        # renaming it. The instance must keep reporting no directory rather
+        # than a half-written one, and must stay usable.
+        target = self.seeded()
+        record = {"converged_utc": "2026-08-14T20:00:00+00:00",
+                  "domain_sid": "S-1-5-21-1-2-3"}
+        before = target.marker.read_text(encoding="utf-8")
+        with mock.patch.object(
+                simulation_overlay.os, "replace",
+                side_effect=OSError("interrupted")):
+            with self.assertRaises(OSError):
+                target.record_convergence(record)
+        self.assertEqual(target.marker.read_text(encoding="utf-8"), before)
+        self.assertIsNone(target.convergence())
+        self.assertFalse(
+            (target.state
+             / simulation_overlay.PERSISTENT_MARKER_STAGING_NAME).exists())
+        # Still a valid instance afterwards, and the next attempt succeeds.
+        target.record_convergence(record)
+        self.assertEqual(
+            target.convergence()["domain_sid"], "S-1-5-21-1-2-3")
+
+    def test_a_stranded_staging_file_neither_converges_nor_blocks_destroy(self):
+        # A staging file left by a killed rewrite is truncated by the next one
+        # and swept by destroy, so it can never look like a convergence and can
+        # never make an instance permanently un-erasable.
+        target = self.seeded()
+        staging = (target.state
+                   / simulation_overlay.PERSISTENT_MARKER_STAGING_NAME)
+        staging.write_text('{"schema": 1, "mode": "persist', encoding="utf-8")
+        self.assertIsNone(target.convergence())
+        target.record_convergence(
+            {"converged_utc": "now", "domain_sid": "S-1-5-21-9-9-9"})
+        self.assertFalse(staging.exists())
+        staging.write_text("half", encoding="utf-8")
+        target.destroy("DESTROY lab-dc1")
+        self.assertFalse(target.state.exists())
+
+    def test_a_marker_rewrite_is_private_and_refuses_a_planted_symlink(self):
+        target = self.seeded()
+        staging = (target.state
+                   / simulation_overlay.PERSISTENT_MARKER_STAGING_NAME)
+        elsewhere = self.root / "elsewhere"
+        staging.symlink_to(elsewhere)
+        with self.assertRaises(OSError):
+            target.record_convergence(
+                {"converged_utc": "now", "domain_sid": "S-1-5-21-1-1-1"})
+        self.assertFalse(elsewhere.exists())
+        self.assertIsNone(target.convergence())
+        staging.unlink()
+        target.record_convergence(
+            {"converged_utc": "now", "domain_sid": "S-1-5-21-1-1-1"})
+        self.assertEqual(target.marker.stat().st_mode & 0o777, 0o600)
+
     # -- teardown --------------------------------------------------------
     def test_destroy_requires_the_exact_instance_named_confirmation(self):
         target = self.seeded()

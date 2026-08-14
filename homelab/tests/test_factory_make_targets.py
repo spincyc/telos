@@ -181,6 +181,8 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "homelab-factory-persistent-plan",
             "homelab-factory-persistent-status",
             "homelab-factory-persistent-up",
+            "homelab-factory-persistent-converge-plan",
+            "homelab-factory-persistent-converge",
             "homelab-factory-persistent-destroy",
         ):
             with self.subTest(target=target):
@@ -196,6 +198,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
 
     def test_persistent_plan_and_status_are_read_only(self):
         for target in ("homelab-factory-persistent-plan",
+                       "homelab-factory-persistent-converge-plan",
                        "homelab-factory-persistent-status"):
             with self.subTest(target=target):
                 text = commands(target)
@@ -213,6 +216,29 @@ class FactoryMakeTargetTests(unittest.TestCase):
         # installer media, which would reinstall over the retained directory.
         self.assertIn("--seed-iso '$(SEED_ISO)'", text)
         self.assertNotIn("--iso", text)
+
+    def test_persistent_converge_is_apply_gated_and_takes_no_credential(self):
+        text = recipe("homelab-factory-persistent-converge")
+        self.assertIn("APPLY", text)
+        self.assertIn("dry run", text)
+        self.assertEqual(1, text.count("--apply"))
+        self.assertIn("bootstrap_dc.py persistent-converge", text)
+        self.assertIn("--instance '$(PERSISTENT_DC)'", text)
+        # Credentials are typed at the terminal, so no Make variable may carry
+        # one and no answer file may be named.
+        commands_only = commands("homelab-factory-persistent-converge")
+        for forbidden in (
+            "PASSWORD", "CREDENTIAL", "SECRET", "--password", "ADMIN_PASSWORD",
+        ):
+            self.assertNotIn(forbidden, commands_only)
+        # Installer media would reinstall over the directory this mode keeps.
+        self.assertNotIn("--iso", commands_only)
+        # FACTORY_DURATION's 120-second default would abort a provisioning run,
+        # so the convergence bound is its own variable with no default.
+        self.assertNotIn("FACTORY_DURATION", commands_only)
+        self.assertIn("PERSISTENT_CONVERGE_TIMEOUT", commands_only)
+        self.assertRegex(MAKEFILE, r"(?m)^PERSISTENT_CONVERGE_TIMEOUT \?=\s*$")
+        self.assertRegex(MAKEFILE, r"(?m)^RECONVERGE \?=\s*$")
 
     def test_persistent_destroy_requires_apply_instance_and_confirmation(self):
         text = commands("homelab-factory-persistent-destroy")
@@ -239,6 +265,7 @@ class FactoryMakeTargetTests(unittest.TestCase):
             with self.subTest(target=target):
                 text = commands(target)
                 for forbidden in ("PERSISTENT_DC", "persistent-up",
+                                  "persistent-converge",
                                   "persistent-destroy"):
                     self.assertNotIn(forbidden, text)
 

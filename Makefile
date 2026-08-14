@@ -87,6 +87,11 @@ FACTORY_COMPARE_EVIDENCE ?=
 # persistence must be asked for by name, never inferred.
 PERSISTENT_DC_ROOT ?= build/homelab/vm/persistent-dc
 PERSISTENT_DC ?=
+# Both empty by default so the convergence keeps its own long in-guest bound and
+# never reconverges by accident. FACTORY_DURATION is deliberately NOT reused: its
+# 120-second default would abort a Samba provisioning run.
+PERSISTENT_CONVERGE_TIMEOUT ?=
+RECONVERGE ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -158,7 +163,9 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-recover homelab-factory-recover-judge \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-factory-persistent-plan homelab-factory-persistent-status \
-	homelab-factory-persistent-up homelab-factory-persistent-destroy \
+	homelab-factory-persistent-up homelab-factory-persistent-converge \
+	homelab-factory-persistent-converge-plan \
+	homelab-factory-persistent-destroy \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -779,6 +786,59 @@ homelab-factory-persistent-up:
 			--apply; \
 	fi
 
+# Provision Active Directory into a persistent instance, in place. A bring-up
+# alone leaves an installed Controller with no domain; this is the step that
+# gives it one, and it is deliberately separate from -up because it is
+# long-running, it reads credentials typed at your terminal, it builds and
+# destroys a secret-bearing convergence CD, and it attaches a simulated peer.
+#
+# The durable ESP is never rewritten. The disposable acceptance path reaches a
+# root shell by injecting an init=/bin/bash entry into a THROWAWAY ESP; doing
+# that to a durable loader default would leave a permanent root shell one power
+# cycle away. It is unnecessary here: the offline installer already asked you to
+# type a local-rescue console password into this image, so convergence logs in
+# normally and asks you for that password at this terminal. No harness-generated
+# credential ever reaches durable state, and nothing is written to a file, a
+# Make variable, an environment variable, or argv.
+#
+# It also leaves the domain Administrator ENABLED with the password you type,
+# unlike a disposable run: a persistent directory whose only built-in
+# administrator is disabled cannot create an account, join a machine, or rotate
+# a credential.
+homelab-factory-persistent-converge-plan:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+		--instance '$(PERSISTENT_DC)' \
+		--persistent-root '$(PERSISTENT_DC_ROOT)' \
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
+
+homelab-factory-persistent-converge:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to provision the directory; it will ask at this terminal for the local-rescue and Administrator passwords'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			$(if $(RECONVERGE),--reconverge) \
+			$(if $(PERSISTENT_CONVERGE_TIMEOUT),--timeout '$(PERSISTENT_CONVERGE_TIMEOUT)') \
+			--apply; \
+	fi
+
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
 # stable instance name, and the exact confirmation carrying that name.
 homelab-factory-persistent-destroy:
@@ -1203,6 +1263,10 @@ help:
 		'                         Plan a persistent Controller instance' \
 		'make homelab-factory-persistent-up APPLY=1 PERSISTENT_DC=<name>' \
 		'                         Create when absent, then boot it in place' \
+		'make homelab-factory-persistent-converge-plan PERSISTENT_DC=<name>' \
+		'                         Plan provisioning a directory into it' \
+		'make homelab-factory-persistent-converge APPLY=1 PERSISTENT_DC=<name>' \
+		'                         Provision AD in place; asks for passwords' \
 		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-private-onboard  Build a sibling private overlay' \

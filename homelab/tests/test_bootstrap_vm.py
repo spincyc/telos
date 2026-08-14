@@ -827,7 +827,8 @@ class PersistentControllerCliTests(unittest.TestCase):
 
     def test_persistent_subcommands_require_an_instance_name(self):
         for command in (
-            "persistent-up", "persistent-status", "persistent-destroy",
+            "persistent-up", "persistent-converge", "persistent-status",
+            "persistent-destroy",
         ):
             with self.subTest(command=command):
                 with contextlib.redirect_stderr(io.StringIO()):
@@ -836,6 +837,452 @@ class PersistentControllerCliTests(unittest.TestCase):
         _, err = self.call(
             "persistent-up", "--instance", "../escape", expect=2)
         self.assertIn("instance must be", err)
+
+    def test_a_bring_up_never_implies_a_directory_that_is_not_there(self):
+        target = self.seeded_instance()
+        out, _ = self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=0)
+        self.assertIn("directory: not provisioned", out)
+        self.assertIn("persistent-converge", out)
+        target.record_convergence({
+            "converged_utc": "2026-08-14T20:00:00+00:00",
+            "realm": "AD.FACTORY.TEST",
+            "domain_sid": "S-1-5-21-7-8-9",
+        })
+        out, _ = self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=0)
+        self.assertIn("S-1-5-21-7-8-9", out)
+        # An unreadable record degrades a read-only report to "unknown" rather
+        # than failing it; only paths that act on the marker fail closed.
+        target.marker.write_text(
+            json.dumps({
+                "schema": 1, "mode": "persistent", "instance": "lab-dc1",
+                "created_utc": "x", "seeded_from": {"disk": "d",
+                                                    "disk_sha256": "s"},
+                "converged": {"converged_utc": ""},
+            }), encoding="utf-8")
+        out, _ = self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=0)
+        self.assertIn("directory: unknown", out)
+
+    def seeded_instance(self, name="lab-dc1"):
+        with mock.patch(
+                "vm.simulation_overlay.subprocess.run",
+                side_effect=self._fake_qemu_img):
+            target = simulation_overlay.PersistentControllerInstance(
+                self.persistent_root / name, instance=name)
+            target.create(
+                bootstrap_dc.paths(self.canonical)["disk"],
+                bootstrap_dc.paths(self.canonical)["vars"])
+        return target
+
+
+class PersistentConvergenceTests(unittest.TestCase):
+    """Provisioning a directory into a persistent instance, in place.
+
+    The properties under test are the ones that make this safe to run against
+    durable state: no harness-generated credential, no rewrite of a durable
+    ESP, and a host-side convergence claim that can only ever trail the
+    in-guest fact.
+    """
+
+    PASSWORDS = ("console-secret-typed", "Administrator-secret-typed")
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.canonical = self.root / "canonical"
+        self.canonical.mkdir()
+        files = bootstrap_dc.paths(self.canonical)
+        for key in ("disk", "vars", "manifest"):
+            files[key].write_bytes(b"canonical " + key.encode())
+            files[key].chmod(0o600)
+        self.persistent_root = self.root / "persistent"
+        self.state = self.persistent_root / "lab-dc1"
+        self.typed = []
+        self.launched = []
+
+    def call(self, *argv, expect):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = bootstrap_dc.main(list(argv))
+        self.assertEqual(result, expect, err.getvalue() or out.getvalue())
+        return out.getvalue(), err.getvalue()
+
+    def _fake_qemu_img(self, argv, **_kwargs):
+        if argv[0] == "qemu-img" and argv[1] in {"create", "convert"}:
+            Path(argv[-1]).write_bytes(b"seeded from canonical")
+        return subprocess.CompletedProcess(argv, 0)
+
+    def _getpass(self, prompt):
+        self.typed.append(prompt)
+        return self.PASSWORDS[0] if "console" in prompt else self.PASSWORDS[1]
+
+    class _Bundle:
+        """A stand-in for the secret-bearing convergence medium."""
+
+        def __init__(self, _repo, output, *, authorization_nonce,
+                     password=None, spec=None):
+            self.output = Path(output)
+            self.password = password
+            self.authorization_nonce = authorization_nonce
+            self.spec = spec
+
+        def build(self):
+            self.output.write_bytes(b"convergence iso")
+            return self.output
+
+        @staticmethod
+        def guest_command(nonce):
+            return f"telos-converge {nonce}"
+
+    class _Child:
+        def __init__(self, *_args, **_kwargs):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            raise AssertionError("a finished child must not be signalled")
+
+    def _harness(self, drive):
+        """Patch every boundary a convergence crosses except the state itself."""
+        return contextlib.ExitStack(), [
+            mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))),
+            mock.patch.object(
+                bootstrap_dc.shutil, "which", return_value="/usr/bin/x"),
+            mock.patch.object(
+                bootstrap_dc.subprocess, "run",
+                side_effect=self._fake_qemu_img),
+            mock.patch.object(
+                bootstrap_dc.subprocess, "Popen",
+                side_effect=lambda argv, **kw: (
+                    self.launched.append(list(argv)) or self._Child())),
+            mock.patch.object(
+                bootstrap_dc, "_controlling_terminal", return_value=True),
+            mock.patch.object(
+                bootstrap_dc.getpass, "getpass", side_effect=self._getpass),
+            mock.patch.object(bootstrap_dc, "FactoryBundle", self._Bundle),
+            mock.patch.object(
+                bootstrap_dc, "_attach_simulated_gateway",
+                return_value=self._Child()),
+            mock.patch.object(
+                bootstrap_dc, "_drive_persistent_convergence",
+                side_effect=drive),
+        ]
+
+    @contextlib.contextmanager
+    def harness(self, drive):
+        stack, patches = self._harness(drive)
+        with stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            yield
+
+    @staticmethod
+    def _record(*_args, **_kwargs):
+        return {
+            "converged_utc": "2026-08-14T20:00:00+00:00",
+            "realm": "AD.FACTORY.TEST",
+            "domain_sid": "S-1-5-21-101-202-303",
+        }
+
+    def converge(self, *extra, expect=0, drive=None):
+        with self.harness(drive or self._record):
+            return self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                *extra, expect=expect)
+
+    # -- plan ------------------------------------------------------------
+    def test_the_plan_creates_boots_and_asks_for_nothing(self):
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen, \
+                mock.patch.object(
+                    bootstrap_dc.getpass, "getpass") as prompt:
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root), expect=0)
+        run.assert_not_called()
+        popen.assert_not_called()
+        prompt.assert_not_called()
+        self.assertFalse(self.persistent_root.exists())
+        self.assertIn("dry run; repeat with --apply", out)
+        self.assertIn("ESP is never rewritten", out)
+        self.assertIn(bootstrap_dc.CONSOLE_ACCOUNT, out)
+        self.assertIn("198.51.100.10", out)
+        self.assertIn(
+            f"listen=127.0.0.1:{bootstrap_dc.PERSISTENT_SOCKET_PORT}", out)
+
+    def test_convergence_refuses_the_acceptance_state(self):
+        with mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", self.canonical.name,
+                "--persistent-root", str(self.canonical.parent),
+                "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+            _, err = self.call(
+                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "persistent-converge", "--instance", "bootstrap-dc",
+                "--persistent-root", str(bootstrap_dc.DEFAULT_STATE.parent),
+                "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+        run.assert_not_called()
+        popen.assert_not_called()
+        self.assertEqual(
+            bootstrap_dc.paths(self.canonical)["disk"].read_bytes(),
+            b"canonical disk")
+
+    # -- credentials -----------------------------------------------------
+    def test_credentials_come_from_a_terminal_or_the_run_refuses(self):
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"), \
+                mock.patch.object(
+                    bootstrap_dc, "_controlling_terminal",
+                    return_value=False), \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--apply", expect=2)
+        self.assertIn("controlling terminal", err)
+        self.assertIn("not a file, argv", err)
+        popen.assert_not_called()
+        # Nothing was created, so a run that cannot read its credential leaves
+        # no half-made instance behind.
+        self.assertFalse(self.persistent_root.exists())
+
+    def test_a_typed_credential_is_validated_and_confirmed(self):
+        with mock.patch.object(
+                bootstrap_dc, "_controlling_terminal", return_value=True):
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass", return_value=""):
+                with self.assertRaisesRegex(ValueError, "non-empty line"):
+                    bootstrap_dc._typed_secret("p: ")
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass", return_value="a\tb"):
+                with self.assertRaisesRegex(ValueError, "control characters"):
+                    bootstrap_dc._typed_secret("p: ")
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass",
+                    side_effect=["first", "second"]):
+                with self.assertRaisesRegex(ValueError, "did not match"):
+                    bootstrap_dc._typed_secret("p: ", confirm="again: ")
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass",
+                    side_effect=["same", "same"]):
+                self.assertEqual(
+                    bootstrap_dc._typed_secret("p: ", confirm="again: "),
+                    b"same")
+
+    def test_no_harness_credential_reaches_durable_state(self):
+        out, _ = self.converge("--apply")
+        self.assertIn("S-1-5-21-101-202-303", out)
+        # Both credentials were typed, never generated.
+        self.assertEqual(len(self.typed), 3)
+        self.assertTrue(any("console" in prompt for prompt in self.typed))
+        self.assertTrue(any("Administrator" in prompt for prompt in self.typed))
+        # Neither value, nor any prompt, appears anywhere in the durable state
+        # or in what the operator was shown.
+        durable = b"".join(
+            entry.read_bytes() for entry in sorted(self.state.iterdir()))
+        for secret in self.PASSWORDS:
+            self.assertNotIn(secret.encode(), durable)
+            self.assertNotIn(secret, out)
+        # ... nor in the argv the guest was launched with.
+        for argv in self.launched:
+            for secret in self.PASSWORDS:
+                self.assertNotIn(secret, " ".join(argv))
+
+    # -- the durable ESP -------------------------------------------------
+    def test_the_persistent_path_never_rewrites_a_durable_esp(self):
+        self.converge("--apply")
+        # The image the harness handed QEMU is byte-for-byte the seeded copy:
+        # no loader.conf was rewritten and no boot entry was injected, which is
+        # the whole reason this design logs in instead of injecting.
+        self.assertEqual(
+            (self.state / simulation_overlay.PERSISTENT_DISK_NAME).read_bytes(),
+            b"seeded from canonical")
+        self.assertEqual(
+            sorted(entry.name for entry in self.state.iterdir()),
+            sorted([
+                simulation_overlay.PERSISTENT_DISK_NAME,
+                simulation_overlay.PERSISTENT_VARS_NAME,
+                simulation_overlay.PERSISTENT_MARKER_NAME,
+                simulation_overlay.LOCK_NAME,
+            ]))
+        # The injection machinery is not reachable from this module at all: it
+        # is neither imported nor bound, so no persistent verb can grow a path
+        # to it by accident.
+        source = Path(bootstrap_dc.__file__).read_text(encoding="utf-8")
+        for forbidden in (
+            "DisposableBootDisk(", "automated_controller", "mcopy",
+            "_inject_entry", "_with_init_shell",
+        ):
+            self.assertNotIn(forbidden, source)
+        self.assertFalse(hasattr(bootstrap_dc, "DisposableBootDisk"))
+
+    def test_the_guest_boots_its_own_disk_with_a_read_only_convergence_cd(self):
+        self.converge("--apply")
+        self.assertEqual(len(self.launched), 1)
+        argv = " ".join(self.launched[0])
+        self.assertIn(
+            f"file={self.state / simulation_overlay.PERSISTENT_DISK_NAME}",
+            argv)
+        self.assertIn("media=cdrom,readonly=on", argv)
+        self.assertIn("controller-convergence.iso", argv)
+        self.assertIn("-name persistent-dc-lab-dc1", argv)
+        self.assertIn(
+            f"listen=127.0.0.1:{bootstrap_dc.PERSISTENT_SOCKET_PORT}", argv)
+        # Never installer media, which would reinstall over the directory this
+        # mode exists to keep, and never the acceptance canonical or its port.
+        self.assertNotIn(str(bootstrap_dc.paths(self.canonical)["disk"]), argv)
+        self.assertNotIn("listen=127.0.0.1:12961", argv)
+
+    # -- the record trails the fact --------------------------------------
+    def test_a_failed_convergence_records_nothing_and_releases_the_lock(self):
+        def explode(*_args, **_kwargs):
+            raise bootstrap_dc.SerialAutomationError(
+                "timed out waiting for persistent-login-prompt")
+
+        _, err = self.converge("--apply", expect=2, drive=explode)
+        self.assertIn("persistent convergence failed", err)
+        self.assertIn("persistent-login-prompt", err)
+        target = simulation_overlay.PersistentControllerInstance(
+            self.state, instance="lab-dc1")
+        self.assertTrue(target.exists())
+        self.assertIsNone(target.convergence())
+        # The lock is free, so the instance can be retried or brought up.
+        target.prepare()
+        target.close()
+
+    def test_a_convergence_whose_record_fails_is_reported_not_hidden(self):
+        with mock.patch.object(
+                simulation_overlay.PersistentControllerInstance,
+                "record_convergence",
+                side_effect=OSError("read-only state")):
+            _, err = self.converge("--apply", expect=2)
+        self.assertIn("converged but its record could not be written", err)
+
+    def test_a_second_convergence_needs_reconverge_and_says_what_it_skips(self):
+        self.converge("--apply")
+        _, err = self.converge("--apply", expect=2)
+        self.assertIn("already converged", err)
+        self.assertIn("--reconverge", err)
+        self.assertIn("does NOT change the domain Administrator password", err)
+        self.typed.clear()
+        out, _ = self.converge("--apply", "--reconverge")
+        self.assertIn("already converged", out)
+        # A reconvergence asks for the console credential only: the
+        # Administrator password is not re-provisioned, so it must not be
+        # collected as though it were.
+        self.assertEqual(len(self.typed), 1)
+        self.assertIn("console", self.typed[0])
+
+    # -- one root command over the console -------------------------------
+    def test_a_console_root_command_never_carries_the_credential(self):
+        console = mock.Mock()
+        console.password = b"console-secret-typed"
+        sent = []
+        console._send.side_effect = lambda value, event: sent.append(value)
+        console._wait.return_value = mock.Mock(
+            group=lambda index: b"0" if index == 1 else b"")
+        bootstrap_dc._console_root(console, "id -u", "probe")
+        commands = b" ".join(sent)
+        self.assertIn(b"'id -u'", commands)
+        # The credential is answered to sudo's own private prompt, and never
+        # appears inside the command the shell records.
+        self.assertEqual(
+            sum(1 for value in sent if value == console.password), 1)
+        self.assertNotIn(console.password, b" ".join(
+            value for value in sent if value != console.password))
+        # A nonzero result is a named failure, not a silent continuation.
+        console._wait.return_value = mock.Mock(
+            group=lambda index: b"3" if index == 1 else b"")
+        with self.assertRaisesRegex(
+                bootstrap_dc.SerialAutomationError, "failed: probe"):
+            bootstrap_dc._console_root(console, "id -u", "probe")
+        for invalid in ("", "two\nlines"):
+            with self.assertRaisesRegex(
+                    bootstrap_dc.SerialAutomationError, "invalid"):
+                bootstrap_dc._console_root(console, invalid, "probe")
+        console.password = None
+        with self.assertRaisesRegex(
+                bootstrap_dc.SerialAutomationError, "unavailable"):
+            bootstrap_dc._console_root(console, "id -u", "probe")
+
+    def test_the_administrator_is_left_enabled_and_proven_so(self):
+        # The disposable payload's last act disables Administrator because its
+        # synthetic password is thrown away. A persistent directory must keep an
+        # administrator the operator can actually use, and the enable is proven
+        # rather than assumed.
+        self.assertIn("user enable Administrator",
+                      bootstrap_dc.ADMINISTRATOR_ENABLE)
+        self.assertIn("userAccountControl", bootstrap_dc.ADMINISTRATOR_ENABLE)
+        self.assertIn("test $((__telos_uac & 2)) -eq 0",
+                      bootstrap_dc.ADMINISTRATOR_ENABLE)
+        self.assertNotIn("Administrator", bootstrap_dc.DOMAIN_SID_COMMAND)
+
+
+class DisposablePathUnchangedTests(unittest.TestCase):
+    """The persistent lane must not be able to change an acceptance run."""
+
+    def test_the_disposable_boot_disk_knows_nothing_of_persistence(self):
+        from vm import automated_controller
+
+        source = Path(automated_controller.__file__).read_text(encoding="utf-8")
+        for forbidden in ("persistent", "bootstrap_dc", "converge"):
+            self.assertNotIn(forbidden, source.lower())
+
+    def test_the_acceptance_command_shape_is_untouched(self):
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))):
+            command = bootstrap_dc.qemu_command(Path("/state"), None)
+        self.assertEqual(command, [
+            "qemu-system-x86_64",
+            "-name", "bootstrap-dc",
+            "-machine", "q35,accel=kvm",
+            "-cpu", "host",
+            "-smp", "4",
+            "-m", "8192",
+            "-display", "none",
+            "-serial", "mon:stdio",
+            "-boot", "strict=on,menu=off",
+            "-drive", "if=pflash,format=raw,readonly=on,file=/code",
+            "-drive", "if=pflash,format=raw,file=/state/OVMF_VARS.fd",
+            "-drive", (
+                "if=none,id=osdisk,format=qcow2,cache=none,"
+                "file=/state/bootstrap-dc.qcow2"),
+            "-device", (
+                "virtio-blk-pci,drive=osdisk,serial=TELOS-BOOTSTRAP-DC1,"
+                "bootindex=1"),
+            "-nodefaults",
+            "-netdev", "socket,id=bootstrap,listen=127.0.0.1:12961",
+            "-device", "virtio-net-pci,netdev=bootstrap,mac=52:54:00:11:11:11",
+        ])
 
 
 if __name__ == "__main__":

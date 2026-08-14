@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import getpass
 import hashlib
 import json
 import os
 import re
+import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -19,8 +22,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 try:
+    from .controller_factory import FactoryBundle, FactorySpec
     from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
+    from .serial_automation import SerialAutomation, SerialAutomationError
     from .simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         PERSISTENT_DISK_NAME,
@@ -29,8 +34,10 @@ try:
         PersistentControllerInstance,
     )
 except ImportError:  # Direct execution from homelab/.
+    from controller_factory import FactoryBundle, FactorySpec
     from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
+    from serial_automation import SerialAutomation, SerialAutomationError
     from simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         PERSISTENT_DISK_NAME,
@@ -58,6 +65,53 @@ DEFAULT_PERSISTENT_ROOT = Path("build/homelab/vm/persistent-dc")
 #: up at a time, and a second one fails loudly on bind rather than silently
 #: joining the first one's segment.
 PERSISTENT_SOCKET_PORT = DEFAULT_PORT + 10
+#: The synthetic MAC the isolated loopback segment gives a controller guest. Named
+#: rather than repeated so the convergence peer is told the same address the
+#: guest actually uses.
+SOCKET_MAC = "52:54:00:11:11:11"
+#: The console account ``homelab/seed/install-controller`` creates on the
+#: canonical Controller image. Its password is typed by the operator during that
+#: offline install and is not known to this harness, which is exactly why a
+#: persistent instance needs no ESP rewrite: it logs in normally.
+CONSOLE_ACCOUNT = "local-rescue"
+#: Bounds for the persistent convergence console. The payload bound covers a full
+#: offline Samba provisioning run; the console bound covers a login, one root
+#: command, or a shutdown.
+PERSISTENT_CONVERGE_TIMEOUT = 2700.0
+PERSISTENT_CONSOLE_TIMEOUT = 300.0
+#: QEMU binds its loopback listener during startup, so the gateway peer may lose
+#: the first connect attempts. A refused connect consumes nothing, so retrying is
+#: safe; the bound keeps a genuinely dead guest from hanging the run.
+GATEWAY_ATTACH_ATTEMPTS = 40
+GATEWAY_ATTACH_DELAY = 0.25
+#: Re-enable the built-in domain administrator after convergence, then prove it.
+#:
+#: The factory payload's last act is ``samba-tool user disable Administrator``,
+#: which is right for a disposable guest: its synthetic credential is discarded
+#: at teardown, so no live account may survive holding it. A *persistent*
+#: directory is the opposite case. The operator typed this password, and leaving
+#: the only built-in administrator disabled would leave a directory that cannot
+#: create an account, join a machine, or rotate a credential — unadministrable
+#: and unrecoverable. The enable is tolerant (an already-enabled account is
+#: convergence, not failure) and the *proof* is fail-closed, mirroring the
+#: payload's own ``administrator-disabled-proof`` step.
+ADMINISTRATOR_ENABLE = (
+    "/usr/bin/samba-tool user enable Administrator >/dev/null 2>&1 || true; "
+    "__telos_uac=$(/usr/bin/samba-tool user show Administrator "
+    "--attributes=userAccountControl | "
+    "/usr/bin/sed -n 's/^userAccountControl: //p'); "
+    "case \"$__telos_uac\" in ''|*[!0-9]*) exit 3;; esac; "
+    "test $((__telos_uac & 2)) -eq 0"
+)
+#: Read the durable domain SID. Three sources are consulted and the first
+#: canonical SID any of them prints is taken, because the exact wording of these
+#: tools' output is not a contract; the host still validates the shape and fails
+#: closed on no match rather than recording a guess.
+DOMAIN_SID_COMMAND = (
+    "{ /usr/bin/net getdomainsid; /usr/bin/net getlocalsid; "
+    "/usr/bin/wbinfo -D \"$(/usr/bin/wbinfo --own-domain)\"; } 2>/dev/null | "
+    "/usr/bin/grep -oE 'S-1-5-21(-[0-9]{1,10}){3}' | /usr/bin/head -1"
+)
 REPOSITORY = Path(__file__).resolve().parents[2]
 SYS_CLASS_NET = Path("/sys/class/net")
 _NET_NAME = re.compile(r"^[a-zA-Z0-9_.-]{1,15}$")
@@ -260,7 +314,7 @@ def qemu_command(
     ]
     if network_config is None:
         command += socket_network_args(
-            role="listen", mac="52:54:00:11:11:11", port=socket_port)
+            role="listen", mac=SOCKET_MAC, port=socket_port)
     else:
         command += tap_network_args(
             network_config, verify_host=verify_host_network)
@@ -491,6 +545,31 @@ def _persistent_state(root: Path, instance: str) -> Path:
     return Path(root) / instance
 
 
+def _persistent_directory_summary(
+    target: PersistentControllerInstance, existing: bool,
+) -> str:
+    """One honest line about whether this instance holds a real directory.
+
+    Tolerant on purpose: a marker this reader cannot understand must not turn a
+    bring-up or a status query into a failure, so an unreadable record is
+    reported as unknown. Every path that *acts* on the marker still reads it
+    through the fail-closed ``read_marker``.
+    """
+    if not existing:
+        return "none yet; this instance has not been created"
+    try:
+        recorded = target.convergence()
+    except (ValueError, RuntimeError) as error:
+        return f"unknown; the convergence record is unreadable ({error})"
+    if recorded is None:
+        return (
+            "not provisioned; this instance holds an installed Controller with "
+            "no domain. Run persistent-converge to provision one")
+    return (
+        f"converged {recorded['converged_utc']}; realm {recorded.get('realm')}; "
+        f"domain SID {recorded.get('domain_sid')}")
+
+
 def _persistent_running(target: PersistentControllerInstance) -> bool | None:
     """Whether the instance lock is held; ``None`` when it cannot be probed."""
     if not target.lock_path.is_file():
@@ -551,6 +630,10 @@ def persistent_up(
         print("bring-up: reuse the retained directory state")
     else:
         print(f"bring-up: seed {files['disk']} from {canonical['disk']}")
+    # A bring-up must never imply a directory that is not there. An instance
+    # seeded straight from the canonical image is an installed Controller with
+    # no domain at all, and persistent-converge is the step that provisions one.
+    print("directory: " + _persistent_directory_summary(target, existing))
     print(f"acceptance canonical: {canonical['state']} is read-only here and "
           "is never a persistent target")
     print(" ".join(str(part) for part in command))
@@ -603,6 +686,462 @@ def persistent_up(
     return returncode
 
 
+class _AnnouncedEvents(list):
+    """A serial event log that also reports progress to the operator.
+
+    ``SerialAutomation`` records progress by appending to ``events`` and offers
+    no callback, and a persistent convergence is a long wait behind a silent
+    pipe. Substituting this list reports each stage as it happens without
+    touching ``serial_automation.py``, which every acceptance gate shares.
+    """
+
+    def append(self, event: object) -> None:
+        super().append(event)
+        print(f"  {event}", flush=True)
+
+
+def _controlling_terminal() -> bool:
+    """True when this process can read a credential from its own terminal."""
+    try:
+        with open("/dev/tty", "rb"):
+            return True
+    except OSError:
+        return False
+
+
+def _typed_secret(prompt: str, *, confirm: str | None = None) -> bytes:
+    """Read one operator credential from the controlling terminal only.
+
+    Deliberately not a file, an environment variable, a Make variable or an
+    argv element. These are *real* credentials — the console password the
+    offline installer asked the operator to type, and the domain Administrator
+    password the directory will keep for good — and this repository's rule for
+    exactly those values is that they are typed directly and never land
+    anywhere they could be read again. Without a terminal this fails closed
+    rather than silently accepting an echoed or stored value.
+    """
+    if not _controlling_terminal():
+        raise ValueError(
+            "persistent convergence reads its credentials from a controlling "
+            "terminal and from nowhere else: not a file, argv, an environment "
+            "variable, or a Make variable")
+    value = getpass.getpass(prompt)
+    if confirm is not None and getpass.getpass(confirm) != value:
+        raise ValueError("the two credential entries did not match")
+    if not value or len(value) > 512:
+        raise ValueError("a credential must be one non-empty line")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("a credential must not contain control characters")
+    return value.encode("utf-8")
+
+
+def _console_root(
+    console: SerialAutomation,
+    command: str,
+    label: str,
+    *,
+    value: bytes | None = None,
+) -> bytes | None:
+    """Run one bounded root command over an authenticated console.
+
+    Modelled on the identity lane's controller helper: only fixed switches and
+    one quoted literal cross the wire, the credential answers sudo's own
+    private prompt, and a nonzero result is a distinctly named failure instead
+    of a silent continuation. With ``value`` the command's single-line output is
+    returned, proven against that pattern before the return code is read.
+    """
+    if console.password is None:
+        raise SerialAutomationError(
+            f"persistent controller credential is unavailable: {label}")
+    if not command or "\n" in command:
+        raise SerialAutomationError(
+            f"persistent controller command is invalid: {label}")
+    token = os.urandom(16).hex().encode("ascii")
+    prompt = b"__TELOS_PERSISTENT_SUDO_" + token + b"__"
+    emitted = b"__TELOS_PERSISTENT_VALUE_" + token + b"="
+    result = b"__TELOS_PERSISTENT_RC_" + token + b"="
+    payload = command
+    if value is not None:
+        payload = (
+            f"__telos_value=$({command}); "
+            f"printf '\\n{emitted.decode('ascii')}%s\\n' \"$__telos_value\"")
+    console._send(b"", label + "-shell-requested")
+    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", label + "-shell-ready")
+    console._send(
+        b"sudo -k -S -p '" + prompt + b"' /usr/bin/bash -c "
+        + shlex.quote(payload).encode("ascii")
+        + b"; __telos_rc=$?; printf '\\n" + result
+        + b"%s\\n' \"$__telos_rc\"",
+        label + "-command-sent")
+    console._wait(
+        rb"(?:^|[\r\n])" + re.escape(prompt) + rb"\s*$", label + "-sudo-prompt")
+    console._send(console.password, label + "-password-sent")
+    observed = None
+    if value is not None:
+        match = console._wait(
+            rb"(?:^|\n)" + re.escape(emitted) + rb"(" + value + rb")\s*(?:\n|$)",
+            label + "-value")
+        observed = match.group(1)
+    match = console._wait(
+        rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
+        label + "-result")
+    if int(match.group(1)) != 0:
+        raise SerialAutomationError(
+            f"persistent controller command failed: {label}")
+    return observed
+
+
+def _extra_read_only_medium(
+    medium: Path, *, drive_id: str, bootindex: int,
+) -> list[str]:
+    """Attach one more read-only data CD to the bus ``qemu_command`` created.
+
+    Additive on purpose: ``qemu_command`` keeps emitting byte-identical argv for
+    every existing caller, and no acceptance path reaches this function.
+    """
+    return [
+        "-drive",
+        f"if=none,id={drive_id},media=cdrom,readonly=on,"
+        f"file={medium.resolve()}",
+        "-device",
+        f"scsi-cd,bus=mediabus.0,drive={drive_id},bootindex={bootindex}",
+    ]
+
+
+def _attach_simulated_gateway(
+    port: int, log: Path, *, guest: subprocess.Popen[bytes] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Attach the userspace peer the convergence measures its clock against.
+
+    Not optional: the factory payload fails closed unless it can measure NTP
+    against 198.51.100.10, which exists only inside this simulator. It is the
+    same program the acceptance simulation uses, in its ``--connect`` role, so
+    nothing on the host is created, changed, or bound outside loopback.
+    """
+    program = Path(__file__).with_name("simulated_gateway.py")
+    argv = [
+        sys.executable, str(program), "--connect", "--port", str(port),
+        "--controller-mac", SOCKET_MAC,
+    ]
+    descriptor = os.open(
+        log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        stream = os.fdopen(descriptor, "wb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with stream:
+        for _attempt in range(GATEWAY_ATTACH_ATTEMPTS):
+            # A guest that has already exited will never bind the segment, so
+            # stop immediately rather than spending the whole retry budget.
+            if guest is not None and guest.poll() is not None:
+                raise RuntimeError(
+                    "the persistent controller guest exited before its "
+                    f"loopback segment was attached (status {guest.poll()})")
+            child = subprocess.Popen(
+                argv, stdin=subprocess.DEVNULL, stdout=stream,
+                stderr=subprocess.STDOUT)
+            time.sleep(GATEWAY_ATTACH_DELAY)
+            if child.poll() is None:
+                return child
+    raise RuntimeError(
+        "the simulated gateway peer could not attach to the persistent "
+        f"instance's loopback segment on 127.0.0.1:{port}")
+
+
+def _drive_persistent_convergence(
+    process: subprocess.Popen[bytes],
+    password: bytes,
+    nonce: str,
+    spec: FactorySpec,
+    *,
+    install_seed: bool,
+    timeout: float,
+) -> dict:
+    """Log in normally, converge the durable disk, and prove what it now holds.
+
+    Every step here runs against the instance's *own* loader entry: no ESP was
+    rewritten, there is no init shell, and the only way in is the console
+    account the offline installer created. ``converge_disposable_controller`` is
+    reused verbatim because it is the proven protocol — it tracks the payload's
+    named stages, requires ``TELOS FACTORY CONTROLLER PASS``, proves the
+    convergence media were released, and proves ``samba.service`` live with a
+    real ``sam.ldb`` before returning. Its *name* is a wart here; renaming it
+    would touch a module every acceptance gate shares, so this comment carries
+    the meaning instead.
+    """
+    if process.stdout is None or process.stdin is None:
+        raise RuntimeError(
+            "persistent controller serial pipes were not created")
+    console = SerialAutomation(
+        process.stdout, process.stdin, password,
+        timeout=PERSISTENT_CONSOLE_TIMEOUT)
+    console.events = _AnnouncedEvents()
+    console._wait(
+        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        "persistent-login-prompt")
+    console._send(CONSOLE_ACCOUNT.encode("ascii"), "persistent-username-sent")
+    console._wait(rb"(?:^|\n)Password:\s*$", "persistent-login-password-prompt")
+    console._send(password, "persistent-login-password-sent")
+    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", "persistent-shell-ready")
+    if install_seed:
+        console.install_offline_controller_dependencies()
+    console.converge_disposable_controller(
+        FactoryBundle.guest_command(nonce), timeout=timeout)
+    _console_root(
+        console, ADMINISTRATOR_ENABLE, "persistent-administrator-enable")
+    sid = _console_root(
+        console, DOMAIN_SID_COMMAND, "persistent-domain-sid",
+        value=rb"S-1-5-21(?:-[0-9]{1,10}){3}")
+    record = {
+        "converged_utc": datetime.now(UTC).isoformat(),
+        "realm": spec.realm,
+        "netbios": spec.netbios,
+        "dns_domain": spec.domain,
+        "domain_sid": None if sid is None else sid.decode("ascii"),
+        "administrator": (
+            "enabled; its password was typed by the operator and is not "
+            "stored by this harness"),
+        "console_credential": (
+            f"{CONSOLE_ACCOUNT}, as set by the offline installer; this "
+            "convergence neither changed it nor recorded it"),
+        "esp": "unmodified; the instance boots its own loader default",
+    }
+    # Powering off through the same authenticated channel: ``sudo -n`` cannot be
+    # used because every command above passes ``-k`` and so leaves no cached
+    # credential behind on purpose.
+    token = os.urandom(16).hex().encode("ascii")
+    prompt = b"__TELOS_PERSISTENT_POWEROFF_" + token + b"__"
+    console._send(b"", "persistent-poweroff-shell-requested")
+    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", "persistent-poweroff-shell-ready")
+    console._send(
+        b"sudo -k -S -p '" + prompt + b"' /usr/bin/systemctl poweroff",
+        "persistent-poweroff-command-sent")
+    console._wait(
+        rb"(?:^|[\r\n])" + re.escape(prompt) + rb"\s*$",
+        "persistent-poweroff-sudo-prompt")
+    console._send(password, "persistent-poweroff-password-sent")
+    console._wait(
+        rb"(?:Reached target System Power Off|reboot: Power down)",
+        "persistent-poweroff-observed")
+    return record
+
+
+def persistent_converge(
+    root: Path,
+    instance: str,
+    apply: bool,
+    *,
+    canonical_state: Path = DEFAULT_STATE,
+    seed_iso: Path | None = None,
+    reconverge: bool = False,
+    timeout: float = PERSISTENT_CONVERGE_TIMEOUT,
+) -> int:
+    """Provision Active Directory into one persistent instance, in place.
+
+    This is the step that turns an instance seeded from the canonical image
+    (an installed Controller with no directory at all) into a directory server
+    whose domain survives being shut down and brought up again. It is separate
+    from ``persistent-up`` on purpose: it is long-running, it needs credentials
+    typed at a terminal, it builds and destroys a secret-bearing medium, and it
+    attaches a simulated peer — none of which belong in a bring-up that must
+    stay fast and idempotent.
+
+    Three properties matter more than the mechanism:
+
+    * *the durable ESP is never rewritten.* No ``init=/bin/bash`` entry and no
+      loader default is touched, because the login uses the console account the
+      offline installer already created.
+    * *no harness-generated credential reaches durable state.* Both credentials
+      are typed by the operator, held in memory, and never written to a file,
+      argv, transcript, or the marker.
+    * *the acceptance path cannot be reached.* Every refusal
+      ``persistent-up`` runs, runs here first and before anything is printed.
+    """
+    try:
+        state = _persistent_state(root, instance)
+        target = PersistentControllerInstance(state, instance=instance)
+        canonical = paths(canonical_state)
+        target.assert_separate(canonical["disk"])
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    files = persistent_paths(state)
+    existing = target.exists()
+    recorded = None
+    if existing:
+        try:
+            recorded = target.convergence()
+        except (ValueError, RuntimeError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+    spec = FactorySpec()
+    try:
+        command = qemu_command(
+            state, None, None, files=files,
+            socket_port=PERSISTENT_SOCKET_PORT,
+            name=f"persistent-dc-{instance}")
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"persistent controller instance: {instance}")
+    print(f"state: {state}")
+    print("mode: persistent convergence; the durable disk is provisioned in "
+          "place and its ESP is never rewritten")
+    if not existing:
+        print(f"bring-up: seed {files['disk']} from {canonical['disk']}")
+    elif recorded:
+        print(f"already converged: {recorded['converged_utc']} "
+              f"({recorded.get('realm')}, SID {recorded.get('domain_sid')})")
+    else:
+        print("bring-up: reuse the retained, not-yet-converged directory state")
+    print(f"directory identity: {spec.realm} at {spec.address}/{spec.prefix}")
+    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+          "password the offline installer told you to type; it is held in "
+          "memory only and is neither changed nor recorded")
+    print("domain Administrator: provisioned with a password you type here, "
+          "then left enabled so the directory stays administrable")
+    print("convergence medium: a per-run TELOS_FACTORY CD built into a private "
+          "mode-0700 directory, attached read-only, and destroyed afterwards")
+    if seed_iso is not None:
+        print(f"seed medium: {seed_iso} (read-only, optional)")
+    print("fabric: a simulated gateway peer on "
+          f"127.0.0.1:{PERSISTENT_SOCKET_PORT}; the payload measures NTP "
+          f"against {spec.ntp_upstream}, which exists only there")
+    print(f"acceptance canonical: {canonical['state']} is read-only here and "
+          "is never a persistent target")
+    print(" ".join(str(part) for part in command))
+    if not apply:
+        print("dry run; repeat with --apply")
+        return 0
+
+    problems = [f"{tool} is not installed" for tool in
+                ("qemu-system-x86_64", "qemu-img", "xorriso")
+                if not shutil.which(tool)]
+    if recorded and not reconverge:
+        problems.append(
+            f"{instance} is already converged; pass --reconverge to run the "
+            "convergent play again. A reconvergence does NOT change the domain "
+            "Administrator password, because provisioning is skipped once a "
+            "directory exists")
+    if seed_iso is not None and not _regular_file(seed_iso):
+        problems.append(f"{seed_iso} is missing")
+    if not existing:
+        problems += [str(canonical[key]) + " is missing"
+                     for key in ("disk", "vars")
+                     if not _regular_file(canonical[key])]
+    if problems:
+        for problem in problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+
+    console_password = b""
+    administrator = None
+    try:
+        console_password = _typed_secret(
+            f"{CONSOLE_ACCOUNT} console password: ")
+        if recorded is None:
+            administrator = _typed_secret(
+                "new domain Administrator password: ",
+                confirm="retype domain Administrator password: ")
+    except (ValueError, EOFError, KeyboardInterrupt) as error:
+        print(f"error: {error or type(error).__name__}", file=sys.stderr)
+        return 2
+
+    try:
+        if not existing:
+            marker = target.create(canonical["disk"], canonical["vars"])
+            print(f"seeded {instance} from "
+                  f"{marker['seeded_from']['disk_sha256']}")
+        target.prepare()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    run_root = Path(tempfile.mkdtemp(prefix="telos-persistent-converge-"))
+    run_root.chmod(0o700)
+    nonce = secrets.token_hex(32)
+    bundle = FactoryBundle(
+        REPOSITORY, run_root / "controller-convergence.iso",
+        authorization_nonce=nonce, spec=spec,
+        password=None if administrator is None
+        else administrator.decode("utf-8"))
+    guest: subprocess.Popen[bytes] | None = None
+    gateway: subprocess.Popen[bytes] | None = None
+    record: dict | None = None
+    failure: BaseException | None = None
+    try:
+        bundle.build()
+        # The convergence CD goes through the ``seed_iso`` argument, which is
+        # what creates the media bus; an optional dependency seed is then
+        # appended to that same bus without changing ``qemu_command``.
+        launch = qemu_command(
+            state, None, bundle.output, files=files,
+            socket_port=PERSISTENT_SOCKET_PORT,
+            name=f"persistent-dc-{instance}")
+        if seed_iso is not None:
+            launch += _extra_read_only_medium(
+                seed_iso, drive_id="persistentseedmedia", bootindex=4)
+        print(" ".join(str(part) for part in launch))
+        guest = subprocess.Popen(
+            launch, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, bufsize=0)
+        gateway = _attach_simulated_gateway(
+            PERSISTENT_SOCKET_PORT, run_root / "gateway.log", guest=guest)
+        record = _drive_persistent_convergence(
+            guest, console_password, nonce, spec,
+            install_seed=seed_iso is not None, timeout=timeout)
+    except BaseException as error:
+        failure = error
+    finally:
+        # The credentials exist only here. Python cannot wipe an immutable
+        # bytes object, so the best available step is to drop every reference,
+        # including the bundle's in-memory copy, as the factory lanes do.
+        bundle.password = ""
+        console_password = b""
+        administrator = None
+        for child in (guest, gateway):
+            if child is None or child.poll() is not None:
+                continue
+            child.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=20)
+            if child.poll() is None:
+                child.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    child.wait(timeout=10)
+        bundle.output.unlink(missing_ok=True)
+        # The guest QEMU may still be visible in /proc for an instant, so retry
+        # the release exactly as persistent_up does rather than failing a good
+        # run on a teardown race.
+        for attempt in range(6):
+            try:
+                target.close()
+                break
+            except (RuntimeError, OSError) as error:
+                if attempt == 5:
+                    if failure is None:
+                        failure = error
+                    break
+                time.sleep(0.1)
+        shutil.rmtree(run_root, ignore_errors=True)
+    if failure is not None or record is None:
+        print(f"error: persistent convergence failed: "
+              f"{failure or 'no convergence was proved'}", file=sys.stderr)
+        return 2
+    try:
+        target.record_convergence(record)
+    except (RuntimeError, OSError) as error:
+        # The directory is converged and the disk holds it; only the host-side
+        # record failed. Say so distinctly rather than reporting a clean pass.
+        print(f"error: the directory converged but its record could not be "
+              f"written: {error}", file=sys.stderr)
+        return 2
+    print(f"{instance}: converged {record['realm']}; domain SID "
+          f"{record['domain_sid']}; directory state retained at {state}")
+    return 0
+
+
 def persistent_status(root: Path, instance: str) -> int:
     try:
         state = _persistent_state(root, instance)
@@ -620,6 +1159,8 @@ def persistent_status(root: Path, instance: str) -> int:
         print(f"created: {marker['created_utc']}")
         print(f"seeded from: {marker['seeded_from']['disk']} "
               f"({marker['seeded_from']['disk_sha256']})")
+    print("directory: " + _persistent_directory_summary(
+        target, marker is not None))
     print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
     print("hash fence: none by design; the disk is the durable directory state")
     return 0 if marker else 1
@@ -688,7 +1229,10 @@ def parser() -> argparse.ArgumentParser:
     # Persistent instances are a separate, explicitly named verb set. No
     # existing subcommand can reach them and none of them can reach the
     # disposable acceptance state.
-    for name in ("persistent-up", "persistent-status", "persistent-destroy"):
+    for name in (
+        "persistent-up", "persistent-converge", "persistent-status",
+        "persistent-destroy",
+    ):
         persistent_parser = commands.add_parser(name)
         persistent_parser.add_argument(
             "--instance", required=True,
@@ -696,11 +1240,19 @@ def parser() -> argparse.ArgumentParser:
         persistent_parser.add_argument(
             "--persistent-root", type=Path, default=DEFAULT_PERSISTENT_ROOT,
             help="root holding persistent instances; never the acceptance state")
-        if name == "persistent-up":
+        if name in ("persistent-up", "persistent-converge"):
             persistent_parser.add_argument("--apply", action="store_true")
             persistent_parser.add_argument(
                 "--seed-iso", type=Path,
                 help="read-only convergence/seed CD for a first bring-up")
+        if name == "persistent-converge":
+            persistent_parser.add_argument(
+                "--reconverge", action="store_true",
+                help="run the convergent play again on an already converged "
+                     "instance; the Administrator password is not changed")
+            persistent_parser.add_argument(
+                "--timeout", type=float, default=PERSISTENT_CONVERGE_TIMEOUT,
+                help="bound on the in-guest convergence payload, in seconds")
         if name == "persistent-destroy":
             persistent_parser.add_argument(
                 "--confirm",
@@ -723,6 +1275,11 @@ def main(argv: list[str] | None = None) -> int:
         return persistent_up(
             args.persistent_root, args.instance, args.apply,
             canonical_state=args.state_dir, seed_iso=args.seed_iso)
+    if command == "persistent-converge":
+        return persistent_converge(
+            args.persistent_root, args.instance, args.apply,
+            canonical_state=args.state_dir, seed_iso=args.seed_iso,
+            reconverge=args.reconverge, timeout=args.timeout)
     if command == "persistent-status":
         return persistent_status(args.persistent_root, args.instance)
     if command == "persistent-destroy":

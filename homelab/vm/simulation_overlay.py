@@ -54,8 +54,24 @@ ACCEPTANCE_MANIFEST_NAME = "manifest.json"
 PERSISTENT_DISK_NAME = "persistent-dc.qcow2"
 PERSISTENT_VARS_NAME = "OVMF_VARS.fd"
 PERSISTENT_MARKER_NAME = "persistent-instance.json"
+#: One fixed staging name for a marker rewrite, never a random one. A rewrite
+#: renames this file over the marker, so an interrupted rewrite leaves exactly
+#: one predictable leftover that the next rewrite truncates and ``destroy``
+#: knows about, instead of an unbounded set of dot-files that would make an
+#: instance permanently un-erasable by the unexpected-files refusal.
+PERSISTENT_MARKER_STAGING_NAME = "." + PERSISTENT_MARKER_NAME + ".new"
 PERSISTENT_MARKER_SCHEMA = 1
 PERSISTENT_MODE = "persistent"
+#: The marker key holding the convergence record. Its absence is meaningful: an
+#: instance that has never been provisioned carries no such key, and every
+#: rewrite adds it only after the guest has *proved* it converged, so the marker
+#: can understate convergence after a crash but can never overstate it.
+PERSISTENT_CONVERGENCE_KEY = "converged"
+#: The canonical text form of an Active Directory domain SID. The recorded value
+#: is the durable identity of the directory an instance now holds, and is what a
+#: later bring-up compares against to prove the same directory came back rather
+#: than a freshly provisioned one.
+DOMAIN_SID = re.compile(r"S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}")
 #: Instance names become a single path component under the persistent root, so
 #: they are restricted to a shape that cannot traverse, glob, or hide.
 PERSISTENT_INSTANCE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
@@ -559,6 +575,20 @@ class PersistentControllerInstance:
       every later session depend on the canonical staying byte-identical for
       ever, and would have put persistent writes one link away from the disk the
       acceptance gates fence.
+
+    **Why this disk's ESP is never rewritten, and where the credential comes
+    from** (2026-08-14). The disposable acceptance path reaches a root shell by
+    injecting an ``init=/bin/bash`` entry into a *throwaway* ESP and setting a
+    one-run ``local-rescue`` password with ``passwd``. Neither half may be
+    reused here: rewriting a durable loader default leaves a permanent root
+    shell one power cycle away, and a harness-generated password captured into
+    durable state is a credential nobody chose and nobody can rotate. Neither is
+    necessary, because the offline Controller installer already asked the
+    operator to type a ``local-rescue`` password into this very image
+    (``homelab/seed/install-controller``), so a persistent instance boots its
+    normal loader entry and is provisioned over the console credential the
+    operator already holds. The convergence record below is what makes that
+    provisioning legible host-side; see ``bootstrap_dc.persistent_converge``.
     """
 
     def __init__(
@@ -637,6 +667,72 @@ class PersistentControllerInstance:
         return all(
             _regular_file(path)
             for path in (self.disk, self.vars, self.marker))
+
+    # -- convergence record ----------------------------------------------
+    @staticmethod
+    def _validated_convergence(record: object) -> dict:
+        """Fail closed unless ``record`` is a usable convergence record."""
+        if not isinstance(record, dict):
+            raise PersistentInstanceInvalid(
+                "persistent convergence record is not an object")
+        when = record.get("converged_utc")
+        if not isinstance(when, str) or not when:
+            raise PersistentInstanceInvalid(
+                "persistent convergence record has no converged_utc time")
+        sid = record.get("domain_sid")
+        if sid is not None and (
+                not isinstance(sid, str) or not DOMAIN_SID.fullmatch(sid)):
+            raise PersistentInstanceInvalid(
+                "persistent convergence record has no canonical domain SID: "
+                f"{sid!r}")
+        return record
+
+    def convergence(self) -> dict | None:
+        """The recorded convergence, or ``None`` when this instance has none.
+
+        ``None`` is the honest answer for an instance seeded straight from the
+        canonical image: it holds an installed Controller with no directory at
+        all. A caller must not treat that as a directory server.
+        """
+        record = self.read_marker().get(PERSISTENT_CONVERGENCE_KEY)
+        if record is None:
+            return None
+        return self._validated_convergence(record)
+
+    def record_convergence(self, record: dict) -> dict:
+        """Add a proven convergence record to the marker, atomically.
+
+        Called only after the guest has proved its directory service live and
+        has powered off, so the durable claim always trails the durable fact.
+        The write stages into one fixed name and ``rename``s over the marker —
+        the same discipline ``create`` uses — so a kill mid-write leaves the
+        previous marker intact and the instance keeps reporting *no*
+        convergence rather than a half-written one.
+        """
+        record = self._validated_convergence(record)
+        marker = self.read_marker()
+        marker[PERSISTENT_CONVERGENCE_KEY] = record
+        self._write_marker(marker)
+        return marker
+
+    def _write_marker(self, marker: dict) -> None:
+        staging = self.state / PERSISTENT_MARKER_STAGING_NAME
+        # O_NOFOLLOW so a planted symlink at the staging name cannot redirect a
+        # 0600 write, and O_TRUNC so a leftover from an interrupted rewrite is
+        # replaced rather than appended to.
+        descriptor = os.open(
+            staging,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(marker, indent=2) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staging, self.marker)
+        except BaseException:
+            staging.unlink(missing_ok=True)
+            raise
 
     # -- creation --------------------------------------------------------
     def create(self, canonical_disk: Path, canonical_vars: Path) -> dict:
@@ -835,9 +931,14 @@ class PersistentControllerInstance:
         # QEMU would corrupt a live directory instead of retiring it.
         self.prepare()
         try:
+            # The marker staging name is expected because an interrupted
+            # convergence record may leave it behind; it is still refused when
+            # it is a symlink, and every other unexpected entry still fails
+            # closed rather than being swept.
             keep = {
                 PERSISTENT_DISK_NAME, PERSISTENT_VARS_NAME,
-                PERSISTENT_MARKER_NAME, LOCK_NAME,
+                PERSISTENT_MARKER_NAME, PERSISTENT_MARKER_STAGING_NAME,
+                LOCK_NAME,
             }
             unexpected = sorted(
                 entry.name for entry in self.state.iterdir()
@@ -848,7 +949,7 @@ class PersistentControllerInstance:
                     + ", ".join(unexpected))
             for name in (
                 PERSISTENT_DISK_NAME, PERSISTENT_VARS_NAME,
-                PERSISTENT_MARKER_NAME,
+                PERSISTENT_MARKER_NAME, PERSISTENT_MARKER_STAGING_NAME,
             ):
                 (self.state / name).unlink(missing_ok=True)
         finally:
