@@ -1,0 +1,11 @@
+{
+  "_documentation": "Private principal roster. See README.md beside this file. Copying this template changes nothing: `principals` is empty, so every account keeps the synthetic name from workstations/identity_lifecycle.json and the acceptance gates are unaffected. Fill `principals` in to name your real accounts. Keys beginning with an underscore are documentation and are ignored by the loader; every other unknown key is refused.",
+  "_example_principals": {
+    "standard_user": {"name": "<standard-user>"},
+    "daily_administrator": {"name": "<daily-administrator>"},
+    "domain_administrator": {"name": "<domain-administrator>"},
+    "local_rescue": {"name": "<break-glass-user>"}
+  },
+  "schema_version": 1,
+  "principals": {}
+}

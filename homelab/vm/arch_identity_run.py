@@ -66,11 +66,24 @@ from typing import Callable, Mapping, Protocol, Sequence
 from .signal_cleanup import RunInterrupted, SignalGuard
 
 # The judge lives under workstations/ and is imported by path so the producer
-# and the judge stay in lockstep on the contract (order, checks, fields).
+# and the judge stay in lockstep on the contract (order, checks, fields).  The
+# gate-7 installer renderer next to it is imported the same way, and for the
+# same reason: it owns the ONE roster loader and the probe-verb names it bakes
+# onto the disk, so the disk's accounts and the names this host types at the
+# getty cannot come from two different resolutions.  A path import rather than a
+# package-relative one because this module is imported both as
+# ``homelab.vm.arch_identity_run`` and as ``vm.arch_identity_run``, and
+# ``..workstations`` reaches beyond the top-level package in the second case.
 _WORKSTATIONS = Path(__file__).resolve().parents[1] / "workstations"
 if str(_WORKSTATIONS) not in sys.path:
     sys.path.insert(0, str(_WORKSTATIONS))
 import identity_lifecycle as lifecycle  # noqa: E402
+from arch_second import (  # noqa: E402
+    PROBE_ROSTER_MARKER,
+    PROBE_ROSTER_VERB,
+    identity_roster,
+    identity_roster_fingerprint,
+)
 
 CONTRACT = lifecycle.load_json(lifecycle.CONTRACT)
 REQUIRED_CHECKS: tuple[str, ...] = tuple(CONTRACT["required_checks"])
@@ -148,22 +161,30 @@ MEASURED_CHECK_FIELDS: dict[str, tuple[str, ...]] = {
 # owns the SSSD/Kerberos/sudo commands; this host only reads its verdict.
 PROBE_HELPER = "/usr/local/sbin/homelab-arch-identity-probe"
 
+# The resolved principal roster: the tracked identity-lifecycle contract,
+# optionally patched by the owner's gitignored private overlay, through the one
+# loader that also bakes these names onto the installed disk.  With no overlay
+# it is exactly the synthetic acceptance roster.
+ROSTER = identity_roster()
+#: The fingerprint this host expects a driven disk to report back.
+ROSTER_FINGERPRINT = identity_roster_fingerprint(ROSTER)
+
 # The daily administrator is the principal the live drive logs in as on the
-# ttyS0 getty.  The name comes from the shared lifecycle contract; the
-# credential is the per-run synthetic one staged on the disposable Controller
+# ttyS0 getty.  The name comes from the shared roster above; the credential is
+# the per-run synthetic one staged on the disposable Controller
 # (controller_principals), held in memory only and never recorded.
-OPERATOR_PRINCIPAL = str(CONTRACT["principals"]["daily_administrator"]["name"])
+OPERATOR_PRINCIPAL = str(ROSTER["daily_administrator"])
 
 # The break-glass administrator.  ``identity_lifecycle.json`` gives it
 # ``domain_role: none``, so -- unlike the three principals above -- NO
 # Controller-staged account supplies its credential: ``controller_principals``
-# ``POSIX_ALLOCATION`` stages only ``student``, ``operator`` and
-# ``directory-admin``.  Gate 7 installs it with a *disabled* password, and the
-# ``arch-local-rescue`` probe requires ``passwd -S`` to report ``P``, so this
-# run generates the credential in memory and sets it once from the root shell
-# ``elevate_operator`` already obtained.  Nothing ever needs the value again,
-# so it is never stored on the boundary.
-RESCUE_PRINCIPAL = str(CONTRACT["principals"]["local_rescue"]["name"])
+# ``POSIX_ALLOCATION`` stages only the three DIRECTORY roles (by default
+# ``student``, ``operator`` and ``directory-admin``).  Gate 7 installs it with a
+# *disabled* password, and the ``arch-local-rescue`` probe requires ``passwd -S``
+# to report ``P``, so this run generates the credential in memory and sets it
+# once from the root shell ``elevate_operator`` already obtained.  Nothing ever
+# needs the value again, so it is never stored on the boundary.
+RESCUE_PRINCIPAL = str(ROSTER["local_rescue"])
 
 # Gate 7 grants the operator a *passworded* sudoers rule
 # ("operator ALL=(ALL:ALL) ALL" in workstations/arch_second.py — no NOPASSWD),
@@ -270,6 +291,26 @@ JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE = (
 LOGIN_REFUSED_FAILURE = (
     "operator login on the ttyS0 getty was refused with the staged "
     "credential")
+# The principal names are baked onto the disk at install time (gate 7 renders
+# them into the probe helper, the sudoers rules and the break-glass useradd), so
+# a disk installed under one roster and driven against another has accounts this
+# host does not believe in.  Left undiagnosed that surfaces as a refused login
+# for a user that never existed, which indicts the credential path instead of
+# the roster.  Both stops below therefore run BEFORE the first lifecycle check
+# and name the roster explicitly.  Neither message carries a principal name: the
+# fingerprint is a digest precisely so a real account name never reaches a
+# retained console transcript.
+ROSTER_UNREPORTED_FAILURE = (
+    "the workstation probe helper never reported an identity-roster "
+    "fingerprint; a disk installed before the roster verb existed cannot be "
+    "proven to carry this host's principal roster, so a fresh gate-7 install "
+    "is required")
+ROSTER_MISMATCH_FAILURE = (
+    "the workstation disk was installed with a different identity roster than "
+    "this host resolves (contract plus the private overlay under "
+    "homelab/instance/identity/principals.json); the accounts baked onto the "
+    "disk are not the accounts this run would drive, so a fresh gate-7 install "
+    "under the current roster is required")
 SUDO_ELEVATION_FAILURE = (
     "operator sudo -S elevation did not yield a root shell for the probes")
 # The four ways the elevation can stop, each naming its OWN layer so the next
@@ -816,6 +857,37 @@ class ArchIdentityDrive:
     def _marker_key(self, check: str) -> str:
         return check.upper().replace("-", "_")
 
+    def confirm_roster(self) -> str:
+        """Prove the disk carries this host's principal roster, or refuse.
+
+        The probe's ``roster`` verb needs no privilege and no lookup, so this is
+        the cheapest possible first exchange and it runs before any lifecycle
+        check spends console time.  A stale disk (one installed before the verb
+        existed) answers with a usage error and no marker; the bounded wait then
+        expires and is reported as ROSTER_UNREPORTED_FAILURE rather than as an
+        anonymous console timeout.
+        """
+        token = self.channel.token
+        command = f"{PROBE_HELPER} {PROBE_ROSTER_VERB} {token}".encode("ascii")
+        self.channel._send(command, "arch-probe-roster-sent")
+        prefix = f"{PROBE_ROSTER_MARKER}{token}=".encode("ascii")
+        try:
+            match = self.channel._wait(
+                re.escape(prefix) + rb"([0-9a-f]{8,64})\b",
+                "arch-probe-roster-observed")
+        except (ArchIdentityError, lifecycle.EvidenceError):
+            raise
+        except Exception as error:  # bounded serial failure: name the stage
+            raise ArchIdentityError(
+                ROSTER_UNREPORTED_FAILURE, check="arch-joined") from error
+        observed = match.group(1).decode("ascii")
+        if observed != ROSTER_FINGERPRINT:
+            raise ArchIdentityError(
+                f"{ROSTER_MISMATCH_FAILURE} (disk {observed}, "
+                f"host {ROSTER_FINGERPRINT})",
+                check="arch-joined")
+        return observed
+
     def _probe(self, check: str) -> bool:
         token = self.channel.token
         command = f"{PROBE_HELPER} {check} {token}".encode("ascii")
@@ -1095,6 +1167,9 @@ def run_lifecycle(
         outcomes: dict[str, bool] = {}
         outcomes["controller-ready"] = session.observe_controller_ready()
         drive = ArchIdentityDrive(session.open_channel())
+        # Before any proof: the disk's own roster must be the roster this host
+        # resolved, or every name the drive types afterwards is the wrong name.
+        drive.confirm_roster()
 
         _probe_check(outcomes, "arch-joined", drive.prove_joined)
         _probe_check(

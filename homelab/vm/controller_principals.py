@@ -6,11 +6,26 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
+import sys
 from typing import BinaryIO, Mapping
 import uuid
 
 from .serial_automation import SerialAutomation, SerialAutomationError
+
+# The gate-7 installer renderer under workstations/ owns the ONE roster loader:
+# the same resolution that bakes the principal names onto an installed disk also
+# fixes which principals this module stages in the directory, so the two cannot
+# drift.  Imported by path, exactly as vm/arch_identity_run.py imports the judge
+# beside it, because this module is imported both as
+# ``homelab.vm.controller_principals`` and as ``vm.controller_principals`` and a
+# ``..workstations`` relative import reaches beyond the top-level package in the
+# second case.
+_WORKSTATIONS = Path(__file__).resolve().parents[1] / "workstations"
+if str(_WORKSTATIONS) not in sys.path:
+    sys.path.insert(0, str(_WORKSTATIONS))
+from arch_second import DIRECTORY_ROLES, identity_roster  # noqa: E402
 
 
 class ControllerPrincipalError(RuntimeError):
@@ -26,17 +41,44 @@ class ControllerPrincipalResult:
     events: tuple[str, ...]
 
 
-_ROLES = ("student", "operator", "directory-admin")
+# The three DIRECTORY principals, resolved by the one roster loader that also
+# bakes the names onto the installed workstation disk
+# (workstations/arch_second.identity_roster: the tracked identity-lifecycle
+# contract, optionally patched by the owner's gitignored private overlay).
+# Reading them here instead of pinning a second hardcoded tuple is what stops
+# the two historical sources of principal names from drifting apart; with no
+# overlay present these are exactly ("student", "operator", "directory-admin").
+_ROSTER = identity_roster()
+_ROLES = tuple(_ROSTER[role] for role in DIRECTORY_ROLES)
+_DOMAIN_ADMIN = _ROSTER["domain_administrator"]
+# The second gate on the same names.  arch_second's SAFE_PRINCIPAL already
+# refused anything that would need quoting; this one is deliberately kept as
+# well, because these names are substituted into a Python program that runs
+# inside the Controller and into JSON that travels as one shell word.
 _SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
+        or len(set(_ROLES)) != len(_ROLES):
+    # Import-time and unconditional: a roster this module could not safely bake
+    # into a guest program must stop the process here, not at the serial console
+    # inside a disposable VM.
+    raise ValueError("Controller principal roster is invalid")
 
 # ADR 0055: UID and GID come from the directory.  The Arch Workstation lane
 # runs SSSD with ``ldap_id_mapping = False`` (identity_client role), so a
 # principal without directory-stored POSIX attributes cannot log in at all.
 # The allocation is deterministic and public:
 #
-#   users:  uidNumber = 10000 + position in the pinned _ROLES roster
+#   users:  uidNumber = 10000 + the principal's ROLE position in
+#           arch_second.DIRECTORY_ROLES (standard user, daily administrator,
+#           domain administrator -- the same order the old hardcoded roster
+#           had, so the numbers are unchanged)
 #   groups: gidNumber = 10000 + the group's well-known Active Directory RID
 #           (Domain Admins 512 -> 10512, Domain Users 513 -> 10513)
+#
+# Keying the user allocation on the ROLE rather than on the NAME is what makes
+# it safe for the owner to rename a principal: renaming standard_user moves no
+# UID, because "10000" belongs to the standard-user role and not to the string
+# "student".  Adding a role would append a UID.
 #
 # Every user's gidNumber is the Domain Users gidNumber because Domain Users
 # (RID 513) is each account's Active Directory primary group.  The base sits
@@ -51,19 +93,28 @@ _POSIX_PRIMARY_GROUP = "Domain Users"
 _POSIX_GROUP_RIDS = {"Domain Users": 513, "Domain Admins": 512}
 
 
-def _posix_allocation() -> dict[str, dict]:
-    """Derive the deterministic POSIX allocation from the pinned roster."""
+def _posix_allocation(
+    roster: Mapping[str, str] | None = None,
+) -> dict[str, dict]:
+    """Derive the deterministic POSIX allocation from the resolved roster.
+
+    *roster* is a parameter so a test can prove the allocation for a renamed
+    roster without reloading this module; production always uses the resolved
+    one.
+    """
+    if roster is None:
+        roster = _ROSTER
     groups = {
         name: _POSIX_BASE + rid for name, rid in _POSIX_GROUP_RIDS.items()
     }
     users = {
-        name: {
+        roster[role]: {
             "uidNumber": _POSIX_BASE + index,
             "gidNumber": groups[_POSIX_PRIMARY_GROUP],
             "loginShell": _POSIX_LOGIN_SHELL,
-            "unixHomeDirectory": "/home/" + name,
+            "unixHomeDirectory": "/home/" + roster[role],
         }
-        for index, name in enumerate(_ROLES)
+        for index, role in enumerate(DIRECTORY_ROLES)
     }
     return {"users": users, "groups": groups}
 
@@ -96,9 +147,14 @@ POSIX_ALLOCATION = _validated_posix_allocation(_posix_allocation())
 
 # These programs run inside the disposable Controller.  Their source is
 # encoded only to make it safe to place in one shell word; it contains no
-# instance data or credential.  The @POSIX_JSON@ token is substituted below
-# with the public, deterministic POSIX_ALLOCATION; secrets still travel
-# exclusively over stdin.
+# credential.  The @POSIX_JSON@ and @ROSTER_JSON@ tokens are substituted below
+# with the public, deterministic POSIX_ALLOCATION and the resolved roster;
+# secrets still travel exclusively over stdin.
+#
+# The roster is substituted rather than written literally so that renaming a
+# principal in the private overlay cannot leave a stale hardcoded name behind
+# in the guest program -- which would have failed as "unexpected principal
+# roster" from inside a disposable VM, the least diagnosable place available.
 _STAGE_PROGRAM_TEMPLATE = r"""
 import json
 import sys
@@ -108,9 +164,11 @@ from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
 
+roster = json.loads('@ROSTER_JSON@')
+order = roster["order"]
 values = json.load(sys.stdin)
-expected = {"student", "operator", "directory-admin"}
-if set(values) != expected:
+expected = set(order)
+if set(values) != expected or len(order) != len(expected):
     raise ValueError("unexpected principal roster")
 posix = json.loads('@POSIX_JSON@')
 lp = LoadParm()
@@ -160,7 +218,7 @@ try:
         results = samdb.search(expression=expression, attrs=["gidNumber"])
         if len(results) != 1 or integers(results[0], "gidNumber") != [gid]:
             raise RuntimeError("posix group gidNumber is invalid")
-    for name in ("student", "operator", "directory-admin"):
+    for name in order:
         unix = posix["users"][name]
         samdb.newuser(
             name, values[name],
@@ -186,10 +244,11 @@ try:
                 expected_upn, FLAG_MOD_REPLACE, "userPrincipalName")
             samdb.modify(update)
     samdb.add_remove_group_members(
-        "Domain Admins", ["directory-admin"], add_members_operation=True,
+        "Domain Admins", [roster["domain_administrator"]],
+        add_members_operation=True,
     )
     sids = set()
-    for name in ("student", "operator", "directory-admin"):
+    for name in order:
         expected_upn = name + "@" + realm
         results = samdb.search(
             expression="(sAMAccountName=" + name + ")",
@@ -243,7 +302,7 @@ try:
     # the DC, owned by the directory-stored POSIX identity so smbd's rfc2307
     # mapping grants the share owner and nobody else.
     import os
-    for name in ("student", "operator", "directory-admin"):
+    for name in order:
         unix = posix["users"][name]
         path = "/srv/unas/" + name
         os.makedirs(path, mode=0o700, exist_ok=True)
@@ -273,15 +332,7 @@ except BaseException:
     raise
 """
 
-# The allocation is validated host-side (collision-free) before it is baked
-# into the guest program.  JSON never contains a single quote, so the
-# substitution stays one safe Python string literal.
-_STAGE_PROGRAM = _STAGE_PROGRAM_TEMPLATE.replace(
-    "@POSIX_JSON@",
-    json.dumps(POSIX_ALLOCATION, sort_keys=True, separators=(",", ":")),
-)
-
-_DESTROY_PROGRAM = r"""
+_DESTROY_PROGRAM_TEMPLATE = r"""
 import json
 import sys
 
@@ -289,8 +340,10 @@ from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
 
+roster = json.loads('@ROSTER_JSON@')
+order = roster["order"]
 names = json.load(sys.stdin)
-expected = {"student", "operator", "directory-admin"}
+expected = set(order)
 if set(names) != expected or len(names) != len(expected):
     raise ValueError("unexpected principal roster")
 lp = LoadParm()
@@ -315,6 +368,40 @@ for name in names:
 if failures:
     raise RuntimeError("principal destruction failed: " + ",".join(failures))
 """
+
+
+# The roster is validated host-side (safely representable, distinct) and the
+# allocation is validated host-side (collision-free) before either is baked
+# into a guest program.  SAFE_PRINCIPAL/_SAFE_NAME admit only ``[a-z0-9-]``, so
+# neither JSON document can contain a single quote and each substitution stays
+# one safe Python string literal -- checked rather than assumed, because the
+# whole point of the private overlay is that these names are no longer literals
+# a reader of this file can see.
+def _roster_json(roles: tuple[str, ...], domain_administrator: str) -> str:
+    document = json.dumps(
+        {"order": list(roles), "domain_administrator": domain_administrator},
+        sort_keys=True, separators=(",", ":"),
+    )
+    if "'" in document or "\\" in document:
+        raise ValueError(
+            "Controller principal roster is not one safe string literal")
+    return document
+
+
+def _substituted(
+    template: str, roster_json: str, allocation: Mapping[str, dict],
+) -> str:
+    return template.replace("@ROSTER_JSON@", roster_json).replace(
+        "@POSIX_JSON@",
+        json.dumps(allocation, sort_keys=True, separators=(",", ":")),
+    )
+
+
+_ROSTER_JSON = _roster_json(_ROLES, _DOMAIN_ADMIN)
+_STAGE_PROGRAM = _substituted(
+    _STAGE_PROGRAM_TEMPLATE, _ROSTER_JSON, POSIX_ALLOCATION)
+_DESTROY_PROGRAM = _substituted(
+    _DESTROY_PROGRAM_TEMPLATE, _ROSTER_JSON, POSIX_ALLOCATION)
 
 
 def _encoded_program(source: str) -> bytes:

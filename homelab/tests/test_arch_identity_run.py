@@ -50,6 +50,10 @@ from homelab.vm.arch_identity_run import (
     RESCUE_PRINCIPAL,
     RESCUE_PROMPT_MISSING_FAILURE,
     RESCUE_UPDATED_DIAGNOSTIC,
+    ROSTER,
+    ROSTER_FINGERPRINT,
+    ROSTER_MISMATCH_FAILURE,
+    ROSTER_UNREPORTED_FAILURE,
     SUDO_CREDENTIAL_REFUSED_FAILURE,
     SUDO_ECHO_NOT_SUPPRESSED_FAILURE,
     SUDO_ELEVATION_FAILURE,
@@ -114,6 +118,7 @@ CONTROLLER_OUTCOME_CHECKS = (
 # drift from the real console contract.
 sys.path.insert(0, str(ROOT))
 from workstations.arch_second import (  # noqa: E402
+    PROBE_ROSTER_VERB,
     STORAGE_ATTACHED_MEASUREMENT_MARKERS,
     STORAGE_LOGIN_SECONDS_MARKER,
 )
@@ -162,9 +167,16 @@ class FakeSerialChannel:
 
     def __init__(self, results: dict[str, str], *,
                  login_seconds: int = 4,
+                 roster_fingerprint: str | None = None,
                  measurements: dict[str, int] | None = None) -> None:
         self.token = "deadbeefcafef00d"
         self.results = results
+        # What the guest's probe answers the roster verb with.  Defaults to the
+        # roster this host resolved, i.e. a disk installed under the same
+        # roster; a test overrides it to model a disk installed under another.
+        self.roster_fingerprint = (
+            ROSTER_FINGERPRINT if roster_fingerprint is None
+            else roster_fingerprint)
         self.measurements = dict(DEFAULT_MEASUREMENTS)
         self.measurements["login_seconds"] = login_seconds
         if measurements:
@@ -198,6 +210,9 @@ class FakeSerialChannel:
         key = check.upper().replace("-", "_")
         expected = f"__TELOS_ARCH_{key}_{self.token}=".encode("ascii")
         assert re.escape(expected) in pattern, (pattern, expected)
+        if check == PROBE_ROSTER_VERB:
+            # The roster verb answers with a fingerprint, never a verdict.
+            return _FakeMatch(self.roster_fingerprint.encode("ascii"))
         markers = MEASURED_MARKERS.get(check, {})
         fields = list(markers)
         withheld = verdict in (
@@ -237,8 +252,10 @@ class FakeSession:
         controller_results: dict[str, bool] | None = None,
         windows_events: list[dict[str, object]] | None = None,
         stop_failures: list[str] | None = None,
+        roster_fingerprint: str | None = None,
     ) -> None:
-        self.channel = FakeSerialChannel(drive_results or {})
+        self.channel = FakeSerialChannel(
+            drive_results or {}, roster_fingerprint=roster_fingerprint)
         self.controller_results = controller_results or {}
         self._windows_events = (
             passing_windows_events() if windows_events is None

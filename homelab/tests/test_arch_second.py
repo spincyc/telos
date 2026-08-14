@@ -42,6 +42,12 @@ from workstations.arch_second import (
     _machine_principal, _render_join_media_stage, parse_lsblk,
     render_installer, validate_windows_first,
 )
+from workstations.arch_second import (
+    CONTRACT_ROLES, DIRECTORY_ROLES, IdentityRosterError, PROBE_ROSTER_MARKER,
+    PROBE_ROSTER_VERB, ROSTER_FINGERPRINT_LENGTH, SAFE_PRINCIPAL,
+    identity_contract_path, identity_overlay_path, identity_roster,
+    identity_roster_fingerprint,
+)
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 from lib.workstation_repo import REPO_NAME
 

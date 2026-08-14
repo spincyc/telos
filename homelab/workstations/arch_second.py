@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -413,6 +414,21 @@ PROBE_CHECKS = (
     "arch-storage-absent-login",
 )
 
+# The probe's one non-check verb.  It reports the fingerprint of the roster this
+# disk was INSTALLED with, so gate 8 can prove -- before the first lifecycle
+# check -- that the accounts baked onto the disk are the accounts the host's own
+# roster loader resolved.  A disk installed under one roster and driven against
+# another otherwise fails as an unexplained refused login: the names are baked
+# in at install time and the drive types them at the getty.
+PROBE_ROSTER_VERB = "roster"
+# The token-scoped marker the verb prints.  ``arch_identity_run`` builds its
+# wait pattern from this one definition, so a renamed marker can never leave the
+# drive waiting on a line the probe no longer prints.
+PROBE_ROSTER_MARKER = "__TELOS_ARCH_ROSTER_"
+# Half a SHA-256, hex.  Long enough that an accidental collision between two
+# rosters is not a thing that happens; short enough to read off a transcript.
+ROSTER_FINGERPRINT_LENGTH = 16
+
 # Gate 9: optional per-user UNAS SMB storage.  The storage authority has its
 # own stable DNS label inside the synthetic domain so the gate-8 runner can
 # toggle reachability in DNS alone (samba-tool dns update on the Controller
@@ -661,23 +677,198 @@ def _find_arch_gap(
     return candidates[0]
 
 
-def _identity_principals() -> dict[str, str]:
-    """Read the acceptance principals from the identity-lifecycle contract."""
-    contract = json.loads(
-        Path(__file__).with_name("identity_lifecycle.json").read_text(
-            encoding="utf-8"))
-    principals = contract["principals"]
-    names = {
-        "standard": principals["standard_user"]["name"],
-        "daily_admin": principals["daily_administrator"]["name"],
-        "domain_admin": principals["domain_administrator"]["name"],
-        "local_rescue": principals["local_rescue"]["name"],
-    }
-    for name in names.values():
-        if not isinstance(name, str) or not SAFE_PRINCIPAL.fullmatch(name):
-            raise InstallContractError(
-                "identity-lifecycle principal name is not safely representable")
+class IdentityRosterError(InstallContractError):
+    """The principal roster cannot be resolved from contract plus overlay.
+
+    Distinctly named on purpose: an unreadable or malformed private overlay
+    must never look like a disk-geometry refusal, and it must never fall back
+    to the synthetic acceptance names silently -- a fallback would install a
+    workstation with accounts the owner did not ask for.
+    """
+
+
+def identity_contract_path() -> Path:
+    """The tracked identity-lifecycle contract: the roster's public defaults."""
+    return Path(__file__).with_name("identity_lifecycle.json")
+
+
+def identity_overlay_path() -> Path:
+    """The owner's gitignored private roster declaration.
+
+    ADR 0046: real identities are instance data, so the real account names
+    live only under ``homelab/instance/`` and never in a tracked file.  The
+    document is JSON rather than an Ansible var file because every reader on
+    this path (this installer renderer, ``vm/controller_principals.py``,
+    ``vm/arch_identity_run.py``) is Python that reads JSON contracts and has
+    no YAML dependency.  ``homelab/instance-example/identity/`` carries the
+    documented placeholder template.
+    """
+    return HOMELAB_ROOT / "instance" / "identity" / "principals.json"
+
+
+# The contract's four principal roles, in the one order that matters: the
+# first three are the DIRECTORY roles, and a directory role's position in this
+# tuple is what fixes its uidNumber in vm/controller_principals.py.  Keying the
+# allocation on the ROLE rather than on the name is what lets a name change
+# without moving a UID; appending a role would append a UID.
+CONTRACT_ROLES = (
+    "standard_user",
+    "daily_administrator",
+    "domain_administrator",
+    "local_rescue",
+)
+# ``local_rescue`` is deliberately excluded: ADR 0055/0063 keep the break-glass
+# administrator a LOCAL account (UID 1000 on this disk), never a directory
+# principal, so nothing stages it in the directory and it owns no uidNumber
+# from the directory allocation.
+DIRECTORY_ROLES = CONTRACT_ROLES[:3]
+# Only the NAME is instance data.  ``domain_role`` and ``workstation_role`` are
+# policy the lifecycle judge grades (workstations/identity_lifecycle.py
+# validate_contract), so an overlay may not restate or move them.
+OVERLAY_PRINCIPAL_KEYS = ("name",)
+OVERLAY_SCHEMA_VERSION = 1
+
+
+def _overlay_documentation_key(key: object) -> bool:
+    """A leading underscore marks a key that exists only to be read by a human.
+
+    JSON has no comments and the overlay is a file an owner edits by hand, so
+    the template ships its worked example under ``_``-prefixed keys.  Every
+    other unknown key is refused: a typo in ``principals`` must fail closed,
+    not be ignored into the synthetic default.
+    """
+    return isinstance(key, str) and key.startswith("_")
+
+
+def _identity_overlay_names(path: Path) -> dict[str, str]:
+    """Read the private overlay's sparse ``principals`` patch, or nothing.
+
+    Absent file means "no override": every name stays exactly the contract's,
+    which is what keeps the acceptance path byte-identical.  A file that EXISTS
+    and cannot be understood is a refusal, never a fallback.
+    """
+    if not path.exists() and not path.is_symlink():
+        return {}
+    if path.is_symlink() or not path.is_file():
+        raise IdentityRosterError(
+            "identity roster overlay must be a regular file")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise IdentityRosterError(
+            "identity roster overlay is unreadable JSON") from error
+    if not isinstance(document, dict):
+        raise IdentityRosterError(
+            "identity roster overlay is not a JSON object")
+    if document.get("schema_version") != OVERLAY_SCHEMA_VERSION:
+        raise IdentityRosterError(
+            "identity roster overlay must declare schema_version "
+            f"{OVERLAY_SCHEMA_VERSION}")
+    unknown = [
+        key for key in document
+        if key not in {"schema_version", "principals"}
+        and not _overlay_documentation_key(key)
+    ]
+    if unknown:
+        raise IdentityRosterError(
+            f"identity roster overlay has unknown key {sorted(unknown)[0]!r}")
+    principals = document.get("principals", {})
+    if not isinstance(principals, dict):
+        raise IdentityRosterError(
+            "identity roster overlay principals is not a JSON object")
+    names: dict[str, str] = {}
+    for role, declaration in principals.items():
+        if _overlay_documentation_key(role):
+            continue
+        if role not in CONTRACT_ROLES:
+            raise IdentityRosterError(
+                f"identity roster overlay names unknown role {role!r}")
+        if not isinstance(declaration, dict):
+            raise IdentityRosterError(
+                f"identity roster overlay role {role!r} is not a JSON object")
+        extra = [
+            key for key in declaration
+            if key not in OVERLAY_PRINCIPAL_KEYS
+            and not _overlay_documentation_key(key)
+        ]
+        if extra:
+            raise IdentityRosterError(
+                f"identity roster overlay role {role!r} may only set "
+                f"{OVERLAY_PRINCIPAL_KEYS[0]!r}")
+        if "name" not in declaration:
+            raise IdentityRosterError(
+                f"identity roster overlay role {role!r} declares no name")
+        names[role] = declaration["name"]
     return names
+
+
+def identity_roster(overlay_path: Path | None = None) -> dict[str, str]:
+    """Resolve ``{contract role: principal name}`` once, for every reader.
+
+    This is the SINGLE roster loader.  ``_identity_principals()`` below (which
+    bakes the names onto the installed disk), ``vm/controller_principals.py``
+    (which derives the directory POSIX allocation and the staged roster) and
+    ``vm/arch_identity_run.py`` (which logs in as the daily administrator and
+    sets the rescue password) all consult it, so the two historical sources of
+    principal names cannot drift apart.
+
+    Precedence is contract first, private overlay second.  With no overlay the
+    result is the synthetic acceptance roster verbatim, which is what keeps
+    gates 6 and 8 passing untouched.
+    """
+    contract = json.loads(
+        identity_contract_path().read_text(encoding="utf-8"))
+    principals = contract["principals"]
+    roster = {
+        role: principals[role]["name"] for role in CONTRACT_ROLES
+    }
+    if overlay_path is None:
+        overlay_path = identity_overlay_path()
+    roster.update(_identity_overlay_names(overlay_path))
+    for role in CONTRACT_ROLES:
+        name = roster[role]
+        # The same gate the contract names already pass, applied to overlay
+        # names too: these flow into shell words, sudoers rules, SMB share
+        # names and Kerberos principals, so anything that would need quoting
+        # is refused rather than escaped.
+        if not isinstance(name, str) or not SAFE_PRINCIPAL.fullmatch(name):
+            raise IdentityRosterError(
+                f"identity roster name for {role} is not safely representable")
+    if len(set(roster.values())) != len(CONTRACT_ROLES):
+        # Two roles sharing a name would collapse distinctions the lifecycle
+        # exists to prove (daily administrator vs domain administrator) and
+        # would collide in the directory POSIX allocation.
+        raise IdentityRosterError("identity roster names are not distinct")
+    return {role: roster[role] for role in CONTRACT_ROLES}
+
+
+def identity_roster_fingerprint(roster: Mapping[str, str] | None = None) -> str:
+    """A short, secret-free digest of the roster a disk was installed with.
+
+    Baked into the probe helper at install time and reported back by the
+    probe's ``roster`` verb, so gate 8 can refuse -- with a named error -- to
+    drive a disk whose accounts are not the accounts this host believes in.
+    The names are not secrets, but a digest is the right shape anyway: it is
+    fixed-width, order-independent of nothing, and it never puts a real
+    account name on a console transcript.
+    """
+    if roster is None:
+        roster = identity_roster()
+    payload = json.dumps(
+        {role: roster[role] for role in CONTRACT_ROLES},
+        sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:ROSTER_FINGERPRINT_LENGTH]
+
+
+def _identity_principals() -> dict[str, str]:
+    """The resolved roster under the short keys the probe template uses."""
+    roster = identity_roster()
+    return {
+        "standard": roster["standard_user"],
+        "daily_admin": roster["daily_administrator"],
+        "domain_admin": roster["domain_administrator"],
+        "local_rescue": roster["local_rescue"],
+    }
 
 
 def _identity_login_bound() -> int:
@@ -984,6 +1175,9 @@ STANDARD_USER='@STANDARD_USER@'
 DAILY_ADMIN='@DAILY_ADMIN@'
 DOMAIN_ADMIN='@DOMAIN_ADMIN@'
 RESCUE_USER='@RESCUE_USER@'
+# The fingerprint of the roster baked into the four names above.  Reported by
+# the `roster` verb and compared host-side by gate 8's drive.
+ROSTER_FINGERPRINT='@ROSTER_FINGERPRINT@'
 STORAGE_HOST='@STORAGE_HOST@'
 STORAGE_PROBE_ROOT='@STORAGE_PROBE_ROOT@'
 STORAGE_MOUNT_ERROR='@STORAGE_MOUNT_ERROR@'
@@ -992,7 +1186,7 @@ DOMAIN_WAIT_TRIES='@DOMAIN_WAIT_TRIES@'
 LOOKUP_WAIT_TRIES='@LOOKUP_WAIT_TRIES@'
 
 usage() {
-  echo 'usage: homelab-arch-identity-probe <check> <token>' >&2
+  echo 'usage: homelab-arch-identity-probe <check|@ROSTER_VERB@> <token>' >&2
   exit 2
 }
 
@@ -1000,6 +1194,7 @@ usage() {
 check="$1"
 token="$2"
 case "$check" in
+  @ROSTER_VERB@|\\
   arch-joined|arch-standard-online|arch-daily-admin|domain-admin-separate|\\
   arch-cached-login|arch-uncached-denied|arch-local-rescue|\\
   arch-identity-restored|arch-storage-attached|arch-storage-denied|\\
@@ -1007,6 +1202,14 @@ case "$check" in
   *) usage ;;
 esac
 printf '%s' "$token" | grep -Eq '^[A-Za-z0-9]{8,64}$' || usage
+
+# Answered before any elevation and before any lookup: reporting which roster
+# this disk carries needs no privilege, and a mismatch must be diagnosed before
+# a single check spends console time.
+if [ "$check" = '@ROSTER_VERB@' ]; then
+  printf '@ROSTER_MARKER@%s=%s\\n' "$token" "$ROSTER_FINGERPRINT"
+  exit 0
+fi
 
 if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
   exec sudo -n -- "$0" "$check" "$token"
@@ -1374,6 +1577,7 @@ def _render_probe(
     *,
     domain: str,
     principals: Mapping[str, str],
+    roster_fingerprint: str,
     storage_host: str,
     login_bound: int,
 ) -> str:
@@ -1387,6 +1591,11 @@ def _render_probe(
         "@DAILY_ADMIN@": principals["daily_admin"],
         "@DOMAIN_ADMIN@": principals["domain_admin"],
         "@RESCUE_USER@": principals["local_rescue"],
+        # One definition of the roster verb and its marker, shared with gate 8's
+        # drive (vm/arch_identity_run.py).
+        "@ROSTER_VERB@": PROBE_ROSTER_VERB,
+        "@ROSTER_MARKER@": PROBE_ROSTER_MARKER,
+        "@ROSTER_FINGERPRINT@": roster_fingerprint,
         "@STORAGE_HOST@": storage_host,
         "@STORAGE_PROBE_ROOT@": STORAGE_PROBE_ROOT,
         "@STORAGE_MOUNT_ERROR@": STORAGE_MOUNT_ERROR_PATH,
@@ -1932,7 +2141,17 @@ def render_installer(
     if not SAFE_REPO_URL.fullmatch(package_repo_url):
         raise InstallContractError("package repository URL is invalid")
     realm = realm_dns_domain.upper()
-    principals = _identity_principals()
+    roster = identity_roster()
+    principals = {
+        "standard": roster["standard_user"],
+        "daily_admin": roster["daily_administrator"],
+        "domain_admin": roster["domain_administrator"],
+        "local_rescue": roster["local_rescue"],
+    }
+    # Rendered from the SAME resolved roster that supplied the four names above,
+    # never re-read, so the fingerprint on the disk always describes the accounts
+    # on the disk even if the overlay changes mid-build.
+    roster_fingerprint = identity_roster_fingerprint(roster)
     login_bound = _identity_login_bound()
     storage_host = f"{STORAGE_HOST_LABEL}.{realm_dns_domain}"
     # The realm's one domain controller and this machine, both fully qualified.
@@ -1951,6 +2170,7 @@ def render_installer(
         controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
     probe = _render_probe(
         domain=realm_dns_domain, principals=principals,
+        roster_fingerprint=roster_fingerprint,
         storage_host=storage_host, login_bound=login_bound)
     pam_system_auth = _PAM_SYSTEM_AUTH
     probe_path = PROBE_HELPER_PATH

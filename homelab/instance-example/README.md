@@ -26,6 +26,13 @@ Then put the **public** key — the `.pub` file, one line — into
 keys, and back it up somewhere that does not depend on the homelab being up. A
 break-glass key stored only on a homelab machine is not a break-glass key.
 
+## The real account names
+
+`identity/principals.json` names the real directory and break-glass accounts the
+workstation factory creates. It is optional, and absent it every account keeps
+the synthetic name in the tracked contract, which is what the acceptance gates
+expect. See [`identity/README.md`](identity/README.md).
+
 ## What does not go here
 
 The overlay is gitignored, not encrypted, and it sits in a working tree that
