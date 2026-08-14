@@ -634,6 +634,39 @@ class RosterOverlayTests(unittest.TestCase):
             }), encoding="utf-8")
             return identity_roster(overlay_path=overlay)
 
+    def test_one_declaration_reaches_the_disk_and_the_persistent_directory(self):
+        # The defect this replaced: two independent declarations of the same real
+        # accounts, in two files, in two shapes, with two different UID keyings.
+        # Now the workstation disk's names and the durable directory's accounts
+        # are the same resolution of the same declaration, and the durable
+        # allocation is the same function the disposable path already uses.
+        from homelab.workstations import arch_second
+
+        for roster in (CONTRACT_ROSTER, self._renamed()):
+            with self.subTest(roster=sorted(roster)[0]):
+                # The names the gate-7 installer bakes onto the disk.
+                baked = arch_second._identity_principals(roster)
+                plan = controller_principals.directory_account_plan(
+                    list(DIRECTORY_ROLES), roster=roster)
+                self.assertEqual(
+                    [entry["name"] for entry in plan],
+                    [baked["standard"], baked["daily_admin"],
+                     baked["domain_admin"]],
+                )
+                # ...and the break-glass account is on the disk and nowhere in
+                # the directory allocation (ADR 0055/0063).
+                self.assertEqual(baked["local_rescue"], roster["local_rescue"])
+                self.assertNotIn(baked["local_rescue"],
+                                 [entry["name"] for entry in plan])
+                # One rule: the durable plan's numbers ARE the disposable
+                # allocation's numbers for the same roster.
+                allocation = controller_principals._posix_allocation(roster)
+                for entry in plan:
+                    unix = allocation["users"][entry["name"]]
+                    for attribute in ("uidNumber", "gidNumber", "loginShell",
+                                      "unixHomeDirectory"):
+                        self.assertEqual(entry[attribute], unix[attribute])
+
     def test_the_wire_roster_and_the_credentials_follow_the_live_roster(self):
         # ``stage``/``destroy`` accept EXACTLY the resolved roster, so a caller
         # holding a stale name is refused on this side of the console.

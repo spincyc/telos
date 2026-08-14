@@ -1,11 +1,27 @@
 # Private principal roster
 
-`principals.json` names the real directory and break-glass accounts the factory
-creates on a workstation. Real account names are instance data (ADR 0046), so
-they live here — under the gitignored `homelab/instance/` overlay — and never in
-a tracked file.
+`principals.json` is **the one place real account names are declared.** Real
+account names are instance data (ADR 0046), so they live here — under the
+gitignored `homelab/instance/` overlay — and never in a tracked file.
 
     homelab/instance/identity/principals.json
+
+Everything that needs those names reads them from here:
+
+| Reader | What it does with them |
+| --- | --- |
+| `homelab/workstations/arch_second.py` | bakes them onto the installed workstation disk (probe helper, sudoers rules, the break-glass `useradd`) |
+| `homelab/vm/controller_principals.py` | stages the disposable acceptance principals and owns the **one** directory POSIX allocation rule |
+| `homelab/vm/arch_identity_run.py` | drives gate 8 — logs in as the daily administrator, sets the rescue password |
+| `ansible/roles/domain_controller` | converges the **durable** directory accounts on a persistent Controller |
+
+The Ansible role cannot import Python from this repository at the moment it
+converges a guest, so it does not try: its own
+`files/resolve-directory-accounts.py` renders its account plan from this file on
+the **control host**, and the guest receives nothing but the finished plan. The
+role's variable `homelab_ad_directory_accounts` therefore names contract *roles*
+and never an account. See
+[`../group_vars/controllers.yml`](../group_vars/controllers.yml).
 
 The file is optional. **With no file, every account keeps the synthetic name
 recorded in the tracked contract `homelab/workstations/identity_lifecycle.json`**
@@ -52,8 +68,19 @@ Rules the loader enforces, each fail-closed:
 | `local_rescue` | Local break-glass administrator, `wheel`, passworded sudo | 1000 (local) | **Never a directory account and never `root`** (ADR 0055, ADR 0063). It is the only way in while the directory is down |
 
 UIDs belong to the **role**, not to the name: renaming an account never moves a
-UID. `local_rescue` has no directory UID at all — it is a local account on the
-disk, which is the whole point of it.
+UID, and adding a role appends one without moving any existing one. The rule is
+written once, in
+`homelab/vm/controller_principals.directory_account_plan`, and both the
+disposable acceptance Controller and the durable directory of a persistent
+instance derive their numbers from it.
+
+`local_rescue` has no directory UID at all — it is a local account on the disk,
+which is the whole point of it, and the durable-account resolver refuses it by
+name so no instance variable can smuggle it into the directory.
+
+A durable account that the directory has **already** allocated keeps its number:
+convergence refuses to move a `uidNumber`, because files on every workstation,
+the per-user share directory and every ACL keyed on that number cannot follow it.
 
 Keep the `local_rescue` name here and `homelab_breakglass_user` in
 `group_vars/all.yml` **the same**. Nothing checks that today: this Python path

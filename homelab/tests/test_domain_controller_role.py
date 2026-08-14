@@ -257,18 +257,24 @@ class TestDomainControllerRole(unittest.TestCase):
 
 
 DURABLE_BLOCK = "Converge the declared durable directory accounts"
+RESOLVER = ROLE / "files/resolve-directory-accounts.py"
 
-# The synthetic acceptance roster, in the order controller_principals.py pins
-# it. Declaring it through this role's own variables must reproduce that
-# module's POSIX_ALLOCATION exactly; if it ever does not, the workstation would
-# see different UIDs than the acceptance path proves and file ownership under
-# the per-user share root would break.
-ACCEPTANCE_ROSTER = [
-    {"name": "student", "role": "standard", "password_file": "/run/one"},
-    {"name": "operator", "role": "standard", "password_file": "/run/two"},
-    {"name": "directory-admin", "role": "administrator",
-     "password_file": "/run/three"},
-]
+# The whole contract roster, declared the ONE way this role now accepts it: as
+# contract ROLES. No account name appears in this file, in the role, or in the
+# role's variables -- the names come from the single declaration
+# (homelab/instance/identity/principals.json, resolved by the one loader in
+# homelab/workstations/arch_second.py).
+ACCEPTANCE_ROLES = ["standard_user", "daily_administrator",
+                    "domain_administrator"]
+# Placeholder names in the same shape the owner's real private overlay uses.
+# They exist only to prove that a rename moves no UID; nothing tracked may carry
+# a real account name (ADR 0046).
+RENAMED_ROSTER = {
+    "standard_user": "roster-a",
+    "daily_administrator": "roster-b",
+    "domain_administrator": "roster-c",
+    "local_rescue": "roster-d",
+}
 
 
 def jinja():
@@ -390,158 +396,414 @@ class TestDurableAccountsAreInertByDefault(DurableAccountBase):
     def test_the_disposable_roster_never_moves_into_this_role(self):
         # Stated as a test so a later edit cannot quietly move the disposable
         # roster into this role, where it would outlive the run it belongs to.
-        self.assertNotIn("homelab_ad_directory_accounts",
-                         (ROLE / "tasks/main.yml").read_text()
-                         .split(DURABLE_BLOCK)[0])
+        # Comments are stripped: the section's own explanation names the
+        # variable, and prose cannot converge anything.
+        above = "\n".join(
+            line for line
+            in (ROLE / "tasks/main.yml").read_text()
+            .split(DURABLE_BLOCK)[0].splitlines()
+            if not line.lstrip().startswith("#"))
+        self.assertNotIn("homelab_ad_directory_accounts", above)
 
 
-class TestDurableAccountPosixAllocation(DurableAccountBase):
-    """One allocation rule, honoured in two places.
+class TestOneUidRuleInOnePlace(DurableAccountBase):
+    """The UID rule is written once, is role-positional, and this role has none.
 
-    `controller_principals.py` owns the rule for the disposable acceptance
-    roster; this role applies the same rule to a durable roster. They must
-    agree, because the Arch workstation runs SSSD with
-    `ldap_id_mapping = False`: the UID a client sees is the uidNumber stored in
-    the directory, and two allocations would mean the acceptance path proves
-    one set of numbers while the persistent instance serves another.
+    Before this, the rule existed twice with two different keyings: the
+    workstation lane keyed uidNumber on the principal's ROLE position, and this
+    role keyed it on the position of an entry in a hand-written YAML list. A
+    disagreement meant the workstation probed a user the real directory did not
+    have. Now `controller_principals.directory_account_plan` is the only
+    implementation and this role consumes its output.
     """
 
-    def test_the_rule_constants_are_the_same_constants(self):
-        from homelab.vm import controller_principals
-
+    def test_the_role_no_longer_keys_an_identifier_on_anything(self):
+        text = (ROLE / "tasks/main.yml").read_text()
         defaults = self.defaults()
-        self.assertEqual(defaults["homelab_ad_posix_base"],
-                         controller_principals._POSIX_BASE)
-        self.assertEqual(defaults["homelab_ad_posix_login_shell"],
-                         controller_principals._POSIX_LOGIN_SHELL)
-        self.assertEqual(defaults["homelab_ad_posix_primary_group"],
-                         controller_principals._POSIX_PRIMARY_GROUP)
-        self.assertEqual(defaults["homelab_ad_posix_group_rids"],
-                         controller_principals._POSIX_GROUP_RIDS)
-        self.assertIn(defaults["homelab_ad_posix_admin_group"],
-                      controller_principals._POSIX_GROUP_RIDS)
+        # No arithmetic, no base, and no per-attribute defaults to compute from.
+        self.assertNotIn("uidNumber': (", text)
+        self.assertNotIn("posix_base | int", text)
+        for gone in ("homelab_ad_posix_base", "homelab_ad_posix_login_shell",
+                     "homelab_ad_posix_home_root",
+                     "homelab_ad_posix_primary_group"):
+            with self.subTest(variable=gone):
+                self.assertNotIn(gone, defaults)
+                self.assertNotIn(gone, text)
+        # The two values the role does keep are the ones it uses for itself: the
+        # group it asks about, and the set of groups it verifies. The resolver
+        # refuses to render a plan if either disagrees with the allocation.
+        self.assertEqual(defaults["homelab_ad_posix_admin_group"],
+                         "Domain Admins")
+        self.assertEqual(set(defaults["homelab_ad_posix_group_rids"]),
+                         {"Domain Users", "Domain Admins"})
 
-    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
-    def test_the_role_reproduces_the_allocation_it_shares(self):
+    def test_the_surviving_rule_is_role_positional(self):
         from homelab.vm import controller_principals as principals
 
-        plan, groups = DurableAccountSimulation(self).allocate(
-            ACCEPTANCE_ROSTER)
-        base = principals._POSIX_BASE
+        plan = principals.directory_account_plan(ACCEPTANCE_ROLES)
+        base = principals.POSIX_BASE
         self.assertEqual(
-            groups,
-            {name: base + rid
-             for name, rid in principals._POSIX_GROUP_RIDS.items()})
+            [entry["contract_role"] for entry in plan],
+            list(principals.DIRECTORY_ROLES))
         for position, entry in enumerate(plan):
-            with self.subTest(account=entry["name"]):
+            with self.subTest(role=entry["contract_role"]):
                 self.assertEqual(entry["uidNumber"], base + position)
-                self.assertEqual(
-                    entry["gidNumber"],
-                    base + principals._POSIX_GROUP_RIDS[
-                        principals._POSIX_PRIMARY_GROUP])
+                self.assertEqual(entry["gidNumber"],
+                                 base + principals.POSIX_GROUP_RIDS[
+                                     principals.POSIX_PRIMARY_GROUP])
                 self.assertEqual(entry["loginShell"],
-                                 principals._POSIX_LOGIN_SHELL)
-                self.assertEqual(entry["unixHomeDirectory"],
-                                 "/home/" + entry["name"])
-        # And, for as long as the disposable roster is the pinned one, against
-        # the snapshot that module derives for it. Guarded rather than assumed:
-        # the acceptance roster is moving into the private overlay, and the rule
-        # above is what must hold, not this particular snapshot of it.
-        allocation = getattr(principals, "POSIX_ALLOCATION", None)
-        names = {entry["name"] for entry in plan}
-        if allocation and set(allocation["users"]) == names:
-            self.assertEqual(groups, allocation["groups"])
-            for entry in plan:
-                expected = allocation["users"][entry["name"]]
-                with self.subTest(snapshot=entry["name"]):
-                    for attribute, value in expected.items():
-                        self.assertEqual(entry[attribute], value)
+                                 principals.POSIX_LOGIN_SHELL)
+                self.assertEqual(
+                    entry["unixHomeDirectory"],
+                    principals.POSIX_HOME_ROOT + "/" + entry["name"])
+        # The order the instance happens to declare its roles in is immaterial:
+        # the identifier belongs to the role, not to a position in a list.
+        self.assertEqual(plan, principals.directory_account_plan(
+            list(reversed(ACCEPTANCE_ROLES))))
 
-    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
-    def test_position_and_nothing_else_decides_the_identifier(self):
-        simulation = DurableAccountSimulation(self)
-        plan, groups = simulation.allocate([
-            {"name": "first", "role": "standard", "password_file": "/run/a"},
-            {"name": "second", "role": "administrator",
-             "password_file": "/run/b"},
-        ])
-        base = self.defaults()["homelab_ad_posix_base"]
-        self.assertEqual([entry["uidNumber"] for entry in plan],
-                         [base, base + 1])
-        # Every user's primary gid is the Domain Users gid, from its RID.
-        self.assertEqual({entry["gidNumber"] for entry in plan},
-                         {base + 513})
-        self.assertEqual(groups, {"Domain Users": base + 513,
-                                  "Domain Admins": base + 512})
-        self.assertEqual([entry["unixHomeDirectory"] for entry in plan],
-                         ["/home/first", "/home/second"])
+    def test_renaming_an_account_moves_no_uid(self):
+        from homelab.vm import controller_principals as principals
 
-    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
-    def test_the_user_range_cannot_reach_the_group_range(self):
-        # gids are base+512 and base+513, so a roster of 512 entries would
-        # allocate a uid equal to the Domain Admins gid.
-        simulation = DurableAccountSimulation(self)
-        roster = [{"name": f"a{index}", "role": "standard",
-                   "password_file": "/run/x"} for index in range(512)]
-        self.assertFalse(simulation.roster_is_accepted(roster))
-        self.assertTrue(simulation.roster_is_accepted(roster[:511]))
+        contract = principals.directory_account_plan(ACCEPTANCE_ROLES)
+        renamed = principals.directory_account_plan(
+            ACCEPTANCE_ROLES, roster=RENAMED_ROSTER)
+        self.assertNotEqual([entry["name"] for entry in contract],
+                            [entry["name"] for entry in renamed])
+        for before, after in zip(contract, renamed):
+            with self.subTest(role=before["contract_role"]):
+                self.assertEqual(before["contract_role"],
+                                 after["contract_role"])
+                self.assertEqual(before["uidNumber"], after["uidNumber"])
+                self.assertEqual(before["gidNumber"], after["gidNumber"])
+                self.assertEqual(before["role"], after["role"])
+                # Only the name, and the home path derived from it, move.
+                self.assertEqual(after["unixHomeDirectory"],
+                                 "/home/" + after["name"])
+
+    def test_appending_a_role_renumbers_nothing(self):
+        from homelab.vm import controller_principals as principals
+
+        for count in range(1, len(ACCEPTANCE_ROLES) + 1):
+            shorter = principals.directory_account_plan(
+                ACCEPTANCE_ROLES[:count])
+            longer = principals.directory_account_plan(ACCEPTANCE_ROLES)
+            with self.subTest(declared=count):
+                self.assertEqual(shorter, longer[:count])
+
+    def test_local_rescue_never_enters_the_directory_allocation(self):
+        from homelab.vm import controller_principals as principals
+        from homelab.workstations.arch_second import CONTRACT_ROLES
+
+        # ADR 0055/0063: the break-glass administrator is a LOCAL account at UID
+        # 1000 on the disk. It owns no directory uidNumber, and no instance
+        # variable may smuggle it into one.
+        self.assertEqual(principals.LOCAL_ONLY_ROLES, ("local_rescue",))
+        self.assertNotIn("local_rescue", principals.DIRECTORY_ROLES)
+        self.assertEqual(len(CONTRACT_ROLES), 4)
+        with self.assertRaisesRegex(principals.DirectoryPlanError, "LOCAL"):
+            principals.directory_account_plan(
+                ACCEPTANCE_ROLES + ["local_rescue"])
+        plan = principals.directory_account_plan(
+            ACCEPTANCE_ROLES, roster=RENAMED_ROSTER)
+        self.assertNotIn(RENAMED_ROSTER["local_rescue"],
+                         [entry["name"] for entry in plan])
+        self.assertNotIn(
+            RENAMED_ROSTER["local_rescue"],
+            principals._posix_allocation(RENAMED_ROSTER)["users"])
+
+    def test_only_the_domain_administrator_becomes_a_domain_admin(self):
+        from homelab.vm import controller_principals as principals
+
+        # The coordinating decision this lane also had to check: an owner's
+        # everyday admin account belongs in `daily_administrator`, and that role
+        # must be a plain `standard` directory account. Gate 8's
+        # `domain-admin-separate` check proves exactly this from the group's own
+        # member list.
+        self.assertEqual(principals.DIRECTORY_ADMIN_ROLES,
+                         ("domain_administrator",))
+        self.assertEqual(
+            {entry["contract_role"]: entry["role"]
+             for entry in principals.directory_account_plan(ACCEPTANCE_ROLES)},
+            {"standard_user": "standard",
+             "daily_administrator": "standard",
+             "domain_administrator": "administrator"},
+        )
+
+    def test_the_no_overlay_allocation_is_byte_identical_to_today(self):
+        from homelab.vm import controller_principals as principals
+        from homelab.workstations.arch_second import identity_roster
+
+        # Gate 8 is at 21/21 and gates 6 and 8 assert the synthetic names, so
+        # the no-overlay case has to stay exactly what it was. An absent overlay
+        # is the no-overlay case by definition.
+        absent = Path(tempfile.gettempdir()) / "telos-absent-overlay.json"
+        self.assertFalse(absent.exists(), absent)
+        roster = identity_roster(overlay_path=absent)
+        self.assertEqual(roster, {
+            "standard_user": "student",
+            "daily_administrator": "operator",
+            "domain_administrator": "directory-admin",
+            "local_rescue": "local-rescue",
+        })
+        self.assertEqual(
+            {entry["name"]: entry["uidNumber"]
+             for entry in principals.directory_account_plan(
+                 ACCEPTANCE_ROLES, roster=roster)},
+            {"student": 10000, "operator": 10001, "directory-admin": 10002},
+        )
+        self.assertEqual(principals.directory_group_allocation(),
+                         {"Domain Users": 10513, "Domain Admins": 10512})
+        # The disposable acceptance path itself: the same numbers, untouched.
+        self.assertEqual(
+            principals.POSIX_ALLOCATION["users"]["student"]["uidNumber"], 10000)
+        self.assertEqual(principals.POSIX_ALLOCATION["groups"],
+                         {"Domain Users": 10513, "Domain Admins": 10512})
+
+
+class TestDurableAccountResolver(DurableAccountBase):
+    """The control-host resolver: the bridge, and the only thing that crosses it.
+
+    The provisioning driver runs INSIDE the Controller with only
+    `homelab/ansible` staged, so it cannot import the roster loader and must not
+    be handed the owner's private overlay. The derivation therefore runs on the
+    Ansible control host and the guest receives only the finished plan.
+    """
+
+    def resolve(self, roles, *, admin_group="Domain Admins", rids=None):
+        import json
+
+        rids = ('{"Domain Users": 513, "Domain Admins": 512}' if rids is None
+                else rids)
+        result = subprocess.run(
+            [sys.executable, str(RESOLVER),
+             "--roles", ",".join(roles),
+             "--admin-group", admin_group,
+             "--group-rids-json", rids],
+            capture_output=True, text=True,
+        )
+        document = (json.loads(result.stdout) if result.returncode == 0
+                    else None)
+        return result, document
+
+    def test_it_only_passes_through_the_one_allocation_rule(self):
+        from homelab.vm import controller_principals as principals
+
+        result, document = self.resolve(ACCEPTANCE_ROLES)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(document["schema"], 1)
+        self.assertEqual(document["posix_base"], principals.POSIX_BASE)
+        self.assertEqual(document["primary_group"],
+                         principals.POSIX_PRIMARY_GROUP)
+        self.assertEqual(document["admin_group"], principals.POSIX_ADMIN_GROUP)
+        self.assertEqual(document["groups"],
+                         principals.directory_group_allocation())
+        # The resolver adds no keying of its own; this is the property that
+        # makes "one rule, one place" true across the process boundary.
+        self.assertEqual(document["accounts"],
+                         principals.directory_account_plan(ACCEPTANCE_ROLES))
+
+    def test_it_refuses_a_declaration_it_cannot_turn_into_a_plan(self):
+        for label, roles, extra in (
+            ("the local break-glass account", ["local_rescue"], {}),
+            ("an unknown role", ["nope"], {}),
+            ("nothing at all", [], {}),
+            ("a role declared twice",
+             ["standard_user", "standard_user"], {}),
+            ("a privilege group the allocation does not know",
+             ACCEPTANCE_ROLES, {"admin_group": "Enterprise Admins"}),
+            ("well-known RIDs that disagree with the allocation",
+             ACCEPTANCE_ROLES, {"rids": '{"Domain Users": 513}'}),
+            ("a group RID map that is not JSON",
+             ACCEPTANCE_ROLES, {"rids": "not-json"}),
+        ):
+            with self.subTest(refusal=label):
+                result, _ = self.resolve(roles, **extra)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("", result.stdout)
+                self.assertIn("error:", result.stderr)
+
+    def test_it_reads_no_credential_and_names_no_account(self):
+        source = RESOLVER.read_text()
+        # It renders identifiers, not credentials: it takes no password option,
+        # opens no file of its own, and runs nothing.
+        self.assertNotRegex(source, r"add_argument\([^)]*password")
+        self.assertNotIn("read_text", source)
+        self.assertNotIn("open(", source)
+        self.assertNotIn("subprocess", source)
+        self.assertNotIn("samba-tool", source)
+        # The one declaration is the only source of names, so the resolver holds
+        # none: not the synthetic ones, not a placeholder.
+        for name in ("student", "operator", "directory-admin", "local-rescue"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, source)
+
+    def test_it_says_why_when_the_repository_is_not_reachable(self):
+        # Copied out of the repository, as the factory copies the role into the
+        # guest, it must refuse with a sentence that names the reason rather
+        # than raise ImportError from inside a disposable VM.
+        with tempfile.TemporaryDirectory() as scratch:
+            elsewhere = Path(scratch) / "a/b/c/d/e/f"
+            elsewhere.mkdir(parents=True)
+            copy = elsewhere / RESOLVER.name
+            copy.write_text(RESOLVER.read_text())
+            result = subprocess.run(
+                [sys.executable, str(copy),
+                 "--roles", "standard_user",
+                 "--admin-group", "Domain Admins",
+                 "--group-rids-json", '{"Domain Users": 513}'],
+                capture_output=True, text=True,
+            )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("not reachable", result.stderr)
+        self.assertIn("homelab/ansible", result.stderr)
 
 
 class TestDurableAccountRefusals(DurableAccountBase):
-    """The role must refuse a roster or a credential file it cannot trust."""
+    """The role must refuse a declaration or a credential file it cannot trust."""
 
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
-    def test_a_declared_account_is_created_with_its_posix_identity(self):
+    def test_one_declaration_drives_the_whole_plan(self):
+        from homelab.vm import controller_principals as principals
+
         simulation = DurableAccountSimulation(self)
-        plan, _ = simulation.allocate(
-            [{"name": "standard-user", "role": "standard",
-              "password_file": "/run/a"},
-             {"name": "admin-user", "role": "administrator",
-              "password_file": "/run/b"}],
-            existing=["standard-user", "Administrator", "krbtgt"])
+        plan, groups = simulation.allocate(
+            ACCEPTANCE_ROLES, existing=["student", "Administrator", "krbtgt"])
+        resolved = principals.directory_account_plan(ACCEPTANCE_ROLES)
+        # Every identifier in the role's plan came from the one rule, untouched.
+        for entry, expected in zip(plan, resolved):
+            with self.subTest(role=entry["contract_role"]):
+                for attribute in ("name", "role", "uidNumber", "gidNumber",
+                                  "loginShell", "unixHomeDirectory"):
+                    self.assertEqual(entry[attribute], expected[attribute])
+        self.assertEqual(groups, principals.directory_group_allocation())
         # Only the account the directory does not have is created, and the one
         # that survived a relaunch keeps its password: no file is even needed
         # for it.
-        self.assertEqual([entry["name"] for entry in plan if entry["create"]],
-                         ["admin-user"])
-        self.assertEqual([entry["role"] for entry in plan],
-                         ["standard", "administrator"])
-        # The administrator must land in the well-known privilege group.
-        self.assertFalse(simulation.admin_membership_fails(
-            plan, ["standard-user", "admin-user"]))
-        self.assertTrue(simulation.admin_membership_fails(
-            plan, ["standard-user"]))
+        self.assertEqual([entry["create"] for entry in plan],
+                         [False, True, True])
+        # The password-file path is derived from the template, so no account name
+        # is restated anywhere: one declaration, one path per account.
+        template = self.defaults()["homelab_ad_account_password_file_template"]
+        for entry in plan:
+            with self.subTest(role=entry["contract_role"]):
+                self.assertEqual(entry["password_file"],
+                                 template.replace("{name}", entry["name"]))
+                self.assertIs(entry["reset_password"], False)
+        self.assertTrue(simulation.password_paths_are_accepted(plan))
 
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
-    def test_an_unusable_roster_stops_convergence(self):
+    def test_a_rotation_is_authorized_by_role_and_never_by_name(self):
         simulation = DurableAccountSimulation(self)
-        for label, roster in (
-            ("a repeated name", [
-                {"name": "a", "role": "standard", "password_file": "/run/a"},
-                {"name": "a", "role": "administrator",
-                 "password_file": "/run/b"}]),
-            ("an upper-case name", [
-                {"name": "Ksh", "role": "standard", "password_file": "/run/a"}]),
-            ("an unknown role", [
-                {"name": "a", "role": "root", "password_file": "/run/a"}]),
-            ("no role at all", [{"name": "a", "password_file": "/run/a"}]),
+        plan, _ = simulation.allocate(
+            ACCEPTANCE_ROLES, reset_roles=["domain_administrator"])
+        self.assertEqual(
+            {entry["contract_role"] for entry in plan
+             if entry["reset_password"]},
+            {"domain_administrator"})
+        # A role named for a rotation that is not declared at all is a refusal:
+        # it would silently rotate nothing.
+        self.assertFalse(simulation.roster_is_accepted(
+            ["standard_user"], reset_roles=["domain_administrator"]))
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_the_privilege_group_is_asserted_in_both_directions(self):
+        from homelab.vm import controller_principals as principals
+
+        simulation = DurableAccountSimulation(self)
+        plan, _ = simulation.allocate(ACCEPTANCE_ROLES)
+        names = {entry["contract_role"]: entry["name"] for entry in plan}
+        admin = names["domain_administrator"]
+        daily = names["daily_administrator"]
+        self.assertFalse(simulation.admin_membership_fails(plan, [admin]))
+        # A domain administrator missing from the group is a failure...
+        self.assertTrue(simulation.admin_membership_fails(plan, []))
+        # ...and so is a daily administrator that is IN it. That is the half
+        # that was missing, and it is exactly what gate 8's
+        # domain-admin-separate check proves from this group's member list.
+        self.assertTrue(
+            simulation.admin_membership_fails(plan, [admin, daily]))
+        self.assertEqual(
+            principals.directory_role("daily_administrator"), "standard")
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_an_unusable_declaration_stops_convergence(self):
+        simulation = DurableAccountSimulation(self)
+        self.assertTrue(simulation.roster_is_accepted(ACCEPTANCE_ROLES))
+        for label, roles in (
+            ("nothing declared", []),
+            ("a repeated role", ["standard_user", "standard_user"]),
+            ("an upper-case role", ["Standard_User"]),
+            ("an account name where a role belongs", ["directory-admin"]),
         ):
-            with self.subTest(roster=label):
-                self.assertFalse(simulation.roster_is_accepted(roster))
+            with self.subTest(declaration=label):
+                self.assertFalse(simulation.roster_is_accepted(roles))
+        for label, template in (
+            ("a template with no {name}", "/run/secrets/homelab-ad"),
+            ("a relative template", "secrets/homelab-ad-{name}"),
+        ):
+            with self.subTest(template=label):
+                self.assertFalse(simulation.roster_is_accepted(
+                    ACCEPTANCE_ROLES, template=template))
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_a_resolved_plan_that_misses_a_declared_role_is_refused(self):
+        simulation = DurableAccountSimulation(self)
+        plan = simulation.resolved(ACCEPTANCE_ROLES)
+        self.assertTrue(simulation.plan_is_accepted(ACCEPTANCE_ROLES, plan))
+        for label, mutate in (
+            ("one account short",
+             lambda document: dict(document,
+                                   accounts=document["accounts"][:-1])),
+            ("an unknown schema",
+             lambda document: dict(document, schema=2)),
+            ("a privilege group the role does not verify",
+             lambda document: dict(document, admin_group="Enterprise Admins")),
+            ("a group the role does not verify",
+             lambda document: dict(document, groups={"Domain Users": 10513})),
+        ):
+            with self.subTest(plan=label):
+                self.assertFalse(simulation.plan_is_accepted(
+                    ACCEPTANCE_ROLES, mutate(plan)))
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_an_account_the_directory_already_numbered_is_never_renumbered(self):
+        simulation = DurableAccountSimulation(self)
+        entry = {"name": "a", "uidNumber": 10001}
+        self.assertTrue(simulation.allocation_is_accepted(
+            entry, "sAMAccountName: a\nuidNumber: 10001\n"))
+        # An account that carries no uidNumber yet is not a renumber: the driver
+        # stages one.
+        self.assertTrue(simulation.allocation_is_accepted(
+            entry, "sAMAccountName: a\n"))
+        for label, stdout in (
+            ("a declaration-order allocation from the old keying",
+             "sAMAccountName: a\nuidNumber: 10000\n"),
+            ("a prefix that is not the number",
+             "sAMAccountName: a\nuidNumber: 100010\n"),
+            ("an idmap allocation", "sAMAccountName: a\nuidNumber: 3000012\n"),
+        ):
+            with self.subTest(stored=label):
+                self.assertFalse(
+                    simulation.allocation_is_accepted(entry, stdout))
+                self.assertTrue(simulation.allocation_is_accepted(
+                    entry, stdout, renumber=True))
 
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
     def test_a_declared_account_without_a_password_file_path_is_refused(self):
         simulation = DurableAccountSimulation(self)
         self.assertTrue(simulation.password_paths_are_accepted(
-            [{"name": "a", "role": "standard", "password_file": "/run/a"}]))
-        for label, roster in (
-            ("an empty path", [
-                {"name": "a", "role": "standard", "password_file": ""}]),
-            ("no path at all", [{"name": "a", "role": "standard"}]),
+            [{"name": "a", "password_file": "/run/a"}]))
+        for label, plan in (
+            ("an empty path", [{"name": "a", "password_file": ""}]),
+            ("no path at all", [{"name": "a"}]),
+            ("a relative path", [{"name": "a", "password_file": "run/a"}]),
+            ("two accounts sharing one file",
+             [{"name": "a", "password_file": "/run/a"},
+              {"name": "b", "password_file": "/run/a"}]),
         ):
-            with self.subTest(roster=label):
+            with self.subTest(plan=label):
                 self.assertFalse(
-                    simulation.password_paths_are_accepted(roster))
+                    simulation.password_paths_are_accepted(plan))
 
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
     def test_an_unprotected_password_file_is_refused_by_the_role(self):
@@ -862,26 +1124,61 @@ class DurableAccountSimulation:
         return all(self.render(condition, variables) is True
                    for condition in conditions)
 
-    def variables(self, roster, existing=()):
+    def variables(self, roles, existing=(), reset_roles=(), template=None):
         variables = dict(self.defaults)
-        variables["homelab_ad_directory_accounts"] = roster
+        variables["homelab_ad_directory_accounts"] = list(roles)
+        variables["homelab_ad_account_password_reset_roles"] = list(reset_roles)
+        if template is not None:
+            variables["homelab_ad_account_password_file_template"] = template
         variables["homelab_ad_existing_users"] = {
             "stdout_lines": list(existing)}
         return variables
 
-    def roster_is_accepted(self, roster):
-        return self.holds("Validate the declared durable account roster",
-                          self.variables(roster))
+    def resolved(self, roles):
+        """The plan the control-host resolver renders for *roles*, verbatim.
 
-    def password_paths_are_accepted(self, roster):
+        Run for real rather than reconstructed: the point of the bridge is that
+        the guest consumes exactly what the one rule produced.
+        """
+        import json
+
+        result = subprocess.run(
+            [sys.executable, str(RESOLVER),
+             "--roles", ",".join(roles),
+             "--admin-group", self.defaults["homelab_ad_posix_admin_group"],
+             "--group-rids-json",
+             json.dumps(self.defaults["homelab_ad_posix_group_rids"])],
+            capture_output=True, text=True,
+        )
+        self.case.assertEqual(0, result.returncode, result.stderr)
+        return json.loads(result.stdout)
+
+    def roster_is_accepted(self, roles, reset_roles=(), template=None):
+        return self.holds(
+            "Validate the declared durable account roster",
+            self.variables(roles, reset_roles=reset_roles, template=template))
+
+    def plan_is_accepted(self, roles, plan):
+        return self.holds(
+            "Require the resolved plan to cover exactly the declared roles",
+            dict(self.variables(roles), homelab_ad_directory_plan=plan))
+
+    def password_paths_are_accepted(self, plan):
         return self.holds(
             "Require a password-file path for every declared durable account",
-            self.variables(roster))
+            dict(self.defaults, homelab_ad_account_plan=plan))
 
     def password_file_is_accepted(self, stat):
         return self.holds(
             "Require a protected password file for every new durable account",
             dict(self.defaults, item={"stat": stat}))
+
+    def allocation_is_accepted(self, entry, stdout, renumber=False):
+        return self.holds(
+            "Refuse to renumber a durable account the directory already holds",
+            dict(self.defaults,
+                 homelab_ad_account_renumber_enabled=renumber,
+                 item={"item": entry, "stdout": stdout}))
 
     def resolution_is_accepted(self, entry, line):
         return self.holds(
@@ -902,27 +1199,22 @@ class DurableAccountSimulation:
             homelab_ad_account_plan=plan,
             homelab_ad_admin_members={"rc": 0, "stdout_lines": members})))
 
-    def allocate(self, roster, existing=()):
-        """Run the two set_fact loops the way Ansible would."""
-        variables = self.variables(roster, existing)
+    def allocate(self, roles, existing=(), reset_roles=(), template=None):
+        """Run the role's set_facts over a really-resolved plan, as Ansible would."""
+        variables = self.variables(
+            roles, existing, reset_roles=reset_roles, template=template)
+        variables["homelab_ad_directory_plan"] = self.resolved(roles)
         reset = self.case.named(
             "Start the durable POSIX allocation from an empty plan")
         for key, value in reset["ansible.builtin.set_fact"].items():
-            variables[key] = value
-        for name in (
-            "Derive the durable POSIX group allocation from the well-known RIDs",
-            "Derive the durable POSIX allocation from the declared roster order",
-        ):
-            task = self.case.named(name)
-            index_var = task.get("loop_control", {}).get("index_var")
-            for position, item in enumerate(
-                    self.render(task["loop"], variables)):
-                local = dict(variables, item=item)
-                if index_var:
-                    local[index_var] = position
-                for key, expression in task[
-                        "ansible.builtin.set_fact"].items():
-                    variables[key] = self.render(expression, local)
+            variables[key] = (self.render(value, variables)
+                              if isinstance(value, str) else value)
+        task = self.case.named(
+            "Complete the resolved plan with this run's convergence decisions")
+        for item in self.render(task["loop"], variables):
+            local = dict(variables, item=item)
+            for key, expression in task["ansible.builtin.set_fact"].items():
+                variables[key] = self.render(expression, local)
         return (variables["homelab_ad_account_plan"],
                 variables["homelab_ad_account_group_plan"])
 

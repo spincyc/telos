@@ -21,6 +21,31 @@ homelab_services: []
 #     # would hand this application somebody else's radio.
 #     - /dev/serial/by-id/<usb-radio-id>
 
+# ADR 0055: the durable directory accounts a PERSISTENT Controller keeps across
+# bring-ups. This names contract ROLES, never accounts: the real account names
+# are declared exactly once, in identity/principals.json beside this file, which
+# is the same declaration that names the accounts baked onto an installed
+# workstation disk. Order is immaterial -- the uidNumber belongs to the role, so
+# renaming an account moves no UID and adding a role appends one.
+#
+# Leave it empty on the disposable acceptance Controller: its roster is
+# synthetic, per-run, and staged over the serial console instead.
+#
+# `local_rescue` is refused outright. It is a LOCAL account at UID 1000 on the
+# workstation (ADR 0055, ADR 0063) and must never become a directory principal.
+homelab_ad_directory_accounts: []
+# - standard_user           # unprivileged directory account
+# - daily_administrator     # passworded sudo on the workstation, NOT a Domain
+#                           # Admins member -- gate 8 proves that separation
+# - domain_administrator    # the Domain Admins member
+
+# Where each new account's initial credential is staged on the Controller, as a
+# path template. `{name}` becomes the account's own resolved name. The file is a
+# root-owned 0600 regular file with one non-empty first line, and is only needed
+# for an account the directory does not have yet -- delete it afterwards. Never
+# put the credential itself in this overlay, in Git, or on a command line.
+homelab_ad_account_password_file_template: /run/secrets/homelab-ad-{name}
+
 # ADR 0055: enable only once the domain controller exists and answers. Joining
 # a machine to a directory that is not ready is how a working machine stops
 # being able to log in.

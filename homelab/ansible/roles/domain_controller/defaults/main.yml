@@ -55,20 +55,36 @@ homelab_storage_address: ""
 
 # Durable directory accounts for a PERSISTENT instance (ADR 0055).
 #
-# Empty by default, and every task that acts on this list is gated on it being
+# This list does NOT name accounts. Real account names are instance data
+# (ADR 0046) and are declared exactly once, in the owner's gitignored private
+# overlay:
+#
+#     homelab/instance/identity/principals.json
+#
+# which homelab/workstations/arch_second.identity_roster resolves against the
+# tracked identity-lifecycle contract, and which also names the accounts baked
+# onto an installed workstation disk. This list only says WHICH of the
+# contract's directory roles this instance keeps as durable directory accounts:
+#
+#   homelab_ad_directory_accounts:
+#     - standard_user
+#     - daily_administrator
+#     - domain_administrator
+#
+# Order is immaterial. The UID belongs to the ROLE, not to the position in this
+# list and not to the account's name (see the allocation note below), so
+# renaming an account in the overlay moves no UID and adding a role appends one.
+#
+# `local_rescue` is refused outright: ADR 0055/0063 keep the break-glass
+# administrator a LOCAL account at UID 1000 on the workstation, never a
+# directory principal.
+#
+# Empty by default, and every task that acts on it is gated on it being
 # non-empty, so a run that declares nothing behaves exactly as this role did
 # before durable accounts existed. That is deliberate: the disposable
 # acceptance Controller must stay untouched, because its roster is synthetic,
 # per-run, and staged much later over the serial console by
 # homelab/vm/controller_principals.py.
-#
-# Declare the roster in the gitignored instance overlay (ADR 0046), in the
-# order the POSIX identifiers should be allocated. Each entry:
-#
-#   - name: <account>            # sAMAccountName, [a-z][a-z0-9-]{0,62}
-#     role: standard             # or `administrator`: a Domain Admins member
-#     password_file: /run/secrets/homelab-ad-<account>
-#     reset_password: false      # optional; see the rotation switch below
 #
 # This role is never given a password value, only the path of a root-owned
 # 0600 file that already exists on the target. An account that already exists
@@ -76,40 +92,52 @@ homelab_storage_address: ""
 # re-convergence, which is the whole point of a persistent instance.
 homelab_ad_directory_accounts: []
 
-# The POSIX allocation rule, stated once.
+# The POSIX allocation rule lives in exactly one place, and it is not here:
 #
-# It is the SAME rule homelab/vm/controller_principals.py implements for the
-# disposable acceptance roster (_POSIX_BASE, _POSIX_LOGIN_SHELL,
-# _POSIX_PRIMARY_GROUP, _POSIX_GROUP_RIDS), and
-# homelab/tests/test_domain_controller_role.py fails if the two ever disagree
-# -- a second allocation would hand the workstation different UIDs than the
-# acceptance path proves, and file ownership under /srv/unas would break.
+#     homelab/vm/controller_principals.directory_account_plan
 #
-#   users:  uidNumber = homelab_ad_posix_base + position in the declared roster
-#   groups: gidNumber = homelab_ad_posix_base + well-known Active Directory RID
-#           (Domain Admins 512 -> 10512, Domain Users 513 -> 10513)
+#   users:  uidNumber = POSIX_BASE + the role's position in
+#           arch_second.DIRECTORY_ROLES
+#   groups: gidNumber = POSIX_BASE + the group's well-known AD RID
 #
-# Every user's gidNumber is the Domain Users gidNumber because Domain Users
-# (RID 513) is each account's Active Directory primary group. The base sits far
-# above a workstation's first local ordinary-user UID (1000, the break-glass
-# account), which ADR 0055 requires to stay local.
+# The same function serves the disposable acceptance roster, so the workstation
+# can never be handed different UIDs than the acceptance path proves and file
+# ownership under the per-user share root cannot break. This role does not
+# restate the arithmetic and holds no base: its variables are rendered on the
+# Ansible CONTROL HOST by files/resolve-directory-accounts.py, because the
+# in-guest driver has only homelab/ansible staged and must not be given the
+# owner's private identity overlay.
 #
-# Position is what the identifier is derived from, so REORDERING the roster
-# renumbers the accounts and orphans everything they own. Append; never insert.
-homelab_ad_posix_base: 10000
-homelab_ad_posix_login_shell: /bin/bash
-homelab_ad_posix_home_root: /home
-homelab_ad_posix_primary_group: Domain Users
+# The two values below are declared here because the role itself uses them --
+# the privilege group is the one it asks `samba-tool group listmembers` about,
+# and the RID map is the set of groups it requires to carry a gidNumber. The
+# resolver refuses to render a plan if either disagrees with the allocation
+# above; it never derives a number from them.
 homelab_ad_posix_admin_group: Domain Admins
 homelab_ad_posix_group_rids:
   Domain Users: 513
   Domain Admins: 512
 
+# Where each durable account's initial credential is staged on the target, as a
+# PATH TEMPLATE, never a value. `{name}` is replaced with the account's own
+# resolved name, so the owner never restates a name here either. The file must
+# be a root-owned 0600 regular file with a non-empty first line, and is only
+# required for an account the directory does not have yet: delete it afterwards.
+homelab_ad_account_password_file_template: /run/secrets/homelab-ad-{name}
+
 # A password already set in the directory is never rewritten. Rotation takes
-# two keys: this switch, and `reset_password: true` on the individual account.
-# Return it to false immediately afterwards, exactly as with first
+# two keys: this switch, and naming the CONTRACT ROLE (not the account) below.
+# Return both to their defaults immediately afterwards, exactly as with first
 # provisioning.
 homelab_ad_account_password_reset_enabled: false
+homelab_ad_account_password_reset_roles: []
+
+# An account the directory already holds keeps the uidNumber it was allocated.
+# Convergence refuses to move it, because everything that account owns -- files
+# on every workstation, its per-user share directory, every ACL keyed on its
+# POSIX identity -- is keyed on that number and nothing here can follow it.
+# Setting this true for one deliberate run is a migration, not a convergence.
+homelab_ad_account_renumber_enabled: false
 
 # Where the per-user [homes] share directories live. This must stay the root of
 # the `path = /srv/unas/%S` service exported below, and it is the same root

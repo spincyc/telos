@@ -702,15 +702,27 @@ def identity_overlay_path() -> Path:
     ``vm/arch_identity_run.py``) is Python that reads JSON contracts and has
     no YAML dependency.  ``homelab/instance-example/identity/`` carries the
     documented placeholder template.
+
+    It is also the declaration the DURABLE directory follows.
+    ``ansible/roles/domain_controller`` converges the persistent instance's real
+    accounts, and its own
+    ``files/resolve-directory-accounts.py`` renders that role's variables from
+    this same overlay on the Ansible CONTROL HOST -- the role's driver runs in a
+    guest that carries only ``homelab/ansible`` and is deliberately never given
+    this file.  So the role declares contract ROLES, never account names, and
+    there is no second place to keep in step.
     """
     return HOMELAB_ROOT / "instance" / "identity" / "principals.json"
 
 
 # The contract's four principal roles, in the one order that matters: the
 # first three are the DIRECTORY roles, and a directory role's position in this
-# tuple is what fixes its uidNumber in vm/controller_principals.py.  Keying the
+# tuple is what fixes its uidNumber in
+# vm/controller_principals.directory_account_plan -- for the disposable
+# acceptance roster and for a persistent instance's durable directory accounts
+# alike, because that is the only place the rule is written.  Keying the
 # allocation on the ROLE rather than on the name is what lets a name change
-# without moving a UID; appending a role would append a UID.
+# without moving a UID; appending a role appends a UID and moves none.
 CONTRACT_ROLES = (
     "standard_user",
     "daily_administrator",
@@ -860,9 +872,18 @@ def identity_roster_fingerprint(roster: Mapping[str, str] | None = None) -> str:
     return hashlib.sha256(payload).hexdigest()[:ROSTER_FINGERPRINT_LENGTH]
 
 
-def _identity_principals() -> dict[str, str]:
-    """The resolved roster under the short keys the probe template uses."""
-    roster = identity_roster()
+def _identity_principals(
+    roster: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The resolved roster under the short keys the probe template uses.
+
+    *roster* is a parameter so the renderer can pass the roster it already
+    resolved -- the names baked onto the disk and the fingerprint reported by
+    the probe then describe the same resolution even if the overlay changes
+    mid-build -- and so a test can ask what a given roster would bake.
+    """
+    if roster is None:
+        roster = identity_roster()
     return {
         "standard": roster["standard_user"],
         "daily_admin": roster["daily_administrator"],
@@ -2142,12 +2163,7 @@ def render_installer(
         raise InstallContractError("package repository URL is invalid")
     realm = realm_dns_domain.upper()
     roster = identity_roster()
-    principals = {
-        "standard": roster["standard_user"],
-        "daily_admin": roster["daily_administrator"],
-        "domain_admin": roster["domain_administrator"],
-        "local_rescue": roster["local_rescue"],
-    }
+    principals = _identity_principals(roster)
     # Rendered from the SAME resolved roster that supplied the four names above,
     # never re-read, so the fingerprint on the disk always describes the accounts
     # on the disk even if the overlay changes mid-build.

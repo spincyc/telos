@@ -586,6 +586,18 @@
 # per-run roster (staged over the serial by homelab/vm/controller_principals.py,
 # 21/21 checks as of 2026-08-14) is untouched by every task in this section.
 #
+# ONE DECLARATION. homelab_ad_directory_accounts names contract ROLES, never
+# accounts: the real names live once, in the owner's gitignored
+# homelab/instance/identity/principals.json (ADR 0046), which is also what names
+# the accounts baked onto an installed workstation disk. The first task in the
+# block below renders this role's whole account plan -- names, roles and the
+# rfc2307 POSIX identifiers -- from that one declaration, on the Ansible CONTROL
+# HOST, because the driver runs in a guest that carries only homelab/ansible and
+# must not be handed the owner's private overlay. Nothing in this role derives a
+# uidNumber; the rule lives only in
+# homelab/vm/controller_principals.directory_account_plan and is keyed on the
+# ROLE, so renaming an account moves no UID and appending a role renumbers none.
+#
 # Why this is not just "samba-tool user create":
 #   * `samba-tool user create <name> <password>` takes the password
 #     POSITIONALLY, which puts it in the process table for every local user to
@@ -604,46 +616,96 @@
   when: homelab_ad_directory_accounts | length > 0
   block:
     - name: Validate the declared durable account roster
-      # Position in the roster IS the uidNumber, so a duplicate or a renamed
-      # entry silently renumbers accounts and orphans everything they own. The
-      # length bound is what keeps the user range below the group range: gids
-      # are base+512 and base+513, so a roster of 512 or more would collide
-      # with Domain Admins.
+      # This list declares contract ROLES, so the only things to check here are
+      # its shape and the two values this role uses for itself. Whether a role
+      # exists, whether it is a directory role at all, and what uidNumber it
+      # owns are decided by the one allocation rule, in the resolver below.
       ansible.builtin.assert:
         that:
-          - homelab_ad_posix_base | int >= 10000
-          - homelab_ad_directory_accounts | length < 512
-          - homelab_ad_directory_accounts | map(attribute='name', default='')
-            | select('match', '^[a-z][a-z0-9-]{0,62}$') | list | length ==
+          - homelab_ad_directory_accounts | length > 0
+          - homelab_ad_directory_accounts
+            | select('match', '^[a-z][a-z0-9_]{0,62}$') | list | length ==
             homelab_ad_directory_accounts | length
-          - homelab_ad_directory_accounts | map(attribute='name', default='')
-            | unique | list | length == homelab_ad_directory_accounts | length
-          - homelab_ad_directory_accounts | map(attribute='role', default='')
-            | select('in', ['standard', 'administrator']) | list | length ==
+          - homelab_ad_directory_accounts | unique | list | length ==
             homelab_ad_directory_accounts | length
-          - homelab_ad_posix_primary_group in homelab_ad_posix_group_rids
           - homelab_ad_posix_admin_group in homelab_ad_posix_group_rids
           - homelab_ad_account_share_root | length > 0
+          - homelab_ad_account_password_file_template is search('{name}')
+          - homelab_ad_account_password_file_template is match('/')
+          - homelab_ad_account_password_reset_roles
+            | difference(homelab_ad_directory_accounts) | length == 0
         fail_msg: >-
-          homelab_ad_directory_accounts is not a usable roster. Every entry
-          needs a lower-case name matching ^[a-z][a-z0-9-]{0,62}$, unique
-          across the roster, and an explicit role of `standard` or
-          `administrator`. Append to the roster; never reorder or remove an
-          entry, because position determines uidNumber.
+          homelab_ad_directory_accounts is not a usable declaration. It names
+          the contract roles this instance keeps as durable directory accounts
+          -- `standard_user`, `daily_administrator`, `domain_administrator` --
+          each at most once, and never an account name: real names are declared
+          once, in homelab/instance/identity/principals.json.
+          homelab_ad_account_password_file_template must be an absolute path
+          containing `{name}`, and every role named for a password reset must
+          also be declared here.
 
-    - name: Require a password-file path for every declared durable account
-      # A path, not a value: the file itself is staged out of band, root-owned
-      # and 0600, and is only required to EXIST for an account that does not
-      # exist yet. Declared in aggregate so no individual path reaches the log.
+    - name: Resolve the durable account roster on the Ansible control host
+      # THE BRIDGE. The account plan is derived where the one roster loader and
+      # the one POSIX allocation rule live -- the repository -- and the guest
+      # receives only the finished plan as ordinary Ansible data. It cannot be
+      # derived in the guest: the Controller carries only homelab/ansible, and
+      # staging the owner's private identity overlay into a guest would spread
+      # instance data (ADR 0046) for no reason.
+      #
+      # Fail-closed by construction: the resolver exits non-zero, with a named
+      # reason on stderr, for an unknown role, for `local_rescue`, for a roster
+      # overlay it cannot understand, and for a well-known-group declaration
+      # that disagrees with the allocation. Nothing has been mutated yet.
+      #
+      # become: false because this reads a file in the operator's own checkout;
+      # run_once because the plan is a property of the instance, not of a host;
+      # check_mode: false because it mutates nothing and the tasks after it need
+      # its output to say anything useful in a --check run.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - "{{ role_path }}/files/resolve-directory-accounts.py"
+          - --roles
+          - "{{ homelab_ad_directory_accounts | join(',') }}"
+          - --admin-group
+          - "{{ homelab_ad_posix_admin_group }}"
+          - --group-rids-json
+          - "{{ homelab_ad_posix_group_rids | to_json }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      check_mode: false
+      register: homelab_ad_resolved_roster
+
+    - name: Adopt the resolved durable account plan
+      ansible.builtin.set_fact:
+        homelab_ad_directory_plan: >-
+          {{ homelab_ad_resolved_roster.stdout | from_json }}
+
+    - name: Require the resolved plan to cover exactly the declared roles
+      # The resolver is the authority on names and identifiers; this is the one
+      # thing the role must confirm for itself, because a plan that silently
+      # covered fewer roles than were declared would converge fewer accounts
+      # than the owner asked for and report success.
       ansible.builtin.assert:
         that:
-          - homelab_ad_directory_accounts
-            | map(attribute='password_file', default='')
-            | map('trim') | select('equalto', '') | list | length == 0
+          - homelab_ad_directory_plan.schema == 1
+          - homelab_ad_directory_plan.accounts | length ==
+            homelab_ad_directory_accounts | length
+          - homelab_ad_directory_plan.accounts
+            | map(attribute='contract_role') | sort ==
+            homelab_ad_directory_accounts | sort
+          - homelab_ad_directory_plan.admin_group ==
+            homelab_ad_posix_admin_group
+          - homelab_ad_directory_plan.groups | length ==
+            homelab_ad_posix_group_rids | length
+          - homelab_ad_directory_plan.groups | list | sort ==
+            homelab_ad_posix_group_rids | list | sort
         fail_msg: >-
-          Every durable account needs its own password_file path (prefer a /run
-          path). Do not put the password itself in inventory, Git, an Ansible
-          variable, or a command line.
+          The resolved durable account plan does not cover exactly the declared
+          contract roles, or does not allocate exactly the well-known groups
+          this role verifies. Nothing has been changed on the Controller.
 
     - name: List the directory accounts that already exist
       # What makes the whole section idempotent, and what decides which
@@ -660,53 +722,99 @@
       changed_when: false
 
     - name: Start the durable POSIX allocation from an empty plan
+      # The group allocation is adopted whole from the resolved plan: gidNumber
+      # is base + the group's well-known RID, and that arithmetic lives only in
+      # controller_principals.py. Both groups must carry a gidNumber before any
+      # SSSD client running with ldap_id_mapping = False can resolve them, and a
+      # user's primary gid comes from Domain Users.
       ansible.builtin.set_fact:
         homelab_ad_account_plan: []
-        homelab_ad_account_group_plan: {}
+        homelab_ad_account_group_plan: "{{ homelab_ad_directory_plan.groups }}"
 
-    - name: Derive the durable POSIX group allocation from the well-known RIDs
-      # gidNumber = base + RID, the same rule controller_principals.py applies
-      # to the acceptance roster. Both groups must carry a gidNumber before any
-      # SSSD client running with ldap_id_mapping = False can resolve them, and
-      # a user's primary gid comes from Domain Users.
-      ansible.builtin.set_fact:
-        homelab_ad_account_group_plan: >-
-          {{ homelab_ad_account_group_plan
-             | combine({item.key: homelab_ad_posix_base | int
-                                  + (item.value | int)}) }}
-      loop: "{{ homelab_ad_posix_group_rids | dict2items }}"
-      loop_control:
-        label: "{{ item.key }}"
-
-    - name: Derive the durable POSIX allocation from the declared roster order
-      # uidNumber = base + position, gidNumber = the Domain Users gid, shell and
-      # unixHomeDirectory from the same defaults controller_principals.py pins.
-      # A workstation running SSSD with ldap_id_mapping = False cannot log an
-      # account in at all without these four attributes stored in the
-      # directory, which is why they are computed here rather than left to a
-      # client-side template.
+    - name: Complete the resolved plan with this run's convergence decisions
+      # The resolved entry already carries the account's name, its directory
+      # role and all four rfc2307 attributes an SSSD client with
+      # ldap_id_mapping = False must read out of the directory. This adds only
+      # what is a property of THIS run and of THIS target: where the credential
+      # was staged, whether a rotation was authorized for that role, and whether
+      # the directory already holds the account. No identifier is computed here.
       ansible.builtin.set_fact:
         homelab_ad_account_plan: >-
-          {{ homelab_ad_account_plan + [{
-               'name': item.name,
-               'role': item.role,
-               'password_file': item.password_file,
-               'reset_password': item.reset_password is defined
-                                 and (item.reset_password | bool),
+          {{ homelab_ad_account_plan + [item | combine({
+               'password_file': homelab_ad_account_password_file_template
+                                | replace('{name}', item.name),
+               'reset_password': item.contract_role
+                                 in homelab_ad_account_password_reset_roles,
                'create': item.name | lower not in (
                  homelab_ad_existing_users.stdout_lines | map('trim')
                  | map('lower') | list),
-               'uidNumber': (homelab_ad_posix_base | int) + (position | int),
-               'gidNumber': homelab_ad_account_group_plan[
-                 homelab_ad_posix_primary_group],
-               'loginShell': homelab_ad_posix_login_shell,
-               'unixHomeDirectory': homelab_ad_posix_home_root
-                                    ~ '/' ~ item.name,
-             }] }}
-      loop: "{{ homelab_ad_directory_accounts }}"
+             })] }}
+      loop: "{{ homelab_ad_directory_plan.accounts }}"
       loop_control:
-        index_var: position
+        label: "{{ item.contract_role }}"
+
+    - name: Require a password-file path for every declared durable account
+      # A path, not a value: the file itself is staged out of band, root-owned
+      # and 0600, and is only required to EXIST for an account that does not
+      # exist yet. Asserted in aggregate so no individual path reaches the log.
+      ansible.builtin.assert:
+        that:
+          - homelab_ad_account_plan
+            | map(attribute='password_file', default='')
+            | map('trim') | select('equalto', '') | list | length == 0
+          - homelab_ad_account_plan
+            | map(attribute='password_file', default='')
+            | reject('match', '/') | list | length == 0
+          - homelab_ad_account_plan
+            | map(attribute='password_file', default='') | unique | list
+            | length == homelab_ad_account_plan | length
+        fail_msg: >-
+          Every durable account needs its own absolute password_file path
+          (prefer a /run path), and no two accounts may share one. Check
+          homelab_ad_account_password_file_template. Do not put the password
+          itself in inventory, Git, an Ansible variable, or a command line.
+
+    - name: Read the POSIX identity the directory has already allocated
+      # Asked before anything is written, and only for accounts that exist. A
+      # durable account's uidNumber is the one thing about it that cannot be
+      # re-derived: files on every workstation, its per-user share directory and
+      # every ACL keyed on its POSIX identity all reference that number.
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/samba-tool
+          - user
+          - show
+          - "{{ item.name }}"
+          - --attributes=sAMAccountName,uidNumber
+      register: homelab_ad_account_allocated
+      changed_when: false
+      loop: "{{ homelab_ad_account_plan | rejectattr('create') | list }}"
+      loop_control:
         label: "{{ item.name }}"
+
+    - name: Refuse to renumber a durable account the directory already holds
+      # The rule is role-positional, so this can only fire for a directory whose
+      # accounts were allocated under some other keying -- for instance the
+      # declaration-order keying this role applied before the roster became one
+      # declaration. An account carrying no uidNumber at all is not a renumber:
+      # the driver stages it below.
+      ansible.builtin.assert:
+        that:
+          - >-
+            homelab_ad_account_renumber_enabled | bool or
+            item.stdout is not search('(?m)^uidNumber:') or
+            item.stdout is search('(?m)^uidNumber:\s*'
+                                  ~ item.item.uidNumber ~ '\s*$')
+        fail_msg: >-
+          {{ item.item.name }} already holds a uidNumber in the directory that
+          is not the {{ item.item.uidNumber }} this role's one allocation rule
+          gives its role. Moving it would orphan every file that account owns.
+          Migrate deliberately -- re-own its files and its per-user share
+          directory -- and set homelab_ad_account_renumber_enabled for that one
+          run.
+      loop: "{{ homelab_ad_account_allocated.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
 
     - name: Inspect the password file of every durable account to be created
       # no_log because stat returns a checksum of the file it inspected, which
@@ -769,11 +877,11 @@
               - --groups-json
               - "{{ homelab_ad_account_group_plan | to_json }}"
               - --primary-group
-              - "{{ homelab_ad_posix_primary_group }}"
+              - "{{ homelab_ad_directory_plan.primary_group }}"
               - --admin-group
-              - "{{ homelab_ad_posix_admin_group }}"
+              - "{{ homelab_ad_directory_plan.admin_group }}"
               - --posix-base
-              - "{{ homelab_ad_posix_base }}"
+              - "{{ homelab_ad_directory_plan.posix_base }}"
               - --diagnostic-file
               - /run/homelab-provision-accounts.status
               - "{{ '--allow-password-reset'
@@ -859,12 +967,19 @@
         label: "{{ item.key }}"
 
     - name: Verify every durable administrator is a Domain Admins member
-      # ADR 0055/0063: the domain administrator is a Domain Admins member with
+      # ADR 0055/0063: the DOMAIN administrator is a Domain Admins member with
       # passworded sudo on the workstation, never root and never the local
       # break-glass account. The sudo half lives in the workstation lane; this
       # is the directory half, and it is asserted rather than assumed because a
       # created-but-unprivileged administrator looks like a working account
       # until the day it is needed.
+      #
+      # Checked in BOTH directions, which is the half that was missing. The
+      # `daily_administrator` role maps to `standard` here precisely because it
+      # must NOT be a Domain Admins member -- that separation is what gate 8's
+      # `domain-admin-separate` check proves from this very group's member list,
+      # and an extra member would defeat it silently. The provisioning driver
+      # makes the same two-way assertion at the moment of use.
       ansible.builtin.command:
         argv:
           - /usr/bin/samba-tool
@@ -878,6 +993,11 @@
         (homelab_ad_account_plan | selectattr('role', 'equalto', 'administrator')
          | map(attribute='name')
          | reject('in', homelab_ad_admin_members.stdout_lines | map('trim')
+                        | map('lower') | list)
+         | list | length > 0) or
+        (homelab_ad_account_plan | rejectattr('role', 'equalto', 'administrator')
+         | map(attribute='name')
+         | select('in', homelab_ad_admin_members.stdout_lines | map('trim')
                         | map('lower') | list)
          | list | length > 0)
 

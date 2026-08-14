@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import BinaryIO, Mapping
+from typing import BinaryIO, Mapping, Sequence
 import uuid
 
 from .serial_automation import SerialAutomation, SerialAutomationError
@@ -25,7 +25,11 @@ from .serial_automation import SerialAutomation, SerialAutomationError
 _WORKSTATIONS = Path(__file__).resolve().parents[1] / "workstations"
 if str(_WORKSTATIONS) not in sys.path:
     sys.path.insert(0, str(_WORKSTATIONS))
-from arch_second import DIRECTORY_ROLES, identity_roster  # noqa: E402
+from arch_second import (  # noqa: E402
+    CONTRACT_ROLES,
+    DIRECTORY_ROLES,
+    identity_roster,
+)
 
 
 class ControllerPrincipalError(RuntimeError):
@@ -66,7 +70,9 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
 # ADR 0055: UID and GID come from the directory.  The Arch Workstation lane
 # runs SSSD with ``ldap_id_mapping = False`` (identity_client role), so a
 # principal without directory-stored POSIX attributes cannot log in at all.
-# The allocation is deterministic and public:
+#
+# THIS IS THE ONE DIRECTORY POSIX ALLOCATION RULE.  It is deterministic and
+# public:
 #
 #   users:  uidNumber = 10000 + the principal's ROLE position in
 #           arch_second.DIRECTORY_ROLES (standard user, daily administrator,
@@ -78,7 +84,18 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
 # Keying the user allocation on the ROLE rather than on the NAME is what makes
 # it safe for the owner to rename a principal: renaming standard_user moves no
 # UID, because "10000" belongs to the standard-user role and not to the string
-# "student".  Adding a role would append a UID.
+# "student".  Appending a role appends a UID and moves none of the existing
+# ones, because the position of every earlier role is unchanged.
+#
+# Both consumers derive their numbers from ``directory_account_plan`` below and
+# neither restates the arithmetic:
+#
+#   * the disposable acceptance roster this module stages over the Controller
+#     serial (POSIX_ALLOCATION, _STAGE_PROGRAM);
+#   * the DURABLE roster ansible/roles/domain_controller converges on a
+#     persistent instance, whose variables are rendered on the Ansible control
+#     host by that role's files/resolve-directory-accounts.py -- the role's own
+#     YAML no longer keys anything on declaration order.
 #
 # Every user's gidNumber is the Domain Users gidNumber because Domain Users
 # (RID 513) is each account's Active Directory primary group.  The base sits
@@ -86,11 +103,40 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
 # break-glass account), which ADR 0055 requires to stay local.
 _POSIX_BASE = 10000
 _POSIX_LOGIN_SHELL = "/bin/bash"
+_POSIX_HOME_ROOT = "/home"
 _POSIX_PRIMARY_GROUP = "Domain Users"
 # "Domain Admins" is the privilege group the Arch identity probe resolves
 # with getent (workstations/arch_second.py); both groups must own a
 # gidNumber before any SSSD client can resolve them.
 _POSIX_GROUP_RIDS = {"Domain Users": 513, "Domain Admins": 512}
+_POSIX_ADMIN_GROUP = "Domain Admins"
+
+# The public names of the same constants, for readers outside this module (the
+# domain_controller role's control-host resolver).  Underscored aliases are kept
+# because this module's own tests and templates already read them.
+POSIX_BASE = _POSIX_BASE
+POSIX_LOGIN_SHELL = _POSIX_LOGIN_SHELL
+POSIX_HOME_ROOT = _POSIX_HOME_ROOT
+POSIX_PRIMARY_GROUP = _POSIX_PRIMARY_GROUP
+POSIX_ADMIN_GROUP = _POSIX_ADMIN_GROUP
+POSIX_GROUP_RIDS = dict(_POSIX_GROUP_RIDS)
+
+# Which contract roles are DIRECTORY administrators, in the ``standard`` /
+# ``administrator`` vocabulary the domain_controller role and its provisioning
+# driver speak.  ``daily_administrator`` is deliberately absent: ADR 0055 makes
+# the everyday elevated account a passworded-sudo administrator on the
+# WORKSTATION and never a Domain Admins member, which is exactly the separation
+# gate 8's ``domain-admin-separate`` check proves from the group's member list.
+# The driver (files/provision-accounts.py) asserts the membership in BOTH
+# directions, so a ``standard`` account that somehow held Domain Admins fails
+# convergence rather than passing quietly.
+DIRECTORY_ADMIN_ROLES = ("domain_administrator",)
+# ``local_rescue`` never appears here at all.  DIRECTORY_ROLES already excludes
+# it (ADR 0055/0063 keep the break-glass administrator a LOCAL account at UID
+# 1000), and ``directory_account_plan`` refuses it by name so a hand-written
+# instance variable cannot smuggle it into the directory.
+LOCAL_ONLY_ROLES = tuple(
+    role for role in CONTRACT_ROLES if role not in DIRECTORY_ROLES)
 
 
 def _posix_allocation(
@@ -112,7 +158,7 @@ def _posix_allocation(
             "uidNumber": _POSIX_BASE + index,
             "gidNumber": groups[_POSIX_PRIMARY_GROUP],
             "loginShell": _POSIX_LOGIN_SHELL,
-            "unixHomeDirectory": "/home/" + roster[role],
+            "unixHomeDirectory": _POSIX_HOME_ROOT + "/" + roster[role],
         }
         for index, role in enumerate(DIRECTORY_ROLES)
     }
@@ -144,6 +190,91 @@ def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
 
 
 POSIX_ALLOCATION = _validated_posix_allocation(_posix_allocation())
+
+
+class DirectoryPlanError(ValueError):
+    """A durable directory roster cannot be derived from the contract roles.
+
+    Distinctly named so the domain_controller role's control-host resolver can
+    report a roster fault as a roster fault.  A refusal here stops convergence
+    before anything is installed on the Controller, which is the only place a
+    misdeclared role is cheap to diagnose.
+    """
+
+
+def directory_role(contract_role: str) -> str:
+    """Map one contract role onto the directory's ``standard``/``administrator``.
+
+    ``daily_administrator`` maps to ``standard`` on purpose (see
+    DIRECTORY_ADMIN_ROLES): it is the workstation's passworded-sudo account and
+    must NOT be a Domain Admins member.
+    """
+    if contract_role not in DIRECTORY_ROLES:
+        raise DirectoryPlanError(
+            f"{contract_role!r} is not a directory role")
+    return ("administrator" if contract_role in DIRECTORY_ADMIN_ROLES
+            else "standard")
+
+
+def directory_account_plan(
+    contract_roles: Sequence[str],
+    roster: Mapping[str, str] | None = None,
+) -> list[dict]:
+    """Derive the durable directory accounts for *contract_roles*, in UID order.
+
+    The single derivation both lanes use.  *contract_roles* names WHICH contract
+    roles become directory principals on this instance; it never names an
+    account and never influences a uidNumber, because the returned list is
+    ordered by, and numbered from, each role's position in
+    ``arch_second.DIRECTORY_ROLES``.  So the order the caller writes its roles
+    in is immaterial, renaming an account in the private overlay moves no UID,
+    and declaring one more role appends one UID.
+
+    *roster* is a parameter so a test can derive a plan for a renamed roster
+    without reloading this module; production always uses the resolved one.
+    """
+    if isinstance(contract_roles, str):
+        raise DirectoryPlanError("directory roles must be a list of roles")
+    requested = list(contract_roles)
+    if not requested:
+        raise DirectoryPlanError("no directory role was declared")
+    for role in requested:
+        if not isinstance(role, str):
+            raise DirectoryPlanError("directory role is not a string")
+        if role in LOCAL_ONLY_ROLES:
+            raise DirectoryPlanError(
+                f"{role} is a LOCAL account (ADR 0055/0063) and must never "
+                "become a directory principal")
+        if role not in DIRECTORY_ROLES:
+            raise DirectoryPlanError(
+                f"{role!r} is not one of the contract's directory roles "
+                f"{list(DIRECTORY_ROLES)}")
+    if len(set(requested)) != len(requested):
+        raise DirectoryPlanError("a directory role is declared twice")
+    if roster is None:
+        roster = _ROSTER
+    allocation = _validated_posix_allocation(_posix_allocation(roster))
+    plan = []
+    for role in DIRECTORY_ROLES:
+        if role not in requested:
+            continue
+        name = roster[role]
+        unix = allocation["users"][name]
+        plan.append({
+            "contract_role": role,
+            "name": name,
+            "role": directory_role(role),
+            "uidNumber": unix["uidNumber"],
+            "gidNumber": unix["gidNumber"],
+            "loginShell": unix["loginShell"],
+            "unixHomeDirectory": unix["unixHomeDirectory"],
+        })
+    return plan
+
+
+def directory_group_allocation() -> dict[str, int]:
+    """The well-known groups every SSSD client must be able to resolve."""
+    return dict(_validated_posix_allocation(_posix_allocation())["groups"])
 
 # These programs run inside the disposable Controller.  Their source is
 # encoded only to make it safe to place in one shell word; it contains no
