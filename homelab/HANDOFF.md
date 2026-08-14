@@ -204,20 +204,43 @@ Windows preserved, `TELOS ARCH NVRAM ENTRIES AUTHORED`, join media consumed and
 destroyed), because the one-shot join unit only reaches a disk through a gate-7
 install.
 
-**The open blocker.** Run 4's transcript shows the intended order exactly:
-`TELOS ARCH JOIN MEDIA CONSUMED` -> `TELOS ARCH JOIN VERIFIED` -> the join unit
-finishing -> sssd starting -> the ttyS0 getty -> the prompt. The machine account
-and host keytab are therefore proven good and this is no longer the stale-join
-problem. What remains is that `sssd.service` reaching *active* is not the same as
-its AD backend being *online*: the provider connection completes asynchronously,
-the prompt appears immediately, and `pam_sss` finds the domain offline. Offline
-auth needs a cached credential, which cannot exist -- the disk was installed with
-no user logins and the operator password is generated per run -- so the refusal
-is deterministic and no retry count changes it. The fix under way gates the login
-on an in-guest readiness proof ordered before `systemd-user-sessions.service`,
-the same mechanism the join unit already uses; clock skew against the freshly
-provisioned DC is being ruled out at the same time, since the lifecycle expects
-Kerberos time to be proven.
+| 5 | `arch-identity/run-20260814T131951Z-83e2612decf0` | first run with the readiness gate: it fired correctly, reporting a readiness failure and NOT a refused login |
+| 6 | (aborted) | controller principal staging failed; launched from a tree a lane was mid-edit on |
+| 7 | `arch-identity/run-20260814T135756Z-c72cff0ac44f` | boot nondeterminism: no menu, 146-byte transcript, no `BdsDxe:` line at all |
+| 8 | `arch-identity/run-20260814T140142Z-587985cdf83f` | boot + join proven again; readiness gate fired with full diagnostics |
+
+**Run 8's diagnostics settled the identity question.** The gate prints thirteen
+secret-free fields on failure; grep the transcript for
+`TELOS ARCH DOMAIN DIAGNOSTIC`. They show the directory is **completely
+correct**: `net ads search`, using the host keytab the in-run join wrote,
+returns `operator` with `uidNumber 10001`, `gidNumber 10513`, `loginShell` and
+`unixHomeDirectory`, and `Domain Users` with the matching `gidNumber 10513`. The
+machine principal is in the keytab, LDAP on 389 answers, and the DC name
+resolves. So Kerberos, LDAP, DNS-for-Samba, POSIX attributes and the staged
+principal are all proven good.
+
+What fails is inside SSSD alone: `domain-status` reports `Offline` with
+**`Discovered AD Domain Controllers: None so far`** — its backend never found a
+DC, so it went offline and served nothing, and every lookup logged
+`SSSD is offline`. The target is therefore SSSD's DC discovery (it locates DCs
+by `_ldap._tcp` SRV lookup), not identity, not the POSIX attributes, not the
+keytab, and not the Global Catalog. Note the asymmetry a fix must explain:
+`net ads` reached the DC while SSSD could not discover it.
+
+**Also open: the boot is nondeterministic.** Two of eight runs (2 and 7) started
+no UEFI boot option at all -- console init and then nothing, no `BdsDxe:` line
+-- with byte-identical firmware variables and the same disk as runs that
+succeeded. All three of today's gate-7 bundles do carry the authored
+`Linux Boot Manager` entry, so this is not a missing entry. Aligning the argv
+with gate 10 made it much rarer but did not root-cause it. A re-prepare against
+the same gate-7 disk is cheap (~7 min, no reinstall), so retry on this
+signature -- but it needs a real fix, and the VGA device added for frame
+evidence is still not screenshotted by this lane.
+
+**The open blocker, precisely.** SSSD's backend never discovers a domain
+controller, so it never comes online, so `pam_sss` has nothing to authenticate
+against and no cache to fall back on (the join unit wipes the cache and the
+operator password is generated per run). Everything else in the chain is proven.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
