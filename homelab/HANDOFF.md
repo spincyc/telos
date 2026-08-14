@@ -275,14 +275,33 @@ so the bind uses the machine account and `ad_hostname`'s case cannot affect it.
 Pinning `ldap_sasl_authid` would have pinned the wrong thing while looking like
 a fix.
 
-**The open blocker, precisely.** `sudo -k -S -p '' -i` prints its lecture, then
-`Sorry, try again` -- sudo read something and rejected it, which is its response
-to a wrong password rather than to no input. The domain login immediately before
-it accepted the same credential, so suspect the write discipline (a stdin race
-against `sudo -S`, or the terminator) or sudo's own PAM stack not reaching the
-`pam_sss` the installer inserts into `system-auth`, before suspecting the value.
-The elevation must stay a genuine passworded proof: no NOPASSWD, no dropping
-`-k`.
+| 11 | `arch-identity/run-20260814T155301Z-4b21f9334459` | **ROOT SHELL.** `sudo_elevated`, `sudo_uid: 0`; a boot stall recurred and the new retry recovered it. Only the local-rescue password remains |
+
+**The sudo failure was a race on sudo's stdin.** The elevation gated on a marker
+the shell printed *before* sudo ran, so the harness wrote the credential and then
+typed the next command milliseconds later -- and that line became sudo's
+password. The getty login and the rescue-password paths both wait for the prompt
+of the program that will read them; the elevation now does too, via a
+token-scoped `-p` prompt. It stays a genuine passworded proof: `-k` still
+invalidates the timestamp and the sudoers rule is unchanged.
+
+**The stall retry earned its keep on its first outing, and narrowed the
+mechanism.** Run 11 hit the no-boot signature (`transcript_bytes: 146`, same as
+run 7), the power-cycle recovered it, and the retained evidence answered the open
+question: QMP reported `status: running` with `reason: timed-out`. The vCPU was
+*running*, which kills the stalled-device-emulation and host-I/O candidates and
+leaves a firmware spin in the first ESP read as the surviving hypothesis. A 3 MB
+framebuffer capture and the QMP event stream are retained beside it.
+
+**The open blocker, precisely.** `rescue_password_set` is false: the
+`local-rescue` break-glass password is not being set from the elevated console.
+Gate 7 installs that account with a *disabled* password while the
+`arch-local-rescue` check requires `passwd -S` to report `P`, so this step is
+what makes that check passable at all. `passwd` prompts twice, so the run-10
+lesson -- wait for the prompt of the program that reads, never a marker the shell
+printed earlier -- is the first thing to check.
+
+After this step the eleven lifecycle probes run for the first time ever.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with

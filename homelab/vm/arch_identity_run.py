@@ -193,6 +193,14 @@ RESCUE_PRINCIPAL = str(CONTRACT["principals"]["local_rescue"]["name"])
 #    verdict is now a token-scoped marker or sudo's own re-prompt, and each
 #    outcome names its own layer.
 #
+# The lecture is deliberately NOT suppressed with a `Defaults lecture=never`
+# drop-in.  That would be an installer change, and an installer change costs a
+# fresh gate-7 install; the lecture is harmless once nothing pattern-matches on
+# its shape, and a test pins the outcome pattern against the verbatim lecture
+# at every read boundary.  Neither is any of this a PAM problem: stock Arch
+# ships /etc/pam.d/sudo as `auth include system-auth`, and gate 7 writes
+# pam_sss into that file's auth stack, so sudo's stack does reach SSSD.
+#
 # Failed sudo attempts feed pam_faillock exactly like failed logins (see
 # LOGIN_ATTEMPTS), so the exchange also refuses to burn attempts: a refusal is
 # detected from sudo's second prompt and aborts immediately, leaving one
