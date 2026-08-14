@@ -19,7 +19,7 @@ def firewall():
         gateway="10.1.31.1",
         dns="10.1.31.1",
         update_addresses=frozenset({"198.51.100.11"}),
-        household_networks=("10.0.0.0/21",),
+        household_networks=("10.1.40.0/21",),
     )
 
 
@@ -76,7 +76,7 @@ class TestSimulatedFirewall(unittest.TestCase):
 
     def test_existing_household_subnet_has_a_distinct_counter(self):
         subject = firewall()
-        result = subject.decide(Flow("tcp", "10.0.3.10", 22))
+        result = subject.decide(Flow("tcp", "10.1.43.10", 22))
         self.assertEqual(result, Decision(False, "deny-household"))
         self.assertIn("deny-household packets=1", subject.report())
 

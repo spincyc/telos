@@ -201,6 +201,11 @@ def published_pdfs() -> set[str]:
 # to a sanctioned synthetic range. Scanning only prose is how a captured
 # workstation MAC, a captured disk serial and the real lab subnet reached the
 # tests, the libraries and a fixture unchallenged.
+RFC1918_ADDRESS = r"""(?:
+      10\.\d{1,3}\.\d{1,3}\.\d{1,3}
+    | 192\.168\.\d{1,3}\.\d{1,3}
+    | 172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}
+)"""
 RFC1918_PATTERNS = (
     (re.compile(r"\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "RFC 1918 10/8 address literal"),
     (re.compile(r"\b192\.168\.\d{1,3}\.\d{1,3}\b"), "RFC 1918 192.168/16 address literal"),
@@ -231,6 +236,15 @@ INSTANCE_CODE_PATTERNS = RFC1918_PATTERNS + (
     # a size or an integer bound.
     (re.compile(r"\bS[0-9][A-Z][0-9A-Z]{11,13}\b"), "vendor disk serial"),
     (re.compile(r"serial\W{1,8}\d{12,}", re.IGNORECASE), "vendor disk serial"),
+    # A CIDR is a topology disclosure that its network address alone does not
+    # carry: the size of the block says how the real site is subnetted. The
+    # patterns above stop at the word boundary before the slash, so a real
+    # supernet reached the tests wearing a network address that looks like a
+    # documentation subnet in isolation and this host's real prefix length.
+    # Matching the prefix length into the token makes INSTANCE_SANCTIONED judge
+    # both halves, so a sanctioned network address with an unsanctioned prefix
+    # length is now reported.
+    (re.compile(rf"\b{RFC1918_ADDRESS}/\d{{1,3}}\b", re.VERBOSE), "RFC 1918 CIDR"),
 )
 
 # The synthetic ranges this project draws test values from. A token outside
@@ -240,11 +254,22 @@ INSTANCE_SANCTIONED = re.compile(
     r"""^(?:
           10\.0\.0\.\d{1,3}                        # generic documentation subnet
         | 10\.0\.2\.\d{1,3}                        # QEMU user-mode networking
-        | 10\.0\.3\.\d{1,3}                        # simulated off-segment network
         | 10\.1\.\d{1,3}\.\d{1,3}                  # simulated lab, 10.1.31.0/24 and neighbours
         | 10\.[29]\.1\.\d{1,3}                     # simulated firewall's far networks
         | 172\.(?:16|31)\.\d{1,3}\.\d{1,3}         # generic documentation subnets
         | 192\.168\.\d{1,3}\.\d{1,3}               # generic documentation subnets
+        # Sanctioned CIDRs. Separate from the address branches above because the
+        # anchors here make the prefix length part of what must be excused: a
+        # network address earns no excuse for the block size attached to it,
+        # which is how a real supernet got through. Every prefix length below is
+        # either an RFC-fixed private root or long enough that the block it
+        # names is a single synthetic subnet rather than a site's topology.
+        | 10\.0\.0\.0/(?:8|24)                     # RFC 1918 10/8 root; documentation subnet
+        | 10\.1\.40\.0/21                          # simulated household supernet (deny-household)
+        | 10\.1\.\d{1,3}\.\d{1,3}/(?:2[4-9]|3[0-3]) # simulated lab, /24 and longer only
+        | 172\.16\.0\.0/12                         # RFC 1918 172.16/12 root
+        | 192\.168\.0\.0/16                        # RFC 1918 192.168/16 root
+        | 192\.168\.50\.0/30                       # documentation subnet, netplan unit test
         | 52:54:00(?::[0-9a-f]{2}){3}              # QEMU locally-administered MAC range
         | (?:aa:bb:cc|00:11:22)(?::[0-9a-f]{2}){3} # placeholder MACs
         | (?:00:00:00|01:00:00)(?::[0-9a-f]{2}){3} # the null MAC and the switch model's BPDU address

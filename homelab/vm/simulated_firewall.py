@@ -108,13 +108,17 @@ def acceptance_probe_matrix(
         (Flow("tcp", ntp, 123), Decision(False, "deny-default")),
         (Flow("udp", ntp, 124), Decision(False, "deny-default")),
         (Flow("tcp", update_address, 80), Decision(False, "deny-default")),
-        # Two probes on two different /24s inside the household supernet, so
-        # the rule is proved to match the whole range rather than one subnet.
-        # These deliberately stay outside the simulated lab's own 10.1.31.0/24:
+        # Two probes on two different /24s inside the household supernet
+        # 10.1.40.0/21 that test_simulated_firewall.py configures, so the rule
+        # is proved to match the whole range rather than one subnet. They
+        # deliberately stay outside the simulated lab's own 10.1.31.0/24:
         # deny-household models egress toward the surrounding household network,
-        # which is by definition a different network from the lab.
-        (Flow("icmp", "10.0.0.1"), Decision(False, "deny-household")),
-        (Flow("tcp", "10.0.3.254", 443), Decision(False, "deny-household")),
+        # which is by definition a different network from the lab. Both values
+        # are synthetic and sit inside the project's simulated-lab allocation
+        # root; keep them inside whatever supernet the test passes, or they fall
+        # through to deny-private and the counter assertions there flip.
+        (Flow("icmp", "10.1.40.1"), Decision(False, "deny-household")),
+        (Flow("tcp", "10.1.43.254", 443), Decision(False, "deny-household")),
         (Flow("icmp", "10.2.1.1"), Decision(False, "deny-private")),
         (Flow("tcp", "172.16.1.1", 443), Decision(False, "deny-private")),
         (Flow("tcp", "192.168.1.1", 443), Decision(False, "deny-private")),
