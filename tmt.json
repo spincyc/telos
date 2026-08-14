@@ -1,4 +1,16 @@
 {
-  "tools": {},
+  "tools": {
+    "factory-bundle-firmware-provenance": {
+      "idempotent": true,
+      "json": true,
+      "lang": "python",
+      "mutates": false,
+      "origin": "local",
+      "purpose": "Report a factory bundle's firmware-variables provenance and boot-relevant argv.",
+      "requires": [],
+      "stage": "stable",
+      "usage": "tools/factory-bundle-firmware-provenance [--json] BUNDLE [BUNDLE ...]"
+    }
+  },
   "v": 1
 }

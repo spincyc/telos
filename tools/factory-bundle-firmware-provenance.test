@@ -1,0 +1,129 @@
+#!/bin/sh
+# Test for tools/factory-bundle-firmware-provenance: exit 0 = pass (the stable gate).
+set -eu
+
+# Resolved sibling path: keeps working after a cd into a sandbox.
+tool="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/factory-bundle-firmware-provenance"
+
+# --help always works.
+"$tool" --help >/dev/null
+
+# Work in a throwaway sandbox; the trap cleans up on any exit.
+sandbox="$(mktemp -d)"
+trap 'rm -rf "$sandbox"' EXIT INT TERM
+cd "$sandbox"
+
+# An identity-lane bundle: variables provenance nested under firmware_copy,
+# and an argv carrying the knobs that decide whether a bootloader ever runs.
+mkdir identity
+cat > identity/authorization.json <<'JSON'
+{
+  "firmware_copy": {
+    "path": "/runs/identity/OVMF_VARS.fd",
+    "source": "/runs/install/OVMF_VARS.fd",
+    "policy": "gate7-installed"
+  }
+}
+JSON
+cat > identity/qemu-command.json <<'JSON'
+{
+  "schema": 1,
+  "argv": [
+    "qemu-system-x86_64", "-m", "8192", "-display", "none",
+    "-serial", "stdio", "-boot", "order=c,menu=off",
+    "-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF_CODE.fd",
+    "-drive", "if=pflash,format=raw,file=/runs/identity/OVMF_VARS.fd",
+    "-device", "VGA",
+    "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001"
+  ]
+}
+JSON
+
+"$tool" --json identity > out.json
+grep -q '"v":1' out.json
+python3 - <<'PY'
+import json
+row = json.load(open("out.json"))["bundles"][0]
+assert row["vars_policy"] == "gate7-installed", row
+assert row["vars_source"] == "/runs/install/OVMF_VARS.fd", row
+assert row["argv_recorded"] is True, row
+assert row["boot_order"] == "order=c,menu=off", row
+assert row["serial"] == "stdio", row
+assert row["memory_mib"] == "8192", row
+# A display device is what makes QMP screendump work; bootindex is what
+# competes with authored NVRAM entries. Both must be reported, not guessed.
+assert row["display_device"] is True, row
+assert row["boot_index"] is False, row
+assert len(row["pflash"]) == 2, row
+PY
+
+# The dual-boot shape: vars_source and pristine_vars at the top level, under
+# an "authorization" envelope, and no recorded argv at all.
+mkdir dualboot
+cat > dualboot/authorization.json <<'JSON'
+{
+  "pristine_vars": false,
+  "authorization": {
+    "vars_source": "gate7-installed",
+    "gate7": {"vars_path": "/runs/install/OVMF_VARS.fd"}
+  }
+}
+JSON
+"$tool" --json dualboot > out.json
+python3 - <<'PY'
+import json
+row = json.load(open("out.json"))["bundles"][0]
+assert row["vars_source"] == "gate7-installed", row
+assert row["pristine_vars"] is False, row
+# Absent argv is reported as absent, never as knobs that were not set.
+assert row["argv_recorded"] is False, row
+assert "boot_order" not in row, row
+PY
+
+# A bootindex-pinned boot is reported as such: this is the delta that made one
+# gate-8 boot render a menu and the next render nothing.
+mkdir pinned
+cp identity/authorization.json pinned/
+cat > pinned/qemu-command.json <<'JSON'
+{"argv": ["qemu-system-x86_64", "-device", "nvme,drive=osdisk,bootindex=1"]}
+JSON
+"$tool" --json pinned > out.json
+python3 -c '
+import json
+row = json.load(open("out.json"))["bundles"][0]
+assert row["boot_index"] is True, row
+assert row["display_device"] is False, row
+'
+
+# Rows come back in the order given, one per bundle.
+"$tool" --json identity dualboot pinned > out.json
+python3 -c '
+import json
+rows = json.load(open("out.json"))["bundles"]
+assert [r["bundle"] for r in rows] == ["identity", "dualboot", "pinned"], rows
+'
+
+# Byte-stable for unchanged inputs.
+"$tool" --json identity dualboot > again.json
+cmp out.json out.json
+"$tool" --json identity dualboot > second.json
+cmp again.json second.json
+
+# The plain output names every field it reports.
+"$tool" identity | grep -q '^vars_policy	gate7-installed$'
+
+# Fail-closed, cli-v1 error contract: a directory with no authorization.json
+# is an error on stderr with nothing on stdout, not a silently empty row.
+mkdir empty
+if "$tool" --json empty > stdout.txt 2> stderr.txt; then exit 1; fi
+test ! -s stdout.txt
+grep -q '"status":"error"' stderr.txt
+grep -q '"v":1' stderr.txt
+
+# A path that is not a directory is refused the same way.
+: > regular-file
+if "$tool" --json regular-file > /dev/null 2> stderr.txt; then exit 1; fi
+grep -q '"status":"error"' stderr.txt
+
+# At least one bundle is required.
+if "$tool" --json > /dev/null 2>&1; then exit 1; fi

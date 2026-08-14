@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Report the firmware and boot provenance of factory acceptance bundles.
+
+Answers one question: what did this bundle actually boot? Each row pairs the
+firmware variables a bundle was given (their source and recorded policy) with
+the boot-relevant QEMU argv it ran, so two bundles can be compared directly.
+
+That pairing is what separated a gate-8 boot that rendered no systemd-boot
+menu from a gate-10 boot that did: the recorded diagnosis blamed serial-console
+routing, while the artifacts showed pristine firmware variables carrying no
+bootloader entry. A `policy` field can also disagree with reality when an
+operator overrode the variables source, so both are always reported.
+
+Usage: tools/factory-bundle-firmware-provenance [--json] BUNDLE [BUNDLE ...]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+PROTOCOL_VERSION = 1
+
+#: Read, never written. A bundle is any directory holding these.
+AUTHORIZATION = "authorization.json"
+QEMU_COMMAND = "qemu-command.json"
+
+#: The boot-relevant argv knobs. Everything else in the command line is
+#: noise for this question.
+FLAG_ARGUMENTS = ("-boot", "-serial", "-display", "-m")
+
+
+def _load(path: Path) -> dict[str, object]:
+    with path.open(encoding="utf-8") as handle:
+        loaded = json.load(handle)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} is not a JSON object")
+    return loaded
+
+
+def _first_string(mapping: dict[str, object], *keys: str) -> str | None:
+    """The first present key whose value is a non-empty string."""
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _firmware(authorization: dict[str, object]) -> dict[str, object]:
+    """Variables provenance, from either bundle shape.
+
+    The identity lanes nest it under ``firmware_copy``; the dual-boot lane
+    records ``vars_source``/``pristine_vars`` at the top level, sometimes
+    under an ``authorization`` envelope.
+    """
+    envelope = authorization.get("authorization")
+    inner = envelope if isinstance(envelope, dict) else {}
+    copy = authorization.get("firmware_copy")
+    copied = copy if isinstance(copy, dict) else {}
+    pristine = authorization.get("pristine_vars")
+    if pristine is None:
+        pristine = inner.get("pristine_vars")
+    gate7 = inner.get("gate7")
+    gate7_vars = gate7.get("vars_path") if isinstance(gate7, dict) else None
+    return {
+        "vars_policy": _first_string(copied, "policy"),
+        "vars_source": (
+            _first_string(copied, "source")
+            or _first_string(inner, "vars_source")
+            or _first_string(authorization, "vars_source")
+            or (gate7_vars if isinstance(gate7_vars, str) else None)
+        ),
+        "pristine_vars": pristine if isinstance(pristine, bool) else None,
+    }
+
+
+def _boot(argv: list[str]) -> dict[str, object]:
+    """The boot-relevant argv knobs, order-independent."""
+    flags: dict[str, str | None] = {name: None for name in FLAG_ARGUMENTS}
+    devices: list[str] = []
+    pflash: list[str] = []
+    for index, item in enumerate(argv):
+        following = argv[index + 1] if index + 1 < len(argv) else None
+        if item in flags and following is not None:
+            flags[item] = following
+        elif item == "-device" and following is not None:
+            devices.append(following)
+        elif item == "-drive" and following is not None:
+            if "if=pflash" in following:
+                pflash.append(following)
+    return {
+        "boot_order": flags["-boot"],
+        "serial": flags["-serial"],
+        "display": flags["-display"],
+        "memory_mib": flags["-m"],
+        # A display device is what makes QMP screendump work at all.
+        "display_device": any(
+            item.split(",", 1)[0] in ("VGA", "virtio-vga", "qxl-vga")
+            for item in devices
+        ),
+        "boot_index": any("bootindex=" in item for item in devices),
+        "pflash": pflash,
+    }
+
+
+def provenance(bundle: Path) -> dict[str, object]:
+    """One bundle's firmware and boot provenance."""
+    if not bundle.is_dir():
+        raise ValueError(f"{bundle} is not a bundle directory")
+    authorization_path = bundle / AUTHORIZATION
+    if not authorization_path.is_file():
+        raise ValueError(f"{bundle} carries no {AUTHORIZATION}")
+    row: dict[str, object] = {"bundle": str(bundle)}
+    row.update(_firmware(_load(authorization_path)))
+    command_path = bundle / QEMU_COMMAND
+    if command_path.is_file():
+        argv = _load(command_path).get("argv")
+        if not isinstance(argv, list) or not all(
+                isinstance(item, str) for item in argv):
+            raise ValueError(f"{command_path} carries no string argv")
+        row.update(_boot(argv))
+        row["argv_recorded"] = True
+    else:
+        # Not every lane records its argv; say so rather than implying the
+        # knobs were absent.
+        row["argv_recorded"] = False
+    return row
+
+
+def run(bundles: list[Path]) -> dict[str, object]:
+    """Produce one provenance row per bundle, in the order given."""
+    return {"bundles": [provenance(bundle) for bundle in bundles]}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="factory-bundle-firmware-provenance",
+        description=(
+            "Report the firmware variables provenance and boot-relevant QEMU "
+            "argv of factory acceptance bundles."
+        ),
+    )
+    parser.add_argument(
+        "bundle",
+        nargs="+",
+        type=Path,
+        help="a factory run bundle directory holding authorization.json",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one compact key-sorted JSON object (cli-v1)",
+    )
+    arguments = parser.parse_args(argv)
+    try:
+        payload = run(arguments.bundle)
+    except Exception as error:
+        # cli-v1 error contract: exactly one compact key-sorted JSON object
+        # on stderr, nothing on stdout, stable code plus exit category.
+        message = str(error) or error.__class__.__name__
+        if arguments.json:
+            print(
+                json.dumps(
+                    {
+                        "code": "internal",
+                        "error": message,
+                        "status": "error",
+                        "v": PROTOCOL_VERSION,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"factory-bundle-firmware-provenance: {message}",
+                file=sys.stderr)
+        return 70
+    if arguments.json:
+        print(
+            json.dumps(
+                {**payload, "v": PROTOCOL_VERSION},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+    for row in payload["bundles"]:
+        for key, value in sorted(row.items()):
+            print(f"{key}\t{value}")
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
