@@ -109,6 +109,32 @@ ARCH_DRIVE_CHECKS = (
 CONTROLLER_OUTCOME_CHECKS = (
     "controller-ready", "controller-offline", "controller-restored")
 
+# The measured data lines each check prints before its verdict, taken from the
+# same marker maps the rendered probe and the drive share, so the double cannot
+# drift from the real console contract.
+sys.path.insert(0, str(ROOT))
+from workstations.arch_second import (  # noqa: E402
+    STORAGE_ATTACHED_MEASUREMENT_MARKERS,
+    STORAGE_LOGIN_SECONDS_MARKER,
+)
+from vm.controller_principals import POSIX_ALLOCATION  # noqa: E402
+
+MEASURED_MARKERS: dict[str, dict[str, str]] = {
+    "arch-storage-attached": dict(STORAGE_ATTACHED_MEASUREMENT_MARKERS),
+    "arch-storage-absent-login": {
+        "login_seconds": STORAGE_LOGIN_SECONDS_MARKER},
+}
+# What a converging guest measures.  The UID/GID pair is the directory's own
+# staged rfc2307 allocation for the mounting principal, not a chosen number:
+# the producer refuses a storage pass whose identifiers disagree with it.
+_STAGED_OPERATOR = POSIX_ALLOCATION["users"][OPERATOR_PRINCIPAL]
+DEFAULT_MEASUREMENTS: dict[str, int] = {
+    "owner_uid": int(_STAGED_OPERATOR["uidNumber"]),
+    "owner_gid": int(_STAGED_OPERATOR["gidNumber"]),
+    "file_mtime": 1786000000,
+    "login_seconds": 4,
+}
+
 
 class _FakeMatch:
     """Match double whose numbered *and named* groups are scripted."""
@@ -125,28 +151,42 @@ class _FakeMatch:
 class FakeSerialChannel:
     """A scripted stand-in for SerialAutomation's low-level surface.
 
-    ``results`` maps a check name to "PASS", "FAIL", or "TIMEOUT" (plus
-    "PASS_WITHOUT_SECONDS" for the storage-absent probe, which then skips
-    its measured data line). The channel records every command it is asked
-    to send and answers each probe with the scripted verdict, so a drive
-    can be exercised deterministically.
+    ``results`` maps a check name to "PASS", "FAIL", or "TIMEOUT". Two further
+    verdicts model a guest that answers without the measurements its check
+    requires: "PASS_WITHOUT_SECONDS" (historical name, storage-absent) and
+    "PASS_WITHOUT_MEASUREMENT" (any measured check) withhold every data line.
+    The channel records every command it is asked to send, emits one data line
+    per measured field of ``MEASURED_MARKERS`` and then the scripted verdict,
+    so a drive can be exercised deterministically.
     """
 
     def __init__(self, results: dict[str, str], *,
-                 login_seconds: int = 4) -> None:
+                 login_seconds: int = 4,
+                 measurements: dict[str, int] | None = None) -> None:
         self.token = "deadbeefcafef00d"
         self.results = results
-        self.login_seconds = login_seconds
+        self.measurements = dict(DEFAULT_MEASUREMENTS)
+        self.measurements["login_seconds"] = login_seconds
+        if measurements:
+            self.measurements.update(measurements)
         self.sent: list[bytes] = []
         self._pending: str | None = None
-        self._data_line_sent = False
+        self._data_lines_sent = 0
+
+    @property
+    def login_seconds(self) -> int:
+        return self.measurements["login_seconds"]
+
+    @login_seconds.setter
+    def login_seconds(self, value: int) -> None:
+        self.measurements["login_seconds"] = value
 
     def _send(self, value: bytes, event: str) -> None:
         self.sent.append(value)
         parts = value.decode("ascii").split()
         # /usr/local/sbin/homelab-arch-identity-probe <check> <token>
         self._pending = parts[1]
-        self._data_line_sent = False
+        self._data_lines_sent = 0
 
     def _wait(self, pattern: bytes, label: str):
         check = self._pending
@@ -158,14 +198,25 @@ class FakeSerialChannel:
         key = check.upper().replace("-", "_")
         expected = f"__TELOS_ARCH_{key}_{self.token}=".encode("ascii")
         assert re.escape(expected) in pattern, (pattern, expected)
-        if check == "arch-storage-absent-login":
-            if not self._data_line_sent and verdict != "PASS_WITHOUT_SECONDS":
-                self._data_line_sent = True
-                return _FakeMatch(
-                    {1: str(self.login_seconds).encode("ascii"), 2: None})
-            passed = verdict in ("PASS", "PASS_WITHOUT_SECONDS")
-            return _FakeMatch({1: None, 2: b"PASS" if passed else b"FAIL"})
-        return _FakeMatch(b"PASS" if verdict == "PASS" else b"FAIL")
+        markers = MEASURED_MARKERS.get(check, {})
+        fields = list(markers)
+        withheld = verdict in (
+            "PASS_WITHOUT_SECONDS", "PASS_WITHOUT_MEASUREMENT")
+        if fields and not withheld and self._data_lines_sent < len(fields):
+            index = self._data_lines_sent
+            field = fields[index]
+            # The drive must have built a token-scoped pattern for this data
+            # marker too, or a real guest's line would never be read.
+            marker = f"{markers[field]}{self.token}=".encode("ascii")
+            assert re.escape(marker) in pattern, (pattern, marker)
+            self._data_lines_sent += 1
+            groups = {position: None for position in range(1, len(fields) + 2)}
+            groups[index + 1] = str(self.measurements[field]).encode("ascii")
+            return _FakeMatch(groups)
+        passed = verdict.startswith("PASS")
+        groups = {position: None for position in range(1, len(fields) + 1)}
+        groups[len(fields) + 1] = b"PASS" if passed else b"FAIL"
+        return _FakeMatch(groups)
 
 
 def passing_windows_events() -> list[dict[str, object]]:
@@ -270,18 +321,41 @@ class ProducerJudgeAgreementTests(unittest.TestCase):
     def test_check_details_match_the_valid_events_fixture(self):
         # The producer's field templates must equal the fixture the judge is
         # exercised with, or the two could silently diverge.  Fields the
-        # producer measures live (MEASURED_CHECK_FIELDS) are excluded from
-        # the static template but must exist in the fixture.
+        # producer measures live (MEASURED_CHECK_FIELDS) are excluded from the
+        # static template; the fixture is the JUDGE's contract, so it carries
+        # only the measured fields the judge itself grades (see
+        # test_judge_graded_measurements_are_in_the_fixture).
         from homelab.tests.test_identity_lifecycle import valid_events
         for item in valid_events(self.contract):
             check = item["check"]
             fields = {k: v for k, v in item.items()
                       if k not in {"check", "result", "external_access"}}
             measured = set(MEASURED_CHECK_FIELDS.get(check, ()))
-            for name in measured:
-                self.assertIn(name, fields, check)
+            # Nothing may appear in the fixture from nowhere: every field is
+            # either a static template field or one the producer measures.
+            self.assertEqual(
+                set(fields) - measured, set(CHECK_DETAILS[check]), check)
             static = {k: v for k, v in fields.items() if k not in measured}
             self.assertEqual(static, CHECK_DETAILS[check], check)
+
+    def test_judge_graded_measurements_are_in_the_fixture(self):
+        # login_seconds is graded by the judge, so the judge's own fixture must
+        # carry it.  The three arch-storage-attached measurements are NOT graded
+        # by the judge: gate 9's contract row requires them to be RECORDED
+        # ("Record UID/GID and timestamp measurements before reconsidering
+        # NFS"), and an audit found the probe emitted none of them, so this
+        # producer enforces them instead.  That asymmetry is deliberate and
+        # stated here so a later reader does not "fix" it by loosening the
+        # producer.
+        from homelab.tests.test_identity_lifecycle import valid_events
+        fixture = {item["check"]: item for item in valid_events(self.contract)}
+        self.assertIn(
+            "login_seconds", fixture["arch-storage-absent-login"])
+        for name in MEASURED_CHECK_FIELDS["arch-storage-attached"]:
+            self.assertNotIn(name, fixture["arch-storage-attached"])
+        self.assertEqual(
+            MEASURED_CHECK_FIELDS["arch-storage-attached"],
+            ("owner_uid", "owner_gid", "file_mtime"))
 
     def test_producer_order_matches_the_contract(self):
         self.assertEqual(
@@ -320,11 +394,65 @@ class ProducerJudgeAgreementTests(unittest.TestCase):
             drive_results={
                 "arch-storage-absent-login": "PASS_WITHOUT_SECONDS"})
         with self.assertRaisesRegex(
-                ArchIdentityError, "measured login duration") as caught:
+                ArchIdentityError,
+                "passed without its measured login_seconds") as caught:
             run_lifecycle(session)
         self.assertEqual(
             caught.exception.check, "arch-storage-absent-login")
         self.assertIn("stop", session.events)
+
+    def test_storage_attached_pass_without_measurements_is_refused(self):
+        # Gate 9's UID/GID and timestamp measurements are enforced the same way
+        # the login duration is: a guest that answers PASS without printing them
+        # is a producer failure, never an event with a fabricated number in it.
+        session = FakeSession(
+            drive_results={
+                "arch-storage-attached": "PASS_WITHOUT_MEASUREMENT"})
+        with self.assertRaisesRegex(
+                ArchIdentityError,
+                "passed without its measured owner_uid, owner_gid, "
+                "file_mtime") as caught:
+            run_lifecycle(session)
+        self.assertEqual(caught.exception.check, "arch-storage-attached")
+        self.assertIn("stop", session.events)
+
+    def test_storage_measurements_reach_the_evidence(self):
+        session = FakeSession()
+        session.channel.measurements["file_mtime"] = 1786000123
+        events = run_lifecycle(session)
+        attached = next(item for item in events
+                        if item["check"] == "arch-storage-attached")
+        staged = POSIX_ALLOCATION["users"][OPERATOR_PRINCIPAL]
+        self.assertEqual(attached["owner_uid"], int(staged["uidNumber"]))
+        self.assertEqual(attached["owner_gid"], int(staged["gidNumber"]))
+        self.assertEqual(attached["file_mtime"], 1786000123)
+        # The measurements are additive: the judged fields are untouched.
+        for name, value in CHECK_DETAILS["arch-storage-attached"].items():
+            self.assertEqual(attached[name], value)
+        lifecycle.judge(self.contract, events)
+
+    def test_storage_uid_gid_must_be_the_staged_directory_identity(self):
+        # Recording the identifiers proves they were observed; comparing them
+        # against the Controller's deterministic rfc2307 allocation is what
+        # makes them a proof of UID/GID stability.  A mismatch means SSSD
+        # resolved the principal through some other mapping -- exactly what
+        # ldap_id_mapping = False exists to prevent -- and that is a lifecycle
+        # failure, not a number to record and move past.
+        staged = POSIX_ALLOCATION["users"][OPERATOR_PRINCIPAL]
+        for field, wrong in (
+            ("owner_uid", int(staged["uidNumber"]) + 1),
+            ("owner_gid", int(staged["gidNumber"]) + 1),
+        ):
+            with self.subTest(field=field):
+                session = FakeSession()
+                session.channel.measurements[field] = wrong
+                with self.assertRaisesRegex(
+                        ArchIdentityError,
+                        f"measured {field}={wrong}") as caught:
+                    run_lifecycle(session)
+                self.assertEqual(
+                    caught.exception.check, "arch-storage-attached")
+                self.assertIn("stop", session.events)
 
     def test_drive_builds_token_scoped_probe_commands(self):
         channel = FakeSerialChannel({})
@@ -411,7 +539,13 @@ class WindowsEvidenceMergeTests(unittest.TestCase):
                     if not check.startswith("windows-")}
         assembled = assemble_evidence(
             outcomes, events,
-            measurements={"arch-storage-absent-login": {"login_seconds": 4}})
+            measurements={
+                "arch-storage-absent-login": {"login_seconds": 4},
+                "arch-storage-attached": dict(
+                    (name, DEFAULT_MEASUREMENTS[name])
+                    for name in MEASURED_CHECK_FIELDS["arch-storage-attached"]
+                ),
+            })
         joined = next(e for e in assembled if e["check"] == "windows-joined")
         self.assertEqual(joined.get("observed_at"), "2026-08-10T00:00:00Z")
 

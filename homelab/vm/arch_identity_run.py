@@ -126,11 +126,20 @@ CHECK_DETAILS: dict[str, dict[str, object]] = {
         "login_bound_seconds": CONTRACT["login_bound_seconds"]},
 }
 
-# Fields the judge requires that are *measured live* rather than templated:
-# the guest probe prints the observed login duration as a token-scoped data
-# line and the producer merges it into the event.  A passing event without
-# its measurement is refused rather than fabricated.
+# Fields that are *measured live* rather than templated: the guest probe prints
+# each one as a token-scoped data line before its verdict and the producer
+# merges it into the event.  A passing event without its measurement is refused
+# rather than fabricated.
+#
+# ``login_seconds`` is required by the judge.  The three storage-attached fields
+# are required by gate 9's contract row -- "Record UID/GID and timestamp
+# measurements before reconsidering NFS" -- which the 2026-08-14 audit found the
+# probe did not emit at all.  The judge does not (yet) grade them, so they are
+# enforced HERE: this producer refuses to record arch-storage-attached as a pass
+# without all three, which is the only place that guarantee can live while the
+# judge is owned by another module.
 MEASURED_CHECK_FIELDS: dict[str, tuple[str, ...]] = {
+    "arch-storage-attached": ("owner_uid", "owner_gid", "file_mtime"),
     "arch-storage-absent-login": ("login_seconds",),
 }
 
@@ -797,6 +806,50 @@ class ArchIdentityDrive:
         )
         return match.group(1) == b"PASS"
 
+    def _probe_measured(
+        self, check: str, markers: Mapping[str, str],
+    ) -> tuple[bool, dict[str, int]]:
+        """Run one bounded proof that also prints token-scoped measurements.
+
+        The guest prints one integer data line per field of *markers* before its
+        verdict, so a single alternation reads both and the verdict ends the
+        read no matter how many data lines preceded it.  A ``PASS`` missing any
+        measurement is refused: this producer never fabricates a number the
+        guest did not print, and the guest never prints one it did not observe.
+        """
+        token = self.channel.token
+        command = f"{PROBE_HELPER} {check} {token}".encode("ascii")
+        self.channel._send(command, f"arch-probe-{check}-sent")
+        ordered = tuple(markers.items())
+        verdict_prefix = (
+            f"__TELOS_ARCH_{self._marker_key(check)}_{token}=".encode("ascii"))
+        alternatives = [
+            re.escape(f"{marker}{token}=".encode("ascii")) + rb"([0-9]+)"
+            for _, marker in ordered
+        ]
+        alternatives.append(
+            re.escape(verdict_prefix) + rb"(PASS|FAIL)\b")
+        pattern = rb"(?:" + rb"|".join(alternatives) + rb")"
+        measured: dict[str, int] = {}
+        while True:
+            match = self.channel._wait(
+                pattern, f"arch-probe-{check}-observed")
+            for index, (field, _) in enumerate(ordered, start=1):
+                if match.group(index) is not None:
+                    measured[field] = int(match.group(index))
+                    break
+            else:
+                passed = match.group(len(ordered) + 1) == b"PASS"
+                break
+        if passed:
+            missing = [field for field, _ in ordered if field not in measured]
+            if missing:
+                raise ArchIdentityError(
+                    f"{check} passed without its measured "
+                    + ", ".join(missing),
+                    check=check)
+        return passed, measured
+
     def prove_joined(self) -> bool:
         """`net ads testjoin`: a live secure channel and machine account."""
         return self._probe("arch-joined")
@@ -829,15 +882,25 @@ class ArchIdentityDrive:
         """After reconnect, SSSD resolves the directory identity again."""
         return self._probe("arch-identity-restored")
 
-    def prove_storage_attached(self) -> bool:
-        """The reachable per-user SMB share mounts with the user's identity."""
-        return self._probe("arch-storage-attached")
+    def prove_storage_attached(self) -> tuple[bool, dict[str, int]]:
+        """The reachable per-user SMB share mounts with the user's identity.
+
+        Gate 9 requires UID/GID and timestamp measurements from this check, so
+        the guest prints three token-scoped data lines before its verdict: the
+        directory's rfc2307 identifiers for the mounting principal and the
+        server-recorded mtime of the file its round trip wrote.
+        """
+        from homelab.workstations.arch_second import (
+            STORAGE_ATTACHED_MEASUREMENT_MARKERS)
+
+        return self._probe_measured(
+            "arch-storage-attached", STORAGE_ATTACHED_MEASUREMENT_MARKERS)
 
     def prove_storage_denied(self) -> bool:
         """A foreign user's share is refused while storage is reachable."""
         return self._probe("arch-storage-denied")
 
-    def prove_storage_absent_login(self) -> tuple[bool, int | None]:
+    def prove_storage_absent_login(self) -> tuple[bool, dict[str, int]]:
         """With the storage target absent, login stays bounded and allowed.
 
         The guest probe prints one token-scoped data line with the measured
@@ -848,31 +911,9 @@ class ArchIdentityDrive:
         from homelab.workstations.arch_second import (
             STORAGE_LOGIN_SECONDS_MARKER)
 
-        check = "arch-storage-absent-login"
-        token = self.channel.token
-        command = f"{PROBE_HELPER} {check} {token}".encode("ascii")
-        self.channel._send(command, f"arch-probe-{check}-sent")
-        data_prefix = f"{STORAGE_LOGIN_SECONDS_MARKER}{token}=".encode(
-            "ascii")
-        verdict_prefix = (
-            f"__TELOS_ARCH_{self._marker_key(check)}_{token}=".encode(
-                "ascii"))
-        pattern = (
-            rb"(?:" + re.escape(data_prefix) + rb"([0-9]+)|"
-            + re.escape(verdict_prefix) + rb"(PASS|FAIL)\b)")
-        seconds: int | None = None
-        while True:
-            match = self.channel._wait(pattern, f"arch-probe-{check}-observed")
-            if match.group(1) is not None:
-                seconds = int(match.group(1))
-                continue
-            passed = match.group(2) == b"PASS"
-            break
-        if passed and seconds is None:
-            raise ArchIdentityError(
-                f"{check} passed without its measured login duration",
-                check=check)
-        return passed, seconds
+        return self._probe_measured(
+            "arch-storage-absent-login",
+            {"login_seconds": STORAGE_LOGIN_SECONDS_MARKER})
 
 
 # --------------------------------------------------------------------------
@@ -961,6 +1002,64 @@ def _probe_check(
         ) from error
 
 
+def _measured_check(
+    outcomes: dict[str, bool],
+    measurements: dict[str, dict[str, object]],
+    check: str,
+    prove: Callable[[], tuple[bool, Mapping[str, int]]],
+) -> None:
+    """Run one bounded proof that also returns its live measurements.
+
+    Same failure binding as ``_probe_check``; the measured fields are recorded
+    separately so ``assemble_evidence`` can refuse a pass that is missing one
+    instead of writing an event with a fabricated number in it.
+    """
+    try:
+        passed, measured = prove()
+    except lifecycle.EvidenceError:
+        raise
+    except ArchIdentityError:
+        raise
+    except Exception as error:  # bounded serial failure: name the stage
+        raise ArchIdentityError(
+            f"{check} proof failed on the console: {type(error).__name__}",
+            check=check,
+        ) from error
+    outcomes[check] = passed
+    if measured:
+        measurements[check] = dict(measured)
+
+
+def _require_directory_identity(measured: Mapping[str, object]) -> None:
+    """Refuse a storage pass whose UID/GID are not the staged directory ones.
+
+    Recording the identifiers proves they were observed; comparing them against
+    the deterministic rfc2307 allocation the disposable Controller staged
+    (``controller_principals.POSIX_ALLOCATION``) is what makes them a proof of
+    the UID/GID stability gate 8 asks for rather than two numbers in a file.  A
+    mismatch means SSSD resolved the mounting principal through some other
+    mapping -- exactly what ``ldap_id_mapping = False`` exists to prevent -- and
+    that is a lifecycle failure, not a measurement to record and move past.
+
+    Imported lazily so the module keeps no import-time dependency on the
+    Controller-side staging code.
+    """
+    from .controller_principals import POSIX_ALLOCATION
+
+    staged = POSIX_ALLOCATION["users"][OPERATOR_PRINCIPAL]
+    expected = {
+        "owner_uid": int(staged["uidNumber"]),
+        "owner_gid": int(staged["gidNumber"]),
+    }
+    for field, value in expected.items():
+        if measured.get(field) != value:
+            raise ArchIdentityError(
+                "arch-storage-attached measured "
+                f"{field}={measured.get(field)!r}, but the directory staged "
+                f"{value} for {OPERATOR_PRINCIPAL}",
+                check="arch-storage-attached")
+
+
 def run_lifecycle(
     session: ArchIdentitySession,
 ) -> list[dict[str, object]]:
@@ -1004,25 +1103,19 @@ def run_lifecycle(
         # (after the operator login primed the Kerberos ticket the sec=krb5
         # mounts need), then the target is made unreachable so the bounded,
         # storage-independent login can be proven honestly.
-        _probe_check(
-            outcomes, "arch-storage-attached", drive.prove_storage_attached)
+        measurements: dict[str, dict[str, object]] = {}
+        _measured_check(
+            outcomes, measurements, "arch-storage-attached",
+            drive.prove_storage_attached)
+        if outcomes["arch-storage-attached"]:
+            _require_directory_identity(
+                measurements["arch-storage-attached"])
         _probe_check(
             outcomes, "arch-storage-denied", drive.prove_storage_denied)
         session.make_storage_unreachable()
-        measurements: dict[str, dict[str, object]] = {}
-        try:
-            passed, seconds = drive.prove_storage_absent_login()
-        except (lifecycle.EvidenceError, ArchIdentityError):
-            raise
-        except Exception as error:  # bounded serial failure: name the stage
-            raise ArchIdentityError(
-                "arch-storage-absent-login proof failed on the console: "
-                + type(error).__name__,
-                check="arch-storage-absent-login") from error
-        outcomes["arch-storage-absent-login"] = passed
-        if seconds is not None:
-            measurements["arch-storage-absent-login"] = {
-                "login_seconds": seconds}
+        _measured_check(
+            outcomes, measurements, "arch-storage-absent-login",
+            drive.prove_storage_absent_login)
 
         events = assemble_evidence(
             outcomes, session.windows_evidence(),

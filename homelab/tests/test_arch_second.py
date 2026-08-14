@@ -32,7 +32,8 @@ from workstations.arch_second import (
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
     PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH, SSSD_CACHE_GLOB,
     SSSD_CHILD_BINARIES, SSSD_CHILD_LOG_NAMES, SSSD_SERVICES,
-    STORAGE_HOST_LABEL,
+    STORAGE_ATTACHED_MEASUREMENT_MARKERS, STORAGE_DIAGNOSTIC_MARKER,
+    STORAGE_HOST_LABEL, STORAGE_MOUNT_ERROR_PATH,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
     WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
@@ -585,10 +586,15 @@ class ArchSecondTests(unittest.TestCase):
                       script)
         self.assertIn(STORAGE_PROBE_ROOT, script)
         # The measured login duration is reported as a token-scoped data
-        # marker the gate-8 drive records as evidence.
+        # marker the gate-8 drive records as evidence.  One emitter renders
+        # every such marker, so the prefix is asserted on the emitter and the
+        # field name on the call.
         self.assertIn(
-            f"printf '{STORAGE_LOGIN_SECONDS_MARKER}%s=%s\\n' "
-            '"$token" "$elapsed"', script)
+            "printf '__TELOS_ARCH_%s_%s=%s\\n' \"$1\" \"$token\" \"$2\"",
+            script)
+        self.assertIn('data STORAGE_LOGIN_SECONDS "$elapsed"', script)
+        self.assertEqual(
+            STORAGE_LOGIN_SECONDS_MARKER, "__TELOS_ARCH_STORAGE_LOGIN_SECONDS_")
         # The login bound comes from the identity-lifecycle contract.
         contract = json.loads(
             (Path(__file__).resolve().parents[1] / "workstations"
@@ -606,11 +612,14 @@ class ArchSecondTests(unittest.TestCase):
         )
         denial = script.split("check_arch_storage_denied()")[1].split(
             "check_arch_storage_absent_login()")[0]
-        self.assertIn(
-            'storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1',
-            denial)
-        self.assertIn(
-            'if storage_mount "$STANDARD_USER" "$DAILY_ADMIN"; then', denial)
+        own = denial.index('storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || {')
+        foreign = denial.index(
+            'if storage_mount "$STANDARD_USER" "$DAILY_ADMIN"; then')
+        self.assertLess(own, foreign)
+        # The own-share failure diagnoses rather than returning silently: a
+        # Kerberos fault refuses every share alike and must not be mistaken for
+        # the authorization denial this check exists to prove.
+        self.assertIn('storage_diagnose "$DAILY_ADMIN" "$DAILY_ADMIN"', denial)
 
     def test_optional_storage_attach_is_never_login_blocking(self):
         script = render_installer(
@@ -648,6 +657,125 @@ class ArchSecondTests(unittest.TestCase):
         self.assertIn("fstab_never_blocks_login", script)
         self.assertIn(
             "systemctl list-unit-files --state=enabled --no-legend", script)
+
+    def test_sssd_bounds_its_own_return_to_online(self):
+        # The 2026-08-14 live run measured SSSD's default recovery schedule:
+        # the Controller returned at t+27.3s, the backend went Online near
+        # t+96s, and arch-identity-restored -- whose only subject is recovery --
+        # gave up at t+89.1s after its full bounded wait.  sssd.conf(5) in the
+        # shipped sssd-2.13.1-1 states the arithmetic (60 / 3600 / 30 defaults,
+        # doubling per failed attempt), so the first retry alone lands 60-90s
+        # out and every further failure doubles it.  Chasing that with a longer
+        # probe bound would chase a doubling number; the configuration states
+        # the bound instead, and the man page's own "at least 4 times
+        # offline_timeout" ratio is respected.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn("offline_timeout = 5", script)
+        self.assertIn("offline_timeout_max = 20", script)
+        self.assertIn("offline_timeout_random_offset = 0", script)
+        # The bound must be reachable inside the probe's own wait, or the
+        # configuration and the check would still disagree.
+        self.assertLess(20, PROBE_DOMAIN_WAIT_TRIES * JOIN_WAIT_SECONDS)
+
+    def test_identity_restored_waits_out_the_negative_cache(self):
+        # arch-uncached-denied runs moments earlier and its whole subject is
+        # that this principal does NOT resolve while the Controller is down, so
+        # nss_sss has just cached the miss (entry_negative_timeout, 15s by
+        # default).  An unretried lookup inside that window would report "the
+        # directory never came back" when it saw only its own negative cache.
+        # The retry is bounded and the lookup still has to succeed.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        body = script.split("check_arch_identity_restored()")[1].split(
+            "\n}\n")[0]
+        self.assertIn("await_domain_state Online", body)
+        self.assertIn('for _ in $(seq 1 "$DOMAIN_WAIT_TRIES"); do', body)
+        self.assertIn(
+            'getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 && return 0', body)
+        self.assertIn(f"sleep {JOIN_WAIT_SECONDS}", body)
+        # Fail-closed: the loop's only exit without a successful lookup is a
+        # diagnosed failure.
+        self.assertIn("return 1", body)
+        self.assertIn("note_domain_state", body)
+
+    def test_storage_attached_proves_a_round_trip_and_measures_it(self):
+        # Gate 9's contract for this check is a round trip -- "create, read,
+        # and remove a test file", passing only when the contents survive --
+        # and the gate-9 row additionally requires UID/GID and timestamp
+        # measurements, which the probe did not emit before.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        body = script.split("check_arch_storage_attached()")[1].split(
+            "check_arch_storage_denied()")[0]
+        self.assertIn('probe_file="$mount_point/.telos-storage-probe.$$"', body)
+        self.assertIn('printf \'%s\\n\' "$written" > "$probe_file"', body)
+        self.assertIn('[ "$(cat "$probe_file" 2>/dev/null)" = "$written" ]',
+                      body)
+        self.assertIn('rm -f "$probe_file"', body)
+        for guard in ('[ "$roundtrip" = 1 ] || return 1',
+                      '[ "$removed" = 1 ] || return 1'):
+            self.assertIn(guard, body)
+        # The identifiers come from the directory's resolution of the mounting
+        # principal, never from stat on the mount: cifs reports the mount's own
+        # uid= option for every inode when the server sends no POSIX ownership,
+        # so a stat there would only echo what the mount was told.
+        self.assertIn('owner_uid=$(id -u "$DAILY_ADMIN" 2>/dev/null)', body)
+        self.assertIn('owner_gid=$(id -g "$DAILY_ADMIN" 2>/dev/null)', body)
+        self.assertIn('file_mtime=$(stat -c %Y "$probe_file" 2>/dev/null)',
+                      body)
+        # Unprovable means FAIL: a non-integer measurement is refused rather
+        # than printed, so the drive can never record a fabricated field.
+        for name in ("owner_uid", "owner_gid", "file_mtime"):
+            self.assertIn(
+                f"printf '%s' \"${name}\" | grep -Eq '^[0-9]+$' || return 1",
+                body)
+        # Every measured field the drive requires is printed under its own
+        # token-scoped marker before the verdict.
+        for field, marker in STORAGE_ATTACHED_MEASUREMENT_MARKERS.items():
+            self.assertTrue(marker.startswith("__TELOS_ARCH_"))
+            self.assertTrue(marker.endswith("_"))
+            emitter = marker[len("__TELOS_ARCH_"):-1]
+            self.assertIn(f'data {emitter} "${field}"', body)
+
+    def test_storage_failures_name_their_layer_on_the_console(self):
+        # -ENOKEY (the -126 the 2026-08-14 run recorded) is the kernel's answer
+        # to EVERY cifs.spnego upcall failure, so the verdict alone cannot
+        # separate "no ticket" from "the KDC does not know this service
+        # principal" from "the server rejected the key".  kvno asks this KDC
+        # for exactly the principal mount.cifs asks for, which is the field
+        # that settles it.  Bounded, and only on the failure path.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertIn(f"STORAGE_MOUNT_ERROR='{STORAGE_MOUNT_ERROR_PATH}'",
+                      script)
+        # The mount's own stderr is kept, not discarded.
+        self.assertIn('2>"$STORAGE_MOUNT_ERROR"', script)
+        diagnose = script.split("storage_diagnose() {")[1].split("\n}\n")[0]
+        self.assertIn('note mount-error cat "$STORAGE_MOUNT_ERROR"', diagnose)
+        self.assertIn('note ticket runuser -u "$2" -- klist', diagnose)
+        self.assertIn(
+            'note service-ticket runuser -u "$2" -- kvno "cifs/$STORAGE_HOST"',
+            diagnose)
+        # The emitter shares the boot gate's bound, column cap and wording, so
+        # a diagnostic can never hang in place of the failure it explains.
+        note = script.split("note() {")[1].split("\n}\n")[0]
+        self.assertIn(f"timeout {DIAGNOSTIC_COMMAND_SECONDS}", note)
+        self.assertIn(f"cut -c1-{DIAGNOSTIC_LINE_COLUMNS}", note)
+        self.assertIn(DIAGNOSTIC_EMPTY_FIELD, note)
+        self.assertIn(STORAGE_DIAGNOSTIC_MARKER, note)
+        # The error file must not live under the mount tree, where a successful
+        # mount would hide it.
+        self.assertFalse(
+            STORAGE_MOUNT_ERROR_PATH.startswith(STORAGE_PROBE_ROOT + "/"))
 
     def test_workstation_contract_supplies_mount_cifs_for_the_probe(self):
         # cifs-utils owns /usr/bin/mount.cifs; the workstation closure carries

@@ -358,6 +358,43 @@ class TestDomainControllerStorage(unittest.TestCase):
         text = (self.ROLE / "tasks/main.yml").read_text()
         self.assertIn("'--use-rfc2307' if homelab_ad_enable_rfc2307", text)
 
+    def test_the_storage_alias_gets_kerberos_service_principals(self):
+        # A Kerberos SMB client asks the KDC for a service ticket named after
+        # the UNC host it was handed, so an A record alone cannot make this
+        # share mountable with sec=krb5.  The 2026-08-14 gate-8 run proved it
+        # live: every //unas.<domain>/<user> mount failed with -ENOKEY
+        # ("Send error in SessSetup = -126") while the share, the rfc2307
+        # idmap, the A record and the client's own closure were all correct,
+        # because nothing had ever registered an SPN for the alias and Samba's
+        # provisioning registers only the DC's own names.
+        task = self.named(
+            "Register the storage authority name as a Kerberos service alias")
+        argv = task["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:3], ["/usr/bin/samba-tool", "spn", "add"])
+        # cifs is the class mount.cifs asks for; host is the class AD's default
+        # sPNMappings expands to every other service class on the same alias.
+        self.assertEqual(task["loop"], ["cifs", "host"])
+        self.assertIn("{{ item }}/{{ homelab_storage_host_label }}", argv[3])
+        self.assertIn("homelab_ad_dns_domain", argv[3])
+        # The alias goes on this DC's own computer account, so the ticket is
+        # backed by the machine key smbd already accepts with -- no second
+        # account and no second keytab.
+        self.assertEqual(argv[4], "{{ homelab_ad_expected_hostname }}$")
+        # Gated exactly like the DNS publication: no address, no storage.
+        self.assertEqual(task["when"], "homelab_storage_address | length > 0")
+        # An SPN the account already holds is convergence, not a failure.
+        self.assertIn("already", task["failed_when"])
+
+    def test_the_storage_alias_spn_precedes_its_dns_publication(self):
+        # The name must never resolve to a host that cannot serve Kerberos SMB
+        # under it, so the alias is registered before it is published.
+        names = [str(task.get("name", "")) for task in self.tasks()]
+        spn = names.index(
+            "Register the storage authority name as a Kerberos service alias")
+        publish = names.index(
+            "Publish the storage authority name in domain DNS")
+        self.assertLess(spn, publish)
+
     def test_the_unas_name_is_published_when_an_address_is_set(self):
         task = self.named("Publish the storage authority name in domain DNS")
         argv = task["ansible.builtin.command"]["argv"]

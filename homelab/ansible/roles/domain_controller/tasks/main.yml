@@ -250,6 +250,50 @@
           valid users = %S
   notify: restart samba ad dc
 
+- name: Register the storage authority name as a Kerberos service alias
+  # A Kerberos SMB client asks the KDC for a service ticket named after the UNC
+  # host it was handed, so an A record alone cannot make this share mountable
+  # with sec=krb5: `unas` is an ALIAS for this DC, and with no matching
+  # servicePrincipalName the KDC answers S_PRINCIPAL_UNKNOWN, the client's
+  # cifs.spnego upcall fails, and request_key(2) negates the key with -ENOKEY.
+  #
+  # The 2026-08-14 gate-8 run is why this task exists.  Both reachable-storage
+  # checks failed with the kernel's "Verify user has a krb5 ticket and keyutils
+  # is installed" and "Send error in SessSetup = -126" -- -126 is -ENOKEY --
+  # while the share, the rfc2307 idmap, the A record and the client's own
+  # closure were all correct.  Nothing in this role or in the workstation
+  # install ever registered an SPN for the alias, and Samba's provisioning
+  # registers only the DC's own names (HOST/<dc>.<domain>, HOST/<NETBIOS>).
+  #
+  # The alias SPNs go on this DC's own computer account, so the ticket the KDC
+  # issues is encrypted with the very machine key smbd already accepts with; no
+  # second account and no second keytab.  `cifs/` is the class mount.cifs asks
+  # for; `host/` is registered alongside it because AD's default sPNMappings
+  # (`host=...,cifs,...` in Samba's own provision_configuration.ldif) expands
+  # the host class to every other service class on the same alias, which keeps
+  # the alias usable by anything else without another directory change.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/samba-tool
+      - spn
+      - add
+      - "{{ item }}/{{ homelab_storage_host_label }}.{{
+        homelab_ad_dns_domain }}"
+      - "{{ homelab_ad_expected_hostname }}$"
+  loop:
+    - cifs
+    - host
+  register: homelab_unas_spn
+  changed_when: homelab_unas_spn.rc == 0
+  # samba-tool refuses an SPN it already holds ("Service principal ... already
+  # affected to ..."), which is convergence, not a failure.
+  failed_when: >-
+    homelab_unas_spn.rc != 0 and
+    'already' not in
+    ((homelab_unas_spn.stderr | default('')) ~
+     (homelab_unas_spn.stdout | default('')))
+  when: homelab_storage_address | length > 0
+
 - name: Apply share changes before publishing the storage name
   ansible.builtin.meta: flush_handlers
 

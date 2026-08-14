@@ -412,9 +412,34 @@ STORAGE_HOST_LABEL = "unas"
 STORAGE_MOUNT_ROOT = "/srv/unas"
 # Where the acceptance probe performs its own explicit, bounded mounts.
 STORAGE_PROBE_ROOT = "/run/telos-storage-probe"
+# Where the mount attempt's own stderr is kept for the duration of one check.
+# Deliberately NOT under STORAGE_PROBE_ROOT: that tree carries the mount points,
+# and a file inside one would vanish under a successful mount.
+STORAGE_MOUNT_ERROR_PATH = "/run/telos-storage-probe.err"
 # The extra data marker the storage-absent check prints before its verdict so
 # the gate-8 drive can record the measured login duration as evidence.
 STORAGE_LOGIN_SECONDS_MARKER = "__TELOS_ARCH_STORAGE_LOGIN_SECONDS_"
+# The measurements gate 9 requires ("Record UID/GID and timestamp
+# measurements"), as {evidence field: token-scoped marker prefix}.  One
+# definition, read by the probe renderer here and by the gate-8 drive's
+# readers, so a renamed marker can never leave the drive waiting on a line the
+# probe no longer prints.  Every one of them is OBSERVED on the live mount: the
+# UID/GID pair is the directory's rfc2307 identity for the mounting principal
+# (ADR 0055) and the timestamp is the mtime the server recorded for the file the
+# round trip just wrote.  Deliberately not `stat` on the mount: cifs reports the
+# mount's own `uid=` option for every inode when the server sends no POSIX
+# ownership, so a stat there would only echo what the mount was told.
+STORAGE_ATTACHED_MEASUREMENT_MARKERS: dict[str, str] = {
+    "owner_uid": "__TELOS_ARCH_STORAGE_OWNER_UID_",
+    "owner_gid": "__TELOS_ARCH_STORAGE_OWNER_GID_",
+    "file_mtime": "__TELOS_ARCH_STORAGE_FILE_MTIME_",
+}
+# The marker the probe's own secret-free storage diagnostics print under.  The
+# gate-8 drive does not parse these: they land in the retained ttyS0 transcript,
+# where the 2026-08-14 run needed them and had none.  -ENOKEY is the kernel's
+# answer to EVERY cifs.spnego upcall failure -- no ticket cache, an SPN the KDC
+# does not know, a key it rejects -- so the verdict alone cannot name a layer.
+STORAGE_DIAGNOSTIC_MARKER = "TELOS ARCH STORAGE DIAGNOSTIC"
 
 
 class InstallContractError(ValueError):
@@ -777,6 +802,33 @@ ad_hostname = {client_fqdn}
 # ad_gpo_implicit_deny stays at its False default, so enforcing mode could
 # never grant less than this -- only deny everything.
 ad_gpo_access_control = permissive
+# Recovery after the authority returns, bounded by configuration instead of
+# left to SSSD's default schedule.  Read off the shipped sssd-2.13.1-1 man page,
+# which states the retry arithmetic verbatim:
+#
+#   new_delay = Minimum(old_delay * 2, offline_timeout_max)
+#               + random[0...offline_timeout_random_offset]
+#
+# with defaults 60 / 3600 / 30.  So a workstation whose backend went offline
+# does not test the directory again for 60-90 s, and every further failure
+# DOUBLES that up to an hour.  The 2026-08-14 gate-8 run measured it: the
+# Controller came back at t+27.3 s, the backend went Online at about t+96 s
+# (~69 s after it went offline, squarely inside 60-90), and
+# `arch-identity-restored` -- whose whole subject is recovery -- gave up at
+# t+89.1 s after its full 30 x 2 s wait, seven seconds early.  Raising the
+# probe's bound would only chase a number that doubles; the property worth
+# having is that recovery is PROMPT, which is also what a real machine needs:
+# a student's laptop reconnecting to the lab should not be blind to the
+# directory for up to an hour.  4x offline_timeout is the ratio the man page
+# asks for ("General rule here should be to set offline_timeout_max to at
+# least 4 times offline_timeout"), and the random offset is off so the wait is
+# deterministic rather than merely short.  All three are
+# `[rule/allowed_domain_options]` entries in the cfg_rules.ini this package
+# ships, checked there rather than assumed -- the section an option belongs to
+# has already cost this gate one live run.
+offline_timeout = 5
+offline_timeout_max = 20
+offline_timeout_random_offset = 0
 ad_domain = {domain}
 krb5_realm = {realm}
 realmd_tags = manages-system joined-with-samba
@@ -903,10 +955,11 @@ _PROBE_TEMPLATE = """\
 #!/usr/bin/env bash
 # Managed by Telos gate 7 (workstations/arch_second.py).  Secret-free
 # identity probe for gate 8 (vm/arch_identity_run.py): runs exactly one
-# lifecycle check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL.  The
-# storage-absent check additionally prints one token-scoped
-# __TELOS_ARCH_STORAGE_LOGIN_SECONDS_<token>=<n> data line before its
-# verdict.  It never reads or carries a credential, so each proof is
+# lifecycle check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL.  Two
+# checks additionally print token-scoped data lines BEFORE that verdict: the
+# storage-absent check prints its measured login duration, and the
+# storage-attached check prints the UID, GID and server timestamp gate 9
+# requires.  It never reads or carries a credential, so each proof is
 # bounded to what a credential-free session can honestly observe;
 # unprovable means FAIL.
 set -u
@@ -919,6 +972,7 @@ DOMAIN_ADMIN='@DOMAIN_ADMIN@'
 RESCUE_USER='@RESCUE_USER@'
 STORAGE_HOST='@STORAGE_HOST@'
 STORAGE_PROBE_ROOT='@STORAGE_PROBE_ROOT@'
+STORAGE_MOUNT_ERROR='@STORAGE_MOUNT_ERROR@'
 LOGIN_BOUND_SECONDS='@LOGIN_BOUND@'
 DOMAIN_WAIT_TRIES='@DOMAIN_WAIT_TRIES@'
 
@@ -947,6 +1001,40 @@ key=$(printf '%s' "$check" | tr 'a-z-' 'A-Z_')
 
 verdict() {
   printf '__TELOS_ARCH_%s_%s=%s\\n' "$key" "$token" "$1"
+}
+
+# One token-scoped DATA line, printed before the verdict and never instead of
+# it.  The drive reads the fields it requires by marker prefix (see
+# STORAGE_LOGIN_SECONDS_MARKER and STORAGE_ATTACHED_MEASUREMENT_MARKERS in the
+# module that renders this file) and refuses a PASS whose measurement is
+# missing, so a measurement is never fabricated on either side of the console.
+data() {
+  printf '__TELOS_ARCH_%s_%s=%s\\n' "$1" "$token" "$2"
+}
+
+# One bounded, secret-free diagnostic line.  These are for the retained ttyS0
+# transcript, not for the drive: nothing waits on them, so a field that says
+# nothing costs only a line.  They run ONLY after a bounded proof has already
+# failed, which is why a converging run pays nothing for them -- the same
+# discipline the boot-time domain-online gate's diagnostics follow.
+#
+# Why they exist: the 2026-08-14 gate-8 run failed both reachable-storage
+# checks with nothing on the console but the kernel's
+# "Verify user has a krb5 ticket and keyutils is installed" and
+# "Send error in SessSetup = -126".  -126 is -ENOKEY, which is what
+# request_key(2) returns for ANY cifs.spnego upcall failure, so that transcript
+# could not separate "the user holds no ticket" from "the KDC does not know
+# this service principal" from "the server rejected the key" -- three different
+# layers, one message.  The fields below name the layer.
+note() {
+  field="$1"
+  shift
+  value="$(timeout @DIAGNOSTIC_SECONDS@ "$@" 2>&1 |
+           tr -s '[:space:]' ' ' | cut -c1-@DIAGNOSTIC_COLUMNS@)"
+  # An empty answer is itself a finding, so it is named: "the command returned
+  # nothing" and "the field was never printed" must not look alike.
+  printf '%s %s: %s\\n' '@STORAGE_DIAGNOSTIC_MARKER@' "$field" \\
+    "${value:-@DIAGNOSTIC_EMPTY_FIELD@}"
 }
 
 @DOMAIN_STATE_FUNCTIONS@
@@ -1036,10 +1124,37 @@ check_arch_local_rescue() {
 }
 
 check_arch_identity_restored() {
-  await_domain_state Online || return 1
-  # A lookup no cache can serve proves the directory answers again.
-  getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 || return 1
-  return 0
+  # Both halves are bounded waits on a state that must actually arrive, never
+  # a weakening: the backend has to report Online and the lookup has to
+  # succeed, or this is a FAIL.
+  #
+  # The second wait is not belt-and-braces.  `arch-uncached-denied` ran
+  # moments ago and its whole subject is that this very principal does NOT
+  # resolve while the Controller is down, so nss_sss has just cached the miss
+  # -- entry_negative_timeout, 15 s by default in the sssd-2.13.1-1 this disk
+  # installs, and an [nss]-section option this configuration does not set.  An
+  # unretried lookup issued inside that window would report "the directory
+  # never came back" when what it actually saw was its own negative cache
+  # entry.  Waiting it out settles the question without needing to know
+  # whether an offline miss populates the negative cache at all.
+  await_domain_state Online || {
+    note_domain_state
+    return 1
+  }
+  for _ in $(seq 1 "$DOMAIN_WAIT_TRIES"); do
+    getent passwd "$DOMAIN_ADMIN" >/dev/null 2>&1 && return 0
+    sleep @JOIN_WAIT_SECONDS@
+  done
+  note_domain_state
+  note identity-lookup getent passwd "$DOMAIN_ADMIN"
+  return 1
+}
+
+# The one diagnostic every reachable-authority check shares: what SSSD says
+# about the backend it just failed against.  sssctl prints domain names, server
+# names and an online/offline verdict; never a credential.
+note_domain_state() {
+  note domain-status sssctl domain-status "$DOMAIN"
 }
 
 storage_reachable() {
@@ -1051,20 +1166,46 @@ storage_mount() {
   # Mount share $1 with user $2's Kerberos identity.  Credential-free by
   # construction: sec=krb5 can only succeed from a ticket a real login
   # already obtained; the probe never holds or types a secret.  mount.cifs
-  # comes from cifs-utils; if the package contract does not ship it the
-  # attempt honestly fails closed.
+  # comes from cifs-utils, which the package contract does carry.
+  #
+  # The mount's own stderr is kept rather than discarded.  It is the only place
+  # the CLIENT's reason appears -- mount.cifs prints "mount error(13):
+  # Permission denied" for a refused tree connect and "mount error(126):
+  # Required key not available" when the cifs.spnego upcall failed -- and those
+  # two are the difference between the denial arch-storage-denied is there to
+  # prove and a Kerberos fault that cannot prove anything.  Secret-free: an
+  # error string, and this mount has no password to name.
   command -v mount.cifs >/dev/null 2>&1 || return 1
   mount_uid=$(id -u "$2" 2>/dev/null) || return 1
   mkdir -p "$STORAGE_PROBE_ROOT/$1" || return 1
   timeout 20 mount.cifs "//$STORAGE_HOST/$1" "$STORAGE_PROBE_ROOT/$1" \\
     -o "sec=krb5,cruid=$mount_uid,uid=$mount_uid,soft,echo_interval=10" \\
-    >/dev/null 2>&1
+    >/dev/null 2>"$STORAGE_MOUNT_ERROR"
 }
 
 storage_unmount() {
   umount "$STORAGE_PROBE_ROOT/$1" 2>/dev/null
   rmdir "$STORAGE_PROBE_ROOT/$1" 2>/dev/null
   return 0
+}
+
+# Why a mount of //$STORAGE_HOST/$1 as user $2 did not succeed, one bounded
+# secret-free line per layer, outward from the client.  Runs only after a mount
+# has already failed.  The decisive field is service-ticket: `kvno` asks THIS
+# KDC for exactly the service principal mount.cifs asks for, so
+# "Server not found in Kerberos database" (the storage authority name is only a
+# DNS record and carries no servicePrincipalName) and "kvno = N" (the KDC does
+# know it, so the fault is further in) are finally distinguishable.  kvno and
+# klist print principal names, key version numbers and ticket flags; neither
+# prints key material, and neither takes a password.
+storage_diagnose() {
+  note mount-error cat "$STORAGE_MOUNT_ERROR"
+  note ticket runuser -u "$2" -- klist
+  note service-ticket runuser -u "$2" -- kvno "cifs/$STORAGE_HOST"
+  note upcall-helper ls -l /usr/bin/cifs.upcall /usr/bin/request-key
+  note upcall-config cat /etc/request-key.d/cifs.spnego.conf
+  note storage-name getent hosts "$STORAGE_HOST"
+  note_domain_state
 }
 
 fstab_never_blocks_login() {
@@ -1098,30 +1239,81 @@ check_arch_storage_attached() {
   # The mounting identity is the daily administrator: the gate-8 drive's
   # real getty login primes that principal's Kerberos ticket, and sec=krb5
   # can only ever succeed from such a real login's ticket.
-  await_domain_state Online || return 1
+  await_domain_state Online || { note_domain_state; return 1; }
   storage_reachable || return 1
-  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1
-  fstype=$(findmnt -rn -M "$STORAGE_PROBE_ROOT/$DAILY_ADMIN" \\
-    -o FSTYPE 2>/dev/null)
+  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || {
+    storage_diagnose "$DAILY_ADMIN" "$DAILY_ADMIN"
+    storage_unmount "$DAILY_ADMIN"
+    return 1
+  }
+  mount_point="$STORAGE_PROBE_ROOT/$DAILY_ADMIN"
+  fstype=$(findmnt -rn -M "$mount_point" -o FSTYPE 2>/dev/null)
   listed=0
-  ls "$STORAGE_PROBE_ROOT/$DAILY_ADMIN" >/dev/null 2>&1 && listed=1
+  ls "$mount_point" >/dev/null 2>&1 && listed=1
+  # Gate 9's contract for this check is a ROUND TRIP -- "create, read, and
+  # remove a test file", passing only when "the round trip preserves file
+  # contents" (workstations/acceptance.json, arch-smb-available) -- so a
+  # directory listing alone was never the whole proof.  Every operation on a
+  # sec=krb5 mount is authorized at the SERVER by the mount credential, which
+  # is the daily administrator's own Kerberos identity, so this is that
+  # principal's authorization being exercised and not root's local bypass.
+  probe_file="$mount_point/.telos-storage-probe.$$"
+  written="telos-storage-roundtrip-$$"
+  roundtrip=0
+  if printf '%s\\n' "$written" > "$probe_file" 2>/dev/null &&
+      [ "$(cat "$probe_file" 2>/dev/null)" = "$written" ]; then
+    roundtrip=1
+  fi
+  # The measurements gate 9 asks for, taken while the mount is live and read
+  # back before the file is removed.  See STORAGE_ATTACHED_MEASUREMENT_MARKERS
+  # for why the identifiers come from `id` and not from `stat` on the mount.
+  owner_uid=$(id -u "$DAILY_ADMIN" 2>/dev/null)
+  owner_gid=$(id -g "$DAILY_ADMIN" 2>/dev/null)
+  file_mtime=$(stat -c %Y "$probe_file" 2>/dev/null)
+  removed=0
+  rm -f "$probe_file" 2>/dev/null
+  [ -e "$probe_file" ] || removed=1
+  if [ "$roundtrip" = 0 ] || [ "$removed" = 0 ]; then
+    storage_diagnose "$DAILY_ADMIN" "$DAILY_ADMIN"
+  fi
   storage_unmount "$DAILY_ADMIN"
   [ "$fstype" = cifs ] || return 1
   [ "$listed" = 1 ] || return 1
+  [ "$roundtrip" = 1 ] || return 1
+  [ "$removed" = 1 ] || return 1
+  # Unprovable means FAIL here too: a measurement that is not a plain integer
+  # is refused rather than printed, so the drive can never record a field this
+  # probe did not actually observe.
+  printf '%s' "$owner_uid" | grep -Eq '^[0-9]+$' || return 1
+  printf '%s' "$owner_gid" | grep -Eq '^[0-9]+$' || return 1
+  printf '%s' "$file_mtime" | grep -Eq '^[0-9]+$' || return 1
+  data STORAGE_OWNER_UID "$owner_uid"
+  data STORAGE_OWNER_GID "$owner_gid"
+  data STORAGE_FILE_MTIME "$file_mtime"
   return 0
 }
 
 check_arch_storage_denied() {
-  await_domain_state Online || return 1
+  await_domain_state Online || { note_domain_state; return 1; }
   storage_reachable || return 1
   # Fail-closed: the same identity must first mount its own share so a
   # broken mount path can never masquerade as an authorization denial.
-  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || return 1
+  storage_mount "$DAILY_ADMIN" "$DAILY_ADMIN" || {
+    storage_diagnose "$DAILY_ADMIN" "$DAILY_ADMIN"
+    storage_unmount "$DAILY_ADMIN"
+    return 1
+  }
   storage_unmount "$DAILY_ADMIN"
   if storage_mount "$STANDARD_USER" "$DAILY_ADMIN"; then
     storage_unmount "$STANDARD_USER"
     return 1
   fi
+  # The refusal is the pass, and its REASON is recorded: the mount error
+  # distinguishes the server's "Permission denied" -- the denial this check
+  # exists to prove -- from a Kerberos failure that would refuse every share
+  # alike.  The own-share mount above already rules the latter out, so this
+  # field is evidence rather than a gate.
+  note refusal cat "$STORAGE_MOUNT_ERROR"
   storage_unmount "$STANDARD_USER"
   return 0
 }
@@ -1137,7 +1329,7 @@ check_arch_storage_absent_login() {
   timeout "$LOGIN_BOUND_SECONDS" su -l "$STANDARD_USER" -c true \\
     >/dev/null 2>&1 || return 1
   elapsed=$SECONDS
-  printf '__TELOS_ARCH_STORAGE_LOGIN_SECONDS_%s=%s\\n' "$token" "$elapsed"
+  data STORAGE_LOGIN_SECONDS "$elapsed"
   [ "$elapsed" -le "$LOGIN_BOUND_SECONDS" ]
 }
 
@@ -1178,8 +1370,19 @@ def _render_probe(
         "@RESCUE_USER@": principals["local_rescue"],
         "@STORAGE_HOST@": storage_host,
         "@STORAGE_PROBE_ROOT@": STORAGE_PROBE_ROOT,
+        "@STORAGE_MOUNT_ERROR@": STORAGE_MOUNT_ERROR_PATH,
         "@LOGIN_BOUND@": str(login_bound),
         "@DOMAIN_WAIT_TRIES@": str(PROBE_DOMAIN_WAIT_TRIES),
+        # The same per-try sleep the shared domain-state wait uses, so the
+        # probe's second bounded wait (the identity lookup) cannot drift into a
+        # different shape from the first.
+        "@JOIN_WAIT_SECONDS@": str(JOIN_WAIT_SECONDS),
+        # The probe's failure-path diagnostics reuse the boot gate's own bound,
+        # column cap and empty-field wording: one discipline on this disk.
+        "@DIAGNOSTIC_SECONDS@": str(DIAGNOSTIC_COMMAND_SECONDS),
+        "@DIAGNOSTIC_COLUMNS@": str(DIAGNOSTIC_LINE_COLUMNS),
+        "@DIAGNOSTIC_EMPTY_FIELD@": DIAGNOSTIC_EMPTY_FIELD,
+        "@STORAGE_DIAGNOSTIC_MARKER@": STORAGE_DIAGNOSTIC_MARKER,
         # Shared with the boot-time domain-online gate, never re-implemented.
         "@DOMAIN_STATE_FUNCTIONS@": _DOMAIN_STATE_FUNCTIONS,
     }
@@ -1905,9 +2108,10 @@ TELOS_PROBE_EOF
 # Wants= of remote-fs.target, x-systemd.automount defers the network mount to
 # first access, and the bounded mount timeout caps any attach attempt.  No
 # login-path unit orders after it and the acceptance probe performs its own
-# explicit bounded mounts.  mount.cifs is owned by cifs-utils, which the
-# package contract does not yet carry; until that contract decision lands the
-# automount trigger and the probe both fail closed without hanging.
+# explicit bounded mounts.  mount.cifs is owned by cifs-utils, which the package
+# contract DOES carry, and its `keyutils` dependency brings the request-key
+# helper the kernel's cifs.spnego upcall runs -- without which every sec=krb5
+# mount fails closed with -ENOKEY and no way to tell why.
 mkdir -p /mnt{storage_mount_root}/{standard_user}
 cat >> /mnt/etc/fstab <<'TELOS_STORAGE_EOF'
 # Optional per-user UNAS storage: may attach when reachable, never
