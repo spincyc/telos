@@ -61,7 +61,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Protocol
+from typing import Callable, Mapping, Protocol, Sequence
 
 from .signal_cleanup import RunInterrupted, SignalGuard
 
@@ -473,6 +473,28 @@ RESCUE_PASSWORD_WRITES = 4
 RESCUE_UPDATED_DIAGNOSTIC = b"password updated successfully"
 
 
+def measured_probe_pattern(
+    markers: Sequence[str], token: str, verdict_prefix: bytes,
+) -> bytes:
+    """One alternation reading every measurement line and then the verdict.
+
+    Each value must be followed by a real line ending.  Without that anchor a
+    serial read whose chunk boundary lands inside the number matches only its
+    leading digits, and the remainder is trimmed away with the consumed buffer:
+    the live 2026-08-14 run read ``owner_uid=1`` from a guest that printed
+    ``10001``, and the identity guard then refused a pass the guest had
+    genuinely earned.  The terminator is a lookahead rather than a consuming
+    match, so it stays available to the next read.
+    """
+    alternatives = [
+        re.escape(f"{marker}{token}=".encode("ascii")) + rb"([0-9]+)(?=[\r\n])"
+        for marker in markers
+    ]
+    alternatives.append(
+        re.escape(verdict_prefix) + rb"(PASS|FAIL)(?=[\r\n])")
+    return rb"(?:" + rb"|".join(alternatives) + rb")"
+
+
 def new_boot_facts() -> dict[str, object]:
     """Secret-free workstation boot/login lifecycle facts for the evidence."""
     return {
@@ -823,13 +845,8 @@ class ArchIdentityDrive:
         ordered = tuple(markers.items())
         verdict_prefix = (
             f"__TELOS_ARCH_{self._marker_key(check)}_{token}=".encode("ascii"))
-        alternatives = [
-            re.escape(f"{marker}{token}=".encode("ascii")) + rb"([0-9]+)"
-            for _, marker in ordered
-        ]
-        alternatives.append(
-            re.escape(verdict_prefix) + rb"(PASS|FAIL)\b")
-        pattern = rb"(?:" + rb"|".join(alternatives) + rb")"
+        pattern = measured_probe_pattern(
+            [marker for _, marker in ordered], token, verdict_prefix)
         measured: dict[str, int] = {}
         while True:
             match = self.channel._wait(
@@ -1793,8 +1810,12 @@ def elevation_outcome_pattern(token: str) -> bytes:
     _command, _ready, prompt, failed = elevation_command(token)
     proof = root_proof_marker(token)
     return (
-        rb"(?:^|\n)" + re.escape(proof) + rb"(?P<uid>[0-9]+)\s*(?:\n|$)"
-        rb"|(?:^|\n)" + re.escape(failed) + rb"(?P<rc>[0-9]+)\s*(?:\n|$)"
+        # A real newline, never ``$``: under MULTILINE ``$`` also matches at the
+        # end of the buffer, so a read whose chunk boundary lands inside the
+        # number would match its leading digits and the rest would be trimmed
+        # away.  That is exactly how a live run read a truncated measurement.
+        rb"(?:^|\n)" + re.escape(proof) + rb"(?P<uid>[0-9]+)[ \t\r]*\n"
+        rb"|(?:^|\n)" + re.escape(failed) + rb"(?P<rc>[0-9]+)[ \t\r]*\n"
         rb"|(?P<refused>" + sudo_prompt_pattern(prompt) + rb")"
         rb"|(?P<root_shell>(?:^|\n)\[root@[^\n]*\]#[ \t]*)"
     )
@@ -2759,7 +2780,7 @@ class ArchIdentityBoundary:
                 "storage-dns-sudo-prompt")
             console._send(console.password, "storage-dns-password-sent")
             match = console._wait(
-                rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
+                rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)[ \t\r]*\n",
                 "storage-dns-rc-observed")
         except SerialAutomationError as error:
             raise ArchIdentityError(

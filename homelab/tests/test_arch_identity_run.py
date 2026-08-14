@@ -453,6 +453,30 @@ class ProducerJudgeAgreementTests(unittest.TestCase):
         self.assertEqual(caught.exception.check, "arch-storage-attached")
         self.assertIn("stop", session.events)
 
+    def test_a_partial_read_cannot_truncate_a_measurement(self):
+        # The live 2026-08-14 run read owner_uid=1 from a guest that printed
+        # 10001: the alternation had no line anchor, so a serial chunk boundary
+        # inside the number matched its leading digits and the rest was trimmed
+        # away with the consumed buffer. The identity guard then refused a pass
+        # the guest had genuinely earned.
+        import re as _re
+        from homelab.vm.arch_identity_run import measured_probe_pattern
+
+        pattern = _re.compile(
+            measured_probe_pattern(
+                ["__TELOS_ARCH_STORAGE_OWNER_UID_"], "tok", b"__V_tok="),
+            _re.MULTILINE)
+        # Every prefix of the real line, up to but not including its
+        # terminator, must match nothing at all.
+        line = b"__TELOS_ARCH_STORAGE_OWNER_UID_tok=10001\r\n"
+        for cut in range(len(line) - 2):
+            self.assertIsNone(
+                pattern.search(line[:cut]),
+                f"a read cut at {cut} bytes matched a partial value")
+        found = pattern.search(line)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.group(1), b"10001")
+
     def test_storage_measurements_reach_the_evidence(self):
         session = FakeSession()
         session.channel.measurements["file_mtime"] = 1786000123
