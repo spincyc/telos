@@ -58,6 +58,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
@@ -228,6 +229,57 @@ WORKSTATION_LOG_FILENAME = "workstation-serial.log"
 BOOT_FACTS_FILENAME = "workstation-boot.json"
 TRANSCRIPT_RETENTION_BYTES = 4 * 1024 * 1024
 
+# --------------------------------------------------------------------------
+# Boot-stall evidence.  Two of eight gate-8 runs on 2026-08-14 produced
+# console-init output and then nothing: no ``BdsDxe: loading Boot0007`` line,
+# no menu, no fall-through to the Windows entry, no disk write, and a QEMU
+# that stayed alive until the harness's wait expired.  Parsing the post-run
+# variable stores settled a great deal -- ``Boot0007 "Linux Boot Manager"``
+# was present, ACTIVE and first in the live ``BootOrder``; ``BootNext`` was
+# never set; and BOTH failures wrote ``HDDP``, which EDK2 only writes inside
+# ``EfiBootManagerBoot()`` once ``BmExpandPartitionDevicePath()`` has matched
+# the ESP -- so the guest wedged after the entry was selected and the
+# partition resolved, and before ``LoadImage`` read
+# ``\EFI\systemd\systemd-bootx64.efi``.  What it could NOT settle is the
+# mechanism (spinning vCPU, stalled device emulation, or a host I/O stall
+# through the three-deep cache=none qcow2 chain), because the firmware's
+# print level emits two lines an entire boot and four serial transcripts were
+# the only artifacts this lane kept.  These names cover the artifacts that
+# make the next occurrence self-diagnosing.
+#: The firmware's own debug console.  If this OVMF build uses the I/O-port
+#: DebugLib the whole firmware log lands here and the stall point is a
+#: one-line read; if it uses the serial DebugLib the file stays empty, which
+#: costs nothing and is itself the answer.
+WORKSTATION_FIRMWARE_LOG_FILENAME = "workstation-firmware.log"
+#: The fabric switch log, copied out of the runtime tempdir that deletes it.
+#: It is the only record of fabric timing and of whether the switch itself
+#: failed, and the single artifact that can confirm or kill the
+#: "QEMU stalled" reading: a switch still logging while the guest says
+#: nothing means the QEMU process was alive and scheduled.
+SWITCH_LOG_FILENAME = "workstation-switch.jsonl"
+#: One framebuffer frame per stall.  ``-device VGA`` was added specifically so
+#: QMP ``screendump`` would work and nothing in this module ever called it; a
+#: frame separates "firmware still on a blank screen" from "systemd-boot
+#: rendered to VGA but not to ttyS0" at a glance.
+STALL_FRAME_TEMPLATE = "workstation-stall-{index}.ppm"
+FIRMWARE_LOG_RETENTION_BYTES = 4 * 1024 * 1024
+SWITCH_LOG_RETENTION_BYTES = 1024 * 1024
+#: A 1024x768 PPM is ~2.3MB; anything past this is not a framebuffer dump.
+STALL_FRAME_MAX_BYTES = 16 * 1024 * 1024
+#: Bounds on the retained diagnosis: stall records, drained QMP events per
+#: record, and timestamped serial labels.
+BOOT_STALL_RETENTION_LIMIT = 8
+STALL_QMP_EVENT_LIMIT = 24
+STALL_QMP_TIMEOUT = 10.0
+SERIAL_TIMELINE_LIMIT = 512
+#: ``SerialAutomation._wait`` raises one exception type for two very
+#: different faults, and ``drive_boot_menu`` used to rewrite both into the
+#: same message.  That ambiguity -- did QEMU die, or did a live guest go
+#: quiet? -- cost most of the 2026-08-14 investigation, so the distinction is
+#: named and retained.
+STALL_SERIAL_CLOSED = "serial-closed"
+STALL_TIMED_OUT = "timed-out"
+
 #: Dead in-subnet address the ``unas`` storage label is repointed to for the
 #: storage-absent proof: DNS resolution stays healthy (identity services keep
 #: running) while every SMB connection attempt fails fast.
@@ -279,6 +331,20 @@ def new_boot_facts() -> dict[str, object]:
         "entry_selected": None,
         "entry_committed": False,
         "menu_retries": 0,
+        # Deliberately NOT folded into menu_retries.  A retry counted there
+        # means a rendered menu whose five-second Windows default won the
+        # window; a boot stall counted here means no menu was ever rendered at
+        # all, with the firmware provably inside EfiBootManagerBoot for a
+        # correct, active, first-in-BootOrder entry whose ESP it had already
+        # matched.  They are different faults, and conflating them would
+        # destroy the only signal either one has.  ``boot_stalls`` counts the
+        # stalls a power-cycle recovered from, so the flake rate stays visible
+        # in the evidence instead of being hidden by the retry.
+        "boot_stalls": 0,
+        # One bounded, secret-free record per observed stall (the recovered
+        # ones and the terminal one alike): reason, frame, QMP status and the
+        # asynchronous QMP events this lane never used to drain.
+        "boot_stall_evidence": [],
         "handoff_seen": False,
         # In-run join lifecycle: secret-free booleans only, mirroring the
         # gate-7 ``join_media`` facts plus the DC-side destruction proof.
@@ -297,6 +363,22 @@ def new_boot_facts() -> dict[str, object]:
         "login_completed": False,
         "sudo_elevated": False,
         "rescue_password_set": False,
+        # Timing.  Every instant in the 2026-08-14 stall investigation had to
+        # be reconstructed from file mtimes, so the workstation's power-on
+        # wall clock and a bounded, timestamped serial-label timeline (offsets
+        # in seconds from that instant) are retained with the facts.
+        "workstation_spawned_at": None,
+        "serial_timeline": [],
+        # The OVMF variable store either side of the boot.  Comparing a failed
+        # run's post-boot hash with a passing one's is then a grep rather than
+        # a varstore-parsing script, and before-versus-after answers "did the
+        # firmware write the varstore at all this boot" on its own.
+        "firmware_vars_sha256_before": None,
+        "firmware_vars_sha256_after": None,
+        # Size of the retained firmware debug console: nonzero proves this
+        # OVMF build uses the I/O-port DebugLib and the whole firmware log is
+        # in the bundle; zero proves it uses the serial one.
+        "firmware_debug_log_bytes": None,
     }
 
 
@@ -856,6 +938,7 @@ def audit_arch_identity_boot(command: list[str], *, disk: Path) -> None:
 def workstation_boot_command(
     disk: Path, variables: Path, switch_port: int, *,
     qmp_socket: Path | None = None,
+    firmware_log: Path | None = None,
 ) -> list[str]:
     """Build the disk-only boot command for the joined Arch workstation.
 
@@ -870,6 +953,17 @@ def workstation_boot_command(
     ``qmp_socket`` (mirroring the dual-boot lane) pins a private QMP socket
     so a missed systemd-boot window can be power-cycled with ``system_reset``
     instead of being waited out inside Windows.
+
+    ``firmware_log`` wires OVMF's own debug console to a file.  The 2026-08-14
+    stalls left this lane with four serial transcripts of a firmware whose
+    print level emits two lines an entire boot, so where inside
+    ``EfiBootManagerBoot`` the guest wedged could not be read off any
+    artifact.  ``-debugcon`` plus the ``0x402`` I/O port OVMF's
+    ``BaseDebugLibIoPort`` uses turns that into a one-line read when the build
+    carries that DebugLib, and produces an empty file (costing nothing, and
+    itself informative) when it carries the serial one.  Both audits are run
+    below with the extra tokens present, because a rejected token would break
+    every run rather than one.
 
     One empty ``pcie-root-port`` is cold-plugged for the one-use ``TELOS_JOIN``
     media the in-run join hot-attaches: q35's root complex (``pcie.0``) does
@@ -895,6 +989,17 @@ def workstation_boot_command(
         # no-menu boot could not be diagnosed from this lane's own artifacts.
         "-device", "VGA",
     ]
+    if firmware_log is not None:
+        target = Path(firmware_log)
+        # A chardev spec is comma-separated, so a comma in the path would be
+        # parsed as another option and QEMU would refuse to start at all.
+        if not target.is_absolute() or "," in str(target):
+            raise ArchIdentityError(
+                "the firmware debug log path must be absolute and comma-free")
+        command += [
+            "-debugcon", f"file:{target}",
+            "-global", "isa-debugcon.iobase=0x402",
+        ]
     if qmp_socket is not None:
         if len(str(Path(qmp_socket)).encode()) > 100:
             raise ArchIdentityError(
@@ -930,6 +1035,96 @@ def workstation_boot_command(
 # --------------------------------------------------------------------------
 # Boot drive: systemd-boot menu, getty login, single sudo -S elevation.
 # --------------------------------------------------------------------------
+
+def _utc_now() -> str:
+    """One wall-clock stamp in the shape the other evidence lanes write."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _file_sha256(path: Path) -> str | None:
+    """The repository's file digest, or ``None`` when it cannot be taken."""
+    from .windows_install_contract import sha256
+
+    try:
+        return sha256(Path(path))
+    except OSError:
+        return None
+
+
+def stall_reason(error: BaseException) -> str:
+    """Tell a dead QEMU apart from a live guest that went quiet.
+
+    ``SerialAutomation._wait`` raises the same ``SerialAutomationError`` for
+    EOF on the console (``serial closed while waiting for ...``, i.e. the QEMU
+    process exited) and for a guest that simply stopped speaking (``timed out
+    waiting for ...``), and ``drive_boot_menu`` rewrote both into one message,
+    so the retained facts could not tell them apart.  Reconstructing that
+    distinction from QEMU's lifetime consumed most of the 2026-08-14 stall
+    investigation; here it is read once and retained.
+    """
+    return (STALL_SERIAL_CLOSED if str(error).startswith("serial closed")
+            else STALL_TIMED_OUT)
+
+
+def _bounded_qmp_events(queued) -> list[dict[str, object]]:
+    """The asynchronous QMP events on the socket, bounded and secret-free.
+
+    ``QmpClient`` queues every event it reads past while awaiting a command
+    response and nothing in this lane has ever looked at that queue, so a
+    ``BLOCK_IO_ERROR``, ``RESET`` or ``STOP`` raised during a stalled boot was
+    discarded -- exactly the traffic that would have distinguished a host I/O
+    stall from a spinning vCPU.  Only QEMU-generated names, timestamps and
+    small primitive payloads are kept, and only the most recent few.
+    """
+    result: list[dict[str, object]] = []
+    try:
+        recent = list(queued)[-STALL_QMP_EVENT_LIMIT:]
+    except TypeError:  # not iterable: a double, or nothing at all
+        return result
+    for item in recent:
+        if not isinstance(item, dict):
+            continue
+        entry: dict[str, object] = {"event": str(item.get("event"))[:64]}
+        stamp = item.get("timestamp")
+        if isinstance(stamp, dict):
+            entry["timestamp"] = {
+                str(key)[:16]: value for key, value in stamp.items()
+                if isinstance(value, (int, float))}
+        data = item.get("data")
+        if isinstance(data, dict):
+            entry["data"] = {
+                str(key)[:32]: (
+                    value if isinstance(value, (bool, int, float))
+                    else str(value)[:96])
+                for key, value in list(data.items())[:8]}
+        result.append(entry)
+    return result
+
+
+class TimestampedEvents(list):
+    """A ``SerialAutomation.events`` list that also records *when*.
+
+    ``serial_automation`` appends bare labels, so a retained bundle said which
+    console exchanges happened and in what order but never at what time, and
+    the whole 2026-08-14 stall investigation had to reconstruct its timings
+    from file mtimes.  Subclassing ``list`` keeps the label sequence
+    byte-identical for every existing reader (and every existing assertion)
+    while ``timeline`` records ``[offset_seconds, label]`` against the
+    workstation's power-on instant.
+    """
+
+    def __init__(self, existing=(), *, clock=None, origin=None) -> None:
+        super().__init__(existing)
+        self.clock = clock or time.monotonic
+        self.origin = self.clock() if origin is None else origin
+        self.timeline: list[list[object]] = []
+
+    def append(self, item) -> None:
+        self.timeline.append([round(self.clock() - self.origin, 3), item])
+        super().append(item)
+
 
 def _send_raw(console, value: bytes, event: str) -> None:
     """Write raw bytes without the line terminator ``_send`` appends.
@@ -998,6 +1193,7 @@ def drive_boot_menu(
     attempts: int = 2,
     menu_timeout: float | None = None,
     handoff_timeout: float = HANDOFF_TIMEOUT,
+    on_stall: Callable[..., object] | None = None,
 ) -> None:
     """Select the Arch entry on the serial systemd-boot menu, fail-closed.
 
@@ -1009,8 +1205,15 @@ def drive_boot_menu(
     Arch and committed with Enter, and the Linux EFI-stub handoff markers
     prove the selection took.  A missed window means Windows is
     booting silently; the guest is power-cycled via *reset* (QMP
-    ``system_reset``) and the menu is driven once more.  Every terminal
-    outcome is a distinct, named failure.
+    ``system_reset``) and the menu is driven once more.  A menu that never
+    renders at all is power-cycled the same way and counted separately as a
+    boot stall (see the branch below).  Every terminal outcome is a distinct,
+    named failure.
+
+    ``on_stall(reason, attempt=..., terminal=..., label=...)`` is invoked on
+    each never-rendered miss so the caller can retain the frame/QMP evidence
+    the mechanism of a stall needs; it is best-effort and never affects the
+    outcome.
     """
     from .dualboot_acceptance import (
         ARCH_HANDOFF_MARKERS, MENU_ARCH_ENTRY, MENU_WINDOWS_ENTRY,
@@ -1033,9 +1236,45 @@ def drive_boot_menu(
             try:
                 console._wait(menu_pattern, "arch-menu-rendered")
             except SerialAutomationError as error:
-                raise ArchIdentityError(
-                    MENU_NEVER_RENDERED_FAILURE, check="arch-joined",
-                ) from error
+                # Power-cycle once and drive the menu again rather than
+                # failing here on the first miss.  A retry can look like
+                # papering over a fault, so the justification is recorded:
+                # the 2026-08-14 stall bundles prove Boot0007 was present,
+                # LOAD_OPTION_ACTIVE and first in the live BootOrder, that
+                # nobody set BootNext, and that the firmware had already
+                # written HDDP -- which EDK2 only writes once
+                # EfiBootManagerBoot has expanded and matched the ESP device
+                # path.  The entry, the boot order, the partition and the
+                # loader path were therefore all correct and resolved, so this
+                # is not a configuration or artifact error that a retry would
+                # mask; it is a stall inside the first read of the loader, and
+                # a power-cycle is exactly what a real workstation would get.
+                # This lane already sanctions QMP ``system_reset`` for the
+                # analogous post-menu miss just below, ``attempts`` bounds it
+                # to one extra try, the final attempt still raises the named
+                # never-rendered failure (fail-closed), and ``boot_stalls``
+                # plus the retained stall evidence keep the flake rate visible
+                # instead of hiding it.  Both failures recorded
+                # ``menu_retries: 0`` precisely because this branch used to
+                # raise before the power-cycle below could ever be reached.
+                reason = stall_reason(error)
+                terminal = attempt + 1 >= max(1, attempts)
+                if on_stall is not None:
+                    try:
+                        on_stall(
+                            reason, attempt=attempt + 1, terminal=terminal,
+                            label="arch-menu-rendered")
+                    except Exception:  # noqa: BLE001 - diagnosis never raises
+                        pass
+                if terminal:
+                    raise ArchIdentityError(
+                        MENU_NEVER_RENDERED_FAILURE, check="arch-joined",
+                    ) from error
+                facts["boot_stalls"] = int(facts.get("boot_stalls", 0)) + 1
+                console.buffer = b""
+                reset()
+                console.events.append("arch-workstation-power-cycled")
+                continue
             facts["menu_seen"] = True
             # ``_wait`` matches (and trims) the ANSI-stripped buffer, so the
             # raw render ``_menu_entries`` needs lives only in the console's
@@ -1831,6 +2070,7 @@ class ArchIdentityBoundary:
         the secret-free probes can all pass.
         """
         from .serial_automation import SerialAutomation
+        from .simulation_evidence import private_file
 
         assert self._port is not None and self._qmp_root is not None
         if OPERATOR_PRINCIPAL not in self._principals:
@@ -1838,9 +2078,23 @@ class ArchIdentityBoundary:
                 "workstation boot requires the staged operator principal",
                 check="arch-joined")
         qmp_path = self._qmp_root / "workstation.qmp"
+        # QEMU writes the firmware debug console itself, so the destination is
+        # created private and empty first: the chardev opens it O_TRUNC and so
+        # keeps this mode-0600 inode, and a missing evidence directory would
+        # make QEMU refuse to start at all rather than merely lose the log.
+        firmware_log = (
+            self.bundle.evidence_path.parent
+            / WORKSTATION_FIRMWARE_LOG_FILENAME)
+        private_file(firmware_log, b"")
         command = workstation_boot_command(
             self.bundle.disk, self.bundle.firmware, self._port,
-            qmp_socket=qmp_path)
+            qmp_socket=qmp_path, firmware_log=firmware_log)
+        # Hashed BEFORE the boot as well as after: the pair answers "did the
+        # firmware write the variable store at all this boot" without a
+        # varstore parser, which is the question both 2026-08-14 stalls turned
+        # on (they had written HDDP, so they had).
+        self._boot_facts["firmware_vars_sha256_before"] = _file_sha256(
+            self.bundle.firmware)
         # Retained beside the bundle's authorization, as the install and
         # dual-boot lanes do: a boot that renders no menu is diagnosed from
         # the firmware knobs it actually ran with, and reconstructing them
@@ -1850,7 +2104,9 @@ class ArchIdentityBoundary:
             json.dumps({"schema": 1, "argv": command}, indent=2) + "\n",
             encoding="utf-8")
         recorded.chmod(0o600)
+        spawned_at = time.monotonic()
         process = self._spawn("workstation", command, stdio=True)
+        self._boot_facts["workstation_spawned_at"] = _utc_now()
         self._audit("client", process.pid, allowed_nic_models=("e1000e",))
         try:
             self._workstation_qmp = self._connect_qmp(qmp_path, process.pid)
@@ -1862,11 +2118,14 @@ class ArchIdentityBoundary:
             process.stdout, process.stdin,
             self._principals[OPERATOR_PRINCIPAL].encode("ascii"),
             timeout=CONSOLE_READY_TIMEOUT)
+        # Every console label from here on is timestamped against power-on.
+        console.events = TimestampedEvents(console.events, origin=spawned_at)
         self._workstation_console = console
         drive_boot_menu(
             console, self._boot_facts,
             reset=lambda: self._workstation_qmp.execute("system_reset"),
-            menu_timeout=MENU_RENDER_TIMEOUT)
+            menu_timeout=MENU_RENDER_TIMEOUT,
+            on_stall=self._retain_boot_stall_evidence)
         # Strictly between the menu drive and the login: the guest cannot log
         # anybody in until its join unit has finished, and nobody can log in at
         # all until this run's directory knows this machine.
@@ -1971,13 +2230,155 @@ class ArchIdentityBoundary:
     def windows_evidence(self) -> list[dict[str, object]]:
         return self.bundle.read_windows_evidence()
 
+    def _retain_boot_stall_evidence(
+        self, reason: str, *, attempt: int, terminal: bool, label: str,
+    ) -> None:
+        """Make the next boot stall self-diagnosing, bounded and secret-free.
+
+        Called from ``drive_boot_menu`` on every never-rendered miss: the one
+        it power-cycles and retries, and the terminal one it raises on.  The
+        two 2026-08-14 stalls left this lane with four serial transcripts of a
+        firmware that prints two lines an entire boot, and nothing else, so
+        the mechanism could not be settled: the guest was demonstrably inside
+        ``EfiBootManagerBoot(Boot0007)`` past the ESP match (it had written
+        ``HDDP``) and before ``LoadImage``, but no artifact could say whether
+        the vCPU was spinning, a device had stalled, or host I/O had stalled
+        through the three-deep ``cache=none`` qcow2 chain.  Three cheap
+        artifacts separate those, and none of them was being kept:
+
+        * a framebuffer frame -- ``-device VGA`` exists for exactly this and
+          ``screendump`` had never once been called from this module -- which
+          separates "firmware still on a blank screen" from "systemd-boot
+          rendered to VGA but not to ttyS0";
+        * ``query-status`` plus the asynchronous events queued on the QMP
+          socket this lane holds open and never drains, so ``paused`` versus
+          ``running`` (and any ``BLOCK_IO_ERROR`` or ``RESET``) separates a
+          stalled device or host I/O stall from a spinning vCPU;
+        * the stall reason, EOF versus a quiet guest, which ``_wait`` and this
+          function both used to collapse into one message.
+
+        Everything retained is bounded (record count, frame size, event count)
+        and secret-free: this runs strictly before the in-run join and the
+        operator login, so no credential has reached the console or the
+        framebuffer yet.  Capture failures are recorded in the record itself
+        and never raised -- diagnosis must not change the run's outcome.
+        """
+        from .simulation_evidence import private_directory
+
+        records = self._boot_facts.setdefault("boot_stall_evidence", [])
+        if (not isinstance(records, list)
+                or len(records) >= BOOT_STALL_RETENTION_LIMIT):
+            return
+        record: dict[str, object] = {
+            "reason": reason,
+            "label": label,
+            "attempt": attempt,
+            "terminal": terminal,
+            "at": _utc_now(),
+            "frame": None,
+            "status": None,
+            "qmp_events": [],
+        }
+        records.append(record)
+        console = self._workstation_console
+        if console is not None:
+            record["transcript_bytes"] = len(
+                bytes(getattr(console, "transcript", b"")))
+        evidence = self.bundle.evidence_path.parent
+        try:
+            private_directory(evidence)
+        except Exception as error:  # noqa: BLE001 - diagnosis never raises
+            record["retention_error"] = type(error).__name__
+            return
+        qmp = self._workstation_qmp
+        if qmp is None:
+            record["qmp"] = "unavailable"
+            return
+        frame = evidence / STALL_FRAME_TEMPLATE.format(index=len(records))
+        try:
+            qmp.screenshot(frame)
+            if frame.is_file():
+                size = frame.stat().st_size
+                if size > STALL_FRAME_MAX_BYTES:
+                    frame.unlink()
+                    record["frame_error"] = "frame exceeded its size bound"
+                else:
+                    frame.chmod(0o600)
+                    record["frame"] = frame.name
+                    record["frame_bytes"] = size
+        except Exception as error:  # noqa: BLE001 - diagnosis never raises
+            record["frame_error"] = type(error).__name__
+        try:
+            status = qmp.execute("query-status", timeout=STALL_QMP_TIMEOUT)
+        except Exception as error:  # noqa: BLE001 - diagnosis never raises
+            record["status_error"] = type(error).__name__
+        else:
+            if isinstance(status, dict):
+                record["status"] = status.get("status")
+                record["running"] = status.get("running")
+        # Reading the queue after a command drains the socket: ``execute``
+        # queues every event it passes over on the way to its response.
+        record["qmp_events"] = _bounded_qmp_events(
+            getattr(qmp, "_events", ()))
+
+    def _retain_switch_log(self) -> None:
+        """Copy the fabric switch log out of the tempdir that deletes it.
+
+        ``switch.jsonl`` is written for the whole run and then removed with
+        ``self._runtime``, so the only record of fabric timing -- and of
+        whether the switch process itself failed -- has never survived a run.
+        It is the one artifact that can confirm or kill the "QEMU stalled"
+        reading of a boot stall: a switch still logging while the guest says
+        nothing places the stall inside a live, scheduled QEMU.  Bounded to a
+        line-aligned tail so the retained file stays parseable.
+        """
+        from .simulation_evidence import private_file, redact
+
+        if self._runtime is None:
+            return
+        source = self._runtime / "switch.jsonl"
+        if source.is_symlink() or not source.is_file():
+            return
+        data = source.read_bytes()[-SWITCH_LOG_RETENTION_BYTES:]
+        if len(data) == SWITCH_LOG_RETENTION_BYTES and b"\n" in data:
+            data = data.split(b"\n", 1)[1]
+        private_file(
+            self.bundle.evidence_path.parent / SWITCH_LOG_FILENAME,
+            redact(data))
+
+    def _retain_firmware_log(self) -> None:
+        """Bound the firmware debug console QEMU wrote for itself.
+
+        A debug-DebugLib OVMF can emit megabytes over a long boot, so the
+        retained size is capped the same way the transcript is and the
+        observed size is recorded: nonzero means this build carries the
+        I/O-port DebugLib and the whole firmware log is in the bundle, zero
+        means it carries the serial one and the empty file is the answer.
+        """
+        from .simulation_evidence import private_file
+
+        path = (
+            self.bundle.evidence_path.parent
+            / WORKSTATION_FIRMWARE_LOG_FILENAME)
+        if path.is_symlink() or not path.is_file():
+            return
+        size = path.stat().st_size
+        self._boot_facts["firmware_debug_log_bytes"] = size
+        if size > FIRMWARE_LOG_RETENTION_BYTES:
+            private_file(
+                path, path.read_bytes()[-FIRMWARE_LOG_RETENTION_BYTES:])
+        else:
+            path.chmod(0o600)
+
     def _retain_workstation_evidence(self, transcript: bytes) -> None:
         """Keep a bounded, redacted transcript and secret-free boot facts.
 
         Mirrors ``arch_install_run._sanitize_log``: only a bounded tail is
         kept, secret-shaped values are redacted, and the files are private.
         The facts record the menu/login lifecycle (menu-seen, entry-selected,
-        getty-seen, login-completed, retries, elevation) and nothing else.
+        getty-seen, login-completed, retries, elevation), the boot-stall
+        diagnosis, the console timeline and the firmware-variable digests, and
+        nothing else.
         """
         from .simulation_evidence import private_file, redact
 
@@ -1985,6 +2386,24 @@ class ArchIdentityBoundary:
         private_file(
             evidence / WORKSTATION_LOG_FILENAME,
             redact(transcript[-TRANSCRIPT_RETENTION_BYTES:]))
+        # Timing and firmware state, both of which had to be reconstructed by
+        # hand after the 2026-08-14 stalls: the bounded timestamped console
+        # timeline, and the post-boot variable-store digest to compare against
+        # this run's pre-boot one and against another run's.
+        timeline = getattr(
+            getattr(self._workstation_console, "events", None),
+            "timeline", None)
+        if isinstance(timeline, list):
+            self._boot_facts["serial_timeline"] = [
+                list(item) for item in timeline[-SERIAL_TIMELINE_LIMIT:]]
+        self._boot_facts["firmware_vars_sha256_after"] = _file_sha256(
+            self.bundle.firmware)
+        try:
+            self._retain_firmware_log()
+        except OSError:
+            # Bounding QEMU's own log must never cost the facts file, which is
+            # the artifact that says how far the boot actually got.
+            self._boot_facts["firmware_debug_log_bytes"] = None
         payload = {"schema": 1, **self._boot_facts}
         private_file(
             evidence / BOOT_FACTS_FILENAME,
@@ -2041,6 +2460,13 @@ class ArchIdentityBoundary:
                     "workstation evidence retention failed: "
                     + type(error).__name__)
             self._workstation_console = None
+        # Strictly before the runtime tempdir is removed below: the switch log
+        # is written there all run and has never survived one.
+        try:
+            self._retain_switch_log()
+        except Exception as error:  # noqa: BLE001
+            failures.append(
+                "switch log retention failed: " + type(error).__name__)
         self._principals = {}
         if self._controller_disk is not None:
             try:

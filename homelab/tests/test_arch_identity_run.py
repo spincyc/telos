@@ -666,6 +666,55 @@ class WorkstationBootCommandTests(unittest.TestCase):
                 audit_arch_identity_boot(
                     command, disk=root / "other.qcow2")
 
+    def test_firmware_debug_console_is_wired_and_still_audits(self):
+        # The 2026-08-14 stalls could not be placed inside the firmware
+        # because OVMF's print level emits two serial lines an entire boot.
+        # -debugcon at OVMF's 0x402 I/O port carries the whole firmware log
+        # when this build uses BaseDebugLibIoPort, and an empty file (which
+        # costs nothing and is itself the answer) when it does not.  A token
+        # either audit rejected would break EVERY run, so both are asserted
+        # here with the extra tokens present.
+        from homelab.vm.simulated_topology import audit_qemu_argv
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "arch-workstation.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            disk.write_bytes(b"disk")
+            variables.write_bytes(b"vars")
+            log = root / "evidence" / "workstation-firmware.log"
+            command = workstation_boot_command(
+                disk, variables, 23456, firmware_log=log)
+            self.assertIn("-debugcon", command)
+            self.assertIn(f"file:{log}", command)
+            self.assertIn("isa-debugcon.iobase=0x402", command)
+            # No -chardev token is introduced, which audit_qemu_argv forbids.
+            self.assertNotIn("-chardev", command)
+            audit_qemu_argv(
+                "client", command, allowed_nic_models=("e1000e",))
+            audit_arch_identity_boot(command, disk=disk)
+            # The debug console is a file sink only: it adds no writable
+            # block device and no installation media.
+            self.assertFalse(
+                any("workstation-firmware.log" in item
+                    for index, item in enumerate(command)
+                    if index and command[index - 1] == "-drive"))
+
+    def test_unsafe_firmware_log_path_is_refused(self):
+        # A chardev spec is comma-separated: a comma in the path would be
+        # parsed as another option and QEMU would refuse to start at all.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "arch-workstation.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            disk.write_bytes(b"disk")
+            variables.write_bytes(b"vars")
+            for bad in (root / "a,b" / "firmware.log",
+                        Path("relative/firmware.log")):
+                with self.assertRaisesRegex(
+                        ArchIdentityError, "comma-free"):
+                    workstation_boot_command(
+                        disk, variables, 23456, firmware_log=bad)
+
 
 class _FakeProcess:
     def __init__(self) -> None:
