@@ -453,12 +453,14 @@ homelab-factory-recover:
 			--run '$(RECOVERY_RUN)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			$(if $(RECOVERY_BOOT),--boot) \
 			--duration '$(FACTORY_DURATION)'; \
 	else \
 		$(PYTHON) homelab/bin/homelab-lifecycle-recovery \
 			--run '$(RECOVERY_RUN)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			$(if $(RECOVERY_BOOT),--boot) \
 			--duration '$(FACTORY_DURATION)' --apply; \
 	fi
 

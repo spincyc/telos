@@ -250,6 +250,20 @@ class LiveRecoveryLab(RecoveryLab):
         # real environment can supply the live proofs without changing callers.
         self.boot = boot
 
+    def _live(self, hook: Callable[[RunContext], Any],
+              ctx: RunContext) -> Any:
+        """Ask a live-boot hook for its proofs, or ``None`` without ``--boot``.
+
+        ``boot`` is the single gate on the live path: when it is false no hook
+        is even called, so a guest-boot scenario can only ever be deferred.
+        When it is true the hook runs and its return value is used verbatim —
+        ``None`` still means "not exercised", so an unimplemented hook defers
+        honestly instead of fabricating a live pass.
+        """
+        if not self.boot:
+            return None
+        return hook(ctx)
+
     # -- fully-provable loopback scenarios --------------------------------
 
     def pxe_release_rollback(self, ctx: RunContext) -> dict[str, Any]:
@@ -424,7 +438,7 @@ class LiveRecoveryLab(RecoveryLab):
             return {"status": FAILED,
                     "reason": "the ADR-0068 stable-name contract is incomplete",
                     "fields": fields}
-        live = self._live_controller_restart(ctx)
+        live = self._live(self._live_controller_restart, ctx)
         if live is not None:
             return {"status": PROVEN, "fields": fields, "live": live}
         return {
@@ -457,7 +471,7 @@ class LiveRecoveryLab(RecoveryLab):
             "windows_entry": NVRAM_WINDOWS_LABEL,
             "independent_uefi_entries": True,
         }
-        live = self._live_broken_boot_repair(ctx)
+        live = self._live(self._live_broken_boot_repair, ctx)
         if live is not None:
             return {"status": PROVEN, "fields": fields, "live": live}
         return {
@@ -492,7 +506,7 @@ class LiveRecoveryLab(RecoveryLab):
             "cached_login_policy": True,
             "offline_credentials_expiration": 0,
         }
-        live = self._live_directory_dns_loss(ctx)
+        live = self._live(self._live_directory_dns_loss, ctx)
         if live is not None:
             return {"status": PROVEN, "fields": fields, "live": live}
         return {
@@ -535,7 +549,7 @@ class LiveRecoveryLab(RecoveryLab):
                               "observe reconstruction from public inputs",
                     "fields": {"seed_verified": True,
                                "synthetic_private_overlay": True}}
-        live = self._live_controller_reconstruction(ctx)
+        live = self._live(self._live_controller_reconstruction, ctx)
         if live is not None:
             return {"status": PROVEN, "fields": fields, "live": live}
         return {
@@ -570,7 +584,7 @@ class LiveRecoveryLab(RecoveryLab):
             "writes_confined_to_overlay": True,
             "re_mintable": True,
         }
-        live = self._live_failed_install_recovery(ctx)
+        live = self._live(self._live_failed_install_recovery, ctx)
         if live is not None:
             return {"status": PROVEN, "fields": fields, "live": live}
         return {
@@ -585,10 +599,12 @@ class LiveRecoveryLab(RecoveryLab):
     #
     # Each returns the observed live proofs when a real DisposableBootDisk/QMP
     # session runs the scenario, or None when no live boot was exercised (the
-    # loopback lab and the repo "no QEMU" boundary).  A real environment
-    # overrides ``boot=True`` and implements these against the same
+    # loopback lab and the repo "no QEMU" boundary).  They are reached only
+    # through :meth:`_live`, so ``--boot`` / ``boot=True`` is what lets them run
+    # at all; a real environment implements them against the same
     # DisposableBootDisk/QmpClient/SerialAutomation machinery the other runners
-    # use; they are intentionally not exercised — and never faked — here.
+    # use.  Until then they return None: the scenario defers honestly and is
+    # never faked into a pass, with or without the flag.
 
     def _live_controller_restart(self, ctx: RunContext):
         return None
@@ -620,7 +636,7 @@ def _summary(events: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def run(run_dir: Path, *, releases: Path, controller_state: Path,
-        seed_iso: Path, duration: float, apply: bool,
+        seed_iso: Path, duration: float, apply: bool, boot: bool = False,
         lab: RecoveryLab | None = None) -> int:
     if not MIN_DURATION <= duration <= MAX_DURATION:
         raise RecoveryError(
@@ -632,6 +648,10 @@ def run(run_dir: Path, *, releases: Path, controller_state: Path,
     print(f"Releases: {releases}")
     print(f"Maximum runtime: {duration:g} seconds")
     print("Scenarios: " + ", ".join(SCENARIOS))
+    print("Live guest boot: " + ("requested" if boot else "not requested"))
+    if boot:
+        print("Live proofs are recorded only where a live hook is implemented; "
+              "an unimplemented hook stays deferred and is never a pass")
     if not apply:
         print("dry run; repeat with --apply to exercise recovery and judge")
         return 0
@@ -645,7 +665,7 @@ def run(run_dir: Path, *, releases: Path, controller_state: Path,
         duration=duration)
     context.scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
     if lab is None:
-        lab = LiveRecoveryLab()
+        lab = LiveRecoveryLab(boot=boot)
 
     result: dict[str, Any] = {"schema": 1, "status": "fail",
                               "phase": "starting"}
@@ -704,6 +724,13 @@ def parser() -> argparse.ArgumentParser:
                         default=Path("homelab/var/seed/telos-controller-seed.iso"))
     result.add_argument("--duration", type=float, default=1800)
     result.add_argument("--apply", action="store_true")
+    result.add_argument(
+        "--boot", action="store_true",
+        help="opt into the live guest-boot path for the five scenarios whose "
+             "complete proof needs a booted guest; without it no live hook is "
+             "called at all.  A hook that is not implemented still returns no "
+             "live proofs, so the scenario stays deferred — this flag never "
+             "turns a deferral into a pass")
     return result
 
 
@@ -712,7 +739,7 @@ def main(argv: list[str] | None = None) -> int:
     return run(
         args.run, releases=args.releases,
         controller_state=args.controller_state, seed_iso=args.seed_iso,
-        duration=args.duration, apply=args.apply)
+        duration=args.duration, apply=args.apply, boot=args.boot)
 
 
 if __name__ == "__main__":

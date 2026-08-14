@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 # ROOT.parent gives the ``homelab`` package; lib/vm supply the leaf modules.
@@ -480,6 +481,47 @@ class RunTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["error_type"], "RuntimeError")
 
+    # -- the --boot flag is reachable end to end -------------------------
+
+    def test_parser_exposes_boot_defaulting_off(self):
+        args = runner.parser().parse_args(["--run", "run"])
+        self.assertFalse(args.boot)
+        args = runner.parser().parse_args(["--run", "run", "--boot"])
+        self.assertTrue(args.boot)
+
+    def _spy_lab(self, seen):
+        class Spy(runner.LiveRecoveryLab):
+            def __init__(self, *, boot=False):
+                super().__init__(boot=boot)
+                seen.append(boot)
+
+        return Spy
+
+    def test_run_constructs_the_live_lab_with_boot(self):
+        for boot in (False, True):
+            seen = []
+            with mock.patch.object(runner, "LiveRecoveryLab",
+                                   self._spy_lab(seen)):
+                code = runner.run(
+                    self.root / f"run-boot-{boot}", **self._ctx_inputs(),
+                    duration=600, apply=True, boot=boot)
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, [boot])
+
+    def test_main_passes_boot_through_to_the_lab(self):
+        for argv_extra, expected in ((["--boot"], True), ([], False)):
+            seen = []
+            with mock.patch.object(runner, "LiveRecoveryLab",
+                                   self._spy_lab(seen)):
+                code = runner.main([
+                    "--run", str(self.root / f"main-{expected}"),
+                    "--releases", str(self.root / "pxe"),
+                    "--controller-state", str(self.root / "controller"),
+                    "--seed-iso", str(self.root / "seed.iso"),
+                    "--duration", "600", "--apply", *argv_extra])
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, [expected])
+
     def test_existing_run_bundle_is_refused(self):
         run_dir = self.root / "run"
         run_dir.mkdir()
@@ -613,6 +655,91 @@ class LiveLoopbackProofTests(unittest.TestCase):
             "controller-reconstruction",
             self.lab.controller_reconstruction(self._context()))
         self.assertEqual(record["result"], "not-run")
+
+    def test_live_hooks_are_not_called_without_boot(self):
+        called = []
+
+        class Recording(runner.LiveRecoveryLab):
+            def _live_controller_restart(self, ctx):
+                called.append("controller-restart")
+                return None
+
+        record = runner.record_from_observation(
+            "controller-restart",
+            Recording(boot=False).controller_restart(self._context()))
+        self.assertEqual(record["result"], "not-run")
+        self.assertEqual(called, [])
+
+    def test_boot_reaches_the_live_hooks(self):
+        called = []
+
+        class Recording(runner.LiveRecoveryLab):
+            def _live_controller_restart(self, ctx):
+                called.append("controller-restart")
+                return None
+
+        record = runner.record_from_observation(
+            "controller-restart",
+            Recording(boot=True).controller_restart(self._context()))
+        # The hook ran, returned no live proofs, and the scenario still defers:
+        # --boot never turns an unproven live scenario into a pass.
+        self.assertEqual(called, ["controller-restart"])
+        self.assertEqual(record["result"], "not-run")
+        self.assertTrue(record["deferred_reason"])
+
+    def test_boot_lets_an_implemented_hook_prove_a_scenario(self):
+        class Booted(runner.LiveRecoveryLab):
+            def _live_controller_restart(self, ctx):
+                return dict(LIVE["controller-restart"])
+
+        record = runner.record_from_observation(
+            "controller-restart",
+            Booted(boot=True).controller_restart(self._context()))
+        self.assertEqual(record["result"], "pass")
+        self.assertTrue(record["controller_restarted"])
+        # The same implemented hook is unreachable without the flag.
+        deferred = runner.record_from_observation(
+            "controller-restart",
+            Booted(boot=False).controller_restart(self._context()))
+        self.assertEqual(deferred["result"], "not-run")
+
+    def test_every_live_boot_scenario_is_gated_on_boot(self):
+        # All five guest-boot scenarios route through the same ``boot`` gate.
+        # Give reconstruction its real inputs so the flow reaches the hook
+        # rather than short-circuiting on an absent seed.
+        build_release_set(self.root, "20260727.005")
+        seed = self.root / "seed.iso"
+        seed.write_bytes(b"seed\n")
+        ctx = self._context()
+        ctx.seed_iso = seed
+        for scenario, method_name, hook_name in (
+            ("controller-restart", "controller_restart",
+             "_live_controller_restart"),
+            ("broken-boot-repair", "broken_boot_repair",
+             "_live_broken_boot_repair"),
+            ("directory-dns-loss", "directory_dns_loss",
+             "_live_directory_dns_loss"),
+            ("failed-install-recovery", "failed_install_recovery",
+             "_live_failed_install_recovery"),
+            ("controller-reconstruction", "controller_reconstruction",
+             "_live_controller_reconstruction"),
+        ):
+            called = []
+
+            class Recording(runner.LiveRecoveryLab):
+                pass
+
+            setattr(Recording, hook_name,
+                    lambda self, ctx, _seen=called: _seen.append(1) or None)
+            record = runner.record_from_observation(
+                scenario, getattr(Recording(boot=False), method_name)(ctx))
+            self.assertEqual(called, [], scenario)
+            self.assertEqual(record["result"], "not-run", scenario)
+            record = runner.record_from_observation(
+                scenario, getattr(Recording(boot=True), method_name)(ctx))
+            self.assertEqual(called, [1], scenario)
+            # The hook returned no proofs, so the scenario still defers.
+            self.assertEqual(record["result"], "not-run", scenario)
 
     def test_full_live_lab_run_is_partial_and_judges(self):
         build_release_set(self.root, "20260727.001")
