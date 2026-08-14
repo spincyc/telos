@@ -22,8 +22,8 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 5 Windows-first install | — | **PASS** (bundle `homelab/var/factory/windows-installs/run-20260810T145421Z-5b457e50e20b`) |
 | 6 Windows join and login | domain identity + recovery | **PASS — 24/24 contracted checks, proven 2026-08-13** (one deferral: `disable-reenable`; see §2) |
 | 7 Arch-second install | — | **pass** (bundle `arch-installs/run-20260811T141601Z-6941005247e8`) |
-| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — 19 of 21 checks pass live 2026-08-14; the 2 storage checks remain (see §3) |
-| 9 Optional storage failure | Windows half live-proven; Arch half waits on gate 8 | **PASS (Windows) / NOT RUN (Arch)** — `optional-storage-offline` and `optional-storage-access-denied` are among the 24 passed checks in the 2026-08-13 gate-6 evidence; the three `arch-smb-*` checks ride inside a gate-8 run. No standalone target by design. (see state doc) |
+| 8 Arch join and login | SSSD identity lifecycle | **PASS — 21/21, proven 2026-08-14** (see §3) |
+| 9 Optional storage failure | rides gates 6 and 8, no target of its own by design | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half in the passing 2026-08-14 gate-8 run, whose `arch-storage-{attached,denied,absent-login}` checks are gate 9's three (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
 | 12 Repeatability (twice-through) | — | **NOT RUN** — needs gates 8 and 9 live |
@@ -332,11 +332,36 @@ accounts, so that depends on the controller's own name-service reaching the
 directory. That is the layer to fix, and it is controller-side -- which is cheap,
 because the controller role runs fresh on every gate-8 run.
 
-**The open blocker, precisely.** The two `arch-storage-*` checks -- gate 9's Arch
-half, and the last thing gate 9 is waiting on. Kerberos is solved (above); the
-server does not resolve the per-user share name for a domain user.
-`arch-storage-denied` mounts the owner's own share first as its fail-closed
-guard, so both move together once the share resolves.
+| 15 | (superseded) | share mounted; the identity guard refused a pass reporting owner_uid=1 -- the harness had truncated 10001 on a partial read |
+| 16 | `arch-identity/run-20260814T172142Z-495164bc7159` | **GATE 8 PASSES. 21 of 21.** Judge: `PASS: 21 checks, external_access=False` |
+
+**Gate 8 is proven.** Evidence
+`homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159/evidence/identity-lifecycle.jsonl`;
+judge with `make homelab-arch-identity-judge ARCH_IDENTITY_EVIDENCE=<that file>`.
+Because the two `arch-storage-*` checks are gate 9's Arch half, **gate 9's
+outstanding proof closes with it**.
+
+The last two faults, for the record. The per-user share never resolved because
+the Controller's own name service had no directory source at all -- `smbd`
+clones its `[homes]` section only when it can look the requested name up as a
+user on the server, and on an AD DC the domain users are not local accounts. The
+run before that got the mount working and was refused by the measurement guard,
+which was right to refuse: the harness had read `owner_uid=1` from a guest that
+printed `10001`, because the measurement pattern had no line anchor and a serial
+chunk boundary inside the number matched its leading digits.
+
+Note `boot_stalls: 1` in the passing run: the firmware stall recurred and the
+power-cycle retry absorbed it. That fault is still not root-caused -- see below.
+
+**No gate-8 blocker remains.** What is still open around it:
+- **The firmware boot stall is not root-caused.** It hit 3 of 16 runs and the
+  bounded power-cycle retry recovers it. Retained evidence narrowed the
+  mechanism: QMP reported `status: running` with `reason: timed-out`, so the
+  vCPU was running -- which eliminates stalled device emulation and host I/O and
+  leaves a firmware spin in the first ESP read. A framebuffer frame, the QMP
+  event stream and the switch log are retained on each occurrence.
+- **The fleet template drift**: `ansible/roles/identity_client/templates/sssd.conf.j2`
+  should carry the same `offline_timeout` bounds the installer now sets.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
