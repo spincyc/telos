@@ -22,7 +22,7 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 5 Windows-first install | — | **PASS** (bundle `homelab/var/factory/windows-installs/run-20260810T145421Z-5b457e50e20b`) |
 | 6 Windows join and login | domain identity + recovery | **PASS — 24/24 contracted checks, proven 2026-08-13** (one deferral: `disable-reenable`; see §2) |
 | 7 Arch-second install | — | **pass** (bundle `arch-installs/run-20260811T141601Z-6941005247e8`) |
-| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — boot chain proven 2026-08-14; blocked on an in-run domain join (see §3) |
+| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — boot, in-run join and domain login all proven 2026-08-14; blocked on sudo elevation (see §3) |
 | 9 Optional storage failure | Windows half live-proven; Arch half waits on gate 8 | **PASS (Windows) / NOT RUN (Arch)** — `optional-storage-offline` and `optional-storage-access-denied` are among the 24 passed checks in the 2026-08-13 gate-6 evidence; the three `arch-smb-*` checks ride inside a gate-8 run. No standalone target by design. (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
@@ -253,10 +253,36 @@ the same gate-7 disk is cheap (~7 min, no reinstall), so retry on this
 signature -- but it needs a real fix, and the VGA device added for frame
 evidence is still not screenshotted by this lane.
 
-**The open blocker, precisely.** SSSD's backend never discovers a domain
-controller, so it never comes online, so `pam_sss` has nothing to authenticate
-against and no cache to fall back on (the join unit wipes the cache and the
-operator password is generated per run). Everything else in the chain is proven.
+| 9 | `arch-identity/run-20260814T144603Z-2ccf8c3ce931` | `ad_server` worked -- SSSD discovered and selected the DC, SRV answered -- but still Offline: the fault was the authenticated bind |
+| 10 | `arch-identity/run-20260814T152400Z-ce7b701254a3` | **DOMAIN LOGIN WORKS.** `domain_online_observed`, `getty_seen`, `login_completed` all true; a home directory was created and an operator shell appeared. Only `sudo -S` elevation fails |
+
+**The keytab was the bind failure.** `net ads join` at install time wrote
+`/etc/krb5.keytab` against the domain of *that* run. The boot-time re-join
+against this run's freshly provisioned domain left the old keys in place with
+the same KVNO, so SSSD's `ldap_child` could select a dead key and the backend
+went offline with the server correctly identified. Removing the keytab
+immediately before the boot-time join fixed it -- the same reasoning the join
+unit already applied to the SSSD cache. Note `net ads` kept working throughout
+because it authenticates from `secrets.tdb`, which the join *does* rewrite.
+
+A hypothesis worth recording as refuted, because it is easy to re-derive: the
+keytab holds `HOST/TELOS-WS1.ad.factory.test` with the host part uppercased while
+`ad_hostname` is the lowercase DNS name, which looks like a case mismatch. It is
+not. Reading the shipped sssd binary, `ldap_child` selects the bind principal
+from the keytab itself over a fixed pattern list whose matching pattern
+truncates the hostname at the first dot, uppercases it and appends a dollar --
+so the bind uses the machine account and `ad_hostname`'s case cannot affect it.
+Pinning `ldap_sasl_authid` would have pinned the wrong thing while looking like
+a fix.
+
+**The open blocker, precisely.** `sudo -k -S -p '' -i` prints its lecture, then
+`Sorry, try again` -- sudo read something and rejected it, which is its response
+to a wrong password rather than to no input. The domain login immediately before
+it accepted the same credential, so suspect the write discipline (a stdin race
+against `sudo -S`, or the terminator) or sudo's own PAM stack not reaching the
+`pam_sss` the installer inserts into `system-auth`, before suspecting the value.
+The elevation must stay a genuine passworded proof: no NOPASSWD, no dropping
+`-k`.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
