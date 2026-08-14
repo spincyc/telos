@@ -234,6 +234,7 @@ INSTANCE_CODE_GLOBS = (
     "homelab/tests/**/*",
     "homelab/updates/**/*",
     "homelab/vm/**/*",
+    "homelab/workstations/**/*",
     "release/**/*",
     "tools/**/*",
 )
@@ -242,9 +243,6 @@ INSTANCE_CODE_GLOBS = (
 #     "10.1.0.0/16" prompt example are address literals the CIDR rule would
 #     flag, and widening the sanction to /16 to permit a comment would undo
 #     the prefix-length check that caught a real leak.
-#   homelab/workstations/** -- free and green today (its only tokens are
-#     already-sanctioned simulated-lab addresses), but add it once the
-#     in-flight gate-8 join work there settles.
 #   homelab/docs/** -- awaiting an owner decision on what those guides may
 #     carry, since they are tracked but not wired into the site.
 INSTANCE_CODE_SUFFIXES = {".j2", ".json", ".md", ".ps1", ".py", ".yaml", ".yml"}
