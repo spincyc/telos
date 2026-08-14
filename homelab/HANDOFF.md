@@ -22,7 +22,7 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 5 Windows-first install | — | **PASS** (bundle `homelab/var/factory/windows-installs/run-20260810T145421Z-5b457e50e20b`) |
 | 6 Windows join and login | domain identity + recovery | **PASS — 24/24 contracted checks, proven 2026-08-13** (one deferral: `disable-reenable`; see §2) |
 | 7 Arch-second install | — | **pass** (bundle `arch-installs/run-20260811T141601Z-6941005247e8`) |
-| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — 18 of 21 checks pass live 2026-08-14; 3 remain (see §3) |
+| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — 19 of 21 checks pass live 2026-08-14; the 2 storage checks remain (see §3) |
 | 9 Optional storage failure | Windows half live-proven; Arch half waits on gate 8 | **PASS (Windows) / NOT RUN (Arch)** — `optional-storage-offline` and `optional-storage-access-denied` are among the 24 passed checks in the 2026-08-13 gate-6 evidence; the three `arch-smb-*` checks ride inside a gate-8 run. No standalone target by design. (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
@@ -311,17 +311,31 @@ separation, controller-offline cached login, uncached denial, local rescue,
 controller restore, and the Windows secure channel. `arch-storage-absent-login`
 passes too, so the absent-storage path works.
 
-**The open blocker, precisely.** Three checks:
-- `arch-identity-restored` -- runs after the controller is frozen and restored.
-  Its Windows twin passes. SSSD's backend goes offline on a failed request and
-  retries on its own schedule, which can be slower than a bounded probe, so
-  establish what the check actually requires before assuming the Windows lane's
-  reboot-and-reverify transfers.
-- `arch-storage-attached` and `arch-storage-denied` -- gate 9's Arch half riding
-  this gate. The controller side is complete and test-locked, and
-  `arch-storage-absent-login` passes, so look at the client: the `sec=krb5`
-  mount needs a ticket belonging to the logged-in user. Gate 9's required proof
-  also asks for UID/GID and timestamp measurements the probe does not yet emit.
+| 13 | `arch-identity/run-20260814T164555Z-2519fe2d8fec` | **19 of 21.** `arch-identity-restored` now passes. Only the two `arch-storage-*` checks remain |
+
+`arch-identity-restored` failed on timing, not identity: its Windows twin
+recovers because Netlogon is told to re-establish, while SSSD goes offline on a
+failed request and returns on its own retry schedule, which can outlast a bounded
+probe. Giving that recovery room fixed it without weakening the proof.
+
+**The open blocker, precisely.** The two `arch-storage-*` checks -- which are
+also gate 9's Arch half, so they are what that gate has been waiting on.
+`arch-storage-absent-login` passes, so the absent-storage path works.
+
+`mount.cifs -o sec=krb5` asks the KDC for a `cifs/<share-host>` ticket, and the
+controller had published the storage alias as a DNS A record with no
+`servicePrincipalName` -- so the KDC answered with an unknown principal and the
+client's upcall failed. Registering the alias SPNs on the controller's own
+computer account (so the ticket is one this DC already holds keys for -- no
+second account, no second keytab) was necessary and is not sufficient. The named
+next suspicion is the credential cache: `mount.cifs` delegates Kerberos to a
+`request-key` upcall that must find *the logged-in user's* ccache, which is what
+`cruid=` is for, and SSSD's configured ccache type decides where that lives and
+who may read it. `arch-storage-denied` mounts the owner's own share first as its
+fail-closed guard, so it shares the root cause.
+
+Gate 9 additionally wants UID/GID and timestamp measurements on these checks; the
+probe currently emits booleans plus one login duration.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
