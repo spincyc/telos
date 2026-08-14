@@ -27,6 +27,9 @@ from homelab.vm.arch_identity_run import (
     BOOT_FACTS_FILENAME,
     CHECK_DETAILS,
     GETTY_NEVER_APPEARED_FAILURE,
+    JOIN_FAILURE,
+    JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE,
+    LOGIN_ATTEMPTS,
     LOGIN_REFUSED_FAILURE,
     MAX_DURATION,
     MEASURED_CHECK_FIELDS,
@@ -35,6 +38,8 @@ from homelab.vm.arch_identity_run import (
     MENU_WINDOW_MISSED_FAILURE,
     OPERATOR_PRINCIPAL,
     REQUIRED_CHECKS,
+    RESCUE_PASSWORD_FAILURE,
+    RESCUE_PRINCIPAL,
     SUDO_ELEVATION_FAILURE,
     WINDOWS_CHECKS,
     WORKSTATION_LOG_FILENAME,
@@ -45,10 +50,15 @@ from homelab.vm.arch_identity_run import (
     elevation_command,
     login_operator,
     new_boot_facts,
+    rescue_password_command,
     run,
     run_lifecycle,
     self_judge,
+    set_rescue_password,
     workstation_boot_command,
+)
+from homelab.vm.arch_install_run import (
+    build_arch_join_iso as _REAL_BUILD_JOIN_ISO,
 )
 from homelab.vm.dualboot_acceptance import (
     MENU_ARCH_ENTRY,
@@ -572,6 +582,28 @@ class WorkstationBootCommandTests(unittest.TestCase):
         variables.write_bytes(b"vars")
         return workstation_boot_command(disk, variables, port)
 
+    def test_boot_carries_the_empty_join_media_hotplug_port(self):
+        # q35's pcie.0 supports no PCIe hotplug, so the one-use TELOS_JOIN
+        # media needs a root port that was present at boot.  It carries no
+        # device and no backend: the credential cannot exist until this run's
+        # domain has been provisioned.
+        from homelab.vm.arch_install_prepare import (
+            JOIN_PORT_CHASSIS, JOIN_PORT_ID)
+        with tempfile.TemporaryDirectory() as name:
+            command = self._command(Path(name))
+        self.assertIn(
+            f"pcie-root-port,id={JOIN_PORT_ID},bus=pcie.0,"
+            f"chassis={JOIN_PORT_CHASSIS}", command)
+        self.assertFalse(
+            any(f"bus={JOIN_PORT_ID}" in item for item in command))
+        self.assertEqual(
+            sum(item.startswith("pcie-root-port,") for item in command), 1)
+        # Both boundary audits still hold with the extra empty port.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "arch-workstation.qcow2"
+            audit_arch_identity_boot(self._command(root), disk=disk)
+
     def test_boots_from_disk_only(self):
         from homelab.vm.arch_install_prepare import DISK_SERIAL
         with tempfile.TemporaryDirectory() as name:
@@ -657,16 +689,35 @@ class _FakeProcess:
 
 
 class _FakeQmp:
+    """Track blockdev/device lifecycle and prove inode ownership like QEMU.
+
+    Only the join media is added with the nested ``file`` driver shape, so
+    ownership tracking mirrors ``test_arch_install_run._FakeMediaQmp`` without
+    disturbing the controller's seed/convergence attachments.
+    """
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.held: set[tuple[int, int]] = set()
         self.closed = False
 
     def execute(self, command, arguments=None, **_kw):
         self.calls.append((command, arguments))
+        if command == "blockdev-add" and isinstance(arguments, dict):
+            source = arguments.get("file")
+            if isinstance(source, dict):
+                info = Path(source["filename"]).stat()
+                self.held.add((info.st_dev, info.st_ino))
+        if command == "blockdev-del":
+            self.held.clear()
         return {}
+
+    def holds_inode(self, device, inode):
+        return (device, inode) in self.held
 
     def await_device_deleted(self, device, timeout=None):
         self.calls.append(("await_device_deleted", device))
+        return {"event": "DEVICE_DELETED", "data": {"device": device}}
 
     def close(self):
         self.closed = True
@@ -675,6 +726,19 @@ class _FakeQmp:
 #: Cross-object ordering ledger for the wiring tests: process spawns and
 #: principal staging append here so their relative order is provable.
 TIMELINE: list[str] = []
+
+
+def _build_join_iso(output, material, **_kwargs):
+    """Build a real, private join ISO without needing xorriso installed.
+
+    The genuine builder runs (so the ISO is a real mode-0600 file whose inode
+    the media-ownership proofs can be checked against); only the xorriso
+    process is stood in for.  The original is captured at import time because
+    the module attribute itself is what gets patched.
+    """
+    from homelab.tests.test_arch_install_run import _iso_runner
+
+    return _REAL_BUILD_JOIN_ISO(output, material, runner=_iso_runner)
 
 
 def _menu_cell(row: int, title: str, *, selected: bool) -> bytes:
@@ -734,6 +798,7 @@ class _FakeSerial:
     menu_rerender = MENU_ARCH_FIRST_SELECTED
     login_outcome: bytes | None = None  # group(1): b"Login incorrect"
     sudo_outcome: bytes | None = None  # group(1): failure return code
+    rescue_outcome = b"0"  # group(1): passwd local-rescue return code
     root_uid = b"0"
     transcript = b""
 
@@ -783,6 +848,8 @@ class _FakeSerial:
             return _FakeMatch({0: b"", 1: type(self).login_outcome})
         if label == "arch-sudo-outcome":
             return _FakeMatch({0: b"", 1: type(self).sudo_outcome})
+        if label == "arch-rescue-result":
+            return _FakeMatch({0: b"", 1: type(self).rescue_outcome})
         if label == "arch-root-verified":
             return _FakeMatch({0: b"", 1: type(self).root_uid})
         if label == "storage-dns-rc-observed":
@@ -813,6 +880,39 @@ class _FakePrincipalSerial:
     def destroy(self, names):
         TIMELINE.append("destroy-principals")
         return mock.Mock()
+
+
+class _FakeJoinSerial:
+    """Records the one-use domain-join principal lifecycle over the console."""
+
+    instances: list["_FakeJoinSerial"] = []
+    fail = False
+    destruction_proved = True
+
+    def __init__(self, reader, writer, *, timeout=90.0) -> None:
+        self.timeout = timeout
+        self.console = None
+        self.principal = "tj-" + "0" * 16
+        self.credential: str | None = None
+        type(self).instances.append(self)
+
+    def stage(self, credential):
+        from homelab.vm.controller_join_material import (
+            ControllerJoinMaterialError, ControllerJoinResult)
+        TIMELINE.append("stage-join-principal")
+        if type(self).fail:
+            raise ControllerJoinMaterialError("scripted join staging failure")
+        self.credential = credential
+        return ControllerJoinResult(
+            operation="stage", principal=self.principal,
+            destruction_proved=False, events=())
+
+    def destroy(self):
+        from homelab.vm.controller_join_material import ControllerJoinResult
+        TIMELINE.append("destroy-join-principal")
+        return ControllerJoinResult(
+            operation="destroy", principal=self.principal,
+            destruction_proved=type(self).destruction_proved, events=())
 
 
 class _FakeDisposableDisk:
@@ -886,6 +986,7 @@ class BoundaryWiringTests(unittest.TestCase):
         _FakeSerial.instances = []
         _FakeSerial.login_outcome = None
         _FakeSerial.sudo_outcome = None
+        _FakeSerial.rescue_outcome = b"0"
         _FakeSerial.root_uid = b"0"
         _FakeSerial.transcript = b""
         _FakeDisposableDisk.instances = []
@@ -901,16 +1002,32 @@ class BoundaryWiringTests(unittest.TestCase):
             mock.patch(
                 "homelab.vm.controller_principals.ControllerPrincipalSerial",
                 _FakePrincipalSerial),
+            # The one-use join principal protocol; the media lifecycle itself
+            # (build -> attach -> consumed -> destroyed) runs the real code.
+            mock.patch(
+                "homelab.vm.controller_join_material.ControllerJoinSerial",
+                _FakeJoinSerial),
+            # xorriso is not a test dependency: the real builder runs with the
+            # install lane's stand-in runner, so the ISO's inode is real.
+            mock.patch(
+                "homelab.vm.arch_install_run.build_arch_join_iso",
+                _build_join_iso),
         ]
         for patch in self._patches:
             patch.start()
             self.addCleanup(patch.stop)
         _FakePrincipalSerial.instances = []
         _FakePrincipalSerial.fail = False
+        _FakeJoinSerial.instances = []
+        _FakeJoinSerial.fail = False
+        _FakeJoinSerial.destruction_proved = True
         TIMELINE.clear()
 
     def _boundary(self, root: Path) -> _WiredBoundary:
         bundle = make_bundle(root)
+        # validate() is what the real run path calls before constructing the
+        # boundary; it publishes the authorized realm the in-run join needs.
+        bundle.validate()
         boundary = _WiredBoundary(bundle, duration=600)
         seed = root / "seed.iso"
         seed.write_bytes(b"seed")
@@ -969,6 +1086,10 @@ class BoundaryWiringTests(unittest.TestCase):
                     "blockdev-add", "blockdev-add", "device_add",
                     "device_del", "await_device_deleted",
                     "blockdev-del", "blockdev-del",
+                    # The in-run join media: one read-only node in the empty
+                    # join root port, hot-removed and released again.
+                    "blockdev-add", "device_add",
+                    "device_del", "await_device_deleted", "blockdev-del",
                 ])
                 self.assertTrue(boundary.observe_controller_ready())
                 # The convergence media and its password never survive.
@@ -976,9 +1097,16 @@ class BoundaryWiringTests(unittest.TestCase):
                 # Principals are staged after the Controller converges and
                 # strictly before the workstation boots; the workstation
                 # console owns the staged operator credential.
+                # The one-use join principal is staged only after the
+                # workstation is booting and destroyed with proof afterwards.
                 self.assertEqual(TIMELINE, [
                     "spawn:switch", "spawn:gateway", "spawn:controller",
-                    "stage-principals", "spawn:workstation"])
+                    "stage-principals", "spawn:workstation",
+                    "stage-join-principal", "destroy-join-principal"])
+                join_staging = _FakeJoinSerial.instances[0]
+                self.assertIs(join_staging.console, _FakeSerial.instances[0])
+                self.assertEqual(join_staging.timeout,
+                                 arch_identity_run.CONSOLE_READY_TIMEOUT)
                 staging = _FakePrincipalSerial.instances[0]
                 self.assertIs(staging.console, _FakeSerial.instances[0])
                 self.assertEqual(
@@ -990,16 +1118,27 @@ class BoundaryWiringTests(unittest.TestCase):
                     staging.staged[OPERATOR_PRINCIPAL].encode("ascii"))
                 # The workstation boot carries the QMP power-cycle socket.
                 self.assertIn("-qmp", commands["workstation"])
-                # Menu -> getty -> login -> elevation, in order, over serial.
+                # Menu -> in-run join -> getty -> login -> elevation ->
+                # break-glass password, in order, over serial.  The join sits
+                # strictly between the menu drive and the login: no login can
+                # succeed until this run's directory knows this machine.
                 self.assertEqual(workstation_console.events, [
                     "arch-menu-rendered", "arch-menu-entry-selected",
                     "arch-menu-rerendered", "arch-menu-entry-committed",
-                    "arch-handoff-observed", "arch-getty-observed",
+                    "arch-handoff-observed",
+                    "arch-join-media-consumed", "arch-join-verified",
+                    "arch-getty-observed",
                     "arch-login-username-sent", "arch-login-password-prompt",
                     "arch-login-password-sent", "arch-login-outcome",
                     "arch-sudo-command-sent", "arch-sudo-echo-off",
                     "arch-sudo-password-sent", "arch-sudo-outcome",
                     "arch-root-proof-requested", "arch-root-verified",
+                    "arch-rescue-command-sent", "arch-rescue-echo-off",
+                    "arch-rescue-new-password-prompt",
+                    "arch-rescue-password-sent",
+                    "arch-rescue-password-confirm-prompt",
+                    "arch-rescue-password-confirm-sent",
+                    "arch-rescue-result",
                 ])
                 # The Arch entry (listed first) was selected with its raw
                 # digit key and committed with Enter: no newline that would
@@ -1014,7 +1153,22 @@ class BoundaryWiringTests(unittest.TestCase):
                 self.assertTrue(facts["getty_seen"])
                 self.assertTrue(facts["login_completed"])
                 self.assertTrue(facts["sudo_elevated"])
+                self.assertTrue(facts["rescue_password_set"])
                 self.assertEqual(facts["menu_retries"], 0)
+                # The full one-use join lifecycle is recorded, secret-free.
+                for name in (
+                    "join_media_built", "join_media_attached",
+                    "join_media_consumed", "join_media_destroyed",
+                    "join_verified", "join_principal_destroyed",
+                ):
+                    self.assertTrue(facts[name], name)
+                # The staged credential reached the ISO builder, never a fact.
+                self.assertNotIn(
+                    _FakeJoinSerial.instances[0].credential,
+                    json.dumps(facts))
+                # The run-built join ISO was destroyed by exact inode.
+                self.assertFalse(
+                    (boundary._runtime / "join.iso").exists())
                 # Outage control drives the Controller process, not the fabric.
                 import signal
                 boundary.take_controller_offline()
@@ -1107,6 +1261,88 @@ class BoundaryWiringTests(unittest.TestCase):
                 boundary.start()
             self.assertEqual(caught.exception.check, "arch-joined")
             self.assertEqual(boundary._processes, {})
+
+    def test_join_failure_is_named_and_never_blames_the_login(self):
+        # The 2026-08-14 live run stopped at the login because the join had
+        # never happened.  A join that cannot be staged must say so itself.
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeJoinSerial.fail = True
+            with self.assertRaises(ArchIdentityError) as caught:
+                boundary.start()
+            self.assertIn(JOIN_FAILURE, str(caught.exception))
+            self.assertNotIn(LOGIN_REFUSED_FAILURE, str(caught.exception))
+            self.assertNotIn(
+                GETTY_NEVER_APPEARED_FAILURE, str(caught.exception))
+            self.assertEqual(caught.exception.check, "arch-joined")
+            self.assertEqual(boundary._processes, {})
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            # The facts say exactly where it stopped: the boot chain worked,
+            # the join never got as far as building its media, and no login
+            # was ever attempted.
+            self.assertTrue(recorded["handoff_seen"])
+            self.assertFalse(recorded["join_media_built"])
+            self.assertFalse(recorded["join_verified"])
+            self.assertFalse(recorded["join_principal_destroyed"])
+            self.assertFalse(recorded["getty_seen"])
+            self.assertFalse(recorded["login_completed"])
+
+    def test_join_without_proved_principal_destruction_fails_closed(self):
+        class _UnprovedMaterial:
+            """One-use material whose destruction proof never arrives."""
+
+            def __init__(self, realm, *, stage, destroy) -> None:
+                self.realm = realm
+
+            def use(self, consumer):
+                from homelab.vm.controller_join_material import (
+                    ControllerJoinResult)
+                principal = "tj-" + "0" * 16
+                value = consumer({
+                    "realm": "AD.FACTORY.TEST",
+                    "principal": principal,
+                    "credential": "Synthetic-Join-unproved-47!",
+                    "operator": "operator@AD.FACTORY.TEST",
+                })
+                return value, ControllerJoinResult(
+                    operation="destroy", principal=principal,
+                    destruction_proved=False, events=())
+
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            with mock.patch(
+                    "homelab.vm.controller_join_material."
+                    "OneUseDomainJoinMaterial", _UnprovedMaterial):
+                with self.assertRaises(ArchIdentityError) as caught:
+                    boundary.start()
+            self.assertEqual(
+                str(caught.exception), JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE)
+            self.assertEqual(caught.exception.check, "arch-joined")
+            self.assertEqual(boundary._processes, {})
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            # The media lifecycle completed; only the DC-side proof did not.
+            self.assertTrue(recorded["join_media_destroyed"])
+            self.assertFalse(recorded["join_principal_destroyed"])
+            self.assertFalse(recorded["login_completed"])
+
+    def test_rescue_password_failure_is_bound_to_its_own_check(self):
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeSerial.rescue_outcome = b"1"
+            with self.assertRaises(ArchIdentityError) as caught:
+                boundary.start()
+            self.assertEqual(
+                str(caught.exception), RESCUE_PASSWORD_FAILURE)
+            self.assertEqual(caught.exception.check, "arch-local-rescue")
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            self.assertTrue(recorded["sudo_elevated"])
+            self.assertFalse(recorded["rescue_password_set"])
 
     def test_wall_clock_expiry_terminates_and_is_reported(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1419,6 +1655,116 @@ class ElevationTests(SerialTranscriptCase):
             elevate_operator(console, facts, timeout=2.0)
         self.assertEqual(str(caught.exception), SUDO_ELEVATION_FAILURE)
         self.assertFalse(facts["sudo_elevated"])
+
+
+class RescuePasswordTests(SerialTranscriptCase):
+    """The break-glass password gate 7 deliberately leaves disabled."""
+
+    def _ready(self, console) -> bytes:
+        return (b"\n__TELOS_ARCH_RESCUE_READY_"
+                + console.token.encode("ascii") + b"__\n")
+
+    def _result(self, console, code: bytes) -> bytes:
+        return (b"\n__TELOS_ARCH_RESCUE_RC_"
+                + console.token.encode("ascii") + b"=" + code + b"\n")
+
+    def test_password_is_set_with_echo_provably_suppressed(self):
+        console, feeder, sink = self._console()
+        feeder.write(
+            self._ready(console)
+            + b"New password: "
+            + b"\nRetype new password: "
+            + self._result(console, b"0"))
+        facts = new_boot_facts()
+        set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertTrue(facts["rescue_password_set"])
+        sent = self._sent(sink)
+        # Echo is provably off before either write, the account is the one the
+        # lifecycle contract names, and the credential never enters the
+        # retained transcript.
+        self.assertIn(b"stty -echo", sent)
+        self.assertIn(b"passwd " + RESCUE_PRINCIPAL.encode("ascii"), sent)
+        self.assertLess(
+            sent.index(b"stty -echo"), sent.index(TEST_CREDENTIAL))
+        self.assertEqual(sent.count(TEST_CREDENTIAL + b"\n"), 2)
+        self.assertNotIn(TEST_CREDENTIAL, console.transcript)
+        self.assertEqual(console.events, [
+            "arch-rescue-command-sent", "arch-rescue-echo-off",
+            "arch-rescue-new-password-prompt", "arch-rescue-password-sent",
+            "arch-rescue-password-confirm-prompt",
+            "arch-rescue-password-confirm-sent", "arch-rescue-result"])
+
+    def test_nonzero_passwd_return_is_the_named_failure(self):
+        console, feeder, _sink = self._console()
+        feeder.write(
+            self._ready(console)
+            + b"New password: "
+            + b"\nRetype new password: "
+            + self._result(console, b"1"))
+        facts = new_boot_facts()
+        with self.assertRaises(ArchIdentityError) as caught:
+            set_rescue_password(console, facts, TEST_CREDENTIAL, timeout=2.0)
+        self.assertEqual(str(caught.exception), RESCUE_PASSWORD_FAILURE)
+        self.assertEqual(caught.exception.check, "arch-local-rescue")
+        self.assertFalse(facts["rescue_password_set"])
+
+    def test_command_never_carries_the_secret(self):
+        command, ready, result = rescue_password_command("feedfacefeedface")
+        self.assertIn(b"stty -echo", command)
+        self.assertIn(b"passwd " + RESCUE_PRINCIPAL.encode("ascii"), command)
+        self.assertLess(command.index(b"stty -echo"), command.index(b"passwd"))
+        self.assertIn(b"stty echo;", command)
+        self.assertIn(ready, command)
+        self.assertIn(result, command)
+        self.assertNotRegex(
+            command.decode("ascii"), r"(?i)password[ ]*=|--stdin|chpasswd")
+
+    def test_rescue_check_needs_the_password_gate7_never_sets(self):
+        # The probe requires `passwd -S` to report P and gate 7 installs the
+        # account with a disabled password, so only this run can satisfy it.
+        from homelab.tests.test_arch_second import SIZES
+        from homelab.workstations.arch_second import render_installer
+
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES)
+        self.assertNotIn(f"passwd {RESCUE_PRINCIPAL}", script)
+        self.assertIn(
+            '[ "$(passwd -S "$RESCUE_USER" 2>/dev/null | '
+            "awk '{print $2}')\" = P ]", script)
+        # identity_lifecycle.json gives the account no domain role, so no
+        # Controller-staged principal could ever supply its credential.
+        contract = json.loads(
+            (Path(__file__).resolve().parents[1] / "workstations"
+             / "identity_lifecycle.json").read_text(encoding="utf-8"))
+        rescue = contract["principals"]["local_rescue"]
+        self.assertEqual(rescue["name"], RESCUE_PRINCIPAL)
+        self.assertEqual(rescue["domain_role"], "none")
+        from homelab.vm.controller_principals import POSIX_ALLOCATION
+        self.assertNotIn(RESCUE_PRINCIPAL, POSIX_ALLOCATION["users"])
+
+
+class LoginAttemptBudgetTests(unittest.TestCase):
+    """Pin the retry budget to the faillock threshold it must stay under."""
+
+    def test_attempts_stay_below_pam_faillock_deny(self):
+        from homelab.tests.test_arch_second import SIZES
+        from homelab.workstations.arch_second import render_installer
+
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES)
+        # Gate 7 ships the stock Arch faillock stack with no deny= override,
+        # so the default deny=3 applies and the third consecutive failure
+        # locks the account for the default 600s unlock_time.  Spending the
+        # whole budget would make every later proof fail on a lockout the
+        # evidence would misreport as an identity failure.
+        self.assertIn("pam_faillock.so      preauth", script)
+        self.assertIn("pam_faillock.so      authfail", script)
+        self.assertNotIn("deny=", script)
+        self.assertNotIn("unlock_time=", script)
+        self.assertLess(LOGIN_ATTEMPTS, 3)
+        self.assertGreaterEqual(LOGIN_ATTEMPTS, 2)
 
 
 class SudoPathDecisionTests(unittest.TestCase):

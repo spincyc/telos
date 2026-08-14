@@ -1,5 +1,6 @@
 """Executable parity checks between package policy and image/build inputs."""
 
+from importlib import import_module
 from pathlib import Path
 import re
 import sys
@@ -176,15 +177,40 @@ def role_enabled_units(role: Path) -> frozenset[str]:
 
 
 def shell_enabled_units(path: Path) -> frozenset[str]:
-    """Units enabled by `systemctl enable` inside a generated shell payload."""
+    """Units enabled by `systemctl enable` inside a generated shell payload.
+
+    A unit name interpolated from a module constant (``{JOIN_ONCE_UNIT_NAME}``)
+    is resolved against that module rather than skipped: the old pattern
+    silently matched nothing there, so an enabled unit could stay undeclared
+    while the parity test still passed.
+    """
+    text = path.read_text(encoding="utf-8")
     units: set[str] = set()
     for match in re.finditer(
-        r"systemctl enable ((?:[A-Za-z0-9@._-]+ ?)+)",
-        path.read_text(encoding="utf-8"),
+        r"systemctl enable ((?:\{?[A-Za-z0-9@._-]+\}? ?)+)", text
     ):
         for unit in match.group(1).split():
+            if unit.startswith("{") and unit.endswith("}"):
+                unit = _module_constant(path, unit[1:-1])
             units.add(unit if "." in unit else f"{unit}.service")
     return frozenset(units)
+
+
+def _module_constant(path: Path, name: str) -> str:
+    """The value of a module-level string constant, by import.
+
+    The rendered payload interpolates a local binding (``{join_once_unit_name}``)
+    whose value comes from the module constant of the same name in upper case,
+    so both spellings are tried before giving up.
+    """
+    module = import_module(f"homelab.{path.parent.name}.{path.stem}")
+    for candidate in (name, name.upper()):
+        value = getattr(module, candidate, None)
+        if isinstance(value, str) and value:
+            return value
+    raise AssertionError(
+        f"{path.name} interpolates {{{name}}} into `systemctl enable` but "
+        f"exposes no matching string constant to resolve it")
 
 
 def wants_linked_units(path: Path) -> frozenset[str]:
@@ -229,6 +255,9 @@ class NonAnsibleServiceParityTests(unittest.TestCase):
             "NetworkManager.service",
             "sssd.service",
             "serial-getty@ttyS0.service",
+            # The one-shot in-run domain join: gate 8 boots into a freshly
+            # provisioned domain, so the disk must re-join before sssd starts.
+            "telos-arch-join-once.service",
         }))
         profile_declared = frozenset().union(*(
             self.declared(overlay)

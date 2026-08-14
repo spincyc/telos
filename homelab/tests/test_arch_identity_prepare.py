@@ -379,6 +379,40 @@ class PrepareTests(unittest.TestCase):
                 expected_sizes_mib=(260, 16, 200000, 40000, 1000),
             ))
 
+    def test_domain_joined_means_join_capable_not_already_joined(self):
+        # The corrected premise: a gate-8 run provisions a brand-new domain,
+        # so the disk can only ship a join-CAPABLE identity client.  What the
+        # gate-7 transcript's marker proves is exactly that capability -- the
+        # renderer also installs and enables the one-shot boot unit that
+        # re-joins in-run -- and the authorization keeps its field unchanged.
+        script = arch_second.render_installer(
+            disk_path="/dev/vda",
+            disk_serial="TELOS-WIN-0001",
+            hostname="telos-workstation",
+            expected_sizes_mib=(260, 16, 200000, 40000, 1000),
+        )
+        self.assertIn(
+            f"systemctl enable {arch_second.JOIN_ONCE_UNIT_NAME}", script)
+        self.assertIn(arch_second.JOIN_ONCE_SCRIPT_PATH, script)
+        # No schema change: the consumer contract keeps the same field, and
+        # the runner still validates it exactly as before.
+        self.assertIs(
+            prepare_module.ArchIdentityBundle.__module__.endswith(
+                "arch_identity_run"), True)
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            install = make_install_bundle(root)
+            evidence = write_windows_evidence(
+                root / "windows-acceptance.jsonl")
+            run = prepare(
+                install, evidence, run_root=root / "identity-runs",
+                ovmf_vars=make_vars_template(root))
+            authorization = json.loads(
+                (run / "authorization.json").read_text(encoding="utf-8"))
+            self.assertTrue(authorization["domain_joined"])
+            self.assertEqual(
+                authorization["join_marker"], ARCH_JOIN_MARKER)
+
     def test_failed_gate7_result_is_refused_by_prepare(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

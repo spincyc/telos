@@ -184,7 +184,8 @@
       ],
       "services": [
         "NetworkManager.service",
-        "serial-getty@ttyS0.service"
+        "serial-getty@ttyS0.service",
+        "telos-arch-join-once.service"
       ]
     },
     "services": {

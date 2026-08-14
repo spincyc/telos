@@ -10,16 +10,19 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
-    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_LABEL, LINUX_ROOT_X86_64,
+    CONTROLLER_ADDRESS, ESP, JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL,
+    JOIN_ONCE_BEFORE_UNITS, JOIN_ONCE_SCRIPT_PATH, JOIN_ONCE_UNIT_NAME,
+    JOIN_ONCE_UNIT_PATH, JOIN_VERIFIED_MARKER, JOIN_WAIT_SECONDS,
+    JOIN_WAIT_TRIES, LINUX_ROOT_X86_64,
     MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, MSR, NVRAM_ENTRIES_MARKER,
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
-    PROBE_CHECKS, PROBE_HELPER_PATH, STORAGE_HOST_LABEL,
+    PROBE_CHECKS, PROBE_HELPER_PATH, SSSD_CACHE_GLOB, STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
     WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
-    InstallContractError, Partition, parse_lsblk, render_installer,
-    validate_windows_first,
+    InstallContractError, Partition, _render_join_media_stage, parse_lsblk,
+    render_installer, validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 from lib.workstation_repo import REPO_NAME
@@ -28,6 +31,13 @@ MIB = 1024**2
 SIZES = (1024, 16, 300 * 1024, 100 * 1024, 2048)
 GUIDS = (ESP, MSR, WINDOWS, LINUX_ROOT_X86_64, WINDOWS_RECOVERY)
 FILESYSTEMS = ("vfat", None, "ntfs", None, "ntfs")
+
+
+def _heredoc_body(script: str, terminator: str) -> str:
+    """Return exactly the payload the installer delivers under *terminator*."""
+    opener = f"<<'{terminator}'\n"
+    start = script.index(opener) + len(opener)
+    return script[start:script.index(f"\n{terminator}\n", start)]
 
 
 def good_disk():
@@ -729,6 +739,112 @@ class ArchSecondTests(unittest.TestCase):
         self.assertLess(verify, order_marker)
         self.assertEqual(1, script.count(NVRAM_ENTRIES_MARKER))
         self.assertEqual(1, script.count(NVRAM_ORDER_MARKER))
+
+    # ---- Boot-time one-shot re-join (gate-8 in-run join contract) ----
+
+    def test_install_and_boot_join_share_one_media_stage(self):
+        # Reuse, not a near-duplicate: the one-use media consumption is
+        # rendered once and appears verbatim in both the install-time join and
+        # the boot-time join script, so the two can never drift apart.
+        stage = _render_join_media_stage(JOIN_MEDIA_LABEL)
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        self.assertEqual(script.count(stage), 2)
+        # The install-time join gate-7 acceptance proves is untouched.
+        self.assertIn(
+            "arch-chroot /mnt net ads join -A /run/telos-join/credentials",
+            script)
+
+    def test_boot_time_join_unit_is_installed_and_enabled(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        # Root-only script, world-readable unit, enabled at install time.
+        self.assertIn(
+            f"install -Dm0700 /dev/stdin /mnt{JOIN_ONCE_SCRIPT_PATH}", script)
+        self.assertIn(
+            f"install -Dm0644 /dev/stdin /mnt{JOIN_ONCE_UNIT_PATH}", script)
+        self.assertIn(
+            f"arch-chroot /mnt systemctl enable {JOIN_ONCE_UNIT_NAME}", script)
+        unit = _heredoc_body(script, "TELOS_JOIN_UNIT_EOF")
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("RemainAfterExit=no", unit)
+        self.assertIn("After=network-online.target", unit)
+        self.assertIn(f"ExecStart={JOIN_ONCE_SCRIPT_PATH}", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
+        # The ordering is the login-readiness proof: sssd must not start
+        # against the previous run's domain SID, and serial-getty@ttyS0 is
+        # After=systemd-user-sessions.service, so ordering before user
+        # sessions is what keeps the login prompt behind the finished join.
+        self.assertEqual(JOIN_ONCE_BEFORE_UNITS,
+                         ("sssd.service", "systemd-user-sessions.service"))
+        self.assertIn(
+            "Before=" + " ".join(JOIN_ONCE_BEFORE_UNITS), unit)
+
+    def test_boot_time_join_fails_closed_and_orders_its_proofs(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        body = _heredoc_body(script, "TELOS_JOIN_ONCE_EOF")
+        self.assertIn("set -euo pipefail", body)
+        # The media wait is bounded and its absence is a hard failure, never
+        # a silent skip that would let the login be blamed instead.
+        self.assertIn(f"for _ in $(seq 1 {JOIN_WAIT_TRIES}); do", body)
+        self.assertIn(f"sleep {JOIN_WAIT_SECONDS}", body)
+        self.assertIn(
+            '[[ -e "$join_dev" ]] || { echo "join credential media is '
+            'absent" >&2; exit 1; }', body)
+        # A failure on any path still removes the tmpfs credential.
+        self.assertIn("trap 'rm -rf /run/telos-join' EXIT", body)
+        consumed = (
+            f"printf '%s\\n' '{JOIN_MEDIA_CONSUMED_MARKER}' > /dev/console")
+        verified = f"printf '%s\\n' '{JOIN_VERIFIED_MARKER}' > /dev/console"
+        ordered = [
+            body.index('mount -o ro "$join_dev" /run/telos-join/media'),
+            body.index("umount /run/telos-join/media"),
+            body.index(consumed),
+            body.index("net ads join -A /run/telos-join/credentials"),
+            body.index("net ads testjoin"),
+            body.index("rm -rf /run/telos-join\n"),
+            body.index(verified),
+            body.index(f"rm -f {SSSD_CACHE_GLOB}"),
+        ]
+        self.assertEqual(ordered, sorted(ordered))
+        # Each marker is printed exactly once from the guest's own script.
+        self.assertEqual(body.count(consumed), 1)
+        self.assertEqual(body.count(verified), 1)
+
+    def test_boot_join_script_and_unit_carry_no_credential(self):
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        unit = _heredoc_body(script, "TELOS_JOIN_UNIT_EOF")
+        body = _heredoc_body(script, "TELOS_JOIN_ONCE_EOF")
+        # The unit names only the script; it never touches a secret, so it is
+        # safe as a mode-0644 file on the installed disk.
+        self.assertNotRegex(unit, r"(?i)password|secret|credential")
+        # The script's only credential path is the mode-0600 tmpfs file.
+        self.assertEqual(
+            set(re.findall(r"\S*/credentials\b", body)),
+            {"/run/telos-join/credentials"})
+        allowed = (
+            'values["password"]',
+            '"password = " + password',
+            "(username, password)",
+        )
+        for line in body.splitlines():
+            if "password" in line and not line.lstrip().startswith("#"):
+                self.assertTrue(
+                    any(marker in line for marker in allowed),
+                    f"unexpected password reference: {line!r}")
+        # No literal of either shape the runner generates can be present.
+        self.assertNotIn("Synthetic-Join-", script)
+        self.assertNotRegex(script, r"\btj-[0-9a-f]{16}\b")
 
     def test_rejects_injection_in_machine_identifiers(self):
         with self.assertRaises(InstallContractError):

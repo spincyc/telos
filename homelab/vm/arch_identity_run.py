@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """Live Arch identity login harness and identity-lifecycle evidence producer.
 
-Gate 8. This drives a *real*, already installed and joined Arch workstation
-over its serial console through the ordered identity lifecycle that
+Gate 8. This drives a *real*, already installed Arch workstation over its
+serial console through the ordered identity lifecycle that
 ``homelab/workstations/identity_lifecycle.py`` judges, and emits the exact
 JSONL evidence events that judge grades. It replaces the hand-authored
 ``valid_events`` fixture with evidence produced from an actual guest.
+
+The gate-7 disk ships a join-*capable* identity client; it does not arrive
+joined into *this* run's directory, and it cannot.  Every gate-8 run boots the
+canonical ``bootstrap-dc`` image, which carries no provisioned AD, so
+``ansible/roles/domain_controller`` re-runs ``samba-tool domain provision``
+and the run gets a fresh domain SID, a fresh krbtgt and an empty SAM: the
+machine account gate 7's install-time join created simply does not exist here.
+So this gate joins in-run -- exactly as the Windows lane does
+(``windows_identity_orchestrator._execute_join``) -- with the same one-use
+``tj-<hex>`` join principal and ``TELOS_JOIN`` media machinery gates 5-7 use,
+after the systemd-boot menu drive and strictly before the operator login.
 
 The Arch side of the lifecycle is console/SSSD, not GUI: the joined guest
 presents a login on ``/dev/ttyS0`` and every proof is a bounded serial
@@ -18,8 +29,10 @@ Structure:
 * ``drive_boot_menu``/``login_operator``/``elevate_operator`` take the live
   workstation from power-on to a root shell: the systemd-boot menu is driven
   over serial to the Arch entry (the gate-7 disk keeps the Windows default;
-  a missed window is power-cycled over QMP), the staged operator logs in on
-  the ttyS0 getty, and one echo-suppressed ``sudo -S`` elevation follows.
+  a missed window is power-cycled over QMP), the in-run domain join is carried
+  through one-use media (``ArchIdentityBoundary._join_workstation``), the
+  staged operator logs in on the ttyS0 getty, and one echo-suppressed
+  ``sudo -S`` elevation follows.
   The per-run operator credential is staged on the disposable Controller by
   ``controller_principals`` exactly as the Windows lane does; it lives only
   in memory.  A bounded, redacted workstation transcript and the secret-free
@@ -131,6 +144,17 @@ PROBE_HELPER = "/usr/local/sbin/homelab-arch-identity-probe"
 # (controller_principals), held in memory only and never recorded.
 OPERATOR_PRINCIPAL = str(CONTRACT["principals"]["daily_administrator"]["name"])
 
+# The break-glass administrator.  ``identity_lifecycle.json`` gives it
+# ``domain_role: none``, so -- unlike the three principals above -- NO
+# Controller-staged account supplies its credential: ``controller_principals``
+# ``POSIX_ALLOCATION`` stages only ``student``, ``operator`` and
+# ``directory-admin``.  Gate 7 installs it with a *disabled* password, and the
+# ``arch-local-rescue`` probe requires ``passwd -S`` to report ``P``, so this
+# run generates the credential in memory and sets it once from the root shell
+# ``elevate_operator`` already obtained.  Nothing ever needs the value again,
+# so it is never stored on the boundary.
+RESCUE_PRINCIPAL = str(CONTRACT["principals"]["local_rescue"]["name"])
+
 # Gate 7 grants the operator a *passworded* sudoers rule
 # ("operator ALL=(ALL:ALL) ALL" in workstations/arch_second.py — no NOPASSWD),
 # so the probe helper's `sudo -n` self-elevation cannot succeed from a fresh
@@ -140,13 +164,15 @@ OPERATOR_PRINCIPAL = str(CONTRACT["principals"]["daily_administrator"]["name"])
 # `id -u` is 0.  This decision is pinned by tests against the rendered gate-7
 # sudoers rule.
 
-#: Gate 7 must ship these on the joined disk for the live drive to work.
+#: Gate 7 must ship these on the join-capable disk for the live drive to work.
 GATE7_CONTRACT = (
     f"a secret-free probe helper at {PROBE_HELPER} that runs one lifecycle "
     "check and prints __TELOS_ARCH_<CHECK>_<token>=PASS|FAIL, a systemd-boot "
     "menu rendered on ttyS0 listing the Arch and Windows entries behind the "
     "Windows-default five-second window (gate-7 acceptance requires the "
-    "Windows default), a passworded serial getty on ttyS0 that accepts the "
+    "Windows default), an enabled one-shot boot unit that re-joins this run's "
+    "freshly provisioned domain from one-use TELOS_JOIN media before sssd and "
+    "before user sessions, a passworded serial getty on ttyS0 that takes the "
     "staged operator's SSSD domain login, and a passworded operator sudoers "
     "rule for the drive's single sudo -S elevation"
 )
@@ -168,11 +194,24 @@ MENU_NOT_COMMITTED_FAILURE = (
 GETTY_NEVER_APPEARED_FAILURE = (
     "ttyS0 getty never appeared after the Arch kernel handoff; gate 7 must "
     "ship " + GATE7_CONTRACT)
+JOIN_FAILURE = (
+    "the in-run domain join from the one-use TELOS_JOIN media never completed "
+    "on the workstation console; this run provisions a brand-new domain, so "
+    "the gate-7 machine account does not exist here and no login can succeed "
+    "until the boot-time join unit prints both of its markers")
+JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE = (
+    "the one-use domain-join principal was not provably destroyed on the "
+    "disposable Controller; the run refuses to continue with a live join "
+    "account in the directory")
 LOGIN_REFUSED_FAILURE = (
     "operator login on the ttyS0 getty was refused with the staged "
     "credential")
 SUDO_ELEVATION_FAILURE = (
     "operator sudo -S elevation did not yield a root shell for the probes")
+RESCUE_PASSWORD_FAILURE = (
+    "the local-rescue break-glass password was not set from the elevated "
+    "console; gate 7 installs that account with a disabled password and the "
+    "arch-local-rescue probe requires passwd -S to report P")
 
 #: Retained workstation console evidence (bounded + redacted, no secrets).
 WORKSTATION_LOG_FILENAME = "workstation-serial.log"
@@ -198,9 +237,23 @@ MENU_RENDER_TIMEOUT = 120.0
 MENU_COMMIT_STEPS = 8
 #: Per-step bound on that re-render.
 MENU_COMMIT_TIMEOUT = 10.0
-#: Bounded getty credential attempts (SSSD may still be connecting when the
-#: first prompt renders; pam_faillock caps the useful retries anyway).
-LOGIN_ATTEMPTS = 3
+#: Bounded getty credential attempts.  Deliberately BELOW pam_faillock's
+#: default ``deny=3`` rather than equal to it: the gate-7 system-auth stack is
+#: the stock Arch one, so the third consecutive failure locks the account for
+#: the default 600s ``unlock_time``.  A harness that spent all three would
+#: leave the guest locked, and every later proof that touches this principal
+#: (the probes' ``su -l``, the sec=krb5 storage mounts) would then be denied by
+#: a lockout the evidence would misreport as an identity failure.  Two attempts
+#: absorb one spurious refusal (SSSD may still be connecting when the first
+#: prompt renders) while keeping a full failure of headroom below the
+#: threshold, so a refusal reported here is always an honest refusal.
+LOGIN_ATTEMPTS = 2
+#: Bound for the guest-side one-shot join: the boot unit waits up to
+#: 60 x 2s for the media before it fails closed, and the join plus
+#: ``net ads testjoin`` follow, so the marker waits need real headroom.
+JOIN_TIMEOUT = 420.0
+#: Bound for the single ``passwd local-rescue`` exchange on the root shell.
+RESCUE_PASSWORD_TIMEOUT = 60.0
 
 
 def new_boot_facts() -> dict[str, object]:
@@ -211,9 +264,18 @@ def new_boot_facts() -> dict[str, object]:
         "entry_committed": False,
         "menu_retries": 0,
         "handoff_seen": False,
+        # In-run join lifecycle: secret-free booleans only, mirroring the
+        # gate-7 ``join_media`` facts plus the DC-side destruction proof.
+        "join_media_built": False,
+        "join_media_attached": False,
+        "join_media_consumed": False,
+        "join_media_destroyed": False,
+        "join_verified": False,
+        "join_principal_destroyed": False,
         "getty_seen": False,
         "login_completed": False,
         "sudo_elevated": False,
+        "rescue_password_set": False,
     }
 
 
@@ -250,6 +312,11 @@ BUNDLE_QEMU_COMMAND = "qemu-command.json"
 EVIDENCE_DIRNAME = "evidence"
 EVIDENCE_FILENAME = "identity-lifecycle.jsonl"
 
+# ``domain_joined`` is retained deliberately, and it means what gate 7 can
+# honestly promise: the disk is a join-CAPABLE identity client (Kerberos,
+# Samba, SSSD, the enabled one-shot join unit).  It does NOT mean the disk
+# arrives joined into this run's directory -- it cannot, because this run
+# provisions a brand-new domain -- so the boundary joins in-run before login.
 _AUTHORIZATION_EXPECTED = {
     "status": "prepared",
     "external_access": False,
@@ -782,10 +849,18 @@ def workstation_boot_command(
     ``qmp_socket`` (mirroring the dual-boot lane) pins a private QMP socket
     so a missed systemd-boot window can be power-cycled with ``system_reset``
     instead of being waited out inside Windows.
+
+    One empty ``pcie-root-port`` is cold-plugged for the one-use ``TELOS_JOIN``
+    media the in-run join hot-attaches: q35's root complex (``pcie.0``) does
+    not support PCIe hotplug, so ``device_add`` needs a root port that was
+    present at boot.  It carries no device at boot, only the slot -- the
+    credential cannot exist before the domain is provisioned -- which is
+    exactly the arrangement ``arch_install_prepare`` uses for gate 7.
     """
     # Imported lazily: topology helpers are never needed by the pure
     # producer/judge path.
-    from .arch_install_prepare import DISK_SERIAL
+    from .arch_install_prepare import (
+        DISK_SERIAL, JOIN_PORT_CHASSIS, JOIN_PORT_ID)
     from .simulated_topology import MACS, _base, audit_qemu_argv
 
     if not 1 <= switch_port <= 65535:
@@ -815,6 +890,14 @@ def workstation_boot_command(
         # authored NVRAM entries, and the gate-10 lane -- the one boundary that
         # renders this menu reliably -- pins no bootindex either.
         "-device", f"nvme,drive=osdisk,serial={DISK_SERIAL}",
+        # The empty hotplug slot the in-run join media is realised into.  It
+        # holds no device and no backend at boot, so audit_arch_identity_boot
+        # still sees exactly one writable disk and no installation media.
+        "-device",
+        (
+            f"pcie-root-port,id={JOIN_PORT_ID},bus=pcie.0,"
+            f"chassis={JOIN_PORT_CHASSIS}"
+        ),
         "-netdev", f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device", f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
@@ -1108,6 +1191,83 @@ def elevate_operator(
         console.timeout = original
 
 
+def rescue_password_command(token: str) -> tuple[bytes, bytes, bytes]:
+    """The single echo-suppressed ``passwd local-rescue``, token-scoped.
+
+    Returns ``(command, ready_marker, result_prefix)``.  Mirrors
+    ``elevation_command`` here and ``AutomatedSerial.run`` in
+    ``automated_controller`` (which sets the Controller's own break-glass
+    password the same way): ``passwd``(1) reads both prompts with terminal
+    echo already disabled, and the explicit ``stty -echo`` in front makes that
+    provable *before* the credential is written -- the ready marker only prints
+    once echo is off.  The result prefix only ever carries an exit code.
+    """
+    tok = token.encode("ascii")
+    ready = b"__TELOS_ARCH_RESCUE_READY_" + tok + b"__"
+    result = b"__TELOS_ARCH_RESCUE_RC_" + tok + b"="
+    command = (
+        b"stty -echo && printf '\\n" + ready + b"\\n' && "
+        b"passwd " + RESCUE_PRINCIPAL.encode("ascii")
+        + b"; __telos_rc=$?; stty echo; "
+        b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
+    )
+    return command, ready, result
+
+
+def set_rescue_password(
+    console, facts: dict[str, object], credential: bytes, *,
+    timeout: float | None = None,
+) -> None:
+    """Set the break-glass password once from the elevated root shell.
+
+    Gate 7 installs ``local-rescue`` with a *disabled* password (mirroring the
+    Controller seed) and nothing else sets it, so the ``arch-local-rescue``
+    probe -- which requires ``passwd -S`` to report ``P`` -- could only ever
+    fail, even after the login works.  ``identity_lifecycle.json`` gives that
+    principal ``domain_role: none``, so no Controller-staged account supplies
+    the credential; the caller generates it per run in memory.  The secret is
+    written only after echo is provably off and ``passwd`` has asked for it, so
+    it never enters the retained serial transcript.  Any other outcome is the
+    named rescue-password failure, bound to the check it would otherwise break.
+    """
+    from .serial_automation import SerialAutomationError
+
+    if not credential or b"\n" in credential or b"\r" in credential:
+        raise ArchIdentityError(
+            "the local-rescue credential must be one non-empty line",
+            check="arch-local-rescue")
+    command, ready, result = rescue_password_command(console.token)
+    original = console.timeout
+    if timeout is not None:
+        console.timeout = timeout
+    try:
+        try:
+            console._send(command, "arch-rescue-command-sent")
+            console._wait(
+                rb"(?:^|\n)" + re.escape(ready) + rb"\s*(?:\n|$)",
+                "arch-rescue-echo-off")
+            console._wait(
+                rb"New password:\s*$", "arch-rescue-new-password-prompt")
+            console._send(credential, "arch-rescue-password-sent")
+            console._wait(
+                rb"Retype new password:\s*$",
+                "arch-rescue-password-confirm-prompt")
+            console._send(
+                credential, "arch-rescue-password-confirm-sent")
+            outcome = console._wait(
+                rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
+                "arch-rescue-result")
+        except SerialAutomationError as error:
+            raise ArchIdentityError(
+                RESCUE_PASSWORD_FAILURE, check="arch-local-rescue") from error
+        if outcome.group(1) != b"0":
+            raise ArchIdentityError(
+                RESCUE_PASSWORD_FAILURE, check="arch-local-rescue")
+        facts["rescue_password_set"] = True
+    finally:
+        console.timeout = original
+
+
 class ArchIdentityBoundary:
     """Live loopback session: fabric, disposable Samba AD, joined Arch guest.
 
@@ -1156,6 +1316,9 @@ class ArchIdentityBoundary:
         self._principals: dict[str, str] = {}
         self._workstation_console = None
         self._workstation_qmp = None
+        #: The run-built one-use join ISO.  ``ArchJoinMedia`` destroys it by
+        #: exact inode in the happy path; teardown sweeps a leftover.
+        self._join_iso: Path | None = None
         self._boot_facts: dict[str, object] = new_boot_facts()
 
     # -- test seams (real implementations are trivially thin) ---------------
@@ -1472,16 +1635,144 @@ class ArchIdentityBoundary:
         self._factory_media = None
         media_root.rmdir()
 
+    def _join_workstation(self) -> None:
+        """Join this run's freshly provisioned domain from one-use media.
+
+        The premise gate 8 used to run on -- "the gate-7 disk arrives joined"
+        -- is false and cannot be made true: this run provisions a brand-new
+        domain (fresh SID, fresh krbtgt, empty SAM), so the machine account the
+        gate-7 install created is not in it, and ``controller_principals``
+        stages only the three *user* roles.  The 2026-08-14 live run showed the
+        exact consequence: the whole boot chain worked and ``operator`` was
+        refused three times, because SSSD could not bind with a host keytab no
+        directory knows and offline auth needs a cached credential that cannot
+        exist on a fresh overlay.  No retry count or delay fixes that.
+
+        So the join happens here, in-run, with the machinery gates 5-7 already
+        prove: a one-use ``tj-<hex>`` principal staged on the freshly converged
+        Controller over the *same authenticated console* ``_stage_principals``
+        uses, sealed into a run-built mode-0600 ``TELOS_JOIN`` ISO, attached
+        read-only into the cold-plugged empty join root port, destroyed by
+        inode as soon as the guest prints the consumed marker, and the DC-side
+        account destroyed with proof whether this succeeds or fails.  The guest
+        side is the one-shot boot unit gate 7 installs and enables; the host
+        only waits for its two secret-free markers.
+        """
+        from .arch_install_run import JOIN_ISO_NAME, run_join_install
+        from .controller_join_material import (
+            ControllerJoinSerial, OneUseDomainJoinMaterial)
+        from homelab.workstations.arch_second import (
+            JOIN_MEDIA_CONSUMED_MARKER, JOIN_VERIFIED_MARKER)
+
+        console = self._workstation_console
+        controller = self._controller_console
+        controller_process = self._processes.get("controller")
+        workstation_process = self._processes.get("workstation")
+        qmp = self._workstation_qmp
+        if (console is None or controller is None or qmp is None
+                or controller_process is None or workstation_process is None):
+            raise ArchIdentityError(
+                "the in-run join needs both live consoles and the workstation "
+                "QMP channel", check="arch-joined")
+        realm = self.bundle.realm
+        if not realm:
+            raise ArchIdentityError(
+                "the authorized Kerberos realm is unavailable for the in-run "
+                "join", check="arch-joined")
+        assert self._runtime is not None
+        iso = self._runtime / JOIN_ISO_NAME
+        self._join_iso = iso
+        facts = self._boot_facts
+        media_facts: dict = {}
+
+        # Exactly the seam _stage_principals and arch_install_run use: the
+        # one-use principal protocol reuses the ALREADY AUTHENTICATED
+        # Controller console rather than opening a second reader on it.
+        join_serial = ControllerJoinSerial(
+            controller_process.stdout, controller_process.stdin,  # type: ignore[attr-defined]
+            timeout=CONSOLE_READY_TIMEOUT)
+        join_serial.console = controller
+        material = OneUseDomainJoinMaterial(
+            realm, stage=join_serial.stage, destroy=join_serial.destroy)
+        consumed = re.escape(JOIN_MEDIA_CONSUMED_MARKER.encode("ascii"))
+        verified = re.escape(JOIN_VERIFIED_MARKER.encode("ascii"))
+
+        def consume(values: Mapping[str, str]) -> tuple[str, dict]:
+            def drive(
+                attach_media: Callable[[], None],
+                consume_media: Callable[[], None],
+            ) -> str:
+                attach_media()
+                # The guest prints this once it holds the credential in its
+                # mode-0600 tmpfs file and has unmounted the media, so the
+                # media is destroyed before the join itself runs.
+                console._wait(consumed, "arch-join-media-consumed")
+                consume_media()
+                console._wait(verified, "arch-join-verified")
+                return bytes(
+                    getattr(console, "transcript", b"")).decode(
+                        "utf-8", "replace")
+
+            return run_join_install(
+                material=values, iso=iso, qmp=qmp,
+                qemu_pid=workstation_process.pid,  # type: ignore[attr-defined]
+                drive=drive, facts=media_facts)
+
+        original = console.timeout
+        console.timeout = JOIN_TIMEOUT
+        try:
+            _consumed, destruction = material.use(consume)
+        except ArchIdentityError:
+            raise
+        except Exception as error:
+            raise ArchIdentityError(
+                JOIN_FAILURE + "; " + type(error).__name__,
+                check="arch-joined") from error
+        finally:
+            console.timeout = original
+            # Secret-free lifecycle booleans, retained on failure too so a
+            # future run reads off exactly how far the join got.
+            facts["join_media_built"] = bool(media_facts.get("built"))
+            facts["join_media_attached"] = bool(media_facts.get("attached"))
+            facts["join_media_consumed"] = bool(media_facts.get("consumed"))
+            facts["join_media_destroyed"] = bool(media_facts.get("destroyed"))
+        facts["join_verified"] = True
+        facts["join_principal_destroyed"] = destruction.destruction_proved
+        if not destruction.destruction_proved:
+            raise ArchIdentityError(
+                JOIN_PRINCIPAL_NOT_DESTROYED_FAILURE, check="arch-joined")
+
+    def _set_rescue_password(self) -> None:
+        """Give the break-glass account the set password its check requires."""
+        import secrets as secrets_module
+
+        console = self._workstation_console
+        if console is None:
+            raise ArchIdentityError(
+                RESCUE_PASSWORD_FAILURE, check="arch-local-rescue")
+        # Same shape as the staged principal credentials.  It is local-only, so
+        # it is generated here, used once, and never retained on the boundary,
+        # in the evidence, or in the transcript.
+        set_rescue_password(
+            console, self._boot_facts,
+            ("T7a" + secrets_module.token_hex(16)).encode("ascii"),
+            timeout=RESCUE_PASSWORD_TIMEOUT)
+
     def _start_workstation(self) -> None:
-        """Boot the joined workstation, select Arch, and log the operator in.
+        """Boot the workstation, select Arch, join in-run, log the operator in.
 
         The gate-7 disk keeps the gate-7 acceptance default (``loader.conf``
         boots Windows after five seconds) and renders its systemd-boot menu
         on ttyS0, so the drive selects the Arch entry over serial within the
         window — power-cycling over QMP on a miss instead of waiting inside
-        Windows — waits for the passworded ttyS0 getty, logs in as the
-        staged operator, and elevates once with echo-suppressed ``sudo -S``
-        so the secret-free probes run from a root shell.
+        Windows.  The in-run domain join then runs (``_join_workstation``);
+        because the guest's join unit is ordered before
+        ``systemd-user-sessions.service`` and ``serial-getty@ttyS0`` is ordered
+        after it, the login prompt cannot appear until the join has finished,
+        so ``login_operator`` needs no readiness logic and no sleeps.  The
+        staged operator then logs in, one echo-suppressed ``sudo -S``
+        elevation follows, and the break-glass password is set from that root
+        shell so the secret-free probes can all pass.
         """
         from .serial_automation import SerialAutomation
 
@@ -1520,8 +1811,13 @@ class ArchIdentityBoundary:
             console, self._boot_facts,
             reset=lambda: self._workstation_qmp.execute("system_reset"),
             menu_timeout=MENU_RENDER_TIMEOUT)
+        # Strictly between the menu drive and the login: the guest cannot log
+        # anybody in until its join unit has finished, and nobody can log in at
+        # all until this run's directory knows this machine.
+        self._join_workstation()
         login_operator(console, self._boot_facts)
         elevate_operator(console, self._boot_facts)
+        self._set_rescue_password()
         console.timeout = PROBE_TIMEOUT
         self._channel = console
 
@@ -1700,6 +1996,15 @@ class ArchIdentityBoundary:
             except OSError:
                 failures.append("convergence media was not removed")
             self._factory_media = None
+        if self._join_iso is not None:
+            # ArchJoinMedia destroys the ISO by exact inode in the happy path;
+            # reuse the install lane's sweep for a run that died before that.
+            from .arch_install_run import _destroy_leftover_join_iso
+
+            leftover = _destroy_leftover_join_iso(self._join_iso)
+            if leftover:
+                failures.append(leftover)
+            self._join_iso = None
         for attribute in ("_qmp_root", "_runtime"):
             root = getattr(self, attribute)
             if root is not None:

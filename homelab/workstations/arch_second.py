@@ -15,6 +15,12 @@ identity probe helper.  The machine-join credential never appears in this
 module, in the rendered script, or on the installed disk: the script reads it
 from a one-use removable volume (the same shape ``vm/windows_join_iso.py``
 builds) into tmpfs, joins, and removes it.
+
+Because gate 8 provisions a brand-new domain on every run, the disk ships a
+join-*capable* identity client rather than a permanently joined one: the same
+one-use-media consumption is also installed as an enabled one-shot boot unit
+(``JOIN_ONCE_UNIT_NAME``) that re-joins before sssd and before user sessions,
+which is what makes the gate-8 login possible at all.
 """
 
 from __future__ import annotations
@@ -92,6 +98,45 @@ SAFE_REPO_URL = re.compile(
 JOIN_MEDIA_LABEL = "TELOS_JOIN"
 JOIN_MEDIA_CONSUMED_MARKER = "TELOS ARCH JOIN MEDIA CONSUMED"
 JOIN_VERIFIED_MARKER = "TELOS ARCH JOIN VERIFIED"
+
+# Boot-time one-shot re-join (the gate-8 in-run join contract).
+#
+# Why a boot unit exists at all: every gate-8 run (vm/arch_identity_run.py)
+# provisions a BRAND-NEW synthetic domain.  The canonical bootstrap-dc image
+# carries no provisioned AD, so ansible/roles/domain_controller re-runs
+# ``samba-tool domain provision`` whenever ``sam.ldb`` is absent, so that
+# run's directory has a fresh domain SID, a fresh krbtgt and an empty SAM.
+# The machine account this installer's install-time ``net ads join`` created
+# does not exist in it, so SSSD (``id_provider = ad``, GSSAPI host-keytab bind)
+# cannot authenticate, goes offline, and the operator login is refused with no
+# cached credential that could ever exist on a fresh overlay.  The live run of
+# 2026-08-14 proved exactly that: the whole boot chain worked and ``operator``
+# was refused three times.  The Windows lane does not have the bug because it
+# joins during its own run (``windows_identity_orchestrator._execute_join``).
+#
+# Why the GUEST performs it: there is no pre-login shell on this disk.
+# ``local-rescue`` is installed with a disabled password and the loader.conf
+# below sets ``editor no``, so neither a console login nor a boot-cmdline edit
+# can reach root before the getty.  The join must therefore be driven by the
+# guest itself, early in boot, from one-use media the runner hot-attaches.
+JOIN_ONCE_SCRIPT_PATH = "/usr/local/sbin/telos-arch-join-once"
+JOIN_ONCE_UNIT_NAME = "telos-arch-join-once.service"
+JOIN_ONCE_UNIT_PATH = f"/etc/systemd/system/{JOIN_ONCE_UNIT_NAME}"
+# The units the one-shot join is ordered before.  Both orderings are
+# load-bearing, not cosmetic: sssd must never start against the previous run's
+# domain SID, and -- because ``serial-getty@ttyS0`` is
+# ``After=systemd-user-sessions.service`` (visible in the 2026-08-14 failing
+# transcript, where "Finished Permit User Sessions" precedes "Started Serial
+# Getty on ttyS0") -- ordering before user sessions is what makes the ttyS0
+# login prompt appear only after the join has finished.  Gate 8's
+# ``login_operator`` consequently needs no readiness logic and no sleeps.
+JOIN_ONCE_BEFORE_UNITS = ("sssd.service", "systemd-user-sessions.service")
+# The stale SSSD cache from the install-time join.  It was primed against the
+# PREVIOUS domain's SID, so it is wiped while sssd is still stopped.
+SSSD_CACHE_GLOB = "/var/lib/sss/db/*"
+# Bounded loop shape shared by every wait in the join path: 60 tries, 2s apart.
+JOIN_WAIT_TRIES = 60
+JOIN_WAIT_SECONDS = 2
 
 # systemd-boot menu titles the gate-10 acceptance keys on.  The Arch title is
 # authored by this installer's loader entry below; the Windows title is what
@@ -791,6 +836,124 @@ def _render_probe(
     return text
 
 
+def _render_join_media_stage(join_media_label: str) -> str:
+    """Turn one-use *join_media_label* media into a mode-0600 tmpfs credential.
+
+    Shared verbatim by the install-time join below and by the boot-time
+    one-shot join unit, so the two can never drift: the same bounded wait for
+    the media, the same fail-closed absence check, the same read-only mount,
+    the same ``join.json`` -> ``net ads`` authentication-file conversion under
+    ``umask 077``, and the same unmount.  The credential exists only on the
+    media and in the mode-0600 tmpfs file; it never reaches argv, a unit file,
+    the journal, or the serial transcript.
+    """
+    return f"""join_dev="/dev/disk/by-label/{join_media_label}"
+for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
+  [[ -e "$join_dev" ]] && break
+  sleep {JOIN_WAIT_SECONDS}
+done
+[[ -e "$join_dev" ]] || {{ echo "join credential media is absent" >&2; exit 1; }}
+mkdir -p -m 700 /run/telos-join /run/telos-join/media
+mount -o ro "$join_dev" /run/telos-join/media
+(
+  umask 077
+  python3 - > /run/telos-join/credentials <<'TELOS_JOIN_CRED_EOF'
+import json
+with open("/run/telos-join/media/join.json", encoding="utf-8") as source:
+    values = json.load(source)
+username = values["username"]
+password = values["password"]
+for item in (username, password):
+    if (not isinstance(item, str) or not item
+            or any(ord(character) < 32 for character in item)):
+        raise SystemExit("join credential is invalid")
+print("username = " + username)
+print("password = " + password)
+TELOS_JOIN_CRED_EOF
+)
+chmod 600 /run/telos-join/credentials
+umount /run/telos-join/media"""
+
+
+def _render_join_once_script(
+    *, join_media_label: str, realm_dns_domain: str,
+) -> str:
+    """Emit the root-only boot-time re-join script the one-shot unit runs.
+
+    Fail-closed throughout: media that never appears, a conversion that fails,
+    a refused join, or a join that does not verify all leave the unit failed
+    and both markers unprinted, so the gate-8 runner's bounded marker waits
+    report the named join failure instead of blaming the later login.
+    """
+    stage = _render_join_media_stage(join_media_label)
+    return f"""#!/usr/bin/env bash
+# Managed by Telos gate 7 (workstations/arch_second.py).  One-shot boot-time
+# domain join from the one-use {join_media_label} media the gate-8 runner
+# hot-attaches.  See JOIN_ONCE_SCRIPT_PATH in that module for why this exists:
+# gate 8 provisions a brand-new domain every run, so the machine account the
+# install-time join created is absent from that run's directory and the guest
+# must re-join itself before any login is possible.
+set -euo pipefail
+
+# The credential only ever lives on the one-use media and in a mode-0600
+# tmpfs file.  An EXIT trap removes it on every path, including a failed join,
+# so a failure can never leave the secret behind on a running guest.
+trap 'rm -rf /run/telos-join' EXIT
+
+{stage}
+printf '%s\\n' '{JOIN_MEDIA_CONSUMED_MARKER}' > /dev/console
+
+# network-online.target only proves the link is configured; the disposable
+# Controller is the realm's KDC and DNS, and it has to answer before a join
+# can succeed.  NetworkManager-wait-online is deliberately not enabled (it
+# would be an undeclared service in the package contract), which makes
+# network-online.target cheap rather than meaningful, so readiness is proven
+# here with the same bounded 60 x 2s shape the media wait uses.  The join
+# itself stays the fail-closed gate, so this loop can never mask a failure.
+for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
+  getent hosts '{realm_dns_domain}' >/dev/null 2>&1 && break
+  sleep {JOIN_WAIT_SECONDS}
+done
+
+net ads join -A /run/telos-join/credentials
+net ads testjoin
+rm -rf /run/telos-join
+printf '%s\\n' '{JOIN_VERIFIED_MARKER}' > /dev/console
+
+# The identity cache was primed against the PREVIOUS domain's SID by the
+# install-time join, so serving it would hand sssd identities whose SIDs no
+# longer exist.  The unit is ordered before sssd.service precisely so this can
+# be a clean wipe rather than a restart-and-hope.
+rm -f {SSSD_CACHE_GLOB}
+"""
+
+
+def _render_join_once_unit() -> str:
+    """Emit the one-shot join unit; its ordering is the login gate."""
+    before = " ".join(JOIN_ONCE_BEFORE_UNITS)
+    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+[Unit]
+Description=Telos one-shot domain join from one-use {JOIN_MEDIA_LABEL} media
+# The join needs a configured link: the realm's KDC and DNS are the
+# disposable Controller, reachable only once DHCP has answered.
+Wants=network-online.target
+After=network-online.target
+# Load-bearing ordering.  sssd must not start against the previous run's
+# domain SID, and serial-getty@ttyS0 is After=systemd-user-sessions.service,
+# so ordering before user sessions is what makes the ttyS0 login prompt
+# appear only after the join finished -- no sleeps anywhere compensate.
+Before={before}
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart={JOIN_ONCE_SCRIPT_PATH}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
 def render_installer(
     *,
     disk_path: str,
@@ -857,6 +1020,17 @@ def render_installer(
     daily_admin = principals["daily_admin"]
     standard_user = principals["standard"]
     storage_mount_root = STORAGE_MOUNT_ROOT
+    # The one-use media consumption is rendered once and used twice: inline
+    # below for the install-time join, and inside the boot-time one-shot join
+    # script, so the two paths cannot drift apart.
+    join_media_stage = _render_join_media_stage(join_media_label)
+    join_once_script = _render_join_once_script(
+        join_media_label=join_media_label,
+        realm_dns_domain=realm_dns_domain)
+    join_once_unit = _render_join_once_unit()
+    join_once_script_path = JOIN_ONCE_SCRIPT_PATH
+    join_once_unit_path = JOIN_ONCE_UNIT_PATH
+    join_once_unit_name = JOIN_ONCE_UNIT_NAME
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 disk={disk_path!r}
@@ -951,32 +1125,7 @@ arch-chroot /mnt systemctl enable NetworkManager
 # The machine-join credential arrives on one-use removable media; it is read
 # into tmpfs only, never echoed, never written to the installed disk, and the
 # runner destroys the media after the consumed marker below.
-join_dev="/dev/disk/by-label/{join_media_label}"
-for _ in $(seq 1 60); do
-  [[ -e "$join_dev" ]] && break
-  sleep 2
-done
-[[ -e "$join_dev" ]] || {{ echo "join credential media is absent" >&2; exit 1; }}
-mkdir -p -m 700 /run/telos-join /run/telos-join/media
-mount -o ro "$join_dev" /run/telos-join/media
-(
-  umask 077
-  python3 - > /run/telos-join/credentials <<'TELOS_JOIN_CRED_EOF'
-import json
-with open("/run/telos-join/media/join.json", encoding="utf-8") as source:
-    values = json.load(source)
-username = values["username"]
-password = values["password"]
-for item in (username, password):
-    if (not isinstance(item, str) or not item
-            or any(ord(character) < 32 for character in item)):
-        raise SystemExit("join credential is invalid")
-print("username = " + username)
-print("password = " + password)
-TELOS_JOIN_CRED_EOF
-)
-chmod 600 /run/telos-join/credentials
-umount /run/telos-join/media
+{join_media_stage}
 echo "{JOIN_MEDIA_CONSUMED_MARKER}"
 
 install -Dm0644 /dev/stdin /mnt/etc/krb5.conf <<'TELOS_KRB5_EOF'
@@ -1038,6 +1187,22 @@ cat >> /mnt/etc/fstab <<'TELOS_STORAGE_EOF'
 //{storage_host}/{standard_user} {storage_mount_root}/{standard_user} cifs sec=krb5,multiuser,soft,echo_interval=15,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=10s,x-systemd.idle-timeout=1min 0 0
 TELOS_STORAGE_EOF
 
+# ---- Boot-time one-shot re-join (gate-8 in-run join contract) ----
+# The install-time join above is what gate-7 acceptance proves, and it stays
+# exactly as it is.  It is not enough for gate 8: that gate boots this disk
+# against a FRESHLY PROVISIONED domain whose SAM has never seen this machine
+# account, so the installed system re-joins itself once, early in boot, from
+# one-use media -- the only shape available, because this disk has no
+# pre-login shell to drive a join from.  Root-only script, mode-0644 unit.
+install -Dm0700 /dev/stdin /mnt{join_once_script_path} \\
+    <<'TELOS_JOIN_ONCE_EOF'
+{join_once_script}
+TELOS_JOIN_ONCE_EOF
+install -Dm0644 /dev/stdin /mnt{join_once_unit_path} <<'TELOS_JOIN_UNIT_EOF'
+{join_once_unit}
+TELOS_JOIN_UNIT_EOF
+
+arch-chroot /mnt systemctl enable {join_once_unit_name}
 arch-chroot /mnt systemctl enable sssd serial-getty@ttyS0.service
 
 arch-chroot /mnt bootctl install

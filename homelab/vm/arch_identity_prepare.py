@@ -24,7 +24,12 @@ and serial transcript, and produces the isolated bundle the gate-8 runner
   accepted, and the events are copied verbatim.
 * ``authorization.json`` — the consumer contract
   (``status=prepared``, no external access, no installation media, no PXE,
-  ``domain_joined`` with a named realm) plus provenance.
+  ``domain_joined`` with a named realm) plus provenance.  ``domain_joined``
+  asserts the disk *ships a join-capable identity client* — Kerberos, Samba,
+  SSSD and the enabled one-shot join unit, proven by the gate-7 transcript's
+  verified-join marker.  It cannot assert that the disk arrives joined into a
+  gate-8 run's directory: that run provisions a brand-new domain, so the
+  gate-8 boundary joins in-run before the operator login.
 
 The produced bundle is round-tripped through the consumer's own fail-closed
 validation before it is reported, so prepare can never emit a bundle the
@@ -72,9 +77,15 @@ PASS_PHASE = "arch-installed-windows-preserved"
 # Seam with the gate-7 domain-join provisioning: the installer emitted by
 # ``workstations/arch_second.py`` prints this marker only after an in-chroot
 # ``net ads join`` succeeded and ``net ads testjoin`` verified it.  A gate-7
-# transcript without it belongs to an unjoined disk, which gate 8 cannot
-# accept, so the check is strict.  The live ``arch-joined`` probe remains the
-# authoritative runtime proof.
+# transcript without it belongs to a disk whose identity client was never
+# proven join-capable, which gate 8 cannot accept, so the check is strict.
+#
+# It does NOT mean the disk arrives *joined* into a gate-8 run's directory: a
+# gate-8 run provisions a brand-new domain (fresh SID, fresh krbtgt, empty
+# SAM), so that machine account is absent there and the disk's enabled
+# one-shot join unit re-joins in-run from one-use media.  What this marker
+# proves is that the shipped identity client really can complete a join; the
+# live ``arch-joined`` probe remains the authoritative runtime proof.
 ARCH_JOIN_MARKER = JOIN_VERIFIED_MARKER
 
 DEFAULT_RUNS = Path("homelab/var/factory/arch-identity")
@@ -149,7 +160,7 @@ def inspect_install_bundle(bundle: Path) -> dict:
     if ARCH_JOIN_MARKER not in transcript:
         raise ArchIdentityPrepareError(
             "gate-7 transcript lacks the verified join marker "
-            f"{ARCH_JOIN_MARKER!r}; the installed disk is not a joined "
+            f"{ARCH_JOIN_MARKER!r}; the installed disk is not a join-capable "
             "identity client")
     return {
         "bundle": str(bundle),
