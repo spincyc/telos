@@ -870,6 +870,24 @@ class TestInstanceTemplate(unittest.TestCase):
         self.assertIn("../instance/inventory/hosts.yml", configuration)
         self.assertTrue((self.TEMPLATE / "inventory/hosts.yml").exists())
 
+    def test_it_does_not_name_a_callback_that_was_removed(self):
+        """`stdout_callback = yaml` resolved to community.general's copy, which
+        that collection removed in 12.0.0 -- and a removed stdout callback is
+        fatal, not a warning, so every host-side run aborted before its first
+        task. The in-guest factory configuration already named the builtin; only
+        this file did not, which is why acceptance kept passing while the
+        persistent path could not start."""
+        import re
+        configuration = (ANSIBLE / "ansible.cfg").read_text()
+        callback = re.search(r"^stdout_callback\s*=\s*(\S+)$",
+                             configuration, re.MULTILINE)
+        self.assertIsNotNone(callback, "no stdout_callback is declared")
+        self.assertIn(callback.group(1), ("default", "ansible.builtin.default"))
+        # The replacement only renders as YAML with this option set.
+        self.assertRegex(configuration, r"(?m)^result_format\s*=\s*yaml$",
+                         msg="result_format=yaml is what restores the YAML "
+                             "output the removed callback used to give")
+
 
 class TestNoInstanceData(unittest.TestCase):
     """ADR 0046: nothing here may name a real machine."""
