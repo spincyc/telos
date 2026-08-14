@@ -568,7 +568,9 @@ class TestDomainControllerShareNameResolution(unittest.TestCase):
             "Require a home-directory field the per-user share can clone from")
         conditions = str(task["ansible.builtin.assert"]["that"])
         self.assertIn("homelab_ad_nss_probe.stdout_lines", conditions)
-        self.assertIn("split(':')[5] | length > 0", conditions)
+        # Counted from the end: a directory display name may legally contain a
+        # colon, which would shift every index before the GECOS field.
+        self.assertIn("split(':')[-2] | length > 0", conditions)
 
     def test_resolution_is_proven_before_the_name_is_published(self):
         # The storage name must never resolve to a Controller that cannot serve

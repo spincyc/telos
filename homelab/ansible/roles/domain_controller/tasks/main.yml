@@ -302,7 +302,9 @@
     argv:
       - /usr/bin/grep
       - -Eq
-      - "^{{ item }}:.*[[:space:]]winbind([[:space:]]|$)"
+      # POSIX ERE only: `$` stays outside every group, so this does not lean on
+      # a GNU extension inside the alternation.
+      - "^{{ item }}:.*[[:space:]]winbind([[:space:]].*)?$"
       - /etc/nsswitch.conf
   loop:
     - passwd
@@ -427,12 +429,14 @@
   # smbd reads pw_dir before it clones [homes] and refuses the clone when that
   # field is empty, even though the served path comes from `path = /srv/unas/%S`
   # and not from pw_dir.  A passwd entry alone is therefore not enough, so the
-  # field is asserted rather than assumed.
+  # field is asserted rather than assumed.  Counted from the end because a
+  # directory display name may legally contain a colon and the GECOS field
+  # would then shift every earlier index; home directory and shell cannot.
   ansible.builtin.assert:
     that:
       - homelab_ad_nss_probe.stdout_lines | length >= 1
-      - homelab_ad_nss_probe.stdout_lines[0].split(':') | length == 7
-      - homelab_ad_nss_probe.stdout_lines[0].split(':')[5] | length > 0
+      - homelab_ad_nss_probe.stdout_lines[0].split(':') | length >= 7
+      - homelab_ad_nss_probe.stdout_lines[0].split(':')[-2] | length > 0
     fail_msg: >-
       {{ homelab_ad_nss_probe_principal }} resolves on this Controller but
       without a usable home-directory field, so smbd cannot clone the [homes]
