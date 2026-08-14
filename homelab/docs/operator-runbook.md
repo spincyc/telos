@@ -372,6 +372,34 @@ because a killed run then leaves the disk crash-consistent, recoverable by the
 guest filesystem journal and Samba's own recovery, whereas a kill during a commit
 would tear the whole base image.
 
+Bring-up alone does not provision a directory — it boots the disk. Provisioning
+is a separate explicit step, because it is long-running, it prompts for
+credentials at your terminal, and it builds a disc that briefly carries one:
+
+```sh
+make homelab-factory-persistent-converge-plan PERSISTENT_DC=<name>   # read-only
+make homelab-factory-persistent-converge APPLY=1 PERSISTENT_DC=<name> \
+    [SEED_ISO=homelab/var/seed/telos-controller-seed.iso]
+```
+
+It converges **in place**, over the `local-rescue` console password the offline
+installer had you type — so it needs no harness credential, and the durable ESP is
+never rewritten. It prompts once for that password and twice for a new domain
+Administrator password; neither reaches a file, an argument, an environment
+variable, or a transcript. Expect roughly 15-25 minutes.
+
+Unlike the disposable path, this leaves the built-in Administrator **enabled**,
+with the password you typed. That is deliberate: the disposable payload's last act
+is to disable it and shred its generated password, which is right for a throwaway
+directory and would make a durable one unadministrable and unrecoverable.
+
+The realm and address are effectively **permanent for the life of the instance** —
+renaming a Samba AD domain afterwards is unsupported in practice — so choose them
+before converging, not after. Convergence is recorded in the instance marker only
+after the guest proved it and powered off, so an interrupted run can understate
+convergence but never overstate it; `-status` and `-up` say when a directory is
+not provisioned, so neither implies a domain that is not there.
+
 Real account names are instance data, so they are named in the gitignored
 overlay, never in a tracked file — see `homelab/instance-example/identity/`.
 Absent that file every account keeps the synthetic contract name, which is
