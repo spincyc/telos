@@ -50,6 +50,17 @@ ad_server = {{ homelab_identity_domain_controller }}
 # explicitly"), which depends on the A record the join may or may not have
 # registered. sssd-ad(5): ad_hostname "must match the hostname for which the
 # keytab was issued", and `net ads join` issues host/<short>.<domain>.
+#
+# Its CASE does not have to match the keytab, and ldap_sasl_authid is
+# deliberately absent. SSSD does not bind as ad_hostname: libsss_ad hands it to
+# sdap_set_sasl_options, which forks ldap_child to pick a principal OUT of the
+# keytab, and the second of ldap_child's patterns ("%S$") uppercases the short
+# hostname and appends "$" -- so the bind principal is the machine account,
+# whatever case ad_hostname carries. A keytab-case mismatch here is therefore
+# not a fault to fix, and pinning ldap_sasl_authid to the FQDN would only make
+# SSSD log "Configured SASL auth ID not found in keytab" before using the
+# machine account anyway. Keep the fleet template and the installer
+# (workstations/arch_second.py, _machine_principal) in step.
 ad_hostname = {{ ansible_hostname }}.{{ homelab_identity_domain }}
 # Samba-AD interop. SSSD defaults ad_gpo_access_control to "enforcing", which
 # makes every interactive login depend on fetching GPOs from SYSVOL over SMB.

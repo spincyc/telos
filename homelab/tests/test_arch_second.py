@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workstations.arch_second import (
     CONTROLLER_ADDRESS, CONTROLLER_HOSTNAME,
-    DIAGNOSTIC_COMMAND_SECONDS, DIAGNOSTIC_EMPTY_FIELD,
-    DIAGNOSTIC_LINE_COLUMNS, DIAGNOSTIC_SSSD_DEBUG_LEVEL,
+    DIAGNOSTIC_CHILD_LOG_LINES, DIAGNOSTIC_COMMAND_SECONDS,
+    DIAGNOSTIC_EMPTY_FIELD, DIAGNOSTIC_KEYTAB_LINES,
+    DIAGNOSTIC_LINE_COLUMNS, DIAGNOSTIC_SSSD_BACKTRACE_END,
+    DIAGNOSTIC_SSSD_DEBUG_LEVEL,
     DIAGNOSTIC_SSSD_LOG_DIR, DIAGNOSTIC_SSSD_LOG_HEAD_LINES,
-    DIAGNOSTIC_SSSD_LOG_LINES,
+    DIAGNOSTIC_SSSD_LOG_LINES, DIAGNOSTIC_TGT_CACHE_PATH,
     DIRECTORY_ADMIN_GROUP, DIRECTORY_PRIMARY_GROUP,
     DOMAIN_ONLINE_AFTER_UNITS, DOMAIN_ONLINE_BEFORE_UNITS,
     DOMAIN_ONLINE_DIAGNOSTIC_MARKER,
@@ -29,12 +31,13 @@ from workstations.arch_second import (
     NVRAM_LINUX_LABEL, NVRAM_LINUX_LOADER, NVRAM_ORDER_MARKER,
     NVRAM_WINDOWS_LABEL, NVRAM_WINDOWS_LOADER, NVRAM_WINDOWS_OPTIONAL_DATA,
     PROBE_CHECKS, PROBE_DOMAIN_WAIT_TRIES, PROBE_HELPER_PATH, SSSD_CACHE_GLOB,
-    SSSD_CHILD_BINARIES, SSSD_SERVICES, STORAGE_HOST_LABEL,
+    SSSD_CHILD_BINARIES, SSSD_CHILD_LOG_NAMES, SSSD_SERVICES,
+    STORAGE_HOST_LABEL,
     STORAGE_LOGIN_SECONDS_MARKER, STORAGE_MOUNT_ROOT, STORAGE_PROBE_ROOT,
     SYNTHETIC_DOMAIN, SYNTHETIC_WORKGROUP, WINDOWS, WINDOWS_RECOVERY,
     WORKSTATION_REPO_NAME, WORKSTATION_REPO_URL, Disk,
     InstallContractError, Partition, _DOMAIN_STATE_FUNCTIONS,
-    _render_join_media_stage, parse_lsblk,
+    _machine_principal, _render_join_media_stage, parse_lsblk,
     render_installer, validate_windows_first,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
@@ -832,6 +835,7 @@ class ArchSecondTests(unittest.TestCase):
             body.index('mount -o ro "$join_dev" /run/telos-join/media'),
             body.index("umount /run/telos-join/media"),
             body.index(consumed),
+            body.index(f"rm -f {HOST_KEYTAB_PATH}"),
             body.index("net ads join -A /run/telos-join/credentials"),
             body.index("net ads testjoin"),
             body.index("rm -rf /run/telos-join\n"),
@@ -842,6 +846,32 @@ class ArchSecondTests(unittest.TestCase):
         # Each marker is printed exactly once from the guest's own script.
         self.assertEqual(body.count(consumed), 1)
         self.assertEqual(body.count(verified), 1)
+
+    def test_boot_time_join_leaves_no_previous_domains_keytab_behind(self):
+        # The install-time join wrote the host keytab against a DIFFERENT domain
+        # -- different SID, different krbtgt, different machine password -- and
+        # Samba refreshes a keytab per principal and key version rather than
+        # replacing the file.  A fresh provision can hand this machine the same
+        # key version number as the domain it replaced, and then the stale keys
+        # are indistinguishable from the live ones inside the very file SSSD's
+        # ldap_child binds with.  Same reason the SSSD cache below is wiped
+        # rather than restarted: this run's join is the only thing in it.
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES,
+        )
+        body = _heredoc_body(script, "TELOS_JOIN_ONCE_EOF")
+        self.assertIn(f"rm -f {HOST_KEYTAB_PATH}", body)
+        # Removed BEFORE the join, so the join is what recreates it, and the
+        # join stays the fail-closed gate: a keytab that did not come back
+        # leaves testjoin failing rather than a silent success.
+        self.assertLess(body.index(f"rm -f {HOST_KEYTAB_PATH}"),
+                        body.index("\nnet ads join -A "))
+        # `kerberos method = secrets and keytab` is what makes the join write it,
+        # and it is the same smb.conf the install-time join used on a disk that
+        # had no keytab at all -- which is the proof that removal is safe.
+        self.assertIn("kerberos method = secrets and keytab",
+                      _heredoc_body(script, "TELOS_SMB_EOF"))
 
     def test_boot_join_script_and_unit_carry_no_credential(self):
         script = render_installer(
@@ -1090,6 +1120,28 @@ class ArchSecondTests(unittest.TestCase):
         # another machine's principal.
         self.assertNotIn("ad_hostname = workstation.", sssd_conf)
 
+    def test_sssd_does_not_pin_the_bind_principal_it_reads_from_the_keytab(self):
+        # A standing invitation to a wrong fix, so it is pinned in both files.
+        # The 2026-08-14 keytab carried `HOST/TELOS-WS1.ad.factory.test` in
+        # UPPERCASE while ad_hostname is lowercase, which reads like a
+        # case-sensitive Kerberos mismatch and is not one: SSSD does not bind as
+        # ad_hostname.  libsss_ad hands it to sdap_set_sasl_options, which forks
+        # ldap_child to run select_principal_from_keytab, whose second pattern
+        # ("%S$") uppercases the short hostname and appends "$" -- so the bind
+        # principal comes back OUT of the keytab as the machine account, and its
+        # case can never disagree.  Pinning ldap_sasl_authid to the FQDN would
+        # only add "Configured SASL auth ID not found in keytab" before SSSD
+        # used that same principal anyway.
+        sssd_conf = _heredoc_body(self._rendered(), "TELOS_SSSD_EOF")
+        template = SSSD_TEMPLATE.read_text(encoding="utf-8")
+        for text in (sssd_conf, template):
+            with self.subTest(text=text[:40]):
+                self.assertNotRegex(text, r"(?m)^ldap_sasl_authid")
+                # And the reason travels with the absence, in both files, or the
+                # next reader re-derives the keytab-case theory from scratch.
+                self.assertIn("ldap_sasl_authid", text)
+                self.assertIn("%S$", text)
+
     def test_sssd_config_carries_only_options_this_sssd_accepts(self):
         # `sssctl config-check` is printed verbatim by the boot-time gate, so a
         # config that always produces findings makes that field unreadable.  The
@@ -1186,10 +1238,15 @@ class ArchSecondTests(unittest.TestCase):
             "primary-group", "admin-group",
             "resolver", "resolver-controller", "resolver-client",
             "discovery-ldap-srv", "discovery-kdc-srv", "discovery-netlogon",
-            "host-keytab", "keytab-principals", "sssd-child-caps",
+            "host-keytab", "sssd-child-caps", "host-tgt",
             "directory-info", "directory-user", "directory-primary-group",
             "sssd-debug-level", "sssd-log",
         ])
+        # The fields whose value is a LIST go through the other emitter, and
+        # both emitters exist exactly once.
+        self.assertEqual(
+            re.findall(r"^ +say_lines ([a-z-]+) ", body, re.M),
+            ["keytab-principals", "sssd-log-start", "sssd-log"])
         # The three layers a reader has to be able to separate: SSSD's own
         # view, the local keytab the GSSAPI bind needs, and the directory's
         # answer over LDAP on the DC rather than the Global Catalog.
@@ -1205,8 +1262,9 @@ class ArchSecondTests(unittest.TestCase):
         self.assertIn(f"tail -n {DIAGNOSTIC_SSSD_LOG_LINES}", body)
         self.assertIn(f"{DIAGNOSTIC_SSSD_LOG_DIR}/sssd_", body)
         # The log tail and the "no log to read" fallback share one field name,
-        # so a reader greps one field either way.
-        self.assertIn("sssd-log \"$entry\" > /dev/console", body)
+        # so a reader greps one field either way.  Both emitters print under the
+        # field name they were given and nothing else.
+        self.assertIn('"$field" \\\n        "$entry" > /dev/console', body)
         self.assertIn(f"say sssd-log ls -l '{DIAGNOSTIC_SSSD_LOG_DIR}'", body)
 
     def test_diagnostics_name_the_resolver_and_the_srv_records(self):
@@ -1255,14 +1313,110 @@ class ArchSecondTests(unittest.TestCase):
         # that run could not tell "the level never changed" from "the backend
         # had nothing more to say".
         body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
-        self.assertIn(f"head -n {DIAGNOSTIC_SSSD_LOG_HEAD_LINES}", body)
-        self.assertIn("sssd-log-start \"$entry\" > /dev/console", body)
+        self.assertIn(
+            f"say_lines sssd-log-start {DIAGNOSTIC_SSSD_LOG_HEAD_LINES}", body)
         self.assertIn('say sssd-debug-level sssctl debug-level "$debug_level"',
                       body)
         self.assertNotIn("sssctl debug-level \"$debug_level\" \\", body)
         # Head before tail: the startup decisions lead, the current state
         # follows, so the transcript reads in the order the failure happened.
-        self.assertLess(body.index("sssd-log-start"), body.index("say sssd-log"))
+        self.assertLess(
+            body.index("sssd-log-start"), body.index("say_lines sssd-log "))
+
+    def test_head_reads_the_whole_backtrace_and_not_a_fixed_window(self):
+        # SSSD does not write the reason as a line, it writes it as a backtrace:
+        # with debug_backtrace_enabled true and debug_level under 9 it buffers
+        # every message at full detail and flushes the lot when it logs its
+        # first error.  The 2026-08-14 head therefore held the FIRST QUARTER of
+        # the answer -- it stopped at `dp_load_configuration`, before the AD
+        # provider had even tried to connect -- and no line count chosen in
+        # advance is the right one.  Read to SSSD's own fence instead, with a
+        # hard stop behind it for a log that carries no backtrace at all.
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(
+            f"sed -n '1,/{DIAGNOSTIC_SSSD_BACKTRACE_END}/p' \"$domain_log\"",
+            body)
+        # The fence text is the shipped libsss_debug.so's own, so it cannot be
+        # paraphrased, and the hard stop has to be able to outrun the 40-line
+        # window it replaces or it would reinstate the bug.
+        self.assertEqual(DIAGNOSTIC_SSSD_BACKTRACE_END,
+                         "BACKTRACE DUMP ENDS HERE")
+        self.assertGreater(DIAGNOSTIC_SSSD_LOG_HEAD_LINES,
+                           DIAGNOSTIC_SSSD_LOG_LINES * 4)
+
+    def test_diagnostics_follow_sssd_to_its_helper_child_logs(self):
+        # The AD provider never reads the host keytab in its own process: it
+        # forks ldap_child to select a principal and again to get a TGT, and
+        # libsss_ldap_common's own error text points at the child's log ("see
+        # ldap_child.log ... for details").  The 2026-08-14 field set read only
+        # sssd_<domain>.log, so every keytab and Kerberos error stayed on disk
+        # while the transcript said nothing but "Failed to connect".
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertEqual(SSSD_CHILD_LOG_NAMES, ("ldap_child", "krb5_child"))
+        for name in SSSD_CHILD_LOG_NAMES:
+            field = f"{name.replace('_', '-')}-log"
+            with self.subTest(child=name):
+                self.assertIn(
+                    f"say_log {field}"
+                    f" '{DIAGNOSTIC_SSSD_LOG_DIR}/{name}.log'"
+                    f" {DIAGNOSTIC_CHILD_LOG_LINES}",
+                    body)
+        # An absent child log is a finding about a different layer than an empty
+        # one -- the child never ran at all -- so say_log reports the reason
+        # rather than printing nothing under the same field name.
+        self.assertIn('if [ -r "$path" ]; then', body)
+        self.assertIn('say "$field" ls -l "$path"', body)
+        # Before the domain log, because that is the order the evidence reads
+        # in: the child failed, and the backend then reported the consequence.
+        self.assertLess(body.index("say_log ldap-child-log"),
+                        body.index("say_lines sssd-log-start"))
+
+    def test_diagnostics_prove_whether_the_machine_can_get_a_tgt(self):
+        # The fork in the road the 2026-08-14 field set could not take: the
+        # keytab existed, the KDC answered, the offset was 0 and the directory
+        # returned the user, yet the backend stayed Offline -- and nothing
+        # printed separated "these keys do not authenticate this machine" from
+        # "they do, and SSSD's use of them is wrong".
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(
+            'say host-tgt env KRB5CCNAME="FILE:$TGT_CACHE" \\\n'
+            '    kinit -V -k -t "$HOST_KEYTAB" "$MACHINE_PRINCIPAL"',
+            body)
+        # -k so no password can be involved, -V so success is a statement and
+        # not an absence, and the throwaway cache removed as soon as the field
+        # has been printed.
+        self.assertIn(f"TGT_CACHE='{DIAGNOSTIC_TGT_CACHE_PATH}'", body)
+        self.assertTrue(DIAGNOSTIC_TGT_CACHE_PATH.startswith("/run/"))
+        self.assertIn('rm -f "$TGT_CACHE"', body)
+        # kinit and klist come from the same package the join already needs.
+        installed = merge_contract(
+            load_registry(
+                Path(__file__).resolve().parents[1] / "package-contract.json"
+            ),
+            PROFILE_OVERLAYS["workstation-install"],
+        ).packages
+        self.assertIn("krb5", installed)
+
+    def test_machine_principal_is_derived_from_the_shipped_sssd(self):
+        # ldap_child's second keytab pattern is "%S$", and sss_krb5_get_primary
+        # truncates the hostname at its first dot, uppercases the rest and
+        # formats "%.15s$".  That is why ad_hostname's case cannot mismatch the
+        # keytab and why ldap_sasl_authid is left unset: the bind principal
+        # comes back OUT of the keytab, as the machine account.
+        self.assertEqual(
+            _machine_principal("telos-ws1.ad.factory.test", "AD.FACTORY.TEST"),
+            "TELOS-WS1$@AD.FACTORY.TEST")
+        # The 15-character NetBIOS truncation is part of the rule, not padding.
+        self.assertEqual(
+            _machine_principal("a-very-long-hostname.example.test", "R"),
+            "A-VERY-LONG-HOS$@R")
+        # The gate is told exactly this, so a diagnostic can never disagree with
+        # the configuration it diagnoses.
+        body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
+        client = re.search(r"^AD_HOSTNAME='([^']+)'$", body, re.M).group(1)
+        realm = re.search(r"^REALM='([^']+)'$", body, re.M).group(1)
+        self.assertIn(
+            f"MACHINE_PRINCIPAL='{_machine_principal(client, realm)}'", body)
 
     def test_diagnostic_line_cap_survives_the_fields_that_matter(self):
         # 200 columns truncated `domain-status` at exactly "Discovered AD Domain
@@ -1272,10 +1426,21 @@ class ArchSecondTests(unittest.TestCase):
         # principals.  A cap that eats the evidence is worse than no cap.
         self.assertGreaterEqual(DIAGNOSTIC_LINE_COLUMNS, 512)
         body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")
-        # One cap, applied to every field and to both log windows, so no field
-        # can be quietly exempted from the bound.
+        # One cap, applied in both emitters and nowhere else, so no field can be
+        # quietly exempted from the bound -- and every field goes through one of
+        # the two.
         self.assertEqual(
-            body.count(f"cut -c1-{DIAGNOSTIC_LINE_COLUMNS}"), 3)
+            body.count(f"cut -c1-{DIAGNOSTIC_LINE_COLUMNS}"), 2)
+        # A column cap cannot bound a listing whose LENGTH is the evidence, so
+        # the keytab gets a line bound instead: the 2026-08-14 field was cut
+        # after the third host principal, which is exactly where a reader would
+        # have begun counting whether a previous join's keys were still there.
+        self.assertIn(
+            f"say_lines keytab-principals {DIAGNOSTIC_KEYTAB_LINES}"
+            f' klist -k "$HOST_KEYTAB"',
+            body)
+        # Room for two full sets of five service principals at three enctypes.
+        self.assertGreaterEqual(DIAGNOSTIC_KEYTAB_LINES, 2 * 5 * 3)
 
     def test_diagnostics_run_only_after_a_failure_and_only_from_fail(self):
         body = _heredoc_body(self._rendered(), "TELOS_DOMAIN_ONLINE_EOF")

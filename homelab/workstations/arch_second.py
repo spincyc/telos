@@ -244,11 +244,31 @@ DIAGNOSTIC_LINE_COLUMNS = 512
 # What a field prints when its command answered nothing at all.  An unresolved
 # getent and an unprinted field must not look alike on the console.
 DIAGNOSTIC_EMPTY_FIELD = "(no output)"
+# A field whose value is a LIST rather than a sentence gets one console line
+# per output line instead, bounded by a line count.  Both bounds exist for the
+# same reason and neither substitutes for the other: DIAGNOSTIC_LINE_COLUMNS
+# stops a runaway line, and a listing whose LENGTH is the evidence cannot be
+# flattened into one capped line at all.  The 2026-08-14 transcript proved that
+# too -- ``keytab-principals`` was cut after the third host principal, so the
+# one field that could have said whether the keytab still carried a previous
+# join's keys was unable to answer.  64 covers five service principals at three
+# enctypes each with room for a second stale set, which is what a reader needs
+# to see in order to rule that fault in or out.
+DIAGNOSTIC_KEYTAB_LINES = 64
 # SSSD's own account of the failure.  Level 7 is 'trace function': it records
 # the backend's decisions and the LDAP filters it sent, which is what names the
 # layer.  Higher levels add wire detail without adding a reason.  Nothing in
 # this gate authenticates, so no credential exists in the process to reach the
 # log at any level.
+#
+# The raise WORKS and is not the missing piece: sssctl is silent on success, so
+# the 2026-08-14 transcript's ``sssd-debug-level: (no output)`` was a success
+# report, and its log tail proves it -- the lines timestamped after the raise
+# are 0x0200/0x0400 entries (``dp_get_account_info_send``, ``dp_attach_req``)
+# that level 0x0070 would never have emitted.  It buys nothing because an
+# offline backend does not retry on demand: the forced lookup logged "Backend is
+# offline! Using cached data if available" and never reconnected, so no level
+# can make it re-explain a connection it is not attempting.
 DIAGNOSTIC_SSSD_DEBUG_LEVEL = 7
 DIAGNOSTIC_SSSD_LOG_LINES = 40
 DIAGNOSTIC_SSSD_LOG_DIR = "/var/log/sssd"
@@ -262,7 +282,37 @@ DIAGNOSTIC_SSSD_LOG_DIR = "/var/log/sssd"
 # So the first lines of the domain log are printed too, under their own field
 # name, because that is where "which server did you try, and what happened" is
 # written.
-DIAGNOSTIC_SSSD_LOG_HEAD_LINES = 40
+#
+# The head is read to a MARKER and not to a fixed short window, because SSSD
+# does not write the reason as a line -- it writes it as a backtrace.  With
+# debug_backtrace_enabled at its true default and debug_level under 9, sssd.conf
+# (5) says every message is buffered in memory at full detail and flushed to the
+# log on the first error at or below 0x0040; the flush is fenced by
+# "PREVIOUS MESSAGE WAS TRIGGERED BY THE FOLLOWING BACKTRACE" and the marker
+# below (both verbatim in the shipped libsss_debug.so).  So the complete trace
+# of the failed connection IS in the log, at the front, and a 40-line head read
+# only its first quarter: the 2026-08-14 window stopped at
+# ``dp_load_configuration``, four lines before the provider even started to
+# connect.  Reading to the fence keeps that whole first backtrace and stops
+# before the retry noise begins.
+DIAGNOSTIC_SSSD_BACKTRACE_END = "BACKTRACE DUMP ENDS HERE"
+# The hard stop behind the fence, for a log that carries no backtrace at all (a
+# level-9 configuration disables buffering) so the head cannot run to EOF.  400
+# lines of typical backend log is about 50 KB, under 5 s of 115200-baud serial
+# time, and it is spent only on the failure path with roughly 170 s of the
+# runner's DOMAIN_ONLINE_TIMEOUT still unused by the wait that just gave up.
+DIAGNOSTIC_SSSD_LOG_HEAD_LINES = 400
+# The helper children's own logs, which are where SSSD PUTS the answer to the
+# question this gate keeps failing to answer.  The AD provider does not read the
+# host keytab in-process -- it forks ldap_child to select a principal and again
+# to get a TGT -- and libsss_ldap_common's own error text says so verbatim:
+# "Failed to get principal from keytab (sss_atomic_read_s() failed), see
+# ldap_child.log (pid = %ld) for details."  The 2026-08-14 field set read
+# sssd_<domain>.log and never followed that pointer, so the keytab errors
+# ("Failed to read keytab [%s]: %s", "error resolving keytab", "Could not get
+# TGT") stayed on disk.  krb5_child is the same story for the login leg.
+SSSD_CHILD_LOG_NAMES = ("ldap_child", "krb5_child")
+DIAGNOSTIC_CHILD_LOG_LINES = 40
 # The host keytab and the SSSD helper children that can read it.  Arch's
 # sssd-2.13.1-1 runs the daemon as ``User=sssd`` and grants
 # ``cap_dac_read_search`` to individual helper binaries in its post_install
@@ -274,6 +324,11 @@ SSSD_CHILD_BINARIES = (
     "/usr/lib/sssd/sssd/ldap_child",
     "/usr/lib/sssd/sssd/gpo_child",
 )
+# Where the gate's own TGT probe writes its throwaway ticket cache.  Under /run
+# so it is tmpfs and never survives the boot, and removed the moment the field
+# has been printed.  A ticket cache is not a credential -- it is derived from a
+# keytab this machine already holds -- but nothing needs it after the verdict.
+DIAGNOSTIC_TGT_CACHE_PATH = "/run/telos-host-tgt.ccache"
 # The two directory groups this disk names, defined once and used by both the
 # acceptance probe and the gate's diagnostics.  The primary group is evidence
 # rather than decoration: with ``ldap_id_mapping = False`` a user whose primary
@@ -694,6 +749,17 @@ ad_server = {controller_fqdn}
 # in this project verifies.  sssd-ad(5) says ad_hostname "must match the
 # hostname for which the keytab was issued", and `net ads join` issues
 # host/<short>.<realm dns domain>, which is exactly this.
+#
+# Its CASE is deliberately left as the DNS name's, and ldap_sasl_authid is
+# deliberately absent, because SSSD does not bind as either one: libsss_ad hands
+# ad_hostname to sdap_set_sasl_options, which forks ldap_child to pick a
+# principal OUT of the keytab, and ldap_child's second pattern -- literally
+# "%S$" -- uppercases the short hostname and appends "$", landing on the machine
+# account.  See _machine_principal() above for the full derivation from this very
+# package.  So do not "fix" the uppercase HOST/... entries `net ads join` writes:
+# there is no case for them to disagree with, and pinning ldap_sasl_authid to the
+# FQDN would only add a "Configured SASL auth ID not found in keytab" message
+# before SSSD used the machine account anyway.
 ad_hostname = {client_fqdn}
 # Samba-AD interop, read off the packages this install ships (2026-08-14).
 # SSSD defaults ad_gpo_access_control to "enforcing", which makes every
@@ -739,6 +805,43 @@ fallback_homedir = /home/%u
 default_shell = /bin/bash
 use_fully_qualified_names = False
 enumerate = False"""
+
+
+def _machine_principal(hostname: str, realm: str) -> str:
+    """Return the keytab principal SSSD's LDAP bind asks the KDC for.
+
+    Derived from the sssd-2.13.1-1 package this disk installs, not guessed, and
+    the derivation is the reason the gate can assert anything at all about the
+    bind.  ``libsss_ad``'s ``ad_set_sdap_options`` hands ``ad_hostname`` to
+    ``sdap_set_sasl_options``, which does not use it directly: it forks
+    ``ldap_child`` to run ``select_principal_from_keytab``, whose pattern list is
+    (verbatim from ``src/providers/ldap/ldap_child.c``, and byte-identical in the
+    shipped binary's ``.data.rel.ro``)::
+
+        primary_patterns[] = {"%s", "%S$", "host/%s", "*$", "host/*",
+                              "%S$", "host/*", NULL}
+
+    ``%S$`` is not a printf conversion.  ``sss_krb5_get_primary`` truncates the
+    hostname at its first dot, UPPERCASES what is left, and formats ``%.15s$``.
+    Pattern 0 (the bare hostname as a one-component principal) cannot match a
+    keytab ``net ads join`` wrote, so pattern 1 is the one that hits and the
+    selected principal is the machine account: ``TELOS-WS1$@AD.FACTORY.TEST``
+    shape, and exactly what the 2026-08-14 ``keytab-principals`` field printed.
+
+    Two consequences worth stating once, because both are easy to re-derive
+    wrongly.  First, ``ad_hostname``'s case is irrelevant to the bind: the
+    principal comes back OUT of the keytab, so the lowercase ``ad_hostname``
+    below cannot mismatch the uppercase ``HOST/TELOS-WS1...`` entries that join
+    also wrote -- ``%S$`` uppercases before comparing and Samba writes the
+    machine account uppercase.  Second, ``ldap_sasl_authid`` is therefore left
+    unset on purpose: setting it to the FQDN would only make
+    ``sdap_set_sasl_options`` log "Configured SASL auth ID not found in keytab"
+    and then use this same principal anyway.  ``match_principal`` compares with
+    ``strcmp``/``strncmp`` and no case-insensitive variant appears anywhere in
+    ``find_principal_in_keytab``, so the matching genuinely is case-sensitive --
+    it simply never has a case to disagree about.
+    """
+    return f"{hostname.split('.', 1)[0].upper()[:15]}$@{realm}"
 
 
 # Complete deterministic /etc/pam.d/system-auth: the stock Arch file with
@@ -1165,6 +1268,20 @@ for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
   sleep {JOIN_WAIT_SECONDS}
 done
 
+# The install-time join wrote {HOST_KEYTAB_PATH} against a DIFFERENT domain --
+# different SID, different krbtgt, different machine password -- and Samba
+# refreshes a keytab per principal and key version, not by replacing the file.
+# A fresh provision can hand this machine the same key version number as the
+# domain it replaced, and then the stale keys are indistinguishable from the
+# live ones inside the file that SSSD's ldap_child binds with.  So the keytab is
+# removed rather than merged, for exactly the reason the SSSD cache below is
+# wiped rather than restarted: this run's join should be the only thing in it.
+# `net ads join` recreates the file from nothing (`kerberos method = secrets and
+# keytab` in the smb.conf this installer wrote), which is how the install-time
+# join created it on a disk that had no keytab at all, and the join stays the
+# fail-closed gate -- a keytab that did not come back leaves testjoin failing
+# and the gate's own host-keytab field empty, never a silent success.
+rm -f {HOST_KEYTAB_PATH}
 net ads join -A /run/telos-join/credentials
 net ads testjoin
 rm -rf /run/telos-join
@@ -1228,6 +1345,14 @@ def _render_domain_online_script(
     # Absolute, space-free paths from a module constant, so this stays one safe
     # shell word list and never needs quoting.
     diagnostic_child_binaries = " ".join(SSSD_CHILD_BINARIES)
+    # One field per SSSD helper child log, named after the child so a reader
+    # greps the layer rather than the file.
+    diagnostic_child_logs = "\n".join(
+        f"  say_log {name.replace('_', '-')}-log"
+        f" '{DIAGNOSTIC_SSSD_LOG_DIR}/{name}.log'"
+        f" {DIAGNOSTIC_CHILD_LOG_LINES}"
+        for name in SSSD_CHILD_LOG_NAMES)
+    machine_principal = _machine_principal(client_fqdn, realm)
     return f"""#!/usr/bin/env bash
 # Managed by Telos gate 7 (workstations/arch_second.py).  Boot-time SSSD
 # domain-online gate.  See DOMAIN_ONLINE_UNIT_NAME in that module for why the
@@ -1244,6 +1369,13 @@ LOGIN_PRINCIPAL='{login_principal}'
 PRIMARY_GROUP='{DIRECTORY_PRIMARY_GROUP}'
 ADMIN_GROUP='{DIRECTORY_ADMIN_GROUP}'
 HOST_KEYTAB='{HOST_KEYTAB_PATH}'
+# The principal SSSD's LDAP bind actually asks the KDC for, derived from the
+# shipped sssd-2.13.1-1 by _machine_principal() in that module rather than
+# guessed at here.  It is NOT ad_hostname: SSSD forks ldap_child to pick a
+# principal out of the keytab, and its second pattern uppercases the short
+# hostname and appends '$', which lands on the machine account.
+MACHINE_PRINCIPAL='{machine_principal}'
+TGT_CACHE='{DIAGNOSTIC_TGT_CACHE_PATH}'
 # The two names sssd.conf now pins (ad_server and ad_hostname).  The gate
 # reports on exactly the names SSSD was configured with, so a diagnostic can
 # never disagree with the configuration it is diagnosing.
@@ -1266,6 +1398,39 @@ say() {{
     "${{value:-{DIAGNOSTIC_EMPTY_FIELD}}}" > /dev/console
 }}
 
+# The same field, for a value that is a LIST rather than a sentence: one console
+# line per output line under one field name, bounded by a line count as well as
+# the shared column cap.  A listing whose LENGTH is the evidence cannot be
+# flattened -- see DIAGNOSTIC_KEYTAB_LINES for the keytab that proved it -- and
+# the log windows below have always needed this shape, so there is one emitter
+# for it instead of a loop repeated per field.
+say_lines() {{
+  field="$1"
+  limit="$2"
+  shift 2
+  timeout {DIAGNOSTIC_COMMAND_SECONDS} "$@" 2>&1 | head -n "$limit" |
+    cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
+    while IFS= read -r entry; do
+      printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' "$field" \\
+        "$entry" > /dev/console
+    done
+}}
+
+# One SSSD log file as one field: its tail when it is readable, and otherwise
+# the reason it is not.  Both halves are findings and they must not look alike --
+# an absent ldap_child.log says the AD provider never forked a child to read the
+# keytab at all, which is a different layer from a child that ran and failed.
+say_log() {{
+  field="$1"
+  path="$2"
+  limit="$3"
+  if [ -r "$path" ]; then
+    say_lines "$field" "$limit" tail -n "$limit" "$path"
+  else
+    say "$field" ls -l "$path"
+  fi
+}}
+
 # Why this block exists: the live run of 2026-08-14 stopped here and said only
 # that the login principal never resolved, which cost an entire
 # install-plus-boot cycle without naming a layer.  These fields walk outward
@@ -1274,12 +1439,18 @@ say() {{
 # up, so a converging boot pays nothing for them.
 #
 # Secret-free by construction, and it is the gate's shape that guarantees it
-# rather than a rule to remember: this unit only ever LOOKS UP identities and
-# authenticates nothing, so no credential exists in the process to leak.
-# klist -k lists principal names and key versions, never key material; getent
-# prints POSIX fields, never hashes; net reads the machine credential from
-# secrets.tdb without printing it; and the SSSD log is raised only to
-# trace-function level, which records LDAP filters and backend decisions.
+# rather than a rule to remember: no password, key or hash is ever in this
+# unit's hands to leak.  klist -k lists principal names and key versions, never
+# key material; getent prints POSIX fields, never hashes; net reads the machine
+# credential from secrets.tdb without printing it; and the SSSD log is raised
+# only to trace-function level, which records LDAP filters and backend
+# decisions.  The one field that authenticates does so with the MACHINE's own
+# keytab -- kinit -k takes no password, prints the principal and the verdict and
+# not the ticket, and its throwaway cache lives on tmpfs for the length of one
+# field.  Nothing here ever holds a HUMAN credential: the join secret reached
+# this disk only through the one-use media the join unit already consumed and
+# erased, and this script names no path under it -- a constraint the module's
+# tests hold the whole rendered gate to, so do not quote one even in a comment.
 diagnose() {{
   say sssd-unit systemctl is-active sssd.service
   say sssd-config sssctl config-check
@@ -1332,8 +1503,35 @@ diagnose() {{
   # three fields say whether a GSSAPI bind was ever possible at all -- a
   # question about local files, not about the directory.
   say host-keytab ls -l "$HOST_KEYTAB"
-  say keytab-principals klist -k "$HOST_KEYTAB"
+  # One line per keytab entry, not one flattened line for the whole table: this
+  # listing's LENGTH is the evidence.  A second set of entries for the same
+  # principals is how a keytab left over from the install-time join against the
+  # PREVIOUS domain would show itself, and the 2026-08-14 column cap cut the
+  # table off before a reader could count.  klist -k prints principal names and
+  # key version numbers and never key material, which is why the enctype flag
+  # stays off: it would add nothing this gate needs and the file is a key table.
+  say_lines keytab-principals {DIAGNOSTIC_KEYTAB_LINES} klist -k "$HOST_KEYTAB"
   say sssd-child-caps getcap {diagnostic_child_binaries}
+  # Whether this machine can get a Kerberos TGT from that keytab AT ALL, and as
+  # which principal.  This is the field the 2026-08-14 set was missing and the
+  # fork in the road for everything left: the keytab existed, the KDC answered,
+  # the clock offset was 0 and the directory returned the user, yet the backend
+  # stayed Offline -- and nothing printed could separate "the keytab's keys do
+  # not authenticate this machine" from "they do, and SSSD's use of them is
+  # wrong".  kinit answers that in one command, from the same file and for the
+  # same principal SSSD selects.
+  #
+  # -V is what makes it self-describing: it names the principal and the keytab
+  # and then says "Authenticated to Kerberos v5", so success is a statement
+  # rather than an absence, and a failure carries the KDC's reason verbatim
+  # ("Preauthentication failed", "Client not found in Kerberos database",
+  # "Keytab contains no suitable keys") -- each of which names a different
+  # layer.  It prints no ticket, no key and no password: a keytab kinit has no
+  # password to take, and the throwaway cache is removed as soon as the field
+  # has been printed.
+  say host-tgt env KRB5CCNAME="FILE:$TGT_CACHE" \\
+    kinit -V -k -t "$HOST_KEYTAB" "$MACHINE_PRINCIPAL"
+  rm -f "$TGT_CACHE"
   # The directory's own answer, over LDAP on the DC itself rather than the
   # Global Catalog, authenticated with the machine credential the join already
   # proved.  If these carry uidNumber and gidNumber while the getent fields
@@ -1344,16 +1542,28 @@ diagnose() {{
   say directory-primary-group net ads search -P \\
     "(sAMAccountName=$PRIMARY_GROUP)" sAMAccountName gidNumber
   # Last, SSSD's own account of it: raise the log level, force one more lookup
-  # so the reason is recorded at that level, then print the log from both ends.
+  # so the reason is recorded at that level, then print the logs.
   #
   # The raise is reported as a field rather than discarded.  It was discarded for
   # one live run and the forty tailed lines that came back carried no
   # trace-level entry at all, which left "the level never changed" and "the
   # backend had nothing further to say" indistinguishable.  sssctl prints nothing
-  # on success, so "(no output)" here means the level took.
+  # on success, so "(no output)" here means the level took -- and the 2026-08-14
+  # transcript confirmed it took, then showed why it does not help: an offline
+  # backend answers the forced lookup from cache ("Backend is offline! Using
+  # cached data if available") without reconnecting, so there is no new
+  # connection for any level to explain.  The reason lives in the two places
+  # below instead: the child logs, and the startup backtrace.
   debug_level='{DIAGNOSTIC_SSSD_DEBUG_LEVEL}'
   say sssd-debug-level sssctl debug-level "$debug_level"
   getent passwd "$LOGIN_PRINCIPAL" >/dev/null 2>&1 || true
+  # The helper children first, because this is where SSSD PUTS the keytab and
+  # Kerberos errors and it says so itself -- "see ldap_child.log ... for
+  # details".  The AD provider never reads the keytab in its own process: it
+  # forks ldap_child to select a principal and again to get a TGT, so a bind
+  # that failed on the keytab left nothing in the domain log to find, which is
+  # exactly what the 2026-08-14 transcript showed.
+{diagnostic_child_logs}
   domain_log='{DIAGNOSTIC_SSSD_LOG_DIR}/sssd_'"$DOMAIN"'.log'
   if [ -r "$domain_log" ]; then
     # The head first, because that is where the AD provider recorded which
@@ -1361,18 +1571,17 @@ diagnose() {{
     # started, two minutes before this gate gave up and unreachable from any
     # tail.  Then the tail, for the most recent state.  Two field names, so a
     # reader never has to guess which end of the log a line came from.
-    head -n {DIAGNOSTIC_SSSD_LOG_HEAD_LINES} "$domain_log" |
-      cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
-      while IFS= read -r entry; do
-        printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' \\
-          sssd-log-start "$entry" > /dev/console
-      done
-    tail -n {DIAGNOSTIC_SSSD_LOG_LINES} "$domain_log" |
-      cut -c1-{DIAGNOSTIC_LINE_COLUMNS} |
-      while IFS= read -r entry; do
-        printf '%s %s: %s\\n' '{DOMAIN_ONLINE_DIAGNOSTIC_MARKER}' \\
-          sssd-log "$entry" > /dev/console
-      done
+    #
+    # The head runs to the end of the FIRST backtrace and not to a fixed short
+    # window: SSSD buffers full-detail messages in memory and flushes them as a
+    # fenced backtrace when it logs its first error, so the whole trace of the
+    # failed connection is one block at the front of the log.  A 40-line head
+    # read a quarter of it.  sed stops at the fence; say_lines' own limit stops a
+    # log that carries no backtrace at all.
+    say_lines sssd-log-start {DIAGNOSTIC_SSSD_LOG_HEAD_LINES} \\
+      sed -n '1,/{DIAGNOSTIC_SSSD_BACKTRACE_END}/p' "$domain_log"
+    say_lines sssd-log {DIAGNOSTIC_SSSD_LOG_LINES} \\
+      tail -n {DIAGNOSTIC_SSSD_LOG_LINES} "$domain_log"
   else
     say sssd-log ls -l '{DIAGNOSTIC_SSSD_LOG_DIR}'
   fi
