@@ -1,6 +1,7 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-08-13, end of the session that proved gate 6.
+**Last updated:** 2026-08-14 (documentation reconciliation against on-disk
+evidence; gate 6 was proved 2026-08-13).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
 
@@ -18,15 +19,15 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 2 Immutable PXE releases | — | **pass** |
 | 3 Controller convergence | — | **pass** |
 | 4 PXE authority boundary | — | **pass** (2026-08-12, real arch run) |
-| 5 Windows-first install | — | **pass** (bundle `run-20260810T145421Z`) |
-| 6 Windows join and login | domain identity + recovery | **PASS — proven 2026-08-13 this session** (see §2) |
+| 5 Windows-first install | — | **PASS** (bundle `homelab/var/factory/windows-installs/run-20260810T145421Z-5b457e50e20b`) |
+| 6 Windows join and login | domain identity + recovery | **PASS — 24/24 contracted checks, proven 2026-08-13** (one deferral: `disable-reenable`; see §2) |
 | 7 Arch-second install | — | **pass** (bundle `arch-installs/run-20260811T141601Z-6941005247e8`) |
-| 8 Arch join and login | SSSD identity lifecycle | **IN PROGRESS — this is the next lane** (see §3) |
-| 9 Optional storage failure | — | advanced/complete-ish (see state doc) |
-| 10 Dual-boot acceptance | — | **pass** (`dualboot-acceptance/run-20260811T170510Z`) |
-| 11 Lifecycle recovery | — | proven/advanced (3 scenarios live, 5 deferred) |
-| 12 Repeatability (twice-through) | — | needs gates 6–10 all live |
-| 13 Documentation | — | guides added (`homelab/docs/`), unpublished (carry lab IP) |
+| 8 Arch join and login | SSSD identity lifecycle | **NOT RUN** — boot chain proven 2026-08-14; blocked on an in-run domain join (see §3) |
+| 9 Optional storage failure | Windows half live-proven; Arch half waits on gate 8 | **PASS (Windows) / NOT RUN (Arch)** — `optional-storage-offline` and `optional-storage-access-denied` are among the 24 passed checks in the 2026-08-13 gate-6 evidence; the three `arch-smb-*` checks ride inside a gate-8 run. No standalone target by design. (see state doc) |
+| 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
+| 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
+| 12 Repeatability (twice-through) | — | **NOT RUN** — needs gates 8 and 9 live |
+| 13 Documentation | — | guides added (`homelab/docs/`), **already public on `origin/main`**; "unpublished" = not wired into the generated site (they carry the lab address the site leak scanner rejects) |
 | 14 External integration | physical / UniFi / ThinkPad | **HARD-BLOCKED on explicit owner authorization** — do not attempt |
 
 Owner directive in force: *proceed through gates 6–13 without stopping for
@@ -40,9 +41,18 @@ separate explicit go-ahead.
 **Result:** attempt `20260813T191519Z-28a9f6ee07f5` on bundle
 `homelab/var/factory/windows-installs/run-20260813T171405Z-6729c809fcab` ran
 24/24 and published `.../acceptance-evidence.jsonl`;
-`make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<that jsonl>` →
-`result: pass, checks: 24`. This is the first-ever successful gate-6 publish.
-`AIQ TASK-2` is marked **done**.
+`make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<that jsonl>`
+prints verbatim:
+```json
+{"checks": 24, "deferred": ["disable-reenable"], "external_access": false,
+ "out_of_scope": ["firmware-activation", "live-microsoft-update"],
+ "result": "pass", "schema_version": 1}
+```
+So the honest framing is "24 of 24 CONTRACTED checks pass", not "all checks":
+account **disable/re-enable is deferred** and unproven, and firmware activation
+plus live Microsoft Update are out of scope by decision (unreproducible in
+QEMU). This is the first-ever successful gate-6 publish. `AIQ TASK-2` is marked
+**done**.
 
 ### The hard problem (secure channel) and the fix — READ if touching gate 6
 During the fault phases the harness SIGSTOP/SIGCONTs the controller (the
@@ -107,8 +117,18 @@ make homelab-windows-identity-prepare APPLY=1 WINDOWS_RUN=<bundle> FACTORY_CONTR
 make homelab-windows-identity-run APPLY=1 WINDOWS_IDENTITY_ATTEMPT=<attempt> FACTORY_CONTROLLER_STATE=build/homelab/vm/bootstrap-dc
 make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<attempt>/acceptance-evidence.jsonl
 ```
-An identity run takes ~45–50 min (two reboots). Evidence file is
-`acceptance-evidence.jsonl` (NOT `windows-evidence.jsonl`). Progress lands in the
+An identity run takes ~45–50 min (two reboots).
+
+**Three names, one stream — all three are real; do not "correct" one into
+another:**
+
+| Name | What it is |
+|---|---|
+| `<attempt>/acceptance-evidence.jsonl` | The file gate 6 WRITES: 24 records, one per contracted check. Verified `wc -l` = 24. |
+| `--windows-evidence` / `WINDOWS_IDENTITY_EVIDENCE=` | The CLI flag and Make variable that POINT AT that file, both for the judge and for `homelab-arch-identity-prepare`. |
+| `<gate-8 bundle>/windows-evidence.jsonl` | A **7-record subset** that `homelab-arch-identity-prepare` copies into the gate-8 bundle — only the `windows-*` checks the gate-8 contract requires: `windows-joined`, `windows-standard-online`, `windows-daily-admin`, `windows-cached-login`, `windows-uncached-denied`, `windows-local-rescue`, `windows-secure-channel-restored`. |
+
+Progress lands in the
 attempt's `acceptance-progress.json` (`passed_count`, `next_check`,
 `failure_detail`). The progressive sanitizer collapses errors to
 `scoped-acceptance.acceptance/FaultPhaseError`; the real coordinate is in
@@ -118,43 +138,106 @@ attempt's `acceptance-progress.json` (`passed_count`, `next_check`,
 
 ## 3. Gate 8 (NEXT LANE) — precise state and next step
 
-`make homelab-arch-identity-{prepare,run,judge}`. Prepare is **wired and works**
-— it accepts the gate-6 evidence + a gate-7 joined-Arch bundle and produced
-`homelab/var/factory/arch-identity/run-20260813T200144Z-108311da65fd`:
+`make homelab-arch-identity-{prepare,run,judge}`. Prepare is wired and works.
+Three live runs (one 2026-08-13, two 2026-08-14) took this from "no menu at all"
+to a fully proven boot chain. The best run is
+`homelab/var/factory/arch-identity/run-20260814T120114Z-5fafdb4897ff`:
+`menu_seen`, `entry_selected`, `entry_committed`, `handoff_seen`, `getty_seen`
+all true, `menu_retries: 0`.
+
 ```
 make homelab-arch-identity-prepare APPLY=1 \
-  ARCH_RUN=homelab/var/factory/arch-installs/run-20260811T141601Z-6941005247e8 \
+  ARCH_RUN=homelab/var/factory/arch-installs/run-20260811T170109Z-7ceb936e2710 \
   WINDOWS_IDENTITY_EVIDENCE=<the gate-6 acceptance-evidence.jsonl>
 make homelab-arch-identity-run APPLY=1 ARCH_IDENTITY_BUNDLE=<bundle> FACTORY_DURATION=3600
 ```
+A gate-8 run fails fast (~6 min on a boot failure, ~7 to the login), so
+iterating the boundary against an existing gate-7 disk is cheap. Each attempt is
+a fresh `identity-prepare`, which builds a new overlay — never a re-install.
 
-**First live run (2026-08-13) failed fast (~6 min):** *"systemd-boot menu never
-rendered on the workstation serial console."* Diagnosis:
-- Disk-side provisioning IS present (`arch_second.py` and the 141601Z
-  `arch-install.sh`): probe helper `/usr/local/sbin/homelab-arch-identity-probe`,
-  `serial-getty@ttyS0`, kernel cmdline `console=tty0 console=ttyS0,115200`,
-  sudoers, SSSD.
-- The systemd-boot **menu** (pre-kernel) renders to the OVMF/UEFI console. Gate-8
-  runs `arch_identity_run.py`, which boots the bundle `OVMF_VARS.fd` + NVMe but
-  does NOT route the UEFI console to ttyS0. Gate-10 dual-boot DID render the menu
-  on serial — see `dualboot_acceptance.py` (pairs VARS with the gate-7 installed
-  OVMF; the EFI stub prints on the OVMF console/serial).
+### What was fixed, and why the previously recorded diagnosis was wrong
+Do not re-derive these. Both are committed with their evidence.
 
-**Next step:** make the arch-identity boundary source/configure OVMF for
-serial-console redirection like the gate-10 dual-boot boundary — compare
-`arch_identity_run.py`'s QEMU command (OVMF pflash, `-serial`, console vars)
-against `dualboot_acceptance.py`. A fresh gate-7 Arch install with current
-provisioning may also be needed if the 141601Z disk predates a serial-console
-fix. After the menu renders, expect the same kind of incremental debugging gate 6
-needed (menu drive, getty SSSD login, sudo -S elevation) — the required-check
-list is in the gate-8 error message and `arch_identity_run.py`. A gate-8 run
-fails fast, so iteration is cheap (no long install needed to test boundary
-changes against the existing 141601Z disk, until a fresh install is required).
+1. **Pristine firmware variables, not serial routing.** The old note said the
+   boundary "does not route the UEFI console to ttyS0". It does: the failing
+   73-byte serial log is byte-identical to the first 73 bytes of the *passing*
+   gate-10 boot-1 log — that is OVMF's own serial terminal init. What pristine
+   variables lack is any boot option pointing at
+   `\EFI\systemd\systemd-bootx64.efi`, so ESP auto-discovery never started
+   systemd-boot and there was nothing to render. `arch_identity_prepare` now
+   defaults to the gate-7 bundle's own `OVMF_VARS.fd`, which carries the
+   `Linux Boot Manager` entry `bootctl` authored at install — the same pairing
+   gate 10 requires as `VARS_SOURCE_GATE7`. `--ovmf-vars` still overrides it.
+2. **A digit key selects; only Enter boots.** With the menu rendering, the digit
+   moved the highlight onto Arch and stopped the five-second countdown, then the
+   guest sat there until the harness gave up. `drive_boot_menu` now commits with
+   `\r`, reading the highlight back from the raw inverse-video render rather
+   than assuming the digit landed. Gate 10 had already recorded this lesson at
+   `dualboot_acceptance.py:141`; the gate-8 lane claimed to mirror that lane
+   while sending the digit alone.
+3. **The boot was also nondeterministic** — one run rendered the menu and the
+   next, with byte-identical vars and the same backing disk, rendered nothing.
+   Fixed by aligning the argv with the gate-10 boundary: no `bootindex=1` (its
+   fw_cfg boot order competes with the authored NVRAM entries), a `VGA` device
+   (without one `-nodefaults` leaves no display and every QMP screendump fails,
+   which is why the early failures left no frame evidence), and 8192 MiB. The
+   run now also retains its exact `qemu-command.json` beside the bundle, so the
+   next flake is diagnosed from what it booted rather than reconstructed.
 
-Gate-7 Arch install (if a fresh joined disk is needed): `make
-homelab-arch-install-{prepare,run}` with `WINDOWS_RUN=<a Windows disk bundle>`
-(e.g. the gate-6 bundle `run-20260813T171405Z`). Provisioning lives in
-`homelab/workstations/arch_second.py`.
+Use `tools/factory-bundle-firmware-provenance <bundle> ...` to compare what any
+two bundles actually booted — that pairing is what settled (1).
+
+### The remaining blocker: the design premise is wrong
+Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
+`net ads testjoin`. But **every gate-8 run provisions a brand-new domain.** The
+canonical `bootstrap-dc` image carries no provisioned AD, and the controller
+role runs `samba-tool domain provision` whenever `sam.ldb` is absent
+(`arch_install_run.py:1240-1243` already records this lesson). New domain SID
+and krbtgt, empty SAM — so the `TELOS-WS1$` machine account the gate-7 install
+created never exists in this run's directory, and `controller_principals.py`
+stages only the three user roles, never a machine account.
+
+With `id_provider = ad` and GSSAPI host-keytab binding, SSSD cannot bind to that
+directory, marks the domain offline, and offline auth needs a cached credential
+that cannot exist (fresh disk, per-run generated password). So `operator` is
+refused deterministically — `LOGIN_REFUSED_FAILURE` — and no delay, backoff or
+retry count can change it. `net ads testjoin` would fail for the same reason, so
+`arch-joined` was never reachable in this design either.
+
+**The Windows lane does not have this bug because it joins in-run.**
+`windows_identity_orchestrator._run_acceptance_checks` records
+`controller-ready`, calls `_execute_join(...)`, and only then records
+`windows-joined`; `_execute_join` stages a one-use `tj-<hex>` join principal on
+the freshly provisioned DC, builds a `TELOS_JOIN` ISO, hot-attaches it, and
+drives the join in-guest. Gate 5 does not join at all.
+
+**Next step:** give the Arch lane the same in-run join, reusing the one-use join
+media gates 5-7 already build (`controller_join_material.py`,
+`arch_install_run.run_join_install`, `ArchJoinMedia`). It has to be driven by a
+one-shot boot unit ordered `Before=sssd.service systemd-user-sessions.service`,
+because **there is no pre-login shell on the disk**: `local-rescue` ships a
+disabled password and gate-7's `loader.conf` sets `editor no`, so neither a
+console login nor a boot-cmdline edit can obtain root before the getty. Since
+`serial-getty@ttyS0` is `After=systemd-user-sessions.service`, that ordering
+makes the login prompt appear only after the join completed — no readiness
+polling needed.
+
+This requires **one fresh gate-7 install**, because the retained bundle predates
+the unit:
+```
+make homelab-arch-install-prepare APPLY=1 WINDOWS_RUN=<a Windows disk bundle>
+make homelab-arch-install-run APPLY=1 ARCH_RUN=<bundle>
+```
+Rejected alternatives, recorded so they are not retried: pre-seeding the machine
+account on the DC (the machine password lives only in the guest's `secrets.tdb`,
+unknowable host-side), and joining from a post-login shell (circular — the login
+is what the join enables).
+
+**Also latent, fix alongside:** `arch-local-rescue` must fail regardless of the
+join, because `check_arch_local_rescue` requires `passwd -S local-rescue` to
+report `P` and nothing in the run ever sets that password. And
+`LOGIN_ATTEMPTS = 3` exactly equals `pam_faillock`'s default `deny=3`, leaving
+no headroom for a single spurious refusal.
 
 ---
 
@@ -171,7 +254,11 @@ homelab-arch-install-{prepare,run}` with `WINDOWS_RUN=<a Windows disk bundle>`
 - Do NOT reintroduce UAC-bypass techniques (scheduled-task/EncodedCommand
   elevation) — rejected this session.
 - Put temp files in the session scratchpad, not the attempt dir.
-- End commits with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- End commits with a `Co-Authored-By:` trailer naming **the model actually
+  acting**, e.g. `Co-Authored-By: <acting model name> <noreply@anthropic.com>`.
+  Do not copy a version from an old commit: the history already carries
+  `Claude Opus 4.8`, `Claude Fable 5`, and `Claude Opus 5 (1M context)`, and
+  three recent commits carry none. Use your own identity.
 
 ## 5. Gotchas
 
@@ -181,19 +268,35 @@ homelab-arch-install-{prepare,run}` with `WINDOWS_RUN=<a Windows disk bundle>`
   120-min attempt. A healthy install has exactly one `wimboot` and prints
   `TELOS WINDOWS NATIVE READY` in ~69 min. Retry on loop; watch the serial log to
   abort early rather than burn the full duration.
-- **Pre-existing test failure:** `test_windows_run_dialog_calibration
-  .test_guest_mismatch_fails_before_start` ("private publication must be a regular
-  file") FAILS on HEAD independent of this session's changes — a module I did not
-  touch. Not a regression. The rest of the windows-identity suite (~477 tests) is
-  green.
+- **~~Pre-existing test failure~~ — FIXED 2026-08-14 (`e9ec869`).**
+  `test_windows_run_dialog_calibration.test_guest_mismatch_fails_before_start`
+  ("private publication must be a regular file") used to fail on HEAD; the stale
+  guest-mismatch fixture was repaired and
+  `PYTHONPATH=. python3 -m unittest homelab.tests.test_windows_run_dialog_calibration`
+  now reports OK. Do not re-report it as a known failure.
 - **Long-run monitoring:** identity/install runs are long; launch them
   backgrounded and attach a harness-tracked waiter (a bounded loop that greps a
   driver log for a DONE marker) so you get a completion notification. `Date.now`
   etc. work in bash but not in workflow scripts.
-- **Disk space:** `homelab/var/factory/windows-installs` accumulates ~17–28 GB
-  bundles; clean spent ones (publication consumed → orphaned disk) if space is
-  tight. Old `run-20260728T*` bundles still carry `publication.iso` files
-  (pre-existing, low priority to purge).
+- **Disk space (measured 2026-08-14):** this is much bigger than it looks. A
+  single full Windows install bundle is ~17–29 GB, but the tree AGGREGATES:
+  `homelab/var` is **532 GB**, `homelab/var/factory` **496 GB**, of which
+  `windows-installs` is **399 GB** and `arch-installs` **90 GB**. One bundle
+  dominates: the historic identity input
+  `windows-installs/run-20260728T114233Z-afecdf7cc9d0` is **241 GB** on its own
+  (it holds every early identity attempt). Host: 799 GB used of 1.5 TB, 627 GB
+  free. Clean spent bundles (publication consumed → orphaned disk) if space is
+  tight, and check `du -sh homelab/var/factory/*` before starting a long run.
+- **One-use credential media: all destroyed.** The old `run-20260728T*` bundles
+  used to carry orphaned `publication.iso` files holding a plaintext
+  `install-password.txt`. All **29** were DESTROYED 2026-08-14: they were
+  orphaned (no `identity/`, no `result.json` — so no acceptance had ever
+  consumed them), and the standing rule is that a one-use credential is
+  destroyed rather than parked. Current state verified:
+  `find /home/ksh/git/claude/telos -name 'publication*.iso' | wc -l` → **0**, and
+  `find … -name 'install-password*'` → nothing. **No stray one-use credential
+  remains in the tree.** If you create a publication stash for cheap iteration
+  (see §2), you own deleting it.
 
 ## 6. Key files touched this session (all committed)
 - `homelab/vm/windows_control/Invoke-TelosIdentityProbe.ps1` — read-only
@@ -219,4 +322,7 @@ homelab-arch-install-{prepare,run}` with `WINDOWS_RUN=<a Windows disk bundle>`
    OVMF/serial; get the systemd-boot menu onto ttyS0; iterate the arch-identity
    run (fails fast, cheap) against the 141601Z disk; do a fresh gate-7 install if
    the disk is stale.
-4. Then gates 9 / 11 / 12 loose ends; gate 14 only with explicit owner go-ahead.
+4. Gate 9 needs no separate work — its three remaining Arch checks are graded
+   inside a passing gate-8 run. Gate 11 needs the live guest-boot hook (not
+   another loopback run). Gate 12 needs gates 8/9 live first. Gate 14 only with
+   explicit owner go-ahead.

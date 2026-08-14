@@ -1,8 +1,14 @@
 # Homelab documentation pass
 
-Document version: `20260727.001`
+Document version: `20260814.001`
 
-Status: queued
+Status: in progress — the first two guides shipped 2026-08-12 (`2680c23`):
+[`docs/factory-guide.md`](docs/factory-guide.md) (human) and
+[`docs/operator-runbook.md`](docs/operator-runbook.md) (operator). Both are
+committed and present on public `origin/main`, but neither is wired into the
+generated site yet (`site/site.json` and `scripts/site` reference neither), so
+"unpublished" for these two means "not in the site navigation", not "private".
+They are credited against pass-sequence row 7 below.
 
 The current implementation work continues without waiting for this pass.
 Homelab documentation is HTML/Markdown-first. No Homelab PDF is required at
@@ -72,7 +78,7 @@ fixed with useful content rather than decoration.
 | 4 | Network design | Explain the address aesthetic, small scan-friendly ranges, and device classes | Exact UniFi objects and order, restricted provisioning Wi-Fi, DHCP/DNS authority boundaries, firewall matrix, discovery exceptions, capacity measurements, conflict tests, and recovery from a broken isolated network | gap |
 | 5 | Directory and DNS | Explain one identity across Windows and Arch, cached logons, and travel limits | Samba AD/DNS deployment, validation, time synchronization, administrator tiers, user lifecycle, temporary revocation phases, backup/restore, disaster recovery, and authority handoff | gap |
 | 6 | PXE and install media | Explain wired boot, Wi-Fi limitations, provenance, and what remains manual | Arch and Windows acquisition, hashes/signatures, immutable release layout, wimboot, firmware boot order, restricted network credentials, update publication, rollback, and offline recovery | partial |
-| 7 | Workstation factory | Provide a short minting checklist with clear go/no-go gates | Target-laptop firmware, configurable disk baseline, Windows-primary dual boot, no-encryption pilot, installation, identity joins, local recovery, acceptance measurements, rebuild avoidance, and release recording | partial |
+| 7 | Workstation factory | **shipped 2026-08-12: [`docs/factory-guide.md`](docs/factory-guide.md)** | **shipped 2026-08-12: [`docs/operator-runbook.md`](docs/operator-runbook.md)** — real Make targets in lifecycle order paired with the proven evidence, pass/fail gate table, troubleshooting, rollback/rebuild/verify; reserved aggregate names flagged. Remaining: site navigation wiring (leak scanner rejects the lab address), the gate-9 storage-check correction noted below, and refreshing the gate table as gates 8/11 close | drafted; site wiring and gate-table refresh outstanding |
 | 8 | Windows owner and operator paths | Normal use, automatic updates, travel, and first-response recovery | Windows 11 Pro update policy, firmware licensing, AD join/cache tests, local rescue, boot repair, storage fallback, diagnostic capture, reimage decision, and decommission | partial |
 | 9 | Arch owner and operator paths | Normal use, automatic updates, travel, and first-response recovery | Gated automatic update design, Arch News handling, health checks, rollback, AD/SSSD cache behavior, UID/time verification, boot repair, package-state evidence, and reimage decision | gap |
 | 10 | User storage | Explain local-first homes and optional NAS behavior | Primary and backup NAS SMB/NFS tradeoffs, per-user share automation, UID/GID and timestamp tests, offline/nonblocking mounts, permissions, backup semantics, restore proof, and failure injection | gap |
@@ -82,6 +88,29 @@ fixed with useful content rather than decoration.
 | 14 | Private-overlay bootstrap | Walk another household through answering questions safely | Generate their equivalent private repository, validate answers, protect secrets, connect it to public Telos, update/rebase safely, back up privately, and prove no private material is published | partial |
 | 15 | Decommission and incident response | Explain lost, retired, transferred, or compromised devices | Disable access, cached-logon limitations, credential rotation, share removal, inventory evidence, data disposition, firmware reset, and post-incident verification | gap |
 | 16 | Cross-document acceptance | A release note stating what is usable now | Fresh-clone rehearsal, link check, command transcript, screenshots/diagrams review, privacy scan, accessibility pass, failure-path drill, and publication check | queued |
+
+## Known corrections outstanding in the shipped guides
+
+Found 2026-08-14 by an evidence audit against on-disk artifacts. These are
+defects in `docs/operator-runbook.md`, which this pass owns:
+
+- **Gate 9 is misdescribed (line ~396).** The runbook says gate 9 is `PENDING`
+  with *"no target yet: the identity contract carries no storage check"*. The
+  second half is false: `homelab/workstations/acceptance.json` carries six
+  `optional-storage` checks — `windows-smb-{available,unreachable,denied}` and
+  `arch-smb-{available,unreachable,denied}` — and
+  `homelab/workstations/windows_identity_acceptance.py` exercises the Windows
+  three through the `optional-storage-offline` and
+  `optional-storage-access-denied` evidence checks, both of which PASSED inside
+  the 2026-08-13 gate-6 evidence. The correct
+  entry is `PASS (Windows) / NOT RUN (Arch)`, with the note that gate 9 needs no
+  target of its own because it is graded inside the gate-6 and gate-8 identity
+  acceptances, and that only the three Arch storage checks remain.
+- **The gate table is pinned to a stale ledger version.** Its heading reads "as
+  of ledger `20260812.001`"; `WORKSTATION-FACTORY-STATE.md` is now
+  `20260814.001`. Re-pin it and re-check gates 6, 10, and 11 against their
+  judges' verbatim output, which name `deferred` and `out_of_scope` checks that
+  the runbook's bare `PASS` markers hide.
 
 ## Page pattern
 

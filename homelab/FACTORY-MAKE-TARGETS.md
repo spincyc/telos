@@ -1,10 +1,14 @@
 # Workstation factory Make contract
 
-Document version: `20260727.002`
+Document version: `20260814.001`
 
-Status: interface proposal; targets marked **implemented** are available now.
-The remaining names are reserved for the local lifecycle runner. Do not attach
-placeholder recipes that report success.
+Status: partly implemented. Targets marked **implemented** exist in the Makefile
+today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-14.
+Targets marked **reserved** do not exist; the local per-gate lifecycle that
+actually runs is a separate, real set of targets — see
+[Implemented per-gate lifecycle](#implemented-per-gate-lifecycle), which is the
+contract to read before running anything. Do not attach placeholder recipes that
+report success, and do not assume a reserved aggregate name works.
 
 ## Reproducibility boundary
 
@@ -28,39 +32,86 @@ Disk-erasing targets additionally require a stable target identifier and an
 exact confirmation value. Verification targets must distinguish `PASS`,
 `FAIL`, and `NOT RUN`; a planned assertion is never a pass.
 
+This vocabulary binds the DOCUMENTATION too, not only the targets. A gate's
+recorded verdict in any homelab document is `PASS`, `FAIL`, `NOT RUN`, or —
+where a judge itself renders it — `PARTIAL`, always with a scope note naming
+what is and is not covered. Hedged prose verdicts ("advanced", "complete-ish",
+"proven/advanced", "complete-ish (see state doc)") are not permitted: they hide
+which half of a gate is unproven. When a gate is half-proven, write both halves
+explicitly, e.g. "PASS (Windows) / NOT RUN (Arch)".
+
 ## Target graph
 
-| Stage | Target | Contract |
-|---|---|---|
-| Host | `homelab-factory-deps` | Install/check the complete Arch build-host dependency set. Online; explicit operator action. |
-| Acquire | `homelab-factory-media` | Fresh-resolve Arch and `wimboot`; import the operator-supplied Windows ISO; emit one aggregate receipt. Online or local import. |
-| Seal | `homelab-factory-cache-seal` | Verify every cached input, record hashes and tool versions, and produce a portable inventory. No downloads. |
-| Offline gate | `homelab-factory-offline-check` | Refuse absent/unsealed inputs and prove subsequent recipes have no download dependency. |
-| Controller | `homelab-factory-controller` | Create a disposable controller overlay and converge PXE/HTTP, Samba AD DNS, Kerberos/time, logging, backup, and restore. |
-| Releases | `homelab-factory-pxe` | Build and verify immutable controller, Windows, and Arch releases using one `YYYYMMDD.NNN` release identifier. |
-| Authority | `homelab-factory-authority-check` | Prove the simulated gateway is the only DHCP authority and no guest can reach a host or external network. |
-| Windows | `homelab-factory-windows` | PXE-boot and install Windows 11 Pro first; reboot without installation media; join the synthetic domain and test login/recovery. |
-| Arch | `homelab-factory-arch` | PXE-boot and install Arch second while preserving Windows and recovery partitions; join the same domain. |
-| Dual boot | `homelab-factory-dualboot-check` | Cold-boot both systems and measure partition, EFI, boot-default, login, update, storage-failure, and recovery contracts. |
-| Acceptance | **`homelab-factory-verify`** (implemented) | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
-| Recovery | `homelab-factory-recover` | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. |
-| Cleanup | `homelab-factory-clean` | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
-| Repeat | `homelab-factory-repeat` | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. |
-| Fresh clone | `homelab-factory-fresh-clone` | Clone the public repository into a disposable directory, resolve and record the commit, acquire/import inputs, then invoke the same lifecycle. |
+| Stage | Target | Status | Contract |
+|---|---|---|---|
+| Host | `homelab-factory-deps` | **implemented** | Install/check the complete Arch build-host dependency set. Online; explicit operator action. |
+| Acquire | `homelab-factory-media` | **implemented** | Fresh-resolve Arch and `wimboot`; import the operator-supplied Windows ISO; emit one aggregate receipt. Online or local import. Delegates to `homelab-media`. |
+| Seal | `homelab-factory-cache-seal` | **implemented** | Verify every cached input, record hashes and tool versions, and produce a portable inventory. No downloads. |
+| Offline gate | `homelab-factory-offline-check` | **implemented** | Refuse absent/unsealed inputs and prove subsequent recipes have no download dependency. |
+| Controller | `homelab-factory-controller` | **reserved** | Create a disposable controller overlay and converge PXE/HTTP, Samba AD DNS, Kerberos/time, logging, backup, and restore. The bundle half exists as **`homelab-factory-controller-bundle`** (implemented); the live runners converge the controller themselves. |
+| Releases | `homelab-factory-pxe` | **implemented** | Build and verify immutable controller, Windows, and Arch releases using one `YYYYMMDD.NNN` release identifier. |
+| Authority | `homelab-factory-authority-check` | **reserved — but implemented under another name** | Prove the simulated gateway is the only DHCP authority and no guest can reach a host or external network. This exists today as **`homelab-pxe-authority-audit SWITCH=…`** (implemented, read-only, renders `VERDICT PASS`/`FAIL`) and is wired into `homelab-factory-verify` as a distinct gate. Prefer the real name; do not implement a second one. |
+| Windows | `homelab-factory-windows` | **reserved** | PXE-boot and install Windows 11 Pro first; reboot without installation media; join the synthetic domain and test login/recovery. Really performed by the per-gate `homelab-windows-install-*` and `homelab-windows-identity-*` targets below. |
+| Arch | `homelab-factory-arch` | **reserved** | PXE-boot and install Arch second while preserving Windows and recovery partitions; join the same domain. Really performed by the per-gate `homelab-arch-install-*` and `homelab-arch-identity-*` targets below. |
+| Dual boot | `homelab-factory-dualboot-check` | **reserved** | Cold-boot both systems and measure partition, EFI, boot-default, login, update, storage-failure, and recovery contracts. Really performed by `homelab-dualboot-acceptance-*` below. |
+| Acceptance | `homelab-factory-verify` | **implemented** | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
+| Recovery | `homelab-factory-recover` | **implemented** | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. Graded by **`homelab-factory-recover-judge RECOVERY_EVIDENCE=…`** (implemented). |
+| Cleanup | `homelab-factory-clean` | **reserved** | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
+| Repeat | `homelab-factory-repeat` | **reserved** | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. |
+| Fresh clone | `homelab-factory-fresh-clone` | **reserved** | Clone the public repository into a disposable directory, resolve and record the commit, acquire/import inputs, then invoke the same lifecycle. |
 
-The intended aggregate graph is:
+Eight names in the table above do not exist in the Makefile:
+`homelab-factory-{controller,authority-check,windows,arch,dualboot-check,clean,repeat,fresh-clone}`.
+`make` will fail with "No rule to make target". Two of the eight have real
+substitutes already implemented under different names
+(`homelab-factory-controller-bundle`, `homelab-pxe-authority-audit`).
+
+## Implemented per-gate lifecycle
+
+This is what actually runs today, gate by gate. Every name below was verified
+present in the Makefile on 2026-08-14. Each mutating target needs `APPLY=1`.
+
+| Gate | Targets | Required variables |
+|---:|---|---|
+| 4 | `homelab-pxe-authority-audit` | `SWITCH=<run>/evidence/switch.jsonl` |
+| 5 | `homelab-windows-install-prepare`, `homelab-windows-install-run` | `WINDOWS_RUN=<bundle>`, `FACTORY_DURATION=` |
+| 6 | `homelab-windows-identity-prepare`, `homelab-windows-identity-run`, `homelab-windows-identity-judge` | `WINDOWS_RUN=`, `WINDOWS_IDENTITY_ATTEMPT=`, `FACTORY_CONTROLLER_STATE=`, `WINDOWS_IDENTITY_EVIDENCE=` |
+| 7 | `homelab-arch-install-prepare`, `homelab-arch-install-run` | `WINDOWS_RUN=<a Windows disk bundle>` |
+| 8, 9 (Arch half) | `homelab-arch-identity-prepare`, `homelab-arch-identity-run`, `homelab-arch-identity-judge` | `ARCH_RUN=`, `WINDOWS_IDENTITY_EVIDENCE=` (consumed via `--windows-evidence`), `ARCH_IDENTITY_BUNDLE=`, `ARCH_IDENTITY_EVIDENCE=` |
+| 10 | `homelab-dualboot-acceptance-prepare`, `homelab-dualboot-acceptance-run`, `homelab-dualboot-acceptance-judge` | `DUALBOOT_EVIDENCE=` |
+| 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_EVIDENCE=` |
+| 3 (bundle) | `homelab-factory-controller-bundle` | — |
+| 12 | `homelab-factory-verify` | — |
+
+Gate 9 deliberately has no target of its own: its `optional-storage` checks are
+graded inside the gate-6 and gate-8 identity acceptances.
+
+Every `*-judge` target is read-only and prints one JSON verdict object. Read the
+whole object, not just `result`: a judge may render `result: pass` while also
+naming `deferred` and `out_of_scope` checks, and `homelab-factory-recover-judge`
+renders `result: partial` whenever any scenario deferred.
+
+The intended aggregate graph, annotated with what really implements each step:
 
 ```text
-deps -> media -> cache-seal -> offline-check
+deps -> media -> cache-seal -> offline-check           (all implemented)
                               |
                               v
-controller -> pxe -> authority-check
+controller-bundle -> pxe -> pxe-authority-audit        (implemented; the
+                         |                              reserved names are
+                         |                              controller / authority-check)
+                         v
+windows-install-{prepare,run} -> windows-identity-{prepare,run,judge}
                          |
                          v
-windows-first -> arch-second -> dualboot-check
-                                  |
-                                  v
-                    verify -> recover -> clean -> repeat
+arch-install-{prepare,run} -> arch-identity-{prepare,run,judge}
+                         |
+                         v
+dualboot-acceptance-{prepare,run,judge}
+                         |
+                         v
+verify -> recover -> recover-judge -> [clean] -> [repeat]
+                                       ^-- reserved, not implemented
 ```
 
 ## Required common inputs
