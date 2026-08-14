@@ -219,13 +219,29 @@ machine principal is in the keytab, LDAP on 389 answers, and the DC name
 resolves. So Kerberos, LDAP, DNS-for-Samba, POSIX attributes and the staged
 principal are all proven good.
 
-What fails is inside SSSD alone: `domain-status` reports `Offline` with
-**`Discovered AD Domain Controllers: None so far`** — its backend never found a
-DC, so it went offline and served nothing, and every lookup logged
-`SSSD is offline`. The target is therefore SSSD's DC discovery (it locates DCs
-by `_ldap._tcp` SRV lookup), not identity, not the POSIX attributes, not the
-keytab, and not the Global Catalog. Note the asymmetry a fix must explain:
-`net ads` reached the DC while SSSD could not discover it.
+What fails is inside SSSD alone: `domain-status` reports `Offline` and every
+lookup logs `SSSD is offline`. The target is therefore SSSD's ability to reach a
+DC, not identity, not the POSIX attributes, not the keytab, and not the Global
+Catalog.
+
+**Correction, recorded so it is not re-derived.** A first reading of that field
+concluded SSSD had *discovered no DC at all*. That was wrong -- an artifact of
+the diagnostic's own 200-column cap, which truncated the line at exactly
+`Discovered AD Domain Controller servers: `. The cap is now 512 and the field
+prints in full. What IS established: DNS works from the workstation (the join
+unit's bounded `getent hosts <realm>` loop broke on its first iteration, and
+nothing writes `/etc/hosts`), and DHCP hands the workstation the controller as
+its only nameserver.
+
+The asymmetry -- `net ads` reached the DC while SSSD did not -- is now partly
+explained. Samba's DC location falls back to a NetBIOS broadcast, which this
+flat hub floods and the DC answers, followed by a CLDAP netlogon ping; SSSD's AD
+provider can locate a DC *only* by SRV. And the two query different records:
+`net lookup ldap` asks `_ldap._tcp.dc._msdcs.<domain>` while SSSD asks
+`_ldap._tcp.<domain>`. So `net ads` can succeed with no SRV record at all.
+**What is still not settled** is whether `_ldap._tcp.<domain>` answers -- the
+only SRV check in the repository queried loopback on the DC itself. The fix is
+therefore deterministic rather than causal, and says so in the code.
 
 **Also open: the boot is nondeterministic.** Two of eight runs (2 and 7) started
 no UEFI boot option at all -- console init and then nothing, no `BdsDxe:` line

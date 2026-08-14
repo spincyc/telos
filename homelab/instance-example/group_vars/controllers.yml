@@ -28,3 +28,11 @@ homelab_identity_enabled: false
 homelab_identity_domain: <domain>.home.arpa
 homelab_identity_realm: <DOMAIN>.HOME.ARPA
 homelab_identity_netbios_domain: <DOMAIN>
+# Name a controller to take SSSD's login path off SRV discovery. Give the NAME,
+# never an address: SSSD warns that an ad_server which is an address breaks
+# GSSAPI. Leave it empty on a multi-controller site, where discovery is what you
+# want. A live gate-8 run lost a day to this: an Arch workstation joined the
+# directory and read its own users out over LDAP while SSSD still could not
+# reach a controller, because Samba's own lookups fall back to a broadcast and
+# ask a different SRV record than SSSD does.
+homelab_identity_domain_controller: <controller>.<domain>.home.arpa
