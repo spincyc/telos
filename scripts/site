@@ -263,9 +263,6 @@ INSTANCE_SANCTIONED = re.compile(
 # exempting them is what lets the gate widen now rather than after they settle.
 # Delete each entry the moment its file is scrubbed.
 INSTANCE_CODE_EXEMPT = {
-    # Still carry the pre-audit lab subnet.
-    "homelab/tests/test_artifacts.py": ("RFC 1918 10/8 address literal",),
-    "homelab/vm/simulated_firewall.py": ("RFC 1918 10/8 address literal",),
     # Hardware-shape fixtures whose NVMe serials predate this gate, and the
     # acceptance test that must type them back verbatim. None of them is a disk
     # in this workstation (checked against /dev/disk/by-id).

@@ -14,17 +14,17 @@ class TestNginx(unittest.TestCase):
     def test_binds_the_managed_address_only(self):
         # ADR 0011: a Controller with a second NIC must not serve on a network
         # it does not own.
-        config = artifacts.render_nginx(listen_address="10.0.7.2")
-        self.assertIn("listen 10.0.7.2:80;", config)
+        config = artifacts.render_nginx(listen_address="10.1.31.2")
+        self.assertIn("listen 10.1.31.2:80;", config)
         self.assertNotIn("listen 80;", config)
 
     def test_is_read_only(self):
-        config = artifacts.render_nginx(listen_address="10.0.7.2")
+        config = artifacts.render_nginx(listen_address="10.1.31.2")
         self.assertIn("limit_except GET HEAD", config)
         self.assertIn("autoindex off", config)
 
     def test_names_the_governing_adrs(self):
-        config = artifacts.render_nginx(listen_address="10.0.7.2")
+        config = artifacts.render_nginx(listen_address="10.1.31.2")
         for adr in ("ADR 0048", "ADR 0044", "ADR 0011"):
             self.assertIn(adr, config)
 
@@ -67,17 +67,17 @@ class TestManifest(unittest.TestCase):
 class TestIpxe(unittest.TestCase):
     def test_has_exactly_one_boot_target(self):
         # A menu with one entry is a timeout waiting to pick the wrong thing.
-        script = artifacts.render_ipxe(base_url="http://10.0.7.2/boot")
+        script = artifacts.render_ipxe(base_url="http://10.1.31.2/boot")
         self.assertNotIn("menu", script.lower())
         self.assertEqual(script.count("boot ||"), 1)
 
     def test_serial_console_is_enabled(self):
         # The acceptance matrix drives the installer over the serial console.
-        script = artifacts.render_ipxe(base_url="http://10.0.7.2/boot")
+        script = artifacts.render_ipxe(base_url="http://10.1.31.2/boot")
         self.assertIn("console=ttyS0,115200", script)
 
     def test_failure_drops_to_a_shell_with_an_explanation(self):
-        script = artifacts.render_ipxe(base_url="http://10.0.7.2/boot")
+        script = artifacts.render_ipxe(base_url="http://10.1.31.2/boot")
         self.assertIn(":failed", script)
         self.assertIn("checksum", script)
 
