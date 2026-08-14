@@ -245,8 +245,16 @@ make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<private JSONL>
 #   WINDOWS_SUBMIT_FOCUS_TABS=<n> WINDOWS_REVIEWED_SUBMIT_FOCUS=1
 ```
 
-**Evidence — gate 6 ALL 24 CHECKS PASS 2026-08-12**, attempt
-`20260812T043214Z-28ff545de0ce`. `acceptance-progress.json` records
+**Evidence — gate 6 PASS, 24 of 24 contracted checks, 2026-08-13**, attempt
+`20260813T191519Z-28a9f6ee07f5` on bundle
+`homelab/var/factory/windows-installs/run-20260813T171405Z-6729c809fcab`. That
+is the accepted run and the first one to publish
+`acceptance-evidence.jsonl`; the earlier 2026-08-12 attempt
+`20260812T043214Z-28ff545de0ce` also scored 24/24 but ran before the
+secure-channel and publication fixes landed. The judge additionally reports
+`deferred: [disable-reenable]` and `out_of_scope: [firmware-activation,
+live-microsoft-update]`, so "24/24" means every contracted check, not every
+conceivable one. `acceptance-progress.json` records
 `passed_count: 24`, `total_checks: 24`, `next_check: null`, kind
 `windows-identity-acceptance-progress`, with the 24 named checks:
 `controller-ready`, `windows-joined`, `windows-standard-online`,
@@ -382,7 +390,7 @@ by re-running Stages 0–5 from the sealed cache and comparing receipts with
 
 ---
 
-## Pass/fail gate summary (as of ledger `20260812.001`)
+## Pass/fail gate summary (as of ledger `20260814.001`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
@@ -391,19 +399,28 @@ by re-running Stages 0–5 from the sealed cache and comparing receipts with
 | 3 | Controller convergence | `homelab-factory-controller-bundle APPLY=1` (+ live runners) | PASS |
 | 4 | PXE authority boundary | `homelab-pxe-authority-audit SWITCH=…` | **PASS** |
 | 5 | Windows-first install | `homelab-windows-install-{prepare,run}` | **PASS** |
-| 6 | Windows join/login | `homelab-windows-identity-{prepare,run,judge}` | **PASS 24/24** |
+| 6 | Windows join/login | `homelab-windows-identity-{prepare,run,judge}` | **PASS**, 24/24 contracted checks; judge also reports `deferred: [disable-reenable]` and `out_of_scope: [firmware-activation, live-microsoft-update]` |
 | 7 | Arch-second install | `homelab-arch-install-{prepare,run}` | **PASS** |
-| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PENDING (wired)** |
-| 9 | Optional storage failure | *(no target yet)* | **PENDING** |
-| 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS** |
-| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** |
+| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **NOT RUN** — boot chain proven live 2026-08-14 (menu, Enter-commit, EFI handoff, ttyS0 getty); blocked on an in-run domain join, see the state ledger's gate-8 row |
+| 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** (Windows) / **NOT RUN** (Arch) |
+| 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
+| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`; the five defer by construction until a live boot hook exists |
 | 12 | Repeatability | `homelab-factory-verify` (comparator) | **PENDING** |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** |
 
-Gate 9 has no acceptance target yet: the identity contract carries no storage
-check. It needs a loopback SMB target, an optional-mount client policy, and a
-three-state Arch judge before it can be claimed.
+Gate 9 has no acceptance target of its own by design: its checks ride the two
+identity gates. `homelab/workstations/acceptance.json` carries six
+`optional-storage` checks — `windows-smb-{available,unreachable,denied}` and
+`arch-smb-{available,unreachable,denied}` — and
+`homelab/workstations/windows_identity_acceptance.py` gates the Windows side
+through `optional-storage-offline` and `optional-storage-access-denied`. Both of
+those passed in the 2026-08-13 gate-6 run, so the Windows half is live-proven.
+The three `arch-smb-*` checks are driven by `arch_identity_run.py` and are the
+only part still outstanding; they can only run inside a passing gate-8 run.
+
+An earlier revision of this section claimed the identity contract carries no
+storage check. That was wrong — corrected 2026-08-14.
 
 ---
 
