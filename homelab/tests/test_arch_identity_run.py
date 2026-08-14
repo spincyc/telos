@@ -748,13 +748,32 @@ class _FakeQmp:
     disturbing the controller's seed/convergence attachments.
     """
 
+    #: Guest run state ``query-status`` reports, and the asynchronous events
+    #: QEMU queued on the socket.  A real ``QmpClient`` accumulates the latter
+    #: in ``_events`` and this lane never drained them, so a stalled boot's
+    #: BLOCK_IO_ERROR or STOP was discarded.
+    status = {"status": "paused", "running": False}
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
         self.held: set[tuple[int, int]] = set()
         self.closed = False
+        self.frames: list[Path] = []
+        self._events = [{
+            "event": "STOP",
+            "timestamp": {"seconds": 1755100000, "microseconds": 1234},
+            "data": {},
+        }]
+
+    def screenshot(self, path):
+        self.calls.append(("screendump", str(path)))
+        self.frames.append(Path(path))
+        Path(path).write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
 
     def execute(self, command, arguments=None, **_kw):
         self.calls.append((command, arguments))
+        if command == "query-status":
+            return dict(type(self).status)
         if command == "blockdev-add" and isinstance(arguments, dict):
             source = arguments.get("file")
             if isinstance(source, dict):
@@ -853,6 +872,10 @@ class _FakeSerial:
     rescue_outcome = b"0"  # group(1): passwd local-rescue return code
     root_uid = b"0"
     transcript = b""
+    #: Leading ``arch-menu-rendered`` waits that stall: the guest says nothing
+    #: at all, as two of eight gate-8 runs did on 2026-08-14.
+    menu_stalls = 0
+    menu_stall_message = "timed out waiting for arch-menu-rendered"
 
     def __init__(self, reader, writer, password, *, timeout=90.0,
                  clock=None) -> None:
@@ -864,6 +887,7 @@ class _FakeSerial:
         self.calls: list[str] = []
         self.events: list[str] = []
         self.token = "feedfacefeedface"
+        self.stalls_served = 0
         type(self).instances.append(self)
 
     def establish_disposable_controller_session(self):
@@ -884,6 +908,14 @@ class _FakeSerial:
         self.events.append(event)
 
     def _wait(self, pattern, label):
+        if (label == "arch-menu-rendered"
+                and self.stalls_served < type(self).menu_stalls):
+            # The real _wait records no label when it gives up, so neither
+            # does this: a stall leaves no trace on the console but its own.
+            from homelab.vm.serial_automation import SerialAutomationError
+            self.stalls_served += 1
+            self.calls.append(f"stall:{label}")
+            raise SerialAutomationError(type(self).menu_stall_message)
         self.calls.append(f"wait:{label}")
         self.events.append(label)
         if label == "arch-menu-rendered":
@@ -1041,6 +1073,10 @@ class BoundaryWiringTests(unittest.TestCase):
         _FakeSerial.rescue_outcome = b"0"
         _FakeSerial.root_uid = b"0"
         _FakeSerial.transcript = b""
+        _FakeSerial.menu_stalls = 0
+        _FakeSerial.menu_stall_message = (
+            "timed out waiting for arch-menu-rendered")
+        _FakeQmp.status = {"status": "paused", "running": False}
         _FakeDisposableDisk.instances = []
         self._patches = [
             mock.patch(
@@ -1401,6 +1437,144 @@ class BoundaryWiringTests(unittest.TestCase):
             self.assertTrue(recorded["sudo_elevated"])
             self.assertFalse(recorded["rescue_password_set"])
 
+    def test_boot_stall_is_power_cycled_and_self_diagnosing(self):
+        # Two of eight gate-8 runs on 2026-08-14 rendered no menu at all with
+        # a correct, active, first-in-BootOrder entry whose ESP the firmware
+        # had already matched (it wrote HDDP).  The first miss must now
+        # power-cycle and retry -- and it must leave behind the artifacts that
+        # separate a spinning vCPU from a stalled device or host I/O, none of
+        # which this lane used to keep.
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeSerial.menu_stalls = 1
+            boundary.start()
+            try:
+                facts = boundary._boot_facts
+                # Counted as its own fault, never folded into menu_retries:
+                # that one means a rendered menu whose Windows default won.
+                self.assertEqual(facts["boot_stalls"], 1)
+                self.assertEqual(facts["menu_retries"], 0)
+                self.assertTrue(facts["menu_seen"])
+                self.assertTrue(facts["handoff_seen"])
+                self.assertTrue(facts["login_completed"])
+                console = _FakeSerial.instances[1]
+                self.assertIn("arch-workstation-power-cycled", console.events)
+                self.assertIn(("system_reset", None), boundary.qmp.calls)
+                # One bounded record naming the stall and its evidence.
+                records = facts["boot_stall_evidence"]
+                self.assertEqual(len(records), 1)
+                record = records[0]
+                self.assertEqual(record["reason"], "timed-out")
+                self.assertEqual(record["label"], "arch-menu-rendered")
+                self.assertEqual(record["attempt"], 1)
+                self.assertFalse(record["terminal"])
+                # paused-versus-running is what separates a stalled device or
+                # a host I/O stall from a spinning vCPU.
+                self.assertEqual(record["status"], "paused")
+                self.assertFalse(record["running"])
+                # The asynchronous QMP events the lane held a socket open for
+                # and never drained.
+                self.assertEqual(
+                    [item["event"] for item in record["qmp_events"]], ["STOP"])
+                # A frame: -device VGA was added for exactly this and
+                # screendump had never been called from this module.
+                frame = (
+                    boundary.bundle.evidence_path.parent / record["frame"])
+                self.assertTrue(frame.is_file())
+                self.assertEqual(frame.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(record["frame_bytes"], frame.stat().st_size)
+            finally:
+                failures = boundary.stop()
+            self.assertEqual(failures, [])
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            self.assertEqual(recorded["boot_stalls"], 1)
+            self.assertEqual(
+                recorded["boot_stall_evidence"][0]["reason"], "timed-out")
+
+    def test_stall_evidence_is_kept_when_the_boot_never_recovers(self):
+        # The terminal miss is still the named never-rendered failure, and it
+        # still retains its diagnosis -- otherwise the next occurrence costs
+        # another investigation.
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeSerial.menu_stalls = 2
+            _FakeSerial.menu_stall_message = (
+                "serial closed while waiting for arch-menu-rendered")
+            with self.assertRaises(ArchIdentityError) as caught:
+                boundary.start()
+            self.assertEqual(
+                str(caught.exception), MENU_NEVER_RENDERED_FAILURE)
+            self.assertEqual(caught.exception.check, "arch-joined")
+            recorded = json.loads(
+                (boundary.bundle.evidence_path.parent / BOOT_FACTS_FILENAME)
+                .read_text(encoding="utf-8"))
+            # Bounded to one power-cycle: one recovered stall counted, two
+            # stalls recorded, the second marked terminal.
+            self.assertEqual(recorded["boot_stalls"], 1)
+            self.assertFalse(recorded["menu_seen"])
+            reasons = [(item["reason"], item["terminal"], item["attempt"])
+                       for item in recorded["boot_stall_evidence"]]
+            # EOF (QEMU exited) is recorded distinctly from a quiet guest;
+            # collapsing the two cost most of the 2026-08-14 investigation.
+            self.assertEqual(
+                reasons, [("serial-closed", False, 1),
+                          ("serial-closed", True, 2)])
+            for item in recorded["boot_stall_evidence"]:
+                self.assertTrue(
+                    (boundary.bundle.evidence_path.parent
+                     / item["frame"]).is_file())
+
+    def test_boot_facts_carry_timing_digests_and_the_switch_log(self):
+        # Every timing in the 2026-08-14 investigation was reconstructed from
+        # file mtimes, the switch log had been deleted with the tempdir, and
+        # comparing two runs' variable stores needed a parser.
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            boundary.start()
+            evidence = boundary.bundle.evidence_path.parent
+            # The switch log lives in the runtime tempdir stop() removes.
+            (boundary._runtime / "switch.jsonl").write_bytes(
+                b'{"event":"port","name":"client"}\n')
+            argv = dict(boundary.spawned)["workstation"]
+            self.assertIn(
+                f"file:{evidence / 'workstation-firmware.log'}", argv)
+            failures = boundary.stop()
+            self.assertEqual(failures, [])
+            recorded = json.loads(
+                (evidence / BOOT_FACTS_FILENAME).read_text(encoding="utf-8"))
+            self.assertRegex(
+                recorded["workstation_spawned_at"],
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            timeline = recorded["serial_timeline"]
+            self.assertEqual(timeline[0][1], "arch-menu-rendered")
+            self.assertTrue(
+                all(isinstance(offset, (int, float)) and offset >= 0
+                    for offset, _label in timeline))
+            self.assertEqual(
+                [label for _offset, label in timeline],
+                list(_FakeSerial.instances[1].events))
+            # The variable store either side of the boot: equal here because
+            # nothing really booted, and the pair is what answers "did the
+            # firmware write the varstore at all" without a parser.
+            from homelab.vm.windows_install_contract import sha256
+            digest = sha256(boundary.bundle.firmware)
+            self.assertEqual(recorded["firmware_vars_sha256_before"], digest)
+            self.assertEqual(recorded["firmware_vars_sha256_after"], digest)
+            # The firmware debug console was pre-created private so QEMU's
+            # own O_TRUNC open keeps the mode; empty here (nothing booted),
+            # which is exactly what a serial-DebugLib OVMF would also leave.
+            log = evidence / "workstation-firmware.log"
+            self.assertTrue(log.is_file())
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(recorded["firmware_debug_log_bytes"], 0)
+            # The fabric switch log survived the tempdir.
+            switch = evidence / "workstation-switch.jsonl"
+            self.assertEqual(
+                switch.read_bytes(), b'{"event":"port","name":"client"}\n')
+            self.assertEqual(switch.stat().st_mode & 0o777, 0o600)
+
     def test_wall_clock_expiry_terminates_and_is_reported(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self._boundary(Path(name))
@@ -1588,15 +1762,91 @@ class MenuDriveTests(SerialTranscriptCase):
         self.assertEqual(resets, [1])
 
     def test_menu_that_never_renders_is_the_named_menu_failure(self):
+        # Now takes TWO consecutive misses: the first is power-cycled like the
+        # post-menu miss below.  The terminal one is still the same named,
+        # fail-closed failure.
         console, feeder, _sink = self._console()
         feeder.write(b"BdsDxe: starting nothing interesting\n")
         feeder.close()
+        resets: list[int] = []
+        stalls: list[tuple] = []
+        facts = new_boot_facts()
         with self.assertRaises(ArchIdentityError) as caught:
             drive_boot_menu(
-                console, new_boot_facts(), reset=lambda: None,
-                menu_timeout=0.5, handoff_timeout=0.3)
+                console, facts, reset=lambda: resets.append(1),
+                menu_timeout=0.5, handoff_timeout=0.3,
+                on_stall=lambda reason, **kw: stalls.append((reason, kw)))
         self.assertEqual(str(caught.exception), MENU_NEVER_RENDERED_FAILURE)
         self.assertEqual(caught.exception.check, "arch-joined")
+        self.assertEqual(resets, [1])
+        self.assertEqual(facts["boot_stalls"], 1)
+        self.assertFalse(facts["menu_seen"])
+        # The stall evidence is captured on the retried miss AND on the
+        # terminal one, so a run that never recovers still teaches the next.
+        self.assertEqual(
+            stalls,
+            [("serial-closed",
+              {"attempt": 1, "terminal": False,
+               "label": "arch-menu-rendered"}),
+             ("serial-closed",
+              {"attempt": 2, "terminal": True,
+               "label": "arch-menu-rendered"})])
+
+    def test_first_boot_stall_power_cycles_once_and_still_boots(self):
+        # The 2026-08-14 stall: the guest says nothing at all, with the boot
+        # entry, the boot order, the ESP match and the loader path all proven
+        # correct from the post-run varstore.  A bounded power-cycle recovers
+        # it, and the new fact keeps the flake rate visible.
+        console, feeder, sink = self._console()
+        resets: list[int] = []
+
+        def reset():
+            resets.append(1)
+            feeder.write(MENU_ARCH_FIRST + MENU_ARCH_FIRST_SELECTED + HANDOFF)
+
+        stalls: list[tuple] = []
+        facts = new_boot_facts()
+        drive_boot_menu(
+            console, facts, reset=reset, menu_timeout=0.5,
+            handoff_timeout=2.0,
+            on_stall=lambda reason, **kw: stalls.append((reason, kw)))
+        self.assertEqual(resets, [1])
+        self.assertEqual(facts["boot_stalls"], 1)
+        # A stall is NOT a missed five-second window; conflating the two would
+        # destroy the only signal either fault has.
+        self.assertEqual(facts["menu_retries"], 0)
+        self.assertTrue(facts["menu_seen"])
+        self.assertTrue(facts["entry_committed"])
+        self.assertTrue(facts["handoff_seen"])
+        self.assertEqual(self._sent(sink), b"1\r")
+        self.assertIn("arch-workstation-power-cycled", console.events)
+        self.assertEqual(len(stalls), 1)
+        self.assertEqual(stalls[0][0], "timed-out")
+        self.assertFalse(stalls[0][1]["terminal"])
+
+    def test_stall_reason_separates_a_dead_qemu_from_a_quiet_guest(self):
+        # SerialAutomation._wait raises one exception type for EOF (QEMU
+        # exited) and for a live guest that went quiet, and this lane rewrote
+        # both into one message.  Reconstructing that distinction from QEMU's
+        # lifetime cost most of the 2026-08-14 investigation.
+        #
+        # ``stall_reason`` reads the distinction off the message ``_wait``
+        # composes, so this drives the REAL SerialAutomation down both paths
+        # rather than a double: it is the canary for that wording, and it
+        # fails the moment serial_automation stops distinguishing them.
+        for closed, expected in ((True, "serial-closed"),
+                                 (False, "timed-out")):
+            with self.subTest(closed=closed):
+                console, feeder, _sink = self._console()
+                if closed:
+                    feeder.close()
+                stalls: list[str] = []
+                with self.assertRaises(ArchIdentityError):
+                    drive_boot_menu(
+                        console, new_boot_facts(), reset=lambda: None,
+                        menu_timeout=0.4, handoff_timeout=0.3,
+                        on_stall=lambda reason, **kw: stalls.append(reason))
+                self.assertEqual(stalls, [expected, expected])
 
 
 class DomainOnlineGateTests(SerialTranscriptCase):
@@ -1972,6 +2222,61 @@ class EvidenceRetentionTests(unittest.TestCase):
                 sorted({"schema", *new_boot_facts()}))
             # The workstation credential was released during teardown.
             self.assertEqual(boundary._principals, {})
+
+    def test_stall_evidence_is_bounded(self):
+        from homelab.vm.arch_identity_run import (
+            BOOT_STALL_RETENTION_LIMIT,
+            STALL_QMP_EVENT_LIMIT,
+            _bounded_qmp_events,
+        )
+        with tempfile.TemporaryDirectory() as name:
+            boundary = ArchIdentityBoundary(make_bundle(Path(name)))
+            for attempt in range(BOOT_STALL_RETENTION_LIMIT + 4):
+                boundary._retain_boot_stall_evidence(
+                    "timed-out", attempt=attempt + 1, terminal=False,
+                    label="arch-menu-rendered")
+            records = boundary._boot_facts["boot_stall_evidence"]
+            self.assertEqual(len(records), BOOT_STALL_RETENTION_LIMIT)
+            # No QMP channel is not a crash: diagnosis never changes the run.
+            self.assertEqual(records[0]["qmp"], "unavailable")
+        queued = [
+            {"event": "BLOCK_IO_ERROR" + "x" * 200,
+             "timestamp": {"seconds": 1, "microseconds": 2, "junk": object()},
+             "data": {"device": "d" * 400, "nospace": True,
+                      **{f"k{index}": index for index in range(20)}}}
+        ] * (STALL_QMP_EVENT_LIMIT + 10)
+        bounded = _bounded_qmp_events(queued)
+        self.assertEqual(len(bounded), STALL_QMP_EVENT_LIMIT)
+        self.assertEqual(len(bounded[0]["event"]), 64)
+        self.assertEqual(sorted(bounded[0]["timestamp"]),
+                         ["microseconds", "seconds"])
+        self.assertLessEqual(len(bounded[0]["data"]), 8)
+        self.assertEqual(len(bounded[0]["data"]["device"]), 96)
+        # Anything that is not a QMP event object is dropped, never guessed.
+        self.assertEqual(_bounded_qmp_events(["not-an-event"]), [])
+        self.assertEqual(_bounded_qmp_events(None), [])
+
+    def test_switch_log_is_copied_bounded_and_line_aligned(self):
+        from homelab.vm.arch_identity_run import (
+            SWITCH_LOG_FILENAME, SWITCH_LOG_RETENTION_BYTES)
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = make_bundle(root)
+            boundary = ArchIdentityBoundary(bundle)
+            runtime = root / "runtime"
+            runtime.mkdir(mode=0o700)
+            boundary._runtime = runtime
+            record = b'{"event":"switch","seq":%d}\n'
+            lines = SWITCH_LOG_RETENTION_BYTES // len(record % 0) + 32
+            (runtime / "switch.jsonl").write_bytes(
+                b"".join(record % index for index in range(lines)))
+            boundary._retain_switch_log()
+            retained = (bundle.evidence_path.parent
+                        / SWITCH_LOG_FILENAME).read_bytes()
+            self.assertLessEqual(len(retained), SWITCH_LOG_RETENTION_BYTES)
+            # A tail cut mid-record would leave the file unparseable.
+            self.assertTrue(retained.startswith(b'{"event"'))
+            self.assertTrue(retained.endswith(b"}\n"))
 
     def test_retention_failure_is_reported_not_raised(self):
         with tempfile.TemporaryDirectory() as name:
