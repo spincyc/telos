@@ -411,6 +411,36 @@ puts a secret in a template, a log or the process table. And the accounts age
 under the domain's password policy: nothing here sets a never-expiring password,
 because that would hide a real property.
 
+### Keep the `local-rescue` password
+
+It is unrecoverable, and losing it costs the whole image. Convergence reaches the
+guest **only** over the serial console: the disk carries no harness credential, no
+authorized key and no init shell, root is locked, and SSH password authentication
+is off. Nothing in this repository can open a canonical image whose console
+password is gone.
+
+The recovery is a reinstall, and it is not expensive as long as the directory is
+not yet provisioned — which is the usual case, because provisioning is a separate
+explicit step:
+
+```sh
+make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
+    CONFIRM='DESTROY <name>'                       # if one was seeded from it
+make homelab-bootstrap-vm-destroy  APPLY=1 CONFIRM=bootstrap-dc
+make homelab-bootstrap-seed                        # if the seed predates
+                                                   # any homelab/seed/ commit
+make homelab-bootstrap-vm-create   APPLY=1
+make homelab-bootstrap-vm-run      APPLY=1 \
+    SEED_ISO=homelab/var/seed/telos-controller-seed.iso
+```
+
+Then reinstall from the console, as in `homelab/seed/README.md`. Rebuilding the
+canonical image invalidates no gate receipt: the disk digest is captured per run
+at prepare time by `ControllerOverlay`, and no tracked artifact pins it.
+
+Once a directory **is** provisioned, the same loss is expensive rather than cheap:
+the accounts, the domain SID and every machine's join live only on that disk.
+
 ## Stage 5 — Verify, recover, repeat
 
 ### 5.1 Final verification (read-only; never installs)
