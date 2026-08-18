@@ -678,7 +678,40 @@ no headroom for a single spurious refusal.
    signature-verified Arch ISO are already staged. The new
    `local-rescue` password must be recorded durably. See the blocker banner at
    the top of this file.
-4. Then, in order: gate 11 needs the three remaining live guest-boot hooks (the
+4. **Prove the roster derivation on the cheap path, before anything durable.**
+   The owner asked on 2026-08-18 whether to mint a real workstation against an
+   ephemeral Controller first, to avoid iterating on workstation faults by
+   rebuilding a Controller. The instinct is right, the risk is mislocated, and
+   the answer is recorded here so it is not re-derived:
+
+   - Workstation-against-disposable-Controller is the **most proven** path in
+     this repository — gate 6 at 24/24, gate 8 at 21/21, gate 10 passing. It
+     does not need verifying.
+   - What is unproven is almost entirely **Controller-side**: persistent
+     convergence, durable account staging over the serial console, and a
+     durable workstation flow that **does not exist** (a durable bundle is
+     preparable but refused before any process starts — see §3).
+   - A workstation minted against an ephemeral Controller is **never
+     keepable**: each run provisions a brand-new domain, so its machine
+     account and every user SID die with the run. It validates the process and
+     never yields the artifact.
+   - The Controller is **not physical yet** (ADR 0065/0067 put the first one in
+     a QEMU VM), so rebuilding it is one destroy target away. The genuinely
+     unrebuildable thing was never the machine — it is the realm and domain
+     SID, and those are frozen in `instance/identity/directory.json`, which a
+     rebuild reuses rather than re-decides.
+   - The real cheap test hiding in that question is the **roster derivation**:
+     the owner's names flowing through both OS lanes. That code (`ee8b5e6`,
+     `dcf4f3a`, `96f2d16`) has never run live and is exactly what would bite
+     when minting a real workstation. Exercise it with **real names under the
+     synthetic realm** — names live in `identity/principals.json` and the realm
+     in `identity/directory.json`, separate documents with separate loaders, so
+     nothing forces them together and no new flow is needed.
+
+   So: install the image, run gates 5–8 with `principals.json` seeded, then
+   converge a **throwaway-named** persistent instance to shake out the
+   Controller-side code before committing the instance you intend to keep.
+5. Then, in order: gate 11 needs the three remaining live guest-boot hooks (the
    other two are implemented but NOT RUN, and the three need primitives that do
    not exist); gate 12 needs the image back plus a live twice-through through
    `make homelab-factory-repeat` — the driver **exists** now, and **no gate
