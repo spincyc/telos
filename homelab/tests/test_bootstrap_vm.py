@@ -1230,7 +1230,17 @@ class PersistentConvergenceTests(unittest.TestCase):
                 "--instance", "lab-dc1",
                 "--persistent-root", str(self.persistent_root),
                 "--directory-identity", str(self.identity), expect=0)
-        run.assert_not_called()
+        # The plan may INSPECT, and does: it reports whether the canonical is
+        # installed, so an operator is not told a run is ready that --apply
+        # would refuse. What it may never do is start a guest or mutate
+        # anything, so assert on the shape of what it ran rather than on
+        # nothing having run.
+        for call in run.call_args_list:
+            argv = [str(part) for part in call.args[0]]
+            self.assertIn(argv[0], ("qemu-img", "sfdisk"), argv)
+            self.assertNotIn("create", argv)
+            self.assertFalse(
+                any(part.startswith("qemu-system") for part in argv), argv)
         popen.assert_not_called()
         prompt.assert_not_called()
         self.assertFalse(self.persistent_root.exists())

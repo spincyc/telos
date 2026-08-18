@@ -1257,6 +1257,16 @@ def persistent_converge(
           "is never a persistent target")
     print(" ".join(str(part) for part in command))
     if not apply:
+        # Say now what --apply would refuse. The plan otherwise reads as
+        # "ready", and an operator who has just chosen a permanent realm has
+        # every reason to think the next step is theirs to take.
+        if not existing:
+            try:
+                assert_installed_controller_image(
+                    canonical["disk"],
+                    subject=f"the canonical image {canonical['disk']}")
+            except ControllerImageError as error:
+                print(f"NOT READY: {error}")
         print("dry run; repeat with --apply")
         return 0
 
