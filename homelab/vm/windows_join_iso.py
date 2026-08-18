@@ -29,6 +29,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
+from .controller_principals import DAILY_ADMINISTRATOR
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
     ControllerAuthCollection,
@@ -268,13 +269,31 @@ DOMAIN = re.compile(
 REALM = re.compile(
     r"(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
 )
+# The daily administrator's UPN.  The local part is DERIVED from the one
+# roster loader (controller_principals -> arch_second.identity_roster), not
+# written out: a literal "operator" here refused every join document the moment
+# the owner's private overlay renamed the principal.  SAFE_PRINCIPAL/_SAFE_NAME
+# already admit only ``[a-z][a-z0-9-]*``, so the name needs no escaping, but
+# re.escape is applied anyway because this is a regex and the gate lives
+# elsewhere.
 OPERATOR = re.compile(
-    r"operator@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
+    re.escape(DAILY_ADMINISTRATOR)
+    + r"@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
 )
 JOIN_USERNAME = re.compile(
     r"tj-[a-f0-9]{16}@(?=.{1,253}\Z)(?![-.])"
     r"(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
 )
+# A UPN local part pinned as a literal inside a control script.  The guest-side
+# TelosJoin.ps1 validates the join document with
+# ``$document.operator -cne ('operator@' + $document.realm)``, so a script that
+# still pins a name the roster no longer resolves to would refuse every join
+# document this module builds -- from inside the Windows guest, over the
+# control serial, with no way to say which side was wrong.  The scripts live
+# outside this module, so the agreement is CHECKED here rather than assumed: a
+# script that pins nothing passes, and a script that pins the resolved daily
+# administrator passes.
+SCRIPT_OPERATOR_PIN = re.compile(r"'([A-Za-z0-9][A-Za-z0-9._-]{0,63})@'")
 JOIN_NODE = "telos-join-media"
 JOIN_DEVICE = "telos-join-cd"
 JOIN_PARENT = "telos-join-bot"
@@ -409,7 +428,8 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
             or values["realm"] != values["domain"].upper()):
         raise WindowsJoinIsoError("join realm is invalid")
     if (not OPERATOR.fullmatch(values["operator"])
-            or values["operator"] != f"operator@{values['realm']}"):
+            or values["operator"]
+            != f"{DAILY_ADMINISTRATOR}@{values['realm']}"):
         raise WindowsJoinIsoError("join operator is invalid")
     if (
         not isinstance(values["username"], str)
@@ -422,6 +442,19 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
             or len(password) > 512 or "\r" in password or "\n" in password):
         raise WindowsJoinIsoError("join password is invalid")
     return values
+
+
+def _assert_scripts_agree_with_roster(assets: tuple[Path, ...]) -> None:
+    """Refuse a control script that pins a principal the roster renamed."""
+    for asset in assets:
+        source = asset.read_text(encoding="utf-8")
+        for pinned in SCRIPT_OPERATOR_PIN.findall(source):
+            if pinned != DAILY_ADMINISTRATOR:
+                raise WindowsJoinIsoError(
+                    f"{asset} pins the join operator as {pinned!r} but the "
+                    f"identity roster resolves the daily administrator to "
+                    f"{DAILY_ADMINISTRATOR!r}; the guest would refuse every "
+                    "join document this builds")
 
 
 def build_join_iso(
@@ -439,6 +472,7 @@ def build_join_iso(
     assets = (SCRIPT, POST_SUBMIT_DIAGNOSTIC_SCRIPT)
     if any(asset.is_symlink() or not asset.is_file() for asset in assets):
         raise WindowsJoinIsoError("join script assets are unavailable")
+    _assert_scripts_agree_with_roster(assets)
     with tempfile.TemporaryDirectory(
             prefix=".windows-join-", dir=parent) as temporary:
         temporary_root = Path(temporary)
@@ -793,7 +827,7 @@ class JoinMediaChannel:
             # equality failed attempt 34 (20260811T123220Z) at the first
             # live evaluation this proof ever reached.
             "domain": expected_domain.casefold(),
-            "operator": f"operator@{expected_domain.upper()}",
+            "operator": f"{DAILY_ADMINISTRATOR}@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }
         observed = dict(result)
@@ -825,7 +859,7 @@ class JoinMediaChannel:
             "join_media_destroyed": True,
             "joined_after_reboot": True,
             "domain": expected_domain,
-            "operator": f"operator@{expected_domain.upper()}",
+            "operator": f"{DAILY_ADMINISTRATOR}@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }
 

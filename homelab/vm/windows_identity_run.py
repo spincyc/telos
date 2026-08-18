@@ -23,6 +23,7 @@ from pathlib import Path
 from .automated_controller import DisposableBootDisk
 from .bootstrap_dc import paths
 from .controller_factory import FactoryBundle
+from .controller_principals import DIRECTORY_PRINCIPALS
 from .factory_runner import (
     DEFAULT_SEED_ISO,
     GATEWAY_MAC,
@@ -2542,9 +2543,17 @@ class PrivateIdentityMaterial:
         if self._principals:
             raise WindowsIdentityRunError(
                 "Controller principals are already staged")
+        # DERIVED, never restated.  These are the accounts
+        # controller_principals will stage on the Controller, and that module
+        # refuses any roster that is not exactly its own -- so the literal
+        # ("student", "operator", "directory-admin") that used to sit here was
+        # correct only while no private overlay existed.  With one, gate 6 died
+        # at this very call with "Controller principal roster is invalid".
+        # Same seam the Arch lane already used (arch_identity_run reads
+        # controller_principals.POSIX_ALLOCATION["users"]); with no overlay
+        # present this is byte-identical to the old literal.
         self._principals = {
-            name: self._credential()
-            for name in ("student", "operator", "directory-admin")
+            name: self._credential() for name in DIRECTORY_PRINCIPALS
         }
         try:
             self.stage_guest_principals(self._principals)

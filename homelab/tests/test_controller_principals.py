@@ -3,7 +3,11 @@ import io
 import json
 import socket
 import shlex
+import subprocess
+import sys
+import tempfile
 import threading
+import tokenize
 import unittest
 
 from pathlib import Path
@@ -621,6 +625,60 @@ class RosterOverlayTests(unittest.TestCase):
             self.assertIsNotNone(
                 controller_principals._SAFE_NAME.fullmatch(name), name)
 
+    def test_a_hand_built_roster_cannot_collapse_two_roles(self):
+        # ``directory_account_plan(roles, roster=...)`` is PUBLIC and the
+        # durable path (the domain_controller role's control-host resolver)
+        # reaches it with a mapping identity_roster never saw.  The allocation
+        # keys ``users`` by NAME, so two roles sharing one name used to
+        # overwrite each other silently: the plan came back one account short
+        # and every collision check still passed, because there was nothing
+        # left to collide.
+        collapsed = dict(
+            CONTRACT_ROSTER,
+            daily_administrator=CONTRACT_ROSTER["domain_administrator"])
+        with self.assertRaisesRegex(
+                controller_principals.DirectoryPlanError, "not distinct"):
+            controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES), roster=collapsed)
+        with self.assertRaisesRegex(
+                controller_principals.DirectoryPlanError, "not distinct"):
+            controller_principals._posix_allocation(collapsed)
+        # The same public entry point also applies the name gate the loader
+        # applies, and refuses a roster missing a directory role outright.
+        with self.assertRaisesRegex(
+                controller_principals.DirectoryPlanError,
+                "safely representable"):
+            controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES),
+                roster=dict(CONTRACT_ROSTER, standard_user="who; reboot"))
+        with self.assertRaisesRegex(
+                controller_principals.DirectoryPlanError, "no name"):
+            controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES),
+                roster={"standard_user": "roster-a"})
+        # A valid roster still plans exactly one account per requested role.
+        self.assertEqual(
+            len(DIRECTORY_ROLES),
+            len(controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES), roster=CONTRACT_ROSTER)))
+
+    def test_a_roster_refusal_names_where_the_roster_came_from(self):
+        # The refusal a live gate-6 run met was the bare "Controller principal
+        # roster is invalid", from inside stage_controller_principals, with a
+        # serial transcript as the only evidence.  It named neither the roster
+        # it expected nor the file that produced it.
+        serial = ControllerPrincipalSerial(io.BytesIO(), io.BytesIO())
+        with self.assertRaises(ValueError) as raised:
+            serial.stage({"nobody-here": "Secret-47!"})
+        message = str(raised.exception)
+        for name in ROLES:
+            self.assertIn(name, message)
+        self.assertIn("nobody-here", message)
+        self.assertIn(controller_principals.ROSTER_SOURCE, message)
+        # And the source phrase names the tracked contract, always.
+        self.assertIn(
+            "identity_lifecycle.json", controller_principals.ROSTER_SOURCE)
+
     def _roster_with(self, **overrides):
         import json as json_module
         import tempfile
@@ -679,6 +737,159 @@ class RosterOverlayTests(unittest.TestCase):
                           for role in DIRECTORY_ROLES})
         self.assertEqual(set(ROLES), set(VALUES))
         self.assertEqual(len(CONTRACT_ROLES), 4)
+
+
+# The Windows lane modules that used to restate the roster.  Each one is
+# imported by, or imports, this module's principal names.
+WINDOWS_LANE = (
+    "windows_identity_run",
+    "windows_identity_orchestrator",
+    "windows_identity_adapter",
+    "windows_join_iso",
+    "controller_join_material",
+)
+
+
+def _code_without_comments(path: Path) -> str:
+    """The module's source with ``#`` comments removed, strings intact."""
+    pieces = []
+    with path.open("rb") as stream:
+        for token in tokenize.tokenize(stream.readline):
+            if token.type == tokenize.COMMENT:
+                continue
+            pieces.append(token.string)
+    return "\n".join(pieces)
+
+
+class WindowsLaneDerivesItsRosterTests(unittest.TestCase):
+    """Blocker 6: the Windows lane must DERIVE the roster, never restate it.
+
+    ``windows_identity_run.stage_controller_principals`` hardcoded
+    ``("student", "operator", "directory-admin")`` and never consulted the
+    roster loader, while this module refuses any roster but its own -- so the
+    first run against the owner's private overlay died at
+    ``stage_controller_principals`` with "Controller principal roster is
+    invalid", naming neither the roster source nor the overlay file.  The Arch
+    lane was already correct (``arch_identity_run`` reads
+    ``POSIX_ALLOCATION["users"]``); these tests hold the Windows lane to the
+    same seam.
+    """
+
+    def test_no_windows_lane_module_restates_a_principal_name(self):
+        # Comments are stripped: the modules explain the old literals in prose,
+        # and prose is not what runs.  ``"operator"`` on its own stays legal --
+        # it is the join document's FIELD name and the guest control script's
+        # contract, not a principal name -- so the scan looks for the two
+        # unambiguous names and for the operator UPN literal.
+        forbidden = ('"student"', "'student'", '"directory-admin"',
+                     "'directory-admin'", "operator@")
+        root = Path(controller_principals.__file__).resolve().parent
+        for module in WINDOWS_LANE:
+            code = _code_without_comments(root / f"{module}.py")
+            for needle in forbidden:
+                with self.subTest(module=module, literal=needle):
+                    self.assertNotIn(needle, code)
+
+    def test_the_lane_stages_exactly_what_this_module_accepts(self):
+        # The seam itself, with no overlay in play: what
+        # stage_controller_principals will ask for is exactly the roster
+        # ControllerPrincipalSerial._values admits.
+        from homelab.vm.windows_identity_run import DIRECTORY_PRINCIPALS
+        self.assertEqual(ROLES, DIRECTORY_PRINCIPALS)
+        serial = ControllerPrincipalSerial(io.BytesIO(), io.BytesIO())
+        self.assertEqual(
+            set(DIRECTORY_PRINCIPALS),
+            set(serial._values({
+                name: f"Secret-{index}-47!"
+                for index, name in enumerate(DIRECTORY_PRINCIPALS)})))
+        # And with no overlay that is still the synthetic acceptance roster,
+        # byte for byte, which is what keeps gates 6 and 8 passing untouched.
+        self.assertEqual(
+            ("student", "operator", "directory-admin"),
+            tuple(CONTRACT_ROSTER[role] for role in DIRECTORY_ROLES))
+
+    def test_a_renamed_roster_reaches_every_windows_lane_module(self):
+        # The reviewer's reproduction, run against the REAL modules in a child
+        # interpreter: a private overlay naming ava/ksh used to produce
+        # "STAGE REFUSED: ValueError Controller principal roster is invalid".
+        # A child process because the roster resolves at import and this suite
+        # must not disturb the parent's already-imported modules -- nor read or
+        # write the owner's real overlay, which is why the overlay is written
+        # to a temporary directory and injected by name.
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temporary:
+            overlay = Path(temporary) / "principals.json"
+            overlay.write_text(json.dumps({
+                "schema_version": 1,
+                "principals": {
+                    "standard_user": {"name": "ava"},
+                    "daily_administrator": {"name": "ksh"},
+                },
+            }), encoding="utf-8")
+            program = f"""
+import json, sys
+sys.path.insert(0, {str(root / "homelab" / "workstations")!r})
+import pathlib
+import arch_second
+arch_second.identity_overlay_path = (
+    lambda: pathlib.Path({str(overlay)!r}))
+sys.path.insert(0, {str(root)!r})
+from homelab.vm import controller_principals as cp
+from homelab.vm import windows_identity_run as run
+from homelab.vm import windows_identity_orchestrator as orchestrator
+from homelab.vm import windows_join_iso as join_iso
+from homelab.vm import controller_join_material as material
+staged = {{
+    name: "Secret-%d-47!" % index
+    for index, name in enumerate(run.DIRECTORY_PRINCIPALS)
+}}
+print(json.dumps({{
+    "roles": list(cp.DIRECTORY_PRINCIPALS),
+    "staged": sorted(
+        cp.ControllerPrincipalSerial._values(staged)),
+    "uids": {{
+        name: entry["uidNumber"]
+        for name, entry in cp.POSIX_ALLOCATION["users"].items()
+    }},
+    "daily_admin_check": orchestrator._CREDENTIAL_ROLES[
+        "windows-daily-admin"][0],
+    "standard_check": orchestrator._CREDENTIAL_ROLES[
+        "windows-standard-online"][0],
+    "join_operator": join_iso._validate_material({{
+        "nonce": "a" * 32,
+        "domain": "ad.factory.test",
+        "realm": "AD.FACTORY.TEST",
+        "username": "tj-" + "b" * 16 + "@AD.FACTORY.TEST",
+        "password": "private value",
+        "operator": cp.DAILY_ADMINISTRATOR + "@AD.FACTORY.TEST",
+    }})["operator"],
+    "material_daily_admin": material.DAILY_ADMINISTRATOR,
+    "source": cp.ROSTER_SOURCE,
+}}))
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", program],
+                capture_output=True, text=True, cwd=str(root), check=False)
+        self.assertEqual(
+            0, completed.returncode,
+            f"child refused the overlay: {completed.stderr}")
+        observed = json.loads(completed.stdout)
+        # Staging succeeds under the renamed roster; this is the exact call
+        # that used to raise.
+        self.assertEqual(["ava", "directory-admin", "ksh"], observed["staged"])
+        self.assertEqual(
+            ["ava", "ksh", "directory-admin"], observed["roles"])
+        # Renaming moves no UID: the allocation is keyed on the ROLE.
+        self.assertEqual(
+            {"ava": 10000, "ksh": 10001, "directory-admin": 10002},
+            observed["uids"])
+        # Every Windows-lane consumer followed.
+        self.assertEqual("ksh", observed["daily_admin_check"])
+        self.assertEqual("ava", observed["standard_check"])
+        self.assertEqual("ksh@AD.FACTORY.TEST", observed["join_operator"])
+        self.assertEqual("ksh", observed["material_daily_admin"])
+        # And the resolved source names the overlay that produced it.
+        self.assertIn("patched by overlay", observed["source"])
 
 
 if __name__ == "__main__":

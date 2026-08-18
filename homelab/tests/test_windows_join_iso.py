@@ -12,25 +12,33 @@ from unittest import mock
 from homelab.vm.windows_join_iso import (
     DuplexJoinSerial,
     JOIN_DEVICE,
+    SCRIPT,
+    SCRIPT_OPERATOR_PIN,
     JoinMediaChannel,
     JoinMediaState,
     WindowsJoinIsoError,
+    _assert_scripts_agree_with_roster,
     build_join_iso,
     execute_join_and_prove,
     execute_join_channel,
     launch_join_command,
 )
+from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
 from homelab.vm.windows_public_command import MAX_PUBLIC_COMMAND_CHARS
 
 
 NONCE = "ab" * 16
+# The join operator is DERIVED from the one roster loader, exactly as the
+# builder derives it, so this fixture follows a renamed roster instead of
+# pinning the synthetic ``operator``.
+OPERATOR = f"{DAILY_ADMINISTRATOR}@AD.EXAMPLE.TEST"
 MATERIAL = {
     "nonce": NONCE,
     "domain": "ad.example.test",
     "realm": "AD.EXAMPLE.TEST",
     "username": "tj-0123456789abcdef@AD.EXAMPLE.TEST",
     "password": "private value",
-    "operator": "operator@AD.EXAMPLE.TEST",
+    "operator": OPERATOR,
 }
 ELEVATION = json.dumps({
     "schema_version": 1,
@@ -290,7 +298,8 @@ class WindowsJoinIsoTests(unittest.TestCase):
             with self.assertRaisesRegex(WindowsJoinIsoError, "operator"):
                 build_join_iso(
                     private / "join.iso",
-                    {**MATERIAL, "operator": "operator@OTHER.EXAMPLE.TEST"})
+                    {**MATERIAL,
+                     "operator": f"{DAILY_ADMINISTRATOR}@OTHER.EXAMPLE.TEST"})
             for username in (
                 "tj-0123456789abcdef",
                 "tj-0123456789abcdef@OTHER.EXAMPLE.TEST",
@@ -303,6 +312,32 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     build_join_iso(
                         private / "join.iso",
                         {**MATERIAL, "username": username})
+
+    def test_a_control_script_pinning_another_operator_is_refused(self):
+        # TelosJoin.ps1 validates the join document with
+        # ``$document.operator -cne ('operator@' + $document.realm)``.  That
+        # literal lives outside this module, so a roster that renamed the daily
+        # administrator would have every join document refused INSIDE the
+        # Windows guest, over the control serial, with nothing to say which
+        # side was wrong.  Check the agreement where it is still cheap.
+        tracked = SCRIPT.read_text(encoding="utf-8")
+        pinned = SCRIPT_OPERATOR_PIN.findall(tracked)
+        self.assertEqual([DAILY_ADMINISTRATOR], pinned)
+        with tempfile.TemporaryDirectory() as temporary:
+            disagreeing = Path(temporary) / "TelosJoin.ps1"
+            disagreeing.write_text(
+                tracked.replace(
+                    f"'{DAILY_ADMINISTRATOR}@'", "'someone-else@'"),
+                encoding="utf-8")
+            with self.assertRaisesRegex(WindowsJoinIsoError, "someone-else"):
+                _assert_scripts_agree_with_roster((disagreeing,))
+            # A script that pins NOTHING passes: parameterising the guest side
+            # is the better fix and must not be blocked by this guard.
+            unpinned = Path(temporary) / "Unpinned.ps1"
+            unpinned.write_text(
+                tracked.replace(f"'{DAILY_ADMINISTRATOR}@'", "$expected"),
+                encoding="utf-8")
+            _assert_scripts_agree_with_roster((unpinned,))
 
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(

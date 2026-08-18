@@ -32,8 +32,11 @@ import base64
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import shlex
+import stat as stat_module
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -72,6 +75,16 @@ SAFE_DOMAIN = re.compile(
 SAFE_WORKGROUP = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,14}$")
 SAFE_LABEL = re.compile(r"^[A-Z0-9_]{1,32}$")
 SAFE_PRINCIPAL = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+# Active Directory's pre-Windows-2000 logon name (``sAMAccountName``) is capped
+# at 20 characters for a USER object, and every directory principal this
+# contract declares becomes one (vm/controller_principals stages them with
+# samba's SamDB).  SAFE_PRINCIPAL alone admits 32, so a 21..32-character name
+# would pass every host-side gate and then fail inside a disposable VM, or --
+# worse, on a durable instance -- at the first Windows logon.  Refuse it where
+# the roster resolves, which is the one place the name is still cheap to
+# change.  The synthetic acceptance names are 7, 8, 15 and 12 characters, so
+# this clamps nothing that exists today.
+SAMACCOUNTNAME_LIMIT = 20
 
 # Synthetic factory realm defaults.  These mirror vm.controller_factory
 # FactorySpec (domain/netbios); the runner may override them, and the test
@@ -752,29 +765,52 @@ def _overlay_documentation_key(key: object) -> bool:
     return isinstance(key, str) and key.startswith("_")
 
 
-def _identity_overlay_names(path: Path) -> dict[str, str]:
+def _identity_overlay_names(path: Path) -> dict[str, str] | None:
     """Read the private overlay's sparse ``principals`` patch, or nothing.
 
-    Absent file means "no override": every name stays exactly the contract's,
-    which is what keeps the acceptance path byte-identical.  A file that EXISTS
-    and cannot be understood is a refusal, never a fallback.
+    Returns ``None`` -- distinct from an empty patch -- for the ONE condition
+    that may fall back: the file genuinely is not there.  Then every name stays
+    exactly the contract's, which is what keeps the acceptance path
+    byte-identical.  A file that EXISTS and cannot be understood is a refusal,
+    never a fallback.
+
+    Absence is decided by ``os.lstat`` and ``FileNotFoundError`` alone, not by
+    ``Path.exists()``/``Path.is_file()``.  On Python 3.13 and later those
+    swallow EVERY ``OSError`` and answer ``False``, so a present overlay under
+    a directory the caller cannot search (EACCES), a dangling mount (ESTALE) or
+    a too-long path read as "no overlay" and silently installed the SYNTHETIC
+    roster -- exactly the fallback the paragraph above forbids.  Verified on
+    3.14.7: ``chmod 000`` on the overlay's parent made ``Path.exists()`` return
+    ``False`` with no exception raised.  ``lstat`` also settles the symlink
+    question in the same syscall, without a second racing stat.
     """
-    if not path.exists() and not path.is_symlink():
-        return {}
-    if path.is_symlink() or not path.is_file():
+    path = Path(path)
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        # Every other OSError means the overlay's state is UNKNOWN.  Unknown is
+        # not absent: refuse rather than mint a directory full of synthetic
+        # accounts under names the owner would not recognise.
         raise IdentityRosterError(
-            "identity roster overlay must be a regular file")
+            f"identity roster overlay {path} could not be examined "
+            f"({error.strerror or type(error).__name__}); an overlay whose "
+            "state is unknown is a refusal, never a fallback") from error
+    if not stat_module.S_ISREG(status.st_mode):
+        raise IdentityRosterError(
+            f"identity roster overlay {path} must be a regular file")
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise IdentityRosterError(
-            "identity roster overlay is unreadable JSON") from error
+            f"identity roster overlay {path} is unreadable JSON") from error
     if not isinstance(document, dict):
         raise IdentityRosterError(
-            "identity roster overlay is not a JSON object")
+            f"identity roster overlay {path} is not a JSON object")
     if document.get("schema_version") != OVERLAY_SCHEMA_VERSION:
         raise IdentityRosterError(
-            "identity roster overlay must declare schema_version "
+            f"identity roster overlay {path} must declare schema_version "
             f"{OVERLAY_SCHEMA_VERSION}")
     unknown = [
         key for key in document
@@ -783,21 +819,23 @@ def _identity_overlay_names(path: Path) -> dict[str, str]:
     ]
     if unknown:
         raise IdentityRosterError(
-            f"identity roster overlay has unknown key {sorted(unknown)[0]!r}")
+            f"identity roster overlay {path} has unknown key "
+            f"{sorted(unknown)[0]!r}")
     principals = document.get("principals", {})
     if not isinstance(principals, dict):
         raise IdentityRosterError(
-            "identity roster overlay principals is not a JSON object")
+            f"identity roster overlay {path} principals is not a JSON object")
     names: dict[str, str] = {}
     for role, declaration in principals.items():
         if _overlay_documentation_key(role):
             continue
         if role not in CONTRACT_ROLES:
             raise IdentityRosterError(
-                f"identity roster overlay names unknown role {role!r}")
+                f"identity roster overlay {path} names unknown role {role!r}")
         if not isinstance(declaration, dict):
             raise IdentityRosterError(
-                f"identity roster overlay role {role!r} is not a JSON object")
+                f"identity roster overlay {path} role {role!r} is not a JSON "
+                "object")
         extra = [
             key for key in declaration
             if key not in OVERLAY_PRINCIPAL_KEYS
@@ -805,16 +843,50 @@ def _identity_overlay_names(path: Path) -> dict[str, str]:
         ]
         if extra:
             raise IdentityRosterError(
-                f"identity roster overlay role {role!r} may only set "
+                f"identity roster overlay {path} role {role!r} may only set "
                 f"{OVERLAY_PRINCIPAL_KEYS[0]!r}")
         if "name" not in declaration:
             raise IdentityRosterError(
-                f"identity roster overlay role {role!r} declares no name")
+                f"identity roster overlay {path} role {role!r} declares no "
+                "name")
         names[role] = declaration["name"]
     return names
 
 
-def identity_roster(overlay_path: Path | None = None) -> dict[str, str]:
+def identity_roster_source(
+    overlay_path: Path | None = None, *, overlaid: bool | None = None,
+) -> str:
+    """Name, in one short phrase, WHERE a resolved roster came from.
+
+    Every roster refusal quotes this.  A rejected roster used to be reported
+    with neither the contract nor the overlay named, which left the reader of a
+    serial transcript no way to tell whether the offending name came from the
+    tracked contract or from their own private file.
+    """
+    if overlay_path is None:
+        overlay_path = identity_overlay_path()
+    if overlaid is None:
+        # Same one-syscall absence test the loader uses, so the phrase cannot
+        # disagree with the resolution it describes.  Anything other than a
+        # clean "not there" counts as an overlay: the loader refuses those, and
+        # a refusal quoting this must not claim there was no overlay.
+        try:
+            os.lstat(overlay_path)
+        except FileNotFoundError:
+            overlaid = False
+        except OSError:
+            overlaid = True
+        else:
+            overlaid = True
+    contract = f"contract {identity_contract_path()}"
+    if not overlaid:
+        return f"{contract}, no overlay at {overlay_path}"
+    return f"{contract} patched by overlay {overlay_path}"
+
+
+def identity_roster(
+    overlay_path: Path | None = None, *, require_overlay: bool = False,
+) -> dict[str, str]:
     """Resolve ``{contract role: principal name}`` once, for every reader.
 
     This is the SINGLE roster loader.  ``_identity_principals()`` below (which
@@ -827,6 +899,15 @@ def identity_roster(overlay_path: Path | None = None) -> dict[str, str]:
     Precedence is contract first, private overlay second.  With no overlay the
     result is the synthetic acceptance roster verbatim, which is what keeps
     gates 6 and 8 passing untouched.
+
+    *require_overlay* is how a DURABLE provisioning path says "the synthetic
+    acceptance names are not an acceptable answer here".  Falling back to them
+    is correct for the disposable acceptance lane, whose accounts are destroyed
+    at the end of the run; it is wrong for a persistent instance, where the
+    resulting SIDs are permanent and an operator who mistyped an overlay path
+    would be told a directory full of ``student``/``operator`` accounts
+    succeeded.  Callers that mint durable identities pass ``True`` and get a
+    refusal naming the exact path that was not there.
     """
     contract = json.loads(
         identity_contract_path().read_text(encoding="utf-8"))
@@ -836,7 +917,15 @@ def identity_roster(overlay_path: Path | None = None) -> dict[str, str]:
     }
     if overlay_path is None:
         overlay_path = identity_overlay_path()
-    roster.update(_identity_overlay_names(overlay_path))
+    overlay = _identity_overlay_names(overlay_path)
+    overlaid = overlay is not None
+    if not overlaid and require_overlay:
+        raise IdentityRosterError(
+            f"identity roster overlay {overlay_path} does not exist and this "
+            "caller may not fall back to the synthetic acceptance roster; "
+            "seed it from homelab/instance-example/identity/")
+    source = identity_roster_source(overlay_path, overlaid=overlaid)
+    roster.update(overlay or {})
     for role in CONTRACT_ROLES:
         name = roster[role]
         # The same gate the contract names already pass, applied to overlay
@@ -845,12 +934,21 @@ def identity_roster(overlay_path: Path | None = None) -> dict[str, str]:
         # is refused rather than escaped.
         if not isinstance(name, str) or not SAFE_PRINCIPAL.fullmatch(name):
             raise IdentityRosterError(
-                f"identity roster name for {role} is not safely representable")
+                f"identity roster name for {role} is not safely "
+                f"representable; roster source: {source}")
+        # The directory principals additionally become AD user objects, whose
+        # pre-Windows-2000 logon name is capped well below SAFE_PRINCIPAL's 32.
+        if role in DIRECTORY_ROLES and len(name) > SAMACCOUNTNAME_LIMIT:
+            raise IdentityRosterError(
+                f"identity roster name for {role} exceeds the "
+                f"{SAMACCOUNTNAME_LIMIT}-character Active Directory "
+                f"sAMAccountName limit; roster source: {source}")
     if len(set(roster.values())) != len(CONTRACT_ROLES):
         # Two roles sharing a name would collapse distinctions the lifecycle
         # exists to prove (daily administrator vs domain administrator) and
         # would collide in the directory POSIX allocation.
-        raise IdentityRosterError("identity roster names are not distinct")
+        raise IdentityRosterError(
+            f"identity roster names are not distinct; roster source: {source}")
     return {role: roster[role] for role in CONTRACT_ROLES}
 
 
@@ -2195,7 +2293,14 @@ def render_installer(
     windows_optdata_bytes = len(NVRAM_WINDOWS_OPTIONAL_DATA)
     local_rescue = principals["local_rescue"]
     daily_admin = principals["daily_admin"]
+    domain_admin = principals["domain_admin"]
     standard_user = principals["standard"]
+    # Rendered as one shell word per directory principal, for the local-shadow
+    # guard below.  Ordered exactly as DIRECTORY_ROLES so a transcript reader
+    # can tell which role a refusal names.
+    directory_principals = " ".join(
+        shlex.quote(name)
+        for name in (standard_user, daily_admin, domain_admin))
     storage_mount_root = STORAGE_MOUNT_ROOT
     # The one-use media consumption is rendered once and used twice: inline
     # below for the install-time join, and inside the boot-time one-shot join
@@ -2350,6 +2455,31 @@ arch-chroot /mnt useradd --create-home --groups wheel --shell /bin/bash \\
 install -Dm0440 /dev/stdin /mnt/etc/sudoers.d/10-local-rescue <<'TELOS_SUDO_EOF'
 %wheel ALL=(ALL:ALL) ALL
 TELOS_SUDO_EOF
+
+# Local-shadow guard, and the reason the sudoers rule below is safe to write.
+# nsswitch above is `passwd: files sss` -- FILES FIRST -- so a LOCAL account or
+# group that happens to share a directory principal's name shadows the
+# directory one for every resolution on this disk.  For the daily
+# administrator that is a privilege escalation and not merely a login fault:
+# `{{daily_admin}} ALL=(ALL:ALL) ALL` would grant unrestricted sudo to whatever
+# local account owns the name.  The base image ships `http`, `git`, `ftp`,
+# `dbus`, `uuidd` and friends, and packages installed above may add more, so
+# the authority is this disk's own /etc/passwd and /etc/group, read after every
+# package is in place.  Refusing costs one reinstall; not refusing installs
+# the escalation and hands it over.  The break-glass account is deliberately
+# absent from the list: ADR 0055/0063 make it LOCAL by design, and the roster
+# loader already proves it shares no name with a directory principal.
+for telos_principal in {directory_principals}; do
+  if cut -d: -f1 /mnt/etc/passwd | grep -qxF "$telos_principal"; then
+    echo "local account shadows directory principal $telos_principal" >&2
+    exit 1
+  fi
+  if cut -d: -f1 /mnt/etc/group | grep -qxF "$telos_principal"; then
+    echo "local group shadows directory principal $telos_principal" >&2
+    exit 1
+  fi
+done
+
 install -Dm0440 /dev/stdin /mnt/etc/sudoers.d/20-daily-admin <<'TELOS_DAILY_EOF'
 {daily_admin} ALL=(ALL:ALL) ALL
 TELOS_DAILY_EOF

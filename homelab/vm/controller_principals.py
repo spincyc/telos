@@ -29,6 +29,7 @@ from arch_second import (  # noqa: E402
     CONTRACT_ROLES,
     DIRECTORY_ROLES,
     identity_roster,
+    identity_roster_source,
 )
 
 
@@ -55,6 +56,25 @@ class ControllerPrincipalResult:
 _ROSTER = identity_roster()
 _ROLES = tuple(_ROSTER[role] for role in DIRECTORY_ROLES)
 _DOMAIN_ADMIN = _ROSTER["domain_administrator"]
+# Where _ROSTER came from, for every refusal below.  A rejected roster used to
+# be reported as a bare "Controller principal roster is invalid", which named
+# neither the contract nor the owner's private overlay -- and the Windows lane
+# hit it from inside stage_controller_principals, where a transcript is all the
+# reader has.
+ROSTER_SOURCE = identity_roster_source()
+# The SINGLE public name for each directory principal, and the tuple of all
+# three in DIRECTORY_ROLES order.  The Windows lane (windows_identity_run,
+# windows_identity_orchestrator, windows_identity_adapter, windows_join_iso,
+# controller_join_material) reads these instead of restating
+# ("student", "operator", "directory-admin") -- the hardcoded literals that
+# made an overlay-renamed roster fail at stage_controller_principals with
+# "Controller principal roster is invalid".  Same derivation the Arch lane
+# already used through POSIX_ALLOCATION["users"]; these constants just spell
+# one role's name where the whole allocation is not wanted.
+DIRECTORY_PRINCIPALS = _ROLES
+STANDARD_USER = _ROSTER["standard_user"]
+DAILY_ADMINISTRATOR = _ROSTER["daily_administrator"]
+DOMAIN_ADMINISTRATOR = _ROSTER["domain_administrator"]
 # The second gate on the same names.  arch_second's SAFE_PRINCIPAL already
 # refused anything that would need quoting; this one is deliberately kept as
 # well, because these names are substituted into a Python program that runs
@@ -65,7 +85,8 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
     # Import-time and unconditional: a roster this module could not safely bake
     # into a guest program must stop the process here, not at the serial console
     # inside a disposable VM.
-    raise ValueError("Controller principal roster is invalid")
+    raise ValueError(
+        f"Controller principal roster is invalid; source: {ROSTER_SOURCE}")
 
 # ADR 0055: UID and GID come from the directory.  The Arch Workstation lane
 # runs SSSD with ``ldap_id_mapping = False`` (identity_client role), so a
@@ -139,6 +160,47 @@ LOCAL_ONLY_ROLES = tuple(
     role for role in CONTRACT_ROLES if role not in DIRECTORY_ROLES)
 
 
+class DirectoryPlanError(ValueError):
+    """A durable directory roster cannot be derived from the contract roles.
+
+    Distinctly named so the domain_controller role's control-host resolver can
+    report a roster fault as a roster fault.  A refusal here stops convergence
+    before anything is installed on the Controller, which is the only place a
+    misdeclared role is cheap to diagnose.
+    """
+
+
+def _validated_roster(roster: Mapping[str, str]) -> dict[str, str]:
+    """Refuse a caller-supplied roster before it can collapse an allocation.
+
+    ``identity_roster`` already applies exactly these gates, so the resolved
+    roster arrives pre-checked.  But *roster* is a PUBLIC parameter of
+    ``directory_account_plan``, and the durable path (the domain_controller
+    role's control-host resolver) reaches it with a mapping this module never
+    loaded.  Without this, two roles sharing a name collapsed silently: the
+    allocation keys ``users`` by NAME, so the second role overwrote the first,
+    the plan came back one account short, and every downstream check still
+    passed.
+    """
+    missing = [role for role in DIRECTORY_ROLES if role not in roster]
+    if missing:
+        raise DirectoryPlanError(
+            f"directory roster declares no name for {missing[0]!r}; "
+            f"roster source: {ROSTER_SOURCE}")
+    names = [roster[role] for role in DIRECTORY_ROLES]
+    for role, name in zip(DIRECTORY_ROLES, names):
+        if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
+            raise DirectoryPlanError(
+                f"directory roster name for {role!r} is not safely "
+                f"representable; roster source: {ROSTER_SOURCE}")
+    if len(set(names)) != len(names):
+        raise DirectoryPlanError(
+            "directory roster names are not distinct, so the POSIX allocation "
+            f"would silently collapse two roles into one account; roster "
+            f"source: {ROSTER_SOURCE}")
+    return {role: roster[role] for role in DIRECTORY_ROLES}
+
+
 def _posix_allocation(
     roster: Mapping[str, str] | None = None,
 ) -> dict[str, dict]:
@@ -150,6 +212,7 @@ def _posix_allocation(
     """
     if roster is None:
         roster = _ROSTER
+    roster = _validated_roster(roster)
     groups = {
         name: _POSIX_BASE + rid for name, rid in _POSIX_GROUP_RIDS.items()
     }
@@ -182,6 +245,10 @@ def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
     if set(uids) & set(gids):
         raise ValueError(
             "Controller POSIX user and group identifier ranges collide")
+    if len(users) != len(DIRECTORY_ROLES):
+        raise ValueError(
+            f"Controller POSIX allocation holds {len(users)} accounts for "
+            f"{len(DIRECTORY_ROLES)} directory roles")
     for user in users.values():
         if user["gidNumber"] not in gids:
             raise ValueError(
@@ -190,16 +257,6 @@ def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
 
 
 POSIX_ALLOCATION = _validated_posix_allocation(_posix_allocation())
-
-
-class DirectoryPlanError(ValueError):
-    """A durable directory roster cannot be derived from the contract roles.
-
-    Distinctly named so the domain_controller role's control-host resolver can
-    report a roster fault as a roster fault.  A refusal here stops convergence
-    before anything is installed on the Controller, which is the only place a
-    misdeclared role is cheap to diagnose.
-    """
 
 
 def directory_role(contract_role: str) -> str:
@@ -562,7 +619,18 @@ class ControllerPrincipalSerial:
     @staticmethod
     def _values(values: Mapping[str, str]) -> dict[str, str]:
         if set(values) != set(_ROLES):
-            raise ValueError("Controller principal roster is invalid")
+            # Name both rosters and where the expected one came from.  Bare,
+            # this refusal was the whole message a caller got for handing over
+            # the old hardcoded ("student", "operator", "directory-admin")
+            # while the owner's overlay had renamed the roster -- from inside
+            # stage_controller_principals, with a serial transcript as the only
+            # evidence.  Principal names are already baked into the guest
+            # program and echoed on that transcript, so naming them here leaks
+            # nothing; the credentials they map to are never touched.
+            raise ValueError(
+                "Controller principal roster is invalid: expected exactly "
+                f"{list(_ROLES)}, got {sorted(values)}; "
+                f"roster source: {ROSTER_SOURCE}")
         copied = dict(values)
         for name, password in copied.items():
             if not _SAFE_NAME.fullmatch(name):

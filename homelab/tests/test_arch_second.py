@@ -1,6 +1,7 @@
 import base64
 import inspect
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -47,8 +48,9 @@ from workstations.arch_second import (
 from workstations.arch_second import (
     CONTRACT_ROLES, DIRECTORY_ROLES, IdentityRosterError, PROBE_ROSTER_MARKER,
     PROBE_ROSTER_VERB, ROSTER_FINGERPRINT_LENGTH, SAFE_PRINCIPAL,
+    SAMACCOUNTNAME_LIMIT,
     identity_contract_path, identity_overlay_path, identity_roster,
-    identity_roster_fingerprint,
+    identity_roster_fingerprint, identity_roster_source,
 )
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 from lib.workstation_repo import REPO_NAME
@@ -1925,6 +1927,126 @@ class RosterLoaderTests(unittest.TestCase):
         self.assertEqual("roster-a", roster["standard_user"])
         self.assertEqual("operator", roster["daily_administrator"])
 
+    def test_an_unreadable_overlay_is_a_refusal_never_a_fallback(self):
+        # THE fail-open the loader exists to prevent, proved against the real
+        # OSError behaviour of the interpreter this suite runs on rather than
+        # against a mock: a valid overlay under a directory the process cannot
+        # search.  On Python 3.13+ ``Path.exists()`` and ``Path.is_symlink()``
+        # swallow EVERY OSError and answer False, so the old
+        # ``if not path.exists() and not path.is_symlink(): return {}``
+        # reported "no overlay" and handed back the SYNTHETIC roster -- with no
+        # exception raised, and on the durable path the resulting SIDs are
+        # permanent.
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses the directory search permission")
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        fenced = root / "identity"
+        fenced.mkdir()
+        overlay = fenced / "principals.json"
+        overlay.write_text(json.dumps({
+            "schema_version": 1,
+            "principals": {"standard_user": {"name": "roster-a"}},
+        }), encoding="utf-8")
+        fenced.chmod(0o000)
+        self.addCleanup(fenced.chmod, 0o700)
+        # The premise, asserted rather than assumed: this really is a stat that
+        # fails, and the pathlib predicates really do hide it.
+        with self.assertRaises(PermissionError):
+            os.lstat(overlay)
+        self.assertFalse(overlay.exists())
+        self.assertFalse(overlay.is_symlink())
+        with self.assertRaisesRegex(
+                IdentityRosterError, "could not be examined"):
+            identity_roster(overlay_path=overlay)
+        # And the refusal names the file, because a transcript is all the
+        # reader of a failed provisioning run has.
+        with self.assertRaisesRegex(IdentityRosterError, re.escape(str(
+                overlay))):
+            identity_roster(overlay_path=overlay)
+
+    def test_only_a_genuine_absence_falls_back_to_the_contract(self):
+        # ENOENT is the ONE condition that may fall back; every other OSError
+        # is refused above.  A path whose PARENT is a regular file raises
+        # ENOTDIR, which means the overlay location is misconfigured, not that
+        # the owner declined to have one.
+        self.assertEqual(self.contract_roster(), identity_roster(
+            overlay_path=self.ABSENT))
+        regular = self.overlay({"schema_version": 1, "principals": {}})
+        with self.assertRaisesRegex(
+                IdentityRosterError, "could not be examined"):
+            identity_roster(overlay_path=regular / "principals.json")
+
+    def test_a_durable_caller_can_refuse_the_synthetic_fallback(self):
+        # An absent overlay is correct for the DISPOSABLE acceptance lane and
+        # wrong for a persistent instance: there the SIDs are permanent, so an
+        # operator who mistyped an overlay path would mint a directory full of
+        # student/operator accounts and be told it succeeded.
+        with self.assertRaisesRegex(
+                IdentityRosterError, "may not fall back"):
+            identity_roster(overlay_path=self.ABSENT, require_overlay=True)
+        # The refusal names the exact path that was not there.
+        with self.assertRaisesRegex(
+                IdentityRosterError, re.escape(str(self.ABSENT))):
+            identity_roster(overlay_path=self.ABSENT, require_overlay=True)
+        # With an overlay present it changes nothing at all.
+        present = self.overlay({
+            "schema_version": 1,
+            "principals": {"standard_user": {"name": "roster-a"}},
+        })
+        self.assertEqual(
+            identity_roster(overlay_path=present),
+            identity_roster(overlay_path=present, require_overlay=True))
+        # The acceptance lane keeps its fallback: this is opt-in, and gates 6
+        # and 8 never pass require_overlay.
+        self.assertEqual(
+            self.contract_roster(), identity_roster(overlay_path=self.ABSENT))
+
+    def test_every_refusal_names_where_the_roster_came_from(self):
+        # A rejected roster used to say only what was wrong with it, never
+        # whether the offending name came from the tracked contract or from the
+        # owner's private file.
+        present = self.overlay({
+            "schema_version": 1,
+            "principals": {"standard_user": {"name": "operator"}},
+        })
+        with self.assertRaisesRegex(
+                IdentityRosterError, re.escape(str(present))):
+            identity_roster(overlay_path=present)
+        self.assertIn(
+            str(identity_contract_path()),
+            identity_roster_source(self.ABSENT))
+        self.assertIn(str(self.ABSENT), identity_roster_source(self.ABSENT))
+        # The phrase distinguishes the two resolutions rather than hedging.
+        self.assertIn("no overlay", identity_roster_source(self.ABSENT))
+        self.assertIn("patched by overlay", identity_roster_source(present))
+
+    def test_a_directory_name_over_the_ad_logon_limit_is_refused(self):
+        # SAFE_PRINCIPAL admits 32 characters; Active Directory's
+        # pre-Windows-2000 logon name (sAMAccountName) caps a USER object at
+        # 20, and every directory role becomes one.  A 21..32-character name
+        # passed every host-side gate and would have failed at the first
+        # Windows logon, inside a VM.
+        self.assertEqual(20, SAMACCOUNTNAME_LIMIT)
+        too_long = "a" * (SAMACCOUNTNAME_LIMIT + 1)
+        self.assertIsNotNone(SAFE_PRINCIPAL.fullmatch(too_long))
+        for role in DIRECTORY_ROLES:
+            with self.subTest(role=role):
+                with self.assertRaisesRegex(
+                        IdentityRosterError, "sAMAccountName limit"):
+                    self.named(**{role: too_long})
+        at_limit = "a" * SAMACCOUNTNAME_LIMIT
+        self.assertEqual(
+            at_limit, self.named(standard_user=at_limit)["standard_user"])
+        # local_rescue is a LOCAL UNIX account (ADR 0055/0063), never an AD
+        # user object, so the AD cap does not apply to it.
+        self.assertEqual(
+            too_long, self.named(local_rescue=too_long)["local_rescue"])
+        # And the synthetic roster is nowhere near the cap.
+        for role in DIRECTORY_ROLES:
+            self.assertLessEqual(
+                len(self.contract_roster()[role]), SAMACCOUNTNAME_LIMIT)
+
     def test_a_symlinked_or_directory_overlay_is_refused(self):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
@@ -1937,6 +2059,38 @@ class RosterLoaderTests(unittest.TestCase):
         directory.mkdir()
         with self.assertRaisesRegex(IdentityRosterError, "regular file"):
             identity_roster(overlay_path=directory)
+
+    # ---- The installed disk's local-shadow guard ----
+
+    def test_the_installer_refuses_a_name_a_local_account_holds(self):
+        # nsswitch is `passwd: files sss` -- FILES FIRST -- so a LOCAL account
+        # sharing a directory principal's name shadows the directory one for
+        # every resolution on the installed disk.  For the daily administrator
+        # that is a privilege escalation, because the sudoers rule this script
+        # writes grants `ALL=(ALL:ALL) ALL` by NAME: an overlay naming the
+        # daily administrator `git` or `http` would hand unrestricted sudo to a
+        # service account.  Gate 8's probe catches it at test time; the
+        # installed disk carries it either way, so the guard runs at install.
+        script = self.render(self.named(daily_administrator="http"))
+        guard = script[
+            script.index("for telos_principal in"):
+            script.index("/mnt/etc/sudoers.d/20-daily-admin")]
+        self.assertIn("cut -d: -f1 /mnt/etc/passwd | grep -qxF", guard)
+        self.assertIn("cut -d: -f1 /mnt/etc/group | grep -qxF", guard)
+        self.assertEqual(2, guard.count("exit 1"))
+        # It guards every DIRECTORY principal and reads this disk's own
+        # databases after every package is installed.
+        roster = self.named(daily_administrator="http")
+        for role in DIRECTORY_ROLES:
+            self.assertIn(roster[role], guard.split(";", 1)[0])
+        # The break-glass account is deliberately absent: ADR 0055/0063 make it
+        # LOCAL by design, and the loader already proves it shares no name with
+        # a directory principal.
+        self.assertNotIn(roster["local_rescue"], guard.split(";", 1)[0])
+        # And it runs BEFORE the rule it protects, never after.
+        self.assertLess(
+            script.index("for telos_principal in"),
+            script.index("/mnt/etc/sudoers.d/20-daily-admin"))
 
     # ---- The fingerprint the disk carries ----
 

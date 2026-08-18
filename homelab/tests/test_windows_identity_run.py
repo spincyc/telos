@@ -6,15 +6,28 @@ from unittest import mock
 
 from homelab.vm import windows_identity_run
 from homelab.vm.windows_identity_run import (
+    DIRECTORY_PRINCIPALS,
     IdentityOperations,
     NativeProcessBoundary,
     PrivateIdentityMaterial,
     WindowsIdentityRunError,
     run_lifecycle,
 )
+from homelab.workstations.arch_second import DIRECTORY_ROLES, identity_roster
 from homelab.tests.windows_identity_fixture import (
     write_prepared_authorization,
 )
+
+# The contract's own roster, resolved with the private overlay explicitly out
+# of the way: what the ACCEPTANCE path must always be, byte for byte.  The
+# live roster (DIRECTORY_PRINCIPALS) is asserted separately, so this suite
+# proves the same thing whether or not the owner has an overlay under
+# homelab/instance/identity/.  Same shape test_controller_principals already
+# uses.
+CONTRACT_ROSTER = identity_roster(
+    overlay_path=Path(__file__).with_name("no-such-identity-overlay.json"))
+CONTRACT_PRINCIPALS = tuple(
+    CONTRACT_ROSTER[role] for role in DIRECTORY_ROLES)
 
 
 class Recorder:
@@ -107,15 +120,29 @@ class WindowsIdentityRunTests(unittest.TestCase):
             self.assertIsNone(material._recovery_context)
             material.stage_controller_principals()
             staged = events[1][1]
-            self.assertEqual(
-                {"student", "operator", "directory-admin"}, set(staged))
+            # DERIVED, not restated.  This used to pin the literal
+            # ("student", "operator", "directory-admin"), which was the
+            # hardcoded roster in stage_controller_principals -- so the test
+            # asserted a literal against itself and could not fail while the
+            # roster loader existed.  With the owner's private overlay in
+            # place, controller_principals stages ava/ksh/directory-admin and
+            # refuses any other roster, and this run died at
+            # stage_controller_principals with "Controller principal roster is
+            # invalid".  Assert the SEAM: what is staged is exactly what
+            # controller_principals will accept.
+            self.assertEqual(set(DIRECTORY_PRINCIPALS), set(staged))
             self.assertEqual(3, len(set(staged.values())))
             self.assertNotIn(old, staged.values())
             self.assertNotIn(new, staged.values())
             material.destroy_controller_principals()
-            self.assertEqual(
-                ("student", "operator", "directory-admin"), events[2][1])
+            self.assertEqual(DIRECTORY_PRINCIPALS, events[2][1])
             material.close()
+            # And with NO overlay the derivation is byte-identical to the
+            # synthetic acceptance roster gates 6 and 8 prove, which is what
+            # keeps them passing untouched.
+            self.assertEqual(
+                ("student", "operator", "directory-admin"),
+                CONTRACT_PRINCIPALS)
 
     def test_private_material_preserves_publication_when_rotation_fails(self):
         recovery = mock.MagicMock()

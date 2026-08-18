@@ -13,6 +13,7 @@ from typing import BinaryIO, Callable, Mapping, TypeVar
 import textwrap
 import uuid
 
+from .controller_principals import DAILY_ADMINISTRATOR
 from .serial_automation import SerialAutomation, SerialAutomationError
 
 
@@ -472,7 +473,7 @@ class OneUseDomainJoinMaterial:
                     "realm": self.realm,
                     "principal": staged.principal,
                     "credential": self._credential_value,
-                    "operator": f"operator@{self.realm}",
+                    "operator": f"{DAILY_ADMINISTRATOR}@{self.realm}",
                 })
                 value = consumer(material)
             except BaseException as error:

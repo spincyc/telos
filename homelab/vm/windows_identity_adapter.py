@@ -28,6 +28,7 @@ from .controller_auth_diagnostic import (
 from .controller_principals import (
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
+    DAILY_ADMINISTRATOR,
 )
 from .serial_automation import SerialAutomation
 from .simulated_gateway import LEASE_IP
@@ -826,7 +827,7 @@ class NativeWindowsAcceptanceAdapter:
         self, principal: str, credential: str, diagnostic_nonce: str,
     ) -> None:
         """Re-establish the exact staged domain-operator session."""
-        if principal != f"operator@{self.realm}":
+        if principal != f"{DAILY_ADMINISTRATOR}@{self.realm}":
             raise WindowsLocalReauthenticationError(
                 "prove-password-target")
         self._reauthenticate(
@@ -840,7 +841,7 @@ class NativeWindowsAcceptanceAdapter:
         self, principal: str, credential: str,
     ) -> None:
         """Re-log the operator in after a reboot, without the auth proofs."""
-        if principal != f"operator@{self.realm}":
+        if principal != f"{DAILY_ADMINISTRATOR}@{self.realm}":
             raise WindowsLocalReauthenticationError("prove-password-target")
         self._reauthenticate(
             principal,
@@ -1391,7 +1392,7 @@ class NativeWindowsAcceptanceAdapter:
                 controller_auth = ControllerAuthDiagnosticSession(
                     self._shared_controller_console(),
                     ControllerAuthExpectation(
-                        "operator", FactorySpec().netbios,
+                        DAILY_ADMINISTRATOR, FactorySpec().netbios,
                         str(LEASE_IP), realm=self.realm),
                     # Controller pre-arm work is a distinct diagnostic
                     # lifecycle.  Give it one immutable budget rather than

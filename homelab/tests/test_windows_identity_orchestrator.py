@@ -24,7 +24,73 @@ from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCollection,
 )
 
+from homelab.vm.controller_principals import (
+    DAILY_ADMINISTRATOR,
+    DIRECTORY_PRINCIPALS,
+    DOMAIN_ADMINISTRATOR,
+    STANDARD_USER,
+)
+from homelab.workstations.arch_second import DIRECTORY_ROLES, identity_roster
+
 from homelab.tests.test_windows_identity_acceptance import details
+
+# The contract roster with the private overlay explicitly out of the way: the
+# synthetic acceptance names, whether or not this machine has an overlay.
+CONTRACT_ROSTER = identity_roster(
+    overlay_path=Path(__file__).with_name("no-such-identity-overlay.json"))
+
+
+class CredentialRoleMapTests(unittest.TestCase):
+    """Which principal each acceptance check authenticates as, DERIVED.
+
+    ``_CREDENTIAL_ROLES`` used to spell ("student", "operator",
+    "directory-admin") in twelve places while controller_principals staged
+    whatever the roster resolved to and refused anything else -- so the map was
+    correct only while no private overlay existed.
+    """
+
+    def test_every_check_names_a_principal_the_controller_will_stage(self):
+        for check, roles in subject._CREDENTIAL_ROLES.items():
+            for role in roles:
+                with self.subTest(check=check, principal=role):
+                    if role == subject._LOCAL_PRINCIPAL_SENTINEL:
+                        # The guest's LOCAL break-glass account: resolved from
+                        # callbacks.local_principal, never staged in the
+                        # directory (ADR 0055/0063).
+                        continue
+                    self.assertIn(role, DIRECTORY_PRINCIPALS)
+
+    def test_the_local_sentinel_can_never_be_a_directory_principal(self):
+        # Nothing in the roster loader stops an overlay naming a principal
+        # "local"; if one did, the break-glass check would silently resolve
+        # against the directory account instead.
+        self.assertNotIn(
+            subject._LOCAL_PRINCIPAL_SENTINEL, DIRECTORY_PRINCIPALS)
+        self.assertEqual(
+            (subject._LOCAL_PRINCIPAL_SENTINEL,),
+            subject._CREDENTIAL_ROLES["windows-local-rescue"])
+
+    def test_each_check_maps_to_the_role_the_gate_names(self):
+        # Role, not name: the daily administrator authenticates the
+        # daily-admin checks, the domain administrator the uncached-denied
+        # one, and the standard user everything else.
+        self.assertEqual(
+            CONTRACT_ROSTER["daily_administrator"],
+            "operator")
+        for check in ("windows-daily-admin", "windows-cached-admin-login"):
+            self.assertEqual(
+                (DAILY_ADMINISTRATOR,), subject._CREDENTIAL_ROLES[check])
+        self.assertEqual(
+            (DOMAIN_ADMINISTRATOR,),
+            subject._CREDENTIAL_ROLES["windows-uncached-denied"])
+        self.assertEqual(
+            (STANDARD_USER,),
+            subject._CREDENTIAL_ROLES["windows-standard-online"])
+        # With no overlay the map is byte-identical to the literals it
+        # replaced, which is what keeps gates 6 and 8 passing untouched.
+        self.assertEqual(
+            ("student", "operator", "directory-admin"),
+            tuple(CONTRACT_ROSTER[role] for role in DIRECTORY_ROLES))
 
 
 class WindowsIdentityOrchestratorTests(unittest.TestCase):
