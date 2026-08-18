@@ -28,7 +28,9 @@ if str(_WORKSTATIONS) not in sys.path:
 from arch_second import (  # noqa: E402
     CONTRACT_ROLES,
     DIRECTORY_ROLES,
+    IdentityRosterError,
     identity_roster,
+    identity_roster_fingerprint,
     identity_roster_source,
 )
 
@@ -333,6 +335,48 @@ def directory_group_allocation() -> dict[str, int]:
     """The well-known groups every SSSD client must be able to resolve."""
     return dict(_validated_posix_allocation(_posix_allocation())["groups"])
 
+
+def durable_directory_roster(
+    overlay_path: Path | None = None,
+) -> dict[str, str]:
+    """Resolve the roster a DURABLE directory may be provisioned from.
+
+    ``identity_roster(require_overlay=True)`` and nothing else.  The module
+    roster resolved at import (``_ROSTER``) is deliberately NOT reused: it is
+    allowed to fall back to the tracked contract's synthetic acceptance names,
+    which is right for the disposable Controller every gate throws away and
+    catastrophic for a persistent instance, where the resulting SIDs are
+    permanent.  An operator who has not seeded the private overlay — or who
+    mistyped its path — gets a refusal naming the exact file, never a
+    directory full of ``student``/``operator`` accounts reported as a success.
+
+    *overlay_path* exists for the same reason the domain_controller role's
+    control-host resolver has ``--identity-overlay``: a test must be able to
+    resolve a roster it wrote itself, without reading or writing whatever
+    private overlay the developer's own machine happens to carry.
+    """
+    return identity_roster(overlay_path=overlay_path, require_overlay=True)
+
+
+def _programs(roster: Mapping[str, str]) -> tuple[str, str, tuple[str, ...]]:
+    """Bake one resolved roster into the two guest programs, plus its order.
+
+    The single place a roster becomes a guest program.  The module constants
+    below are this function applied to the import-time roster; a durable path
+    applies it to the overlay-required roster instead, so the two can differ in
+    NAMES without ever differing in RULE — same POSIX allocation, same
+    validation, same Domain Admins membership derived from the same role.
+    """
+    validated = _validated_roster(roster)
+    roles = tuple(validated[role] for role in DIRECTORY_ROLES)
+    allocation = _validated_posix_allocation(_posix_allocation(validated))
+    roster_json = _roster_json(roles, validated["domain_administrator"])
+    return (
+        _substituted(_STAGE_PROGRAM_TEMPLATE, roster_json, allocation),
+        _substituted(_DESTROY_PROGRAM_TEMPLATE, roster_json, allocation),
+        roles,
+    )
+
 # These programs run inside the disposable Controller.  Their source is
 # encoded only to make it safe to place in one shell word; it contains no
 # credential.  The @POSIX_JSON@ and @ROSTER_JSON@ tokens are substituted below
@@ -586,10 +630,15 @@ def _substituted(
 
 
 _ROSTER_JSON = _roster_json(_ROLES, _DOMAIN_ADMIN)
-_STAGE_PROGRAM = _substituted(
-    _STAGE_PROGRAM_TEMPLATE, _ROSTER_JSON, POSIX_ALLOCATION)
-_DESTROY_PROGRAM = _substituted(
-    _DESTROY_PROGRAM_TEMPLATE, _ROSTER_JSON, POSIX_ALLOCATION)
+_STAGE_PROGRAM, _DESTROY_PROGRAM, _PROGRAM_ROLES = _programs(_ROSTER)
+if _PROGRAM_ROLES != _ROLES:
+    # Structural, and unconditional like the roster gate above: the programs
+    # baked at import and the names this module publishes must be one
+    # derivation of one roster, or a caller would validate against names the
+    # guest program does not create.
+    raise ValueError(
+        f"Controller principal programs disagree with the resolved roster; "
+        f"source: {ROSTER_SOURCE}")
 
 
 def _encoded_program(source: str) -> bytes:
@@ -605,20 +654,49 @@ class ControllerPrincipalSerial:
         writer: BinaryIO,
         *,
         timeout: float = 90.0,
+        password: bytes | None = None,
+        roster: Mapping[str, str] | None = None,
+        roster_source: str | None = None,
     ) -> None:
-        self.console = SerialAutomation(
-            reader, writer, None, timeout=timeout)
+        """Bind one console to one roster.
 
-    @staticmethod
-    def _names(names: tuple[str, ...]) -> tuple[str, ...]:
-        if (set(names) != set(_ROLES) or len(names) != len(_ROLES)
+        *password* is the console account's own sudo credential.  ``None`` — the
+        disposable default — selects ``sudo -n``, which is right for the
+        acceptance Controller, whose ``local-rescue`` account this harness set
+        itself.  A DURABLE instance has no such account: its console password
+        was typed by the operator into the offline installer, so the durable
+        caller supplies it and the protocol answers sudo's own private prompt
+        instead.
+
+        *roster* is how a durable caller says "these names, not the ones this
+        module resolved at import".  ``None`` keeps every existing caller on
+        the module constants, byte for byte.  A supplied roster is baked into
+        this instance's own guest programs by ``_programs``, so the names this
+        object validates are exactly the names its programs create.
+        """
+        self.console = SerialAutomation(
+            reader, writer, password, timeout=timeout)
+        if roster is None:
+            self.roles = _ROLES
+            self.roster_source = ROSTER_SOURCE
+            self._stage_program = _STAGE_PROGRAM
+            self._destroy_program = _DESTROY_PROGRAM
+        else:
+            stage, destroy, roles = _programs(roster)
+            self.roles = roles
+            self.roster_source = (
+                ROSTER_SOURCE if roster_source is None else roster_source)
+            self._stage_program = stage
+            self._destroy_program = destroy
+
+    def _names(self, names: tuple[str, ...]) -> tuple[str, ...]:
+        if (set(names) != set(self.roles) or len(names) != len(self.roles)
                 or any(not _SAFE_NAME.fullmatch(name) for name in names)):
             raise ValueError("Controller principal roster is invalid")
         return names
 
-    @staticmethod
-    def _values(values: Mapping[str, str]) -> dict[str, str]:
-        if set(values) != set(_ROLES):
+    def _values(self, values: Mapping[str, str]) -> dict[str, str]:
+        if set(values) != set(self.roles):
             # Name both rosters and where the expected one came from.  Bare,
             # this refusal was the whole message a caller got for handing over
             # the old hardcoded ("student", "operator", "directory-admin")
@@ -629,8 +707,8 @@ class ControllerPrincipalSerial:
             # nothing; the credentials they map to are never touched.
             raise ValueError(
                 "Controller principal roster is invalid: expected exactly "
-                f"{list(_ROLES)}, got {sorted(values)}; "
-                f"roster source: {ROSTER_SOURCE}")
+                f"{list(self.roles)}, got {sorted(values)}; "
+                f"roster source: {self.roster_source}")
         copied = dict(values)
         for name, password in copied.items():
             if not _SAFE_NAME.fullmatch(name):
@@ -711,14 +789,15 @@ class ControllerPrincipalSerial:
     def stage(
         self, values: Mapping[str, str],
     ) -> ControllerPrincipalResult:
-        """Create exactly the disposable identity-acceptance principals."""
+        """Create exactly this console's directory principals."""
         copied = self._values(values)
         names = tuple(copied)
-        return self._run("stage", copied, _STAGE_PROGRAM, names)
+        return self._run("stage", copied, self._stage_program, names)
 
     def destroy(
         self, names: tuple[str, ...],
     ) -> ControllerPrincipalResult:
-        """Destroy exactly the disposable identity-acceptance principals."""
+        """Destroy exactly this console's directory principals."""
         checked = self._names(names)
-        return self._run("destroy", list(checked), _DESTROY_PROGRAM, checked)
+        return self._run(
+            "destroy", list(checked), self._destroy_program, checked)

@@ -109,6 +109,15 @@ RECOVERY_EVIDENCE ?=
 # 120-second default would abort a Samba provisioning run.
 PERSISTENT_CONVERGE_TIMEOUT ?=
 RECONVERGE ?=
+# The owner's private identity overlay, for the durable-account verb only.
+# Optional: with no value the roster resolves from
+# homelab/instance/identity/principals.json, which is where it belongs. It
+# carries NAMES and never a credential.
+IDENTITY_OVERLAY ?=
+# Stage the durable roster again after an unfinished or a completed run. It
+# does NOT reset the password of an account the directory already holds.
+RESTAGE ?=
+PERSISTENT_ACCOUNTS_TIMEOUT ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -184,6 +193,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-up homelab-factory-persistent-converge \
 	homelab-factory-persistent-converge-plan \
 	homelab-factory-persistent-destroy \
+	homelab-factory-persistent-accounts-plan \
+	homelab-factory-persistent-accounts \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -934,6 +945,62 @@ homelab-factory-persistent-converge:
 
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
 # stable instance name, and the exact confirmation carrying that name.
+# Stage the owner's DURABLE account roster into a persistent instance, over the
+# serial console. Separate from -converge because the console is the only
+# channel that reaches a SIMULATED persistent instance at all: that guest has
+# one QEMU socket netdev to the userspace gateway, with no NAT and no route to
+# the host LAN, so the host-side Ansible path
+# (make homelab-bootstrap-controller INVENTORY=...) cannot reach it.
+#
+# It refuses the synthetic acceptance roster outright. The names come from the
+# owner's gitignored overlay under homelab/instance/identity/, resolved with
+# require_overlay, because minting permanent student/operator SIDs because an
+# overlay was missing is exactly the failure this exists to prevent.
+#
+# One password per contract role is typed at your terminal. Nothing is read
+# from a file, a Make variable, an environment variable or argv, and nothing is
+# written to the instance marker, a log, or this transcript.
+#
+# The daily administrator is staged as a `standard` directory account and never
+# joins Domain Admins: that separation is what gate 8's domain-admin-separate
+# check proves, and it is not this target's to widen.
+homelab-factory-persistent-accounts-plan:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/vm/bootstrap_dc.py \
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+		persistent-accounts \
+		--instance '$(PERSISTENT_DC)' \
+		--persistent-root '$(PERSISTENT_DC_ROOT)' \
+		$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)')
+
+homelab-factory-persistent-accounts:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to stage the durable roster; it will ask at this terminal for the local-rescue password and one password per contract role'; \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-accounts \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)'); \
+	else \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-accounts \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			$(if $(RESTAGE),--restage) \
+			$(if $(PERSISTENT_ACCOUNTS_TIMEOUT),--timeout '$(PERSISTENT_ACCOUNTS_TIMEOUT)') \
+			--apply; \
+	fi
+
 homelab-factory-persistent-destroy:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
@@ -1391,6 +1458,10 @@ help:
 		'                         Plan provisioning a directory into it' \
 		'make homelab-factory-persistent-converge APPLY=1 PERSISTENT_DC=<name>' \
 		'                         Provision AD in place; asks for passwords' \
+		'make homelab-factory-persistent-accounts-plan PERSISTENT_DC=<name>' \
+		'                         Plan the durable account roster for an instance' \
+		'make homelab-factory-persistent-accounts APPLY=1 PERSISTENT_DC=<name>' \
+		'                         Stage the durable roster over the serial console' \
 		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-private-onboard  Build a sibling private overlay' \

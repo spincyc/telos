@@ -696,6 +696,104 @@ class TestPersistentControllerInstance(unittest.TestCase):
                 simulation_overlay.PersistentInstanceInvalid):
             self.instance().provisioning_attempted()
 
+    # -- the durable account roster --------------------------------------
+    RECORD = {
+        "staged_utc": "2026-08-17T10:00:00+00:00",
+        "roster_fingerprint": "0123456789abcdef",
+        "roster_source": "contract X patched by overlay Y",
+        "accounts": [
+            {"contract_role": "standard_user", "role": "standard",
+             "uidNumber": 10000, "gidNumber": 10513},
+            {"contract_role": "daily_administrator", "role": "standard",
+             "uidNumber": 10001, "gidNumber": 10513},
+            {"contract_role": "domain_administrator", "role": "administrator",
+             "uidNumber": 10002, "gidNumber": 10513},
+        ],
+    }
+
+    def test_an_instance_reports_no_staged_roster_until_one_is_proven(self):
+        target = self.seeded()
+        self.assertIsNone(target.directory_accounts())
+        self.assertIsNone(target.directory_accounts_attempted())
+
+    def test_a_proven_roster_is_recorded_and_survives_a_reread(self):
+        target = self.seeded()
+        target.record_directory_accounts(dict(self.RECORD))
+        reread = self.instance().directory_accounts()
+        self.assertEqual(self.RECORD, reread)
+        # It is additive: recording a roster does not disturb the convergence
+        # record or the instance identity.
+        marker = self.instance().read_marker()
+        self.assertEqual("lab-dc1", marker["instance"])
+
+    def test_a_durable_account_record_may_never_carry_an_account_name(self):
+        """Real names are instance data (ADR 0046) and stay in the overlay.
+
+        The marker lives beside the disk under ``build/``; a reader identifies
+        an account by its CONTRACT ROLE and proves the roster with the
+        fingerprint, which is fixed-width and names nobody.
+        """
+        target = self.seeded()
+        named = json.loads(json.dumps(self.RECORD))
+        named["accounts"][0]["name"] = "ava"
+        with self.assertRaisesRegex(
+                simulation_overlay.PersistentInstanceInvalid,
+                "must not carry an account name"):
+            target.record_directory_accounts(named)
+        self.assertIsNone(self.instance().directory_accounts())
+
+    def test_a_malformed_durable_account_record_fails_closed(self):
+        target = self.seeded()
+        for broken, expected in (
+            ("not an object", "not an object"),
+            ({"roster_fingerprint": "x", "accounts": [{"contract_role": "a"}]},
+             "no staged_utc"),
+            ({"staged_utc": "t", "accounts": [{"contract_role": "a"}]},
+             "no roster fingerprint"),
+            ({"staged_utc": "t", "roster_fingerprint": "x", "accounts": []},
+             "names no contract roles"),
+            ({"staged_utc": "t", "roster_fingerprint": "x",
+              "accounts": [{"uidNumber": 10000}]},
+             "no contract role"),
+        ):
+            with self.subTest(record=expected):
+                with self.assertRaisesRegex(
+                        simulation_overlay.PersistentInstanceInvalid,
+                        expected):
+                    target.record_directory_accounts(broken)
+        # ...and a marker that already holds a bad record is refused on read,
+        # rather than reported as a staged roster.
+        marker = target.read_marker()
+        marker[simulation_overlay.PERSISTENT_ACCOUNTS_KEY] = {"note": "x"}
+        target._write_marker(marker)
+        with self.assertRaises(
+                simulation_overlay.PersistentInstanceInvalid):
+            self.instance().directory_accounts()
+
+    def test_the_first_staging_attempt_is_the_one_that_is_kept(self):
+        target = self.seeded()
+        first = target.record_directory_accounts_attempt()
+        recorded = first[simulation_overlay.PERSISTENT_ACCOUNTS_ATTEMPT_KEY]
+        again = target.record_directory_accounts_attempt()
+        self.assertEqual(
+            recorded,
+            again[simulation_overlay.PERSISTENT_ACCOUNTS_ATTEMPT_KEY])
+        reread = self.instance().directory_accounts_attempted()
+        self.assertEqual(recorded, reread)
+        self.assertIn("attempted_utc", reread)
+        # An attempt is not a staged roster: an instance that only got that
+        # far still reports none, which is what makes the next run refuse.
+        self.assertIsNone(target.directory_accounts())
+
+    def test_a_malformed_staging_attempt_record_fails_closed(self):
+        target = self.seeded()
+        marker = target.read_marker()
+        marker[simulation_overlay.PERSISTENT_ACCOUNTS_ATTEMPT_KEY] = {"n": 1}
+        target._write_marker(marker)
+        with self.assertRaises(
+                simulation_overlay.PersistentInstanceInvalid):
+            self.instance().directory_accounts_attempted()
+
     # -- exclusivity -----------------------------------------------------
     def test_bring_up_takes_an_exclusive_lock_in_its_own_directory(self):
         target = self.seeded()

@@ -739,6 +739,118 @@ class RosterOverlayTests(unittest.TestCase):
         self.assertEqual(len(CONTRACT_ROLES), 4)
 
 
+class DurableDirectoryRosterTests(unittest.TestCase):
+    """The roster a PERMANENT directory may be provisioned from.
+
+    The disposable acceptance lane falls back to the tracked contract's
+    synthetic names, and that is correct there: the accounts are destroyed with
+    the guest.  A persistent instance is the opposite case -- the SIDs it mints
+    are permanent -- so the durable entry point requires the owner's private
+    overlay and refuses rather than falling back.
+    """
+
+    OVERLAY = {
+        "schema_version": 1,
+        "principals": {
+            "standard_user": {"name": "ava"},
+            "daily_administrator": {"name": "ksh"},
+        },
+    }
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.overlay = self.root / "principals.json"
+        self.overlay.write_text(json.dumps(self.OVERLAY), encoding="utf-8")
+        self.roster = controller_principals.durable_directory_roster(
+            self.overlay)
+
+    def test_a_missing_overlay_is_a_refusal_and_never_a_fallback(self):
+        absent = self.root / "not-here.json"
+        with self.assertRaises(Exception) as raised:
+            controller_principals.durable_directory_roster(absent)
+        message = str(raised.exception)
+        self.assertIn(str(absent), message)
+        self.assertIn("synthetic acceptance roster", message)
+        # The same path with no ``require_overlay`` is exactly the synthetic
+        # roster, which is what makes the refusal load-bearing.
+        self.assertEqual(
+            ("student", "operator", "directory-admin"),
+            tuple(identity_roster(overlay_path=absent)[role]
+                  for role in DIRECTORY_ROLES))
+
+    def test_an_unreadable_overlay_is_a_refusal_too(self):
+        broken = self.root / "broken.json"
+        broken.write_text("{not json", encoding="utf-8")
+        with self.assertRaisesRegex(Exception, "unreadable JSON"):
+            controller_principals.durable_directory_roster(broken)
+
+    def test_a_durable_roster_bakes_its_own_programs_and_its_own_names(self):
+        stage, destroy, roles = controller_principals._programs(self.roster)
+        self.assertEqual(("ava", "ksh", "directory-admin"), roles)
+        for program in (stage, destroy):
+            self.assertIn('"order":["ava","ksh","directory-admin"]', program)
+            # The synthetic acceptance names are nowhere in a durable program.
+            for synthetic in ("student", "operator"):
+                self.assertNotIn(f'"{synthetic}"', program)
+        # One rule, two rosters: the durable POSIX numbers are the acceptance
+        # allocation's numbers for the same ROLE positions.
+        self.assertIn('"ava":{"gidNumber":10513,"loginShell":"/bin/bash",'
+                      '"uidNumber":10000', stage)
+        self.assertIn('"ksh":{"gidNumber":10513,"loginShell":"/bin/bash",'
+                      '"uidNumber":10001', stage)
+
+    def test_only_the_domain_administrator_joins_domain_admins(self):
+        stage, _destroy, _roles = controller_principals._programs(self.roster)
+        self.assertEqual(
+            ("domain_administrator",),
+            controller_principals.DIRECTORY_ADMIN_ROLES)
+        self.assertIn('"domain_administrator":"directory-admin"', stage)
+        membership = stage.split(
+            "add_remove_group_members(", 1)[1].split(")", 1)[0]
+        self.assertIn('"Domain Admins"', membership)
+        self.assertIn('roster["domain_administrator"]', membership)
+        self.assertNotIn("ksh", membership)
+        plan = controller_principals.directory_account_plan(
+            list(DIRECTORY_ROLES), roster=self.roster)
+        by_role = {entry["contract_role"]: entry for entry in plan}
+        self.assertEqual("standard", by_role["daily_administrator"]["role"])
+        self.assertEqual(
+            "administrator", by_role["domain_administrator"]["role"])
+
+    def test_a_durable_console_validates_against_its_own_roster(self):
+        serial = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.roster,
+            roster_source="a private overlay")
+        self.assertEqual(("ava", "ksh", "directory-admin"), serial.roles)
+        # The module's own (possibly synthetic) roster is not what this console
+        # accepts, and the refusal names the source it was told about.
+        with self.assertRaises(ValueError) as raised:
+            serial.stage({CONTRACT_ROSTER[role]: f"Secret-{index}-47!"
+                          for index, role in enumerate(DIRECTORY_ROLES)})
+        message = str(raised.exception)
+        self.assertIn("a private overlay", message)
+        self.assertIn("student", message)
+        self.assertIn("ava", message)
+        # A default console is byte-for-byte unchanged.
+        default = ControllerPrincipalSerial(io.BytesIO(), io.BytesIO())
+        self.assertEqual(ROLES, default.roles)
+        self.assertEqual(controller_principals.ROSTER_SOURCE,
+                         default.roster_source)
+        self.assertIsNone(default.console.password)
+
+    def test_a_durable_console_answers_sudos_own_prompt(self):
+        # A persistent instance's console account has a password the operator
+        # typed into the offline installer, so the durable path must take the
+        # `sudo -k -p` branch and never the disposable `sudo -n` one.
+        password = b"typed-console-secret"
+        serial = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.roster,
+            password=password)
+        self.assertEqual(password, serial.console.password)
+
+
 # The Windows lane modules that used to restate the roster.  Each one is
 # imported by, or imports, this module's principal names.
 WINDOWS_LANE = (
@@ -827,7 +939,7 @@ class WindowsLaneDerivesItsRosterTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             program = f"""
-import json, sys
+import io, json, sys
 sys.path.insert(0, {str(root / "homelab" / "workstations")!r})
 import pathlib
 import arch_second
@@ -846,7 +958,8 @@ staged = {{
 print(json.dumps({{
     "roles": list(cp.DIRECTORY_PRINCIPALS),
     "staged": sorted(
-        cp.ControllerPrincipalSerial._values(staged)),
+        cp.ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO())._values(staged)),
     "uids": {{
         name: entry["uidNumber"]
         for name, entry in cp.POSIX_ALLOCATION["users"].items()

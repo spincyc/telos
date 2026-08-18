@@ -25,6 +25,7 @@ from typing import Callable
 try:
     from .controller_factory import FactoryBundle, FactorySpec
     from .controller_image import ControllerImageError
+    from .controller_image import assert_installed as assert_installed_image
     from .controller_image import probe as probe_controller_image
     from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
@@ -41,6 +42,7 @@ try:
 except ImportError:  # Direct execution from homelab/.
     from controller_factory import FactoryBundle, FactorySpec
     from controller_image import ControllerImageError
+    from controller_image import assert_installed as assert_installed_image
     from controller_image import probe as probe_controller_image
     from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
@@ -88,6 +90,11 @@ CONSOLE_ACCOUNT = "local-rescue"
 #: command, or a shutdown.
 PERSISTENT_CONVERGE_TIMEOUT = 2700.0
 PERSISTENT_CONSOLE_TIMEOUT = 300.0
+#: Bound on the in-guest durable-account staging program. It creates three
+#: directory users, replaces two group gidNumbers, re-reads every attribute it
+#: wrote and makes three share roots; minutes, not the convergence's tens of
+#: minutes. Bounded like every other console wait, never open-ended.
+PERSISTENT_ACCOUNTS_TIMEOUT = 600.0
 #: QEMU binds its loopback listener during startup, so the gateway peer may lose
 #: the first connect attempts. A refused connect consumes nothing, so retrying is
 #: safe; the bound keeps a genuinely dead guest from hanging the run.
@@ -134,6 +141,27 @@ OVMF_PAIRS = (
         Path("/usr/share/edk2-ovmf/x64/OVMF_VARS.fd"),
     ),
 )
+
+
+def _controller_principals():
+    """Import the principal-staging module in BOTH of this file's run modes.
+
+    ``bootstrap_dc.py`` is executed as a script by every Make recipe, so its
+    package-relative imports fall back to top-level ones. That fallback cannot
+    reach ``controller_principals``: that module imports ``.serial_automation``
+    relatively and only ever loads as part of the package. Adding the
+    repository root to ``sys.path`` and importing it by its package name works
+    identically either way, and it is deferred into a call so the disposable
+    acceptance verbs -- and every existing import of this module -- pay nothing
+    for a durable-only dependency.
+    """
+    try:
+        from . import controller_principals
+    except ImportError:
+        if str(REPOSITORY) not in sys.path:
+            sys.path.insert(0, str(REPOSITORY))
+        from homelab.vm import controller_principals
+    return controller_principals
 
 
 def ovmf_pair() -> tuple[Path, Path] | None:
@@ -896,6 +924,32 @@ def _console_root(
     return observed
 
 
+def _console_poweroff(
+    console: SerialAutomation, password: bytes, label: str,
+) -> None:
+    """Power the guest off through the same authenticated console.
+
+    ``sudo -n`` cannot be used because every command on this path passes ``-k``
+    and so deliberately leaves no cached credential behind. The credential
+    answers sudo's own private prompt, which sudo only prints once it has
+    disabled echo on the tty, and every wait is bounded by the console's own
+    timeout.
+    """
+    token = os.urandom(16).hex().encode("ascii")
+    prompt = b"__TELOS_PERSISTENT_POWEROFF_" + token + b"__"
+    console._send(b"", label + "-shell-requested")
+    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", label + "-shell-ready")
+    console._send(
+        b"sudo -k -S -p '" + prompt + b"' /usr/bin/systemctl poweroff",
+        label + "-command-sent")
+    console._wait(
+        rb"(?:^|[\r\n])" + re.escape(prompt) + rb"\s*$", label + "-sudo-prompt")
+    console._send(password, label + "-password-sent")
+    console._wait(
+        rb"(?:Reached target System Power Off|reboot: Power down)",
+        label + "-observed")
+
+
 def _extra_read_only_medium(
     medium: Path, *, drive_id: str, bootindex: int,
 ) -> list[str]:
@@ -1041,23 +1095,7 @@ def _drive_persistent_convergence(
             "convergence neither changed it nor recorded it"),
         "esp": "unmodified; the instance boots its own loader default",
     }
-    # Powering off through the same authenticated channel: ``sudo -n`` cannot be
-    # used because every command above passes ``-k`` and so leaves no cached
-    # credential behind on purpose.
-    token = os.urandom(16).hex().encode("ascii")
-    prompt = b"__TELOS_PERSISTENT_POWEROFF_" + token + b"__"
-    console._send(b"", "persistent-poweroff-shell-requested")
-    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", "persistent-poweroff-shell-ready")
-    console._send(
-        b"sudo -k -S -p '" + prompt + b"' /usr/bin/systemctl poweroff",
-        "persistent-poweroff-command-sent")
-    console._wait(
-        rb"(?:^|[\r\n])" + re.escape(prompt) + rb"\s*$",
-        "persistent-poweroff-sudo-prompt")
-    console._send(password, "persistent-poweroff-password-sent")
-    console._wait(
-        rb"(?:Reached target System Power Off|reboot: Power down)",
-        "persistent-poweroff-observed")
+    _console_poweroff(console, password, "persistent-poweroff")
     return record
 
 
@@ -1315,6 +1353,408 @@ def persistent_converge(
     return 0
 
 
+def _accounts_recorder(
+    target: PersistentControllerInstance,
+) -> Callable[[], None]:
+    """Persist "this run reached the directory" before it writes anything."""
+    def record() -> None:
+        try:
+            target.record_directory_accounts_attempt()
+        except (RuntimeError, OSError) as error:
+            # Never kill a live staging run over a host-side note, and never
+            # hide it either: without this record a later run would be told the
+            # directory holds none of these accounts when it may hold some.
+            print(f"  warning: could not record the staging attempt ({error}); "
+                  f"if this run fails, list the directory's accounts before "
+                  f"staging again", file=sys.stderr, flush=True)
+    return record
+
+
+def _drive_persistent_accounts(
+    process: subprocess.Popen[bytes],
+    password: bytes,
+    values: dict[str, str],
+    *,
+    roster: dict[str, str],
+    roster_source: str,
+    timeout: float,
+    on_stage: Callable[[], None] | None = None,
+    on_event: Callable[[str], None] | None = None,
+):
+    """Log in normally, prove the directory is live, then stage the roster.
+
+    The whole exchange runs against the instance's *own* loader entry: no ESP
+    is rewritten, there is no init shell, and the only way in is the console
+    account the offline installer created. ``ControllerPrincipalSerial`` then
+    does the actual staging, unchanged and for the same reason
+    ``persistent_converge`` reuses ``converge_disposable_controller``: it is
+    the proven protocol. It suppresses terminal echo and *proves* it before a
+    credential is written, carries the credentials over the guest shell's own
+    stdin rather than argv, answers sudo's private prompt from the console
+    account, and fails closed on a nonzero result.
+    """
+    principals = _controller_principals()
+    if process.stdout is None or process.stdin is None:
+        raise RuntimeError(
+            "persistent controller serial pipes were not created")
+    console = SerialAutomation(
+        process.stdout, process.stdin, password,
+        timeout=PERSISTENT_CONSOLE_TIMEOUT)
+    console.events = _AnnouncedEvents(on_event)
+    console._wait(
+        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        "persistent-accounts-login-prompt")
+    console._send(
+        CONSOLE_ACCOUNT.encode("ascii"), "persistent-accounts-username-sent")
+    console._wait(
+        rb"(?:^|\n)Password:\s*$", "persistent-accounts-login-password-prompt")
+    console._send(password, "persistent-accounts-login-password-sent")
+    console._wait(rb"(?:^|\n)[^\n]*\$\s*$", "persistent-accounts-shell-ready")
+    # Prove the directory is actually serving before anything is typed into it.
+    # The host-side marker says a convergence finished; this says samba.service
+    # is live with a real sam.ldb on THIS boot. Without it, a guest that came
+    # up without its directory would take every credential and only then fail
+    # inside the guest program, with the accounts nowhere and the operator's
+    # passwords already spent.
+    console._wait_controller_ad()
+    if on_stage is not None:
+        on_stage()
+    serial = principals.ControllerPrincipalSerial(
+        process.stdout, process.stdin, timeout=timeout,
+        password=password, roster=roster, roster_source=roster_source)
+    # The same shared-console substitution the Windows and Arch identity lanes
+    # make: the protocol runs over the session that is already authenticated,
+    # instead of opening a second one that would have to log in again.
+    serial.console = console
+    original = console.timeout
+    console.timeout = timeout
+    try:
+        result = serial.stage(values)
+    finally:
+        console.timeout = original
+    _console_poweroff(console, password, "persistent-accounts-poweroff")
+    return result
+
+
+def _persistent_accounts_summary(
+    target: PersistentControllerInstance, existing: bool,
+) -> str:
+    """One honest line about this instance's durable account roster."""
+    if not existing:
+        return "none; this instance has not been created"
+    try:
+        staged = target.directory_accounts()
+        attempted = target.directory_accounts_attempted()
+    except (ValueError, RuntimeError) as error:
+        return f"unknown; the record is unreadable ({error})"
+    if staged is not None:
+        roles = ", ".join(
+            str(account.get("contract_role"))
+            for account in staged["accounts"])
+        return (f"staged {staged['staged_utc']}; roster fingerprint "
+                f"{staged.get('roster_fingerprint')}; contract roles {roles}")
+    if attempted is not None:
+        return (
+            f"UNFINISHED: a staging run reached the directory at "
+            f"{attempted['attempted_utc']} and never proved it finished. Some "
+            "of those accounts may exist; list them on the instance before "
+            "staging again")
+    return ("none staged; run persistent-accounts to stage the owner's "
+            "durable roster into this directory")
+
+
+def persistent_accounts(
+    root: Path,
+    instance: str,
+    apply: bool,
+    *,
+    canonical_state: Path = DEFAULT_STATE,
+    overlay_path: Path | None = None,
+    restage: bool = False,
+    timeout: float = PERSISTENT_ACCOUNTS_TIMEOUT,
+) -> int:
+    """Stage the owner's DURABLE account roster over the serial console.
+
+    The gap this closes. ``make homelab-bootstrap-controller`` provisions the
+    same durable accounts over host-side Ansible, but that reaches a Controller
+    the control host can SSH to, and a *simulated* persistent instance is not
+    one: ``persistent_up`` gives it a single QEMU socket netdev to the
+    userspace gateway, which ``network.py`` documents as supplying no NAT and
+    no route to the host LAN and which ``simulated_gateway.py`` says never
+    forwards general traffic. The serial console is the only channel that
+    reaches this directory at all, so this verb drives it.
+
+    Four properties matter more than the mechanism:
+
+    * *the synthetic roster is refused.* ``durable_directory_roster`` is
+      ``identity_roster(require_overlay=True)``, so a missing or unreadable
+      private overlay is a named refusal and never a directory full of
+      permanent ``student``/``operator`` SIDs reported as a success.
+    * *the privilege separation is not this verb's to widen.* The Domain
+      Admins membership is derived, in the guest program, from
+      ``DIRECTORY_ADMIN_ROLES``; ``daily_administrator`` is absent from it, so
+      the owner's everyday elevated account gets a passworded workstation sudo
+      and never a Domain Admins membership (ADR 0055; gate 8's
+      ``domain-admin-separate``).
+    * *no credential reaches durable state.* Every password is typed at the
+      operator's terminal, held in memory, echo-suppressed on the wire and
+      carried on the guest shell's stdin. None reaches argv, an environment
+      variable, a Make variable, a file, the marker, or a retained transcript.
+    * *the acceptance path cannot be reached.* Every refusal ``persistent_up``
+      makes runs here first and before anything is printed.
+    """
+    principals = _controller_principals()
+    try:
+        state = _persistent_state(root, instance)
+        target = PersistentControllerInstance(state, instance=instance)
+        canonical = paths(canonical_state)
+        target.assert_separate(canonical["disk"])
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    files = persistent_paths(state)
+    if not target.exists():
+        print(f"error: there is no persistent controller instance {instance} "
+              f"at {state}; create one with persistent-up and give it a "
+              f"directory with persistent-converge first", file=sys.stderr)
+        return 2
+    try:
+        recorded = target.convergence()
+        staged = target.directory_accounts()
+        attempted = target.directory_accounts_attempted()
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if recorded is None:
+        print(f"error: {instance} holds an installed Controller with no "
+              f"recorded directory, so there is nothing to stage accounts "
+              f"into. Run persistent-converge first", file=sys.stderr)
+        return 2
+    # Resolved before ANYTHING is printed, and fail-closed on both the dry run
+    # and the applied one: an operator must learn that their private overlay is
+    # missing from a plan, not from a refusal after they have typed four
+    # credentials.
+    try:
+        roster = principals.durable_directory_roster(overlay_path)
+        plan = principals.directory_account_plan(
+            list(principals.DIRECTORY_ROLES), roster=roster)
+        fingerprint = principals.identity_roster_fingerprint(roster)
+        source = principals.identity_roster_source(overlay_path)
+    except (principals.IdentityRosterError, principals.DirectoryPlanError,
+            OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    try:
+        command = qemu_command(
+            state, None, None, files=files,
+            socket_port=PERSISTENT_SOCKET_PORT,
+            name=f"persistent-dc-{instance}")
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(f"persistent controller instance: {instance}")
+    print(f"state: {state}")
+    print("mode: durable directory accounts; the owner's real roster is "
+          "staged into the directory this instance already holds")
+    print(f"directory: converged {recorded['converged_utc']}; realm "
+          f"{recorded.get('realm')}; domain SID {recorded.get('domain_sid')}")
+    print(f"roster source: {source}")
+    print(f"roster fingerprint: {fingerprint}")
+    if staged is not None:
+        print(f"already staged: {staged['staged_utc']} (roster fingerprint "
+              f"{staged.get('roster_fingerprint')})")
+    elif attempted is not None:
+        print("unfinished staging: an earlier run reached the directory at "
+              f"{attempted['attempted_utc']} without proving it finished")
+    print("accounts, by contract role. Real account names are instance data "
+          "(ADR 0046): they are never printed here, never recorded in the "
+          "instance marker, and appear only in the prompts at your own "
+          "terminal, so you know whose password you are setting:")
+    for entry in plan:
+        print(f"  {entry['contract_role']}: directory role {entry['role']}, "
+              f"uidNumber {entry['uidNumber']}, gidNumber "
+              f"{entry['gidNumber']}")
+    print("privilege separation: only "
+          + ", ".join(principals.DIRECTORY_ADMIN_ROLES)
+          + f" joins {principals.POSIX_ADMIN_GROUP}. daily_administrator is "
+          "the workstation's passworded-sudo administrator and is never a "
+          "Domain Admins member (ADR 0055; gate 8 domain-admin-separate)")
+    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+          "password the offline installer told you to type, then one password "
+          "per contract role. All are held in memory only, echo-suppressed on "
+          "the wire, and never written to a file, argv, an environment "
+          "variable, a Make variable, the instance marker, or this transcript")
+    print("fabric: a simulated gateway peer on "
+          f"127.0.0.1:{PERSISTENT_SOCKET_PORT}. This instance has no NAT and "
+          "no route to the host LAN, which is why the roster is staged over "
+          "the serial console instead of by host-side Ansible")
+    print(f"acceptance canonical: {canonical['state']} is read-only here and "
+          "is never a persistent target")
+    print(" ".join(str(part) for part in command))
+    if not apply:
+        print("dry run; repeat with --apply")
+        return 0
+
+    problems = [f"{tool} is not installed" for tool in
+                ("qemu-system-x86_64", "qemu-img") if not shutil.which(tool)]
+    if staged is not None and not restage:
+        problems.append(
+            f"{instance} already holds a staged durable roster "
+            f"({staged['staged_utc']}). Staging CREATES accounts and stops on "
+            "the first one the directory already has, so this refuses rather "
+            "than asking you for credentials it would discard. Pass --restage "
+            "only to add a roster this directory does not have yet")
+    if staged is None and attempted is not None and not restage:
+        problems.append(
+            f"{instance} has an unfinished staging run that already reached "
+            f"the directory ({attempted['attempted_utc']}). Some of those "
+            "accounts may exist with the credentials typed then, and staging "
+            "again would stop on the first of them. List the directory's "
+            "accounts on the instance, then pass --restage")
+    if not problems:
+        # The last refusal before the first prompt. An instance whose disk was
+        # never installed cannot boot to a login, and an operator must never
+        # type an unrecoverable credential into a run that cannot succeed.
+        try:
+            assert_installed_image(
+                files["disk"],
+                subject=f"the persistent instance disk {files['disk']}",
+                remedy=(
+                    "Recreate the instance from an installed canonical image "
+                    "with persistent-up, then converge it."))
+        except ControllerImageError as error:
+            problems.append(str(error))
+    if problems:
+        for problem in problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+
+    console_password = b""
+    values: dict[str, str] = {}
+    try:
+        console_password = _typed_secret(
+            f"{CONSOLE_ACCOUNT} console password: ")
+        for entry in plan:
+            typed = _typed_secret(
+                f"new directory password for {entry['contract_role']} "
+                f"({entry['name']}): ",
+                confirm=f"retype password for {entry['contract_role']}: ")
+            # Python cannot wipe an immutable object, and the guest program
+            # reads a JSON document, so the value has to become a ``str``
+            # somewhere. It becomes one here, once, and every reference is
+            # dropped in the ``finally`` below.
+            values[entry["name"]] = typed.decode("utf-8")
+            typed = b""
+    except (ValueError, EOFError, KeyboardInterrupt) as error:
+        values.clear()
+        print(f"error: {error or type(error).__name__}", file=sys.stderr)
+        return 2
+    if len(set(values.values())) != len(values):
+        # Refused here rather than inside ``stage`` so it costs no boot: the
+        # staged principals must be distinguishable by credential, and two
+        # identical passwords usually mean a mistyped prompt.
+        values.clear()
+        print("error: each contract role needs its own password; two of the "
+              "credentials you typed are identical", file=sys.stderr)
+        return 2
+
+    try:
+        target.prepare()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        values.clear()
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    run_root = Path(tempfile.mkdtemp(prefix="telos-persistent-accounts-"))
+    run_root.chmod(0o700)
+    guest: subprocess.Popen[bytes] | None = None
+    gateway: subprocess.Popen[bytes] | None = None
+    result = None
+    failure: BaseException | None = None
+    try:
+        print(" ".join(str(part) for part in command))
+        guest = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, bufsize=0)
+        gateway = _attach_simulated_gateway(
+            PERSISTENT_SOCKET_PORT, run_root / "gateway.log", guest=guest)
+        result = _drive_persistent_accounts(
+            guest, console_password, values,
+            roster=roster, roster_source=source, timeout=timeout,
+            on_stage=_accounts_recorder(target))
+    except BaseException as error:
+        failure = error
+    finally:
+        # The credentials exist only here. Python cannot wipe an immutable str
+        # or bytes, so the best available step is to drop every reference the
+        # moment the console no longer needs one, exactly as the convergence
+        # path does.
+        console_password = b""
+        values.clear()
+        for child in (guest, gateway):
+            if child is None or child.poll() is not None:
+                continue
+            child.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=20)
+            if child.poll() is None:
+                child.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    child.wait(timeout=10)
+        for attempt in range(6):
+            try:
+                target.close()
+                break
+            except (RuntimeError, OSError) as error:
+                if attempt == 5:
+                    if failure is None:
+                        failure = error
+                    break
+                time.sleep(0.1)
+        shutil.rmtree(run_root, ignore_errors=True)
+    if failure is not None or result is None:
+        print(f"error: staging the durable account roster failed: "
+              f"{failure or 'no staging was proved'}", file=sys.stderr)
+        print(f"the directory may now hold some of these accounts. "
+              f"persistent-status reports the unfinished attempt; list the "
+              f"accounts on {instance} before staging again", file=sys.stderr)
+        return 2
+    record = {
+        "staged_utc": datetime.now(UTC).isoformat(),
+        "roster_fingerprint": fingerprint,
+        "roster_source": source,
+        "accounts": [
+            {
+                "contract_role": entry["contract_role"],
+                "role": entry["role"],
+                "uidNumber": entry["uidNumber"],
+                "gidNumber": entry["gidNumber"],
+            }
+            for entry in plan
+        ],
+        "domain_admin_roles": list(principals.DIRECTORY_ADMIN_ROLES),
+        "credentials": (
+            "one per contract role, typed by the operator at their terminal; "
+            "held in memory, echo-suppressed on the wire, and never written "
+            "to a file, argv, an environment variable, this marker, or a "
+            "transcript"),
+    }
+    try:
+        target.record_directory_accounts(record)
+    except (RuntimeError, OSError) as error:
+        # The accounts exist in the directory; only the host-side record
+        # failed. Say so distinctly rather than reporting a clean pass.
+        print(f"error: the durable roster was staged but its record could not "
+              f"be written: {error}", file=sys.stderr)
+        return 2
+    print(f"{instance}: staged {len(plan)} durable directory accounts")
+    for entry in plan:
+        print(f"  {entry['contract_role']}: directory role {entry['role']}, "
+              f"uidNumber {entry['uidNumber']}")
+    print(f"directory state retained at {state}")
+    return 0
+
+
 def persistent_status(root: Path, instance: str) -> int:
     try:
         state = _persistent_state(root, instance)
@@ -1333,6 +1773,8 @@ def persistent_status(root: Path, instance: str) -> int:
         print(f"seeded from: {marker['seeded_from']['disk']} "
               f"({marker['seeded_from']['disk_sha256']})")
     print("directory: " + _persistent_directory_summary(
+        target, marker is not None))
+    print("directory accounts: " + _persistent_accounts_summary(
         target, marker is not None))
     print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
     print("hash fence: none by design; the disk is the durable directory state")
@@ -1403,8 +1845,8 @@ def parser() -> argparse.ArgumentParser:
     # existing subcommand can reach them and none of them can reach the
     # disposable acceptance state.
     for name in (
-        "persistent-up", "persistent-converge", "persistent-status",
-        "persistent-destroy",
+        "persistent-up", "persistent-converge", "persistent-accounts",
+        "persistent-status", "persistent-destroy",
     ):
         persistent_parser = commands.add_parser(name)
         persistent_parser.add_argument(
@@ -1426,6 +1868,23 @@ def parser() -> argparse.ArgumentParser:
             persistent_parser.add_argument(
                 "--timeout", type=float, default=PERSISTENT_CONVERGE_TIMEOUT,
                 help="bound on the in-guest convergence payload, in seconds")
+        if name == "persistent-accounts":
+            # No --seed-iso and no installer media: this verb boots the
+            # instance's own disk and nothing else.
+            persistent_parser.add_argument("--apply", action="store_true")
+            persistent_parser.add_argument(
+                "--identity-overlay", type=Path, default=None,
+                help="resolve the durable roster against this private overlay "
+                     "instead of homelab/instance/identity/principals.json; "
+                     "reads NAMES, never a credential")
+            persistent_parser.add_argument(
+                "--restage", action="store_true",
+                help="stage again after an unfinished or completed run; it "
+                     "does NOT reset the password of an account the directory "
+                     "already holds")
+            persistent_parser.add_argument(
+                "--timeout", type=float, default=PERSISTENT_ACCOUNTS_TIMEOUT,
+                help="bound on the in-guest staging program, in seconds")
         if name == "persistent-destroy":
             persistent_parser.add_argument(
                 "--confirm",
@@ -1453,6 +1912,12 @@ def main(argv: list[str] | None = None) -> int:
             args.persistent_root, args.instance, args.apply,
             canonical_state=args.state_dir, seed_iso=args.seed_iso,
             reconverge=args.reconverge, timeout=args.timeout)
+    if command == "persistent-accounts":
+        return persistent_accounts(
+            args.persistent_root, args.instance, args.apply,
+            canonical_state=args.state_dir,
+            overlay_path=args.identity_overlay,
+            restage=args.restage, timeout=args.timeout)
     if command == "persistent-status":
         return persistent_status(args.persistent_root, args.instance)
     if command == "persistent-destroy":

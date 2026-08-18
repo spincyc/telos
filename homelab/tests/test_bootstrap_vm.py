@@ -1,8 +1,11 @@
+import base64
 import contextlib
 import io
 import json
+import socket
 import subprocess
 import tempfile
+import threading
 import unittest
 import sys
 from pathlib import Path
@@ -1475,6 +1478,649 @@ class PersistentConvergenceTests(unittest.TestCase):
         self.assertIn("test $((__telos_uac & 2)) -eq 0",
                       bootstrap_dc.ADMINISTRATOR_ENABLE)
         self.assertNotIn("Administrator", bootstrap_dc.DOMAIN_SID_COMMAND)
+
+
+# The owner's real roster, as the private overlay declares it: `ava` a standard
+# user and `ksh` a daily administrator who is deliberately NOT a Domain Admins
+# member.  Written to a temporary file and passed by name, so this suite never
+# reads or writes whatever overlay this machine actually carries.
+PRIVATE_OVERLAY = {
+    "schema_version": 1,
+    "principals": {
+        "standard_user": {"name": "ava"},
+        "daily_administrator": {"name": "ksh"},
+    },
+}
+
+
+class PersistentAccountsCliTests(unittest.TestCase):
+    """Staging the owner's DURABLE account roster into a running instance.
+
+    The simulated persistent instance has one QEMU socket netdev to a userspace
+    gateway that never forwards general traffic, so the host-side Ansible path
+    cannot reach it and the serial console is the only channel there is. What
+    these prove is that the console verb cannot mint the synthetic acceptance
+    roster into a permanent directory, cannot reach acceptance state, cannot
+    take a credential it can never apply, and cannot claim a success it did not
+    observe.
+    """
+
+    CONSOLE = "console-secret-typed"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.canonical = self.root / "canonical"
+        self.canonical.mkdir()
+        files = bootstrap_dc.paths(self.canonical)
+        for key in ("disk", "vars", "manifest"):
+            files[key].write_bytes(b"canonical " + key.encode())
+            files[key].chmod(0o600)
+        fake_image_tools.installed_image(files["disk"], b" canonical disk")
+        files["disk"].chmod(0o600)
+        self.persistent_root = self.root / "persistent"
+        self.state = self.persistent_root / "lab-dc1"
+        self.overlay = self.root / "principals.json"
+        self.overlay.write_text(json.dumps(PRIVATE_OVERLAY), encoding="utf-8")
+        self.absent_overlay = self.root / "no-such-overlay.json"
+        self.typed = []
+        self.launched = []
+        self.staged_calls = []
+        principals = bootstrap_dc._controller_principals()
+        self.roster = principals.durable_directory_roster(self.overlay)
+        self.plan = principals.directory_account_plan(
+            list(principals.DIRECTORY_ROLES), roster=self.roster)
+        # Every real name this run could put anywhere it must not.
+        self.names = tuple(entry["name"] for entry in self.plan)
+        self.secrets = tuple(
+            f"{entry['contract_role']}-secret-typed" for entry in self.plan)
+
+    # -- harness ---------------------------------------------------------
+    def call(self, *argv, expect):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = bootstrap_dc.main(list(argv))
+        self.assertEqual(result, expect, err.getvalue() or out.getvalue())
+        return out.getvalue(), err.getvalue()
+
+    def _fake_qemu_img(self, argv, **kwargs):
+        return fake_image_tools.image_tool(argv, **kwargs)
+
+    def _getpass(self, prompt):
+        self.typed.append(prompt)
+        if "console password" in prompt:
+            return self.CONSOLE
+        for entry, secret in zip(self.plan, self.secrets):
+            if entry["contract_role"] in prompt:
+                return secret
+        raise AssertionError(f"unexpected prompt: {prompt}")
+
+    class _Child:
+        def __init__(self, *_args, **_kwargs):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            raise AssertionError("a finished child must not be signalled")
+
+    def seed(self, *, converged=True, installed=True):
+        """Create the instance this verb needs, without booting anything."""
+        canonical = bootstrap_dc.paths(self.canonical)
+        with mock.patch.object(
+                simulation_overlay.subprocess, "run",
+                side_effect=self._fake_qemu_img):
+            target = simulation_overlay.PersistentControllerInstance(
+                self.state, instance="lab-dc1")
+            target.create(canonical["disk"], canonical["vars"])
+        if converged:
+            target.record_convergence({
+                "converged_utc": "2026-08-16T09:00:00+00:00",
+                "realm": "AD.FACTORY.TEST",
+                "domain_sid": "S-1-5-21-101-202-303",
+            })
+        if not installed:
+            disk = self.state / simulation_overlay.PERSISTENT_DISK_NAME
+            fake_image_tools.blank_image(disk, b" never installed")
+            disk.chmod(0o600)
+        return target
+
+    def _stage_result(self, *_args, **kwargs):
+        recorder = kwargs.get("on_stage")
+        if recorder is not None:
+            recorder()
+        self.staged_calls.append(sorted(kwargs.get("values", ()) or _args[2]))
+        return mock.Mock(operation="stage")
+
+    @contextlib.contextmanager
+    def harness(self, drive=None):
+        drive = self._stage_result if drive is None else drive
+        with contextlib.ExitStack() as stack:
+            for patch in (
+                mock.patch.object(
+                    bootstrap_dc, "ovmf_pair",
+                    return_value=(Path("/code"), Path("/vars"))),
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"),
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run",
+                    side_effect=self._fake_qemu_img),
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "Popen",
+                    side_effect=lambda argv, **kw: (
+                        self.launched.append(list(argv)) or self._Child())),
+                mock.patch.object(
+                    bootstrap_dc, "_controlling_terminal", return_value=True),
+                mock.patch.object(
+                    bootstrap_dc.getpass, "getpass", side_effect=self._getpass),
+                mock.patch.object(
+                    bootstrap_dc, "_attach_simulated_gateway",
+                    return_value=self._Child()),
+                mock.patch.object(
+                    bootstrap_dc, "_drive_persistent_accounts",
+                    side_effect=drive),
+            ):
+                stack.enter_context(patch)
+            yield
+
+    def accounts(self, *extra, expect=0, overlay=None, drive=None):
+        with self.harness(drive):
+            return self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay",
+                str(self.overlay if overlay is None else overlay),
+                *extra, expect=expect)
+
+    def marker(self):
+        return json.loads(
+            (self.state
+             / simulation_overlay.PERSISTENT_MARKER_NAME).read_text())
+
+    def nameless(self, text):
+        """The report with every line that legitimately carries a PATH gone.
+
+        ``roster source``, ``state``, the acceptance canonical and the QEMU
+        argv all print filesystem paths on purpose, and a path can contain any
+        string -- this checkout lives under ``/home/ksh``, which is exactly one
+        of the account names the owner's overlay declares. A "no real name is
+        printed" check therefore has to look at what the verb SAYS, not at
+        where its files happen to live.
+        """
+        roots = (str(bootstrap_dc.REPOSITORY), str(self.root))
+        return "\n".join(
+            line for line in text.splitlines()
+            if not any(root in line for root in roots))
+
+    # -- plan ------------------------------------------------------------
+    def test_the_plan_asks_for_nothing_boots_nothing_and_names_nobody(self):
+        self.seed()
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen, \
+                mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt:
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(self.overlay), expect=0)
+        run.assert_not_called()
+        popen.assert_not_called()
+        prompt.assert_not_called()
+        self.assertIn("dry run; repeat with --apply", out)
+        self.assertIn("serial console", out)
+        for entry in self.plan:
+            self.assertIn(entry["contract_role"], out)
+            self.assertIn(str(entry["uidNumber"]), out)
+        # Real account names are instance data and never reach stdout.
+        said = self.nameless(out)
+        for name in self.names:
+            self.assertNotIn(name, said)
+        # ...and neither do the synthetic acceptance names.
+        for synthetic in ("student", "operator"):
+            self.assertNotIn(synthetic, said)
+        self.assertIn("never a Domain Admins member", out)
+        self.assertIn(
+            f"listen=127.0.0.1:{bootstrap_dc.PERSISTENT_SOCKET_PORT}", out)
+
+    # -- the synthetic roster --------------------------------------------
+    def test_a_missing_overlay_is_refused_never_replaced_by_synthetics(self):
+        self.seed()
+        with mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen, \
+                mock.patch.object(
+                    bootstrap_dc.getpass, "getpass") as prompt:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(self.absent_overlay),
+                "--apply", expect=2)
+        self.assertIn(str(self.absent_overlay), err)
+        self.assertIn("synthetic acceptance roster", err)
+        self.assertNotIn("student", err)
+        popen.assert_not_called()
+        prompt.assert_not_called()
+
+    def test_an_unreadable_overlay_is_refused_not_silently_ignored(self):
+        self.seed()
+        broken = self.root / "broken.json"
+        broken.write_text("{not json", encoding="utf-8")
+        with mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(broken), "--apply", expect=2)
+        self.assertIn("unreadable JSON", err)
+        prompt.assert_not_called()
+
+    # -- the target ------------------------------------------------------
+    def test_an_absent_instance_is_refused_before_any_prompt(self):
+        with mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(self.overlay), "--apply", expect=2)
+        self.assertIn("no persistent controller instance", err)
+        prompt.assert_not_called()
+        popen.assert_not_called()
+
+    def test_an_unconverged_instance_is_refused_before_any_prompt(self):
+        self.seed(converged=False)
+        with mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.accounts("--apply", expect=2)
+        self.assertIn("no recorded directory", err)
+        self.assertIn("persistent-converge", err)
+        prompt.assert_not_called()
+        popen.assert_not_called()
+
+    def test_an_uninstalled_instance_disk_is_refused_before_any_prompt(self):
+        self.seed(installed=False)
+        _, err = self.accounts("--apply", expect=2)
+        self.assertIn("not an installed Controller image", err)
+        self.assertEqual([], self.typed)
+        self.assertEqual([], self.launched)
+
+    def test_acceptance_state_can_never_be_the_target(self):
+        with mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen, \
+                mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", self.canonical.name,
+                "--persistent-root", str(self.canonical.parent),
+                "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+            _, err = self.call(
+                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "persistent-accounts", "--instance", "bootstrap-dc",
+                "--persistent-root", str(bootstrap_dc.DEFAULT_STATE.parent),
+                "--apply", expect=2)
+            self.assertIn("refusing a persistent controller instance", err)
+        run.assert_not_called()
+        popen.assert_not_called()
+        prompt.assert_not_called()
+        self.assertEqual(
+            bootstrap_dc.paths(self.canonical)["disk"].read_bytes(),
+            fake_image_tools.INSTALLED + b" canonical disk")
+
+    # -- credentials -----------------------------------------------------
+    def test_credentials_come_from_a_terminal_or_the_run_refuses(self):
+        self.seed()
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"), \
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run",
+                    side_effect=self._fake_qemu_img), \
+                mock.patch.object(
+                    bootstrap_dc, "_controlling_terminal",
+                    return_value=False), \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(self.overlay), "--apply", expect=2)
+        self.assertIn("controlling terminal", err)
+        self.assertIn("not a file, argv", err)
+        popen.assert_not_called()
+
+    def test_one_credential_is_asked_for_per_contract_role(self):
+        self.seed()
+        self.accounts("--apply")
+        asked = [prompt for prompt in self.typed
+                 if "console password" not in prompt]
+        # One prompt plus one confirmation for each directory role.
+        self.assertEqual(2 * len(self.plan), len(asked))
+        for entry in self.plan:
+            self.assertTrue(any(entry["contract_role"] in prompt
+                                for prompt in asked))
+
+    def test_two_identical_credentials_are_refused_without_booting(self):
+        self.seed()
+        with self.harness():
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass",
+                    side_effect=lambda prompt: (
+                        self.CONSOLE if "console password" in prompt
+                        else "one-secret-for-everyone")):
+                _, err = self.call(
+                    "--state-dir", str(self.canonical), "persistent-accounts",
+                    "--instance", "lab-dc1",
+                    "--persistent-root", str(self.persistent_root),
+                    "--identity-overlay", str(self.overlay),
+                    "--apply", expect=2)
+        self.assertIn("its own password", err)
+        self.assertEqual([], self.launched)
+
+    def test_no_credential_reaches_argv_the_marker_or_the_report(self):
+        self.seed()
+        out, _ = self.accounts("--apply")
+        durable = b"".join(
+            entry.read_bytes() for entry in sorted(self.state.iterdir()))
+        for secret in (self.CONSOLE, *self.secrets):
+            self.assertNotIn(secret.encode(), durable)
+            self.assertNotIn(secret, out)
+            for argv in self.launched:
+                self.assertNotIn(secret, " ".join(argv))
+        # Nor do the real account names reach the durable marker: it
+        # identifies an account by contract role and proves the roster with a
+        # fingerprint. ``roster_source`` is a pair of PATHS by design, so it is
+        # excluded for the reason ``nameless`` documents.
+        record = self.marker()[simulation_overlay.PERSISTENT_ACCOUNTS_KEY]
+        recorded = json.dumps({
+            key: value for key, value in record.items()
+            if key != "roster_source"})
+        for name in self.names:
+            self.assertNotIn(name, recorded)
+
+    # -- reporting -------------------------------------------------------
+    def test_a_successful_staging_reports_each_role_by_contract_role(self):
+        self.seed()
+        out, _ = self.accounts("--apply")
+        self.assertIn(f"staged {len(self.plan)} durable directory accounts",
+                      out)
+        for entry in self.plan:
+            self.assertIn(
+                f"  {entry['contract_role']}: directory role "
+                f"{entry['role']}, uidNumber {entry['uidNumber']}", out)
+        said = self.nameless(out)
+        for name in self.names:
+            self.assertNotIn(name, said)
+        record = self.marker()[simulation_overlay.PERSISTENT_ACCOUNTS_KEY]
+        self.assertEqual(
+            [entry["contract_role"] for entry in self.plan],
+            [account["contract_role"] for account in record["accounts"]])
+        self.assertEqual(
+            ["domain_administrator"], record["domain_admin_roles"])
+        for account in record["accounts"]:
+            self.assertNotIn("name", account)
+        # And the staged values really were keyed by the overlay's names.
+        self.assertEqual([sorted(self.names)], self.staged_calls)
+
+    def test_staging_again_is_refused_unless_restage_is_asked_for(self):
+        self.seed()
+        self.accounts("--apply")
+        _, err = self.accounts("--apply", expect=2)
+        self.assertIn("already holds a staged durable roster", err)
+        self.assertIn("--restage", err)
+        self.accounts("--apply", "--restage")
+
+    # -- failure ---------------------------------------------------------
+    def test_a_mid_way_failure_leaves_a_diagnosable_state(self):
+        self.seed()
+
+        def fails(*_args, **kwargs):
+            kwargs["on_stage"]()
+            raise bootstrap_dc.SerialAutomationError(
+                "timed out waiting for stage-return-code-observed")
+
+        _, err = self.accounts("--apply", expect=2, drive=fails)
+        self.assertIn("staging the durable account roster failed", err)
+        self.assertIn("may now hold some of these accounts", err)
+        marker = self.marker()
+        # No success is claimed...
+        self.assertNotIn(simulation_overlay.PERSISTENT_ACCOUNTS_KEY, marker)
+        # ...and the attempt that reached the directory is recorded, so the
+        # next run refuses rather than asking for credentials the directory
+        # would reject as duplicate accounts.
+        self.assertIn(
+            simulation_overlay.PERSISTENT_ACCOUNTS_ATTEMPT_KEY, marker)
+        self.typed.clear()
+        _, err = self.accounts("--apply", expect=2)
+        self.assertIn("unfinished staging run", err)
+        self.assertEqual([], self.typed)
+        out, _ = self.call(
+            "persistent-status", "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root), expect=0)
+        self.assertIn("UNFINISHED", out)
+
+    def test_a_staging_whose_record_fails_is_reported_not_hidden(self):
+        self.seed()
+        with mock.patch.object(
+                simulation_overlay.PersistentControllerInstance,
+                "record_directory_accounts",
+                side_effect=RuntimeError("marker is read-only")):
+            _, err = self.accounts("--apply", expect=2)
+        self.assertIn("staged but its record could not be written", err)
+
+    # -- privilege separation --------------------------------------------
+    def test_the_daily_administrator_never_joins_domain_admins(self):
+        principals = bootstrap_dc._controller_principals()
+        self.assertEqual(
+            ("domain_administrator",), principals.DIRECTORY_ADMIN_ROLES)
+        by_role = {entry["contract_role"]: entry for entry in self.plan}
+        self.assertEqual("ksh", by_role["daily_administrator"]["name"])
+        self.assertEqual("standard", by_role["daily_administrator"]["role"])
+        self.assertEqual("ava", by_role["standard_user"]["name"])
+        self.assertEqual("standard", by_role["standard_user"]["role"])
+        self.assertEqual(
+            "administrator", by_role["domain_administrator"]["role"])
+        stage, _destroy, _roles = principals._programs(self.roster)
+        # The guest program adds exactly the domain administrator, by name,
+        # and the daily administrator's name appears nowhere near the group.
+        self.assertIn(
+            '"domain_administrator":"'
+            + by_role["domain_administrator"]["name"] + '"', stage)
+        group = stage.split('add_remove_group_members(', 1)[1].split(')', 1)[0]
+        self.assertIn('"Domain Admins"', group)
+        self.assertIn('roster["domain_administrator"]', group)
+        self.assertNotIn("ksh", group)
+        self.assertNotIn("ava", group)
+        # ...and nothing here grants NOPASSWD or a local wheel membership.
+        for forbidden in ("NOPASSWD", "wheel"):
+            self.assertNotIn(forbidden, stage)
+
+
+class PersistentAccountsConsoleTests(unittest.TestCase):
+    """The serial exchange itself, driven against a scripted guest.
+
+    A live guest cannot be booted here (the canonical Controller image is an
+    empty, never-installed disk), so the guest is scripted exactly as the
+    existing serial suites script one. What that still proves is the whole
+    credential discipline: the login answers the getty's own prompt, the
+    payload is written only after the guest proved terminal echo is off, the
+    sudo credential answers sudo's own private prompt, and nothing but base64
+    ever crosses the wire.
+    """
+
+    CONSOLE = b"console-secret-typed"
+
+    def setUp(self):
+        self.observed = {}
+        self.failures = []
+        self.staged = []
+        principals = bootstrap_dc._controller_principals()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        overlay = Path(self.temporary.name) / "principals.json"
+        overlay.write_text(json.dumps(PRIVATE_OVERLAY), encoding="utf-8")
+        self.roster = principals.durable_directory_roster(overlay)
+        self.plan = principals.directory_account_plan(
+            list(principals.DIRECTORY_ROLES), roster=self.roster)
+        self.values = {
+            entry["name"]: f"Durable-{index}-secret!"
+            for index, entry in enumerate(self.plan)
+        }
+
+    def _responder(self, right, *, services_rc=b"0", stage_rc=b"0"):
+        def run():
+            stream = right.makefile("rb", buffering=0)
+            try:
+                right.sendall(b"bootstrap-dc login: ")
+                self.observed["username"] = stream.readline()
+                right.sendall(b"\r\nPassword: ")
+                self.observed["login-password"] = stream.readline()
+                right.sendall(b"\r\n[local-rescue@bootstrap-dc ~]$ ")
+                services = stream.readline()
+                self.observed["services"] = services
+                token = services.split(
+                    b"__TELOS_CONTROLLER_SERVICES_", 1)[1].split(b"=", 1)[0]
+                right.sendall(
+                    b"\r\n__TELOS_CONTROLLER_SERVICES_" + token + b"="
+                    + services_rc + b"\r\n")
+                if services_rc != b"0":
+                    return
+                self.observed["stage-blank"] = stream.readline()
+                right.sendall(b"\r\n[local-rescue@bootstrap-dc ~]$ ")
+                command = stream.readline()
+                self.observed["stage-command"] = command
+                ready = command.split(
+                    b"__TELOS_PRINCIPAL_READY_", 1)[1].split(b"__", 1)[0]
+                result = command.split(
+                    b"__TELOS_PRINCIPAL_RC_", 1)[1].split(b"=", 1)[0]
+                sudo = command.split(
+                    b"__TELOS_PRINCIPAL_SUDO_", 1)[1].split(b"__", 1)[0]
+                right.sendall(
+                    b"\r\n__TELOS_PRINCIPAL_READY_" + ready + b"__\r\n")
+                self.observed["stage-payload"] = stream.readline()
+                right.sendall(
+                    b"\r\n__TELOS_PRINCIPAL_SUDO_" + sudo + b"__\r\n")
+                self.observed["stage-sudo-password"] = stream.readline()
+                right.sendall(
+                    b"\r\n__TELOS_PRINCIPAL_RC_" + result + b"=" + stage_rc
+                    + b"\r\n")
+                if stage_rc != b"0":
+                    return
+                self.observed["poweroff-blank"] = stream.readline()
+                right.sendall(b"\r\n[local-rescue@bootstrap-dc ~]$ ")
+                poweroff = stream.readline()
+                self.observed["poweroff-command"] = poweroff
+                prompt = poweroff.split(
+                    b"__TELOS_PERSISTENT_POWEROFF_", 1)[1].split(b"__", 1)[0]
+                right.sendall(
+                    b"\r\n__TELOS_PERSISTENT_POWEROFF_" + prompt + b"__\r\n")
+                self.observed["poweroff-password"] = stream.readline()
+                right.sendall(b"\r\nReached target System Power Off\r\n")
+            except BaseException as error:  # surfaced, never swallowed
+                self.failures.append(repr(error))
+        return run
+
+    def drive(self, **kwargs):
+        left, right = socket.socketpair()
+        thread = threading.Thread(
+            target=self._responder(right, **kwargs), daemon=True)
+        thread.start()
+        process = mock.Mock()
+        process.stdout = left.makefile("rb", buffering=0)
+        process.stdin = left.makefile("wb", buffering=0)
+        announced = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(announced):
+                with mock.patch.object(
+                        bootstrap_dc, "PERSISTENT_CONSOLE_TIMEOUT", 5.0):
+                    return bootstrap_dc._drive_persistent_accounts(
+                        process, self.CONSOLE, dict(self.values),
+                        roster=self.roster, roster_source="a private overlay",
+                        timeout=5.0,
+                        on_stage=lambda: self.staged.append("reached")
+                    ), announced.getvalue()
+        finally:
+            left.close()
+            right.close()
+            thread.join(timeout=2)
+
+    def test_the_exchange_logs_in_proves_the_directory_and_stages(self):
+        result, announced = self.drive()
+        self.assertEqual([], self.failures)
+        self.assertEqual("stage", result.operation)
+        self.assertEqual(["reached"], self.staged)
+        self.assertEqual(b"local-rescue\n", self.observed["username"])
+        # The directory is proven live BEFORE the staging attempt is recorded
+        # and before a credential is written into it.
+        self.assertIn(b"samba.service", self.observed["services"])
+        self.assertIn(b"sam.ldb", self.observed["services"])
+        self.assertIn("persistent-accounts-shell-ready", announced)
+        self.assertIn("controller-service-readiness-observed", announced)
+        self.assertIn("persistent-accounts-poweroff-observed", announced)
+
+    def test_the_payload_is_written_only_behind_a_proven_echo_off(self):
+        _result, _announced = self.drive()
+        command = self.observed["stage-command"]
+        # Echo is disabled and PROVEN -- the ready marker prints only behind a
+        # successful stty -- before the credentials are written, and the value
+        # the shell reads is base64, never a shell word.
+        self.assertIn(b"stty -echo || exit 91", command)
+        self.assertLess(
+            command.index(b"stty -echo"),
+            command.index(b"__TELOS_PRINCIPAL_READY_"))
+        self.assertIn(b"IFS= read -r __telos_payload", command)
+        self.assertEqual(
+            self.values,
+            json.loads(base64.b64decode(
+                self.observed["stage-payload"]).decode("utf-8")))
+
+    def test_the_console_credential_only_ever_answers_sudos_own_prompt(self):
+        _result, announced = self.drive()
+        command = self.observed["stage-command"]
+        # A durable instance's console account has a password the operator
+        # typed, so the protocol must NOT take the disposable `sudo -n` path.
+        self.assertIn(b"sudo -k -p", command)
+        self.assertNotIn(b"sudo -n", command)
+        for label in ("login-password", "stage-sudo-password",
+                      "poweroff-password"):
+            self.assertEqual(self.CONSOLE + b"\n", self.observed[label])
+        # The credential is in no command line, and in nothing the operator or
+        # a retained log was shown.
+        for label in ("services", "stage-command", "stage-payload",
+                      "poweroff-command"):
+            self.assertNotIn(self.CONSOLE, self.observed[label])
+        self.assertNotIn(self.CONSOLE.decode(), announced)
+        for secret in self.values.values():
+            self.assertNotIn(secret.encode(), command)
+            self.assertNotIn(secret, announced)
+
+    def test_a_directory_that_is_not_serving_stops_before_staging(self):
+        with self.assertRaises(bootstrap_dc.SerialAutomationError):
+            self.drive(services_rc=b"13")
+        # Nothing was recorded as having reached the directory, because
+        # nothing did.
+        self.assertEqual([], self.staged)
+        self.assertNotIn("stage-payload", self.observed)
+
+    def test_a_nonzero_guest_result_is_a_named_failure(self):
+        principals = bootstrap_dc._controller_principals()
+        with self.assertRaisesRegex(
+                principals.ControllerPrincipalError, "stage returned 5"):
+            self.drive(stage_rc=b"5")
+        # The attempt IS recorded: the guest was handed the credentials, so a
+        # later run must not assume the directory is untouched.
+        self.assertEqual(["reached"], self.staged)
 
 
 class DisposablePathUnchangedTests(unittest.TestCase):

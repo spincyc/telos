@@ -81,6 +81,21 @@ PERSISTENT_CONVERGENCE_KEY = "converged"
 #: already set, and a later attempt must not confidently ask for a new one it
 #: cannot apply. Its absence means "no attempt has ever got that far".
 PERSISTENT_PROVISIONING_KEY = "provisioning_attempted"
+#: The marker key recording that the owner's DURABLE account roster has been
+#: staged into this instance's directory. Same discipline as the convergence
+#: record and for the same reason: the accounts it describes are permanent, so
+#: the claim is written only after the guest proved the staging returned zero.
+#: It records contract ROLES, POSIX numbers and a roster FINGERPRINT — never an
+#: account name, which is instance data (ADR 0046) declared once in the owner's
+#: gitignored overlay — and never a credential.
+PERSISTENT_ACCOUNTS_KEY = "directory_accounts"
+#: The marker key recording that a staging run reached the point of writing
+#: into the directory. Written immediately before the guest program runs, so a
+#: run killed mid-stage leaves evidence that some accounts may exist. The guest
+#: program rolls back the accounts IT created when it fails, but a kill cannot
+#: run a rollback, and an operator must be told to look rather than be asked
+#: for fresh credentials the directory would refuse as duplicate accounts.
+PERSISTENT_ACCOUNTS_ATTEMPT_KEY = "directory_accounts_attempted"
 
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
@@ -789,6 +804,95 @@ class PersistentControllerInstance:
                 "it did provision, the domain Administrator password is the "
                 "one typed on that attempt and cannot be changed by running "
                 "convergence again"),
+        }
+        self._write_marker(marker)
+        return marker
+
+    # -- durable account roster ------------------------------------------
+    @staticmethod
+    def _validated_accounts(record: object) -> dict:
+        """Fail closed unless ``record`` is a usable durable-account record.
+
+        Deliberately refuses anything holding a ``name``: the record is written
+        into ``build/`` beside the disk, and real account names are instance
+        data that belong only in the owner's gitignored overlay (ADR 0046). A
+        reader identifies an account by its CONTRACT ROLE and proves the roster
+        with the fingerprint, which is fixed-width and names nobody.
+        """
+        if not isinstance(record, dict):
+            raise PersistentInstanceInvalid(
+                "persistent directory-account record is not an object")
+        when = record.get("staged_utc")
+        if not isinstance(when, str) or not when:
+            raise PersistentInstanceInvalid(
+                "persistent directory-account record has no staged_utc time")
+        fingerprint = record.get("roster_fingerprint")
+        if not isinstance(fingerprint, str) or not fingerprint:
+            raise PersistentInstanceInvalid(
+                "persistent directory-account record has no roster "
+                "fingerprint")
+        accounts = record.get("accounts")
+        if not isinstance(accounts, list) or not accounts:
+            raise PersistentInstanceInvalid(
+                "persistent directory-account record names no contract roles")
+        for account in accounts:
+            if not isinstance(account, dict) or not isinstance(
+                    account.get("contract_role"), str):
+                raise PersistentInstanceInvalid(
+                    "persistent directory-account record has an entry with no "
+                    "contract role")
+            if "name" in account:
+                raise PersistentInstanceInvalid(
+                    "persistent directory-account record must not carry an "
+                    "account name; real names are instance data")
+        return record
+
+    def directory_accounts(self) -> dict | None:
+        """The proven durable account roster, or ``None`` for none staged."""
+        record = self.read_marker().get(PERSISTENT_ACCOUNTS_KEY)
+        if record is None:
+            return None
+        return self._validated_accounts(record)
+
+    def record_directory_accounts(self, record: dict) -> dict:
+        """Add a proven durable-account record to the marker, atomically."""
+        record = self._validated_accounts(record)
+        marker = self.read_marker()
+        marker[PERSISTENT_ACCOUNTS_KEY] = record
+        self._write_marker(marker)
+        return marker
+
+    def directory_accounts_attempted(self) -> dict | None:
+        """When a staging run last reached the directory, if one ever did."""
+        record = self.read_marker().get(PERSISTENT_ACCOUNTS_ATTEMPT_KEY)
+        if record is None:
+            return None
+        if not isinstance(record, dict) or not isinstance(
+                record.get("attempted_utc"), str):
+            raise PersistentInstanceInvalid(
+                "persistent directory-account attempt record has no "
+                "attempted_utc time")
+        return record
+
+    def record_directory_accounts_attempt(self) -> dict:
+        """Note, once, that a staging run reached the directory.
+
+        Idempotent for the same reason ``record_provisioning_attempt`` is: the
+        FIRST attempt's timestamp is the one that describes how long a possibly
+        half-staged directory has been in that state.
+        """
+        marker = self.read_marker()
+        existing = marker.get(PERSISTENT_ACCOUNTS_ATTEMPT_KEY)
+        if isinstance(existing, dict) and existing.get("attempted_utc"):
+            return marker
+        marker[PERSISTENT_ACCOUNTS_ATTEMPT_KEY] = {
+            "attempted_utc": datetime.now(UTC).isoformat(),
+            "note": (
+                "a run reached the point of writing the durable account "
+                "roster into the directory. If it did not finish, some of "
+                "those accounts may exist with the credentials typed on that "
+                "attempt; list them with `samba-tool user list` on the "
+                "instance before staging again"),
         }
         self._write_marker(marker)
         return marker

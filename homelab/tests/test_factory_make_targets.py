@@ -267,6 +267,8 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "homelab-factory-persistent-up",
             "homelab-factory-persistent-converge-plan",
             "homelab-factory-persistent-converge",
+            "homelab-factory-persistent-accounts-plan",
+            "homelab-factory-persistent-accounts",
             "homelab-factory-persistent-destroy",
         )
         for target in targets:
@@ -362,6 +364,8 @@ class FactoryMakeTargetTests(unittest.TestCase):
             "homelab-factory-persistent-up",
             "homelab-factory-persistent-converge-plan",
             "homelab-factory-persistent-converge",
+            "homelab-factory-persistent-accounts-plan",
+            "homelab-factory-persistent-accounts",
             "homelab-factory-persistent-destroy",
         ):
             with self.subTest(target=target):
