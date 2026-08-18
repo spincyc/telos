@@ -1057,6 +1057,12 @@ def _drive_persistent_convergence(
     real ``sam.ldb`` before returning. Its *name* is a wart here; renaming it
     would touch a module every acceptance gate shares, so this comment carries
     the meaning instead.
+
+    ``on_event`` is the same seam the durable-account verb uses: it lets a
+    caller act on a stage *as the guest reaches it*, which is the only way to
+    record a fact about a run that may not survive to the end. A provisioning
+    attempt that dies half way still has to leave a mark, because the operator
+    must not be asked afterwards for a credential the directory already took.
     """
     if process.stdout is None or process.stdin is None:
         raise RuntimeError(
