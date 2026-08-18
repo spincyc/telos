@@ -25,14 +25,14 @@
     {
       "id": "windows-login-driven",
       "phase": 2,
-      "reason": "The gate-10 boot has no in-guest control channel: the gate-5 Windows image's serial marker was a one-shot first-logon command and the identity control agent belongs to gate 6. Until GUI login driving is wired through the identity lane, Windows evidence is boot-observed only and must never claim login-proven.",
+      "reason": "The gate-10 boot has no in-guest control channel: the gate-5 Windows image's serial marker was a one-shot first-logon command and the identity control agent belongs to gate 6. Until GUI login driving is wired through the identity lane, Windows evidence is boot-observed only and must never claim login-proven. Established 2026-08-17 and recorded so it is not re-derived: this deferral cannot be closed on the retained gate-7 disks at all. The only login that needs no directory is the local one, and its credential is gone -- gate 5 generates it randomly and retains it nowhere but the unattend, gate 6 recovers it only from the one-use publication.iso, and every publication.iso in the tree has been consumed and destroyed. The gate-5 AutoLogon is LogonCount=1 and was spent during gate 5's own native-ready boot. Restoring the Controller image would not change any of this. Note also that the judge accepts observation=login-proven with no observational backing whatsoever -- no principal, no method, no frame or transcript corroboration -- so wiring a producer for this flag means adding judge fields, not flipping a boolean.",
       "applies_to": ["windows"],
       "release_gate": "deferred"
     },
     {
       "id": "arch-authenticated-login",
       "phase": 2,
-      "reason": "Proving the ttyS0 login surface exists does not authenticate a principal. Authenticated Arch login belongs to the gate-8 identity lifecycle; gate 10 only proves the login surface is reachable from a cold menu selection.",
+      "reason": "Proving the ttyS0 login surface exists does not authenticate a principal. Authenticated Arch login belongs to the gate-8 identity lifecycle; gate 10 only proves the login surface is reachable from a cold menu selection. Established 2026-08-17 and recorded so it is not re-derived: no authenticated login of any kind is possible on the retained gate-7 disks. Three independent locks, all deliberate. The install-time join bound the disk to a domain that no longer exists, and no user ever authenticated online on it, so cache_credentials has nothing cached. local-rescue was created by useradd with no -p, so its password is disabled and nothing in the run ever sets it. loader.conf sets editor no, so the cmdline cannot be edited to reach root before the getty. The machinery that would set the rescue password runs from an already-elevated root shell, which the login is what enables. Standing up a fresh Controller would not help: a new domain has a new SID, and the re-join unit that fixes that is absent from the 08-11 disks and needs hot-attached join media this gate's boundary forbids. A local-rescue login would not satisfy this check even if it were possible -- local_rescue carries domain_role none and is excluded from the directory roster, so grading it here would be weakening the check rather than passing it.",
       "applies_to": ["arch"],
       "release_gate": "deferred"
     }

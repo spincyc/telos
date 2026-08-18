@@ -387,10 +387,24 @@ choices, and GPT integrity. **Evidence — gate 10 PASS 2026-08-11**, bundle
 `status` `observed`, phase `dualboot-accepted`, `checks: 8` (all green),
 `partitions_byte_identical: true`, `arch_clean_shutdown: true`. The firmware
 started Linux Boot Manager, the five-second Windows-default menu rendered
-(~5 s), Windows booted and shut down cleanly, boot 2 arrow-navigated to Arch,
-the GPT was byte-unchanged, and both EFI boot managers plus the recovery entry
-were present. Note `windows_login_proven: false` here — **live Windows login is
-proven by gate 6's identity stream, not this gate.**
+(~5 s), Windows booted, boot 2 arrow-navigated to Arch, the GPT was
+byte-unchanged, and both EFI boot managers plus the recovery entry were
+present. The same `result.json` records `windows_clean_shutdown: false` — the
+gate does not require a clean Windows shutdown and did not observe one. Note
+`windows_login_proven: false` here — **live Windows login is proven by gate 6's
+identity stream, not this gate.**
+
+**Do not re-point gate 10 at a 2026-08-14 gate-7 bundle.** The three bundles
+from that date bake in `telos-arch-join-once.service` and
+`telos-arch-domain-online.service`, both ordered before
+`systemd-user-sessions.service`. Gate 10 attaches no media and no network, so
+the first spends 120 s waiting for `/dev/disk/by-label/TELOS_JOIN` and the
+second another 120 s waiting for a directory account, pushing the ttyS0 getty
+roughly 240 s past kernel handoff — past `observe_boot`'s 120 s login wait, so
+`arch-console-login-surface` records no login prompt and the gate FAILS. Use an
+08-11 bundle (`run-20260811T141601Z-6941005247e8` or
+`run-20260811T170109Z-7ceb936e2710`); neither installer contains those units.
+Nothing is destroyed by the mistake, but the run is wasted.
 
 ---
 
