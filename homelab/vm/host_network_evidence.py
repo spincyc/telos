@@ -26,17 +26,27 @@ class Observation:
     stderr: str
 
 
+LINK_COMMAND = ("ip", "-j", "-details", "link", "show")
+ADDRESS_COMMAND = ("ip", "-j", "address", "show")
+ROUTE4_COMMAND = ("ip", "-j", "route", "show", "table", "all")
+ROUTE6_COMMAND = ("ip", "-j", "-6", "route", "show", "table", "all")
+BRIDGE_LINK_COMMAND = ("bridge", "-j", "link", "show")
+BRIDGE_VLAN_COMMAND = ("bridge", "-j", "vlan", "show")
+NETNS_COMMAND = ("ip", "netns", "list")
+# --stateless omits counters that can legitimately advance during a test.
+NFT_COMMAND = ("nft", "-j", "--stateless", "list", "ruleset")
+SOCKET_COMMAND = ("ss", "-H", "-lntup")
+
 COMMANDS: tuple[tuple[str, ...], ...] = (
-    ("ip", "-j", "-details", "link", "show"),
-    ("ip", "-j", "address", "show"),
-    ("ip", "-j", "route", "show", "table", "all"),
-    ("ip", "-j", "-6", "route", "show", "table", "all"),
-    ("bridge", "-j", "link", "show"),
-    ("bridge", "-j", "vlan", "show"),
-    ("ip", "netns", "list"),
-    # --stateless omits counters that can legitimately advance during a test.
-    ("nft", "-j", "--stateless", "list", "ruleset"),
-    ("ss", "-H", "-lntup"),
+    LINK_COMMAND,
+    ADDRESS_COMMAND,
+    ROUTE4_COMMAND,
+    ROUTE6_COMMAND,
+    BRIDGE_LINK_COMMAND,
+    BRIDGE_VLAN_COMMAND,
+    NETNS_COMMAND,
+    NFT_COMMAND,
+    SOCKET_COMMAND,
 )
 
 NFT_UNAVAILABLE = (
@@ -106,7 +116,7 @@ def _invalid_evidence(evidence: dict[str, object], label: str) -> list[str]:
             violations.append(
                 f"{label} command has malformed output: " + " ".join(command))
         unavailable_nft = (
-            command == ("nft", "-j", "--stateless", "list", "ruleset")
+            command == NFT_COMMAND
             and item.get("returncode") == 3
             and item.get("stdout") == ""
             and item.get("stderr") == NFT_UNAVAILABLE
@@ -160,7 +170,7 @@ def _socket_port(line: str) -> int | None:
 
 def _comparable_stdout(command: tuple[str, ...], stdout: str) -> object:
     """Remove only time-to-expiry fields while retaining the raw evidence."""
-    if command != ("ip", "-j", "address", "show"):
+    if command != ADDRESS_COMMAND:
         return stdout
     try:
         addresses = json.loads(stdout)
@@ -191,7 +201,7 @@ def compare(
         violations.append("the evidence command set changed")
         return violations
 
-    socket_command = ("ss", "-H", "-lntup")
+    socket_command = SOCKET_COMMAND
     for command in sorted(left):
         old = left[command]
         new = right[command]
@@ -275,3 +285,506 @@ def compare_cycle(
     violations.extend(
         f"after simulation: {item}" for item in compare(before, after))
     return violations
+
+
+# ---------------------------------------------------------------------------
+# Gate-12 host-network change counters
+# ---------------------------------------------------------------------------
+#
+# ``factory_verify._check_host_network`` reads exactly one measurement,
+# ``host_network_changes``.  It renders the acceptance check
+# ``no_host_network_change`` as:
+#
+#   NOT-RUN  the ``host_network_changes`` key is absent entirely
+#   FAIL     the value is not a mapping, or does not carry all seven of
+#            tap/bridge/route/vlan/forwarding/listener/unifi, or any of those
+#            seven is not an ``int`` or is not ``0``
+#   PASS     all seven are present and are the integer zero
+#
+# So a category this module cannot prove must never reach that mapping as a
+# zero.  Two honest renderings exist and both are supported here:
+#
+#   * :func:`change_counters` raises :class:`UnprovenCategory` rather than
+#     return a fabricated zero.  A producer that catches it and omits the
+#     whole ``host_network_changes`` key leaves check 9 at NOT-RUN, which is
+#     the honest verdict for "this run did not measure it".
+#   * :func:`classify` never raises for an unproven category: it puts the
+#     :data:`UNPROVEN` string sentinel in that counter's slot.  A producer
+#     that emits that mapping renders check 9 FAIL, because the sentinel is
+#     not an ``int``.  It can never render PASS.
+#
+# Nothing here returns a hostname, address, MAC, or interface name.  Object
+# identities are built only to be compared and are never surfaced: the public
+# results carry counts, category names, and observation command names.
+
+CATEGORIES: tuple[str, ...] = (
+    "tap", "bridge", "route", "vlan", "forwarding", "listener", "unifi")
+
+#: Placed in a counter slot that has no positive observation behind it.  It is
+#: deliberately not an integer so gate-12 check 9 cannot read it as a PASS.
+UNPROVEN = "unproven"
+
+UNIFI_SCHEMA = 1
+
+# Which counters each observation can prove.  A command that is missing,
+# failed, unparseable, or that produced a difference this module cannot
+# attribute to a shape leaves every category listed here UNPROVEN.
+#
+# ``ip -j address show`` informs the interface categories because an address
+# belongs to an interface whose kind the link observation names, and informs
+# ``route`` because an address implies its connected route.
+#
+# ``ip netns list`` informs every topology category: a namespace that appears
+# or disappears can hide taps, bridges, routes, VLANs, and rules from every
+# other command in this list, so its own stability is part of their proof.
+_CATEGORY_SOURCES: dict[tuple[str, ...], tuple[str, ...]] = {
+    LINK_COMMAND: ("tap", "bridge", "vlan"),
+    ADDRESS_COMMAND: ("tap", "bridge", "vlan", "route"),
+    ROUTE4_COMMAND: ("route",),
+    ROUTE6_COMMAND: ("route",),
+    BRIDGE_LINK_COMMAND: ("bridge",),
+    BRIDGE_VLAN_COMMAND: ("vlan",),
+    NETNS_COMMAND: ("tap", "bridge", "route", "vlan", "forwarding"),
+    NFT_COMMAND: ("forwarding",),
+    SOCKET_COMMAND: ("listener",),
+}
+
+# ``linkinfo.info_kind`` to counter category.  A kind that is absent (a
+# physical NIC, loopback) or unlisted (veth, dummy, bond, wireguard) is
+# deliberately unmapped: such a device is not one of the seven categories, so
+# a *change* to one cannot be attributed and must leave the link-derived
+# categories UNPROVEN rather than silently count as nothing.
+_LINK_KINDS: dict[str, str] = {
+    "tun": "tap",
+    "tap": "tap",
+    "bridge": "bridge",
+    "vlan": "vlan",
+    "macvlan": "vlan",
+    "macvtap": "vlan",
+    "vxlan": "vlan",
+}
+
+_VOLATILE_ADDRESS_FIELDS = ("valid_life_time", "preferred_life_time")
+
+
+class ClassificationError(RuntimeError):
+    """Snapshots cannot support a host-network change count."""
+
+
+class UnprovenCategory(ClassificationError):
+    """A gate-12 category has no positive observation behind it.
+
+    Raised instead of returning a zero.  ``reasons`` maps each unproven
+    category to a shape-only explanation.
+    """
+
+    def __init__(self, reasons: dict[str, str]) -> None:
+        self.reasons = dict(reasons)
+        super().__init__(
+            "host network change counters are unproven:\n- "
+            + "\n- ".join(
+                f"{name}: {self.reasons[name]}"
+                for name in sorted(self.reasons)))
+
+
+def _is_count(value: object, *, minimum: int = 0) -> bool:
+    """A real, non-boolean count.  ``True`` is not an observation of one."""
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and value >= minimum)
+
+
+def _is_named(value: object) -> bool:
+    """A non-empty label naming what made an observation."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def unifi_no_contact(
+    *,
+    audited_processes: int,
+    auditor: str,
+    egress_contacts: int,
+    egress_observation: str,
+) -> dict[str, object]:
+    """Build the positive observation the ``unifi`` counter requires.
+
+    ``COMMANDS`` observes no UniFi surface at all, so this module can never
+    derive a UniFi verdict from a host snapshot.  A zero there is only
+    defensible when a caller supplies an observation that something actually
+    watched for a UniFi contact and saw none; without this argument
+    :func:`classify` reports ``unifi`` as :data:`UNPROVEN`.
+
+    The two halves are both required because they cover different actors:
+
+    ``audited_processes`` / ``auditor``
+        how many *guest* processes were proved, from the kernel's own view of
+        their argv, to carry a loopback socket NIC only -- the audit
+        ``vm.network.assert_isolated`` performs and
+        ``factory_runner.audit_live_process`` re-performs live, which refuses
+        the literal term ``unifi`` along with tap/bridge/user/slirp.  It
+        proves no guest could reach a UniFi controller.
+    ``egress_contacts`` / ``egress_observation``
+        how many contacts to a UniFi endpoint an observation of the *host's*
+        own outbound traffic saw across the whole run window, and what made
+        that observation.  The guest audit says nothing about the host
+        process, and ``ss -H -lntup`` lists listening sockets only, so this
+        half cannot be derived from anything in ``COMMANDS`` today.
+
+    Raises ``ValueError`` for an observation that does not actually observe
+    anything (no audited process, an unnamed auditor or observation, or a
+    negative contact count).
+    """
+    if not _is_count(audited_processes, minimum=1):
+        raise ValueError("a UniFi observation must audit at least one process")
+    if not _is_count(egress_contacts):
+        raise ValueError("egress contacts must be a non-negative count")
+    if not _is_named(auditor):
+        raise ValueError("a UniFi observation must name its auditor")
+    if not _is_named(egress_observation):
+        raise ValueError(
+            "a UniFi observation must name its egress observation")
+    return {
+        "schema": UNIFI_SCHEMA,
+        "guest_isolation_audit": {
+            "audited_processes": audited_processes,
+            "auditor": auditor,
+        },
+        "host_egress": {
+            "contacts": egress_contacts,
+            "observation": egress_observation,
+        },
+    }
+
+
+def _load_json(text: str) -> object | None:
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _canonical(value: object) -> str:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _place(objects: dict, prefix: str, shape: str, category, owner) -> None:
+    """Record one object, preserving multiplicity of identical shapes."""
+    occurrence = 0
+    while f"{prefix}/{occurrence}/{shape}" in objects:
+        occurrence += 1
+    objects[f"{prefix}/{occurrence}/{shape}"] = (category, owner)
+
+
+def _link_objects(text: str):
+    entries = _load_json(text)
+    if not isinstance(entries, list):
+        return None
+    objects: dict[str, tuple] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        info = entry.get("linkinfo")
+        kind = info.get("info_kind") if isinstance(info, dict) else None
+        category = _LINK_KINDS.get(kind) if isinstance(kind, str) else None
+        name = entry.get("ifname")
+        _place(objects, "link", _canonical(entry), category,
+               name if isinstance(name, str) else None)
+    return objects
+
+
+def _address_objects(text: str):
+    entries = _load_json(text)
+    if not isinstance(entries, list):
+        return None
+    objects: dict[str, tuple] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get("ifname")
+        owner = name if isinstance(name, str) else None
+        infos = entry.get("addr_info", [])
+        if not isinstance(infos, list):
+            return None
+        for address in infos:
+            if not isinstance(address, dict):
+                return None
+            stable = {
+                key: value for key, value in address.items()
+                if key not in _VOLATILE_ADDRESS_FIELDS
+            }
+            # The owner resolves to a category once the link observation has
+            # been parsed; an address on an interface of an unmapped kind
+            # stays unattributed.
+            _place(objects, "address", _canonical([owner, stable]),
+                   None, owner)
+    return objects
+
+
+def _flat_objects(prefix: str, category: str | None):
+    def parse(text: str):
+        entries = _load_json(text)
+        if not isinstance(entries, list):
+            return None
+        objects: dict[str, tuple] = {}
+        for entry in entries:
+            _place(objects, prefix, _canonical(entry), category, None)
+        return objects
+    return parse
+
+
+def _nft_objects(text: str):
+    document = _load_json(text)
+    if not isinstance(document, dict):
+        return None
+    elements = document.get("nftables")
+    if not isinstance(elements, list):
+        return None
+    objects: dict[str, tuple] = {}
+    for element in elements:
+        _place(objects, "ruleset", _canonical(element), "forwarding", None)
+    return objects
+
+
+def _netns_objects(text: str):
+    objects: dict[str, tuple] = {}
+    for line in text.splitlines():
+        if line.strip():
+            # A namespace is not one of the seven categories, so a namespace
+            # difference is deliberately unattributable.
+            _place(objects, "netns", _canonical(" ".join(line.split())),
+                   None, None)
+    return objects
+
+
+_PARSERS = {
+    LINK_COMMAND: _link_objects,
+    ADDRESS_COMMAND: _address_objects,
+    ROUTE4_COMMAND: _flat_objects("route4", "route"),
+    ROUTE6_COMMAND: _flat_objects("route6", "route"),
+    BRIDGE_LINK_COMMAND: _flat_objects("bridge-port", "bridge"),
+    BRIDGE_VLAN_COMMAND: _flat_objects("bridge-vlan", "vlan"),
+    NETNS_COMMAND: _netns_objects,
+    NFT_COMMAND: _nft_objects,
+}
+
+
+def _observation_map(evidence: object) -> dict[tuple[str, ...], dict | None]:
+    """Return every required command mapped to its usable observation or None.
+
+    ``None`` means the command cannot be used as evidence: the snapshot is
+    malformed, the command is missing or duplicated, it exited non-zero (the
+    tolerated "nft is unavailable" exit included -- an unreadable ruleset is
+    not a ruleset that did not change), or its output is not text.
+    """
+    result: dict[tuple[str, ...], dict | None] = {
+        command: None for command in COMMANDS}
+    if not isinstance(evidence, dict) or evidence.get("schema") != 1:
+        return result
+    items = evidence.get("observations")
+    if not isinstance(items, list):
+        return result
+    seen: set[tuple[str, ...]] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("command")
+        if not isinstance(raw, (list, tuple)) or \
+                not all(isinstance(part, str) for part in raw):
+            continue
+        command = tuple(raw)
+        if command not in result:
+            continue
+        if command in seen:
+            result[command] = None
+            continue
+        seen.add(command)
+        if item.get("returncode") != 0:
+            continue
+        if not isinstance(item.get("stdout"), str) or \
+                not isinstance(item.get("stderr"), str):
+            continue
+        result[command] = item
+    return result
+
+
+def _link_kind_map(parsed: list[dict | None]) -> dict[str, str]:
+    kinds: dict[str, str] = {}
+    for objects in parsed:
+        for category, owner in (objects or {}).values():
+            if isinstance(owner, str) and category is not None:
+                kinds[owner] = category
+    return kinds
+
+
+def _unifi_counter(observation: object) -> tuple[int | None, str | None]:
+    if observation is None:
+        return None, (
+            "no UniFi observation was supplied; COMMANDS observes no UniFi "
+            "surface, so a zero would rest on the absence of a check rather "
+            "than on evidence (see unifi_no_contact)")
+    if not isinstance(observation, dict) or \
+            observation.get("schema") != UNIFI_SCHEMA:
+        return None, "the UniFi observation has an unsupported schema"
+    audit = observation.get("guest_isolation_audit")
+    egress = observation.get("host_egress")
+    if not isinstance(audit, dict) or not isinstance(egress, dict):
+        return None, "the UniFi observation is missing a required half"
+    audited = audit.get("audited_processes")
+    auditor = audit.get("auditor")
+    contacts = egress.get("contacts")
+    source = egress.get("observation")
+    if not _is_count(audited, minimum=1) or not _is_named(auditor):
+        return None, "the UniFi observation records no guest isolation audit"
+    if not _is_count(contacts) or not _is_named(source):
+        return None, "the UniFi observation records no host egress observation"
+    return contacts, None
+
+
+def classify(
+    before: dict[str, object],
+    after: dict[str, object],
+    *,
+    during: dict[str, object] | None = None,
+    allowed_ports: frozenset[int] = frozenset(),
+    unifi: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Reduce a host-network snapshot cycle to the seven gate-12 counters.
+
+    ``before`` and ``after`` bracket the run; ``during`` is the live snapshot
+    :func:`compare_cycle` already takes, and should always be supplied when it
+    exists (see the attribution rule).  ``allowed_ports`` names the run's own
+    private loopback control ports, which are exempt from the ``listener``
+    counter for the duration of ``during`` only -- exactly the allowance
+    :func:`compare` implements.  ``unifi`` is the positive observation
+    :func:`unifi_no_contact` builds.
+
+    CHANGE ATTRIBUTION RULE.  Every observation is reduced to a multiset of
+    shape-only object identities: one link, one address, one route, one bridge
+    port, one VLAN entry, one ruleset element, one namespace, one listening
+    socket.  An identity present in *every* snapshot of the cycle is
+    pre-existing host state and is never a change, no matter what it is: a
+    host's own taps, bridges and routes cost nothing.  An identity absent from
+    at least one snapshot is one change, counted against the category its
+    shape belongs to.  With ``during`` supplied this counts an object that was
+    created and torn down inside the run (absent from before and after, present
+    in during) exactly as it counts one the run left behind (absent from
+    before).  Without ``during`` such an object is invisible, which is why the
+    live snapshot should always be passed.
+
+    Returns a report; it never raises for an unproven category.  ``counters``
+    holds an ``int`` per category, or the :data:`UNPROVEN` sentinel where no
+    positive observation stands behind a zero: a failed, missing, duplicated
+    or unparseable observation, a difference whose shape cannot be attributed
+    to any of the seven categories, or (always, by default) ``unifi``.
+    ``proven`` is True only when every counter is an integer.  Nothing in the
+    report identifies a host: counts, category names, and the observation
+    command names only.
+    """
+    snapshots = [before] if during is None else [before, during]
+    snapshots.append(after)
+    maps = [_observation_map(snapshot) for snapshot in snapshots]
+
+    counters: dict[str, object] = {name: 0 for name in CATEGORIES}
+    reasons: dict[str, str] = {}
+
+    def unprove(categories, reason: str) -> None:
+        for name in categories:
+            reasons.setdefault(name, reason)
+
+    parsed: dict[tuple[str, ...], list[dict] | None] = {}
+    for command in COMMANDS:
+        if command == SOCKET_COMMAND:
+            continue
+        sources = _CATEGORY_SOURCES[command]
+        if any(entry[command] is None for entry in maps):
+            unprove(
+                sources,
+                "no usable observation from: " + " ".join(command))
+            parsed[command] = None
+            continue
+        objects = [
+            _PARSERS[command](entry[command]["stdout"]) for entry in maps]
+        if any(item is None for item in objects):
+            unprove(sources, "unparseable output from: " + " ".join(command))
+            parsed[command] = None
+            continue
+        parsed[command] = objects
+
+    kinds = _link_kind_map(parsed.get(LINK_COMMAND) or [])
+    for command, objects in parsed.items():
+        if objects is None:
+            continue
+        sources = _CATEGORY_SOURCES[command]
+        identities = set().union(*(set(item) for item in objects))
+        for identity in sorted(identities):
+            present = [item for item in objects if identity in item]
+            if len(present) == len(objects):
+                continue
+            category, owner = present[0][identity]
+            if category is None and isinstance(owner, str):
+                category = kinds.get(owner)
+            if category is None:
+                unprove(
+                    sources,
+                    "a difference could not be attributed to a category: "
+                    + " ".join(command))
+                continue
+            counters[category] = counters[category] + 1
+
+    if any(entry[SOCKET_COMMAND] is None for entry in maps):
+        unprove(("listener",),
+                "no usable observation from: " + " ".join(SOCKET_COMMAND))
+    else:
+        lines = [_socket_lines(entry[SOCKET_COMMAND]) for entry in maps]
+        listener = len(lines[0] ^ lines[-1])
+        if during is not None:
+            listener += len(lines[0] - lines[1])
+            listener += sum(
+                1 for line in lines[1] - lines[0]
+                if not _allowed_socket(line, allowed_ports))
+        counters["listener"] = listener
+
+    contacts, unifi_reason = _unifi_counter(unifi)
+    if unifi_reason is not None:
+        reasons.setdefault("unifi", unifi_reason)
+    else:
+        counters["unifi"] = contacts
+
+    for name in reasons:
+        counters[name] = UNPROVEN
+    return {
+        "schema": 1,
+        "kind": "host-network-change-classification",
+        "counters": counters,
+        "unproven": sorted(reasons),
+        "reasons": dict(sorted(reasons.items())),
+        "proven": not reasons,
+        "snapshots": len(maps),
+    }
+
+
+def change_counters(
+    before: dict[str, object],
+    after: dict[str, object],
+    *,
+    during: dict[str, object] | None = None,
+    allowed_ports: frozenset[int] = frozenset(),
+    unifi: dict[str, object] | None = None,
+) -> dict[str, int]:
+    """The gate-12 ``host_network_changes`` measurement, or nothing at all.
+
+    Same arguments and same attribution rule as :func:`classify`, of which
+    this is the fail-closed form: it returns the seven counters as integers
+    only when every one of them is proven, and raises
+    :class:`UnprovenCategory` otherwise.  It never returns a zero it cannot
+    support, so a producer may put the result straight into
+    ``measurements["host_network_changes"]``.  Catching the exception and
+    omitting that key leaves gate-12 check 9 at NOT-RUN; emitting
+    ``classify(...)["counters"]`` instead renders it FAIL.  Neither can
+    render PASS.
+    """
+    report = classify(
+        before, after, during=during, allowed_ports=allowed_ports, unifi=unifi)
+    if not report["proven"]:
+        raise UnprovenCategory(report["reasons"])
+    return {name: int(value) for name, value in report["counters"].items()}
