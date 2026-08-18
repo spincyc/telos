@@ -9,6 +9,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -52,6 +53,11 @@ from workstations.arch_second import (
     identity_contract_path, identity_overlay_path, identity_roster,
     identity_roster_fingerprint, identity_roster_source,
 )
+from workstations.arch_second import (
+    SYNTHETIC_REALM_SOURCE, InstallerRealm, InstallerRealmError,
+    durable_installer_realm, installer_realm, synthetic_installer_realm,
+)
+import workstations.arch_second as arch_second
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 from lib.workstation_repo import REPO_NAME
 
@@ -565,20 +571,13 @@ class ArchSecondTests(unittest.TestCase):
                     package_repo_url=url,
                 )
 
-    def test_rejects_invalid_realm_parameters(self):
-        for overrides in (
-            {"realm_dns_domain": "AD.Factory.Test"},
-            {"realm_dns_domain": "single-label"},
-            {"realm_workgroup": "factory"},
-            {"realm_workgroup": "TOO-LONG-WORKGROUP"},
-            {"join_media_label": "bad label"},
-            {"join_media_label": ""},
-        ):
+    def test_rejects_invalid_join_media_labels(self):
+        for label in ("bad label", ""):
             with self.assertRaises(InstallContractError):
                 render_installer(
                     disk_path="/dev/vda", disk_serial="LAPTOP-1",
                     hostname="workstation", expected_sizes_mib=SIZES,
-                    **overrides,
+                    join_media_label=label,
                 )
 
     def test_probe_covers_the_optional_storage_checks(self):
@@ -1920,6 +1919,66 @@ class RosterLoaderTests(unittest.TestCase):
         # distinct class means a roster fault never reads as disk geometry.
         self.assertTrue(issubclass(IdentityRosterError, InstallContractError))
 
+    def test_the_break_glass_account_may_not_be_root(self):
+        # ADR 0055/0063 make break-glass a SEPARATELY NAMED local account so it
+        # is not UID 0.  The loader used to accept it: identity_roster()
+        # returned {'local_rescue': 'root'} and the rendered installer would
+        # have baked `useradd root` and a sudoers rule for root onto the disk.
+        # The Ansible common role refuses it too, but the installer path reads
+        # this loader directly and never passes through Ansible.
+        with self.assertRaises(IdentityRosterError) as caught:
+            self.named(local_rescue="root")
+        message = str(caught.exception)
+        self.assertIn("local_rescue", message)
+        self.assertIn("'root'", message)
+        self.assertIn("ADR 0055/0063", message)
+        # The refusal names the file the name came from, so the reader of a
+        # transcript knows which document to correct.
+        self.assertIn("principals.json", message)
+
+    def test_the_break_glass_account_may_not_take_a_system_account(self):
+        # Every one of these is already in /etc/passwd on the installed disk
+        # and nsswitch resolves local files first, so the name could never
+        # mean the account the roster intends.
+        for name in ("root", "daemon", "bin", "sys", "nobody",
+                     "systemd-network"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                        IdentityRosterError, "reserved for the installed"):
+                    self.named(local_rescue=name)
+        # Refused, never substituted: nothing resolves to a different name.
+        self.assertEqual(
+            self.named(local_rescue="rescue")["local_rescue"], "rescue")
+        # A name that merely CONTAINS a reserved one is fine; only the account
+        # names themselves and systemd's own prefix are reserved.
+        for name in ("rootless", "binary-rescue", "system-rescue"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self.named(local_rescue=name)["local_rescue"], name)
+
+    def test_the_reservations_bind_the_local_role_and_only_it(self):
+        # A DIRECTORY principal that collides with a local account is already
+        # refused twice, and better: on the control host before anything is
+        # installed, and by the installer's own local-shadow guard, which reads
+        # this disk's real /etc/passwd after every package is in place.  That
+        # guard exempts the break-glass account by design -- which is exactly
+        # the hole the local reservations close -- so the loader's list binds
+        # the local role alone rather than becoming a third static copy.
+        for role in DIRECTORY_ROLES:
+            with self.subTest(role=role):
+                self.assertEqual(self.named(**{role: "root"})[role], "root")
+        script = render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname="workstation", expected_sizes_mib=SIZES)
+        self.assertIn("local account shadows directory principal", script)
+        # And the directory namespace's own reservations stay there: they mean
+        # nothing to a local UNIX account, and two files already keep them in
+        # step with each other.
+        for name in ("administrator", "guest", "krbtgt", "dns-factory"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self.named(local_rescue=name)["local_rescue"], name)
+
     def test_documentation_keys_are_allowed_because_json_has_no_comments(self):
         roster = identity_roster(overlay_path=self.overlay({
             "_documentation": "read me",
@@ -2135,6 +2194,320 @@ class RosterLoaderTests(unittest.TestCase):
         self.assertIn(f"{PROBE_ROSTER_VERB}|", probe)
         self.assertIn(PROBE_ROSTER_MARKER, probe)
         self.assertNotIn(PROBE_ROSTER_VERB, PROBE_CHECKS)
+
+#: A complete, well-formed ADR 0065 declaration.  Synthetic in every field and
+#: deliberately unlike ``FactorySpec()``'s defaults in all of them, so a
+#: passing assertion about a durable value can never be a silent fallback to
+#: the acceptance one.  The same shape ``test_directory_identity`` uses; a
+#: tracked fixture naming the owner's real realm would put an effectively
+#: permanent private value into Git, which is what the gitignored overlay
+#: exists to prevent.
+DURABLE_DOCUMENT = {
+    "schema_version": 1,
+    "identity": {
+        "dns_domain": "ad.example.home.arpa",
+        "kerberos_realm": "AD.EXAMPLE.HOME.ARPA",
+        "netbios_name": "EXAMPLEAD",
+    },
+    "services": {
+        "bootstrap_dc_fqdn": "bootstrap.ad.example.home.arpa",
+        "permanent_dc_fqdn": "dc2.ad.example.home.arpa",
+    },
+    "network": {"address": "10.1.99.2", "prefix": 28, "gateway": "10.1.99.1"},
+}
+
+#: Every line the synthetic render emits that carries the realm, its NetBIOS
+#: name or its domain controller -- the complete set, frozen at the commit
+#: that made the realm derivable.  This is the acceptance guarantee stated as
+#: bytes rather than as arguments: gate 7 installs against the DISPOSABLE
+#: Controller, gates 8 through 10 depend on that disk, and nothing about
+#: making the realm derivable may move one byte of it.  A new realm-derived
+#: line, a moved one, or a changed one fails here.
+SYNTHETIC_REALM_LINES = (
+    "    default_realm = AD.FACTORY.TEST",
+    "    realm = AD.FACTORY.TEST",
+    "    workgroup = FACTORY",
+    "domains = ad.factory.test",
+    "[domain/ad.factory.test]",
+    "ad_server = bootstrap-dc.ad.factory.test",
+    "ad_hostname = workstation.ad.factory.test",
+    "ad_domain = ad.factory.test",
+    "krb5_realm = AD.FACTORY.TEST",
+    "DOMAIN='ad.factory.test'",
+    "STORAGE_HOST='unas.ad.factory.test'",
+    "//unas.ad.factory.test/student /srv/unas/student cifs "
+    "sec=krb5,multiuser,soft,echo_interval=15,_netdev,nofail,"
+    "x-systemd.automount,x-systemd.mount-timeout=10s,"
+    "x-systemd.idle-timeout=1min 0 0",
+    "  getent hosts 'ad.factory.test' >/dev/null 2>&1 && break",
+    "DOMAIN='ad.factory.test'",
+    "REALM='AD.FACTORY.TEST'",
+    "MACHINE_PRINCIPAL='WORKSTATION$@AD.FACTORY.TEST'",
+    "AD_SERVER='bootstrap-dc.ad.factory.test'",
+    "AD_HOSTNAME='workstation.ad.factory.test'",
+)
+_REALM_LINE = re.compile(
+    r"ad\.factory\.test|AD\.FACTORY\.TEST|bootstrap-dc|FACTORY\b"
+    r"|ad\.example\.home\.arpa|AD\.EXAMPLE\.HOME\.ARPA|EXAMPLEAD")
+
+
+class InstallerRealmTests(unittest.TestCase):
+    """The one realm a disk is built against: derived, or refused.
+
+    ``SYNTHETIC_DOMAIN``/``SYNTHETIC_WORKGROUP`` were the last declaration of
+    ADR 0065's permanent identity outside its single document, and the only
+    one baked onto an installed disk rather than converged by a role.  Two
+    families of test follow, and both matter:
+
+      * acceptance is untouched.  Gate 7 installs against the disposable
+        Controller and gates 8 through 10 depend on that disk, so with no
+        durable identity requested every rendered byte must be what it was.
+      * every refusal fires.  A workstation built against the wrong realm is
+        not a wrong run: it is a finished machine joined to a domain that does
+        not exist, and the realm is on the disk from ``pacstrap`` onwards.
+
+    Every durable fixture is written into a temporary directory.  Nothing here
+    reads ``homelab/instance/``: that is the owner's real declaration, and a
+    suite that consulted it would pass or fail depending on whose machine ran
+    it.
+    """
+
+    def render(self, realm=None, hostname="workstation"):
+        return render_installer(
+            disk_path="/dev/vda", disk_serial="LAPTOP-1",
+            hostname=hostname, expected_sizes_mib=SIZES, realm=realm)
+
+    def document(self, root: Path, **overrides) -> Path:
+        document = json.loads(json.dumps(DURABLE_DOCUMENT))
+        for section, patch in overrides.items():
+            if patch is None:
+                document.pop(section, None)
+            elif isinstance(patch, dict):
+                document.setdefault(section, {}).update(patch)
+            else:
+                document[section] = patch
+        path = root / "directory.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def durable(self, root: Path, *, controller=None, **overrides):
+        return durable_installer_realm(
+            self.document(root, **overrides),
+            controller_fqdn=(
+                controller if controller is not None
+                else DURABLE_DOCUMENT["services"]["bootstrap_dc_fqdn"]))
+
+    # ---- Acceptance is untouched -------------------------------------
+
+    def test_the_synthetic_render_pins_every_realm_bearing_byte(self):
+        script = self.render()
+        self.assertEqual(
+            tuple(line for line in script.splitlines()
+                  if _REALM_LINE.search(line)),
+            SYNTHETIC_REALM_LINES)
+
+    def test_every_route_to_the_synthetic_realm_renders_the_same_bytes(self):
+        # Requesting nothing, asking for the synthetic realm by name, going
+        # through the one resolver, and handing over an equal realm built by
+        # hand are four ways to say the same thing, and the disk may not be
+        # able to tell them apart.
+        baseline = self.render()
+        for realm in (
+            synthetic_installer_realm(),
+            installer_realm(),
+            installer_realm(durable=False),
+            InstallerRealm(
+                dns_domain=SYNTHETIC_DOMAIN,
+                kerberos_realm=SYNTHETIC_DOMAIN.upper(),
+                workgroup=SYNTHETIC_WORKGROUP,
+                controller_fqdn=f"{CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}",
+                durable=False, source="a hand-built equal realm"),
+        ):
+            with self.subTest(source=realm.source):
+                self.assertEqual(baseline, self.render(realm))
+                self.assertFalse(realm.durable)
+
+    def test_the_synthetic_realm_reads_no_identity_document(self):
+        # The acceptance realm is a property of the disposable Controller, not
+        # of who is running the suite: a developer whose machine carries the
+        # private declaration must render exactly what a machine without one
+        # renders.  Proved by making the loader unreachable.
+        def refuse():
+            raise AssertionError(
+                "the synthetic realm resolved the durable declaration")
+
+        with mock.patch.object(arch_second, "_directory_identity", refuse):
+            self.assertEqual(
+                synthetic_installer_realm().dns_domain, SYNTHETIC_DOMAIN)
+            self.assertEqual(installer_realm().workgroup, SYNTHETIC_WORKGROUP)
+            script = self.render()
+        self.assertIn(f"\nad_server = {CONTROLLER_HOSTNAME}."
+                      f"{SYNTHETIC_DOMAIN}\n", script)
+        self.assertEqual(
+            synthetic_installer_realm().source, SYNTHETIC_REALM_SOURCE)
+
+    # ---- The durable realm comes from the document --------------------
+
+    def test_durable_realm_is_taken_from_the_document(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            realm = self.durable(root)
+        identity = DURABLE_DOCUMENT["identity"]
+        self.assertTrue(realm.durable)
+        self.assertEqual(realm.dns_domain, identity["dns_domain"])
+        self.assertEqual(realm.kerberos_realm, identity["kerberos_realm"])
+        self.assertEqual(realm.workgroup, identity["netbios_name"])
+        self.assertEqual(
+            realm.controller_fqdn,
+            DURABLE_DOCUMENT["services"]["bootstrap_dc_fqdn"])
+        # The refusal a reader of a serial transcript needs: which file the
+        # realm about to be made permanent was read from.
+        self.assertIn("directory.json", realm.source)
+        self.assertNotIn(SYNTHETIC_DOMAIN, realm.source)
+
+    def test_durable_realm_reaches_the_rendered_installer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            realm = self.durable(Path(temporary))
+            script = self.render(realm, hostname="telos-ws1")
+        identity = DURABLE_DOCUMENT["identity"]
+        for expected in (
+            f"    default_realm = {identity['kerberos_realm']}",
+            f"    realm = {identity['kerberos_realm']}",
+            f"    workgroup = {identity['netbios_name']}",
+            f"domains = {identity['dns_domain']}",
+            f"[domain/{identity['dns_domain']}]",
+            f"ad_server = {realm.controller_fqdn}",
+            f"ad_hostname = telos-ws1.{identity['dns_domain']}",
+            f"REALM='{identity['kerberos_realm']}'",
+            f"MACHINE_PRINCIPAL='TELOS-WS1$@{identity['kerberos_realm']}'",
+        ):
+            self.assertIn(expected, script.splitlines())
+        # Nothing synthetic survives anywhere on the disk: not the realm, not
+        # the workgroup, not the acceptance Controller.
+        for absent in (SYNTHETIC_DOMAIN, SYNTHETIC_DOMAIN.upper(),
+                       f"= {SYNTHETIC_WORKGROUP}", CONTROLLER_HOSTNAME):
+            self.assertNotIn(absent, script)
+
+    def test_the_workgroup_travels_with_the_realm(self):
+        # The NetBIOS name is the second half of the same fact.  A disk that
+        # derived the realm and kept FACTORY would present a pre-Windows-2000
+        # domain name its own realm does not know.
+        with tempfile.TemporaryDirectory() as temporary:
+            realm = self.durable(Path(temporary))
+            script = self.render(realm)
+        self.assertEqual(realm.workgroup, "EXAMPLEAD")
+        self.assertIn("    workgroup = EXAMPLEAD", script.splitlines())
+        self.assertNotIn(SYNTHETIC_WORKGROUP, script)
+        # And there is no route into the renderer that carries one without the
+        # other: the two are fields of one object, not two arguments.
+        self.assertNotIn(
+            "realm_workgroup",
+            inspect.signature(render_installer).parameters)
+        self.assertNotIn(
+            "realm_dns_domain",
+            inspect.signature(render_installer).parameters)
+
+    # ---- Every refusal fires ------------------------------------------
+
+    def test_an_absent_document_refuses_rather_than_falling_back(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "identity" / "directory.json"
+            with self.assertRaises(InstallerRealmError) as caught:
+                durable_installer_realm(
+                    missing, controller_fqdn="bootstrap.ad.example.home.arpa")
+        message = str(caught.exception)
+        self.assertIn(str(missing), message)
+        self.assertIn("does not exist", message)
+        self.assertIn("may not fall back", message)
+
+    def test_a_malformed_document_refuses(self):
+        cases = {
+            "unreadable JSON": {"raw": "{not json"},
+            "schema_version": {"raw": json.dumps({"schema_version": 99})},
+            "netbios_domain": {"identity": {"netbios_domain": "EXAMPLEAD"}},
+            "kerberos_realm": {"identity": {"kerberos_realm": "WRONG.REALM"}},
+            "home.arpa": {
+                "identity": {
+                    "dns_domain": "ad.example.test",
+                    "kerberos_realm": "AD.EXAMPLE.TEST",
+                },
+            },
+            "declares no": {"identity": {"netbios_name": None}},
+        }
+        for expected, patch in cases.items():
+            with self.subTest(refusal=expected):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    if "raw" in patch:
+                        path = root / "directory.json"
+                        path.write_text(patch["raw"], encoding="utf-8")
+                    else:
+                        path = self.document(root, **patch)
+                    with self.assertRaises(InstallerRealmError) as caught:
+                        durable_installer_realm(
+                            path,
+                            controller_fqdn="bootstrap.ad.example.home.arpa")
+                self.assertIn(expected, str(caught.exception))
+                # Never a fallback, whatever the fault.
+                self.assertNotIn(
+                    f"resolved {SYNTHETIC_DOMAIN}", str(caught.exception))
+
+    def test_a_durable_realm_must_name_a_frozen_controller(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaises(InstallerRealmError) as unstated:
+                durable_installer_realm(self.document(root))
+            with self.assertRaises(InstallerRealmError) as foreign:
+                self.durable(root, controller="dc3.ad.example.home.arpa")
+        services = DURABLE_DOCUMENT["services"]
+        # Unstated names both candidates and says why it will not choose.
+        for fqdn in services.values():
+            self.assertIn(fqdn, str(unstated.exception))
+        self.assertIn("ADR 0065", str(unstated.exception))
+        self.assertIn("not one of the two", str(foreign.exception))
+        # Both frozen names are accepted, and only those two.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for fqdn in services.values():
+                self.assertEqual(
+                    self.durable(root, controller=fqdn).controller_fqdn, fqdn)
+
+    def test_synthetic_resolution_refuses_durable_arguments(self):
+        # A caller who meant the permanent realm and forgot the switch is told
+        # so, rather than silently handed ad.factory.test.
+        with self.assertRaises(InstallerRealmError):
+            installer_realm(controller_fqdn="bootstrap.ad.example.home.arpa")
+        with self.assertRaises(InstallerRealmError):
+            installer_realm(identity_path=Path("/nonexistent/directory.json"))
+
+    def test_a_realm_object_validates_its_own_fields(self):
+        good = dict(
+            dns_domain="ad.example.home.arpa",
+            kerberos_realm="AD.EXAMPLE.HOME.ARPA",
+            workgroup="EXAMPLEAD",
+            controller_fqdn="bootstrap.ad.example.home.arpa",
+            durable=True, source="a test")
+        for field, value in (
+            ("dns_domain", "AD.Example.Home.Arpa"),
+            ("dns_domain", "single-label"),
+            ("workgroup", "exemplead"),
+            ("workgroup", "TOO-LONG-WORKGROUP"),
+            ("kerberos_realm", "ad.example.home.arpa"),
+            ("kerberos_realm", "AD.OTHER.HOME.ARPA"),
+            ("controller_fqdn", "bootstrap.ad.other.home.arpa"),
+            ("controller_fqdn", "ad.example.home.arpa"),
+            ("durable", "yes"),
+            ("source", ""),
+        ):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(InstallContractError):
+                    InstallerRealm(**{**good, field: value})
+
+    def test_the_renderer_refuses_anything_but_a_resolved_realm(self):
+        for realm in (SYNTHETIC_DOMAIN, ("ad.factory.test", "FACTORY"), 7):
+            with self.subTest(realm=realm):
+                with self.assertRaises(InstallContractError):
+                    self.render(realm)
 
 
 if __name__ == "__main__":

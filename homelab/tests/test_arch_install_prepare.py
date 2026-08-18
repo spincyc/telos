@@ -1,7 +1,9 @@
 """Contracts for guarded Arch-second installation bundle preparation."""
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -10,6 +12,7 @@ import unittest
 from unittest import mock
 
 from homelab.vm import arch_install_prepare
+from homelab.workstations import arch_second
 
 
 def _digest(command):
@@ -321,7 +324,8 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 layout=root / "layout.json",
                 workstation_profile=root / "wp.json",
                 run_root=link, hostname="telos-ws1",
-                switch_port=31415)
+                switch_port=31415, durable_identity=False,
+                identity_document=None, controller_fqdn=None)
             with self.assertRaisesRegex(RuntimeError, "symlink"):
                 arch_install_prepare.prepare(args)
 
@@ -335,7 +339,9 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 releases=root / "pxe", seed=root / "seed.iso",
                 layout=root / "layout.json",
                 workstation_profile=root / "wp.json", run_root=root / "runs",
-                hostname="telos-ws1", switch_port=31415)
+                hostname="telos-ws1", switch_port=31415,
+                durable_identity=False, identity_document=None,
+                controller_fqdn=None)
             with mock.patch.object(
                     arch_install_prepare, "inspect_base_windows_disk",
                     return_value={"path": str(windows_disk.resolve())}), \
@@ -372,7 +378,9 @@ class ArchInstallPrepareTests(unittest.TestCase):
                 windows_disk=windows_disk, ovmf_vars=None, releases=releases,
                 seed=root / "seed.iso", layout=root / "layout.json",
                 workstation_profile=root / "wp.json", run_root=root / "runs",
-                hostname="telos-ws1", switch_port=31415)
+                hostname="telos-ws1", switch_port=31415,
+                durable_identity=False, identity_document=None,
+                controller_fqdn=None)
 
             def execute(command, **_kwargs):
                 if command[:2] == ["qemu-img", "create"]:
@@ -451,6 +459,166 @@ class ArchInstallPrepareTests(unittest.TestCase):
             self.assertEqual(
                 names, {"arch-install.sh", "arch-second-verify.py"})
 
+class PreparedRealmTests(unittest.TestCase):
+    """Which realm a prepared bundle bakes, and what it records about it."""
+
+    DOCUMENT = {
+        "schema_version": 1,
+        "identity": {
+            "dns_domain": "ad.example.home.arpa",
+            "kerberos_realm": "AD.EXAMPLE.HOME.ARPA",
+            "netbios_name": "EXAMPLEAD",
+        },
+        "services": {
+            "bootstrap_dc_fqdn": "bootstrap.ad.example.home.arpa",
+            "permanent_dc_fqdn": "dc2.ad.example.home.arpa",
+        },
+        "network": {
+            "address": "10.1.99.2", "prefix": 28, "gateway": "10.1.99.1"},
+    }
+
+    def args(self, root: Path, **overrides) -> argparse.Namespace:
+        releases = root / "pxe"
+        releases.mkdir(exist_ok=True)
+        (releases / "selected-release-set.json").write_text(json.dumps({
+            "schema": 1, "version": "20260727.005",
+            "manifest_sha256": "a" * 64,
+        }))
+        windows_disk = root / "windows.qcow2"
+        windows_disk.write_bytes(b"disk")
+        values = dict(
+            windows_disk=windows_disk, ovmf_vars=root / "OVMF_VARS.fd",
+            releases=releases, seed=root / "seed.iso",
+            layout=root / "layout.json",
+            workstation_profile=root / "wp.json", run_root=root / "runs",
+            hostname="telos-ws1", switch_port=31415,
+            durable_identity=False, identity_document=None,
+            controller_fqdn=None)
+        values.update(overrides)
+        (root / "OVMF_VARS.fd").write_bytes(b"pristine-vars")
+        return argparse.Namespace(**values)
+
+    def prepare(self, args: argparse.Namespace) -> Path:
+        base = {
+            "path": str(Path(args.windows_disk).resolve()),
+            "virtual_size": arch_install_prepare.DISK_BYTES,
+            "format": "qcow2", "sha256": "b" * 64,
+        }
+
+        def execute(command, **_kwargs):
+            if command[:2] == ["qemu-img", "create"]:
+                Path(command[-1]).write_bytes(b"overlay")
+            return subprocess.CompletedProcess(command, 0)
+
+        def overlay(path):
+            return {
+                "path": str(Path(path).resolve()), "format": "qcow2",
+                "backing": base["path"], "sha256": "c" * 64,
+            }
+
+        with mock.patch.object(
+                arch_install_prepare.subprocess, "run", side_effect=execute), \
+                mock.patch.object(
+                    arch_install_prepare, "inspect_base_windows_disk",
+                    return_value=base), \
+                mock.patch.object(
+                    arch_install_prepare, "inspect_overlay",
+                    side_effect=overlay), \
+                mock.patch.object(
+                    arch_install_prepare, "build_record",
+                    return_value=LAYOUT_RECORD), \
+                mock.patch.object(
+                    arch_install_prepare, "sha256", return_value="d" * 64):
+            return arch_install_prepare.prepare(args)
+
+    def document(self, root: Path) -> Path:
+        path = root / "directory.json"
+        path.write_text(json.dumps(self.DOCUMENT), encoding="utf-8")
+        return path
+
+    def test_the_acceptance_bundle_records_the_synthetic_realm(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = self.prepare(self.args(root))
+            authorization = json.loads(
+                (run / "authorization.json").read_text())["authorization"]
+            installer = (run / "arch-install.sh").read_text()
+        self.assertEqual(authorization["realm"], {
+            "dns_domain": "ad.factory.test",
+            "kerberos_realm": "AD.FACTORY.TEST",
+            "netbios_name": "FACTORY",
+            "controller_fqdn": "bootstrap-dc.ad.factory.test",
+            "durable": False,
+        })
+        # And the recorded realm is the realm the script actually carries.
+        self.assertIn("\nad_server = bootstrap-dc.ad.factory.test\n", installer)
+
+    def test_a_durable_bundle_bakes_the_declared_realm(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = self.args(
+                root, durable_identity=True,
+                identity_document=self.document(root),
+                controller_fqdn="dc2.ad.example.home.arpa")
+            run = self.prepare(args)
+            authorization = json.loads(
+                (run / "authorization.json").read_text())["authorization"]
+            installer = (run / "arch-install.sh").read_text()
+        self.assertEqual(authorization["realm"], {
+            "dns_domain": "ad.example.home.arpa",
+            "kerberos_realm": "AD.EXAMPLE.HOME.ARPA",
+            "netbios_name": "EXAMPLEAD",
+            "controller_fqdn": "dc2.ad.example.home.arpa",
+            "durable": True,
+        })
+        self.assertIn("\nad_server = dc2.ad.example.home.arpa\n", installer)
+        self.assertIn("    workgroup = EXAMPLEAD\n", installer)
+        self.assertNotIn("ad.factory.test", installer)
+        self.assertNotIn("FACTORY", installer)
+
+    def test_a_durable_bundle_refuses_without_the_declaration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            missing = root / "identity" / "directory.json"
+            args = self.args(
+                root, durable_identity=True, identity_document=missing,
+                controller_fqdn="dc2.ad.example.home.arpa")
+            with self.assertRaises(arch_second.InstallerRealmError) as caught:
+                self.prepare(args)
+            self.assertIn(str(missing), str(caught.exception))
+            # Nothing was prepared: no run directory survives a refusal.
+            self.assertFalse(
+                (root / "runs").exists() and any((root / "runs").iterdir()))
+
+    def test_the_plan_names_the_realm_before_it_prepares_anything(self):
+        # An operator must read the realm they are about to make permanent in
+        # the plan, and a missing declaration must cost them nothing.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.document(root)
+            with mock.patch.object(
+                    arch_install_prepare, "ovmf_pair", return_value=None):
+                for argv, expected in (
+                    ([], "Realm: AD.FACTORY.TEST (NetBIOS FACTORY)"),
+                    (["--durable-identity",
+                      "--identity-document", str(root / "directory.json"),
+                      "--controller-fqdn", "bootstrap.ad.example.home.arpa"],
+                     "Realm: AD.EXAMPLE.HOME.ARPA (NetBIOS EXAMPLEAD)"),
+                ):
+                    with self.subTest(argv=argv):
+                        with contextlib.redirect_stdout(io.StringIO()) as out:
+                            self.assertEqual(
+                                arch_install_prepare.main(argv), 0)
+                        self.assertIn(expected, out.getvalue())
+                # A durable plan with no declaration is a refusal, not a plan.
+                absent = root / "elsewhere" / "directory.json"
+                with contextlib.redirect_stdout(io.StringIO()) as out, \
+                        contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(arch_install_prepare.main([
+                        "--durable-identity",
+                        "--identity-document", str(absent)]), 2)
+                self.assertIn(str(absent), err.getvalue())
+                self.assertNotIn("Boundary:", out.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

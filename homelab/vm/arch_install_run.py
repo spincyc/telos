@@ -47,7 +47,7 @@ try:
         VARS_NAME, VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, paths
-    from .controller_factory import FactoryBundle
+    from .controller_factory import FactoryBundle, FactorySpec
     from .controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
     from .factory_publication import stage as stage_publication
@@ -67,7 +67,7 @@ except ImportError:  # Direct execution from homelab/vm.
         VARS_NAME, VERIFY_NAME, audit_arch_boot_boundary, inspect_overlay)
     from automated_controller import DisposableBootDisk
     from bootstrap_dc import DEFAULT_STATE, paths
-    from homelab.vm.controller_factory import FactoryBundle
+    from homelab.vm.controller_factory import FactoryBundle, FactorySpec
     from homelab.vm.controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
     from factory_publication import stage as stage_publication
@@ -85,10 +85,25 @@ except ImportError:  # Direct execution from homelab/vm.
 
 from homelab.workstations.arch_second import (
     JOIN_MEDIA_CONSUMED_MARKER, JOIN_MEDIA_LABEL, JOIN_VERIFIED_MARKER,
-    NVRAM_ENTRIES_MARKER, NVRAM_ORDER_MARKER, SYNTHETIC_DOMAIN)
+    NVRAM_ENTRIES_MARKER, NVRAM_ORDER_MARKER, InstallerRealm,
+    InstallerRealmError)
 
 
 MAX_DURATION = 10800
+#: The Controller this runner boots, and therefore the ONE realm a bundle it
+#: drives may have been built against.  Everything about that Controller is
+#: this object: ``converge_controller`` hands it to the ``FactoryBundle`` whose
+#: Ansible variables provision the domain, so the realm the disposable DC
+#: serves and the realm this runner checks a bundle against are not two facts
+#: that happen to agree -- they are one value used twice.
+#:
+#: A durable workstation would be installed against the PERSISTENT Controller
+#: instead (``bootstrap_dc.persistent_converge``), which serves the permanent
+#: realm from ADR 0065's declaration, is reachable only over its serial console
+#: and has no route to this host or to this loopback fabric.  That flow does
+#: not exist, so this runner has exactly one Controller and
+#: ``require_realm_agreement`` refuses every bundle built for another.
+CONTROLLER_SPEC = FactorySpec()
 GUEST_VERIFY_PATH = "/usr/local/lib/telos/arch-second-verify.py"
 GUEST_INSTALLER_PATH = "/root/arch-install.sh"
 BEGIN_MARKER = "TELOS ARCH INSTALL BEGIN"
@@ -401,6 +416,7 @@ def install_controller_seed(qmp, console, seed_iso: Path) -> None:
 
 def converge_controller(
     qmp, console, media_root: Path, *, repo_root: Path | None = None,
+    spec: FactorySpec = CONTROLLER_SPEC,
 ) -> None:
     """Run the offline factory convergence and release its media.
 
@@ -416,9 +432,13 @@ def converge_controller(
         repo_root = Path(__file__).resolve().parents[2]
     nonce = secrets.token_hex(32)
     media_root.mkdir(mode=0o700)
+    # *spec* is stated rather than left to ``FactoryBundle``'s default so the
+    # realm this convergence provisions is the same object
+    # ``require_realm_agreement`` checked every bundle against, not a second
+    # copy of the same defaults.
     bundle = FactoryBundle(
         repo_root, media_root / "controller-convergence.iso",
-        authorization_nonce=nonce)
+        authorization_nonce=nonce, spec=spec)
     try:
         bundle.build()
         qmp.execute("blockdev-add", {
@@ -1165,6 +1185,101 @@ def drive_installer(
     return transcript.decode("utf-8", errors="replace")
 
 
+def require_realm_agreement(
+    authorized: Mapping[str, object], installer_script: str, *,
+    spec: FactorySpec = CONTROLLER_SPEC,
+) -> InstallerRealm:
+    """Refuse a bundle whose realm is not the realm this run's Controller serves.
+
+    Three facts have to agree before anything destructive happens, and until
+    this existed only the first two were even written down:
+
+    * the realm baked into the bundle's installer script, which the prepare
+      stage recorded in ``authorization.realm`` and which is on the target
+      disk from ``pacstrap`` onwards -- in krb5.conf, smb.conf, sssd.conf and
+      the machine account ``net ads join`` creates;
+    * the realm the Controller this run boots actually serves, which is
+      ``CONTROLLER_SPEC`` and nothing else; and
+    * the realm the one-use join material names, which is derived from the
+      first one here rather than from a literal, so it cannot be the odd one
+      out.
+
+    A mismatch is a refusal here, before the switch, the gateway, the
+    Controller or the workstation is started and long before the installer
+    reaches ``mkfs.ext4``.  The alternative is a finished machine joined to a
+    domain that does not exist, discovered at somebody's first login.
+
+    The installer's own bytes are checked too, not just the record: an
+    ``authorization.json`` edited by hand would otherwise let a bundle claim a
+    realm its script does not carry.  ``ad_server`` is the line to check
+    because it is the only place the controller FQDN and the DNS domain appear
+    together, and ``_render_sssd`` renders exactly one of it.
+
+    A durable bundle is refused outright.  Nothing here can boot the
+    persistent Controller -- it is serial-console-only, on its own loopback
+    segment, with no route to this fabric -- so a durable realm cannot be
+    checked against the Controller that would serve it, only against the one
+    that would not.  This is the refusal that fires until that flow exists.
+    """
+    record = authorized.get("realm")
+    if not isinstance(record, Mapping):
+        raise RuntimeError(
+            "the bundle's authorization declares no realm; it was prepared "
+            "before the realm a workstation is built against was recorded, "
+            "and this runner may not assume it was the acceptance realm. "
+            "Prepare the bundle again")
+    fields = ("dns_domain", "kerberos_realm", "netbios_name",
+              "controller_fqdn", "durable")
+    missing = [name for name in fields if record.get(name) is None]
+    if missing or set(record) != set(fields):
+        raise RuntimeError(
+            f"the bundle's authorized realm is not the recorded shape "
+            f"({', '.join(fields)}); it declares {sorted(record)}")
+    try:
+        realm = InstallerRealm(
+            dns_domain=record["dns_domain"],
+            kerberos_realm=record["kerberos_realm"],
+            workgroup=record["netbios_name"],
+            controller_fqdn=record["controller_fqdn"],
+            durable=record["durable"],
+            source="the bundle's authorization.json",
+        )
+    except InstallerRealmError as error:
+        raise RuntimeError(
+            f"the bundle's authorized realm is invalid: {error}") from error
+    if realm.durable:
+        raise RuntimeError(
+            f"this bundle was built against the PERMANENT realm "
+            f"{realm.kerberos_realm} and cannot be installed here: this "
+            f"runner boots the disposable acceptance Controller "
+            f"({spec.fqdn}, realm {spec.realm}) on a per-run loopback fabric, "
+            f"and the persistent Controller that serves the permanent realm "
+            f"is reachable only over its own serial console. Installing it "
+            f"here would join the machine to a domain that does not exist")
+    mismatched = [
+        f"{label} {mine!r} against the Controller's {theirs!r}"
+        for label, mine, theirs in (
+            ("DNS domain", realm.dns_domain, spec.domain),
+            ("NetBIOS name", realm.workgroup, spec.netbios),
+            ("domain controller", realm.controller_fqdn, spec.fqdn),
+        )
+        if mine != theirs
+    ]
+    if mismatched:
+        raise RuntimeError(
+            "the bundle's realm is not the realm the Controller this run "
+            "boots serves: " + "; ".join(mismatched) + ". The realm is baked "
+            "onto the disk at install time, so the join, the directory and "
+            "the disk would disagree permanently")
+    pinned = f"\nad_server = {realm.controller_fqdn}\n"
+    if pinned not in installer_script:
+        raise RuntimeError(
+            f"the bundle's installer script does not pin the authorized "
+            f"domain controller {realm.controller_fqdn}; its authorization "
+            f"and its rendered bytes describe different realms")
+    return realm
+
+
 def run(
     bundle: Path, *, controller_state: Path, releases: Path, seed_iso: Path,
     duration: float, apply: bool,
@@ -1175,12 +1290,22 @@ def run(
     authorization, workstation_command = _bundle(bundle)
     bundle = bundle.resolve()
     authorized = authorization["authorization"]
+    # Both facts are first known here: the realm the bundle's installer bakes
+    # and the realm this runner's one Controller serves.  Checked before the
+    # first line of the plan, so a dry run reports the refusal too, and long
+    # before any process starts.
+    installer_script = (bundle / INSTALLER_NAME).read_text(encoding="utf-8")
+    realm = require_realm_agreement(authorized, installer_script)
     print("Boundary: loopback-only switch; no host or UniFi changes")
     print(f"Bundle: {bundle}")
     print(
         "Workstation: PXE-boots disk-detached; the authorized NVMe overlay is "
         "hot-attached once archiso is live; Windows preserved")
     print(f"Arch release: {authorized['release_version']}")
+    print(
+        f"Realm: {realm.kerberos_realm} (NetBIOS {realm.workgroup}), "
+        f"controller {realm.controller_fqdn}; the disposable Controller this "
+        f"run boots serves exactly this realm")
     print(
         "Domain join: per-run disposable DC account; one-use TELOS_JOIN "
         "media destroyed after the consumed marker")
@@ -1203,7 +1328,6 @@ def run(
         raise RuntimeError("bundle QMP socket path is already occupied")
 
     verify_script = (bundle / VERIFY_NAME).read_text(encoding="utf-8")
-    installer_script = (bundle / INSTALLER_NAME).read_text(encoding="utf-8")
     canonical = paths(controller_state)
     processes: dict[str, subprocess.Popen[bytes]] = {}
     listener = socket.socket()
@@ -1301,8 +1425,11 @@ def run(
                 processes["controller"].stdout, processes["controller"].stdin,
                 timeout=CONTROLLER_CONSOLE_TIMEOUT)
             join_serial.console = console
+            # The realm the per-run join principal is minted in comes from
+            # the checked bundle, never from a literal: it is provably the
+            # realm on the disk and the realm this Controller serves.
             join_material = OneUseDomainJoinMaterial(
-                SYNTHETIC_DOMAIN,
+                realm.kerberos_realm,
                 stage=join_serial.stage, destroy=join_serial.destroy)
 
             def consume(material: Mapping[str, str]) -> tuple[str, dict]:

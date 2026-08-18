@@ -747,6 +747,59 @@ CONTRACT_ROLES = (
 # principal, so nothing stages it in the directory and it owns no uidNumber
 # from the directory allocation.
 DIRECTORY_ROLES = CONTRACT_ROLES[:3]
+# ...and it is therefore the ONE role whose name becomes a local UNIX account:
+# an ``useradd`` in the rendered installer, a sudoers rule, and the account the
+# acceptance probe logs in as.  The reserved-name rules below apply to a local
+# UNIX namespace, which is not the directory namespace.
+LOCAL_ROLE = CONTRACT_ROLES[3]
+
+# Names the break-glass account may never take.  Every one of them already
+# exists in ``/etc/passwd`` on the disk this installer builds, so a roster that
+# names one is not asking for a new account: it is asking for an existing
+# system account, and nsswitch resolves ``files`` first, so the name can never
+# mean anything else.
+#
+#   * ``root`` is the whole point.  ADR 0055 and ADR 0063 make break-glass a
+#     SEPARATELY NAMED local account precisely so it is not UID 0 -- that is
+#     what makes it a safe way in when the directory is down.  A roster saying
+#     ``root`` would bake ``useradd root`` and a sudoers rule for root onto the
+#     disk and destroy the distinction the account exists to create.
+#   * ``daemon``, ``bin``, ``sys`` and ``nobody`` are the system accounts every
+#     Linux base install ships.  A rescue account that resolves to ``nobody``
+#     has no home, no shell and no way in; one that resolves to ``bin`` or
+#     ``sys`` silently adopts a service identity.
+#
+# Bound to the LOCAL role alone, deliberately, and this is the whole reason the
+# rule has to live here at all.  A DIRECTORY principal that collides with a
+# local account is already refused twice, and better: the directory side
+# refuses reserved objects on the control host before anything is installed
+# (``ansible/roles/domain_controller/files/provision-accounts.py`` and its
+# resolver, whose two copies a test asserts equal), and the rendered installer
+# runs a local-shadow guard against this disk's REAL /etc/passwd and /etc/group
+# after every package is in place -- an authority no static list can match.
+# That guard deliberately exempts the break-glass account, because ADR 0055/0063
+# make it local by design, and that exemption is exactly the hole these names
+# close.  Restating the directory reservations (``administrator``, ``guest``,
+# ``krbtgt``, the ``dns-`` prefix) here would be a third copy of a list two
+# files already keep in step, and they mean nothing to a local UNIX account.
+#
+# Compared without case folding, unlike the directory list: ``SAFE_PRINCIPAL``
+# admits lower case only and is checked first, so there is no ``Root`` for this
+# to miss.
+LOCAL_RESERVED_NAMES = frozenset({"root", "daemon", "bin", "sys", "nobody"})
+# systemd reserves this prefix for its own system users (``systemd-network``,
+# ``systemd-journal-remote``, ...), which packages create as they are
+# installed.  A local account there is a collision waiting for an update.
+LOCAL_RESERVED_PREFIXES = ("systemd-",)
+
+
+def _reserved_local_name(name: str) -> bool:
+    """True when *name* belongs to the installed system, not to a roster."""
+    return (name in LOCAL_RESERVED_NAMES
+            or any(name.startswith(prefix)
+                   for prefix in LOCAL_RESERVED_PREFIXES))
+
+
 # Only the NAME is instance data.  ``domain_role`` and ``workstation_role`` are
 # policy the lifecycle judge grades (workstations/identity_lifecycle.py
 # validate_contract), so an overlay may not restate or move them.
@@ -936,6 +989,19 @@ def identity_roster(
             raise IdentityRosterError(
                 f"identity roster name for {role} is not safely "
                 f"representable; roster source: {source}")
+        # The break-glass account is the one name this installer turns into a
+        # local UNIX account, so it is the one the local reservations bind.
+        # Refused, never substituted: a roster that says "root" has to be
+        # corrected in the file that says it, not quietly reinterpreted.
+        if role == LOCAL_ROLE and _reserved_local_name(name):
+            raise IdentityRosterError(
+                f"identity roster names the {role} account {name!r}, which is "
+                f"reserved for the installed system: ADR 0055/0063 make the "
+                f"break-glass administrator a separately named LOCAL account "
+                f"so it is not root or a service identity, and nsswitch "
+                f"resolves local files first, so this name can never mean the "
+                f"account the roster intends. Choose another name in the file "
+                f"that declares it; roster source: {source}")
         # The directory principals additionally become AD user objects, whose
         # pre-Windows-2000 logon name is capped well below SAFE_PRINCIPAL's 32.
         if role in DIRECTORY_ROLES and len(name) > SAMACCOUNTNAME_LIMIT:
@@ -1001,6 +1067,207 @@ def _identity_login_bound() -> int:
         raise InstallContractError(
             "identity-lifecycle login bound is not a sane bounded integer")
     return bound
+
+class InstallerRealmError(InstallContractError):
+    """The realm this disk is being built against cannot be resolved.
+
+    Distinctly named for the reason ``IdentityRosterError`` is: a missing or
+    malformed private declaration must never look like a disk-geometry
+    refusal, and it must never fall back to the synthetic acceptance realm.
+    The realm is baked onto the disk at install time -- into krb5.conf,
+    smb.conf, sssd.conf and the machine account ``net ads join`` creates --
+    before any Ansible role runs, so a wrong one is not a wrong run: it is a
+    finished machine joined to a domain that does not exist, discovered at the
+    first login.
+    """
+
+
+#: What a synthetic realm names as its origin.  Every plan and every refusal
+#: quotes this or ``directory_identity_source``, so a reader of a transcript
+#: can always tell which of the two a disk was built against.
+SYNTHETIC_REALM_SOURCE = (
+    "the synthetic acceptance defaults in workstations/arch_second.py")
+
+
+@dataclass(frozen=True)
+class InstallerRealm:
+    """The one realm a workstation disk is built against, and where it came from.
+
+    Every field is half of the same fact, which is exactly why they travel in
+    one object.  ``render_installer`` used to take ``realm_dns_domain`` and
+    ``realm_workgroup`` as two independent arguments defaulting to the
+    synthetic pair, so a caller could derive one from ADR 0065's declaration
+    and leave the other at ``FACTORY`` -- the NetBIOS domain a workstation
+    presents is the pre-Windows-2000 name of the realm it joined, and a
+    machine that disagrees with its own realm about it does not authenticate.
+    There is no constructor that yields a half-derived realm.
+
+    *durable* is not decoration.  It is the fact
+    ``vm/arch_install_run.require_realm_agreement`` refuses on: a disk built
+    for the permanent directory may not be installed against the disposable
+    acceptance Controller, and today there is no runner that boots any other
+    one.
+    """
+
+    dns_domain: str
+    kerberos_realm: str
+    workgroup: str
+    controller_fqdn: str
+    durable: bool
+    source: str
+
+    def __post_init__(self) -> None:
+        # The same grammars ``render_installer`` has always applied, moved
+        # here so no route into the renderer can skip them: these values reach
+        # shell words, an SMB workgroup, a Kerberos realm and an sssd.conf.
+        if not isinstance(self.dns_domain, str) or not SAFE_DOMAIN.fullmatch(
+                self.dns_domain):
+            raise InstallerRealmError("realm DNS domain is invalid")
+        if not isinstance(self.workgroup, str) or not SAFE_WORKGROUP.fullmatch(
+                self.workgroup):
+            raise InstallerRealmError("realm workgroup is invalid")
+        if not isinstance(self.durable, bool):
+            raise InstallerRealmError("realm durability must be a boolean")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise InstallerRealmError("a realm must name where it came from")
+        # ADR 0065 defines the Kerberos realm as the upper-case form of the
+        # DNS domain, and ``directory_identity`` refuses a document where they
+        # disagree.  Restated here because this object is also built from a
+        # bundle's authorization record, which is not that document.
+        if not isinstance(self.kerberos_realm, str) or \
+                self.kerberos_realm != self.dns_domain.upper():
+            raise InstallerRealmError(
+                f"Kerberos realm {self.kerberos_realm!r} is not the upper-case "
+                f"form of the DNS domain {self.dns_domain!r} (ADR 0065 "
+                f"requires exactly {self.dns_domain.upper()!r})")
+        suffix = "." + self.dns_domain
+        if not isinstance(self.controller_fqdn, str) or \
+                not SAFE_DOMAIN.fullmatch(self.controller_fqdn) or \
+                not self.controller_fqdn.endswith(suffix) or \
+                not SAFE_HOSTNAME.fullmatch(
+                    self.controller_fqdn[:-len(suffix)]):
+            raise InstallerRealmError(
+                f"domain controller {self.controller_fqdn!r} is not a host "
+                f"name beneath the realm's DNS domain {self.dns_domain!r}")
+
+
+def synthetic_installer_realm() -> InstallerRealm:
+    """The acceptance realm: exactly what every rendered installer used to bake.
+
+    Reads nothing.  A developer whose own machine carries the private
+    ``instance/`` overlay must get byte-identical output to a machine with no
+    overlay at all, because gates 7 through 10 run against the disposable
+    Controller and its realm is a property of that Controller, not of who is
+    running the suite.
+    """
+    return InstallerRealm(
+        dns_domain=SYNTHETIC_DOMAIN,
+        kerberos_realm=SYNTHETIC_DOMAIN.upper(),
+        workgroup=SYNTHETIC_WORKGROUP,
+        controller_fqdn=f"{CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}",
+        durable=False,
+        source=SYNTHETIC_REALM_SOURCE,
+    )
+
+
+def _directory_identity():
+    """The ADR 0065 loader, imported late and under whichever name resolves.
+
+    Late because this module is imported by ``vm/arch_install_run.py``, which
+    the loader's own package imports back through ``controller_factory``; a
+    module-level import would make the cycle a matter of who imported first.
+    Under either name because the repository is entered both ways: the tests
+    put ``homelab/`` on the path and import ``vm.directory_identity``, while
+    ``vm/arch_install_prepare.py`` runs with the checkout root on the path and
+    imports ``homelab.vm``.  Every error the loader raises is re-raised as an
+    ``InstallerRealmError`` below, so no caller ever has to catch an exception
+    class whose identity depends on which of the two names won.
+    """
+    try:
+        from homelab.vm import directory_identity
+    except ImportError:  # Executed with only homelab/ on the path.
+        from vm import directory_identity
+    return directory_identity
+
+
+def durable_installer_realm(
+    identity_path: Path | None = None, *, controller_fqdn: str | None = None,
+) -> InstallerRealm:
+    """The PERMANENT realm, from ADR 0065's one declaration, or a refusal.
+
+    There is no fallback and no default, for the reason
+    ``directory_identity.durable_directory_identity`` has neither: the realm
+    and the NetBIOS name are effectively permanent (ADR 0065), the domain SID
+    and every account SID derive from them, and a workstation built against
+    the wrong one is joined to a domain that does not exist.  That is not
+    recoverable by editing a variable and re-running.
+
+    *controller_fqdn* must be stated and must be one of the two Controllers
+    the document freezes.  It is deliberately NOT derived: ADR 0065 says
+    members "must not encode a particular DC as the identity service", and yet
+    the rendered ``sssd.conf`` pins ``ad_server`` because the acceptance
+    fabric's SRV discovery cannot be relied on (see ``_render_sssd``).  Which
+    of ``services.bootstrap_dc_fqdn`` and ``services.permanent_dc_fqdn`` a
+    durable client pins -- or whether a durable client should pin one at all
+    -- is a migration decision the document does not answer, exactly as
+    ``ansible/files/resolve-directory-identity.py`` reconciles the client's
+    pinned controller against the two frozen names without deriving it.  So it
+    is checked against the declaration rather than invented from it.
+    """
+    module = _directory_identity()
+    try:
+        identity = module.durable_directory_identity(identity_path)
+    except (module.DirectoryIdentityError, OSError, ValueError) as error:
+        raise InstallerRealmError(str(error)) from error
+    frozen = (identity.bootstrap_dc_fqdn, identity.permanent_dc_fqdn)
+    source = module.directory_identity_source(identity.source)
+    if controller_fqdn is None:
+        raise InstallerRealmError(
+            f"a durable workstation must name the domain controller its "
+            f"sssd.conf pins, and this build named none. {source} freezes "
+            f"{frozen[0]} (services.bootstrap_dc_fqdn) and {frozen[1]} "
+            f"(services.permanent_dc_fqdn); ADR 0065 requires clients to "
+            f"discover services through AD DNS SRV records rather than encode "
+            f"one controller, so which of the two a permanent disk pins is a "
+            f"decision this loader may not make for you")
+    if controller_fqdn not in frozen:
+        raise InstallerRealmError(
+            f"domain controller {controller_fqdn!r} is not one of the two "
+            f"controllers {source} freezes ({frozen[0]}, {frozen[1]}); a "
+            f"workstation may not be built against a controller ADR 0065 "
+            f"never froze")
+    return InstallerRealm(
+        dns_domain=identity.dns_domain,
+        kerberos_realm=identity.kerberos_realm,
+        workgroup=identity.netbios_name,
+        controller_fqdn=controller_fqdn,
+        durable=True,
+        source=source,
+    )
+
+
+def installer_realm(
+    *, durable: bool = False, identity_path: Path | None = None,
+    controller_fqdn: str | None = None,
+) -> InstallerRealm:
+    """Resolve the one realm a disk is built against, from one switch.
+
+    *durable* false is the acceptance answer and reads no file at all;
+    *durable* true resolves ADR 0065's declaration and refuses without it.
+    The two arguments that only mean anything for a durable build are refused
+    alongside a synthetic one rather than ignored, so a caller who meant to
+    ask for the permanent realm and forgot the switch is told, instead of
+    silently receiving ``ad.factory.test``.
+    """
+    if durable:
+        return durable_installer_realm(
+            identity_path, controller_fqdn=controller_fqdn)
+    if identity_path is not None or controller_fqdn is not None:
+        raise InstallerRealmError(
+            "a synthetic acceptance realm takes no identity document and no "
+            "domain controller; pass durable=True to build against ADR 0065's "
+            "permanent declaration")
+    return synthetic_installer_realm()
 
 
 def _render_krb5(realm: str) -> str:
@@ -2221,8 +2488,7 @@ def render_installer(
     disk_serial: str,
     hostname: str,
     expected_sizes_mib: Sequence[int],
-    realm_dns_domain: str = SYNTHETIC_DOMAIN,
-    realm_workgroup: str = SYNTHETIC_WORKGROUP,
+    realm: InstallerRealm | None = None,
     join_media_label: str = JOIN_MEDIA_LABEL,
     package_repo_url: str = WORKSTATION_REPO_URL,
 ) -> str:
@@ -2239,6 +2505,16 @@ def render_installer(
     live environment's mirrorlist and pacman.conf so *package_repo_url* —
     by default the disposable Controller's receipt-bound workstation
     repository at the fixed fabric address — is the sole package source.
+
+    *realm* is the one realm this disk is built against: its DNS domain, its
+    Kerberos realm, its NetBIOS workgroup and the controller its ``sssd.conf``
+    pins, resolved once by ``installer_realm``.  It is one object rather than
+    the two independent strings this function used to take, because a disk
+    built for one realm and a workgroup from another does not authenticate,
+    and because a realm may not be spelled as a literal at a call site: the
+    permanent one is ADR 0065's single declaration and nothing else.  Omitted
+    -- the acceptance path -- it is the synthetic realm, resolved without
+    reading any file, so every rendered byte is what it has always been.
     """
     if not SAFE_DISK.fullmatch(disk_path):
         raise InstallContractError("disk path must be a simple /dev path")
@@ -2251,15 +2527,24 @@ def render_installer(
         for size in expected_sizes_mib
     ):
         raise InstallContractError("five positive integer sizes are required")
-    if not SAFE_DOMAIN.fullmatch(realm_dns_domain):
-        raise InstallContractError("realm DNS domain is invalid")
-    if not SAFE_WORKGROUP.fullmatch(realm_workgroup):
-        raise InstallContractError("realm workgroup is invalid")
+    if realm is None:
+        realm = synthetic_installer_realm()
+    if not isinstance(realm, InstallerRealm):
+        raise InstallerRealmError(
+            "the realm must be an InstallerRealm resolved by installer_realm; "
+            "a bare domain string cannot carry its NetBIOS name, its "
+            "controller, or where it came from")
     if not SAFE_LABEL.fullmatch(join_media_label):
         raise InstallContractError("join media label is invalid")
     if not SAFE_REPO_URL.fullmatch(package_repo_url):
         raise InstallContractError("package repository URL is invalid")
-    realm = realm_dns_domain.upper()
+    # Unpacked once.  Every value below comes from this one object -- the DNS
+    # domain, its upper-case Kerberos form, the NetBIOS workgroup and the
+    # controller pinned in sssd.conf -- so no two of them can disagree.
+    realm_dns_domain = realm.dns_domain
+    realm_workgroup = realm.workgroup
+    controller_fqdn = realm.controller_fqdn
+    kerberos_realm = realm.kerberos_realm
     roster = identity_roster()
     principals = _identity_principals(roster)
     # Rendered from the SAME resolved roster that supplied the four names above,
@@ -2271,16 +2556,18 @@ def render_installer(
     # The realm's one domain controller and this machine, both fully qualified.
     # SSSD is told exactly these two names (ad_server, ad_hostname) and the
     # boot-time gate reports on exactly these two names, so the diagnostic can
-    # never disagree with the configuration it is diagnosing.
-    controller_fqdn = f"{CONTROLLER_HOSTNAME}.{realm_dns_domain}"
+    # never disagree with the configuration it is diagnosing.  The controller
+    # comes from the realm rather than from CONTROLLER_HOSTNAME: for the
+    # synthetic realm it IS that label, and for a permanent one it is one of
+    # the two FQDNs ADR 0065 froze.
     client_fqdn = f"{hostname}.{realm_dns_domain}"
     sizes = ",".join(str(size) for size in expected_sizes_mib)
     packages = " ".join(_workstation_packages())
     repo_name = WORKSTATION_REPO_NAME
-    krb5_conf = _render_krb5(realm)
-    smb_conf = _render_smb(realm, realm_workgroup)
+    krb5_conf = _render_krb5(kerberos_realm)
+    smb_conf = _render_smb(kerberos_realm, realm_workgroup)
     sssd_conf = _render_sssd(
-        realm_dns_domain, realm,
+        realm_dns_domain, kerberos_realm,
         controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
     probe = _render_probe(
         domain=realm_dns_domain, principals=principals,
@@ -2316,7 +2603,7 @@ def render_installer(
     # The login-readiness gate that follows the join: same one-shot shape, and
     # it reuses the probe helper's own domain-state implementation.
     domain_online_script = _render_domain_online_script(
-        realm_dns_domain=realm_dns_domain, realm=realm,
+        realm_dns_domain=realm_dns_domain, realm=kerberos_realm,
         login_principal=principals["daily_admin"],
         controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
     domain_online_unit = _render_domain_online_unit()

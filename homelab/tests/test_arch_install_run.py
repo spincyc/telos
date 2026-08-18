@@ -1,6 +1,7 @@
 """Contracts for the bounded private Arch-second installation lifecycle."""
 
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ from homelab.vm.arch_install_prepare import (
     VERIFY_NAME)
 from homelab.vm.controller_join_material import (
     ControllerJoinResult, OneUseDomainJoinMaterial)
+from homelab.workstations import arch_second
 
 
 CONST = "c" * 64
@@ -124,13 +126,33 @@ GOOD_SERIAL = "\n".join((
 ))
 
 
+#: Exactly what ``arch_install_prepare`` records for a bundle prepared with no
+#: durable identity requested, and exactly what the disposable Controller
+#: serves.  Written out as a literal rather than read from ``CONTROLLER_SPEC``
+#: so a change to either side is a failure here rather than a run that agrees
+#: with itself about the wrong realm.
+SYNTHETIC_CONTROLLER_FQDN = "bootstrap-dc.ad.factory.test"
+SYNTHETIC_REALM_RECORD = {
+    "dns_domain": "ad.factory.test",
+    "kerberos_realm": "AD.FACTORY.TEST",
+    "netbios_name": "FACTORY",
+    "controller_fqdn": SYNTHETIC_CONTROLLER_FQDN,
+    "durable": False,
+}
+
+
 class ArchInstallRunTests(unittest.TestCase):
     def bundle(self, root: Path) -> Path:
         root.mkdir(mode=0o700)
         (root / OVERLAY_NAME).write_bytes(b"overlay")
         (root / VARS_NAME).write_bytes(b"vars")
         (root / VERIFY_NAME).write_text("verify")
-        (root / INSTALLER_NAME).write_text("installer")
+        # Not the real rendered installer, but it carries the one line
+        # ``require_realm_agreement`` reads: a bundle whose script does not
+        # pin the authorized controller is refused, so a stand-in that omits
+        # it would be refused for the right reason at the wrong time.
+        (root / INSTALLER_NAME).write_text(
+            f"installer\nad_server = {SYNTHETIC_CONTROLLER_FQDN}\n")
         backing = root / "windows-base.qcow2"
         backing.write_bytes(b"base")
         overlay = root / OVERLAY_NAME
@@ -162,6 +184,7 @@ class ArchInstallRunTests(unittest.TestCase):
                 "expected_sizes_mib": [1024, 16, 186098, 72956, 2048],
                 "qemu_argv_sha256": _digest(command),
                 "layout": {},
+                "realm": dict(SYNTHETIC_REALM_RECORD),
             },
             "guest_inputs": [
                 {"name": INSTALLER_NAME, "sha256": CONST},
@@ -1361,9 +1384,11 @@ class ControllerDomainTests(unittest.TestCase):
             bundles: list = []
 
             class _StubBundle:
-                def __init__(self, repo, output, *, authorization_nonce):
+                def __init__(self, repo, output, *, authorization_nonce,
+                             spec):
                     self.output = Path(output)
                     self.nonce = authorization_nonce
+                    self.spec = spec
                     self.password = "Synthetic-secret-47!"
                     bundles.append(self)
 
@@ -1397,6 +1422,9 @@ class ControllerDomainTests(unittest.TestCase):
             self.assertEqual(bundle.password, "")
             self.assertFalse(bundle.output.exists())
             self.assertFalse(media_root.exists())
+            # The realm this convergence provisions is the very object every
+            # bundle is checked against, stated rather than defaulted.
+            self.assertIs(bundle.spec, arch_install_run.CONTROLLER_SPEC)
 
     def test_convergence_drops_the_secret_even_on_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1404,8 +1432,10 @@ class ControllerDomainTests(unittest.TestCase):
             bundles: list = []
 
             class _StubBundle:
-                def __init__(self, repo, output, *, authorization_nonce):
+                def __init__(self, repo, output, *, authorization_nonce,
+                             spec):
                     self.output = Path(output)
+                    self.spec = spec
                     self.password = "Synthetic-secret-47!"
                     bundles.append(self)
 
@@ -1616,6 +1646,166 @@ class EstablishPublicationConsoleTests(unittest.TestCase):
             worker.join()
             process.stdout.close()
         establish.assert_not_called()
+
+class RealmAgreementTests(unittest.TestCase):
+    """The realm on the disk, the realm the Controller serves, and the join.
+
+    The installer bakes a realm onto the target disk before any Ansible role
+    runs, and this runner boots exactly one Controller.  Until these were held
+    to each other, a bundle prepared for the permanent directory would have
+    been installed against the disposable acceptance Controller and the
+    failure would have surfaced at the first login on a finished machine.
+    """
+
+    def realm(self, **overrides) -> dict:
+        record = dict(SYNTHETIC_REALM_RECORD)
+        record.update(overrides)
+        return record
+
+    def script(self, controller=SYNTHETIC_CONTROLLER_FQDN) -> str:
+        return f"#!/usr/bin/env bash\nad_server = {controller}\n"
+
+    def test_a_synthetic_bundle_agrees_with_the_controller_it_boots(self):
+        realm = arch_install_run.require_realm_agreement(
+            {"realm": self.realm()}, self.script())
+        spec = arch_install_run.CONTROLLER_SPEC
+        self.assertEqual(realm.dns_domain, spec.domain)
+        self.assertEqual(realm.kerberos_realm, spec.realm)
+        self.assertEqual(realm.workgroup, spec.netbios)
+        self.assertEqual(realm.controller_fqdn, spec.fqdn)
+        self.assertFalse(realm.durable)
+
+    def test_the_join_material_names_the_checked_realm(self):
+        # The per-run join principal used to be minted in a literal imported
+        # from the installer module.  It now comes from the realm this check
+        # returned, so it cannot be the one fact that disagrees -- and for the
+        # acceptance path that is still exactly AD.FACTORY.TEST.
+        realm = arch_install_run.require_realm_agreement(
+            {"realm": self.realm()}, self.script())
+        material = OneUseDomainJoinMaterial(
+            realm.kerberos_realm, stage=lambda _: None, destroy=lambda: None)
+        self.assertEqual(material.realm, "AD.FACTORY.TEST")
+        self.assertIn(
+            "OneUseDomainJoinMaterial(\n                realm.kerberos_realm,",
+            inspect.getsource(arch_install_run.run))
+        self.assertNotIn(
+            "SYNTHETIC_DOMAIN", inspect.getsource(arch_install_run))
+
+    def test_a_durable_bundle_is_refused(self):
+        # The flow that installs a workstation against the PERSISTENT
+        # Controller does not exist: that Controller is reachable only over
+        # its own serial console and has no route to this loopback fabric.
+        # This is the refusal that fires until it does.
+        with self.assertRaises(RuntimeError) as caught:
+            arch_install_run.require_realm_agreement(
+                {"realm": self.realm(
+                    dns_domain="ad.example.home.arpa",
+                    kerberos_realm="AD.EXAMPLE.HOME.ARPA",
+                    netbios_name="EXAMPLEAD",
+                    controller_fqdn="bootstrap.ad.example.home.arpa",
+                    durable=True)},
+                self.script("bootstrap.ad.example.home.arpa"))
+        message = str(caught.exception)
+        self.assertIn("PERMANENT realm AD.EXAMPLE.HOME.ARPA", message)
+        self.assertIn("disposable acceptance Controller", message)
+        self.assertIn("domain that does not exist", message)
+
+    def test_a_foreign_realm_is_refused_field_by_field(self):
+        cases = {
+            "DNS domain": self.realm(
+                dns_domain="ad.other.test", kerberos_realm="AD.OTHER.TEST",
+                controller_fqdn="bootstrap-dc.ad.other.test"),
+            "NetBIOS name": self.realm(netbios_name="OTHER"),
+            "domain controller": self.realm(
+                controller_fqdn="dc2.ad.factory.test"),
+        }
+        for expected, record in cases.items():
+            with self.subTest(field=expected):
+                with self.assertRaises(RuntimeError) as caught:
+                    arch_install_run.require_realm_agreement(
+                        {"realm": record},
+                        self.script(record["controller_fqdn"]))
+                self.assertIn(expected, str(caught.exception))
+                self.assertIn("baked onto the disk", str(caught.exception))
+
+    def test_a_bundle_with_no_recorded_realm_is_refused(self):
+        for authorized in ({}, {"realm": None}, {"realm": "ad.factory.test"}):
+            with self.subTest(authorized=authorized):
+                with self.assertRaisesRegex(RuntimeError, "declares no realm"):
+                    arch_install_run.require_realm_agreement(
+                        authorized, self.script())
+
+    def test_a_realm_record_of_the_wrong_shape_is_refused(self):
+        record = self.realm()
+        del record["netbios_name"]
+        with self.assertRaisesRegex(RuntimeError, "not the recorded shape"):
+            arch_install_run.require_realm_agreement(
+                {"realm": record}, self.script())
+        with self.assertRaisesRegex(RuntimeError, "not the recorded shape"):
+            arch_install_run.require_realm_agreement(
+                {"realm": self.realm(extra="value")}, self.script())
+        with self.assertRaisesRegex(RuntimeError, "authorized realm is inval"):
+            arch_install_run.require_realm_agreement(
+                {"realm": self.realm(kerberos_realm="ad.factory.test")},
+                self.script())
+
+    def test_an_installer_that_pins_another_controller_is_refused(self):
+        # The record alone is not enough: a hand-edited authorization.json
+        # would otherwise let a bundle claim a realm its script does not
+        # carry.  The rendered bytes have to say the same thing.
+        for script in ("", self.script("dc2.ad.factory.test"),
+                       "ad_server = bootstrap-dc.ad.factory.test"):
+            with self.subTest(script=script):
+                with self.assertRaisesRegex(RuntimeError, "does not pin"):
+                    arch_install_run.require_realm_agreement(
+                        {"realm": self.realm()}, script)
+
+    def test_the_real_rendered_installer_satisfies_the_check(self):
+        # The check is written against bytes ``workstations.arch_second``
+        # actually emits, not against a stand-in: a grammar that no real
+        # installer satisfies would refuse every run.
+        script = arch_second.render_installer(
+            disk_path="/dev/vda", disk_serial="TELOS-WIN-0001",
+            hostname="telos-ws1", expected_sizes_mib=(1024, 16, 1, 1, 2048))
+        realm = arch_install_run.require_realm_agreement(
+            {"realm": self.realm()}, script)
+        self.assertEqual(realm.dns_domain, "ad.factory.test")
+
+
+class RealmRefusalReachesTheRunTests(unittest.TestCase):
+    """The refusal fires before any process, and before the destructive stage."""
+
+    def test_a_durable_bundle_never_reaches_the_fabric(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = ArchInstallRunTests().bundle(Path(temporary) / "bundle")
+            authorization = json.loads(
+                (bundle / "authorization.json").read_text())
+            authorization["authorization"]["realm"]["durable"] = True
+            (bundle / "authorization.json").write_text(
+                json.dumps(authorization))
+            backing = bundle / "windows-base.qcow2"
+            started: list = []
+            with mock.patch.object(
+                    arch_install_run, "inspect_overlay",
+                    return_value={
+                        "path": "unused", "format": "qcow2",
+                        "backing": str(backing.resolve()), "sha256": CONST}), \
+                    mock.patch.object(
+                        arch_install_run, "sha256", return_value=CONST), \
+                    mock.patch.object(
+                        arch_install_run, "audit_arch_boot_boundary"), \
+                    mock.patch.object(
+                        arch_install_run.subprocess, "Popen",
+                        side_effect=lambda *a, **k: started.append(a)):
+                with self.assertRaisesRegex(RuntimeError, "PERMANENT realm"):
+                    arch_install_run.run(
+                        bundle, controller_state=Path("/state"),
+                        releases=Path("/pxe"), seed_iso=Path("/seed.iso"),
+                        duration=600, apply=True)
+            # Nothing was started and no destructive stage was reached: the
+            # evidence directory an applied run creates first is still absent.
+            self.assertEqual(started, [])
+            self.assertFalse((bundle / "evidence").exists())
 
 
 if __name__ == "__main__":

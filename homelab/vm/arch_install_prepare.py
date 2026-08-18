@@ -19,6 +19,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 
 try:
@@ -384,8 +385,39 @@ def qemu_arch_install_command(
     return command
 
 
-def prepare(args: argparse.Namespace) -> Path:
+def resolve_realm(args: argparse.Namespace) -> arch_second.InstallerRealm:
+    """The one realm this bundle's installer bakes onto the target disk.
+
+    Resolved from exactly one switch.  With ``--durable-identity`` absent this
+    reads no file at all and answers the synthetic acceptance realm, which is
+    what gate 7 installs against and what gates 8 through 10 then depend on.
+    With it present the realm, its NetBIOS name and the controller pinned in
+    ``sssd.conf`` all come from ADR 0065's single declaration
+    (``homelab/instance/identity/directory.json``), and an absent or malformed
+    declaration is a refusal naming the file -- never a fall back to
+    ``ad.factory.test``, because the realm is baked onto the disk before any
+    Ansible role runs and a permanent machine joined to a throwaway realm is
+    not recoverable by editing a variable.
+
+    A durable bundle is preparable but NOT runnable today:
+    ``arch_install_run`` boots the disposable acceptance Controller and
+    refuses any bundle whose realm is not that Controller's.  See
+    ``require_realm_agreement`` there for what a real-workstation flow has to
+    supply before this stops being a refusal.
+    """
+    return arch_second.installer_realm(
+        durable=args.durable_identity,
+        identity_path=args.identity_document,
+        controller_fqdn=args.controller_fqdn)
+
+
+def prepare(
+    args: argparse.Namespace,
+    realm: arch_second.InstallerRealm | None = None,
+) -> Path:
     require_netbios_hostname(args.hostname)
+    if realm is None:
+        realm = resolve_realm(args)
     run_root = args.run_root
     if run_root.is_symlink():
         raise ArchInstallPrepareError("Arch run root must not be a symlink")
@@ -457,7 +489,8 @@ def prepare(args: argparse.Namespace) -> Path:
             installer_path,
             arch_second.render_installer(
                 disk_path=GUEST_DISK, disk_serial=DISK_SERIAL,
-                hostname=args.hostname, expected_sizes_mib=sizes))
+                hostname=args.hostname, expected_sizes_mib=sizes,
+                realm=realm))
 
         overlay_record = inspect_overlay(overlay)
         if overlay_record["backing"] != base["path"]:
@@ -477,6 +510,18 @@ def prepare(args: argparse.Namespace) -> Path:
                 "expected_sizes_mib": sizes,
                 "qemu_argv_sha256": command_digest,
                 "layout": record,
+                # The realm baked onto the disk, recorded as part of what was
+                # authorized rather than left implicit in the rendered script.
+                # ``arch_install_run.require_realm_agreement`` holds these
+                # three values, the installer's own bytes and the Controller
+                # the run boots to each other before the destructive stage.
+                "realm": {
+                    "dns_domain": realm.dns_domain,
+                    "kerberos_realm": realm.kerberos_realm,
+                    "netbios_name": realm.workgroup,
+                    "controller_fqdn": realm.controller_fqdn,
+                    "durable": realm.durable,
+                },
             },
             "guest_inputs": [
                 {"name": path.name, "sha256": sha256(path)}
@@ -518,15 +563,44 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--run-root", type=Path, default=DEFAULT_RUNS)
     result.add_argument("--hostname", default=DEFAULT_HOSTNAME)
     result.add_argument("--switch-port", type=int, default=31415)
+    result.add_argument(
+        "--durable-identity", action="store_true",
+        help="bake the PERMANENT realm from ADR 0065's declaration "
+        "(homelab/instance/identity/directory.json) instead of the synthetic "
+        "acceptance realm; refuses rather than falling back, and requires "
+        "--controller-fqdn. No runner accepts such a bundle yet")
+    result.add_argument(
+        "--identity-document", type=Path, default=None,
+        help="read the permanent identity from this document instead of the "
+        "private overlay's default path; only with --durable-identity")
+    result.add_argument(
+        "--controller-fqdn", default=None,
+        help="which of the two controllers the declaration freezes this "
+        "workstation's sssd.conf pins; only with --durable-identity")
     result.add_argument("--apply", action="store_true")
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    # Resolved before the first line of the plan, for the reason
+    # ``bootstrap_dc.persistent_converge`` resolves its identity there: an
+    # operator must read the realm they are about to bake onto a disk in the
+    # plan, and a missing declaration must cost them nothing.
+    try:
+        realm = resolve_realm(args)
+    except arch_second.InstallContractError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     print("Boundary: private run state and loopback-only QEMU command")
     print(f"Disk: fresh qcow2 overlay over {args.windows_disk}")
     print(f"NVMe serial: {DISK_SERIAL}; Windows partitions are preserved")
+    print(f"Realm: {realm.kerberos_realm} (NetBIOS {realm.workgroup}), "
+          f"controller {realm.controller_fqdn}")
+    print(f"Realm source: {realm.source}")
+    if realm.durable:
+        print("note: this is the PERMANENT realm; no runner accepts a durable "
+              "bundle yet (arch_install_run boots the disposable Controller)")
     print("Arch release: PXE-published by a disposable Controller at run time")
     print("Physical disks, host networking and UniFi: untouched")
     if ovmf_pair() is None:
@@ -534,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.apply:
         print("dry run; repeat with --apply to prepare the private bundle")
         return 0
-    print(prepare(args))
+    print(prepare(args, realm))
     return 0
 
 
