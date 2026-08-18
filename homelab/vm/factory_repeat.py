@@ -127,7 +127,18 @@ CANONICAL_CONTROLLER_DISK = Path("build/homelab/vm/bootstrap-dc/bootstrap-dc.qco
 #: Samba AD, Kerberos, DNS and the PXE tree) is gigabytes.  Anything under this
 #: floor cannot possibly contain an installation, so the precondition reads the
 #: real file rather than trusting a manifest that an empty disk also carries.
+#: Fallback floor, used only when :mod:`controller_image` cannot be imported.
+#: It is deliberately weak -- a partially written gigabyte passes it -- so the
+#: real check is the partition-table probe in ``controller_image_problem``.
 INSTALLED_DISK_MINIMUM_BYTES = 1 << 30
+
+try:  # pragma: no cover - exercised by the import-failure test
+    from . import controller_image
+except ImportError:  # pragma: no cover
+    try:
+        import controller_image  # type: ignore[no-redef]
+    except ImportError:
+        controller_image = None  # type: ignore[assignment]
 
 #: Phase artifacts whose names ``factory_verify.ALLOWED_EVIDENCE`` already
 #: accepts at an evidence root, and which therefore MERGE across phases into
@@ -818,6 +829,24 @@ def controller_image_problem(
         return f"canonical Controller image cannot be read: {path} ({error})"
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
         return f"canonical Controller image is not a regular file: {path}"
+    if controller_image is not None:
+        # The size floor below is a weak proxy -- a partially written gigabyte
+        # passes it.  ``controller_image.probe`` reads the actual partition
+        # table, so prefer it and let it speak for itself; it is fail-closed,
+        # so an image it cannot inspect is refused exactly like a blank one.
+        try:
+            state = controller_image.probe(path)
+        except controller_image.ControllerImageError as error:
+            return (
+                f"canonical Controller image {path} could not be inspected: "
+                f"{error}. Run `make homelab-bootstrap-vm-install` if it has "
+                "never been installed")
+        if not state.installed:
+            return (
+                f"canonical Controller image {path} is not an installed "
+                f"Controller: {state.reason}. No live lifecycle can run "
+                "against it; run `make homelab-bootstrap-vm-install` first")
+        return None
     if info.st_size < INSTALLED_DISK_MINIMUM_BYTES:
         return (
             f"canonical Controller image {path} holds {info.st_size} bytes, far "

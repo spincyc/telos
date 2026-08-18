@@ -17,16 +17,19 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "vm"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pxe_release  # noqa: E402
 import pxe_release_set  # noqa: E402
 import factory_repeat  # noqa: E402
+import fake_image_tools  # noqa: E402
 import factory_runner  # noqa: E402
 import factory_verify  # noqa: E402
 
@@ -225,10 +228,21 @@ class TemporaryRootTests(unittest.TestCase):
             self.root / "releases", version, seal, seal_value, stage)
 
     def installed_controller_disk(self) -> Path:
-        """A sparse stand-in that clears the installed-image size floor."""
-        disk = self.root / "bootstrap-dc.qcow2"
-        with open(disk, "wb") as stream:
-            stream.truncate(factory_repeat.INSTALLED_DISK_MINIMUM_BYTES + 1)
+        """A stand-in the real installed-image probe accepts.
+
+        A sparse file over the size floor is no longer enough: the precondition
+        reads the partition table through ``controller_image.probe``, precisely
+        so that a partially written gigabyte cannot pass for an installation.
+        So model the image tools the way the bootstrap suite does, and keep the
+        patch alive for the rest of the test.
+        """
+        disk = fake_image_tools.installed_image(
+            self.root / "bootstrap-dc.qcow2")
+        patcher = mock.patch.object(
+            factory_repeat.controller_image.subprocess, "run",
+            side_effect=fake_image_tools.image_tool)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return disk
 
     def iteration(self, index=1, *, driver=None, producers=None, phases=None):
@@ -736,7 +750,10 @@ class PreconditionTests(TemporaryRootTests):
         problem = factory_repeat.controller_image_problem(
             REPOSITORY / factory_repeat.CANONICAL_CONTROLLER_DISK)
         self.assertIsNotNone(problem)
-        self.assertIn("never-installed", problem)
+        # The verdict comes from the partition-table probe, not a size floor,
+        # and it names the remedy rather than leaving the operator to find it.
+        self.assertIn("is not an installed Controller", problem)
+        self.assertIn("homelab-bootstrap-vm-install", problem)
 
     def test_an_absent_image_is_refused(self):
         self.assertIn(
@@ -786,7 +803,12 @@ class ApplyRefusalTests(TemporaryRootTests):
         finally:
             sys.stderr = real_stderr
         self.assertEqual(2, status)
-        self.assertIn("never-installed", errors.getvalue())
+        # Either refusal is correct here -- a blank image and one qemu-img
+        # cannot read at all are both "not something a lifecycle can boot" --
+        # so assert the refusal and the remedy, not one wording of the cause.
+        printed = errors.getvalue()
+        self.assertIn("refusing to run the lifecycle", printed)
+        self.assertIn("homelab-bootstrap-vm-install", printed)
         # It refused before doing anything: no phase ran, nothing was destroyed.
         self.assertEqual([], driver.executed)
         self.assertEqual([], driver.destroyed)

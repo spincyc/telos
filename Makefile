@@ -78,6 +78,13 @@ FACTORY_TARGET ?= arch-workstation
 # Gate 12 (repeatability): the second twice-through run's retained evidence,
 # compared against FACTORY_EVIDENCE by homelab-factory-verify.
 FACTORY_COMPARE_EVIDENCE ?=
+# Gate 12 (repeatability): the aggregate repeat driver's roots, iteration count
+# and optional receipt. FACTORY_DURATION is the per-phase budget it forwards
+# into each phase, so raise it well above the 120s default for a real run.
+REPEAT_EVIDENCE_ROOT ?= homelab/var/factory/repeat
+REPEAT_WORK_ROOT ?= homelab/var/factory/repeat-work
+REPEAT_ITERATIONS ?= 2
+REPEAT_RECEIPT ?=
 # Persistent controller instances: a directory server that can be brought up,
 # used, shut down, and brought up again with the same domain and accounts. This
 # is NOT the acceptance path. Every gate still boots a disposable copy of
@@ -170,7 +177,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-deps homelab-factory-media \
 	homelab-factory-cache-seal homelab-factory-offline-check \
 	homelab-factory-controller-bundle homelab-factory-pxe \
-	homelab-factory-verify homelab-pxe-authority-audit \
+	homelab-factory-verify homelab-factory-repeat homelab-pxe-authority-audit \
 	homelab-factory-recover homelab-factory-recover-judge \
 	homelab-factory-sim-plan homelab-factory-sim-run \
 	homelab-factory-persistent-plan homelab-factory-persistent-status \
@@ -482,6 +489,33 @@ homelab-pxe-authority-audit:
 # their observable part and are marked NOT-RUN with a recorded reason. The dry
 # run starts nothing; APPLY=1 writes the run bundle's evidence and result.json.
 # A deferred proof is never promoted to a pass.
+# Gate 12 (repeatability): run the complete sealed-input lifecycle at least
+# twice from destroyed disposable state and compare the receipts. The dry run
+# prints the phase plan, which producer measurements are available, and every
+# precondition that would refuse. APPLY=1 runs the lifecycle REPEAT_ITERATIONS
+# times, verifies each aggregate bundle, compares them, and exits non-zero on
+# any divergence. It refuses to apply while the canonical Controller image is
+# an empty never-installed disk -- run homelab-bootstrap-vm-install first.
+homelab-factory-repeat:
+	@if [ '$(APPLY)' != 1 ]; then \
+		$(PYTHON) homelab/bin/homelab-factory-repeat \
+			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
+			--work-root '$(REPEAT_WORK_ROOT)' \
+			--iterations '$(REPEAT_ITERATIONS)' \
+			--duration '$(FACTORY_DURATION)' \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
+			$(if $(REPEAT_RECEIPT),--receipt '$(REPEAT_RECEIPT)'); \
+	else \
+		$(PYTHON) homelab/bin/homelab-factory-repeat \
+			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
+			--work-root '$(REPEAT_WORK_ROOT)' \
+			--iterations '$(REPEAT_ITERATIONS)' \
+			--duration '$(FACTORY_DURATION)' \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
+			$(if $(REPEAT_RECEIPT),--receipt '$(REPEAT_RECEIPT)') \
+			--apply; \
+	fi
+
 homelab-factory-recover:
 	@if [ -z '$(RECOVERY_RUN)' ]; then \
 		echo 'require RECOVERY_RUN=<fresh run bundle directory>' >&2; \
@@ -494,6 +528,8 @@ homelab-factory-recover:
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
 			$(if $(RECOVERY_BOOT),--boot) \
+			$(if $(IDENTITY_BUNDLE),--identity-bundle '$(IDENTITY_BUNDLE)') \
+			$(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') \
 			--duration '$(FACTORY_DURATION)'; \
 	else \
 		$(PYTHON) homelab/bin/homelab-lifecycle-recovery \
@@ -501,6 +537,8 @@ homelab-factory-recover:
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
 			$(if $(RECOVERY_BOOT),--boot) \
+			$(if $(IDENTITY_BUNDLE),--identity-bundle '$(IDENTITY_BUNDLE)') \
+			$(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') \
 			--duration '$(FACTORY_DURATION)' --apply; \
 	fi
 
@@ -1049,6 +1087,22 @@ homelab-image-promotion-gate:
 		--profile '$(IMAGE_PROFILE)' --root '$(IMAGE_ROOT)' \
 		--receipt '$(IMAGE_RECEIPT)' \
 		$(if $(IMAGE_EVIDENCE),--evidence '$(IMAGE_EVIDENCE)')
+
+# Grade a booted candidate image's declared systemd services against the
+# tracked contract, from the transcript the live capture step retained. Pure
+# host-side: no guest, no root, no QEMU, and no registry override -- the
+# tracked contract is the only contract a verdict may rest on.
+homelab-image-service-gate:
+	@if [ -z '$(IMAGE_TRANSCRIPT)' ] || [ -z '$(IMAGE_PROFILE)' ]; then \
+		echo 'require IMAGE_PROFILE=<installer-live|controller-seed|workstation-install>' >&2; \
+		echo 'require IMAGE_TRANSCRIPT=<retained guest console capture>' >&2; \
+		exit 2; \
+	fi
+	@$(PYTHON) homelab/bin/homelab-image-service-gate \
+		--profile '$(IMAGE_PROFILE)' \
+		$(if $(IMAGE_SERVICE_TOKEN),--token '$(IMAGE_SERVICE_TOKEN)') \
+		$(if $(IMAGE_SERVICE_EVIDENCE),--evidence '$(IMAGE_SERVICE_EVIDENCE)') \
+		'$(IMAGE_TRANSCRIPT)'
 
 homelab-windows-identity-judge:
 	@if [ -z '$(WINDOWS_IDENTITY_EVIDENCE)' ]; then \
