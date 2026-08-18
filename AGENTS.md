@@ -22,6 +22,15 @@ add scope-specific requirements.
   yield check is denied. The coordinating/root agent alone applies the
   repository yield gate before yielding control outside the active work-queue
   loop.
+- When more than one agent is editing this checkout at once, never run a
+  command that discards working-tree state -- `git reset --hard`,
+  `git checkout -- .`, `git stash`, `git clean`. A working tree has no reflog,
+  so one such command silently destroys every other lane's uncommitted work
+  and no recovery exists. This is not theoretical: two `git reset --hard HEAD`
+  invocations on 2026-08-17 wiped three tracked files a parallel lane was
+  mid-edit on. Undo your own work by path, never with a bare `.` pathspec, and
+  prefer editing a file back to the state you want over any git command that
+  touches state you do not own.
 - Do not push without user authority. Before every authorized push, run
   `make verify-site` against the exact commit that will be pushed.
 - After every push, find the `Publish GitHub Pages` workflow run whose
