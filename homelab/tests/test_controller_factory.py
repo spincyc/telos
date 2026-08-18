@@ -49,6 +49,64 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             controller_factory.FactorySpec().address)
         self.assertEqual("10.1.31.2", variables["homelab_storage_address"])
 
+    def test_the_acceptance_convergence_variables_are_byte_identical(self):
+        """The whole factory bundle, frozen, so a durable-path change shows here.
+
+        Gates 3 through 12 converge the DISPOSABLE Controller from exactly this
+        document and nothing else: it is written from ``FactorySpec`` and there
+        is no permanent-identity declaration anywhere on the medium, in the
+        guest, or reachable from the payload the guest runs Ansible against.
+
+        That is why the host-side path may derive its identity from
+        ``homelab/instance/identity/directory.json`` (ADR 0065) without
+        touching acceptance, and why an ABSENT declaration may never invent a
+        fallback: a fallback either moves these values, breaking every gate, or
+        -- far worse -- lets a real domain be provisioned under the synthetic
+        realm, whose SID cannot be renamed afterwards. Written out in full
+        rather than spot-checked so that adding, removing or renaming any
+        convergence variable is a deliberate edit to this list.
+        """
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = controller_factory.FactoryBundle(
+                ROOT.parent, root / "factory.iso",
+                authorization_nonce=NONCE)
+            stage = bundle.stage(root / "stage")
+            variables = json.loads((stage / "factory-vars.json").read_text())
+        self.assertEqual(variables, {
+            "homelab_ad_admin_password_file": "/run/secrets/factory-ad-admin",
+            "homelab_ad_development_clock_receipt_file":
+                "/run/telos-factory-state/clock.receipt",
+            "homelab_ad_directory_accounts": [],
+            "homelab_ad_dns_domain": "ad.factory.test",
+            "homelab_ad_expected_hostname": "bootstrap-dc",
+            "homelab_ad_manage_packages": False,
+            "homelab_ad_netbios_domain": "FACTORY",
+            "homelab_ad_ntp_upstreams": ["198.51.100.10"],
+            "homelab_ad_provision_enabled": True,
+            "homelab_ad_realm": "AD.FACTORY.TEST",
+            "homelab_storage_address": "10.1.31.2",
+        })
+
+    def test_the_bundle_carries_no_permanent_identity_declaration(self):
+        # The acceptance medium must not gain one by accident. The staged tree
+        # is homelab/ansible alone: no repository above it, so the resolver the
+        # roles now run finds nothing to consult and every value stays exactly
+        # as factory-vars.json declares it.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = controller_factory.FactoryBundle(
+                ROOT.parent, root / "factory.iso",
+                authorization_nonce=NONCE)
+            stage = bundle.stage(root / "stage")
+            self.assertEqual(
+                [], [path for path in stage.rglob("directory.json")])
+            self.assertFalse((stage / "homelab").exists())
+            self.assertFalse((stage / "ansible/../vm").exists())
+            self.assertTrue(
+                (stage / "ansible/files"
+                 / "resolve-directory-identity.py").is_file())
+
     def test_dedicated_tftp_service_has_no_dhcp_implementation(self):
         text = controller_factory.tftp_unit(ControllerFactoryBundleTests.spec())
         self.assertIn("/usr/bin/in.tftpd", text)

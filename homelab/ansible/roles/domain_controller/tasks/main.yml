@@ -1,4 +1,51 @@
 ---
+# ADR 0065 froze exactly TWO Controllers -- services.bootstrap_dc_fqdn and
+# services.permanent_dc_fqdn -- so "which machine is this play aimed at" is a
+# closed set of two names rather than a free-form string. The
+# `directory_identity` dependency has already refused an inventory that names a
+# third; these two tasks are the per-host half, and they matter most in
+# physical UAT, where the play reaches a real machine over SSH for the first
+# time and a mistyped inventory name would otherwise provision a domain on
+# whatever answered.
+#
+# Both are gated on a document having been read. Without one -- the disposable
+# acceptance Controller, whose identity comes from the factory bundle's
+# factory-vars.json -- neither runs and the assert below is exactly the check
+# it always was.
+- name: Derive the permanent directory identity from its one declaration
+  # ADR 0065's permanent identity -- the DNS domain, its Kerberos realm, the
+  # NetBIOS name and the two Controller FQDNs -- is declared ONCE, in the
+  # owner's gitignored homelab/instance/identity/directory.json, and derived
+  # here. The included file belongs to neither role that needs it: both include
+  # this same one, so the realm this role uses and the realm the other role
+  # uses are resolved by a single invocation and cannot disagree.
+  #
+  # With no such document nothing is derived and nothing is invented; the
+  # assert below still requires every value, exactly as before.
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../../tasks/directory-identity.yml"
+
+- name: Adopt this Controller's own short name from the one declaration
+  ansible.builtin.set_fact:
+    homelab_ad_expected_hostname: "{{ ansible_hostname }}"
+  when:
+    - homelab_directory_identity.document | default('') | length > 0
+    - homelab_ad_expected_hostname | length == 0
+    - ansible_hostname in homelab_directory_identity.controller_hostnames
+
+- name: Refuse a machine that is neither Controller ADR 0065 froze
+  ansible.builtin.assert:
+    that:
+      - ansible_fqdn in homelab_directory_identity.controller_fqdns
+    fail_msg: >-
+      {{ inventory_hostname }} reports itself as {{ ansible_fqdn }}, which is
+      neither controller the permanent identity document declares:
+      {{ homelab_directory_identity.controller_fqdns | join(' and ') }}.
+      Provisioning a domain on a machine nobody decided to make a domain
+      controller is not recoverable by re-running this play. Nothing has been
+      changed on this host.
+  when: homelab_directory_identity.document | default('') | length > 0
+
 - name: Validate the permanent directory identity
   ansible.builtin.assert:
     that:

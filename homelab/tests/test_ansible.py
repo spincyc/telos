@@ -929,22 +929,47 @@ class TestInstanceTemplate(unittest.TestCase):
             (self.TEMPLATE / "group_vars").exists(),
             "group_vars must live inside inventory/, not beside it")
 
-    def test_the_controller_group_supplies_the_permanent_ad_identity(self):
-        # The domain_controller role's FIRST task asserts all four of these are
-        # non-empty, before it touches anything. The role ships them empty on
-        # purpose (a default here would be somebody else's realm), so a template
-        # that does not name them means the first host-side run dies on task 1
-        # with no indication of what to fill in.
+    def test_the_controller_group_derives_the_permanent_ad_identity(self):
+        # This test used to require the template to SET the four permanent
+        # identity values, because the domain_controller role's first task
+        # asserts them non-empty. They are now derived from ADR 0065's single
+        # declaration -- identity/directory.json beside this inventory, which
+        # the same template ships -- by the `directory_identity` role, so a
+        # template that set them would be offering a second declaration of a
+        # value that cannot be renamed. Setting one to a DIFFERENT value is now
+        # refused by name; the template therefore ships them commented out and
+        # says so.
         supplied = self.load(f"{self.GROUP_VARS}/controllers.yml")
         defaults = self.role_defaults("domain_controller")
+        text = (self.TEMPLATE / self.GROUP_VARS / "controllers.yml").read_text()
+        for name in ("homelab_ad_dns_domain", "homelab_ad_realm",
+                     "homelab_ad_netbios_domain",
+                     "homelab_ad_expected_hostname",
+                     "homelab_identity_domain", "homelab_identity_realm",
+                     "homelab_identity_netbios_domain"):
+            with self.subTest(variable=name):
+                self.assertNotIn(
+                    name, supplied,
+                    "the permanent identity is declared once, in "
+                    "identity/directory.json, and derived from there")
+                self.assertIn(f"# {name}:", text,
+                              "the template must still show the shape, and "
+                              "say when setting it is the right thing to do")
         for name in ("homelab_ad_dns_domain", "homelab_ad_realm",
                      "homelab_ad_netbios_domain",
                      "homelab_ad_expected_hostname"):
             with self.subTest(variable=name):
                 self.assertEqual(defaults[name], "",
                                  "the role must keep no public default")
-                self.assertIn(name, supplied)
-                self.assertTrue(str(supplied[name]).strip())
+        # The template must carry the document the values now come from, and
+        # must no longer tell the owner that nothing checks the two agree.
+        self.assertTrue(
+            (self.TEMPLATE / "identity/directory.json").is_file())
+        self.assertIn("identity/directory.json", text)
+        self.assertNotIn("set them to the same values by hand", text)
+        # A client may only pin one of the two Controllers ADR 0065 froze.
+        self.assertIn("<permanent-controller>",
+                      supplied["homelab_identity_domain_controller"])
         # Off, and staged out of band: first provisioning is one deliberate run
         # and its credential never enters this overlay.
         self.assertIs(supplied["homelab_ad_provision_enabled"], False)

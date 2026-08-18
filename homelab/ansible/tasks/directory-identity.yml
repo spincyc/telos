@@ -1,0 +1,111 @@
+---
+# THE BRIDGE for ADR 0065's permanent identity, and the only thing that
+# crosses it.
+#
+# The realm, the DNS domain, the NetBIOS name and the two Controller FQDNs are
+# declared exactly once, in the owner's gitignored private overlay
+# homelab/instance/identity/directory.json, and validated by exactly one
+# loader, homelab/vm/directory_identity.py. Everything else derives.
+#
+# It cannot be derived on the target: a Controller carries only
+# homelab/ansible, and staging the owner's private identity overlay into a
+# guest would spread instance data (ADR 0046) for no reason. So the derivation
+# runs on the Ansible CONTROL HOST -- where the whole repository is -- and the
+# target receives nothing but the finished values as ordinary Ansible data.
+# The same shape roles/domain_controller uses for the durable account roster.
+#
+# Included by BOTH roles that hold identity values, and it belongs to neither,
+# which is why it sits here rather than inside one of them. One invocation
+# reconciles both families at once: that is what makes the domain_controller
+# realm and the identity_client realm incapable of diverging -- they are
+# compared with each other, and with the document, before either role renders a
+# template or provisions anything. `{{ role_path }}/../..` is homelab/ansible
+# from either role, on a control host and in the staged factory payload alike.
+#
+# homelab_directory_identity_document overrides which document is read, and
+# empty -- the only value a run should ever use -- means
+# homelab/instance/identity/directory.json in this checkout. It exists so a
+# test can resolve a fixture it wrote itself rather than whatever private
+# overlay the developer's machine happens to carry, for the same reason the
+# durable-account resolver takes --identity-overlay.
+- name: Resolve the permanent directory identity on the Ansible control host
+  # become: false because this reads a file in the operator's own checkout;
+  # run_once because the identity is a property of the instance, not of a host;
+  # check_mode: false because it mutates nothing and every task after it needs
+  # its output to say anything useful in a --check run.
+  #
+  # Fail-closed by construction: the resolver exits non-zero, with a named
+  # reason on stderr, for a document it cannot understand, for a document whose
+  # state is unknown, for any YAML variable that disagrees with it, for the two
+  # YAML families disagreeing with each other, and for a Controller name that
+  # is neither of the two ADR 0065 froze. Nothing has been mutated yet.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ role_path }}/../../files/resolve-directory-identity.py"
+      - --declared-json
+      - "{{ {
+            'homelab_ad_dns_domain': homelab_ad_dns_domain | default(''),
+            'homelab_ad_realm': homelab_ad_realm | default(''),
+            'homelab_ad_netbios_domain':
+              homelab_ad_netbios_domain | default(''),
+            'homelab_ad_expected_hostname':
+              homelab_ad_expected_hostname | default(''),
+            'homelab_identity_domain': homelab_identity_domain | default(''),
+            'homelab_identity_realm': homelab_identity_realm | default(''),
+            'homelab_identity_netbios_domain':
+              homelab_identity_netbios_domain | default(''),
+            'homelab_identity_domain_controller':
+              homelab_identity_domain_controller | default(''),
+          } | to_json }}"
+      - --document
+      - "{{ homelab_directory_identity_document | default('') }}"
+      - --declared-source
+      - >-
+        the Ansible inventory
+        ({{ inventory_file | default('inventory/group_vars', true) }}
+        and its group_vars)
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  check_mode: false
+  register: homelab_directory_identity_resolved
+
+- name: Adopt the resolved permanent directory identity
+  ansible.builtin.set_fact:
+    homelab_directory_identity: >-
+      {{ homelab_directory_identity_resolved.stdout | from_json }}
+
+- name: Require the resolution to be the shape this role understands
+  ansible.builtin.assert:
+    that:
+      - homelab_directory_identity.schema == 1
+      - homelab_directory_identity.document | length == 0 or
+        (homelab_directory_identity.controller_fqdns | length == 2 and
+         homelab_directory_identity.kerberos_realm ==
+         (homelab_directory_identity.dns_domain | upper))
+    fail_msg: >-
+      The resolved permanent directory identity is not the document this role
+      knows how to consume. Nothing has been changed on any host.
+
+- name: Derive every identity variable from the one permanent declaration
+  # With a document, it is authoritative and both families are set from it --
+  # a set_fact outranks inventory group_vars, so nothing left in the inventory
+  # can take effect behind this. Any inventory value that DISAGREED was already
+  # refused by name above, so this can only ever restate or fill in.
+  #
+  # With NO document nothing happens here at all: the variables keep whatever
+  # the inventory declared and each role's own first task keeps requiring them,
+  # exactly as before this role existed. That is what leaves the disposable
+  # acceptance Controller untouched -- it has no document, and every value it
+  # converges under comes from the factory bundle's factory-vars.json.
+  ansible.builtin.set_fact:
+    homelab_ad_dns_domain: "{{ homelab_directory_identity.dns_domain }}"
+    homelab_ad_realm: "{{ homelab_directory_identity.kerberos_realm }}"
+    homelab_ad_netbios_domain: "{{ homelab_directory_identity.netbios_name }}"
+    homelab_identity_domain: "{{ homelab_directory_identity.dns_domain }}"
+    homelab_identity_realm: "{{ homelab_directory_identity.kerberos_realm }}"
+    homelab_identity_netbios_domain:
+      "{{ homelab_directory_identity.netbios_name }}"
+  when: homelab_directory_identity.document | length > 0

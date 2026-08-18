@@ -22,29 +22,58 @@ homelab_services: []
 #     - /dev/serial/by-id/<usb-radio-id>
 
 # ---------------------------------------------------------------------------
-# The permanent directory identity (roles/domain_controller).
+# The permanent directory identity (ADR 0065): DERIVED HERE, DECLARED ONCE.
 #
-# Every one of these is asserted by the role's FIRST task, before it touches
-# anything, and the role ships them empty on purpose: a default here would be
-# somebody else's realm. Changing any of them after provisioning is a directory
-# migration and not an Ansible convergence, so decide them once.
+# Declare it in identity/directory.json beside this file and leave every
+# variable below commented out. Both paths read that one document:
+#
+#   * the SIMULATED persistent Controller, driven over its serial console with
+#     no route to the host, through homelab/vm/directory_identity.py;
+#   * this HOST-SIDE Ansible path, which reaches a real Controller over SSH,
+#     through ansible/tasks/directory-identity.yml. Both roles that hold
+#     identity values include that ONE file, so the realm this Controller is
+#     provisioned under and the realm a workstation renders into its sssd.conf
+#     are resolved by a single invocation. It runs on the CONTROL HOST with
+#     `delegate_to: localhost` -- a Controller carries only homelab/ansible and
+#     must never be handed your private overlay -- and the target receives
+#     nothing but the finished values.
+#
+# Until 2026-08-18 this comment told you to keep the YAML and the JSON in step
+# yourself, because nothing checked that they agreed. Both halves of that are
+# obsolete: agreement is now proved, and maintaining a second copy is no longer
+# the right thing to do. What happens now:
+#
+#   * With identity/directory.json present it is AUTHORITATIVE. Uncomment a
+#     variable below and set it to a DIFFERENT value and the run REFUSES before
+#     it touches anything, quoting both values and naming both files. Neither
+#     is silently preferred. Setting it to the same value is merely redundant.
+#   * With identity/directory.json ABSENT nothing is derived and nothing is
+#     invented: every variable below must be set explicitly, exactly as before,
+#     and the role's first task still refuses an empty or inconsistent one.
+#   * homelab_ad_expected_hostname is derived from the document too: it is
+#     whichever of services.bootstrap_dc_fqdn and services.permanent_dc_fqdn
+#     this machine actually is, and a machine that is NEITHER is refused before
+#     anything is installed. Naming a third machine here is refused as well.
+#   * The identity_client variables further down derive from the same document
+#     in the same invocation, so the realm a workstation's sssd.conf is built
+#     against and the realm this Controller is provisioned under cannot
+#     diverge. That was the failure worth preventing: it surfaces at the first
+#     login, after the expensive part, against a realm ADR 0065 records as
+#     effectively permanent.
+#
+# Uncomment these ONLY if you deliberately keep no identity/directory.json. A
+# value set here is not a shortcut; it is a second declaration of something
+# that cannot be renamed.
 #
 #   * the DNS domain is lower case and under home.arpa (ADR 0002)
 #   * the realm is its upper-case equivalent, exactly
 #   * the NetBIOS domain is upper case and at most 15 characters
 #   * the expected hostname is the Controller's SHORT name, and must equal both
 #     the machine's hostname and the label in its inventory name above
-#
-# These are the HOST-SIDE path, which reaches a Controller over SSH. The same
-# three values are declared again, as JSON, in identity/directory.json beside
-# this file, for the SIMULATED persistent Controller that has no route to the
-# host and is driven over its serial console. Nothing checks that the two
-# agree -- this side reads YAML and that side reads JSON -- so set them to the
-# same values by hand, once. Both are ADR 0065's permanent identity.
-homelab_ad_dns_domain: <domain>.home.arpa
-homelab_ad_realm: <DOMAIN>.HOME.ARPA
-homelab_ad_netbios_domain: <DOMAIN>
-homelab_ad_expected_hostname: <controller-name>
+# homelab_ad_dns_domain: <domain>.home.arpa
+# homelab_ad_realm: <DOMAIN>.HOME.ARPA
+# homelab_ad_netbios_domain: <DOMAIN>
+# homelab_ad_expected_hostname: <controller-name>
 
 # FIRST PROVISIONING ONLY, and only ever for one deliberate run.
 #
@@ -115,9 +144,15 @@ homelab_ad_account_password_file_template: /run/secrets/homelab-ad-{name}
 # a machine to a directory that is not ready is how a working machine stops
 # being able to log in.
 homelab_identity_enabled: false
-homelab_identity_domain: <domain>.home.arpa
-homelab_identity_realm: <DOMAIN>.HOME.ARPA
-homelab_identity_netbios_domain: <DOMAIN>
+# Derived from identity/directory.json, exactly like the three above and in the
+# same invocation, so the realm rendered into this machine's krb5.conf and
+# sssd.conf is provably the realm the directory was provisioned under. Uncomment
+# only if you deliberately keep no such document -- and then the two families
+# are still checked against each other, because two hand-set copies of a
+# permanent realm can disagree whether or not a third declaration exists.
+# homelab_identity_domain: <domain>.home.arpa
+# homelab_identity_realm: <DOMAIN>.HOME.ARPA
+# homelab_identity_netbios_domain: <DOMAIN>
 # Name a controller to take SSSD's login path off SRV discovery. Give the NAME,
 # never an address: SSSD warns that an ad_server which is an address breaks
 # GSSAPI. Leave it empty on a multi-controller site, where discovery is what you
@@ -125,4 +160,11 @@ homelab_identity_netbios_domain: <DOMAIN>
 # directory and read its own users out over LDAP while SSSD still could not
 # reach a controller, because Samba's own lookups fall back to a broadcast and
 # ask a different SRV record than SSSD does.
-homelab_identity_domain_controller: <controller>.<domain>.home.arpa
+#
+# NOT derived, and deliberately: which controller a client pins is a migration
+# decision you make, not a value the document answers. But it must be one of
+# the two identity/directory.json declares -- services.bootstrap_dc_fqdn while
+# the bootstrap Controller is the only one, services.permanent_dc_fqdn after
+# the permanent one exists -- and a third name is refused, because ad_server
+# must name a controller the domain actually publishes.
+homelab_identity_domain_controller: <permanent-controller>.<domain>.home.arpa

@@ -82,7 +82,7 @@ the correct spelling in the message, rather than ignored back to a default.
 | `kerberos_realm` must be exactly `dns_domain.upper()` | A mismatched pair provisions cleanly and only surfaces at the first Kerberos login |
 | `netbios_name` must match `^[A-Z0-9-]{1,15}$` | Longer names are truncated silently and the pre-Windows-2000 domain name is permanent |
 | Both DC FQDNs must be beneath `dns_domain`, must differ from each other, and each host label must match `^[a-z0-9][a-z0-9-]{0,14}$` | Domain members find a DC through AD DNS SRV records under the identity domain; the 15-character label cap is the NetBIOS machine-name limit samba truncates past. Two names exist so clients survive replacing the first controller |
-| `bootstrap_dc_fqdn`'s host label must be `bootstrap-dc` | The serial console is the only channel into a simulated persistent instance, and every step of the protocol matches on `<hostname> login:` |
+| `bootstrap_dc_fqdn`'s host label must be `bootstrap-dc` **while the persistent instance is simulated** | The serial console is the only channel into a simulated persistent instance, and every step of the protocol matches on `<hostname> login:`. Enforced by `persistent-converge`, not by the loader, because it is a property of that one channel rather than of the document: a physical Controller reached over SSH is bound by `ansible_fqdn` instead, which the Ansible path checks against these same two FQDNs |
 | `address`/`prefix` must parse as an unambiguous dotted-quad and prefix, and `address` and `gateway` must both be usable hosts inside that subnet and differ | The same ADR 0045 rules `homelab/lib/netplan.py` applies to the managed network; the address is written into the guest's durable systemd-networkd unit, its `/etc/hosts` and every A record it serves |
 | A file that exists but cannot be understood is an error | Falling back to the acceptance realm would mint a permanent domain SID under it |
 
@@ -98,15 +98,46 @@ the correct spelling in the message, rather than ignored back to a default.
   password are typed at your own terminal, once, and reach no file here. See
   the parent [`README.md`](../README.md).
 
-### Keep it in step with the Ansible variables
+### The host-side Ansible path derives from this file too
 
-`inventory/group_vars/controllers.yml` declares the same three identity values
-as `homelab_ad_dns_domain`, `homelab_ad_realm` and `homelab_ad_netbios_domain`
-for the **host-side** Ansible path (`make homelab-bootstrap-controller`), which
-reaches a Controller over SSH. This JSON document serves the **simulated**
-persistent path, which has no route to the host and is driven over the serial
-console. Nothing checks that the two agree today — this side reads JSON and
-that side reads YAML — so set them to the same values by hand, once.
+Until 2026-08-18 the same permanent values were declared a second and a third
+time, as YAML, and nothing checked that any of them agreed:
+`homelab_ad_dns_domain`, `homelab_ad_realm` and `homelab_ad_netbios_domain` for
+the domain controller, and `homelab_identity_domain`, `homelab_identity_realm`
+and `homelab_identity_netbios_domain` for every client. That is now one
+declaration — this file — and the rest derive.
+
+`homelab/ansible/tasks/directory-identity.yml` reads this document on the
+**Ansible control host** (`delegate_to: localhost`, `run_once`, nothing
+mutated) and hands both roles the finished values. Both roles include that one
+file, so there is no second invocation for two realms to disagree across. It
+runs on the control host rather than on the target for the same reason the
+durable-account resolver does: a Controller carries only `homelab/ansible`, and
+staging your private overlay into a guest would spread instance data
+(ADR 0046) for no reason.
+
+| Situation | What happens |
+| --- | --- |
+| This file present, the variable unset | Derived from here. Nothing to keep in step |
+| This file present, the variable set to the **same** value | Accepted, merely redundant |
+| This file present, the variable set to a **different** value | **Refused** before anything is touched, quoting both values and naming both files. Neither is silently preferred |
+| This file absent | Nothing derived and nothing invented: every variable must be set explicitly, exactly as before, and the two YAML families are still checked against **each other** |
+
+Two more variables are reconciled without being derived:
+
+- `homelab_ad_expected_hostname` — with this file present it is whichever of
+  `services.bootstrap_dc_fqdn` and `services.permanent_dc_fqdn` the machine
+  actually is, and a machine that is **neither** is refused before anything is
+  installed. Naming a third machine in the inventory is refused too.
+- `homelab_identity_domain_controller` — which controller a client pins is a
+  migration decision you make, not a value this file answers, but it must be
+  one of the two declared here: SSSD's `ad_server` has to name a controller the
+  domain actually publishes.
+
+The disposable acceptance path is deliberately unaffected. It has no
+`directory.json`, its identity comes from the factory bundle's
+`factory-vars.json`, and an absent document must never mean "use the acceptance
+realm" — which is why nothing here has a fallback.
 
 ## Private principal roster
 

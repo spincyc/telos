@@ -1,12 +1,34 @@
 ---
-# Stable client-facing identity. Changing these values after provisioning is a
-# directory migration, not an Ansible convergence.
+# Stable client-facing identity (ADR 0065). Changing these values after
+# provisioning is a directory migration, not an Ansible convergence.
+#
+# DERIVED, not declared. These four stay empty here and the role's
+# `directory_identity` dependency fills them in from the ONE place ADR 0065's
+# permanent values are declared -- the owner's gitignored
+# homelab/instance/identity/directory.json -- which
+# homelab/vm/directory_identity.py is the one loader for and which the
+# simulated persistent Controller is converged from over its serial console.
+# An inventory that also sets one of them, to a DIFFERENT value, is refused by
+# name, quoting both values and naming both files; setting one to the SAME
+# value is merely redundant.
+#
+# With NO such document nothing is derived, the first task below keeps
+# requiring them exactly as it always did, and no fallback is invented. That is
+# deliberate and load-bearing: the disposable acceptance Controller has no
+# document and takes every one of these from the factory bundle's
+# factory-vars.json (homelab/vm/controller_factory.py), which is how gates 3
+# through 12 converge a throwaway domain under ad.factory.test.
 homelab_ad_dns_domain: ""
 homelab_ad_realm: ""
 homelab_ad_netbios_domain: ""
 homelab_ad_server_role: dc
 homelab_ad_dns_backend: SAMBA_INTERNAL
 homelab_ad_provision_enabled: false
+# The Controller's own SHORT name. Also derived: with a permanent-identity
+# document present this is whichever of services.bootstrap_dc_fqdn and
+# services.permanent_dc_fqdn this machine actually is, and a machine that is
+# neither is refused before anything is installed. An inventory value that
+# names a third machine is refused by the resolver.
 homelab_ad_expected_hostname: ""
 
 # First provisioning is the sole task that needs the initial Administrator

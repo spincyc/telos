@@ -1,4 +1,17 @@
 ---
+- name: Derive the permanent directory identity from its one declaration
+  # ADR 0065's permanent identity -- the DNS domain, its Kerberos realm, the
+  # NetBIOS name and the two Controller FQDNs -- is declared ONCE, in the
+  # owner's gitignored homelab/instance/identity/directory.json, and derived
+  # here. The included file belongs to neither role that needs it: both include
+  # this same one, so the realm this role uses and the realm the other role
+  # uses are resolved by a single invocation and cannot disagree.
+  #
+  # With no such document nothing is derived and nothing is invented; the
+  # assert below still requires every value, exactly as before.
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../../tasks/directory-identity.yml"
+
 - name: Require the realm to be named
   ansible.builtin.assert:
     that:
