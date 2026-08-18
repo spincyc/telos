@@ -27,6 +27,11 @@ try:
     from .controller_image import ControllerImageError
     from .controller_image import assert_installed as assert_installed_image
     from .controller_image import probe as probe_controller_image
+    from .directory_identity import (
+        DirectoryIdentityError,
+        directory_identity_source,
+        durable_directory_identity,
+    )
     from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
     from .serial_automation import SerialAutomation, SerialAutomationError
@@ -44,6 +49,11 @@ except ImportError:  # Direct execution from homelab/.
     from controller_image import ControllerImageError
     from controller_image import assert_installed as assert_installed_image
     from controller_image import probe as probe_controller_image
+    from directory_identity import (
+        DirectoryIdentityError,
+        directory_identity_source,
+        durable_directory_identity,
+    )
     from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
     from serial_automation import SerialAutomation, SerialAutomationError
@@ -1113,6 +1123,7 @@ def persistent_converge(
     canonical_state: Path = DEFAULT_STATE,
     seed_iso: Path | None = None,
     reconverge: bool = False,
+    identity_path: Path | None = None,
     timeout: float = PERSISTENT_CONVERGE_TIMEOUT,
 ) -> int:
     """Provision Active Directory into one persistent instance, in place.
@@ -1125,8 +1136,19 @@ def persistent_converge(
     attaches a simulated peer — none of which belong in a bring-up that must
     stay fast and idempotent.
 
-    Three properties matter more than the mechanism:
+    Four properties matter more than the mechanism:
 
+    * *the synthetic acceptance identity is refused.* The realm, NetBIOS name
+      and DNS domain come from the owner's private overlay
+      (``directory_identity.durable_directory_identity``), never from
+      ``FactorySpec()``'s ``ad.factory.test``/``FACTORY`` defaults. ADR 0065
+      requires the overlay to freeze them before the first domain is
+      provisioned, and it records them as effectively permanent: the domain
+      SID and every account SID derive from them, so a fallback would not be a
+      wrong run but a permanent one. It is resolved before anything is printed
+      and on the dry run as well as the applied one, so an operator learns
+      their overlay is missing from a plan rather than from a refusal after
+      they have typed an unrecoverable credential.
     * *the durable ESP is never rewritten.* No ``init=/bin/bash`` entry and no
       loader default is touched, because the login uses the console account the
       offline installer already created.
@@ -1143,6 +1165,28 @@ def persistent_converge(
         target.assert_separate(canonical["disk"])
     except (ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
+        return 2
+    # Resolved here, after the acceptance-state refusals and before the first
+    # print, for the reason the durable-account verb resolves its roster in the
+    # same place: the plan an operator reads must already name the realm they
+    # are about to make permanent, and a missing overlay must cost them nothing.
+    try:
+        identity = durable_directory_identity(identity_path)
+    except (DirectoryIdentityError, OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    spec = identity.factory_spec()
+    if spec.hostname != NAME:
+        # The console protocol is the only channel into a simulated persistent
+        # instance, and every step of it matches on "<hostname> login:". A
+        # bootstrap DC named anything else converges and then leaves
+        # persistent-accounts waiting for a prompt that never comes.
+        print(f"error: directory identity overlay {identity.source} names the "
+              f"bootstrap controller {identity.bootstrap_dc_fqdn}, whose host "
+              f"name is {spec.hostname!r}; this guest is {NAME!r} and its "
+              f"serial console protocol matches on that name. Declare "
+              f"services.bootstrap_dc_fqdn as "
+              f"{NAME}.{identity.dns_domain}", file=sys.stderr)
         return 2
     files = persistent_paths(state)
     existing = target.exists()
@@ -1162,7 +1206,6 @@ def persistent_converge(
     # failure in the window between those two facts makes every retry ask for,
     # confirm, and silently discard a credential that cannot take effect.
     prompts_for_administrator = recorded is None and attempted is None
-    spec = FactorySpec()
     try:
         command = qemu_command(
             state, None, None, files=files,
@@ -1182,7 +1225,13 @@ def persistent_converge(
               f"({recorded.get('realm')}, SID {recorded.get('domain_sid')})")
     else:
         print("bring-up: reuse the retained, not-yet-converged directory state")
-    print(f"directory identity: {spec.realm} at {spec.address}/{spec.prefix}")
+    print(f"directory identity: {spec.realm} at {spec.address}/{spec.prefix}, "
+          f"NetBIOS {spec.netbios}, {spec.fqdn}")
+    print(f"identity source: {directory_identity_source(identity.source)}; "
+          f"ADR 0065 freezes this realm and NetBIOS name before the first "
+          f"domain is provisioned and neither can be renamed afterwards")
+    print(f"permanent controller: {identity.permanent_dc_fqdn} (declared now "
+          f"so clients discover it through AD DNS, not this guest's name)")
     print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
           "password the offline installer told you to type; it is held in "
           "memory only and is neither changed nor recorded")
@@ -1872,6 +1921,12 @@ def parser() -> argparse.ArgumentParser:
                 help="run the convergent play again on an already converged "
                      "instance; the Administrator password is not changed")
             persistent_parser.add_argument(
+                "--directory-identity", type=Path, default=None,
+                help="resolve the PERMANENT realm, NetBIOS name, DNS domain "
+                     "and address against this private overlay instead of "
+                     "homelab/instance/identity/directory.json (ADR 0065); "
+                     "there is no fallback to the acceptance identity")
+            persistent_parser.add_argument(
                 "--timeout", type=float, default=PERSISTENT_CONVERGE_TIMEOUT,
                 help="bound on the in-guest convergence payload, in seconds")
         if name == "persistent-accounts":
@@ -1917,7 +1972,8 @@ def main(argv: list[str] | None = None) -> int:
         return persistent_converge(
             args.persistent_root, args.instance, args.apply,
             canonical_state=args.state_dir, seed_iso=args.seed_iso,
-            reconverge=args.reconverge, timeout=args.timeout)
+            reconverge=args.reconverge,
+            identity_path=args.directory_identity, timeout=args.timeout)
     if command == "persistent-accounts":
         return persistent_accounts(
             args.persistent_root, args.instance, args.apply,

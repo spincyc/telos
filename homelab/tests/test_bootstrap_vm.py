@@ -16,7 +16,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fake_image_tools
 
-from vm import bootstrap_dc, simulation_overlay
+from vm import bootstrap_dc, directory_identity, simulation_overlay
+
+# One well-formed PERMANENT directory identity (ADR 0065), used by every
+# durable-path test here. Deliberately synthetic and deliberately NOT the
+# owner's real realm: a test fixture that named it would put an effectively
+# permanent private value into a tracked file, which is the whole reason the
+# document lives under the gitignored overlay in the first place. It is also
+# not FactorySpec()'s acceptance identity, so a test that passes could not be
+# passing on a silent fallback to it.
+DURABLE_IDENTITY = {
+    "schema_version": 1,
+    "identity": {
+        "dns_domain": "ad.example.home.arpa",
+        "kerberos_realm": "AD.EXAMPLE.HOME.ARPA",
+        "netbios_name": "EXAMPLEAD",
+    },
+    "services": {
+        "bootstrap_dc_fqdn": "bootstrap-dc.ad.example.home.arpa",
+        "permanent_dc_fqdn": "dc2.ad.example.home.arpa",
+    },
+    "network": {"address": "10.1.99.2", "prefix": 28, "gateway": "10.1.99.1"},
+}
 
 
 class BootstrapVmTests(unittest.TestCase):
@@ -1076,8 +1097,17 @@ class PersistentConvergenceTests(unittest.TestCase):
         files["disk"].chmod(0o600)
         self.persistent_root = self.root / "persistent"
         self.state = self.persistent_root / "lab-dc1"
+        # The durable path has no acceptance fallback, so every case here has
+        # to declare the permanent identity. Written into this test's own
+        # temporary directory: the suite must never read or write whatever
+        # private overlay the developer's machine happens to carry.
+        self.identity = self.root / "directory.json"
+        self.identity.write_text(json.dumps(DURABLE_IDENTITY))
+        self.absent_identity = self.root / "no-such-directory.json"
         self.typed = []
         self.launched = []
+        self._Bundle.built = []
+        self.converged_with = []
 
     def call(self, *argv, expect):
         out, err = io.StringIO(), io.StringIO()
@@ -1096,12 +1126,20 @@ class PersistentConvergenceTests(unittest.TestCase):
     class _Bundle:
         """A stand-in for the secret-bearing convergence medium."""
 
+        #: Every bundle built in one test. The spec a bundle is handed is what
+        #: renders the convergence payload and the role's ansible variables,
+        #: so it is the value the durable directory is actually provisioned
+        #: under -- worth asserting on directly rather than through printed
+        #: text.
+        built = []
+
         def __init__(self, _repo, output, *, authorization_nonce,
                      password=None, spec=None):
             self.output = Path(output)
             self.password = password
             self.authorization_nonce = authorization_nonce
             self.spec = spec
+            type(self).built.append(self)
 
         def build(self):
             self.output.write_bytes(b"convergence iso")
@@ -1175,6 +1213,7 @@ class PersistentConvergenceTests(unittest.TestCase):
                 "--state-dir", str(self.canonical), "persistent-converge",
                 "--instance", "lab-dc1",
                 "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(self.identity),
                 *extra, expect=expect)
 
     # -- plan ------------------------------------------------------------
@@ -1189,7 +1228,8 @@ class PersistentConvergenceTests(unittest.TestCase):
             out, _ = self.call(
                 "--state-dir", str(self.canonical), "persistent-converge",
                 "--instance", "lab-dc1",
-                "--persistent-root", str(self.persistent_root), expect=0)
+                "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(self.identity), expect=0)
         run.assert_not_called()
         popen.assert_not_called()
         prompt.assert_not_called()
@@ -1200,6 +1240,143 @@ class PersistentConvergenceTests(unittest.TestCase):
         self.assertIn("198.51.100.10", out)
         self.assertIn(
             f"listen=127.0.0.1:{bootstrap_dc.PERSISTENT_SOCKET_PORT}", out)
+
+    # -- the permanent directory identity (ADR 0065) ---------------------
+    def _capture(self, *args, **_kwargs):
+        """Record the spec the guest was actually converged under."""
+        self.converged_with.append(args[3])
+        return self._record()
+
+    def test_the_plan_names_the_permanent_identity_not_the_acceptance_one(self):
+        acceptance = bootstrap_dc.FactorySpec()
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(bootstrap_dc.subprocess, "run"), \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen"), \
+                mock.patch.object(bootstrap_dc.getpass, "getpass"):
+            out, _ = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(self.identity), expect=0)
+        self.assertIn("AD.EXAMPLE.HOME.ARPA at 10.1.99.2/28", out)
+        self.assertIn("NetBIOS EXAMPLEAD", out)
+        self.assertIn("bootstrap-dc.ad.example.home.arpa", out)
+        self.assertIn("dc2.ad.example.home.arpa", out)
+        self.assertIn(str(self.identity), out)
+        # The plan an operator reads must not carry the synthetic realm they
+        # would otherwise be about to make permanent.
+        self.assertNotIn(acceptance.realm, out)
+        self.assertNotIn(acceptance.domain, out)
+        # Narrowed to the identity line: the unrelated TELOS_FACTORY label of
+        # the convergence medium legitimately carries the same word.
+        self.assertNotIn(f"NetBIOS {acceptance.netbios}", out)
+        self.assertNotIn(f"{acceptance.address}/{acceptance.prefix}", out)
+
+    def test_the_guest_is_converged_under_the_overlay_values(self):
+        self.converge("--apply", drive=self._capture)
+        self.assertEqual(1, len(self.converged_with))
+        self.assertEqual(1, len(self._Bundle.built))
+        acceptance = bootstrap_dc.FactorySpec()
+        # The spec that renders the convergence payload and the role's ansible
+        # variables, and the spec the console protocol is driven with, are the
+        # same one and both carry the PERMANENT identity.
+        for spec in (self.converged_with[0], self._Bundle.built[0].spec):
+            self.assertEqual("ad.example.home.arpa", spec.domain)
+            self.assertEqual("AD.EXAMPLE.HOME.ARPA", spec.realm)
+            self.assertEqual("EXAMPLEAD", spec.netbios)
+            self.assertEqual("10.1.99.2", spec.address)
+            self.assertEqual(28, spec.prefix)
+            self.assertEqual("10.1.99.1", spec.gateway)
+            self.assertEqual("10.1.99.0", spec.network)
+            self.assertEqual("255.255.255.240", spec.mask)
+            self.assertEqual("bootstrap-dc", spec.hostname)
+            self.assertNotEqual(acceptance.domain, spec.domain)
+            # Fabric, not identity: ADR 0065 does not freeze it and the
+            # simulated gateway is the only host that answers it.
+            self.assertEqual(acceptance.ntp_upstream, spec.ntp_upstream)
+
+    def test_an_absent_identity_refuses_before_a_credential_is_typed(self):
+        with self.harness(self._record):
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(self.absent_identity),
+                "--apply", expect=2)
+        self.assertIn(str(self.absent_identity), err)
+        for key in ("identity.dns_domain", "identity.kerberos_realm",
+                    "identity.netbios_name", "services.bootstrap_dc_fqdn",
+                    "services.permanent_dc_fqdn", "network.address",
+                    "network.prefix", "network.gateway"):
+            self.assertIn(key, err)
+        # Unrecoverable credentials are never spent on a run that cannot
+        # succeed, and nothing half-made is left behind.
+        self.assertEqual([], self.typed)
+        self.assertEqual([], self.launched)
+        self.assertFalse(self.persistent_root.exists())
+
+    def test_the_dry_run_refuses_an_absent_identity_too(self):
+        # An operator must learn their overlay is missing from a plan, not
+        # from a refusal after they have typed the console password.
+        _, err = self.call(
+            "--state-dir", str(self.canonical), "persistent-converge",
+            "--instance", "lab-dc1",
+            "--persistent-root", str(self.persistent_root),
+            "--directory-identity", str(self.absent_identity), expect=2)
+        self.assertIn("ADR 0065", err)
+        self.assertIn(bootstrap_dc.FactorySpec().realm, err)
+
+    def test_a_malformed_identity_is_a_refusal_never_a_fallback(self):
+        broken = self.root / "broken.json"
+        document = json.loads(json.dumps(DURABLE_IDENTITY))
+        document["identity"]["kerberos_realm"] = "AD.EXAMPLE.HOME.ARPA."
+        broken.write_text(json.dumps(document))
+        with self.harness(self._record):
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(broken), "--apply", expect=2)
+        self.assertIn("is not the upper-case form of", err)
+        self.assertEqual([], self.typed)
+        self.assertFalse(self.persistent_root.exists())
+
+    def test_a_bootstrap_controller_by_another_name_is_refused(self):
+        # The serial console is the only channel into a simulated persistent
+        # instance and every step matches on "<hostname> login:".
+        renamed = self.root / "renamed.json"
+        document = json.loads(json.dumps(DURABLE_IDENTITY))
+        document["services"]["bootstrap_dc_fqdn"] = (
+            "dc1.ad.example.home.arpa")
+        renamed.write_text(json.dumps(document))
+        with self.harness(self._record):
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(renamed), "--apply", expect=2)
+        self.assertIn("serial console protocol matches on that name", err)
+        self.assertIn(f"{bootstrap_dc.NAME}.ad.example.home.arpa", err)
+        self.assertEqual([], self.typed)
+        self.assertFalse(self.persistent_root.exists())
+
+    def test_the_acceptance_state_refusal_still_comes_first(self):
+        # Ordering matters: an operator pointed at the acceptance canonical
+        # must be told THAT, not told to seed a private overlay first.
+        with mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-converge",
+                "--instance", self.canonical.name,
+                "--persistent-root", str(self.canonical.parent),
+                "--directory-identity", str(self.absent_identity),
+                "--apply", expect=2)
+        self.assertIn("refusing a persistent controller instance", err)
+        self.assertNotIn("ADR 0065", err)
+        run.assert_not_called()
+        popen.assert_not_called()
 
     def test_convergence_refuses_the_acceptance_state(self):
         with mock.patch.object(bootstrap_dc.subprocess, "run") as run, \
@@ -1240,6 +1417,7 @@ class PersistentConvergenceTests(unittest.TestCase):
                 "--state-dir", str(self.canonical), "persistent-converge",
                 "--instance", "lab-dc1",
                 "--persistent-root", str(self.persistent_root),
+                "--directory-identity", str(self.identity),
                 "--apply", expect=2)
         self.assertIn("controlling terminal", err)
         self.assertIn("not a file, argv", err)

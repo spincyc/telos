@@ -34,6 +34,13 @@ homelab_services: []
 #   * the NetBIOS domain is upper case and at most 15 characters
 #   * the expected hostname is the Controller's SHORT name, and must equal both
 #     the machine's hostname and the label in its inventory name above
+#
+# These are the HOST-SIDE path, which reaches a Controller over SSH. The same
+# three values are declared again, as JSON, in identity/directory.json beside
+# this file, for the SIMULATED persistent Controller that has no route to the
+# host and is driven over its serial console. Nothing checks that the two
+# agree -- this side reads YAML and that side reads JSON -- so set them to the
+# same values by hand, once. Both are ADR 0065's permanent identity.
 homelab_ad_dns_domain: <domain>.home.arpa
 homelab_ad_realm: <DOMAIN>.HOME.ARPA
 homelab_ad_netbios_domain: <DOMAIN>

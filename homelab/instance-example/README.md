@@ -43,6 +43,19 @@ Then put the **public** key — the `.pub` file, one line — into
 private keys, and back it up somewhere that does not depend on the homelab being
 up. A break-glass key stored only on a homelab machine is not a break-glass key.
 
+## The permanent directory identity
+
+`identity/directory.json` freezes what the durable directory **is** — its realm,
+NetBIOS name, DNS domain, controller FQDNs and address. ADR 0065 requires those
+to be decided before the first domain is provisioned, and records the realm and
+NetBIOS name as effectively permanent: the domain SID and every account SID
+derive from them, so changing one later is a migration and not a convergence.
+
+It is **not** optional. `persistent-converge` refuses without it, naming every
+key that is missing, rather than provisioning a permanent domain under the
+synthetic acceptance realm. Copying this template provisions nothing: it ships
+its example under `_example`, so a fresh overlay is a refusal you must answer.
+
 ## The real account names
 
 `identity/principals.json` names the real directory and break-glass accounts the

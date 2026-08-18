@@ -114,6 +114,10 @@ RECONVERGE ?=
 # homelab/instance/identity/principals.json, which is where it belongs. It
 # carries NAMES and never a credential.
 IDENTITY_OVERLAY ?=
+# The permanent directory identity document (ADR 0065). Optional: with no
+# value it resolves from homelab/instance/identity/directory.json, which is
+# where it belongs. The durable path REFUSES to inherit the acceptance realm.
+DIRECTORY_IDENTITY ?=
 # Stage the durable roster again after an unfinished or a completed run. It
 # does NOT reset the password of an account the directory already holds.
 RESTAGE ?=
@@ -313,10 +317,17 @@ homelab-test:
 	@$(PYTHON) -m unittest discover -s homelab/tests -t . -v
 
 # The smallest honest verification after a homelab-scoped edit. Unlike
-# `check` it needs no TeX toolchain and skips the site and research gates,
-# which cannot be affected by homelab code.
+# `check` it needs no TeX toolchain and skips the research gates.
+#
+# It does NOT skip the site check, despite that gate rendering no homelab page:
+# the instance-leak scanner reads homelab/tests/**/*.py, so a synthetic address
+# outside the sanctioned ranges in a homelab TEST fixture is a site-check
+# failure that homelab-check used to pass over. That happened on 2026-08-18 --
+# a lane verified green here and `make check` then refused its fixture. The
+# scan costs about half a second, which is nothing against 60s of tests.
 homelab-check:
 	@tools/doc-make-target-drift
+	@$(PYTHON) scripts/site check
 	@$(PYTHON) scripts/arch-packages --check
 	@$(PYTHON) -m unittest discover -s tests -t . -q
 	@$(PYTHON) -m unittest discover -s homelab/tests -t . -q
@@ -914,6 +925,7 @@ homelab-factory-persistent-converge-plan:
 	@$(PYTHON) homelab/vm/bootstrap_dc.py \
 		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 		persistent-converge \
+		$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
 		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
@@ -928,6 +940,7 @@ homelab-factory-persistent-converge:
 		$(PYTHON) homelab/vm/bootstrap_dc.py \
 			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			persistent-converge \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
@@ -935,6 +948,7 @@ homelab-factory-persistent-converge:
 		$(PYTHON) homelab/vm/bootstrap_dc.py \
 			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			persistent-converge \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
