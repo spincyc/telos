@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Run the sealed-input lifecycle at least twice and compare the receipts."""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from homelab.vm.factory_repeat import main  # noqa: E402
+
+
+raise SystemExit(main())

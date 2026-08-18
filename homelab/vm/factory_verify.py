@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Gate-12 acceptance verifier and two-run receipt comparator.
 
-This module is pure, deterministic, read-only, and unprivileged.  It never
-boots a guest, opens a socket, mutates a file, or performs an installation.
+This module is pure, deterministic, and unprivileged.  It never boots a guest,
+opens a socket, performs an installation, or modifies the evidence it reads;
+the only files it ever writes are the two artifacts an operator explicitly
+names OUTSIDE that evidence -- the standalone gate-4 audit JSON
+(``--audit-json``) and the receipt itself (``--receipt``), both created mode
+0600 and refusing to follow a symlink.
 It reads one retained factory run's evidence (as produced by
 ``factory_runner.retain_evidence``) and produces a machine-readable receipt
 that classifies every acceptance measurement it can check from evidence alone
@@ -115,6 +119,10 @@ _EXPECTED_VARYING = frozenset(
 )
 
 _ABSENT = "<absent>"
+
+# A persisted receipt carries a whole run's evidence summary and must stay as
+# private as the evidence it summarizes (factory_runner retains at 0600 too).
+RECEIPT_MODE = 0o600
 
 
 class VerifyError(RuntimeError):
@@ -705,6 +713,51 @@ def compare_runs(receipt_a: dict, receipt_b: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Receipt persistence
+# --------------------------------------------------------------------------
+
+
+def render_receipt(document: dict) -> str:
+    """The one canonical serialization of any receipt this module emits.
+
+    Both the standard output and the persisted file go through this, so a
+    persisted receipt is byte-identical to what the operator saw.
+    """
+    return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
+def write_receipt(document: dict, path) -> Path:
+    """Persist a receipt as a private regular file, replacing any prior one.
+
+    Until this existed a receipt lived only in a terminal's scrollback, so the
+    gate-12 repeat evidence -- the thing the gate exists to produce -- could not
+    be retained, re-read, or compared later without re-running the verifier.
+
+    ``O_NOFOLLOW`` refuses a symlinked destination outright rather than writing
+    through it, and the mode is forced to 0600 on the descriptor so an existing
+    world-readable file cannot keep its mode.  The destination is the operator's
+    choice and must be outside the retained evidence: writing it inside would
+    make the very next ``verify_run`` of that directory FAIL check 2 as an
+    unexpected retained artifact.
+    """
+    path = Path(path)
+    encoded = render_receipt(document).encode("utf-8")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC,
+        RECEIPT_MODE,
+    )
+    try:
+        os.fchmod(descriptor, RECEIPT_MODE)
+        written = 0
+        while written < len(encoded):
+            written += os.write(descriptor, encoded[written:])
+    finally:
+        os.close(descriptor)
+    return path
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -732,6 +785,12 @@ def parser() -> argparse.ArgumentParser:
         help="also write the full gate-4 PXE authority audit JSON to this "
         "path (its verdict is embedded in the receipt regardless)")
     result.add_argument(
+        "--receipt", type=Path, default=None,
+        help="also persist the receipt (or the two-run comparison document) "
+        "to this path, mode 0600, byte-identical to standard output.  Name a "
+        "path outside the retained evidence: a receipt written inside it "
+        "would be an unexpected retained artifact on the next verification")
+    result.add_argument(
         "--plan", action="store_true",
         help="dry run: list the checks without emitting a receipt")
     return result
@@ -748,6 +807,8 @@ def main(argv: list[str] | None = None) -> int:
             # The repeat gate's second run: name it in the plan so an operator
             # can confirm the comparison is wired before spending a live run.
             print(f"compare with: {args.compare_with}")
+        if args.receipt is not None:
+            print(f"receipt: {args.receipt} (mode 0600)")
         print("checks:")
         for name in CHECK_NAMES:
             print(f"  - {name}")
@@ -763,7 +824,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         comparison = None
         output = receipt
-    print(json.dumps(output, indent=2, sort_keys=True))
+    print(render_receipt(output), end="")
+    # Persisted before the verdict lines so a non-zero exit never costs the
+    # receipt the operator asked to keep.
+    if args.receipt is not None:
+        write_receipt(output, args.receipt)
+        print(f"receipt written: {args.receipt}", file=sys.stderr)
     print(_summary_line(receipt), file=sys.stderr)
     if comparison is not None:
         verdict = "PASS" if comparison["equivalent"] else "FAIL"

@@ -5,9 +5,11 @@ directories and a real ``pxe_release_set`` release set, and never boot a
 guest, touch the network, or require privilege.
 """
 
+import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -768,6 +770,106 @@ class CompareCliTests(VerifyRunTests):
             difference["path"].startswith("evidence_subdirectories")
             and difference["classification"] == "divergent"
             for difference in comparison["differences"]), comparison)
+
+
+class ReceiptFileTests(VerifyRunTests):
+    """A receipt must survive the terminal it was printed in.
+
+    Gate 12's deliverable IS the receipt, and before ``--receipt`` existed it
+    lived only in scrollback: nothing could re-read or re-compare it without
+    spending another verification.  These pin the three properties that make a
+    persisted receipt trustworthy -- it is private, it is byte-identical to
+    what the operator saw, and persisting it changes no exit code.
+    """
+
+    def run_cli(self, arguments):
+        """Run ``main`` capturing stdout, returning (status, stdout)."""
+        stream = io.StringIO()
+        real_stdout, real_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = stream, io.StringIO()
+        try:
+            status = factory_verify.main(arguments)
+        finally:
+            sys.stdout, sys.stderr = real_stdout, real_stderr
+        return status, stream.getvalue()
+
+    def test_the_receipt_file_matches_standard_output_byte_for_byte(self):
+        receipt = self.root / "receipt.json"
+        status, printed = self.run_cli(
+            [str(self.evidence()), "--release-set", str(self.release_set()),
+             "--receipt", str(receipt)])
+        self.assertEqual(0, status)
+        self.assertEqual(printed, receipt.read_text(encoding="utf-8"))
+        self.assertEqual("PASS", json.loads(printed)["verdict"])
+
+    def test_the_receipt_file_is_private(self):
+        receipt = self.root / "receipt.json"
+        self.run_cli([str(self.evidence()), "--receipt", str(receipt)])
+        self.assertEqual(
+            factory_verify.RECEIPT_MODE,
+            stat.S_IMODE(receipt.lstat().st_mode))
+
+    def test_a_pre_existing_world_readable_receipt_is_re_privatised(self):
+        receipt = self.root / "receipt.json"
+        receipt.write_text("stale\n", encoding="utf-8")
+        receipt.chmod(0o644)
+        self.run_cli([str(self.evidence()), "--receipt", str(receipt)])
+        self.assertEqual(
+            factory_verify.RECEIPT_MODE,
+            stat.S_IMODE(receipt.lstat().st_mode))
+        self.assertNotIn("stale", receipt.read_text(encoding="utf-8"))
+
+    def test_a_symlinked_receipt_destination_is_refused(self):
+        target = self.root / "target.json"
+        target.write_text("{}\n", encoding="utf-8")
+        link = self.root / "link.json"
+        link.symlink_to(target)
+        with self.assertRaises(OSError):
+            factory_verify.write_receipt({"schema": 1}, link)
+        # The symlink target is untouched: it is never written through.
+        self.assertEqual("{}\n", target.read_text(encoding="utf-8"))
+
+    def test_the_comparison_document_is_what_is_persisted(self):
+        receipt = self.root / "receipt.json"
+        first = self.evidence(name="run-a")
+        second = self.evidence(name="run-b")
+        status, printed = self.run_cli(
+            [str(first), "--compare-with", str(second),
+             "--receipt", str(receipt)])
+        self.assertEqual(0, status)
+        persisted = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual({"run_a", "run_b", "comparison"}, set(persisted))
+        self.assertTrue(persisted["comparison"]["equivalent"])
+        self.assertEqual(printed, receipt.read_text(encoding="utf-8"))
+
+    def test_persisting_changes_no_exit_code(self):
+        # A divergent pair still exits non-zero, and the receipt is written
+        # anyway -- the failing evidence is the receipt worth keeping.
+        receipt = self.root / "receipt.json"
+        first = self.evidence(name="run-a")
+        second = self.evidence(name="run-b", status="fail")
+        status, printed = self.run_cli(
+            [str(first), "--compare-with", str(second),
+             "--receipt", str(receipt)])
+        self.assertEqual(1, status)
+        self.assertEqual(printed, receipt.read_text(encoding="utf-8"))
+        self.assertFalse(
+            json.loads(printed)["comparison"]["equivalent"])
+
+    def test_stdout_is_unchanged_when_no_receipt_is_requested(self):
+        evidence = self.evidence()
+        _, with_flag = self.run_cli(
+            [str(evidence), "--receipt", str(self.root / "receipt.json")])
+        _, without = self.run_cli([str(evidence)])
+        self.assertEqual(without, with_flag)
+
+    def test_the_dry_run_names_the_receipt_and_writes_nothing(self):
+        receipt = self.root / "receipt.json"
+        status, printed = self.run_cli(
+            [str(self.evidence()), "--receipt", str(receipt), "--plan"])
+        self.assertEqual(0, status)
+        self.assertIn(f"receipt: {receipt}", printed)
+        self.assertFalse(receipt.exists())
 
 
 if __name__ == "__main__":
