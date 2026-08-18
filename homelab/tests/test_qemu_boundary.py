@@ -31,6 +31,33 @@ class QemuBoundaryTests(unittest.TestCase):
     def test_accepts_standalone_disposable_boundary(self):
         self.audit()
 
+    def test_accepts_only_an_allowlisted_progress_chardev(self):
+        """The Controller's disposable audit is the B2 gate for the port."""
+        from homelab.vm.guest_progress_collector import (
+            attach_planned_progress_port, audit_progress_port)
+
+        armed, chardev = attach_planned_progress_port(
+            self.argv, Path(self.temp.name) / "progress.sock")
+        self.assertEqual(audit_progress_port(armed), (chardev,))
+        audit_disposable_controller(
+            armed, disk=self.disk, vars_file=self.vars,
+            forbidden_paths=(self.canonical_disk, self.canonical_vars),
+            allowed_chardevs=(chardev,))
+        # Closed: without the allowlist, with the wrong value, or with a
+        # second character device beside it.
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            self.audit(armed)
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            audit_disposable_controller(
+                armed, disk=self.disk, vars_file=self.vars,
+                allowed_chardevs=("socket,id=telosprogress,path=/elsewhere,"
+                                  "server=on,wait=off",))
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            audit_disposable_controller(
+                armed + ["-chardev", "socket,id=other,path=/tmp/o,server=on"],
+                disk=self.disk, vars_file=self.vars,
+                allowed_chardevs=(chardev,))
+
     def test_rejects_canonical_path_anywhere(self):
         for canonical in (self.canonical_disk, self.canonical_vars):
             with self.subTest(canonical=canonical):

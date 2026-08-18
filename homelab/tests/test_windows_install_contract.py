@@ -89,6 +89,47 @@ class WindowsInstallContractTests(unittest.TestCase):
         self.assertNotIn("virtio-blk", text)
         self.assertNotIn("Win11", text)
 
+    @mock.patch(
+        "homelab.vm.simulated_topology.ovmf_pair",
+        return_value=(Path("/firmware/code.fd"), Path("/firmware/vars.fd")))
+    def test_progress_port_is_opt_in_and_leaves_every_audit_closed(
+        self, _pair,
+    ):
+        """B4 arming: the exact triple, allowlisted once, or nothing at all."""
+        from homelab.vm.guest_progress_collector import (
+            audit_progress_port, progress_port_arguments)
+        from homelab.vm.guest_progress_host import GuestProgressHostError
+        from homelab.vm.simulated_topology import audit_qemu_argv
+
+        kwargs = dict(
+            disk=Path("/run/private/windows.qcow2"),
+            variables=Path("/run/private/OVMF_VARS.fd"),
+            qmp_socket=Path("/run/private/windows.qmp"),
+            switch_port=31415, serial="TELOS-WIN-0001")
+        bare = qemu_install_command(**kwargs)
+        progress = Path("/run/private/progress.sock")
+        armed = qemu_install_command(**kwargs, progress_socket=progress)
+        fragment, chardev = progress_port_arguments(progress)
+        self.assertEqual(audit_progress_port(bare), ())
+        self.assertEqual(armed[:len(bare)], bare)
+        self.assertEqual(armed[len(bare):], fragment)
+        self.assertEqual(audit_progress_port(armed), (chardev,))
+        # No secret rides the argv: only a socket path and fixed identifiers.
+        self.assertNotIn("key", chardev)
+        audit_qemu_argv(
+            "client", armed, allowed_nic_models=("e1000e",),
+            allowed_chardevs=(chardev,))
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            audit_qemu_argv("client", armed, allowed_nic_models=("e1000e",))
+        audit_qemu_disk_boundary(
+            armed, disk=Path("/run/private/windows.qcow2"),
+            serial="TELOS-WIN-0001")
+        with self.assertRaises(GuestProgressHostError):
+            audit_qemu_disk_boundary(
+                bare + ["-chardev", chardev],
+                disk=Path("/run/private/windows.qcow2"),
+                serial="TELOS-WIN-0001")
+
     def test_install_command_refuses_an_overlong_qmp_socket_path(self):
         with self.assertRaises(WindowsInstallContractError):
             qemu_install_command(

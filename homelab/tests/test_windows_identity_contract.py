@@ -38,6 +38,50 @@ class WindowsIdentityContractTests(unittest.TestCase):
                 **kwargs, require_absent_serial_socket=False)
             self.assertEqual(launch, reconstructed)
 
+    def test_progress_port_coexists_with_the_audited_serial_chardev(self):
+        """B4 arming where a lane already owns one chardev: both, or neither."""
+        from homelab.vm.guest_progress_collector import (
+            audit_progress_port, progress_port_arguments)
+        from homelab.vm.guest_progress_host import GuestProgressHostError
+        from homelab.vm.simulated_topology import audit_qemu_argv
+
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "windows.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            for path in (disk, variables):
+                path.write_bytes(path.name.encode())
+            kwargs = dict(
+                disk=disk, variables=variables,
+                qmp_socket=root / "windows.qmp", switch_port=31415,
+                serial_socket=root / "windows.serial")
+            bare = qemu_identity_command(**kwargs)
+            progress = root / "progress.sock"
+            armed = qemu_identity_command(**kwargs, progress_socket=progress)
+            fragment, chardev = progress_port_arguments(progress)
+            self.assertEqual(audit_progress_port(bare), ())
+            self.assertEqual(armed[:len(bare)], bare)
+            self.assertEqual(armed[len(bare):], fragment)
+            self.assertEqual(audit_progress_port(armed), (chardev,))
+            # Exactly two character devices, both named in the allowlist.
+            self.assertEqual(armed.count("-chardev"), 2)
+            serial_chardev = armed[armed.index("-chardev") + 1]
+            self.assertIn("telosidentity", serial_chardev)
+            audit_qemu_argv(
+                "client", armed, allowed_nic_models=("e1000e",),
+                allowed_chardevs=(serial_chardev, chardev))
+            # Closed: neither chardev may pass without being allowlisted, and
+            # the private serial socket alone is not a licence for a second.
+            for allowlist in ((), (serial_chardev,), (chardev,)):
+                with self.subTest(allowlist=len(allowlist)):
+                    with self.assertRaisesRegex(
+                            ValueError, "forbidden QEMU option"):
+                        audit_qemu_argv(
+                            "client", armed, allowed_nic_models=("e1000e",),
+                            allowed_chardevs=allowlist)
+            with self.assertRaises(GuestProgressHostError):
+                audit_progress_port(bare + ["-chardev", chardev])
+
     def test_command_boots_only_overlay_and_optional_read_only_control_iso(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .guest_progress_collector import (
+    attach_planned_progress_port, audit_progress_port)
 from .simulated_topology import MACS, _base, audit_qemu_argv
 from .windows_control_serial import attach_qemu_serial
 from .windows_install_contract import audit_qemu_disk_boundary
@@ -27,6 +29,7 @@ def qemu_identity_command(
     switch_port: int,
     control_iso: Path | None = None,
     require_absent_serial_socket: bool = True,
+    progress_socket: Path | None = None,
 ) -> list[str]:
     """Boot only the retained native disk on the isolated factory switch.
 
@@ -34,6 +37,13 @@ def qemu_identity_command(
     (the socket must not yet exist).  The live acceptance secret scan
     re-derives the running argv while QEMU already owns the server socket, so
     it passes ``False`` to require a live private socket instead of absence.
+
+    ``progress_socket`` opt-in arms the diagnostic guest-progress port.  This
+    is the one lane that already owns a separately audited character device
+    (the private COM1 control socket), so the port is attached after it and
+    the finished argv is re-audited against a closed two-value chardev
+    allowlist -- strictly more than the pre-serial audit alone proved.  No
+    Windows reporter ships, so an armed port here records an absent stream.
     """
     if not 1 <= switch_port <= 65535:
         raise ValueError("switch port is invalid")
@@ -107,6 +117,16 @@ def qemu_identity_command(
     # The generic topology audit intentionally rejects all host character
     # devices. Add only the separately audited, fixed-purpose serial socket
     # after that broad audit has accepted the rest of the command.
-    return attach_qemu_serial(
+    command = attach_qemu_serial(
         command, serial_socket,
         require_absent_socket=require_absent_serial_socket)
+    serial_chardev = command[command.index("-chardev") + 1]
+    if progress_socket is not None:
+        command, _ = attach_planned_progress_port(command, progress_socket)
+    # Re-audit the finished argv, chardevs included: the allowlist holds
+    # exactly the private serial socket and, when armed, exactly the
+    # canonical progress channel.  Nothing else may be a character device.
+    audit_qemu_argv(
+        "client", command, allowed_nic_models=("e1000e",),
+        allowed_chardevs=(serial_chardev,) + audit_progress_port(command))
+    return command

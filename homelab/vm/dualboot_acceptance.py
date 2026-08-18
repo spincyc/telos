@@ -59,6 +59,11 @@ try:
         DISK_SERIAL, _expected_sizes_mib, inspect_overlay)
     from .bootstrap_dc import ovmf_pair
     from .factory_runner import guest_disk, measurement_block
+    from .guest_progress_collector import (
+        PROGRESS_SOCKET_NAME, GuestProgressCollector,
+        attach_planned_progress_port, audit_progress_port,
+        prepare_socket_directory)
+    from .guest_progress_credentials import mint_credential
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import private_file, redact
     from .simulated_topology import _base
@@ -69,6 +74,11 @@ except ImportError:  # Direct execution from homelab/vm.
         DISK_SERIAL, _expected_sizes_mib, inspect_overlay)
     from bootstrap_dc import ovmf_pair
     from factory_runner import guest_disk, measurement_block
+    from guest_progress_collector import (
+        PROGRESS_SOCKET_NAME, GuestProgressCollector,
+        attach_planned_progress_port, audit_progress_port,
+        prepare_socket_directory)
+    from guest_progress_credentials import mint_credential
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import private_file, redact
     from simulated_topology import _base
@@ -93,6 +103,12 @@ VARS_NAME = "OVMF_VARS.fd"
 EVENTS_NAME = "dualboot-events.jsonl"
 MIN_DURATION = 60
 MAX_DURATION = 10800
+# Closed guest-progress vocabularies for this lane.  Nothing ships a reporter
+# for either installed guest, so an armed port records an absent stream; the
+# vocabulary exists so a future reporter has one to bind to.
+PROGRESS_PRODUCER = "dualboot-acceptance"
+PROGRESS_PHASES = ("boot", "menu", "login")
+PROGRESS_STATUSES = ("starting", "active", "complete", "failed", "ready")
 
 # systemd-boot entry titles the gate-7 install produces, taken from the
 # arch_second exports so runner and installer cannot drift: the authored
@@ -350,9 +366,22 @@ def audit_dualboot_boot_boundary(
         "tap,", "bridge,", "user,", "slirp", "passt", "vde,", "0.0.0.0",
         "media=cdrom", "netdev=", "ipxe", "tftp", "bootindex=",
     )
-    for item in command:
+    # Either the diagnostic progress port is armed as exactly the canonical
+    # device triple, or it is absent.  When armed, its Unix-socket chardev is
+    # the ONLY character device this boot may carry; every network-shaped
+    # chardev and option stays forbidden, so the disk-only boundary is
+    # unchanged and the default prepared bundle still carries no chardev.
+    progress_chardevs = audit_progress_port(command)
+    for index, item in enumerate(command):
         lowered = item.lower()
         if item in forbidden_options:
+            if (
+                item == "-chardev"
+                and index + 1 < len(command)
+                and command[index + 1] in progress_chardevs
+                and command.count("-chardev") == len(progress_chardevs)
+            ):
+                continue
             raise DualbootAcceptanceError(
                 f"forbidden QEMU option for a disk-only boot: {item}")
         for term in forbidden_text:
@@ -396,7 +425,9 @@ def audit_dualboot_boot_boundary(
     # retained zero frames for exactly that reason.  VGA is not a boot
     # path, so the disk-only boundary is unchanged.
     display = [value for value in devices if value == "VGA"]
-    if len(nvme) != 1 or len(display) != 1 or len(devices) != 2:
+    # Two devices, plus exactly the two the audited progress triple adds.
+    expected_devices = 2 + (2 if progress_chardevs else 0)
+    if len(nvme) != 1 or len(display) != 1 or len(devices) != expected_devices:
         raise DualbootAcceptanceError(
             "acceptance boot must carry exactly one cold-plugged NVMe disk "
             "device and one VGA display device")
@@ -412,8 +443,17 @@ def audit_dualboot_boot_boundary(
 
 def qemu_dualboot_command(
     *, disk: Path, variables: Path, qmp_socket: Path, serial: str,
+    progress_socket: Path | None = None,
 ) -> list[str]:
-    """Build the disk-only cold-boot command with a pinned QMP socket."""
+    """Build the disk-only cold-boot command with a pinned QMP socket.
+
+    ``progress_socket`` opt-in arms the diagnostic guest-progress port.  It
+    is deliberately off by default: this lane's measurement block cites the
+    chardev-free argv as part of its no-external-path claim, and both guests
+    here are installed systems that ship no reporter, so an armed port could
+    only ever record an absent stream.  Arming it is therefore an owner
+    decision, not the shipped default.
+    """
     if Path(variables).is_symlink():
         raise DualbootAcceptanceError("OVMF variables must not be a symlink")
     if len(str(Path(qmp_socket).resolve()).encode()) > 100:
@@ -434,6 +474,8 @@ def qemu_dualboot_command(
         ),
         "-device", f"nvme,drive=osdisk,serial={serial}",
     ]
+    if progress_socket is not None:
+        command, _ = attach_planned_progress_port(command, progress_socket)
     audit_dualboot_boot_boundary(command, disk=disk, serial=serial)
     return command
 
@@ -633,7 +675,7 @@ def observe_boot(
     mode: str, qmp, frames_dir: Path | None, timeout: float,
     quiesce: float = 3.0, confirm: float = 45.0, login_wait: float = 120.0,
     frame_interval: float = 10.0, max_frames: int = 360,
-    nav_interval: float = 1.0,
+    nav_interval: float = 1.0, tick=None,
 ) -> BootObservation:
     """Watch one cold boot on serial without ever guessing an outcome.
 
@@ -674,6 +716,14 @@ def observe_boot(
         now = time.monotonic()
         if process.poll() is not None:
             break
+        if tick is not None:
+            # A diagnostic-only side channel: it advances on this loop's own
+            # bounded cadence and may never affect the observation, so a
+            # fault in it is swallowed rather than failing the boot.
+            try:
+                tick()
+            except Exception:
+                pass
         if (frames_dir is not None and now >= next_frame
                 and observation.frames < max_frames and frame_failures < 3):
             frame = frames_dir / f"{observation.frames + 1:03d}.ppm"
@@ -922,7 +972,7 @@ def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
 
 def _boot_once(
     command: list[str], *, processes: dict, label: str, evidence: Path,
-    qmp_socket: Path, mode: str, timeout: float,
+    qmp_socket: Path, mode: str, timeout: float, progress=None,
 ) -> tuple[BootObservation, bool]:
     """One cold boot: launch, observe, bounded shutdown, reaped before return."""
     frames_dir = evidence / f"{label}-frames"
@@ -936,7 +986,8 @@ def _boot_once(
     try:
         observation = observe_boot(
             process, evidence / f"{label}-serial.log", mode=mode, qmp=qmp,
-            frames_dir=frames_dir, timeout=timeout)
+            frames_dir=frames_dir, timeout=timeout,
+            tick=None if progress is None else progress.poll)
         if process.poll() is None:
             clean = shutdown_guest(qmp, process)
         else:
@@ -1132,8 +1183,10 @@ def acceptance_measurements(*, run: str, events: list[dict]) -> dict:
       run-scoped is the whole point of that overlay, and unlike gates 5 and 7
       this inventory is complete.
     * ``external_connections_after_offline_gate`` -- ``audit_dualboot_boot
-      _boundary`` refuses ANY network device (``-netdev``/``-nic``/``-net``/
-      chardev, plus tap/bridge/user/slirp text) and re-audits the
+      _boundary`` refuses ANY network device (``-netdev``/``-nic``/``-net``,
+      plus tap/bridge/user/slirp text) and every character device except the
+      optional, off-by-default guest-progress Unix socket (a host-local
+      diagnostic channel, never a network path), and re-audits the
       digest-pinned argv that is actually launched, so the boots have no
       external path at all.
 
@@ -1197,6 +1250,13 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
     if qmp_socket.parent != bundle:
         qmp_socket.parent.mkdir(mode=0o700, exist_ok=False)
         owned_qmp_root = qmp_socket.parent
+    # Collected only when the authorized argv actually armed the port; an
+    # unarmed bundle keeps this lane exactly as chardev-free as before.
+    progress_socket: Path | None = None
+    progress: GuestProgressCollector | None = None
+    if audit_progress_port(command):
+        progress_socket = prepare_socket_directory(
+            qmp_socket.parent, name=PROGRESS_SOCKET_NAME)
 
     processes: dict[str, subprocess.Popen[bytes]] = {}
     result: dict = {"schema": 1, "status": "fail", "phase": "starting"}
@@ -1208,16 +1268,26 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
     try:
         with SignalGuard():
             per_boot = duration / 2
+            if progress_socket is not None:
+                # One collector, one immutable deadline, across both cold
+                # boots: the second boot is a new transport boot the restored
+                # receiver accepts without extending this timeline by a
+                # second.
+                progress = GuestProgressCollector(
+                    progress_socket, deadline=time.monotonic() + duration,
+                    credential=mint_credential(prefix="dualboot"),
+                    producer=PROGRESS_PRODUCER, phases=PROGRESS_PHASES,
+                    statuses=PROGRESS_STATUSES)
             result["phase"] = "boot-windows-default"
             boot1, windows_clean = _boot_once(
                 command, processes=processes, label="boot1",
                 evidence=evidence, qmp_socket=qmp_socket,
-                mode="windows-default", timeout=per_boot)
+                mode="windows-default", timeout=per_boot, progress=progress)
             result["phase"] = "boot-arch-select"
             boot2, arch_clean = _boot_once(
                 command, processes=processes, label="boot2",
                 evidence=evidence, qmp_socket=qmp_socket,
-                mode="arch-select", timeout=per_boot)
+                mode="arch-select", timeout=per_boot, progress=progress)
             result["phase"] = "gpt-verify"
             gpt_after = parse_gpt(
                 read_gpt_region(bundle / OVERLAY_NAME))
@@ -1258,6 +1328,13 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
     finally:
         failures = terminate_children(
             processes.values(), terminate_timeout=8, kill_timeout=3)
+        if progress is not None:
+            # Diagnostic observation only; it never alters the verdict, and
+            # an armed port nobody reported on records an absent stream.
+            result["progress"] = progress.record()
+            failures += progress.close()
+        if progress_socket is not None:
+            progress_socket.unlink(missing_ok=True)
         if owned_qmp_root is not None:
             qmp_socket.unlink(missing_ok=True)
             try:

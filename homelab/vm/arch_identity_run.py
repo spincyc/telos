@@ -1266,6 +1266,13 @@ SessionFactory = Callable[[ArchIdentityBundle], ArchIdentitySession]
 #: SerialAutomation timeout only bounds a single console wait; this bound
 #: covers the whole boundary (fabric, Controller convergence, guest drive).
 DEFAULT_DURATION = 1800.0
+# Closed guest-progress vocabularies for this lane.  The shipped reporter
+# lives in the archiso live image, not in the installed joined system, so an
+# armed port here records an absent stream until one ships; the vocabulary
+# exists so that reporter has something to bind to.
+PROGRESS_PRODUCER = "arch-identity"
+PROGRESS_PHASES = ("boot", "join", "login")
+PROGRESS_STATUSES = ("starting", "active", "complete", "failed", "ready")
 MAX_DURATION = 10800.0
 #: Boot-to-console bound for the joined workstation before probes start.
 CONSOLE_READY_TIMEOUT = 300.0
@@ -1331,12 +1338,18 @@ def audit_arch_identity_boot(command: list[str], *, disk: Path) -> None:
     if "order=c,menu=off" not in command:
         raise ArchIdentityError(
             "identity boot must deterministically boot from disk")
+    # Either the diagnostic progress port is armed as exactly the canonical
+    # device triple, or it is absent; nothing partial is tolerated.
+    from .guest_progress_collector import audit_progress_port
+
+    audit_progress_port(command)
 
 
 def workstation_boot_command(
     disk: Path, variables: Path, switch_port: int, *,
     qmp_socket: Path | None = None,
     firmware_log: Path | None = None,
+    progress_socket: Path | None = None,
 ) -> list[str]:
     """Build the disk-only boot command for the joined Arch workstation.
 
@@ -1374,6 +1387,8 @@ def workstation_boot_command(
     # producer/judge path.
     from .arch_install_prepare import (
         DISK_SERIAL, JOIN_PORT_CHASSIS, JOIN_PORT_ID)
+    from .guest_progress_collector import (
+        attach_planned_progress_port, audit_progress_port)
     from .simulated_topology import MACS, _base, audit_qemu_argv
 
     if not 1 <= switch_port <= 65535:
@@ -1425,7 +1440,14 @@ def workstation_boot_command(
         "-netdev", f"socket,id=factory,connect=127.0.0.1:{switch_port}",
         "-device", f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
-    audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
+    if progress_socket is not None:
+        # Diagnostic only: the joined guest may or may not report, and an
+        # unreported port stays recorded as absent.  The socket's private
+        # directory is the run's QMP root, created before this boot.
+        command, _ = attach_planned_progress_port(command, progress_socket)
+    audit_qemu_argv(
+        "client", command, allowed_nic_models=("e1000e",),
+        allowed_chardevs=audit_progress_port(command))
     audit_arch_identity_boot(command, disk=disk)
     return command
 
@@ -2249,6 +2271,11 @@ class ArchIdentityBoundary:
         #: exact inode in the happy path; teardown sweeps a leftover.
         self._join_iso: Path | None = None
         self._boot_facts: dict[str, object] = new_boot_facts()
+        #: Diagnostic guest-progress collection for the workstation boot.
+        #: Never load-bearing: it shapes one evidence field and nothing else,
+        #: and its deadline is this session's, fixed when the run starts.
+        self._progress = None
+        self._deadline: float | None = None
 
     # -- test seams (real implementations are trivially thin) ---------------
 
@@ -2313,6 +2340,9 @@ class ArchIdentityBoundary:
         runtime = Path(tempfile.mkdtemp(prefix="telos-arch-identity-"))
         runtime.chmod(0o700)
         self._runtime = runtime
+        # The one wall-clock bound the whole session shares.  Guest progress
+        # is measured against exactly this instant and can never move it.
+        self._deadline = time.monotonic() + self.duration
         self._watchdog = threading.Timer(self.duration, self._expire)
         self._watchdog.daemon = True
         self._watchdog.start()
@@ -2714,6 +2744,7 @@ class ArchIdentityBoundary:
                 "workstation boot requires the staged operator principal",
                 check="arch-joined")
         qmp_path = self._qmp_root / "workstation.qmp"
+        progress_socket = self._arm_progress()
         # QEMU writes the firmware debug console itself, so the destination is
         # created private and empty first: the chardev opens it O_TRUNC and so
         # keeps this mode-0600 inode, and a missing evidence directory would
@@ -2724,7 +2755,8 @@ class ArchIdentityBoundary:
         private_file(firmware_log, b"")
         command = workstation_boot_command(
             self.bundle.disk, self.bundle.firmware, self._port,
-            qmp_socket=qmp_path, firmware_log=firmware_log)
+            qmp_socket=qmp_path, firmware_log=firmware_log,
+            progress_socket=progress_socket)
         # Hashed BEFORE the boot as well as after: the pair answers "did the
         # firmware write the variable store at all this boot" without a
         # varstore parser, which is the question both 2026-08-14 stalls turned
@@ -2743,7 +2775,14 @@ class ArchIdentityBoundary:
         spawned_at = time.monotonic()
         process = self._spawn("workstation", command, stdio=True)
         self._boot_facts["workstation_spawned_at"] = _utc_now()
-        self._audit("client", process.pid, allowed_nic_models=("e1000e",))
+        # The live re-audit sees the same closed allowlist the plan did: the
+        # kernel's own view of the argv may carry the progress chardev and
+        # nothing else.
+        from .guest_progress_collector import audit_progress_port
+
+        self._audit(
+            "client", process.pid, allowed_nic_models=("e1000e",),
+            allowed_chardevs=audit_progress_port(command))
         try:
             self._workstation_qmp = self._connect_qmp(qmp_path, process.pid)
         except ArchIdentityError as error:
@@ -2757,6 +2796,7 @@ class ArchIdentityBoundary:
         # Every console label from here on is timestamped against power-on.
         console.events = TimestampedEvents(console.events, origin=spawned_at)
         self._workstation_console = console
+        self._poll_progress()
         drive_boot_menu(
             console, self._boot_facts,
             reset=lambda: self._workstation_qmp.execute("system_reset"),
@@ -2765,11 +2805,13 @@ class ArchIdentityBoundary:
         # Strictly between the menu drive and the login: the guest cannot log
         # anybody in until its join unit has finished, and nobody can log in at
         # all until this run's directory knows this machine.
+        self._poll_progress()
         self._join_workstation()
         # And strictly between the join and the login: a joined guest whose
         # SSSD backend is still connecting refuses the operator (proven
         # 2026-08-14), so the guest's own readiness gate is observed here.
         await_domain_online(console, self._boot_facts)
+        self._poll_progress()
         login_operator(console, self._boot_facts)
         # Bounded on its own: the 2026-08-14 run inherited the 300s
         # console-ready timeout here and spent five minutes waiting on an
@@ -2779,6 +2821,42 @@ class ArchIdentityBoundary:
         self._set_rescue_password()
         console.timeout = PROBE_TIMEOUT
         self._channel = console
+
+    def _arm_progress(self):
+        """Create this run's progress socket and collector, or arm nothing.
+
+        Returns the socket path to arm on the workstation argv, or ``None``
+        when the channel could not be prepared -- in which case the boot
+        proceeds exactly as before and the recorded stream stays absent.
+        """
+        from .guest_progress_collector import (
+            PROGRESS_SOCKET_NAME, GuestProgressCollector,
+            prepare_socket_directory)
+        from .guest_progress_credentials import mint_credential
+
+        if self._qmp_root is None or self._deadline is None:
+            return None
+        try:
+            socket_path = prepare_socket_directory(
+                self._qmp_root, name=PROGRESS_SOCKET_NAME)
+            self._progress = GuestProgressCollector(
+                socket_path, deadline=self._deadline,
+                credential=mint_credential(prefix="arch-identity"),
+                producer=PROGRESS_PRODUCER, phases=PROGRESS_PHASES,
+                statuses=PROGRESS_STATUSES)
+        except Exception:  # noqa: BLE001 - a diagnostic channel never blocks
+            self._progress = None
+            return None
+        return socket_path
+
+    def _poll_progress(self) -> None:
+        """Advance collection at one bounded checkpoint; never raises."""
+        if self._progress is None:
+            return
+        try:
+            self._progress.poll()
+        except Exception:  # noqa: BLE001 - diagnostic only
+            pass
 
     def open_channel(self) -> SerialChannel:
         if self._channel is None:
@@ -3038,6 +3116,10 @@ class ArchIdentityBoundary:
                 list(item) for item in timeline[-SERIAL_TIMELINE_LIMIT:]]
         self._boot_facts["firmware_vars_sha256_after"] = _file_sha256(
             self.bundle.firmware)
+        if self._progress is not None:
+            # Diagnostic observation only: an armed port that no guest ever
+            # reported on records an absent stream, and no check reads it.
+            self._boot_facts["progress"] = self._progress.record()
         try:
             self._retain_firmware_log()
         except OSError:
@@ -3108,6 +3190,9 @@ class ArchIdentityBoundary:
             failures.append(
                 "switch log retention failed: " + type(error).__name__)
         self._principals = {}
+        if self._progress is not None:
+            failures += self._progress.close()
+            self._progress = None
         if self._controller_disk is not None:
             try:
                 self._controller_disk.close()

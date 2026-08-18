@@ -23,10 +23,14 @@ import tempfile
 
 try:
     from .bootstrap_dc import ovmf_pair
+    from .guest_progress_collector import (
+        attach_planned_progress_port, audit_progress_port)
     from .simulated_topology import MACS, _base, audit_qemu_argv
     from .windows_install_contract import SAFE_SERIAL, sha256
 except ImportError:  # Direct execution from homelab/vm.
     from bootstrap_dc import ovmf_pair
+    from guest_progress_collector import (
+        attach_planned_progress_port, audit_progress_port)
     from simulated_topology import MACS, _base, audit_qemu_argv
     from windows_install_contract import SAFE_SERIAL, sha256
 
@@ -298,6 +302,10 @@ def audit_arch_boot_boundary(
     if "order=n,menu=off" not in command:
         raise ArchInstallPrepareError(
             "install boot must be network-only so PXE deterministically wins")
+    # Either the diagnostic progress port is armed as exactly the canonical
+    # device triple, or it is absent; a partial or hand-edited arming is a
+    # boundary failure rather than a tolerated extra device.
+    audit_progress_port(command)
 
 
 def qemu_arch_install_command(
@@ -307,6 +315,7 @@ def qemu_arch_install_command(
     qmp_socket: Path,
     switch_port: int,
     serial: str,
+    progress_socket: Path | None = None,
 ) -> list[str]:
     """Build the disk-detached UEFI/e1000e network-boot command.
 
@@ -362,7 +371,15 @@ def qemu_arch_install_command(
         "-device",
         f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
-    audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
+    if progress_socket is not None:
+        # Diagnostic only, and opt-in: the guest reporter this offers a port
+        # to may never speak, and an unspoken port stays recorded as absent.
+        # The socket's private directory is created by the runner just before
+        # launch, so only the path shape can be proved at prepare time.
+        command, _ = attach_planned_progress_port(command, progress_socket)
+    audit_qemu_argv(
+        "client", command, allowed_nic_models=("e1000e",),
+        allowed_chardevs=audit_progress_port(command))
     audit_arch_boot_boundary(command, disk=disk, serial=serial)
     return command
 
@@ -417,6 +434,14 @@ def prepare(args: argparse.Namespace) -> Path:
         shutil.copyfile(ovmf_source, variables)
         variables.chmod(0o600)
 
+        # The diagnostic progress port is armed by passing
+        # ``progress_socket=qmp_socket.parent / PROGRESS_SOCKET_NAME`` here.
+        # It stays off until ``arch_install_run`` (a) allowlists the returned
+        # chardev in its live ``audit_live_process`` call, (b) creates the
+        # socket's private directory with ``prepare_socket_directory`` before
+        # launch, and (c) polls a ``GuestProgressCollector``.  Arming it
+        # without (a) would make every prepared bundle fail its own live
+        # audit, so this bundle carries no chardev today.
         command = qemu_arch_install_command(
             disk=overlay, variables=variables, qmp_socket=qmp_socket,
             switch_port=args.switch_port, serial=DISK_SERIAL)

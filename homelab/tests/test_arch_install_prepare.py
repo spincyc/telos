@@ -59,6 +59,52 @@ class ArchInstallPrepareTests(unittest.TestCase):
         self.assertIn("--apply", result.stdout)
         self.assertIn("--windows-disk", result.stdout)
 
+    def test_progress_port_is_opt_in_and_leaves_every_audit_closed(self):
+        """B4 arming: the exact triple, allowlisted once, or nothing at all."""
+        from homelab.vm.guest_progress_collector import (
+            audit_progress_port, progress_port_arguments)
+        from homelab.vm.guest_progress_host import (
+            GuestProgressHostError, PROGRESS_PORT_NAME)
+        from homelab.vm.simulated_topology import audit_qemu_argv
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            variables = root / "OVMF_VARS.fd"
+            variables.write_bytes(b"vars")
+            disk = root / "arch.qcow2"
+            disk.write_bytes(b"overlay")
+            qmp = Path("/tmp/telos-arch-deadbeef/arch.qmp")
+            progress = qmp.parent / "progress.sock"
+            kwargs = dict(
+                disk=disk, variables=variables, qmp_socket=qmp,
+                switch_port=31415, serial=arch_install_prepare.DISK_SERIAL)
+            bare = arch_install_prepare.qemu_arch_install_command(**kwargs)
+            armed = arch_install_prepare.qemu_arch_install_command(
+                **kwargs, progress_socket=progress)
+            self.assertEqual(audit_progress_port(bare), ())
+            self.assertEqual(armed[:len(bare)], bare)
+            fragment, chardev = progress_port_arguments(progress)
+            self.assertEqual(armed[len(bare):], fragment)
+            self.assertEqual(audit_progress_port(armed), (chardev,))
+            self.assertIn(f"name={PROGRESS_PORT_NAME}", armed[-1])
+            # The socket's directory does not exist at prepare time; only its
+            # shape can be proved here, which is exactly what is proved.
+            self.assertFalse(progress.parent.exists())
+            # Closed both ways: allowlisted once it passes, unlisted it does
+            # not, and the boot boundary refuses a partial arming.
+            audit_qemu_argv(
+                "client", armed, allowed_nic_models=("e1000e",),
+                allowed_chardevs=(chardev,))
+            with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+                audit_qemu_argv(
+                    "client", armed, allowed_nic_models=("e1000e",))
+            arch_install_prepare.audit_arch_boot_boundary(
+                armed, disk=disk, serial=arch_install_prepare.DISK_SERIAL)
+            with self.assertRaises(GuestProgressHostError):
+                arch_install_prepare.audit_arch_boot_boundary(
+                    bare + ["-chardev", chardev], disk=disk,
+                    serial=arch_install_prepare.DISK_SERIAL)
+
     def test_qemu_command_detaches_the_disk_and_pins_e1000e_pxe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

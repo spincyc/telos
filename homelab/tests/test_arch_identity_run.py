@@ -815,6 +815,40 @@ class WorkstationBootCommandTests(unittest.TestCase):
         variables.write_bytes(b"vars")
         return workstation_boot_command(disk, variables, port)
 
+    def test_progress_port_is_opt_in_and_leaves_every_audit_closed(self):
+        """B4 arming: the exact triple, allowlisted once, or nothing at all."""
+        from homelab.vm.guest_progress_collector import (
+            audit_progress_port, progress_port_arguments)
+        from homelab.vm.guest_progress_host import GuestProgressHostError
+        from homelab.vm.arch_identity_run import audit_arch_identity_boot
+        from homelab.vm.simulated_topology import audit_qemu_argv
+
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            disk = root / "arch-workstation.qcow2"
+            variables = root / "OVMF_VARS.fd"
+            disk.write_bytes(b"disk")
+            variables.write_bytes(b"vars")
+            progress = root / "progress.sock"
+            bare = workstation_boot_command(disk, variables, 23456)
+            armed = workstation_boot_command(
+                disk, variables, 23456, progress_socket=progress)
+            fragment, chardev = progress_port_arguments(progress)
+            self.assertEqual(audit_progress_port(bare), ())
+            self.assertEqual(armed[:len(bare)], bare)
+            self.assertEqual(armed[len(bare):], fragment)
+            self.assertEqual(audit_progress_port(armed), (chardev,))
+            audit_qemu_argv(
+                "client", armed, allowed_nic_models=("e1000e",),
+                allowed_chardevs=(chardev,))
+            with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+                audit_qemu_argv(
+                    "client", armed, allowed_nic_models=("e1000e",))
+            audit_arch_identity_boot(armed, disk=disk)
+            with self.assertRaises(GuestProgressHostError):
+                audit_arch_identity_boot(
+                    bare + ["-chardev", chardev], disk=disk)
+
     def test_boot_carries_the_empty_join_media_hotplug_port(self):
         # q35's pcie.0 supports no PCIe hotplug, so the one-use TELOS_JOIN
         # media needs a root port that was present at boot.  It carries no

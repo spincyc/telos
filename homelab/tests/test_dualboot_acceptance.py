@@ -419,6 +419,44 @@ class AuditTests(unittest.TestCase):
             da.audit_dualboot_boot_boundary(
                 command, disk=self.overlay, serial="TELOS-WIN-0001")
 
+    def test_progress_port_is_off_by_default_and_audited_when_armed(self):
+        """The disk-only claim survives: no chardev unless deliberately armed."""
+        from homelab.vm.guest_progress_collector import (
+            audit_progress_port, progress_port_arguments)
+        from homelab.vm.guest_progress_host import GuestProgressHostError
+
+        variables = Path(self.temporary.name) / "OVMF_VARS.fd"
+        variables.write_bytes(b"vars")
+        bare = da.qemu_dualboot_command(
+            disk=self.overlay, variables=variables,
+            qmp_socket=Path("/tmp/telos-db-test/db.qmp"),
+            serial="TELOS-WIN-0001")
+        self.assertNotIn("-chardev", bare)
+        self.assertEqual(audit_progress_port(bare), ())
+        progress = Path("/tmp/telos-db-test/progress.sock")
+        armed = da.qemu_dualboot_command(
+            disk=self.overlay, variables=variables,
+            qmp_socket=Path("/tmp/telos-db-test/db.qmp"),
+            serial="TELOS-WIN-0001", progress_socket=progress)
+        fragment, chardev = progress_port_arguments(progress)
+        self.assertEqual(armed[:len(bare)], bare)
+        self.assertEqual(armed[len(bare):], fragment)
+        self.assertEqual(audit_progress_port(armed), (chardev,))
+        # The armed argv passes its own audit; anything else chardev-shaped
+        # is still refused outright, and the boot is still network-free.
+        da.audit_dualboot_boot_boundary(
+            armed, disk=self.overlay, serial="TELOS-WIN-0001")
+        self.assertNotIn("-netdev", armed)
+        foreign = bare + [
+            "-chardev", "socket,id=other,path=/tmp/other,server=on"]
+        with self.assertRaisesRegex(RuntimeError, "forbidden QEMU option"):
+            da.audit_dualboot_boot_boundary(
+                foreign, disk=self.overlay, serial="TELOS-WIN-0001")
+        with self.assertRaises(GuestProgressHostError):
+            da.audit_dualboot_boot_boundary(
+                bare + ["-chardev", chardev], disk=self.overlay,
+                serial="TELOS-WIN-0001")
+
     def test_generated_command_passes_its_own_audit(self):
         variables = Path(self.temporary.name) / "OVMF_VARS.fd"
         variables.write_bytes(b"vars")
@@ -1347,7 +1385,7 @@ class RunTests(unittest.TestCase):
             bundle = self.bundle(Path(temporary) / "bundle")
 
             def fake_boot(command, *, processes, label, evidence,
-                          qmp_socket, mode, timeout):
+                          qmp_socket, mode, timeout, progress=None):
                 self.assertLessEqual(timeout, 120)
                 (evidence / f"{label}-serial.log").write_bytes(b"transcript")
                 if label == "boot1":
@@ -1403,7 +1441,7 @@ class RunTests(unittest.TestCase):
             silent.login_prompt_at = None
 
             def fake_boot(command, *, processes, label, evidence,
-                          qmp_socket, mode, timeout):
+                          qmp_socket, mode, timeout, progress=None):
                 (evidence / f"{label}-serial.log").write_bytes(b"transcript")
                 return (happy_boot1(), True) if label == "boot1" \
                     else (silent, True)

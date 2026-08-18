@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 import json
 import os
 import re
-import secrets
 import select
 import shutil
 import socket
@@ -26,11 +25,11 @@ try:
     from .automated_controller import DisposableBootDisk
     from .bootstrap_dc import DEFAULT_STATE, ovmf_pair, paths
     from .factory_publication import stage as stage_publication
-    from .guest_progress_host import (
-        attach_progress_port, classify, progress_record)
-    from .guest_progress_protocol import (
-        DeadlineError, GuestProgressError, ProtocolConfig, ReceiverState)
-    from .guest_progress_transport import GuestProgressTransport
+    from .guest_progress_collector import (
+        PROGRESS_SOCKET_NAME, GuestProgressCollector, prepare_socket_directory,
+        remove_socket_root)
+    from .guest_progress_credentials import mint_credential
+    from .guest_progress_host import attach_progress_port, progress_record
     from .signal_cleanup import terminate_children
     from .simulated_topology import (
         MACS, _base, audit_live_process, audit_qemu_argv, socket_nic)
@@ -44,11 +43,12 @@ except ImportError:
     # The guest-progress modules import siblings only relatively, so a
     # direct-script run reaches them through the repository root package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from homelab.vm.guest_progress_collector import (
+        PROGRESS_SOCKET_NAME, GuestProgressCollector, prepare_socket_directory,
+        remove_socket_root)
+    from homelab.vm.guest_progress_credentials import mint_credential
     from homelab.vm.guest_progress_host import (
-        attach_progress_port, classify, progress_record)
-    from homelab.vm.guest_progress_protocol import (
-        DeadlineError, GuestProgressError, ProtocolConfig, ReceiverState)
-    from homelab.vm.guest_progress_transport import GuestProgressTransport
+        attach_progress_port, progress_record)
 
 
 WORKSTATION_SIZE = "40G"
@@ -249,6 +249,7 @@ def retain_evidence(
     runtime: Path, evidence_root: Path, *, status: str,
     error: BaseException | None = None,
     progress: dict | None = None,
+    progress_channels: dict | None = None,
     measurements: dict | None = None,
 ) -> Path:
     evidence_root = Path(evidence_root)
@@ -279,6 +280,11 @@ def retain_evidence(
             "utf-8", "replace")} if error is not None else {}),
         # Diagnostic observation only; it never alters the status verdict.
         **({"progress": progress} if progress is not None else {}),
+        # Every armed channel, per guest, recorded the same honest way: an
+        # armed port with no reporter records an absent stream, never an
+        # implied claim that a guest reported.
+        **({"progress_channels": progress_channels}
+           if progress_channels else {}),
         # The gate-12 acceptance measurements this run observed, embedded only
         # when supplied so an unobserved field stays absent (NOT-RUN) rather
         # than becoming a fabricated claim.
@@ -291,10 +297,12 @@ def retain_evidence(
 
 def retain_failure_evidence(
     runtime: Path, evidence_root: Path, error: BaseException,
-    *, progress: dict | None = None, measurements: dict | None = None,
+    *, progress: dict | None = None, progress_channels: dict | None = None,
+    measurements: dict | None = None,
 ) -> Path:
     return retain_evidence(
         runtime, evidence_root, status="fail", error=error, progress=progress,
+        progress_channels=progress_channels,
         measurements=measurements)
 
 
@@ -396,7 +404,15 @@ def qemu_commands(
     workstation_iso: Path | None,
     publication_iso: Path | None = None,
     progress_socket: Path | None = None,
+    controller_progress_socket: Path | None = None,
 ) -> dict[str, list[str]]:
+    """Plan both guests, optionally arming one diagnostic progress port each.
+
+    Arming a port only offers the channel: the guest decides whether to
+    report, and a guest that never does leaves the recorded stream absent.
+    Each guest gets its own socket, its own credential, and its own receiver,
+    so neither can authenticate against the other's channel.
+    """
     controller = _base("controller", controller_vars, 4096)
     controller += [
         "-drive",
@@ -442,7 +458,13 @@ def qemu_commands(
         workstation, chardev = attach_progress_port(
             workstation, progress_socket)
         workstation_chardevs = (chardev,)
-    audit_qemu_argv("controller", controller)
+    controller_chardevs: tuple[str, ...] = ()
+    if controller_progress_socket is not None:
+        controller, chardev = attach_progress_port(
+            controller, controller_progress_socket)
+        controller_chardevs = (chardev,)
+    audit_qemu_argv(
+        "controller", controller, allowed_chardevs=controller_chardevs)
     audit_qemu_argv(
         "client", workstation, allowed_chardevs=workstation_chardevs)
     return {"controller": controller, "workstation": workstation}
@@ -732,173 +754,51 @@ def arch_handoff_phases(workstation: str) -> dict[str, bool]:
 PROGRESS_PRODUCER = "arch-installer"
 PROGRESS_PHASES = tuple(arch_handoff_phases("")) + ("installer",)
 PROGRESS_STATUSES = ("starting", "active", "complete", "failed", "ready")
-PROGRESS_SOCKET_NAME = "progress.sock"
-PROGRESS_CONNECT_TIMEOUT = 0.05
+# The Controller guest reports against its own closed vocabulary; nothing
+# ships a Controller reporter yet, so its stream is honestly absent today.
+CONTROLLER_PROGRESS_PRODUCER = "telos-controller"
+CONTROLLER_PROGRESS_PHASES = ("boot", "publication")
+CONTROLLER_PROGRESS_SOCKET_NAME = "controller.sock"
 
 
 def _remove_progress_root(root: Path) -> list[str]:
     """Remove the per-run progress socket root and prove its absence."""
-    failures: list[str] = []
-    try:
-        shutil.rmtree(root)
-    except FileNotFoundError:
-        pass
-    except OSError as error:
-        failures.append(f"progress socket root removal failed: {error}")
-    if root.is_symlink() or root.exists():
-        failures.append(f"progress socket root was not removed: {root}")
-    return failures
+    return remove_socket_root(root)
 
 
-class _WorkstationProgress:
-    """Opportunistic diagnostic collector for the workstation progress port.
+def workstation_progress(
+    socket_root: Path, *, deadline: float, credential=None,
+) -> GuestProgressCollector:
+    """Build the workstation collector for one run, credential and all.
 
-    Never load-bearing: an absent peer, transport fault, or protocol error
-    only shapes the retained "progress" evidence block.  Verdicts, gates,
-    and deadlines are untouched, and nothing secret leaves this object.
+    The credential is minted here and stays in host memory; whichever
+    delivery channel the owner picks asks the collector for the document
+    (``stage_credential``/``credential_document_bytes``) rather than
+    re-deriving it.  Until such a channel exists no guest can authenticate,
+    and the recorded stream stays absent.
     """
+    return GuestProgressCollector(
+        Path(socket_root) / PROGRESS_SOCKET_NAME,
+        deadline=deadline,
+        credential=credential or mint_credential(prefix="factory-workstation"),
+        producer=PROGRESS_PRODUCER,
+        phases=PROGRESS_PHASES,
+        statuses=PROGRESS_STATUSES,
+    )
 
-    def __init__(
-        self, socket_root: Path, *, deadline: float,
-        attempt: str | None = None, nonce: str | None = None,
-        key: bytes | None = None,
-    ) -> None:
-        self.socket_root = Path(socket_root)
-        self.socket_path = self.socket_root / PROGRESS_SOCKET_NAME
-        # Credential delivery gap: the PXE payload is a sealed, hash-verified
-        # release with no per-run overlay hook, so the guest cannot yet learn
-        # this attempt's key/nonce; an absent stream is still proved honestly.
-        key = key if key is not None else secrets.token_bytes(32)
-        config = ProtocolConfig(
-            attempt=attempt if attempt is not None
-            else f"factory-{os.getpid()}-{secrets.token_hex(4)}",
-            producer=PROGRESS_PRODUCER,
-            nonce=nonce if nonce is not None else secrets.token_hex(16),
-            phases=PROGRESS_PHASES,
-            statuses=PROGRESS_STATUSES,
-        )
-        self._receiver = ReceiverState(config, key, deadline=deadline)
-        self._connection: socket.socket | None = None
-        self._thread: threading.Thread | None = None
-        self._result = None
-        self._error: BaseException | None = None
-        self._stopping = False
 
-    def poll(self) -> None:
-        """Try one bounded connect to the QEMU-owned progress socket.
-
-        QEMU is the socket server (``server=on,wait=off``), so the host is
-        the connecting peer.  A missing or refusing socket is tolerated
-        forever; a successful connect hands the stream to a background
-        collector so the run-loop cadence never blocks.
-        """
-        if self._stopping or self._thread is not None:
-            return
-        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.settimeout(PROGRESS_CONNECT_TIMEOUT)
-        try:
-            connection.connect(str(self.socket_path))
-        except OSError:
-            connection.close()
-            return
-        self._connection = connection
-        transport = GuestProgressTransport(connection, self._receiver)
-        self._thread = threading.Thread(
-            target=self._collect, args=(transport,),
-            name="workstation-progress", daemon=True)
-        self._thread.start()
-
-    def _collect(self, transport: GuestProgressTransport) -> None:
-        try:
-            self._result = transport.collect()
-        except BaseException as error:
-            # A deliberate stop tears the socket down under the reader;
-            # that fault is not a guest observation.
-            if not self._stopping:
-                self._error = error
-
-    def stop(self) -> None:
-        """Stop collecting; idempotent and bounded."""
-        self._stopping = True
-        if self._connection is not None:
-            try:
-                self._connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-
-    def record(self) -> dict:
-        """Compose the secret-free evidence block; never raises."""
-        self.stop()
-        try:
-            return self._compose()
-        except Exception:
-            # Composition can never mask a run verdict; fall back to the
-            # weakest honest observation.
-            return progress_record(
-                liveness="absent", classification="unavailable")
-
-    def _compose(self) -> dict:
-        if self._result is not None:
-            events = self._result.events
-            phases = [
-                event.envelope["phase"] for event in events
-                if event.envelope["phase"] is not None
-            ]
-            return progress_record(
-                liveness=self._result.liveness,
-                classification=(
-                    None if self._error is None else classify(self._error)),
-                last_phase=phases[-1] if phases else None,
-                last_sequence=(
-                    events[-1].envelope["sequence"] if events else None),
-                events_accepted=len(events),
-            )
-        if self._connection is None:
-            # No peer ever connected: the device was unavailable and the
-            # stream is absent.
-            return progress_record(
-                liveness="absent", classification="unavailable")
-        last_sequence = self._receiver.last_sequence
-        events_accepted = 0 if last_sequence is None else last_sequence + 1
-        try:
-            liveness = self._receiver.liveness(now=time.monotonic())
-        except GuestProgressError:
-            liveness = "absent" if events_accepted == 0 else "stalled"
-        if self._error is None:
-            classification = None
-        elif isinstance(self._error, DeadlineError) and events_accepted == 0:
-            # An empty stream at the deadline is absence, not a stall.
-            classification = "absent"
-        else:
-            classification = classify(self._error)
-        return progress_record(
-            liveness=liveness,
-            classification=classification,
-            last_phase=(
-                self._receiver.active_phase if events_accepted else None),
-            last_sequence=last_sequence,
-            events_accepted=events_accepted,
-        )
-
-    def close(self) -> list[str]:
-        """Stop collection, destroy key state, and remove the socket root."""
-        failures: list[str] = []
-        self.stop()
-        if self._thread is not None and self._thread.is_alive():
-            failures.append("progress collector thread did not stop")
-        if self._connection is not None:
-            try:
-                self._connection.close()
-            except OSError as error:
-                failures.append(f"progress connection close failed: {error}")
-        try:
-            self._receiver.close()
-        except Exception as error:
-            failures.append(f"progress receiver close failed: {error}")
-        failures += _remove_progress_root(self.socket_root)
-        return failures
+def controller_progress(
+    socket_root: Path, *, deadline: float, credential=None,
+) -> GuestProgressCollector:
+    """Build the Controller collector for one run; same rules, own secret."""
+    return GuestProgressCollector(
+        Path(socket_root) / CONTROLLER_PROGRESS_SOCKET_NAME,
+        deadline=deadline,
+        credential=credential or mint_credential(prefix="factory-controller"),
+        producer=CONTROLLER_PROGRESS_PRODUCER,
+        phases=CONTROLLER_PROGRESS_PHASES,
+        statuses=PROGRESS_STATUSES,
+    )
 
 
 def capture_serial(
@@ -1043,12 +943,19 @@ def run(
         serial_thread: threading.Thread | None = None
         # Separate short private root: the socket path must fit sockaddr_un.
         progress_root = Path(tempfile.mkdtemp(prefix="telos-progress-"))
-        progress_channel: _WorkstationProgress | None = None
+        progress_channels: dict[str, GuestProgressCollector] = {}
         try:
+            # Both socket paths are proved free and privately parented here,
+            # immediately before the argv that names them is built.
+            workstation_socket = prepare_socket_directory(
+                progress_root, name=PROGRESS_SOCKET_NAME)
+            controller_socket = prepare_socket_directory(
+                progress_root, name=CONTROLLER_PROGRESS_SOCKET_NAME)
             plans = qemu_commands(
                 overlay.disk, overlay.vars, workstation_disk,
                 workstation_vars, port, workstation_iso, publication_iso,
-                progress_socket=progress_root / PROGRESS_SOCKET_NAME)
+                progress_socket=workstation_socket,
+                controller_progress_socket=controller_socket)
             processes["switch"] = subprocess.Popen(
                 switch_command(listener.fileno(), runtime / "switch.jsonl"),
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -1090,8 +997,15 @@ def run(
             # count is an observed zero rather than an assumed one.
             loopback_only_audited = True
             deadline = time.monotonic() + duration
-            progress_channel = _WorkstationProgress(
-                progress_root, deadline=deadline)
+            # One immutable deadline for the whole run: every collector --
+            # including a receiver restored after a guest restart -- is bound
+            # to exactly this value, so no report can extend the timeline.
+            progress_channels = {
+                "workstation": workstation_progress(
+                    progress_root, deadline=deadline),
+                "controller": controller_progress(
+                    progress_root, deadline=deadline),
+            }
             while time.monotonic() < deadline:
                 failed = [
                     role for role, process in processes.items()
@@ -1100,7 +1014,8 @@ def run(
                 if failed:
                     raise RuntimeError(
                         "factory process failed: " + ", ".join(failed))
-                progress_channel.poll()
+                for channel in progress_channels.values():
+                    channel.poll()
                 time.sleep(min(0.25, max(0, deadline - time.monotonic())))
             if publication_iso is not None:
                 problems = assess_handoff(
@@ -1118,9 +1033,14 @@ def run(
                 # existed.  A change raises and lands in the failure path.
                 overlay.overlay.verify_canonical()
                 canonical_unchanged = True
+                records = {
+                    role: channel.record()
+                    for role, channel in progress_channels.items()
+                }
                 evidence = retain_evidence(
                     runtime, evidence_root, status="pass",
-                    progress=progress_channel.record(),
+                    progress=records.get("workstation"),
+                    progress_channels=records or None,
                     measurements=acceptance_measurements(
                         canonical_unchanged=canonical_unchanged,
                         guest_disks=guest_disks,
@@ -1128,10 +1048,14 @@ def run(
                 print(f"PXE handoff evidence retained at {evidence}")
             return 0
         except BaseException as error:
+            records = {
+                role: channel.record()
+                for role, channel in progress_channels.items()
+            }
             evidence = retain_failure_evidence(
                 runtime, evidence_root, error,
-                progress=progress_channel.record()
-                if progress_channel is not None else None,
+                progress=records.get("workstation"),
+                progress_channels=records or None,
                 # Exactly the subset the run had reached: a failure never
                 # borrows a measurement it did not get to.
                 measurements=acceptance_measurements(
@@ -1144,10 +1068,9 @@ def run(
             listener.close()
             failures = terminate_children(
                 processes.values(), terminate_timeout=5, kill_timeout=2)
-            if progress_channel is not None:
-                failures += progress_channel.close()
-            else:
-                failures += _remove_progress_root(progress_root)
+            for channel in progress_channels.values():
+                failures += channel.close()
+            failures += _remove_progress_root(progress_root)
             if failures:
                 raise RuntimeError(
                     "factory cleanup failed:\n- " + "\n- ".join(failures))

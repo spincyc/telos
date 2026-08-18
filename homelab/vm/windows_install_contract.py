@@ -17,6 +17,8 @@ from xml.sax.saxutils import escape
 
 from homelab.workstations.layout import GIB, build_record
 from homelab.vm.secret_scan import count_secret_occurrences, secret_needles
+from homelab.vm.guest_progress_collector import (
+    attach_planned_progress_port, audit_progress_port)
 from homelab.vm.simulated_topology import MACS, _base, audit_qemu_argv
 
 
@@ -102,6 +104,9 @@ def audit_qemu_disk_boundary(
     if f"serial={serial}" not in joined:
         raise WindowsInstallContractError(
             "QEMU disk does not expose the authorized synthetic serial")
+    # Either the diagnostic progress port is armed as exactly the canonical
+    # device triple, or it is absent.  Nothing else may name that channel.
+    audit_progress_port(command)
 
 
 def qemu_install_command(
@@ -111,8 +116,17 @@ def qemu_install_command(
     qmp_socket: Path,
     switch_port: int,
     serial: str,
+    progress_socket: Path | None = None,
 ) -> list[str]:
-    """Build the persistent UEFI/NVMe/e1000e Windows installation command."""
+    """Build the persistent UEFI/NVMe/e1000e Windows installation command.
+
+    ``progress_socket`` opt-in arms the diagnostic guest-progress port.  No
+    Windows guest reporter ships today, so an armed port here records an
+    absent stream; arming it is an offer, never a claim that anything
+    reported.  The runner must allowlist the returned chardev in its live
+    ``audit_live_process`` call and collect the socket, or the port is
+    offered to nobody.
+    """
     if not 1 <= switch_port <= 65535:
         raise WindowsInstallContractError("switch port is invalid")
     if Path(variables).is_symlink():
@@ -141,7 +155,11 @@ def qemu_install_command(
         "-device",
         f"e1000e,netdev=factory,mac={MACS['client']}",
     ]
-    audit_qemu_argv("client", command, allowed_nic_models=("e1000e",))
+    if progress_socket is not None:
+        command, _ = attach_planned_progress_port(command, progress_socket)
+    audit_qemu_argv(
+        "client", command, allowed_nic_models=("e1000e",),
+        allowed_chardevs=audit_progress_port(command))
     audit_qemu_disk_boundary(command, disk=disk, serial=serial)
     return command
 

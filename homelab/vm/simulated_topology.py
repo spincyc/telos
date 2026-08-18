@@ -368,9 +368,14 @@ def audit_live_process(
         if disposable_disk is None or disposable_vars is None:
             raise RuntimeError(
                 "strict live audit requires both disposable paths")
+        # The same closed allowlist the argv audit just applied: without
+        # forwarding it, a Controller whose argv legitimately carries the
+        # audited progress chardev would be refused here, and the strict
+        # disposable audit would be the reason the channel could not be armed.
         audit_disposable_controller(
             argv, disk=disposable_disk, vars_file=disposable_vars,
-            forbidden_paths=forbidden_paths, qmp_socket=qmp_socket)
+            forbidden_paths=forbidden_paths, qmp_socket=qmp_socket,
+            allowed_chardevs=allowed_chardevs)
 
 
 def _validate(controller_state: Path) -> list[str]:

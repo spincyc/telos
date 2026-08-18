@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from homelab.vm import factory_runner, factory_verify, simulated_topology
+from homelab.vm.guest_progress_credentials import mint_credential
 from homelab.vm.guest_progress_host import PROGRESS_PORT_NAME
-from homelab.vm.guest_progress_protocol import ProtocolConfig
 from homelab.vm.guest_progress_reporter import ProgressReporter, run_over_stream
 from homelab.vm.qemu_boundary import audit_disposable_controller
 
@@ -867,15 +867,18 @@ class WorkstationProgressTests(unittest.TestCase):
                 return_value=(Path("/code"), Path("/vars"))),
         )
 
-    def _plans(self, progress_socket=None):
+    def _plans(self, progress_socket=None, controller_progress_socket=None,
+               controller_disk=Path("/run/controller.qcow2"),
+               controller_vars=Path("/run/controller-vars.fd")):
         runner, topology = self._ovmf_mocks()
         with runner, topology:
             return factory_runner.qemu_commands(
-                Path("/run/controller.qcow2"),
-                Path("/run/controller-vars.fd"),
+                controller_disk,
+                controller_vars,
                 Path("/run/workstation.qcow2"),
                 Path("/run/workstation-vars.fd"),
-                31415, None, progress_socket=progress_socket)
+                31415, None, progress_socket=progress_socket,
+                controller_progress_socket=controller_progress_socket)
 
     def test_workstation_argv_gains_exactly_the_progress_chardev_triple(self):
         socket_path = self.root / "progress.sock"
@@ -908,37 +911,134 @@ class WorkstationProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
             simulated_topology.audit_qemu_argv(
                 "client", armed["workstation"])
+        # Arming one guest never arms the other.
         self.assertEqual(
             factory_runner.declared_chardevs(armed["controller"]), ())
+
+    def test_controller_argv_gains_exactly_the_progress_chardev_triple(self):
+        socket_path = self.root / "controller.sock"
+        disk = Path("/run/disposable/controller.raw")
+        variables = Path("/run/disposable/OVMF_VARS.fd")
+        plans = self._plans(
+            controller_progress_socket=socket_path,
+            controller_disk=disk, controller_vars=variables)
+        bare = self._plans(controller_disk=disk, controller_vars=variables)
+        controller = plans["controller"]
+        chardevs = factory_runner.declared_chardevs(controller)
+        self.assertEqual(chardevs, (
+            f"socket,id=telosprogress,path={socket_path},"
+            "server=on,wait=off",))
+        self.assertEqual(
+            controller[:len(bare["controller"])], bare["controller"])
+        self.assertEqual(controller[len(bare["controller"]):], [
+            "-chardev", chardevs[0],
+            "-device", "virtio-serial-pci,id=telosprogressbus",
+            "-device",
+            "virtserialport,bus=telosprogressbus.0,chardev=telosprogress,"
+            f"name={PROGRESS_PORT_NAME}",
+        ])
+        self.assertEqual(
+            factory_runner.declared_chardevs(plans["workstation"]), ())
+        # Both Controller audits accept the armed argv only with the exact
+        # allowlist, and refuse it without one.
+        simulated_topology.audit_qemu_argv(
+            "controller", controller, allowed_chardevs=chardevs)
+        audit_disposable_controller(
+            controller, disk=disk, vars_file=variables,
+            forbidden_paths=(
+                Path("/canonical/controller.qcow2"),
+                Path("/canonical/OVMF_VARS.fd"),
+            ),
+            allowed_chardevs=chardevs)
+        for audit in (
+            lambda: simulated_topology.audit_qemu_argv(
+                "controller", controller),
+            lambda: audit_disposable_controller(
+                controller, disk=disk, vars_file=variables),
+            lambda: audit_disposable_controller(
+                controller, disk=disk, vars_file=variables,
+                allowed_chardevs=("socket,id=telosprogress,path=/elsewhere,"
+                                  "server=on,wait=off",)),
+        ):
+            with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+                audit()
+
+    def test_the_live_controller_audit_forwards_its_chardev_allowlist(self):
+        """B2's actual blocker: the strict disposable audit saw no allowlist."""
+        disk = self.root / "controller.raw"
+        variables = self.root / "OVMF_VARS.fd"
+        disk.write_bytes(b"")
+        variables.write_bytes(b"")
+        socket_path = self.root / "controller.sock"
+        plans = self._plans(
+            controller_progress_socket=socket_path,
+            controller_disk=disk, controller_vars=variables)
+        chardevs = factory_runner.declared_chardevs(plans["controller"])
+        proc_root = self.root / "proc"
+        (proc_root / "4242").mkdir(parents=True)
+        (proc_root / "4242" / "cmdline").write_bytes(
+            b"\0".join(item.encode() for item in plans["controller"]))
+        simulated_topology.audit_live_process(
+            4242, "controller", proc_root=proc_root,
+            allowed_chardevs=chardevs,
+            disposable_disk=disk, disposable_vars=variables)
+        with self.assertRaisesRegex(ValueError, "forbidden QEMU option"):
+            simulated_topology.audit_live_process(
+                4242, "controller", proc_root=proc_root,
+                disposable_disk=disk, disposable_vars=variables)
 
     def test_no_peer_record_is_absent_and_merges_into_both_evidence_paths(
             self):
         socket_root = self.root / "progress"
         socket_root.mkdir(mode=0o700)
-        channel = factory_runner._WorkstationProgress(
-            socket_root, deadline=time.monotonic() + 5)
+        deadline = time.monotonic() + 5
+        channels = {
+            "workstation": factory_runner.workstation_progress(
+                socket_root, deadline=deadline),
+            "controller": factory_runner.controller_progress(
+                socket_root, deadline=deadline),
+        }
         for _ in range(3):
-            channel.poll()
-        record = channel.record()
-        self.assertEqual(record["liveness"], "absent")
-        self.assertEqual(record["classification"], "unavailable")
-        self.assertIs(record["authoritative"], False)
-        self.assertEqual(record["events_accepted"], 0)
+            for channel in channels.values():
+                channel.poll()
+        records = {
+            role: channel.record() for role, channel in channels.items()}
+        for role, record in records.items():
+            with self.subTest(role=role):
+                # Both ports were armed and nobody reported on either: the
+                # only honest reading is an absent stream.
+                self.assertEqual(record["liveness"], "absent")
+                self.assertEqual(record["classification"], "unavailable")
+                self.assertIs(record["authoritative"], False)
+                self.assertEqual(record["events_accepted"], 0)
+                self.assertIsNone(record["last_phase"])
+                self.assertIsNone(record["last_sequence"])
         runtime = self.root / "runtime"
         runtime.mkdir()
         passed = factory_runner.retain_evidence(
-            runtime, self.root / "evidence", status="pass", progress=record)
+            runtime, self.root / "evidence", status="pass",
+            progress=records["workstation"], progress_channels=records)
         result = json.loads((passed / "result.json").read_text())
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["progress"]["liveness"], "absent")
+        self.assertEqual(
+            set(result["progress_channels"]), {"controller", "workstation"})
+        self.assertEqual(
+            result["progress_channels"]["controller"]["liveness"], "absent")
         # Separate root: destination names are second-granular.
         failed = factory_runner.retain_failure_evidence(
             runtime, self.root / "failure-evidence", RuntimeError("boom"),
-            progress=record)
+            progress=records["workstation"], progress_channels=records)
         result = json.loads((failed / "result.json").read_text())
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["progress"]["classification"], "unavailable")
-        self.assertEqual(channel.close(), [])
+        self.assertEqual(
+            result["progress_channels"]["workstation"]["classification"],
+            "unavailable")
+        for channel in channels.values():
+            self.assertEqual(channel.close(), [])
+        self.assertEqual(
+            factory_runner._remove_progress_root(socket_root), [])
         self.assertFalse(socket_root.exists())
 
     def test_zero_event_evidence_omits_progress_and_keeps_schema(self):
@@ -948,6 +1048,7 @@ class WorkstationProgressTests(unittest.TestCase):
             runtime, self.root / "evidence", status="pass")
         result = json.loads((destination / "result.json").read_text())
         self.assertNotIn("progress", result)
+        self.assertNotIn("progress_channels", result)
         self.assertEqual(
             frozenset(result), {"schema", "status", "retained"})
 
@@ -975,23 +1076,23 @@ class WorkstationProgressTests(unittest.TestCase):
         self.addCleanup(server.close)
         server.bind(str(socket_root / factory_runner.PROGRESS_SOCKET_NAME))
         server.listen(1)
-        key = os.urandom(32)
-        channel = factory_runner._WorkstationProgress(
+        credential = mint_credential(prefix="factory-workstation")
+        channel = factory_runner.workstation_progress(
             socket_root, deadline=time.monotonic() + 10,
-            attempt="attempt-1", nonce="nonce-1", key=key)
+            credential=credential)
         channel.poll()
         server.settimeout(5)
         peer, _ = server.accept()
         self.addCleanup(peer.close)
         peer.settimeout(0.05)
-        config = ProtocolConfig(
-            attempt="attempt-1", producer=factory_runner.PROGRESS_PRODUCER,
-            nonce="nonce-1", phases=factory_runner.PROGRESS_PHASES,
+        config = credential.protocol_config(
+            producer=factory_runner.PROGRESS_PRODUCER,
+            phases=factory_runner.PROGRESS_PHASES,
             statuses=factory_runner.PROGRESS_STATUSES)
         clock = time.monotonic
         reporter = ProgressReporter(
-            config, key, operation_deadline=clock() + 10, clock=clock,
-            uuid_source=uuid.uuid4, wall_clock=time.time)
+            config, credential.key, operation_deadline=clock() + 10,
+            clock=clock, uuid_source=uuid.uuid4, wall_clock=time.time)
 
         def read_fn():
             try:
@@ -1013,8 +1114,42 @@ class WorkstationProgressTests(unittest.TestCase):
         self.assertEqual(record["last_phase"], "installer")
         self.assertIsNone(record["classification"])
         self.assertIs(record["authoritative"], False)
+        # The document the guest would have read is derivable from the same
+        # collector and holds nothing but this attempt's public identity and
+        # its key: exactly what the shipped reporter parses.
+        document = json.loads(channel.credential_document_bytes())
+        self.assertEqual(set(document), {"attempt", "nonce", "key_hex"})
+        self.assertEqual(document["attempt"], credential.attempt)
         self.assertEqual(channel.close(), [])
+        self.assertEqual(
+            factory_runner._remove_progress_root(socket_root), [])
         self.assertFalse(socket_root.exists())
+
+    def test_no_secret_reaches_argv_or_retained_evidence(self):
+        socket_root = self.root / "progress"
+        socket_root.mkdir(mode=0o700)
+        credential = mint_credential(prefix="factory-workstation")
+        channel = factory_runner.workstation_progress(
+            socket_root, deadline=time.monotonic() + 5,
+            credential=credential)
+        self.addCleanup(channel.close)
+        plans = self._plans(
+            progress_socket=socket_root / factory_runner.PROGRESS_SOCKET_NAME,
+            controller_progress_socket=socket_root / "controller.sock")
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        record = channel.record()
+        destination = factory_runner.retain_evidence(
+            runtime, self.root / "evidence", status="pass", progress=record,
+            progress_channels={"workstation": record})
+        rendered = (destination / "result.json").read_text()
+        for secret in (
+            credential.key.hex(), credential.nonce, credential.attempt,
+        ):
+            with self.subTest(secret=secret[:8]):
+                self.assertNotIn(secret, rendered)
+                for role in ("controller", "workstation"):
+                    self.assertNotIn(secret, " ".join(plans[role]))
 
     def test_phase_vocabulary_is_the_handoff_milestones_plus_installer(self):
         self.assertEqual(
