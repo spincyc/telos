@@ -10,6 +10,7 @@ The build itself needs root and is not run from a test. Everything up to the
 build is.
 """
 
+import ast
 import importlib.machinery
 import importlib.util
 import shutil
@@ -25,6 +26,58 @@ _loader = importlib.machinery.SourceFileLoader("homelab_image",
 _spec = importlib.util.spec_from_loader("homelab_image", _loader)
 image = importlib.util.module_from_spec(_spec)
 _loader.exec_module(image)
+
+# `lib/` modules the installer can actually reach, computed from its imports
+# rather than restated. The declared list used to be checked only against
+# itself, so it proved that what was declared got staged and nothing about
+# whether the declaration matched the program.
+UNREACHABLE_BUT_STAGED = frozenset({"artifacts.py", "firstboot.py"})
+
+
+def installer_import_closure():
+    """Every `lib/` module reachable from `bin/homelab-install` by import.
+
+    The installer puts `lib/` on `sys.path` and imports by bare name, so a name
+    that matches a file in `lib/` is a dependency and the closure is walked
+    transitively. A relative or dynamic import would make this untrue, so both
+    raise rather than being skipped.
+    """
+    library = {path.stem: path for path in (ROOT / "lib").glob("*.py")}
+    pending = [ROOT / "bin/homelab-install"]
+    seen = set()
+    reached = set()
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    raise AssertionError(
+                        f"{path}: a relative import breaks the flat lib/ layout "
+                        f"the image stages")
+                names = [node.module.split(".")[0]] if node.module else []
+            elif isinstance(node, ast.Call):
+                function = node.func
+                if (isinstance(function, ast.Name)
+                        and function.id == "__import__") or (
+                        isinstance(function, ast.Attribute)
+                        and function.attr == "import_module"):
+                    raise AssertionError(
+                        f"{path}: a dynamic import is invisible to this check")
+                continue
+            else:
+                continue
+            for name in names:
+                if name in library:
+                    reached.add(f"{name}.py")
+                    pending.append(library[name])
+    return frozenset(reached)
+
 
 PUBLIC_KEY = ("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExample"
               "ExampleExampleExam observer@example\n")
@@ -69,10 +122,28 @@ class TestTheInstallerIsInTheImage(StagingCase):
     def test_every_module_it_imports_is_present(self):
         build = self.stage()
         library = build / "airootfs/usr/local/lib/homelab"
-        for module in image.INSTALLER_MODULES:
+        required = installer_import_closure()
+        self.assertTrue(required, "the import closure came out empty")
+        for module in sorted(required):
             with self.subTest(module=module):
                 self.assertTrue((library / module).is_file())
         self.assertTrue((library / "package-contract.json").is_file())
+
+    def test_nothing_the_installer_cannot_reach_enters_the_image(self):
+        """The declared list exists so a stray file in lib/ cannot silently
+        become part of a published image; a file the installer never imports is
+        that same stray file, arriving through the list instead of around it.
+
+        Over-declaration is the safe direction, so the two current entries are
+        pinned rather than failed: `artifacts.py` and `firstboot.py` belong to
+        `bin/homelab-artifacts` and `bin/homelab-first-boot`, which are
+        Controller programs and are not staged into the installer ISO at all.
+        Any *new* over-declaration fails here. Dropping the two from
+        INSTALLER_MODULES in `bin/homelab-image` lets this pin go with it."""
+        declared = frozenset(image.INSTALLER_MODULES)
+        required = installer_import_closure()
+        self.assertEqual(required - declared, frozenset())
+        self.assertEqual(declared - required, UNREACHABLE_BUT_STAGED)
 
     def test_the_modules_are_findable_at_runtime(self):
         build = self.stage()

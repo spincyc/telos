@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import homelab.lib.image_promotion_cli as subject
 from homelab.lib.image_promotion_cli import main
 from homelab.tests.test_image_promotion_gate import receipt, registry
 
@@ -34,15 +36,18 @@ class ImagePromotionCliTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def run_main(self, *extra):
+        # The registry is a module constant rather than an argument, so a test
+        # substitutes the file the same way it substitutes any other constant.
+        # Nothing a caller can put on the command line reaches it.
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = main([
-                "--profile", "workstation-install",
-                "--root", str(self.root),
-                "--receipt", str(self.receipt_path),
-                "--registry", str(self.registry_path),
-                *extra,
-            ])
+            with mock.patch.object(subject, "REGISTRY", self.registry_path):
+                code = main([
+                    "--profile", "workstation-install",
+                    "--root", str(self.root),
+                    "--receipt", str(self.receipt_path),
+                    *extra,
+                ])
         return code, out.getvalue(), err.getvalue()
 
     def test_prints_sorted_evidence_document(self):
@@ -76,6 +81,22 @@ class ImagePromotionCliTests(unittest.TestCase):
         code, _, err = self.run_main()
         self.assertEqual(code, 1)
         self.assertIn("root-audit:", err)
+
+    def test_the_tracked_contract_is_not_a_command_line_argument(self):
+        """A promotion gate a caller can point at its own registry proves
+        nothing: the permissive registry would satisfy it."""
+        self.assertEqual(
+            subject.REGISTRY,
+            Path(__file__).resolve().parents[1] / "package-contract.json")
+        with self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stderr(io.StringIO()):
+                main([
+                    "--profile", "workstation-install",
+                    "--root", str(self.root),
+                    "--receipt", str(self.receipt_path),
+                    "--registry", str(self.registry_path),
+                ])
+        self.assertEqual(raised.exception.code, 2)
 
     def test_rejects_unknown_profile(self):
         with self.assertRaises(SystemExit) as raised:

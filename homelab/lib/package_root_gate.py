@@ -6,9 +6,17 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
+import re
 import stat
 
 from .package_contract import MergedPackageContract, PACKAGE_RE
+
+
+# Where a pacman-installed Python module lands on Arch. The interpreter version
+# is part of the path, so it is matched rather than assumed: a root carrying two
+# of these is refused instead of guessed at, because a module found only under
+# the version that is not the default would prove nothing about what runs.
+SITE_PACKAGES_RE = re.compile(r"^/usr/lib/python3\.[0-9]+/site-packages/")
 
 
 class PackageRootGateError(RuntimeError):
@@ -28,12 +36,20 @@ class OwnedBinary:
     resolved_path: str
 
 
+@dataclass(frozen=True, order=True)
+class OwnedModule:
+    name: str
+    owner: str
+    path: str
+
+
 @dataclass(frozen=True)
 class PackageRootEvidence:
     root: str
     installed_packages: tuple[InstalledPackage, ...]
     required_packages: tuple[str, ...]
     binaries: tuple[OwnedBinary, ...]
+    modules: tuple[OwnedModule, ...] = ()
 
 
 def _fail(message: str) -> PackageRootGateError:
@@ -201,7 +217,15 @@ def _database_fingerprint(root_fd: int) -> tuple[tuple[str, str, str], ...]:
             os.close(descriptor)
 
 
-def _confined_executable(root_fd: int, guest_path: str) -> tuple[str, int]:
+def _confined_file(
+    root_fd: int,
+    guest_path: str,
+    *,
+    kind: str,
+    require_executable: bool,
+) -> tuple[str, int]:
+    """Open one guest path without ever leaving the root, following no ancestor
+    symlink outside it, and return where it actually resolved to."""
     pending = list(PurePosixPath(guest_path).parts[1:])
     resolved: list[str] = []
     links = 0
@@ -221,7 +245,7 @@ def _confined_executable(root_fd: int, guest_path: str) -> tuple[str, int]:
             if stat.S_ISLNK(metadata.st_mode):
                 links += 1
                 if links > 40:
-                    raise _fail(f"binary symlink chain is too deep: {guest_path}")
+                    raise _fail(f"{kind} symlink chain is too deep: {guest_path}")
                 target = os.readlink(component, dir_fd=parent)
                 target_path = PurePosixPath(target)
                 candidate = (
@@ -234,17 +258,17 @@ def _confined_executable(root_fd: int, guest_path: str) -> tuple[str, int]:
                         continue
                     if part == "..":
                         if not normalized:
-                            raise _fail(f"binary symlink escapes root: {guest_path}")
+                            raise _fail(f"{kind} symlink escapes root: {guest_path}")
                         normalized.pop()
                     else:
                         normalized.append(part)
                 if not normalized and not pending:
-                    raise _fail(f"binary symlink resolves to root: {guest_path}")
+                    raise _fail(f"{kind} symlink resolves to root: {guest_path}")
                 resolved = []
                 pending = normalized + pending
             elif pending:
                 if not stat.S_ISDIR(metadata.st_mode):
-                    raise _fail(f"binary ancestor is not a directory: {guest_path}")
+                    raise _fail(f"{kind} ancestor is not a directory: {guest_path}")
                 resolved.append(component)
             else:
                 executable_fd = os.open(
@@ -254,17 +278,91 @@ def _confined_executable(root_fd: int, guest_path: str) -> tuple[str, int]:
                 )
                 opened = os.fstat(executable_fd)
                 if (not stat.S_ISREG(opened.st_mode)
-                        or opened.st_mode & 0o111 == 0
+                        or (require_executable and opened.st_mode & 0o111 == 0)
                         or (opened.st_dev, opened.st_ino)
                         != (metadata.st_dev, metadata.st_ino)):
                     os.close(executable_fd)
-                    raise _fail(f"binary is not a regular executable: {guest_path}")
+                    raise _fail(
+                        f"{kind} is not a regular "
+                        f"{'executable' if require_executable else 'file'}: "
+                        f"{guest_path}")
                 resolved.append(component)
         except OSError as error:
-            raise _fail(f"cannot inspect required binary: {guest_path}") from error
+            raise _fail(f"cannot inspect required {kind}: {guest_path}") from error
         finally:
             os.close(parent)
     return "/" + "/".join(resolved), executable_fd
+
+
+def _module_paths(prefix: str, name: str) -> tuple[tuple[str, ...], re.Pattern]:
+    """Every file an import of `name` could legitimately resolve to.
+
+    A dotted name is a path: `samba.samdb` is `samba/samdb`. From there Python
+    accepts a plain module, a package directory, or an extension module whose
+    ABI tag is part of its file name, so all three forms are offered and the
+    root decides which one it actually ships.
+    """
+    relative = prefix + name.replace(".", "/")
+    return (
+        (f"{relative}.py", f"{relative}/__init__.py", f"{relative}.so"),
+        re.compile(re.escape(relative) + r"\.[A-Za-z0-9_.+-]+\.so"),
+    )
+
+
+def _owned_modules(
+    root_fd: int,
+    owners: dict[str, str],
+    contract: MergedPackageContract,
+    opened: list[int],
+) -> tuple[OwnedModule, ...]:
+    """Prove every declared module is importable and owned by its package.
+
+    Ownership is read from the same ALPM `FILES` map the binaries use, and the
+    file is then opened through the same confined walk, so a module the database
+    claims but the root does not carry fails here rather than at first import.
+
+    Only the declared name is proven, never its ancestors: a contract that needs
+    `samba` itself says so, because a package may legitimately be a namespace
+    package with no `__init__` of its own.
+    """
+    if not contract.modules:
+        return ()
+    prefixes = sorted({
+        match.group(0) for path in owners
+        if (match := SITE_PACKAGES_RE.match(path))
+    })
+    if len(prefixes) != 1:
+        raise _fail(
+            "package root does not have exactly one python site-packages "
+            "directory")
+    prefix = prefixes[0]
+    # Only extension modules need a scan: their ABI tag is not predictable, so
+    # they are matched by pattern while every other form is a direct lookup.
+    extensions = sorted(
+        path for path in owners
+        if path.startswith(prefix) and path.endswith(".so"))
+    modules: list[OwnedModule] = []
+    for module in contract.modules:
+        exact, tagged = _module_paths(prefix, module.name)
+        candidates = sorted(
+            {path for path in exact if path in owners}
+            | {path for path in extensions if tagged.fullmatch(path)})
+        if not candidates:
+            raise _fail(f"required python module is absent: {module.name}")
+        if {owners[path] for path in candidates} != {module.owner}:
+            raise _fail(
+                f"package database has wrong module owner: {module.name}")
+        for candidate in candidates:
+            resolved_path, descriptor = _confined_file(
+                root_fd, candidate, kind="module", require_executable=False)
+            opened.append(descriptor)
+            if owners.get(resolved_path) != module.owner:
+                raise _fail(
+                    f"package database has wrong resolved module owner: "
+                    f"{module.name}")
+        modules.append(
+            OwnedModule(module.name, module.owner, candidates[0]))
+    return tuple(sorted(modules))
 
 
 def audit_package_root(
@@ -287,8 +385,8 @@ def audit_package_root(
         for binary in contract.binaries:
             if owners.get(binary.path) != binary.owner:
                 raise _fail(f"package database has wrong owner: {binary.path}")
-            resolved_path, executable_fd = _confined_executable(
-                root_fd, binary.path)
+            resolved_path, executable_fd = _confined_file(
+                root_fd, binary.path, kind="binary", require_executable=True)
             executable_fds.append(executable_fd)
             if owners.get(resolved_path) != binary.owner:
                 raise _fail(
@@ -298,11 +396,13 @@ def audit_package_root(
                 binary.owner,
                 resolved_path,
             ))
+        modules = _owned_modules(root_fd, owners, contract, executable_fds)
         evidence = PackageRootEvidence(
             root=str(root),
             installed_packages=installed,
             required_packages=contract.packages,
             binaries=tuple(binaries),
+            modules=modules,
         )
         if _database_fingerprint(root_fd) != database_before:
             raise _fail("package database changed during audit")

@@ -12,7 +12,11 @@ from .package_contract import PROFILE_OVERLAYS
 
 
 HOMELAB_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REGISTRY = HOMELAB_ROOT / "package-contract.json"
+# The tracked contract, and only the tracked contract. A promotion gate that
+# accepted a caller-supplied registry could be satisfied by supplying a
+# permissive one, which would make every promotion it signs off meaningless.
+# This is not a default that can be overridden; there is no flag for it.
+REGISTRY = HOMELAB_ROOT / "package-contract.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,14 +27,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="candidate image root to audit read-only")
     parser.add_argument("--receipt", type=Path, required=True,
                         help="signed seed receipt that built the candidate")
-    parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--evidence", type=Path,
                         help="write the evidence document here instead of stdout")
     args = parser.parse_args(argv)
 
     try:
         evidence = gate_candidate_image(
-            args.profile, args.registry, args.root.resolve(), args.receipt)
+            args.profile, REGISTRY, args.root.resolve(), args.receipt)
     except ImagePromotionGateError as error:
         print(f"image promotion gate: {error}", file=sys.stderr)
         return 1

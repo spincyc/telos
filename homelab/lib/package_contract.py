@@ -24,6 +24,38 @@ OVERLAY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # reason.
 UNIT_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9@._-]*\.(?:service|timer|socket)$")
+# A declared module is the exact dotted name a delivered program imports, not
+# the package that ships it: proving `samba` is installed says nothing about
+# whether `samba/samdb.py` is importable, and an import is what actually runs.
+MODULE_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+# A module owner is NOT required to appear in `packages`, and that is deliberate
+# rather than an oversight. `packages` records what the image build asks pacman
+# for; a Python module often arrives from a package pulled in as a dependency of
+# a requested one -- `ldb` comes with `samba` and is imported directly by
+# `provision-accounts.py` without ever being requested by name.
+#
+# Membership in a request list is also the weaker of the two available checks.
+# What the root gate proves is that the exact file the import resolves to exists
+# in the candidate root and that ALPM attributes it to precisely the declared
+# package, so a dropped upstream dependency, a vendored copy, or a differently
+# owned shim each fail at promotion instead of at first import. Promoting an
+# owner to a requested package is a separate, additive decision that has to move
+# `packages`, the seed package list, and the role that installs it together.
+#
+# `origin` answers a third question: why the image needs the module at all,
+# which is not the same as which package owns it.
+#
+# `repository` means some source in this repository imports the name inside a
+# guest, so the requirement is derivable and a parity test holds it to that
+# derivation in both directions.
+#
+# `upstream` means the owning package needs it at runtime for its own reasons
+# and nothing here imports it. That claim cannot be derived from repository
+# facts, so it is recorded as what it is -- an owner assertion -- rather than
+# dressed up as a derivation. The gate still proves presence and ownership; only
+# the justification differs.
+MODULE_ORIGINS = ("repository", "upstream")
 EXPECTED_OVERLAYS = (
     "installer-live",
     "controller-network",
@@ -63,11 +95,19 @@ class BinaryOwnership:
     owner: str
 
 
+@dataclass(frozen=True, order=True)
+class ModuleRequirement:
+    name: str
+    owner: str
+    origin: str
+
+
 @dataclass(frozen=True)
 class PackageLayer:
     packages: tuple[str, ...]
     binaries: tuple[BinaryOwnership, ...]
     services: tuple[str, ...] = ()
+    modules: tuple[ModuleRequirement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,6 +123,7 @@ class MergedPackageContract:
     packages: tuple[str, ...]
     binaries: tuple[BinaryOwnership, ...]
     services: tuple[str, ...] = ()
+    modules: tuple[ModuleRequirement, ...] = ()
 
 
 def _exact_object(value: Any, fields: set[str], context: str) -> dict[str, Any]:
@@ -106,7 +147,8 @@ def _string(value: Any, context: str) -> str:
 
 
 def _layer(value: Any, context: str) -> PackageLayer:
-    raw = _exact_object(value, {"packages", "binaries", "services"}, context)
+    raw = _exact_object(
+        value, {"packages", "binaries", "services", "modules"}, context)
     if type(raw["packages"]) is not list:
         raise PackageContractError(f"{context}.packages must be an array")
     packages = tuple(
@@ -154,10 +196,34 @@ def _layer(value: Any, context: str) -> PackageLayer:
                 f"{context} has invalid service unit: {service}")
     if len(set(services)) != len(services):
         raise PackageContractError(f"{context} has duplicate services")
+
+    if type(raw["modules"]) is not list:
+        raise PackageContractError(f"{context}.modules must be an array")
+    modules: list[ModuleRequirement] = []
+    for index, item in enumerate(raw["modules"]):
+        entry = _exact_object(
+            item, {"name", "owner", "origin"}, f"{context}.modules[{index}]")
+        name = _string(entry["name"], f"{context}.modules[{index}].name")
+        owner = _string(entry["owner"], f"{context}.modules[{index}].owner")
+        origin = _string(entry["origin"], f"{context}.modules[{index}].origin")
+        if not MODULE_RE.fullmatch(name):
+            raise PackageContractError(
+                f"{context} has invalid module name: {name}")
+        if not PACKAGE_RE.fullmatch(owner):
+            raise PackageContractError(
+                f"{context} has invalid module owner: {owner}")
+        if origin not in MODULE_ORIGINS:
+            raise PackageContractError(
+                f"{context} has invalid module origin: {origin}")
+        modules.append(
+            ModuleRequirement(name=name, owner=owner, origin=origin))
+    if len({item.name for item in modules}) != len(modules):
+        raise PackageContractError(f"{context} has duplicate module names")
     return PackageLayer(
         packages=tuple(sorted(packages)),
         binaries=tuple(sorted(binaries)),
         services=tuple(sorted(services)),
+        modules=tuple(sorted(modules)),
     )
 
 
@@ -196,6 +262,10 @@ def parse_registry(value: Any) -> PackageRegistry:
             if service in common.services:
                 raise PackageContractError(
                     f"service {service} collides between common and {name}")
+        for module in layer.modules:
+            if module.name in {item.name for item in common.modules}:
+                raise PackageContractError(
+                    f"module {module.name} collides between common and {name}")
         merged_packages = set(common.packages) | set(layer.packages)
         for binary in (*common.binaries, *layer.binaries):
             if binary.owner not in merged_packages:
@@ -261,6 +331,15 @@ def merge_contract(
     if absent:
         raise PackageContractError(
             f"binary owner is absent from merged package set: {absent[0]}")
+    modules_by_name: dict[str, ModuleRequirement] = {}
+    for layer in layers:
+        for module in layer.modules:
+            previous = modules_by_name.setdefault(module.name, module)
+            if previous != module:
+                raise PackageContractError(
+                    f"module {module.name} has conflicting declarations: "
+                    f"{previous.owner}/{previous.origin} and "
+                    f"{module.owner}/{module.origin}")
     return MergedPackageContract(
         overlays=canonical,
         packages=packages,
@@ -268,4 +347,5 @@ def merge_contract(
         services=tuple(sorted({
             service for layer in layers for service in layer.services
         })),
+        modules=tuple(sorted(modules_by_name.values())),
     )

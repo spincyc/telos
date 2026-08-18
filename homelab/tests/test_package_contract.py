@@ -95,6 +95,107 @@ class PackageContractTests(unittest.TestCase):
             }
             <= {(item.path, item.owner) for item in image_host.binaries})
 
+    def test_declared_modules_carry_an_owner_and_a_justification(self):
+        registry = package_contract.parse_registry(self.raw)
+        controller = package_contract.merge_contract(
+            registry, ["controller-domain"])
+        self.assertIn(
+            package_contract.ModuleRequirement(
+                name="ldb", owner="ldb", origin="repository"),
+            controller.modules,
+        )
+        self.assertIn(
+            package_contract.ModuleRequirement(
+                name="cryptography", owner="python-cryptography",
+                origin="upstream"),
+            controller.modules,
+        )
+        self.assertEqual(controller.modules, tuple(sorted(controller.modules)))
+        # A layer with no delivered python declares nothing rather than
+        # inheriting somebody else's imports.
+        self.assertEqual(
+            package_contract.merge_contract(registry, ["services"]).modules, ())
+
+    def test_module_owner_need_not_be_a_requested_package(self):
+        """`ldb` is imported directly and arrives as a samba dependency. What
+        the gate proves is ALPM ownership of the file the import resolves to,
+        which is stronger than membership in the request list."""
+        registry = package_contract.parse_registry(self.raw)
+        controller = package_contract.merge_contract(
+            registry, ["controller-domain"])
+        self.assertNotIn("ldb", controller.packages)
+        self.assertIn(
+            "ldb", {module.owner for module in controller.modules})
+
+    def test_invalid_module_declarations_are_rejected(self):
+        for field, value, message in (
+            ("name", "samba..auth", "invalid module name"),
+            ("name", "9lives", "invalid module name"),
+            ("name", "/usr/lib/ldb.so", "invalid module name"),
+            ("owner", "Samba", "invalid module owner"),
+            ("origin", "assumed", "invalid module origin"),
+            ("origin", "", "must be a nonempty string"),
+        ):
+            with self.subTest(field=field, value=value):
+                raw = copy.deepcopy(self.raw)
+                raw["overlays"]["controller-domain"]["modules"][0][field] = value
+                with self.assertRaisesRegex(
+                        package_contract.PackageContractError, message):
+                    package_contract.parse_registry(raw)
+
+    def test_duplicate_and_colliding_modules_are_rejected(self):
+        raw = copy.deepcopy(self.raw)
+        raw["overlays"]["controller-domain"]["modules"].append(
+            copy.deepcopy(raw["overlays"]["controller-domain"]["modules"][0]))
+        with self.assertRaisesRegex(
+                package_contract.PackageContractError,
+                "duplicate module names"):
+            package_contract.parse_registry(raw)
+
+        raw = copy.deepcopy(self.raw)
+        entry = copy.deepcopy(raw["overlays"]["controller-domain"]["modules"][0])
+        raw["common"]["modules"].append(entry)
+        with self.assertRaisesRegex(
+                package_contract.PackageContractError,
+                "collides between common and controller-domain"):
+            package_contract.parse_registry(raw)
+
+    def test_two_overlays_cannot_disagree_about_one_module(self):
+        raw = copy.deepcopy(self.raw)
+        raw["overlays"]["identity-client"]["modules"].append(
+            {"name": "samba.auth", "owner": "samba", "origin": "upstream"})
+        registry = package_contract.parse_registry(raw)
+        with self.assertRaisesRegex(
+                package_contract.PackageContractError,
+                "conflicting declarations"):
+            package_contract.merge_contract(
+                registry, ["controller-domain", "identity-client"])
+
+    def test_identical_module_declarations_merge_to_one(self):
+        raw = copy.deepcopy(self.raw)
+        entry = {"name": "samba.auth", "owner": "samba", "origin": "repository"}
+        raw["overlays"]["identity-client"]["modules"].append(entry)
+        merged = package_contract.merge_contract(
+            package_contract.parse_registry(raw),
+            ["controller-domain", "identity-client"])
+        self.assertEqual(
+            [module.name for module in merged.modules].count("samba.auth"), 1)
+
+    def test_a_layer_without_a_modules_field_is_rejected(self):
+        raw = copy.deepcopy(self.raw)
+        del raw["overlays"]["services"]["modules"]
+        with self.assertRaisesRegex(
+                package_contract.PackageContractError,
+                "is missing field: modules"):
+            package_contract.parse_registry(raw)
+
+    def test_the_schema_version_did_not_move_for_an_added_field(self):
+        """`modules` widens the field set the same way `services` did, and the
+        version is not bumped for the same reason: the registry has no reader
+        outside this repository, and the one copy that leaves it is staged into
+        the image alongside the parser from the same commit."""
+        self.assertEqual(self.raw["schema_version"], 1)
+
     def test_unknown_overlay_is_rejected(self):
         registry = package_contract.parse_registry(self.raw)
         with self.assertRaisesRegex(

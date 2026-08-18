@@ -1,10 +1,15 @@
+from dataclasses import replace
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from homelab.lib.package_contract import BinaryOwnership, MergedPackageContract
+from homelab.lib.package_contract import (
+    BinaryOwnership,
+    MergedPackageContract,
+    ModuleRequirement,
+)
 import homelab.lib.package_root_gate as subject
 from homelab.lib.package_root_gate import PackageRootGateError, audit_package_root
 
@@ -160,12 +165,12 @@ class PackageRootGateTests(unittest.TestCase):
         self.assertEqual(len(audit_package_root(
             self.root, CONTRACT).installed_packages), 2)
 
-        original = subject._confined_executable
+        original = subject._confined_file
         mutated = False
 
-        def mutating_check(root_fd, guest_path):
+        def mutating_check(root_fd, guest_path, **keywords):
             nonlocal mutated
-            result = original(root_fd, guest_path)
+            result = original(root_fd, guest_path, **keywords)
             if not mutated:
                 mutated = True
                 desc = self.root / "var/lib/pacman/local/alpha-1.2-3/desc"
@@ -176,7 +181,7 @@ class PackageRootGateTests(unittest.TestCase):
             return result
 
         with (
-            mock.patch.object(subject, "_confined_executable", mutating_check),
+            mock.patch.object(subject, "_confined_file", mutating_check),
             self.assertRaisesRegex(PackageRootGateError, "changed during audit"),
         ):
             audit_package_root(self.root, CONTRACT)
@@ -221,6 +226,134 @@ class PackageRootGateTests(unittest.TestCase):
         for root in (Path("relative"), Path(self.temporary.name) / "absent"):
             with self.subTest(root=root), self.assertRaises(PackageRootGateError):
                 audit_package_root(root, CONTRACT)
+
+
+SITE = "usr/lib/python3.14/site-packages"
+MODULE_CONTRACT = MergedPackageContract(
+    overlays=("controller-domain",),
+    packages=("alpha", "zulu"),
+    binaries=(),
+    modules=(
+        ModuleRequirement("ldb", "zulu", "repository"),
+        ModuleRequirement("samba.auth", "alpha", "repository"),
+        ModuleRequirement("samba.provision", "alpha", "repository"),
+        ModuleRequirement("samba.samdb", "alpha", "repository"),
+    ),
+)
+
+
+class PackageRootModuleTests(unittest.TestCase):
+    """A declared import is proven the way a declared binary is: the file the
+    import resolves to exists in the root and ALPM attributes it to exactly the
+    package the contract names."""
+
+    ALPHA_FILES = (
+        f"{SITE}/samba/__init__.py",
+        f"{SITE}/samba/auth.cpython-314-x86_64-linux-gnu.so",
+        f"{SITE}/samba/provision/__init__.py",
+        f"{SITE}/samba/samdb.py",
+    )
+    ZULU_FILES = (f"{SITE}/ldb.cpython-314-x86_64-linux-gnu.so",)
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name) / "root"
+        (self.root / "var/lib/pacman/local").mkdir(parents=True)
+        self.build("alpha", "1.2-3", self.ALPHA_FILES)
+        self.build("zulu", "9.0-1", self.ZULU_FILES)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def build(self, name, version, files):
+        directory = self.root / "var/lib/pacman/local" / f"{name}-{version}"
+        directory.mkdir()
+        (directory / "desc").write_text(
+            f"%NAME%\n{name}\n\n%VERSION%\n{version}\n\n", encoding="utf-8")
+        (directory / "files").write_text(
+            "%FILES%\n" + "\n".join(files) + "\n\n", encoding="utf-8")
+        for relative in files:
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"module")
+
+    def test_proves_every_declared_module_and_records_where_it_resolved(self):
+        evidence = audit_package_root(self.root, MODULE_CONTRACT)
+        self.assertEqual(
+            [(item.name, item.owner, item.path) for item in evidence.modules],
+            [
+                ("ldb", "zulu",
+                 f"/{SITE}/ldb.cpython-314-x86_64-linux-gnu.so"),
+                ("samba.auth", "alpha",
+                 f"/{SITE}/samba/auth.cpython-314-x86_64-linux-gnu.so"),
+                ("samba.provision", "alpha",
+                 f"/{SITE}/samba/provision/__init__.py"),
+                ("samba.samdb", "alpha", f"/{SITE}/samba/samdb.py"),
+            ],
+        )
+
+    def test_a_module_need_not_be_executable(self):
+        """A binary must carry the exec bit; a python file must not have to."""
+        (self.root / SITE / "samba/samdb.py").chmod(0o644)
+        self.assertEqual(len(audit_package_root(
+            self.root, MODULE_CONTRACT).modules), 4)
+
+    def test_rejects_a_module_no_package_ships(self):
+        contract = replace(MODULE_CONTRACT, modules=(
+            ModuleRequirement("samba.netcmd", "alpha", "repository"),))
+        with self.assertRaisesRegex(
+                PackageRootGateError,
+                "required python module is absent: samba.netcmd"):
+            audit_package_root(self.root, contract)
+
+    def test_rejects_a_module_owned_by_another_package(self):
+        contract = replace(MODULE_CONTRACT, modules=(
+            ModuleRequirement("ldb", "alpha", "repository"),))
+        with self.assertRaisesRegex(
+                PackageRootGateError, "wrong module owner: ldb"):
+            audit_package_root(self.root, contract)
+
+    def test_rejects_a_module_the_database_claims_but_the_root_lacks(self):
+        """An ALPM record is a claim about the root, not the root itself."""
+        (self.root / SITE / "samba/samdb.py").unlink()
+        with self.assertRaisesRegex(
+                PackageRootGateError, "cannot inspect required module"):
+            audit_package_root(self.root, MODULE_CONTRACT)
+
+    def test_rejects_a_module_symlinked_out_of_the_root(self):
+        target = self.root / SITE / "samba/samdb.py"
+        target.unlink()
+        target.symlink_to("../../../../../../etc/passwd")
+        with self.assertRaisesRegex(PackageRootGateError, "escapes root"):
+            audit_package_root(self.root, MODULE_CONTRACT)
+
+    def test_refuses_a_root_without_exactly_one_site_packages(self):
+        """A module found only under the interpreter that is not the default
+        would prove nothing about what actually runs, so an ambiguous root is
+        refused rather than guessed at."""
+        self.build("yankee", "1-1",
+                   ("usr/lib/python3.13/site-packages/ldb.py",))
+        with self.assertRaisesRegex(
+                PackageRootGateError, "exactly one python site-packages"):
+            audit_package_root(self.root, MODULE_CONTRACT)
+
+        bare = MergedPackageContract(
+            overlays=(), packages=("alpha",), binaries=(), modules=())
+        self.assertEqual(audit_package_root(self.root, bare).modules, ())
+
+    def test_a_root_with_no_python_at_all_refuses_a_module_contract(self):
+        empty = Path(self.temporary.name) / "bare"
+        (empty / "var/lib/pacman/local/alpha-1.2-3").mkdir(parents=True)
+        database = empty / "var/lib/pacman/local/alpha-1.2-3"
+        database.joinpath("desc").write_text(
+            "%NAME%\nalpha\n\n%VERSION%\n1.2-3\n\n", encoding="utf-8")
+        database.joinpath("files").write_text("%FILES%\n\n", encoding="utf-8")
+        contract = MergedPackageContract(
+            overlays=(), packages=("alpha",), binaries=(),
+            modules=(ModuleRequirement("ldb", "alpha", "repository"),))
+        with self.assertRaisesRegex(
+                PackageRootGateError, "exactly one python site-packages"):
+            audit_package_root(empty, contract)
 
 
 if __name__ == "__main__":

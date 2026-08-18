@@ -9,6 +9,7 @@ from typing import Any
 
 from .package_contract import (
     PROFILE_OVERLAYS,
+    ModuleRequirement,
     PackageContractError,
     load_registry,
     merge_contract,
@@ -41,6 +42,7 @@ class ImagePromotionEvidence:
     closure: SeedClosureEvidence
 
     declared_services: tuple[str, ...] = ()
+    declared_modules: tuple[ModuleRequirement, ...] = ()
 
     def to_document(self) -> dict[str, Any]:
         """Render one machine-readable, secret-free evidence document.
@@ -48,7 +50,15 @@ class ImagePromotionEvidence:
         `declared_services` records what the merged contract requires, not what
         was observed: proving a unit is enabled and running needs the separate
         boot gate.
+
+        `modules` is the opposite: every entry was proven present in the root
+        and owned by its declared package, so each one carries the file the
+        import would actually resolve to. `origin` records why the module is
+        required -- `repository` for a name some source here imports inside a
+        guest, `upstream` for an owner assertion about a package's own runtime
+        dependency that no repository source imports.
         """
+        origin = {module.name: module.origin for module in self.declared_modules}
         return {
             "schema": 1,
             "kind": "image-promotion-static-evidence",
@@ -70,6 +80,15 @@ class ImagePromotionEvidence:
                     "resolved_path": binary.resolved_path,
                 }
                 for binary in self.root.binaries
+            ],
+            "modules": [
+                {
+                    "name": module.name,
+                    "owner": module.owner,
+                    "origin": origin[module.name],
+                    "path": module.path,
+                }
+                for module in self.root.modules
             ],
         }
 
@@ -134,4 +153,5 @@ def gate_candidate_image(
         root=root_evidence,
         closure=closure,
         declared_services=contract.services,
+        declared_modules=contract.modules,
     )

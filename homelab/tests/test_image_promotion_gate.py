@@ -18,7 +18,7 @@ DIGEST_DATABASE = "5" * 64
 
 
 def empty_layer():
-    return {"packages": [], "binaries": [], "services": []}
+    return {"packages": [], "binaries": [], "services": [], "modules": []}
 
 
 def registry():
@@ -27,6 +27,7 @@ def registry():
         "packages": ["alpha"],
         "binaries": [{"path": "/usr/bin/alpha", "owner": "alpha"}],
         "services": [],
+        "modules": [],
     }
     return {
         "schema_version": 1,
@@ -150,6 +151,58 @@ class ImagePromotionGateTests(unittest.TestCase):
         document = self.gate().to_document()
         self.assertEqual(document["declared_services"], ["alpha.service"])
         self.assertIs(document["services_verified"], False)
+
+    def test_reports_declared_modules_as_proven_with_their_justification(self):
+        """Unlike a service, a module is not merely declared: the evidence names
+        the file the import resolved to, so the document says what was proven
+        rather than what was asked for."""
+        site = "usr/lib/python3.14/site-packages"
+        self.package("omega", "2.0-1", (f"{site}/omega/__init__.py",))
+        module = self.root / site / "omega/__init__.py"
+        module.parent.mkdir(parents=True)
+        module.write_bytes(b"module")
+        value = registry()
+        value["overlays"]["workstation"]["packages"] = ["alpha", "omega"]
+        value["overlays"]["workstation"]["modules"] = [
+            {"name": "omega", "owner": "omega", "origin": "repository"}]
+        self.write_registry(value)
+        payload = receipt()
+        payload["requested_packages"] = ["alpha", "omega"]
+        payload["package_files"].append({
+            "name": "omega-2.0-1-x86_64.pkg.tar.zst",
+            "bytes": 10,
+            "sha256": DIGEST_ALPHA,
+        })
+        payload["payload_files"].extend([
+            {
+                "path": "packages/omega-2.0-1-x86_64.pkg.tar.zst",
+                "bytes": 10,
+                "sha256": DIGEST_ALPHA,
+            },
+            {
+                "path": "packages/omega-2.0-1-x86_64.pkg.tar.zst.sig",
+                "bytes": 1,
+                "sha256": DIGEST_ALPHA_SIG,
+            },
+        ])
+        self.write_receipt(payload)
+        document = self.gate().to_document()
+        self.assertEqual(document["modules"], [{
+            "name": "omega",
+            "owner": "omega",
+            "origin": "repository",
+            "path": f"/{site}/omega/__init__.py",
+        }])
+
+    def test_a_profile_declaring_no_modules_reports_none(self):
+        self.assertEqual(self.gate().to_document()["modules"], [])
+
+    def test_attributes_root_audit_stage_for_an_absent_module(self):
+        value = registry()
+        value["overlays"]["workstation"]["modules"] = [
+            {"name": "omega", "owner": "alpha", "origin": "repository"}]
+        self.write_registry(value)
+        self.gate_error("root-audit: ")
 
     def test_rejects_unknown_profile(self):
         self.gate_error("unknown image profile: rogue", profile="rogue")

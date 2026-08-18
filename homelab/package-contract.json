@@ -25,7 +25,8 @@
     ],
     "services": [
       "sshd.service"
-    ]
+    ],
+    "modules": []
   },
   "overlays": {
     "installer-live": {
@@ -72,7 +73,8 @@
         "systemd-networkd-wait-online.service",
         "systemd-networkd.service",
         "systemd-networkd.socket"
-      ]
+      ],
+      "modules": []
     },
     "controller-network": {
       "packages": ["dhcpcd", "dnsmasq", "iproute2", "nginx"],
@@ -84,7 +86,8 @@
       ],
       "services": [
         "homelab-first-boot.service"
-      ]
+      ],
+      "modules": []
     },
     "controller-domain": {
       "packages": [
@@ -113,6 +116,17 @@
       "services": [
         "ntpd.service",
         "samba.service"
+      ],
+      "modules": [
+        {"name": "cryptography", "owner": "python-cryptography", "origin": "upstream"},
+        {"name": "dns", "owner": "python-dnspython", "origin": "repository"},
+        {"name": "dns.resolver", "owner": "python-dnspython", "origin": "repository"},
+        {"name": "ldb", "owner": "ldb", "origin": "repository"},
+        {"name": "markdown", "owner": "python-markdown", "origin": "upstream"},
+        {"name": "samba.auth", "owner": "samba", "origin": "repository"},
+        {"name": "samba.param", "owner": "samba", "origin": "repository"},
+        {"name": "samba.provision", "owner": "samba", "origin": "repository"},
+        {"name": "samba.samdb", "owner": "samba", "origin": "repository"}
       ]
     },
     "controller-factory": {
@@ -137,7 +151,8 @@
         "telos-factory-tftp.service",
         "telos-pxe-evidence.service",
         "telos-pxe-ready.service"
-      ]
+      ],
+      "modules": []
     },
     "identity-client": {
       "packages": [
@@ -155,7 +170,8 @@
       ],
       "services": [
         "sssd.service"
-      ]
+      ],
+      "modules": []
     },
     "automatic-updates": {
       "packages": [
@@ -168,7 +184,8 @@
         {"path": "/usr/bin/curl", "owner": "curl"},
         {"path": "/usr/bin/logger", "owner": "util-linux"}
       ],
-      "services": []
+      "services": [],
+      "modules": []
     },
     "workstation": {
       "packages": [
@@ -187,14 +204,16 @@
         "serial-getty@ttyS0.service",
         "telos-arch-domain-online.service",
         "telos-arch-join-once.service"
-      ]
+      ],
+      "modules": []
     },
     "services": {
       "packages": ["podman"],
       "binaries": [
         {"path": "/usr/bin/podman", "owner": "podman"}
       ],
-      "services": []
+      "services": [],
+      "modules": []
     },
     "image-build-host": {
       "packages": [
@@ -227,7 +246,8 @@
         {"path": "/usr/bin/umount", "owner": "util-linux"},
         {"path": "/usr/bin/xorriso", "owner": "libisoburn"}
       ],
-      "services": []
+      "services": [],
+      "modules": []
     }
   }
 }
