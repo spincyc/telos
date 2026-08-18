@@ -537,5 +537,30 @@ class WindowsIdentityRunTests(unittest.TestCase):
         self.assertIsNone(caught.exception.__context__)
 
 
+class ArgvChardevTests(unittest.TestCase):
+    """The live audit compares chardev COUNTS, so all of them must be found."""
+
+    def test_every_chardev_is_collected_not_only_the_first(self):
+        command = [
+            "qemu-system-x86_64",
+            "-chardev", "socket,id=telos-serial,path=/run/private/serial.sock",
+            "-device", "isa-serial,chardev=telos-serial",
+            "-chardev", "socket,id=telos-progress,path=/run/private/prog.sock",
+            "-device", "virtserialport,chardev=telos-progress",
+        ]
+        self.assertEqual(
+            ("socket,id=telos-serial,path=/run/private/serial.sock",
+             "socket,id=telos-progress,path=/run/private/prog.sock"),
+            windows_identity_run.argv_chardevs(command))
+
+    def test_an_unarmed_command_yields_nothing(self):
+        self.assertEqual(
+            (), windows_identity_run.argv_chardevs(["-device", "e1000e"]))
+
+    def test_a_trailing_flag_without_a_value_is_not_a_chardev(self):
+        self.assertEqual(
+            (), windows_identity_run.argv_chardevs(["-chardev"]))
+
+
 if __name__ == "__main__":
     unittest.main()

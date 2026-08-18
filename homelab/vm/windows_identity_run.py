@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 from types import MappingProxyType
 from pathlib import Path
 
@@ -930,6 +930,23 @@ class IdentityReceipt:
     teardown_complete: bool = False
 
 
+
+def argv_chardevs(command: Sequence[str]) -> tuple[str, ...]:
+    """Every ``-chardev`` value in ``command``, in order.
+
+    Every one, not just the first. ``audit_live_process`` compares
+    ``argv.count("-chardev")`` against ``len(allowed_chardevs)``, so deriving a
+    single value from a command carrying two fails the live audit closed. That
+    stayed latent while the serial console was the only channel; arming a
+    second one -- the guest progress port -- reaches it, and it would present
+    as an unexplained refusal at launch rather than as a bug here.
+    """
+    return tuple(
+        command[index + 1]
+        for index, argument in enumerate(command)
+        if argument == "-chardev" and index + 1 < len(command)
+    )
+
 class NativeProcessBoundary:
     """Own the isolated switch, disposable Controller, Windows VM, and QMP."""
 
@@ -1718,10 +1735,7 @@ class NativeProcessBoundary:
                 command, stdin=subprocess.DEVNULL, stdout=output,
                 stderr=subprocess.STDOUT)
         self.processes["windows"] = process
-        chardevs = (
-            (command[command.index("-chardev") + 1],)
-            if "-chardev" in command else ()
-        )
+        chardevs = argv_chardevs(command)
         audit_live_process(
             process.pid, "client", allowed_nic_models=("e1000e",),
             allowed_chardevs=chardevs)
