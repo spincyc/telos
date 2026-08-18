@@ -69,6 +69,13 @@ REQUIRED_NETWORKD_LINKS = (
 )
 PACKAGE_CONTRACT = ROOT / "package-contract.json"
 
+# Never staged, whatever leaves them in the tracked profile. The image tree
+# contains real Python programs (`airootfs/usr/local/bin/homelab-progress`),
+# so anything that imports one by path -- a test, an editor, a manual run --
+# drops a `__pycache__` beside it. copytree would then bake a host-built,
+# host-versioned `.pyc` into a published artifact.
+NEVER_STAGED = ("__pycache__", "*.pyc", "*.pyo")
+
 
 class StagingError(RuntimeError):
     pass
@@ -80,7 +87,8 @@ def stage(work: Path, *, overlay: Path = OVERLAY) -> list[str]:
     build = work / "profile"
     if build.exists():
         shutil.rmtree(build)
-    shutil.copytree(PROFILE, build, symlinks=True)
+    shutil.copytree(PROFILE, build, symlinks=True,
+                    ignore=shutil.ignore_patterns(*NEVER_STAGED))
 
     airootfs = build / "airootfs"
 
@@ -192,6 +200,15 @@ def _refuse_secrets(text: str, where: str) -> None:
 def audit(build: Path) -> list[str]:
     """Look at the staged tree the way somebody who downloaded it would."""
     problems: list[str] = []
+
+    # The staging ignore pattern is the fix; this is the proof. A future
+    # change to how the profile is copied cannot silently reintroduce host
+    # bytecode into a published image without failing here.
+    for path in sorted(build.rglob("*")):
+        if path.name == "__pycache__" or path.suffix in (".pyc", ".pyo"):
+            problems.append(
+                f"{path.relative_to(build)} is host-built Python bytecode, "
+                f"which must never be published in the image")
 
     package_file = build / "packages.x86_64"
     try:

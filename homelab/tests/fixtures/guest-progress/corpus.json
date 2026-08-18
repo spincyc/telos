@@ -1,0 +1,524 @@
+{
+  "accept": [
+    {
+      "boot_id": "boot-11111111-1111-4111-8111-111111111111",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000001\",\"mac\":\"80QXwzu0Ua8ahL0wQfWwnmhWVsXcMwhl14i49hWXawE=\",\"nonce\":\"nonce-corpus-1\",\"phase\":null,\"sequence\":0,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"starting\",\"time\":\"2026-08-17T00:00:01Z\",\"type\":\"sync\"}",
+      "diagnostic": null,
+      "event_type": "sync",
+      "id": "0000000a-000b-4000-800c-000000000001",
+      "moment": 1786924801.0,
+      "name": "arch-sync",
+      "nonce": "nonce-corpus-1",
+      "phase": null,
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 0,
+      "status": "starting",
+      "stream": "arch",
+      "time": "2026-08-17T00:00:01Z"
+    },
+    {
+      "boot_id": "boot-11111111-1111-4111-8111-111111111111",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "diagnostic": null,
+      "event_type": "phase-started",
+      "id": "0000000a-000b-4000-800c-000000000002",
+      "moment": 1786924802.0,
+      "name": "arch-phase-started",
+      "nonce": null,
+      "phase": "installer",
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 1,
+      "status": "active",
+      "stream": "arch",
+      "time": "2026-08-17T00:00:02Z"
+    },
+    {
+      "boot_id": "boot-11111111-1111-4111-8111-111111111111",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000003\",\"mac\":\"SbaviHtCQEnkw2AWvwiz+m6+6vylfzj7q3HxzpIbock=\",\"phase\":\"installer\",\"progress\":50,\"sequence\":2,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:03Z\",\"type\":\"heartbeat\"}",
+      "diagnostic": null,
+      "event_type": "heartbeat",
+      "id": "0000000a-000b-4000-800c-000000000003",
+      "moment": 1786924803.0,
+      "name": "arch-heartbeat",
+      "nonce": null,
+      "phase": "installer",
+      "producer": "arch-installer",
+      "progress": 50,
+      "sequence": 2,
+      "status": "active",
+      "stream": "arch",
+      "time": "2026-08-17T00:00:03Z"
+    },
+    {
+      "boot_id": "boot-11111111-1111-4111-8111-111111111111",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000004\",\"mac\":\"/PN4344+m5elh1idK+xzBwTfqcazxnK4Ce9y8sCISSE=\",\"phase\":\"installer\",\"sequence\":3,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:04Z\",\"type\":\"heartbeat\"}",
+      "diagnostic": null,
+      "event_type": "heartbeat",
+      "id": "0000000a-000b-4000-800c-000000000004",
+      "moment": 1786924804.0,
+      "name": "arch-heartbeat-no-progress",
+      "nonce": null,
+      "phase": "installer",
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 3,
+      "status": "active",
+      "stream": "arch",
+      "time": "2026-08-17T00:00:04Z"
+    },
+    {
+      "boot_id": "boot-11111111-1111-4111-8111-111111111111",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000005\",\"mac\":\"vJFO4OyPeKzcSmFHmo1BsNLHsUp2NgkGk0U03GC3qmw=\",\"phase\":\"installer\",\"sequence\":4,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"complete\",\"time\":\"2026-08-17T00:00:05Z\",\"type\":\"phase-finished\"}",
+      "diagnostic": null,
+      "event_type": "phase-finished",
+      "id": "0000000a-000b-4000-800c-000000000005",
+      "moment": 1786924805.0,
+      "name": "arch-phase-finished",
+      "nonce": null,
+      "phase": "installer",
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 4,
+      "status": "complete",
+      "stream": "arch",
+      "time": "2026-08-17T00:00:05Z"
+    },
+    {
+      "boot_id": "boot-22222222-2222-4222-8222-222222222222",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-22222222-2222-4222-8222-222222222222\",\"id\":\"0000000a-000b-4000-800c-000000000006\",\"mac\":\"5SU8l7JLXMThagFsvx6vgCkZ2uwicHGTfZvX5buN58A=\",\"nonce\":\"nonce-corpus-1\",\"phase\":null,\"sequence\":0,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"starting\",\"time\":\"2026-08-17T00:00:06Z\",\"type\":\"sync\"}",
+      "diagnostic": null,
+      "event_type": "sync",
+      "id": "0000000a-000b-4000-800c-000000000006",
+      "moment": 1786924806.0,
+      "name": "windows-sync",
+      "nonce": "nonce-corpus-1",
+      "phase": null,
+      "producer": "windows-com1-diagnostic",
+      "progress": null,
+      "sequence": 0,
+      "status": "starting",
+      "stream": "windows",
+      "time": "2026-08-17T00:00:06Z"
+    },
+    {
+      "boot_id": "boot-22222222-2222-4222-8222-222222222222",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-22222222-2222-4222-8222-222222222222\",\"id\":\"0000000a-000b-4000-800c-000000000007\",\"mac\":\"gqROpBaYtALdwlysA9HVizXND99J7kO2ROOlrUgd+Hk=\",\"phase\":\"windows-firstboot\",\"sequence\":1,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:07Z\",\"type\":\"phase-started\"}",
+      "diagnostic": null,
+      "event_type": "phase-started",
+      "id": "0000000a-000b-4000-800c-000000000007",
+      "moment": 1786924807.0,
+      "name": "windows-phase-started",
+      "nonce": null,
+      "phase": "windows-firstboot",
+      "producer": "windows-com1-diagnostic",
+      "progress": null,
+      "sequence": 1,
+      "status": "active",
+      "stream": "windows",
+      "time": "2026-08-17T00:00:07Z"
+    },
+    {
+      "boot_id": "boot-22222222-2222-4222-8222-222222222222",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-22222222-2222-4222-8222-222222222222\",\"id\":\"0000000a-000b-4000-800c-000000000008\",\"mac\":\"LsUABTis0xZ4zEfI0rKjivdBGkcCq0E70bGRraXj6Rw=\",\"phase\":\"windows-firstboot\",\"progress\":0,\"sequence\":2,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:08Z\",\"type\":\"heartbeat\"}",
+      "diagnostic": null,
+      "event_type": "heartbeat",
+      "id": "0000000a-000b-4000-800c-000000000008",
+      "moment": 1786924808.0,
+      "name": "windows-heartbeat-zero",
+      "nonce": null,
+      "phase": "windows-firstboot",
+      "producer": "windows-com1-diagnostic",
+      "progress": 0,
+      "sequence": 2,
+      "status": "active",
+      "stream": "windows",
+      "time": "2026-08-17T00:00:08Z"
+    },
+    {
+      "boot_id": "boot-22222222-2222-4222-8222-222222222222",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-22222222-2222-4222-8222-222222222222\",\"id\":\"0000000a-000b-4000-800c-000000000009\",\"mac\":\"NyKeL9H1EY6tINex08pwtPqvWlORrtGqS/dhMRvnohE=\",\"phase\":\"windows-firstboot\",\"progress\":99,\"sequence\":3,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:09Z\",\"type\":\"heartbeat\"}",
+      "diagnostic": null,
+      "event_type": "heartbeat",
+      "id": "0000000a-000b-4000-800c-000000000009",
+      "moment": 1786924809.0,
+      "name": "windows-heartbeat-ninety-nine",
+      "nonce": null,
+      "phase": "windows-firstboot",
+      "producer": "windows-com1-diagnostic",
+      "progress": 99,
+      "sequence": 3,
+      "status": "active",
+      "stream": "windows",
+      "time": "2026-08-17T00:00:09Z"
+    },
+    {
+      "boot_id": "boot-22222222-2222-4222-8222-222222222222",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-22222222-2222-4222-8222-222222222222\",\"id\":\"0000000a-000b-4000-800c-000000000010\",\"mac\":\"b4atFAxkn/6c6NEq9OEEY3ncHaDWEvpo8cR0HXdSzwE=\",\"phase\":\"windows-firstboot\",\"sequence\":4,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"complete\",\"time\":\"2026-08-17T00:00:10Z\",\"type\":\"phase-finished\"}",
+      "diagnostic": null,
+      "event_type": "phase-finished",
+      "id": "0000000a-000b-4000-800c-000000000010",
+      "moment": 1786924810.0,
+      "name": "windows-phase-finished",
+      "nonce": null,
+      "phase": "windows-firstboot",
+      "producer": "windows-com1-diagnostic",
+      "progress": null,
+      "sequence": 4,
+      "status": "complete",
+      "stream": "windows",
+      "time": "2026-08-17T00:00:10Z"
+    },
+    {
+      "boot_id": "boot-33333333-3333-4333-8333-333333333333",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-33333333-3333-4333-8333-333333333333\",\"id\":\"0000000a-000b-4000-800c-000000000011\",\"mac\":\"Ow+3wp+3pW14pbSbvSHOXDfI4lfeDsQnYFrAbXUENHM=\",\"phase\":\"installer\",\"sequence\":9,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"failed\",\"time\":\"2026-08-17T00:00:11Z\",\"type\":\"phase-failed\"}",
+      "diagnostic": null,
+      "event_type": "phase-failed",
+      "id": "0000000a-000b-4000-800c-000000000011",
+      "moment": 1786924811.0,
+      "name": "standalone-phase-failed",
+      "nonce": null,
+      "phase": "installer",
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 9,
+      "status": "failed",
+      "stream": null,
+      "time": "2026-08-17T00:00:11Z"
+    },
+    {
+      "boot_id": "boot-33333333-3333-4333-8333-333333333333",
+      "canonical": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-33333333-3333-4333-8333-333333333333\",\"diagnostic\":{\"id\":\"installer-receipt\",\"sha256\":\"abababababababababababababababababababababababababababababababab\"},\"id\":\"0000000a-000b-4000-800c-000000000012\",\"mac\":\"q1ePMHNdD7Pi3aHzLBboUyrij2/hVCPd8h0VB7XCBe4=\",\"phase\":null,\"sequence\":10,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"ready\",\"time\":\"2026-08-17T00:00:12Z\",\"type\":\"diagnostic-ready\"}",
+      "diagnostic": {
+        "id": "installer-receipt",
+        "sha256": "abababababababababababababababababababababababababababababababab"
+      },
+      "event_type": "diagnostic-ready",
+      "id": "0000000a-000b-4000-800c-000000000012",
+      "moment": 1786924812.0,
+      "name": "standalone-diagnostic-ready",
+      "nonce": null,
+      "phase": null,
+      "producer": "arch-installer",
+      "progress": null,
+      "sequence": 10,
+      "status": "ready",
+      "stream": null,
+      "time": "2026-08-17T00:00:12Z"
+    }
+  ],
+  "attempt": "attempt-corpus-1",
+  "com1": {
+    "accept_lines": [
+      {
+        "case": "windows-sync",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "windows-sync"
+      },
+      {
+        "case": "windows-phase-started",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA3IiwibWFjIjoiZ3FST3BCYVl0QUxkd2x5c0E5SFZpelhORDk5SjdrTzJST09sclVnZCtIaz0iLCJwaGFzZSI6IndpbmRvd3MtZmlyc3Rib290Iiwic2VxdWVuY2UiOjEsInNvdXJjZSI6IndpbmRvd3MtY29tMS1kaWFnbm9zdGljIiwic3BlY3ZlcnNpb24iOiIxLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowN1oiLCJ0eXBlIjoicGhhc2Utc3RhcnRlZCJ9",
+        "name": "windows-phase-started"
+      },
+      {
+        "case": "windows-heartbeat-zero",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA4IiwibWFjIjoiTHNVQUJUaXMweFo0ekVmSTByS2ppdmRCR2tjQ3EwRTcwYkdScmFYajZSdz0iLCJwaGFzZSI6IndpbmRvd3MtZmlyc3Rib290IiwicHJvZ3Jlc3MiOjAsInNlcXVlbmNlIjoyLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidGltZSI6IjIwMjYtMDgtMTdUMDA6MDA6MDhaIiwidHlwZSI6ImhlYXJ0YmVhdCJ9",
+        "name": "windows-heartbeat-zero"
+      },
+      {
+        "case": "windows-heartbeat-ninety-nine",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA5IiwibWFjIjoiTnlLZUw5SDFFWTZ0SU5leDA4cHd0UHF2V2xPUnJ0R3FTL2RoTVJ2bm9oRT0iLCJwaGFzZSI6IndpbmRvd3MtZmlyc3Rib290IiwicHJvZ3Jlc3MiOjk5LCJzZXF1ZW5jZSI6Mywic291cmNlIjoid2luZG93cy1jb20xLWRpYWdub3N0aWMiLCJzcGVjdmVyc2lvbiI6IjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInRpbWUiOiIyMDI2LTA4LTE3VDAwOjAwOjA5WiIsInR5cGUiOiJoZWFydGJlYXQifQ",
+        "name": "windows-heartbeat-ninety-nine"
+      },
+      {
+        "case": "windows-phase-finished",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDEwIiwibWFjIjoiYjRhdEZBeGtuLzZjNk5FcTlPRUVZM25jSGFEV0V2cG84Y1IwSFhkU3p3RT0iLCJwaGFzZSI6IndpbmRvd3MtZmlyc3Rib290Iiwic2VxdWVuY2UiOjQsInNvdXJjZSI6IndpbmRvd3MtY29tMS1kaWFnbm9zdGljIiwic3BlY3ZlcnNpb24iOiIxLjAiLCJzdGF0dXMiOiJjb21wbGV0ZSIsInRpbWUiOiIyMDI2LTA4LTE3VDAwOjAwOjEwWiIsInR5cGUiOiJwaGFzZS1maW5pc2hlZCJ9",
+        "name": "windows-phase-finished"
+      }
+    ],
+    "fail_lines": [
+      {
+        "classification": "malformed",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoi",
+        "name": "truncated-payload"
+      },
+      {
+        "classification": "malformed",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIs",
+        "name": "first-half-of-a-split-line"
+      },
+      {
+        "classification": "malformed",
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyB",
+        "name": "noncanonical-base64url-trailing-bits"
+      },
+      {
+        "classification": "malformed",
+        "line": "TELOS-PROGRESS-V1 AAAAA",
+        "name": "impossible-base64-length"
+      }
+    ],
+    "marker": "TELOS-PROGRESS-V1",
+    "skip_lines": [
+      {
+        "line": "",
+        "name": "empty-line"
+      },
+      {
+        "line": "Windows Setup: applying image (23%)",
+        "name": "plain-console-text"
+      },
+      {
+        "line": "{\"schema_version\":1,\"event\":\"join-material-loaded\",\"nonce\":\"0123456789abcdef0123456789abcdef\"}",
+        "name": "existing-jsonl-console-record"
+      },
+      {
+        "line": "boot log: TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "marker-not-at-line-start"
+      },
+      {
+        "line": "TELOS-PROGRESS-V10 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "marker-extended-past-the-version"
+      },
+      {
+        "line": "TELOS-PROGRESS-V1eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "marker-without-separator"
+      },
+      {
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9 done",
+        "name": "trailing-text-after-payload"
+      },
+      {
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9 TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "second-marker-appended"
+      },
+      {
+        "line": "TELOS-PROGRESS-V1 eyJhdHRl bXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "payload-with-a-space"
+      },
+      {
+        "line": "TELOS-PROGRESS-V1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9==",
+        "name": "standard-base64-padding-is-not-base64url"
+      },
+      {
+        "line": "telos-progress-v1 eyJhdHRlbXB0IjoiYXR0ZW1wdC1jb3JwdXMtMSIsImJvb3RfaWQiOiJib290LTIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlkIjoiMDAwMDAwMGEtMDAwYi00MDAwLTgwMGMtMDAwMDAwMDAwMDA2IiwibWFjIjoiNVNVOGw3SkxYTVRoYWdGc3Z4NnZnQ2taMnV3aWNIR1RmWnZYNWJ1TjU4QT0iLCJub25jZSI6Im5vbmNlLWNvcnB1cy0xIiwicGhhc2UiOm51bGwsInNlcXVlbmNlIjowLCJzb3VyY2UiOiJ3aW5kb3dzLWNvbTEtZGlhZ25vc3RpYyIsInNwZWN2ZXJzaW9uIjoiMS4wIiwic3RhdHVzIjoic3RhcnRpbmciLCJ0aW1lIjoiMjAyNi0wOC0xN1QwMDowMDowNloiLCJ0eXBlIjoic3luYyJ9",
+        "name": "lowercase-marker"
+      }
+    ]
+  },
+  "description": "One corpus, three consumers: the host protocol, the Arch guest reporter shipped in the image, and the Windows COM1 reporter. Every canonical payload below is byte-exact, so the three canonicalisers cannot drift apart unnoticed. Nothing here is acceptance evidence.",
+  "key_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "nonce": "nonce-corpus-1",
+  "phases": {
+    "arch": [
+      "ipxe_preboot",
+      "kernel_init",
+      "archiso_network_hook",
+      "network_root_ready",
+      "installer"
+    ],
+    "windows_com1": [
+      "windows-firstboot",
+      "windows-identity",
+      "windows-acceptance"
+    ]
+  },
+  "producers": {
+    "arch": "arch-installer",
+    "windows_com1": "windows-com1-diagnostic"
+  },
+  "reject": [
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "unknown-field",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"extra\":1,\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"QmVdAgjEc5IGFwFnDPi9loGZTQdxpOvJqXqtKOnijw0=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "an unknown envelope field",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "missing-mac",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "no MAC at all",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "noncanonical-key-order",
+      "payload": "{\"type\":\"phase-started\",\"time\":\"2026-08-17T00:00:02Z\",\"status\":\"active\",\"specversion\":\"1.0\",\"source\":\"arch-installer\",\"sequence\":1,\"phase\":\"installer\",\"mac\":\"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"attempt\":\"attempt-corpus-1\"}",
+      "reason": "keys not in JCS order",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "noncanonical-whitespace",
+      "payload": "{\"attempt\": \"attempt-corpus-1\", \"boot_id\": \"boot-11111111-1111-4111-8111-111111111111\", \"id\": \"0000000a-000b-4000-800c-000000000002\", \"mac\": \"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\", \"phase\": \"installer\", \"sequence\": 1, \"source\": \"arch-installer\", \"specversion\": \"1.0\", \"status\": \"active\", \"time\": \"2026-08-17T00:00:02Z\", \"type\": \"phase-started\"}",
+      "reason": "JCS forbids insignificant whitespace",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "duplicate-key",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\",\"phase\":\"installer\",\"sequence\":1,\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a duplicated JSON object key, which a schema cannot see",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "non-integer-number",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\",\"phase\":\"installer\",\"sequence\":1.0,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a non-integer JSON number; JSON Schema treats 1.0 as an integer, the transport does not",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "status-mismatched-type",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"+vp1aFWTSFfab+Rldc+vXOXeMql7gO8gXWVIKLoQPF4=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"complete\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "heartbeat/phase-started status coordinate violated",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "unknown-event-type",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"7B+i6f2maaXcHZVDpNYEYWvpzqvneqboVoembFX5YXA=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-paused\"}",
+      "reason": "an event type outside the closed registry",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "unknown-phase",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"9ncYvDBeZv2Gjoas2kCGGvxCCxQ0ALkzKp8jK9dSs9c=\",\"phase\":\"not-a-phase\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a phase outside the configured registry",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "nonce-on-non-sync",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"kwLNpN2UjnOpgNr5qiv39ocIq7G3R05yJuaP6Pso5VQ=\",\"nonce\":\"nonce-corpus-1\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "nonce is allowed only on sync",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "sync-without-nonce",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000001\",\"mac\":\"VO7mXTjAtYnZeFU0JZgdPoZLL7e3zDP3gJCqpspwHgg=\",\"phase\":null,\"sequence\":0,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"starting\",\"time\":\"2026-08-17T00:00:01Z\",\"type\":\"sync\"}",
+      "reason": "sync must carry the nonce",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "progress-out-of-range",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"z3ZrOJN/W//RlyP2XiTOW71/82rXENwdGB17PN9Ia1g=\",\"phase\":\"installer\",\"progress\":101,\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"heartbeat\"}",
+      "reason": "progress must be 0..100",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "progress-boolean",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"2yiME7Baf76PyoCfQD6a5K0EkXf1j81pc+XsM6DdnWc=\",\"phase\":\"installer\",\"progress\":true,\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"heartbeat\"}",
+      "reason": "a JSON boolean is not an integer",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "AuthenticationError",
+      "name": "forged-mac",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a MAC that does not verify",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "AuthenticationError",
+      "name": "com1-producer-in-authoritative-config",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"ENmErepVrfMX7B7/MuG5ztwUDHqtMvFMeaV9UVO9f/0=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"windows-com1-diagnostic\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a COM1 event replayed into the authoritative producer binding",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "uppercase-uuid",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000A-000B-4000-800C-000000000002\",\"mac\":\"WB2z4JaRkRDJealxg1Xbh7WOo7Hwx1gC1VKBTo7DlJo=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a non-canonical uppercase UUID",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "non-utc-time",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"LJJ2p/2aDVSupS6OPYw/pw3zOIaQZ8xwZ8BYBBMIN7c=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02+01:00\",\"type\":\"phase-started\"}",
+      "reason": "a non-UTC timestamp",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "short-mac",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a MAC that is not 32 bytes",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "empty-object",
+      "payload": "{}",
+      "reason": "no fields at all",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "negative-sequence",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"J6ZexenvY5ExBYDOyUO+NmK+peedxtBEWz5D0/slX9c=\",\"phase\":\"installer\",\"sequence\":-1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a negative sequence",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "sequence-beyond-json-safe",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"GQBiHD7MI4qHzVsiYYgli3IscTbIZk0+M/zQaBDMGnY=\",\"phase\":\"installer\",\"sequence\":9007199254740992,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-08-17T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a sequence past 2**53-1",
+      "schema_valid": false
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "impossible-date",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-11111111-1111-4111-8111-111111111111\",\"id\":\"0000000a-000b-4000-800c-000000000002\",\"mac\":\"8F+eISpAqsDWvEm2vuZ+maz+PfNxhtIMHboDYlA6RfE=\",\"phase\":\"installer\",\"sequence\":1,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"active\",\"time\":\"2026-02-30T00:00:02Z\",\"type\":\"phase-started\"}",
+      "reason": "a well-shaped but unreal date",
+      "schema_valid": true
+    },
+    {
+      "config": "arch",
+      "family": "SchemaError",
+      "name": "uppercase-digest",
+      "payload": "{\"attempt\":\"attempt-corpus-1\",\"boot_id\":\"boot-33333333-3333-4333-8333-333333333333\",\"diagnostic\":{\"id\":\"installer-receipt\",\"sha256\":\"ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\"},\"id\":\"0000000a-000b-4000-800c-000000000012\",\"mac\":\"N9w27N/3JRU+zaR8WUPKWOrL3MYnd6+mrEdR6PDjBo8=\",\"phase\":null,\"sequence\":10,\"source\":\"arch-installer\",\"specversion\":\"1.0\",\"status\":\"ready\",\"time\":\"2026-08-17T00:00:12Z\",\"type\":\"diagnostic-ready\"}",
+      "reason": "an uppercase diagnostic digest",
+      "schema_valid": false
+    }
+  ],
+  "schema": "guest-progress-event-v1.schema.json",
+  "schema_version": 1,
+  "spec": "guest-progress-event-v1",
+  "streams": {
+    "arch": "boot-11111111-1111-4111-8111-111111111111",
+    "windows": "boot-22222222-2222-4222-8222-222222222222"
+  }
+}

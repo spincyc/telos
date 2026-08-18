@@ -1,11 +1,47 @@
 # Guest progress reporting
 
-Status: design decision; implementation pending
+Status: implemented and unit-tested on the host and in the Arch image;
+never yet run in a live guest. The Windows reporter is limited to COM1
+because no virtio-serial driver exists in this factory, and per-run
+credential delivery is still an open owner decision.
 
 This document defines how a disposable Arch or Windows guest may report
 installation and acceptance progress to the local factory harness. The channel
 is an affirmative liveness and diagnostic signal. It does not replace the
 harness's observations, receipts, deadlines, or acceptance gates.
+
+## What is delivered
+
+| Piece | Where | State |
+|---|---|---|
+| Framing, schema validation, HMAC, replay rejection, receiver state, checkpoints, liveness | `vm/guest_progress_protocol.py` | Delivered, unit-tested |
+| Host wiring, QEMU `virtserialport` argv, failure taxonomy, secret-free evidence block | `vm/guest_progress_host.py` | Delivered, unit-tested |
+| Bounded duplex socket transport | `vm/guest_progress_transport.py` | Delivered, unit-tested |
+| Guest-side stop-and-wait envelope builder | `vm/guest_progress_reporter.py` | Delivered, unit-tested |
+| Arch guest reporter and its device-bound systemd unit | `archiso/airootfs/usr/local/bin/homelab-progress`, `archiso/airootfs/etc/systemd/system/homelab-progress.service` | Ships in the image; wire-compatibility proven against the real host receiver, never run in a booted image |
+| Opportunistic host-side collector for the workstation run | `vm/factory_runner.py` | Delivered; records an honest `absent` stream today |
+| Windows COM1 one-way reporter, its one-use medium, and the host line reader | `vm/windows_progress_control/TelosProgress.ps1`, `vm/windows_progress_iso.py`, `vm/guest_progress_com1.py` | Delivered; the PowerShell is **unexecuted** -- proven by its text, its declared field order, and byte-exact fixtures, not by a run |
+| Published JSON Schema and the shared three-consumer fixture corpus | `tests/fixtures/guest-progress/` | Delivered, asserted by the host, Arch, and Windows tests |
+
+## What remains
+
+* **Nothing here has run in a live guest.** Every guarantee below is a
+  host-side unit-test guarantee. The Arch reporter has never been exercised
+  from a booted image, and no PowerShell in this repository has ever been
+  executed.
+* **Windows cannot use the primary transport.** No signed virtio-serial
+  driver ships in this factory -- every Windows QEMU command pins `e1000e`
+  and nothing references `virtio-win` -- so the named `virtserialport` cannot
+  exist in the guest. Windows therefore has COM1 and only COM1, which is
+  one-way and shared with human-readable console output. See
+  [Windows](#windows).
+* **Per-run credential delivery is an open owner decision.** The guest must
+  learn this attempt's key and nonce out of band. On Arch the PXE payload is
+  a sealed, hash-verified release with no per-run overlay hook, so the
+  reporter finds no credentials and stays silent; `factory_runner` records
+  that honestly as an absent stream rather than pretending otherwise. On
+  Windows the one-use medium already solves delivery mechanically, but
+  whether to arm it -- and with which key lifetime -- is not decided.
 
 ## Outcome and boundary
 
@@ -62,11 +98,12 @@ pre-existing socket, unexpected peer, symlinked path, or data arriving before
 the current attempt is armed.
 
 COM1 is the reduced fallback because it is available earlier and on more
-Windows images. It emits only a fixed prefix followed by a single canonical
-event per line. It must coexist with human-readable console output and
-therefore cannot carry secrets, commands, acknowledgements, or a claim of
-authenticated success. COM1 events may improve failure classification, but
-they never satisfy an acceptance gate.
+Windows images -- and on Windows today it is not a fallback but the only
+channel. It emits only a fixed prefix followed by a single canonical event per
+line. It must coexist with human-readable console output and therefore cannot
+carry secrets, commands, acknowledgements, or a claim of authenticated
+success. COM1 events may improve failure classification, but they never
+satisfy an acceptance gate.
 
 QGA is secondary. The harness may use a strictly allowlisted QGA command to
 check agent reachability or retrieve an already-created, secret-free diagnostic
@@ -76,8 +113,17 @@ failure cannot silently switch an authoritative gate to guest assertion.
 
 ## Event and stream contract
 
-The implementation should publish a JSON Schema and test the same fixtures in
-the Linux, Windows, and host implementations. Each message is one unsigned
+The schema is published at
+`tests/fixtures/guest-progress/guest-progress-event-v1.schema.json`, and the
+shared fixture corpus at `tests/fixtures/guest-progress/corpus.json` is
+asserted by all three implementations: the host parser
+(`test_guest_progress_schema`), the Arch reporter that ships in the image
+(`test_guest_progress_units`), and the Windows COM1 reporter
+(`test_windows_progress_com1`). Every accepted case stores byte-exact
+canonical bytes, so the three canonicalisers cannot drift apart unnoticed, and
+every rejected case records both its transport error family and whether the
+schema alone can see the defect -- a schema cannot see duplicate JSON keys,
+non-canonical encoding, or an unverified MAC. Each message is one unsigned
 32-bit big-endian length followed by that many UTF-8 bytes of RFC 8785
 canonical JSON. The maximum frame is 16 KiB. Zero length, oversize, invalid
 UTF-8, duplicate keys, unknown fields, non-integer numbers, and noncanonical
@@ -169,21 +215,75 @@ local diagnosis, but only allowlisted status coordinates cross the port.
 
 ### Windows
 
-During setup and first boot, register a Task Scheduler boot task under a
-narrow built-in principal, with a bounded start delay and execution time
-limit. It waits boundedly for the signed virtio serial driver/device and then
-starts the same schema encoder. If the named device is unavailable, it emits
-the reduced COM1 coordinate and exits with a classified code.
+**The named port is unavailable and the design above is aspirational.** No
+signed virtio-serial driver ships in this factory: every Windows QEMU command
+pins `e1000e` (`vm/windows_identity_contract.py`) and nothing in the tree
+references `virtio-win`, `vioser`, or `viostor`. Without that driver the guest
+has no `\\.\Global\org.telos.progress.0`, so Windows uses COM1 and nothing
+else. Adding the driver would need its own provenance and signature decision;
+until then the section below is what exists.
 
-Use an SCM service only for phases that must survive task completion or accept
-service lifecycle supervision. Its account, service ACL, executable path,
-binary signature/provenance, restart policy, and allowed device ACL must be
+`TelosProgress.ps1` rides a one-use `TELOS_PROGRESS` ISO -- the same delivery
+mechanism `TelosJoin.ps1` already uses -- and registers its own `AtStartup`
+Task Scheduler task under `SYSTEM` with a 30-minute execution limit. **No
+Windows image rebuild is required.** The registered argument resolves the
+volume by label at run time, so no drive letter is baked in and a destroyed
+medium makes the task a silent no-op. Material (attempt, nonce, per-attempt
+key) lives only on the medium; nothing is copied to persistent storage, and
+the script exits 0 in silence when the medium is absent.
+
+Three properties keep the channel honest, and each is enforced in code and
+proved by a test rather than promised in prose:
+
+* **One-way.** The script opens COM1 to write and never reads it; the host
+  reader owns its `ReceiverState` privately and never returns the sealed
+  `AcceptedEvent` that an acknowledgment requires. There is no code path from
+  a COM1 event to a host acknowledgment.
+* **Channel-separated.** COM1 events carry the fixed producer
+  `windows-com1-diagnostic`, and the protocol binds `source` to the
+  configured producer. A COM1 frame replayed into an authoritative receiver
+  fails authentication even with the same key and attempt, and the COM1
+  reader refuses any config that is not the COM1 producer. The COM1 phase
+  registry is disjoint from the Arch one.
+* **Never authoritative.** The COM1 evidence block takes no `authoritative`
+  or `acknowledged` parameter; both are module constants pinned to `false`,
+  restated in the material the guest reads and in the medium's receipt.
+
+Framing on a shared console is the other half. One event is exactly one line:
+
+```text
+TELOS-PROGRESS-V1 <base64url canonical JSON, no padding>\n
+```
+
+The whole line must `fullmatch` that shape. Consequences, each with a test:
+
+| Adversarial case | Why it fails |
+|---|---|
+| Arbitrary console text | No marker at offset 0, or characters outside the base64url alphabet. |
+| The existing JSONL records already on COM1 (join, credential-action, probe) | A payload can contain no quote, brace, colon, comma, or space, so the two vocabularies are disjoint. |
+| A partial read splitting a line mid-token | A line is only ever formed at an LF; a partial buffer is never parsed. |
+| A line containing the marker in the wrong place (`note: TELOS-PROGRESS-V1 ...`) | `fullmatch` anchors both ends. This is the `10001`-truncated-to-`1` class of bug; anchoring is not decoration. |
+| A marker extended past the version (`TELOS-PROGRESS-V10 ...`) | The literal includes the separating space. |
+| Trailing text after the payload | Nothing may follow the payload. |
+| An interleaved line cut short at an LF | Base64url canonicality, then JSON, then the MAC -- three independent fail-closed checks. |
+| An overlong console line ending in a valid frame | The whole line is discarded during resynchronisation; its tail is never promoted. |
+| The marker appearing inside a payload | Framing is a fullmatch on the line, never a search for the marker, so an embedded occurrence is ordinary payload. |
+| A CR anywhere in the line | The guest sets its serial newline to LF; a CR means foreign console output. |
+
+A marked line that fails any payload check fails the reader closed and records
+a classification; unmarked console text is expected traffic and is only
+counted. Neither outcome ever becomes success.
+
+An SCM service remains the right shape only for phases that must survive task
+completion. Its account, service ACL, executable path, binary
+signature/provenance, restart policy, and allowed device ACL would have to be
 explicitly verified. Neither form runs arbitrary scripts received from the
 host.
 
 ## Acceptance criteria
 
-Implementation is complete only when tests prove:
+Progress against these criteria is recorded below the list. Implementation is
+complete only when tests prove:
 
 1. identical fixtures are accepted and rejected on host, Linux, and Windows;
 2. fragmented, coalesced, truncated, oversized, stale, replayed, reordered,
@@ -196,3 +296,14 @@ Implementation is complete only when tests prove:
 7. keys, sockets, tasks/services, helper processes, QGA publication, and COM1
    capture are absent after successful and failed teardown; and
 8. retained events and diagnostics are bounded and secret-free.
+
+| Criterion | State |
+|---|---|
+| 1. identical fixtures on host, Linux, Windows | Met by unit tests over the shared corpus. The Windows side is a byte-exact model of the script's own declared field order, not an execution. |
+| 2. malformed/stale/replayed/forged/noncanonical frames fail closed | Met for the host parser, the socket transport, and the COM1 reader. |
+| 3. reconnect cannot consume stale bytes | Met for the socket transport (`FrameDecoder.reset`, `ReceiverState.reconnect`). COM1 has no reconnect: it is a one-way console stream. |
+| 4. every timeout bounded by the original phase deadline | Met in the protocol and transport; unproven in a live run. |
+| 5. COM1 and QGA exercised without upgrading either | COM1 met. **QGA is not implemented at all.** |
+| 6. a false guest success cannot pass an independent host gate | Structurally met: no gate reads a progress event, and no COM1 event can be acknowledged or marked authoritative. Not demonstrated against a live gate. |
+| 7. keys, sockets, tasks/services, helper processes, COM1 capture absent after teardown | Partly met: key destruction, socket-root removal, and receiver close are tested. **Windows task and medium teardown is untested** -- no guest exists to unregister the task in. |
+| 8. retained events and diagnostics bounded and secret-free | Met by construction and tested for both evidence blocks. |

@@ -10,11 +10,17 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
 
+from homelab.tests.guest_progress_corpus import (
+    load_corpus,
+    load_schema,
+    validate,
+)
 from homelab.vm import factory_runner
 from homelab.vm.guest_progress_host import PROGRESS_PORT_NAME
 from homelab.vm import guest_progress_protocol as protocol
@@ -35,13 +41,25 @@ WANTS = AIROOTFS / "etc/systemd/system" / (DEVICE_UNIT + ".wants")
 
 
 def load_script():
-    loader = importlib.machinery.SourceFileLoader(
-        "homelab_progress", str(SCRIPT))
-    spec = importlib.util.spec_from_loader("homelab_progress", loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    """Import the shipped guest script without writing into the image tree.
+
+    `homelab-image` copies `archiso/` wholesale into the staged profile, so a
+    `__pycache__` written here would be baked into a published image. The
+    builder now refuses to copy bytecode as well, but the test end is fixed
+    too: a test should not dirty the tree it is inspecting.
+    """
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader = importlib.machinery.SourceFileLoader(
+            "homelab_progress", str(SCRIPT))
+        spec = importlib.util.spec_from_loader("homelab_progress", loader)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+    finally:
+        sys.dont_write_bytecode = previous
 
 
 class ReporterWireCompatTests(unittest.TestCase):
@@ -249,6 +267,83 @@ class ReporterUnitTests(unittest.TestCase):
         self.assertEqual(
             os.readlink(link), "../homelab-progress.service")
         self.assertIn(f"WantedBy={DEVICE_UNIT}", UNIT.read_text())
+
+
+class ArchCorpusConsumerTests(unittest.TestCase):
+    """The shared corpus, from the Arch reporter that ships in the image.
+
+    Second of the corpus's three consumers. Byte-identity here is what stops
+    the host, Arch, and Windows canonicalisers from drifting apart.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.module = load_script()
+        cls.corpus = load_corpus()
+        cls.schema = load_schema()
+        cls.key = bytes.fromhex(cls.corpus["key_hex"])
+        cls.cases = [
+            case for case in cls.corpus["accept"]
+            if case["producer"] == cls.module.PRODUCER
+        ]
+
+    def test_the_corpus_carries_arch_cases(self):
+        self.assertTrue(self.cases)
+        self.assertEqual(
+            self.corpus["producers"]["arch"], factory_runner.PROGRESS_PRODUCER)
+
+    def test_the_shipped_script_renders_the_corpus_bytes_exactly(self):
+        for case in self.cases:
+            if case["diagnostic"] is not None:
+                # The shipped script emits no diagnostic-ready event, so it
+                # cannot render this case; the host consumer still checks it.
+                continue
+            with self.subTest(case=case["name"]):
+                extra = {}
+                if case["nonce"] is not None:
+                    extra["nonce"] = case["nonce"]
+                if case["progress"] is not None:
+                    extra["progress"] = case["progress"]
+                rendered = self.module.build_event(
+                    case["event_type"],
+                    attempt=self.corpus["attempt"],
+                    boot_id=case["boot_id"],
+                    sequence=case["sequence"],
+                    key=self.key,
+                    phase=case["phase"],
+                    moment=case["moment"],
+                    event_id=case["id"],
+                    **extra)
+                self.assertEqual(rendered, case["canonical"].encode("utf-8"))
+
+    def test_every_corpus_event_validates_against_the_published_schema(self):
+        for case in self.corpus["accept"]:
+            with self.subTest(case=case["name"]):
+                validate(self.schema, json.loads(case["canonical"]))
+
+    def test_the_shipped_script_frames_the_corpus_bytes_like_the_host(self):
+        for case in self.cases:
+            with self.subTest(case=case["name"]):
+                payload = case["canonical"].encode("utf-8")
+                self.assertEqual(
+                    self.module.frame_for(payload),
+                    encode_frame(json.loads(case["canonical"])))
+
+    def test_the_real_receiver_accepts_the_arch_corpus_stream(self):
+        config = ProtocolConfig(
+            attempt=self.corpus["attempt"],
+            producer=self.module.PRODUCER,
+            nonce=self.corpus["nonce"],
+            phases=factory_runner.PROGRESS_PHASES,
+            statuses=factory_runner.PROGRESS_STATUSES,
+        )
+        receiver = ReceiverState(config, self.key, deadline=1000.0)
+        stream = [case for case in self.cases if case["stream"] == "arch"]
+        for index, case in enumerate(stream):
+            accepted = receiver.accept(
+                case["canonical"].encode("utf-8"), received_at=float(index + 1))
+            self.assertFalse(accepted.duplicate)
+        self.assertEqual(receiver.last_sequence, stream[-1]["sequence"])
 
 
 if __name__ == "__main__":

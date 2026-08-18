@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "payload": "telos-windows-progress-reporter",
+  "entrypoint": "TelosProgress.ps1",
+  "task_name": "TelosProgress",
+  "volume_label": "TELOS_PROGRESS",
+  "producer": "windows-com1-diagnostic",
+  "phases": [
+    "windows-firstboot"
+  ],
+  "transport": {
+    "kind": "serial-line",
+    "port": "COM1",
+    "baud": 115200,
+    "direction": "guest-to-host",
+    "marker": "TELOS-PROGRESS-V1",
+    "encoding": "base64url-canonical-json",
+    "authoritative": false,
+    "acknowledged": false
+  }
+}
