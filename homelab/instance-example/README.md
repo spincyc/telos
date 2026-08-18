@@ -63,6 +63,13 @@ workstation factory creates. It is optional, and absent it every account keeps
 the synthetic name in the tracked contract, which is what the acceptance gates
 expect. See [`identity/README.md`](identity/README.md).
 
+It is also where the **break-glass administrator's name** is declared, once.
+Convergence derives `homelab_breakglass_user` from it rather than reading a
+second copy, so the account `roles/common` creates on a machine and the account
+baked onto that machine's installed disk cannot be different accounts — and a
+value set in `inventory/group_vars/all.yml` that disagrees is refused, naming
+both files, before anything is touched.
+
 ## What does not go here
 
 The overlay is gitignored, not encrypted, and it sits in a working tree that

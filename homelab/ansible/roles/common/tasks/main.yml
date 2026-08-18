@@ -1,4 +1,23 @@
 ---
+- name: Derive the break-glass administrator from its one declaration
+  # The break-glass administrator's name is declared ONCE, in the owner's
+  # gitignored homelab/instance/identity/principals.json, and derived here. The
+  # same document names the account the Python installer path bakes onto a
+  # workstation disk, so the account this role creates and the account that
+  # disk was built to trust are resolved from one declaration and cannot
+  # disagree. The included file belongs to the identity scheme rather than to
+  # this role, which is why it sits beside its permanent-identity sibling in
+  # ansible/tasks/ rather than inside roles/common.
+  #
+  # This is the FIRST task on purpose: the assert below must judge the derived
+  # name, so the useradd/sudoers safety gate and ADR 0055's `not root` rule
+  # apply to whatever the roster says just as they applied to the inventory.
+  #
+  # With no such roster nothing is derived and nothing is invented; the assert
+  # below still judges the inventory's own value, exactly as before.
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../../tasks/breakglass-identity.yml"
+
 - name: Refuse a break-glass administrator name this role cannot use safely
   # This value is interpolated raw into three places that cannot defend
   # themselves: a `useradd` name, the FILENAME /etc/sudoers.d/10-<name>, and the

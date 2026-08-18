@@ -6,6 +6,17 @@
 # The key is a dedicated pair used for nothing else (ADR 0063). Nothing here
 # ever handles the private half. Both values are supplied by the gitignored
 # instance overlay; an inherited default key would be a credential in Git.
+#
+# The NAME is now derived rather than declared here: with a private identity
+# roster at homelab/instance/identity/principals.json,
+# tasks/breakglass-identity.yml sets it from that document's `local_rescue`
+# -- the same declaration the Python installer path bakes onto a workstation
+# disk -- and refuses an inventory value that disagrees, naming both files.
+#
+# This default therefore applies only where there is NO roster, and it stays
+# `labadmin` rather than becoming the tracked contract's synthetic
+# `local-rescue`: an absent roster must never quietly rename the break-glass
+# account on a host that already has one.
 homelab_breakglass_user: labadmin
 homelab_breakglass_authorized_keys: []
 

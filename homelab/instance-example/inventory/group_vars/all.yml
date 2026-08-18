@@ -1,10 +1,51 @@
 # Applies to every managed machine.
 ---
-# The local administrator that exists whether or not the directory is up.
-# Deliberately not your directory account and not `root` (ADR 0055, ADR 0063).
-homelab_breakglass_user: <break-glass-user>
+# ---------------------------------------------------------------------------
+# The break-glass administrator (ADR 0055, ADR 0063): DERIVED, DECLARED ONCE.
+#
+# It is the local administrator that exists whether or not the directory is up,
+# deliberately not your directory account and not `root`. While the directory
+# is down it is the ONLY way into a machine.
+#
+# Its name is declared in identity/principals.json beside this inventory, under
+# `principals.local_rescue.name`, and derived here. Leave the variable below
+# commented out. That one document is also what the Python installer path bakes
+# onto a workstation DISK -- the `useradd`, the sudoers rule and the acceptance
+# probe -- so the account this convergence creates and the account that disk was
+# built to trust are resolved from a single declaration.
+#
+# Until 2026-08-18 this file told you to keep the two names the same by hand,
+# because nothing checked that they agreed. Both halves of that are obsolete:
+# agreement is now proved, and maintaining a second copy is no longer the right
+# thing to do. What happens now:
+#
+#   * With identity/principals.json present it is AUTHORITATIVE -- including
+#     for a roster that does not mention local_rescue at all, which resolves to
+#     the tracked contract's `local-rescue`, exactly as the disk does. Uncomment
+#     the variable below and set it to a DIFFERENT value and the run REFUSES
+#     before it touches anything, quoting both values and naming both files.
+#     Neither is silently preferred. Setting it to the same value is merely
+#     redundant.
+#   * With identity/principals.json ABSENT nothing is derived and nothing is
+#     invented: the variable below applies if you set it and the role default
+#     applies if you do not, exactly as before -- and keeping it in step with
+#     the name on the disk is again yours to do, unchecked. `make
+#     homelab-instance` seeds that file, so the usual state is "present".
+#   * A roster that names the break-glass administrator `root` is refused on
+#     the control host, and the role's own first assert still judges the
+#     derived name against `useradd`'s NAME_REGEX.
+#
+# Uncomment this ONLY if you deliberately keep no identity/principals.json, and
+# then it must equal the `local_rescue` name that installer path used --
+# `local-rescue` from workstations/identity_lifecycle.json unless you renamed
+# it. A value set here is not a shortcut; it is a second declaration of the one
+# account that has to work when nothing else does.
+# homelab_breakglass_user: <break-glass-user>
 
 # The public half of the dedicated break-glass key pair, verbatim, one entry per
 # line of the .pub file. The private half is never stored in this repository.
+#
+# NOT derived, and deliberately: identity/principals.json declares names, never
+# key material, and no credential belongs in this overlay's identity documents.
 homelab_breakglass_authorized_keys:
   - "ssh-ed25519 <public-key-body> homelab break-glass"

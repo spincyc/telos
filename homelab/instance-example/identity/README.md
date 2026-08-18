@@ -155,6 +155,7 @@ Everything that needs those names reads them from here:
 | `homelab/vm/controller_principals.py` | stages the disposable acceptance principals and owns the **one** directory POSIX allocation rule |
 | `homelab/vm/arch_identity_run.py` | drives gate 8 — logs in as the daily administrator, sets the rescue password |
 | `ansible/roles/domain_controller` | converges the **durable** directory accounts on a persistent Controller |
+| `ansible/roles/common` | creates the break-glass administrator, and its sudoers rule, on **every** converged machine |
 
 The Ansible role cannot import Python from this repository at the moment it
 converges a guest, so it does not try: its own
@@ -223,10 +224,52 @@ A durable account that the directory has **already** allocated keeps its number:
 convergence refuses to move a `uidNumber`, because files on every workstation,
 the per-user share directory and every ACL keyed on that number cannot follow it.
 
-Keep the `local_rescue` name here and `homelab_breakglass_user` in
-`inventory/group_vars/all.yml` **the same**. Nothing checks that today: this
-Python path reads JSON contracts and the Ansible path reads YAML vars, and they
-are separate readers of the same decision.
+### The break-glass administrator derives from this file too
+
+Until 2026-08-18 this README told you to keep the `local_rescue` name here and
+`homelab_breakglass_user` in `inventory/group_vars/all.yml` the same, and said
+outright that **nothing checked that today**. That is no longer true, and
+keeping a second copy is no longer the right thing to do.
+
+It was the last unchecked pair the owner knew about, and the worst one to
+leave: by ADR 0055 and ADR 0063 this account is the *only* way into a machine
+when the directory is down. Two names that disagree means the account you can
+log in as is not the account the disk was built to trust — discovered at
+exactly the moment you needed it.
+
+`homelab/ansible/tasks/breakglass-identity.yml` reads this document on the
+**Ansible control host** (`delegate_to: localhost`, `run_once`, nothing
+mutated) and hands `roles/common` the finished name. It runs there rather than
+on the target for the same reason the durable-account resolver does: a target
+converged from the staged factory payload carries only `homelab/ansible`, and
+staging your private overlay into a guest would spread instance data (ADR 0046)
+for no reason. It resolves the name through `identity_roster` — the same one
+loader every other reader in the table above uses — so the name it derives is
+by construction the name the disk was built with.
+
+| Situation | What happens |
+| --- | --- |
+| This file present, the variable unset | Derived from here. Nothing to keep in step |
+| This file present, but it does not mention `local_rescue` | Still derived from here: the roster resolves to the tracked contract's `local-rescue`, which is exactly what the disk gets |
+| This file present, the variable set to the **same** value | Accepted, merely redundant |
+| This file present, the variable set to a **different** value | **Refused** before anything is touched, quoting both values and naming both files. Neither is silently preferred |
+| This file absent | Nothing derived and nothing invented: `homelab_breakglass_user` keeps whatever the inventory declares, and the role's own `labadmin` default if it declares nothing — and keeping it in step with the disk is again yours to do, unchecked |
+| This file names `local_rescue` as `root` | **Refused** on the control host (ADR 0055: it is a *separately named* account with its own sudo rule) |
+
+The absent case does not fall back to `local-rescue`, and deliberately. An
+absent roster that quietly substituted the contract's synthetic name would
+rename the break-glass account on every host that has no overlay — the very
+failure this check exists to prevent, merely committed by the fix instead of by
+you. So `roles/common` keeps its `labadmin` default there, and its own first
+assert keeps judging the name — `useradd`'s `NAME_REGEX`, at most 32
+characters, never `root` — whether the name was derived or declared.
+
+`make homelab-instance` seeds this file, so the usual state is *present*: the
+inventory template ships `homelab_breakglass_user` commented out and says so.
+
+The disposable acceptance path is unaffected twice over. It has no overlay, and
+`ansible/playbooks/bootstrap-controller.yml` — the play the factory bundle runs
+inside the Controller — carries no `common` role at all.
 
 ### The one thing this file cannot do
 
