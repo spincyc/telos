@@ -21,7 +21,7 @@ converges a guest, so it does not try: its own
 the **control host**, and the guest receives nothing but the finished plan. The
 role's variable `homelab_ad_directory_accounts` therefore names contract *roles*
 and never an account. See
-[`../group_vars/controllers.yml`](../group_vars/controllers.yml).
+[`../inventory/group_vars/controllers.yml`](../inventory/group_vars/controllers.yml).
 
 The file is optional. **With no file, every account keeps the synthetic name
 recorded in the tracked contract `homelab/workstations/identity_lifecycle.json`**
@@ -83,9 +83,9 @@ convergence refuses to move a `uidNumber`, because files on every workstation,
 the per-user share directory and every ACL keyed on that number cannot follow it.
 
 Keep the `local_rescue` name here and `homelab_breakglass_user` in
-`group_vars/all.yml` **the same**. Nothing checks that today: this Python path
-reads JSON contracts and the Ansible path reads YAML vars, and they are separate
-readers of the same decision.
+`inventory/group_vars/all.yml` **the same**. Nothing checks that today: this
+Python path reads JSON contracts and the Ansible path reads YAML vars, and they
+are separate readers of the same decision.
 
 ## The one thing this file cannot do
 

@@ -47,6 +47,18 @@ _REPOSITORY = Path(__file__).resolve().parent.parents[4]
 _LOADER = _REPOSITORY / "homelab" / "vm" / "controller_principals.py"
 
 
+# The same two constants files/provision-accounts.py enforces at the moment of
+# use, restated here so a roster that names a reserved directory object is
+# refused on the CONTROL HOST -- before a driver is installed on the target and
+# before anything is looked up in the directory. A unit test asserts the two
+# copies agree. See the driver for why each entry is on the list.
+RESERVED_NAMES = frozenset({
+    "administrator", "guest", "krbtgt",
+    "root", "daemon", "bin", "sys", "nobody",
+})
+RESERVED_PREFIXES = ("dns-",)
+
+
 class ResolverError(RuntimeError):
     """The plan cannot be rendered; convergence must stop before mutating."""
 
@@ -75,6 +87,14 @@ def _roles(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _reserved(name: str) -> bool:
+    """True when *name* is a directory object no roster may adopt."""
+    folded = str(name).strip().lower()
+    return (folded in RESERVED_NAMES
+            or any(folded.startswith(prefix)
+                   for prefix in RESERVED_PREFIXES))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Render durable directory accounts from the one roster.")
@@ -88,6 +108,14 @@ def main(argv: list[str] | None = None) -> int:
         "--group-rids-json", required=True,
         help="the well-known groups that must carry a gidNumber, as "
              "{name: Active Directory RID}")
+    parser.add_argument(
+        "--identity-overlay", type=Path, default=None,
+        help="resolve the roster against this private overlay instead of "
+             "the one this checkout's instance/ holds. Reads names, never a "
+             "credential; a path that does not exist resolves to the tracked "
+             "contract's synthetic roster, which is what makes a test of this "
+             "program independent of whatever overlay the developer's own "
+             "machine happens to carry.")
     arguments = parser.parse_args(argv)
 
     principals = _principals()
@@ -111,10 +139,37 @@ def main(argv: list[str] | None = None) -> int:
             "the role's declared privilege group disagrees with "
             f"{principals.POSIX_ADMIN_GROUP!r}")
 
+    roster = None
+    if arguments.identity_overlay is not None:
+        try:
+            from homelab.workstations.arch_second import identity_roster
+            roster = identity_roster(overlay_path=arguments.identity_overlay)
+        except Exception as error:  # noqa: BLE001 - reported, never swallowed
+            raise ResolverError(
+                f"the identity roster could not be resolved from "
+                f"{arguments.identity_overlay}: "
+                f"{type(error).__name__}: {error}") from error
+
     try:
-        accounts = principals.directory_account_plan(_roles(arguments.roles))
+        accounts = principals.directory_account_plan(
+            _roles(arguments.roles), roster=roster)
     except principals.DirectoryPlanError as error:
         raise ResolverError(str(error)) from error
+
+    # Refused here rather than only in the guest: this is the last point at
+    # which nothing has been installed on the Controller and nothing has been
+    # looked up in the directory. A reserved name is a roster fault, and a
+    # roster fault must fail where the roster lives.
+    for account in accounts:
+        if _reserved(account["name"]):
+            raise ResolverError(
+                f"the account declared for {account['contract_role']} names a "
+                "reserved directory object. The built-in domain accounts "
+                "(Administrator, Guest, krbtgt), the per-DC DNS service "
+                "account and the local UNIX system accounts belong to the "
+                "directory and to every managed machine, not to a roster: "
+                "adopting one would rewrite an account this domain depends "
+                "on. Rename it in the private identity overlay.")
 
     document = {
         "schema": 1,

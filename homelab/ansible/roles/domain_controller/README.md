@@ -3,6 +3,44 @@
 This role provisions the first host-level Samba AD DC with Samba's internal
 DNS. It is intentionally not included in a playbook by default.
 
+## How it is run
+
+One play carries this role: `ansible/playbooks/bootstrap-controller.yml`, which
+targets the inventory group `bootstrap_controllers`.
+
+```sh
+make homelab-bootstrap-controller INVENTORY=homelab/instance/inventory/hosts.yml
+make homelab-bootstrap-controller INVENTORY=homelab/instance/inventory/hosts.yml APPLY=1
+```
+
+Without `APPLY=1` that is `--check --diff`. Read what check mode does and does
+not prove under "Check mode" below before relying on it.
+
+Two properties of the private overlay decide whether this works at all, and
+both used to be wrong in the shipped template:
+
+* the Controller must be a member of **`bootstrap_controllers`** (declare it as
+  a parent of `controllers`, which is what `instance-example` now does), or the
+  play matches zero hosts and merely warns;
+* `group_vars/` must sit **inside** `inventory/`, beside `hosts.yml`. Ansible
+  resolves group variables relative to the inventory source, so an
+  `instance/group_vars/` one level up is read by nothing and every variable in
+  it silently falls back to its role default.
+
+Check both before converging anything:
+
+```sh
+ansible-inventory -i homelab/instance/inventory/hosts.yml --list
+```
+
+The Controller's variables must appear under `_meta.hostvars`. If the only key
+there is `ansible_user`, the layout is wrong.
+
+The durable accounts travel this host-side path and no other. The in-guest
+factory payload (`homelab/vm/controller_factory.py`) deliberately declares an
+empty roster: only a control host has the private identity overlay, the one
+roster loader, and an operator who can stage a credential file out of band.
+
 Before the first run, place the initial Administrator password in a root-owned
 `0600` file on the target, preferably:
 
@@ -52,7 +90,7 @@ This role is told only *which* of that contract's directory roles the instance
 keeps as durable directory accounts:
 
 ```yaml
-# homelab/instance/group_vars/controllers.yml
+# homelab/instance/inventory/group_vars/controllers.yml
 homelab_ad_directory_accounts:
   - standard_user
   - daily_administrator
@@ -72,6 +110,15 @@ repository — and therefore the one roster loader
 guest receives only the finished plan: the in-guest driver has just
 `homelab/ansible` staged and is never handed the private overlay.
 
+`local_rescue` is not the only refused name. The roster may not name a reserved
+directory object either — `Administrator`, `Guest`, `krbtgt`, the per-DC
+`dns-*` service account, or a local UNIX system account such as `root` — because
+an account that already exists needs no credential and would simply be adopted:
+its POSIX attributes and its `userPrincipalName` rewritten before any
+fail-closed check ran. The refusal is case-insensitive, is made on the control
+host (before anything is installed on the target) and again in the driver
+(before Samba is even imported).
+
 ### Credentials
 
 Before the run that first creates an account, place its initial credential in a
@@ -84,6 +131,23 @@ needs to exist on the target again. The role is never given a value, only a
 path; a temporary root-owned `0700` driver opens each file and hands what it
 reads to Samba's in-process API, so nothing ever appears in a process argument
 list, an Ansible variable, a template, or a log.
+
+Stage the file at the moment of use and delete it immediately afterwards.
+`/run` is tmpfs, so a reboot removes it whether or not you do:
+
+```sh
+ssh <controller> 'sudo install -d -m 0700 /run/secrets'
+ssh <controller> 'sudo install -m 0600 /dev/null /run/secrets/homelab-ad-<name>'
+ssh <controller> 'sudo tee /run/secrets/homelab-ad-<name> >/dev/null'   # type it
+ssh <controller> 'sudo shred -u /run/secrets/homelab-ad-<name>'
+```
+
+Never put the value on a command line: argv is readable in the process table by
+every local account. `tee` reads it from your terminal.
+
+There is deliberately no way to have Ansible carry the value. `vars_prompt`, a
+lookup and a vaulted variable all end with the credential in an Ansible
+variable, which is what this shape exists to avoid.
 
 Rotating a credential that is already set takes two keys: set
 `homelab_ad_account_password_reset_enabled: true` for that one run *and* name
@@ -132,12 +196,47 @@ convergence instead of quietly defeating that separation.
 Convergence fails closed on a half-provisioned account: each one must carry all
 four POSIX attributes in the directory, resolve through this Controller's own
 name service with its own `uidNumber`, own a private
-`homelab_ad_account_share_root/<name>` directory for the per-user share, and
+`homelab_ad_share_root/<name>` directory for the per-user share, and
 appear in Domain Admins if and only if its role is `administrator`. The live
 check this role cannot
 perform for itself is persistence: bring the instance up, confirm both accounts
 exist with their attributes, shut it down, bring it up again, and confirm the
 accounts and the domain SID survived.
+
+### Diagnosing a failure
+
+Two tasks in this section carry `no_log`, and only two: the per-account `stat`,
+whose loop item is the account's own plan entry, and the driver invocation,
+whose argv is the whole plan. Both would otherwise put resolved account names
+into a retained transcript (ADR 0046).
+
+Everything else about a failure is readable, and names accounts by their
+**contract role**:
+
+* a password file that is missing, not a regular file, not root-owned, not
+  `0600` or empty is reported as `<contract role>: <reason>`, for every account
+  at once, before anything is installed on the target;
+* any failure inside the driver is reported from the driver's own diagnostic,
+  `/run/homelab-provision-accounts.status` — root-owned `0600`, bounded to
+  16 KiB, with every credential it read replaced by `[REDACTED]`. A `rescue`
+  reads that file and fails the run with its contents.
+
+Resolve a path yourself from `homelab_ad_account_password_file_template` and
+`homelab/instance/identity/principals.json`; the role will not print it.
+
+### Check mode
+
+`--check` stops this role at its eighth task, immediately after the identity,
+FQDN-resolution and clock preflight, because nothing below it can be evaluated
+safely against a host where the packages and the directory do not exist yet.
+
+That means a dry run proves the permanent identity is coherent and the host is
+reachable, resolvable and in time. It does **not** reach the durable-account
+roster validation, the control-host resolver, or the password-file precheck:
+those live inside the durable-account block, which is deliberately gated and
+sits last. A misdeclared roster or a missing credential file is therefore
+caught on the first `APPLY=1` run, before any account is created, but not by
+`--check`.
 
 ## Backup boundary
 

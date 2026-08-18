@@ -231,7 +231,7 @@
 
 - name: Create the optional per-user UNAS share root
   ansible.builtin.file:
-    path: /srv/unas
+    path: "{{ homelab_ad_share_root }}"
     state: directory
     owner: root
     group: root
@@ -244,7 +244,7 @@
     prepend_newline: true
     block: |
       [homes]
-          path = /srv/unas/%S
+          path = {{ homelab_ad_share_root }}/%S
           read only = no
           browseable = no
           valid users = %S
@@ -401,7 +401,7 @@
   changed_when: false
   failed_when: >-
     homelab_unas_share_path.rc != 0 or
-    '/srv/unas/%S' not in homelab_unas_share_path.stdout
+    (homelab_ad_share_root ~ '/%S') not in homelab_unas_share_path.stdout
 
 - name: Verify the Controller resolves an unqualified directory identity
   # The check the 2026-08-14 gate-8 failure had nowhere to fail: [homes] can
@@ -629,7 +629,7 @@
           - homelab_ad_directory_accounts | unique | list | length ==
             homelab_ad_directory_accounts | length
           - homelab_ad_posix_admin_group in homelab_ad_posix_group_rids
-          - homelab_ad_account_share_root | length > 0
+          - homelab_ad_share_root | length > 0
           - homelab_ad_account_password_file_template is search('{name}')
           - homelab_ad_account_password_file_template is match('/')
           - homelab_ad_account_password_reset_roles
@@ -790,7 +790,7 @@
       changed_when: false
       loop: "{{ homelab_ad_account_plan | rejectattr('create') | list }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.contract_role }}"
 
     - name: Refuse to renumber a durable account the directory already holds
       # The rule is role-positional, so this can only fire for a directory whose
@@ -798,53 +798,124 @@
       # declaration-order keying this role applied before the roster became one
       # declaration. An account carrying no uidNumber at all is not a renumber:
       # the driver stages it below.
+      #
+      # The condition is anchored at both ends so a stored 105123 cannot satisfy an
+      # expected 10512, and `\\s` is written doubled: this is a Jinja string
+      # literal, and Jinja parses `\\s` the way Python does -- an undoubled one
+      # raises `DeprecationWarning: invalid escape sequence` on every render.
       ansible.builtin.assert:
         that:
           - >-
             homelab_ad_account_renumber_enabled | bool or
             item.stdout is not search('(?m)^uidNumber:') or
-            item.stdout is search('(?m)^uidNumber:\s*'
-                                  ~ item.item.uidNumber ~ '\s*$')
+            item.stdout is search('(?m)^uidNumber:\\s*'
+                                  ~ item.item.uidNumber ~ '\\s*$')
         fail_msg: >-
-          {{ item.item.name }} already holds a uidNumber in the directory that
-          is not the {{ item.item.uidNumber }} this role's one allocation rule
-          gives its role. Moving it would orphan every file that account owns.
-          Migrate deliberately -- re-own its files and its per-user share
-          directory -- and set homelab_ad_account_renumber_enabled for that one
-          run.
+          The durable account for contract role {{ item.item.contract_role }}
+          already holds a uidNumber in the directory that is not the
+          {{ item.item.uidNumber }} this role's one allocation rule gives that
+          role. Moving it would orphan every file that account owns. Migrate
+          deliberately -- re-own its files and its per-user share directory --
+          and set homelab_ad_account_renumber_enabled for that one run. The
+          account is named by its role here on purpose: a real account name
+          must not reach a retained Ansible transcript (ADR 0046).
       loop: "{{ homelab_ad_account_allocated.results }}"
       loop_control:
-        label: "{{ item.item.name }}"
+        label: "{{ item.item.contract_role }}"
 
-    - name: Inspect the password file of every durable account to be created
-      # no_log because stat returns a checksum of the file it inspected, which
-      # for a one-line password file is a hash of the password itself.
+    - name: Select the durable accounts whose credential must be staged now
+      # A credential file is needed for an account the directory does not hold
+      # yet AND for an authorized rotation. Only the first was selected before,
+      # so a `reset_password: true` / `create: false` run walked straight past
+      # this role's "stops before anything is installed on the target"
+      # guarantee and discovered the missing file inside the driver instead --
+      # after the driver had been installed and with the failure censored.
+      ansible.builtin.set_fact:
+        homelab_ad_account_credentials_needed: >-
+          {{ homelab_ad_account_plan | selectattr('create') | list
+             | union(homelab_ad_account_plan
+                     | selectattr('reset_password') | list) }}
+
+    - name: Inspect the password file of every durable account that needs one
+      # no_log because the loop ITEM is that account's own plan entry, which
+      # carries its resolved name and the path built from that name; a real
+      # account name must not reach a retained transcript (ADR 0046), and
+      # Ansible prints the whole item beside a failed result. The stat result
+      # itself carries no secret -- get_checksum is false, so nothing derived
+      # from the file's CONTENT is returned. What used to make this section
+      # undiagnosable was asserting under the same no_log, which censored the
+      # explanation along with the name; the two tasks below separate them.
       ansible.builtin.stat:
         path: "{{ item.password_file }}"
         get_checksum: false
-      loop: "{{ homelab_ad_account_plan | selectattr('create') | list }}"
+      loop: "{{ homelab_ad_account_credentials_needed }}"
+      loop_control:
+        label: "{{ item.contract_role }}"
       register: homelab_ad_account_password
       no_log: true
 
-    - name: Require a protected password file for every new durable account
+    - name: Reduce each staged password file to a name-free verdict
+      # The bridge between "must not be logged" and "must be diagnosable". Each
+      # unusable file becomes one `<contract role>: <reason>` string. A contract
+      # role is tracked vocabulary, not instance data; the account's name and
+      # the path built from it stay out of it, and so does anything derived from
+      # the file's contents. Written as one expression over the registered
+      # results rather than a loop precisely so that this task has no item of
+      # its own to leak and needs no no_log to be safe.
+      ansible.builtin.set_fact:
+        homelab_ad_account_password_faults: >-
+          {{ (homelab_ad_account_password.results | default([])
+              | rejectattr('stat.exists')
+              | map(attribute='item.contract_role')
+              | map('regex_replace', '^(.*)$', '\\1: no file at that path')
+              | list)
+           + (homelab_ad_account_password.results | default([])
+              | selectattr('stat.exists') | rejectattr('stat.isreg')
+              | map(attribute='item.contract_role')
+              | map('regex_replace', '^(.*)$', '\\1: not a regular file')
+              | list)
+           + (homelab_ad_account_password.results | default([])
+              | selectattr('stat.exists') | selectattr('stat.isreg')
+              | rejectattr('stat.uid', 'equalto', 0)
+              | map(attribute='item.contract_role')
+              | map('regex_replace', '^(.*)$', '\\1: not owned by root')
+              | list)
+           + (homelab_ad_account_password.results | default([])
+              | selectattr('stat.exists') | selectattr('stat.isreg')
+              | rejectattr('stat.mode', 'equalto', '0600')
+              | map(attribute='item.contract_role')
+              | map('regex_replace', '^(.*)$', '\\1: not mode 0600')
+              | list)
+           + (homelab_ad_account_password.results | default([])
+              | selectattr('stat.exists') | selectattr('stat.isreg')
+              | rejectattr('stat.size', 'greaterthan', 0)
+              | map(attribute='item.contract_role')
+              | map('regex_replace', '^(.*)$', '\\1: empty')
+              | list) }}
+
+    - name: Require a protected password file for every durable account needing one
       # The same refusal first provisioning makes for the domain administrator,
       # per account. The driver re-checks all of it as root at the moment it
       # opens the file; this is the check that stops convergence before
       # anything is installed on the target.
+      #
+      # Deliberately NOT no_log: everything it prints is the verdict list
+      # above, which names contract roles and reasons only.
       ansible.builtin.assert:
         that:
-          - item.stat.exists
-          - item.stat.isreg
-          - item.stat.uid == 0
-          - item.stat.mode == '0600'
-          - item.stat.size > 0
+          - homelab_ad_account_password_faults | length == 0
         fail_msg: >-
-          Creating a durable directory account requires a root-owned 0600
-          password file already on the target, one per account. Remove each
-          file once its account exists; a later run needs a file only for an
-          account the directory does not have yet.
-      loop: "{{ homelab_ad_account_password.results }}"
-      no_log: true
+          A durable directory account needs a root-owned 0600 regular file with
+          a non-empty first line, at the path
+          homelab_ad_account_password_file_template gives it, already staged on
+          the target -- one per account, and only for an account the directory
+          does not hold yet or one whose rotation this run authorized. Delete
+          each file once its account exists. Unusable, by contract role:
+          {{ homelab_ad_account_password_faults | join('; ') }}. The accounts
+          are named by their roles here on purpose: neither a real account name
+          nor the path built from it may reach a retained Ansible transcript
+          (ADR 0046). Resolve the path yourself from the template and
+          homelab/instance/identity/principals.json.
 
     - name: Converge the durable accounts with an ephemeral credential feeder
       block:
@@ -883,7 +954,7 @@
               - --posix-base
               - "{{ homelab_ad_directory_plan.posix_base }}"
               - --diagnostic-file
-              - /run/homelab-provision-accounts.status
+              - "{{ homelab_ad_account_diagnostic_file }}"
               - "{{ '--allow-password-reset'
                     if homelab_ad_account_password_reset_enabled | bool
                     else '--refuse-password-reset' }}"
@@ -896,6 +967,41 @@
             ((homelab_ad_account_convergence.stdout | from_json).changed
              | bool)
           no_log: true
+      rescue:
+        - name: Read the durable account driver's own diagnostic
+          # Why this exists: the task above must stay no_log -- its argv carries
+          # the whole plan and therefore every resolved account name, and
+          # Ansible prints a failed command's argv -- so its failure reached the
+          # operator as `(censored due to no_log)` and nothing else. The most
+          # likely first-run failure is a password file that is missing or not
+          # 0600, which is the one thing that must be readable.
+          #
+          # The driver writes this file itself, as root, mode 0600, bounded to
+          # 16 KiB, with every credential it read replaced by [REDACTED] and
+          # every account referred to by its CONTRACT ROLE. It is the same shape
+          # the first-domain path already had (the factory payload cats
+          # /run/homelab-provision-domain.status on failure); nothing read this
+          # one.
+          ansible.builtin.slurp:
+            src: "{{ homelab_ad_account_diagnostic_file }}"
+          register: homelab_ad_account_diagnostic
+          failed_when: false
+
+        - name: Report why the durable directory account convergence failed
+          # A rescue swallows the failure, so the run has to be failed again
+          # here or a half-converged directory would report success.
+          ansible.builtin.fail:
+            msg: >-
+              Durable directory account convergence failed. The driver's own
+              diagnostic ({{ homelab_ad_account_diagnostic_file }} on the
+              target, root-owned 0600, credential-redacted, accounts named by
+              contract role): {{
+                (homelab_ad_account_diagnostic.content | b64decode | trim)
+                if homelab_ad_account_diagnostic.content is defined
+                else 'the driver wrote none, so it failed before it started --
+                      check that /usr/local/libexec is writable and that
+                      python-samba is installed on this Controller.'
+              }}
       always:
         - name: Remove the durable account driver
           ansible.builtin.file:
@@ -910,14 +1016,14 @@
       # the same chown controller_principals.py performs for the acceptance
       # roster, and it must not depend on the name service being warm.
       ansible.builtin.file:
-        path: "{{ homelab_ad_account_share_root }}/{{ item.name }}"
+        path: "{{ homelab_ad_share_root }}/{{ item.name }}"
         state: directory
         owner: "{{ item.uidNumber }}"
         group: "{{ item.gidNumber }}"
         mode: "0700"
       loop: "{{ homelab_ad_account_plan }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.contract_role }}"
 
     - name: Verify each durable account's POSIX attributes in the directory
       # This is what an SSSD client with ldap_id_mapping = False reads over
@@ -934,16 +1040,27 @@
           - --attributes=sAMAccountName,uidNumber,gidNumber,loginShell,unixHomeDirectory
       register: homelab_ad_account_posix
       changed_when: false
+      # Compared with an anchored per-line regex, not a substring: `uidNumber:
+      # 10512` is a substring of a stored `uidNumber: 105123`, so the plain `in`
+      # test this used to make would accept an account numbered ten times too
+      # high and report it verified. `regex_escape` because loginShell and
+      # unixHomeDirectory are paths, and `\\s` is doubled because Jinja parses
+      # string escapes the way Python does.
       failed_when: >-
         homelab_ad_account_posix.rc != 0 or
-        ('uidNumber: ' ~ item.uidNumber) not in homelab_ad_account_posix.stdout or
-        ('gidNumber: ' ~ item.gidNumber) not in homelab_ad_account_posix.stdout or
-        ('loginShell: ' ~ item.loginShell) not in homelab_ad_account_posix.stdout or
-        ('unixHomeDirectory: ' ~ item.unixHomeDirectory)
-        not in homelab_ad_account_posix.stdout
+        homelab_ad_account_posix.stdout is not search(
+          '(?m)^uidNumber:\\s*' ~ item.uidNumber ~ '\\s*$') or
+        homelab_ad_account_posix.stdout is not search(
+          '(?m)^gidNumber:\\s*' ~ item.gidNumber ~ '\\s*$') or
+        homelab_ad_account_posix.stdout is not search(
+          '(?m)^loginShell:\\s*'
+          ~ (item.loginShell | regex_escape) ~ '\\s*$') or
+        homelab_ad_account_posix.stdout is not search(
+          '(?m)^unixHomeDirectory:\\s*'
+          ~ (item.unixHomeDirectory | regex_escape) ~ '\\s*$')
       loop: "{{ homelab_ad_account_plan }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.contract_role }}"
 
     - name: Verify the well-known groups carry the POSIX gid clients resolve
       # A user's primary gid comes from Domain Users, and the Arch identity
@@ -959,9 +1076,12 @@
           - --attributes=sAMAccountName,gidNumber
       register: homelab_ad_group_posix
       changed_when: false
+      # Anchored for the same reason as the account attributes above: a stored
+      # 105123 must not satisfy an expected 10512.
       failed_when: >-
         homelab_ad_group_posix.rc != 0 or
-        ('gidNumber: ' ~ item.value) not in homelab_ad_group_posix.stdout
+        homelab_ad_group_posix.stdout is not search(
+          '(?m)^gidNumber:\\s*' ~ item.value ~ '\\s*$')
       loop: "{{ homelab_ad_account_group_plan | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
@@ -1019,7 +1139,7 @@
       delay: 5
       loop: "{{ homelab_ad_account_plan }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.contract_role }}"
 
     - name: Require the resolved identity to be the directory's own POSIX one
       # uid and gid are read from the START of the passwd line and the home
@@ -1056,16 +1176,16 @@
           winbind cache and re-run.
       loop: "{{ homelab_ad_account_nss.results }}"
       loop_control:
-        label: "{{ item.item.name }}"
+        label: "{{ item.item.contract_role }}"
 
     - name: Verify each per-user storage directory belongs to its account
       ansible.builtin.stat:
-        path: "{{ homelab_ad_account_share_root }}/{{ item.name }}"
+        path: "{{ homelab_ad_share_root }}/{{ item.name }}"
       register: homelab_ad_account_share
       changed_when: false
       loop: "{{ homelab_ad_account_plan }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.contract_role }}"
 
     - name: Require each per-user storage directory to be owned and private
       ansible.builtin.assert:
@@ -1076,10 +1196,10 @@
           - item.stat.gid == item.item.gidNumber
           - item.stat.mode == '0700'
         fail_msg: >-
-          A durable account's {{ homelab_ad_account_share_root }} directory is
+          A durable account's {{ homelab_ad_share_root }} directory is
           missing, or is not owned exclusively by that account's directory
           POSIX identity, so its per-user share would serve files its owner
           cannot read or another account can.
       loop: "{{ homelab_ad_account_share.results }}"
       loop_control:
-        label: "{{ item.item.name }}"
+        label: "{{ item.item.contract_role }}"

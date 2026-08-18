@@ -2,6 +2,16 @@
 # Converge the temporary host-level domain controller. The private inventory
 # owns every identity value. First provisioning remains a separate explicit
 # opt-in inside roles/domain_controller.
+#
+# This is the ONE play that carries the domain_controller role, so it is also
+# the only wired path to the durable directory accounts. `bootstrap_controllers`
+# is the group the in-guest factory inventory declares
+# (homelab/vm/controller_factory.py) and it must exist in the private inventory
+# too: an inventory that does not define it makes this play match zero hosts,
+# which Ansible reports as a WARNING and not as a failure. Declare it there as a
+# parent of `controllers` -- see homelab/instance-example/inventory/hosts.yml --
+# so the Controller is in both groups and group_vars/controllers.yml, which
+# holds every AD variable, applies to it.
 - name: Converge the isolated bootstrap Controller
   hosts: bootstrap_controllers
   become: true

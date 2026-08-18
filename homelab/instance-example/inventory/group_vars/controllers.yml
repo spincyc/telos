@@ -21,6 +21,50 @@ homelab_services: []
 #     # would hand this application somebody else's radio.
 #     - /dev/serial/by-id/<usb-radio-id>
 
+# ---------------------------------------------------------------------------
+# The permanent directory identity (roles/domain_controller).
+#
+# Every one of these is asserted by the role's FIRST task, before it touches
+# anything, and the role ships them empty on purpose: a default here would be
+# somebody else's realm. Changing any of them after provisioning is a directory
+# migration and not an Ansible convergence, so decide them once.
+#
+#   * the DNS domain is lower case and under home.arpa (ADR 0002)
+#   * the realm is its upper-case equivalent, exactly
+#   * the NetBIOS domain is upper case and at most 15 characters
+#   * the expected hostname is the Controller's SHORT name, and must equal both
+#     the machine's hostname and the label in its inventory name above
+homelab_ad_dns_domain: <domain>.home.arpa
+homelab_ad_realm: <DOMAIN>.HOME.ARPA
+homelab_ad_netbios_domain: <DOMAIN>
+homelab_ad_expected_hostname: <controller-name>
+
+# FIRST PROVISIONING ONLY, and only ever for one deliberate run.
+#
+# Set this true, stage the file below, run the play, then set it false again.
+# With no directory present and this false the role refuses; with a directory
+# present the whole provisioning step is skipped and neither of these is read.
+homelab_ad_provision_enabled: false
+
+# The PATH of a root-owned 0600 file that already exists ON THE CONTROLLER and
+# whose first line is the initial domain Administrator password. Never the
+# password itself: this file is in a working tree, and the value would enter
+# Git, the Ansible log and every transcript of the run. Stage it over SSH
+# immediately before the run and delete it immediately afterwards:
+#
+#   ssh <controller> 'sudo install -d -m 0700 /run/secrets'
+#   ssh <controller> 'sudo install -m 0600 /dev/null /run/secrets/samba-ad-admin'
+#   ssh <controller> 'sudo tee /run/secrets/samba-ad-admin >/dev/null'   # type it
+#   ...
+#   ssh <controller> 'sudo shred -u /run/secrets/samba-ad-admin'
+#
+# /run is tmpfs, so a reboot removes it whether or not you do.
+homelab_ad_admin_password_file: ""
+
+# Optional: publish the per-user SMB storage authority name (`unas`) in domain
+# DNS at this address. Empty skips publication entirely (gate 9).
+homelab_storage_address: ""
+
 # ADR 0055: the durable directory accounts a PERSISTENT Controller keeps across
 # bring-ups. This names contract ROLES, never accounts: the real account names
 # are declared exactly once, in identity/principals.json beside this file, which
@@ -45,6 +89,20 @@ homelab_ad_directory_accounts: []
 # for an account the directory does not have yet -- delete it afterwards. Never
 # put the credential itself in this overlay, in Git, or on a command line.
 homelab_ad_account_password_file_template: /run/secrets/homelab-ad-{name}
+
+# Staging one, in full. `<name>` is the account's resolved name from
+# identity/principals.json -- the role never restates it, and neither should
+# you anywhere but here, at the moment of use:
+#
+#   ssh <controller> 'sudo install -d -m 0700 /run/secrets'
+#   ssh <controller> 'sudo install -m 0600 /dev/null /run/secrets/homelab-ad-<name>'
+#   ssh <controller> 'sudo tee /run/secrets/homelab-ad-<name> >/dev/null'
+#   <type the password, then Ctrl-D>
+#   ssh <controller> 'sudo shred -u /run/secrets/homelab-ad-<name>'
+#
+# Do not put the value on a command line: argv is world-readable in the process
+# table. `tee` reads it from your terminal, and the role and its driver only
+# ever receive the PATH.
 
 # ADR 0055: enable only once the domain controller exists and answers. Joining
 # a machine to a directory that is not ready is how a working machine stops

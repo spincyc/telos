@@ -301,6 +301,14 @@ if ! ANSIBLE_CONFIG="$root/factory-ansible.cfg" \
     echo 'TELOS FACTORY PROVISION DIAGNOSTIC'
     cat /run/homelab-provision-domain.status
   fi
+  # Inert on this payload -- it declares no durable directory accounts -- but
+  # the file is written by a task whose own output is no_log, so if a durable
+  # roster is ever converged from a payload this is the only place its reason
+  # would surface. Both drivers redact every credential they read.
+  if [[ -f /run/homelab-provision-accounts.status ]]; then
+    echo 'TELOS FACTORY ACCOUNTS DIAGNOSTIC'
+    cat /run/homelab-provision-accounts.status
+  fi
   exit 2
 fi
 install -d -m 0755 /etc/homelab /srv/tftp /srv/http/homelab/boot
@@ -324,15 +332,40 @@ install -d -o root -g root -m 0700 /run/telos-factory-auth-audit
 install -o root -g root -m 0600 /dev/null \
   /run/telos-factory-auth-audit/auth.jsonl
 echo 'TELOS FACTORY STEP auth-audit-config-write'
+# CONVERGES the audit setting; it does not append it. On a PERSISTENT instance
+# /etc/samba/smb.conf is durable and no role ever templates it, so a second
+# convergence used to insert a second copy and then fail its own verify -- after
+# the write, which left the durable file carrying two copies and every later run
+# failing identically until somebody hand-edited it over the console.
+#
+# The old guard was `! grep -Eq ...` on a line of its own. Bash exempts a
+# `!`-prefixed pipeline from `set -e`, so that line could never stop anything:
+# it was a comment with a process behind it. The counts below are taken into
+# variables and compared explicitly, which is what makes the decision able to
+# fail.
+auth_audit_line=$'\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl'
 test "$(grep -c '^\\[global\\]$' /etc/samba/smb.conf)" == 1
-! grep -Eq '^[[:space:]]*[^#;].*auth_json_audit' /etc/samba/smb.conf
+auth_audit_any=$(grep -Ec '^[[:space:]]*[^#;].*auth_json_audit' /etc/samba/smb.conf || true)
+auth_audit_ours=$(grep -Fxc "$auth_audit_line" /etc/samba/smb.conf || true)
+if [[ "$auth_audit_any" != "$auth_audit_ours" ]]; then
+  echo 'an auth_json_audit setting this payload did not write is already in /etc/samba/smb.conf' >&2
+  grep -En '^[[:space:]]*[^#;].*auth_json_audit' /etc/samba/smb.conf >&2 || true
+  exit 2
+fi
+# Strip every copy and insert exactly one, so a file that arrived with none,
+# with one, or with the two a pre-2026-08-17 payload left behind all converge
+# to the same single line. `cat` back into place rather than mv: the inode, its
+# ownership and anything else pointing at it are left alone.
+grep -Fxv "$auth_audit_line" /etc/samba/smb.conf >/etc/samba/smb.conf.telos-audit || true
 sed -i \
   '/^\\[global\\]$/a\\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
-  /etc/samba/smb.conf
+  /etc/samba/smb.conf.telos-audit
+cat /etc/samba/smb.conf.telos-audit >/etc/samba/smb.conf
+rm -f /etc/samba/smb.conf.telos-audit
 chmod 0600 /etc/samba/smb.conf
 echo 'TELOS FACTORY STEP auth-audit-config-verify'
-test "$(grep -Fxc $'\\tlog level = 0 auth_json_audit:3@/run/telos-factory-auth-audit/auth.jsonl' \
-  /etc/samba/smb.conf)" == 1
+test "$(grep -Fxc "$auth_audit_line" /etc/samba/smb.conf)" == 1
+test "$(grep -Ec '^[[:space:]]*[^#;].*auth_json_audit' /etc/samba/smb.conf)" == 1
 testparm -s /etc/samba/smb.conf >/dev/null 2>&1
 echo 'TELOS FACTORY STEP auth-audit-restart'
 systemctl restart samba.service
@@ -465,6 +498,23 @@ class FactoryBundle:
                 "/run/telos-factory-state/clock.receipt",
             "homelab_ad_manage_packages": False,
             "homelab_storage_address": self.spec.address,
+            # Stated, not left to the role default, because it is the property
+            # that keeps this payload hermetic: the disposable acceptance
+            # Controller's roster is synthetic, per-run and staged much later
+            # over the serial console by homelab/vm/controller_principals.py,
+            # and the role's whole durable-account section is gated on this
+            # list being non-empty.
+            #
+            # It stays empty on purpose and there is deliberately no way to fill
+            # it in here. Durable accounts are converged from the Ansible
+            # CONTROL HOST (playbooks/bootstrap-controller.yml against the
+            # private inventory), which is the only place the one roster loader,
+            # the private identity overlay and an operator who can stage a
+            # credential file all exist at once. Carrying them on this medium
+            # would mean putting the owner's real account names -- and a
+            # credential per account -- onto an ISO built for a disposable
+            # guest, and into a serial transcript.
+            "homelab_ad_directory_accounts": [],
         }
         (destination / "factory-vars.json").write_text(
             json.dumps(variables, sort_keys=True) + "\n", encoding="utf-8")

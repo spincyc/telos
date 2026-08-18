@@ -382,6 +382,15 @@ class TestDurableAccountsAreInertByDefault(DurableAccountBase):
     def test_nothing_outside_that_gate_reads_the_roster_or_its_plan(self):
         # The gate is only worth having if no ungated task depends on it. A
         # task added above the block would run on the disposable Controller.
+        #
+        # `homelab_ad_account_share_root` used to be on this list and is no
+        # longer, because the variable is gone: the share root is now
+        # `homelab_ad_share_root` and is READ OUTSIDE the gate on purpose. It
+        # is a role setting, not roster data -- the [homes] service this role
+        # exports on every Controller, disposable or not, serves `<root>/%S`,
+        # and the durable accounts' own directories are created under the same
+        # root. Listing it here forced three `/srv/unas` literals to restate it
+        # and left the variable itself wired to nothing.
         for task in self.tasks():
             if task.get("name") == DURABLE_BLOCK:
                 continue
@@ -389,7 +398,8 @@ class TestDurableAccountsAreInertByDefault(DurableAccountBase):
             for variable in ("homelab_ad_directory_accounts",
                              "homelab_ad_account_plan",
                              "homelab_ad_account_group_plan",
-                             "homelab_ad_account_share_root"):
+                             "homelab_ad_account_credentials_needed",
+                             "homelab_ad_directory_plan"):
                 with self.subTest(task=task.get("name"), variable=variable):
                     self.assertNotIn(variable, body)
 
@@ -569,21 +579,76 @@ class TestDurableAccountResolver(DurableAccountBase):
     Ansible control host and the guest receives only the finished plan.
     """
 
-    def resolve(self, roles, *, admin_group="Domain Admins", rids=None):
+    def resolve(self, roles, *, admin_group="Domain Admins", rids=None,
+                overlay=None):
         import json
 
         rids = ('{"Domain Users": 513, "Domain Admins": 512}' if rids is None
                 else rids)
-        result = subprocess.run(
-            [sys.executable, str(RESOLVER),
-             "--roles", ",".join(roles),
-             "--admin-group", admin_group,
-             "--group-rids-json", rids],
-            capture_output=True, text=True,
-        )
+        argv = [sys.executable, str(RESOLVER),
+                "--roles", ",".join(roles),
+                "--admin-group", admin_group,
+                "--group-rids-json", rids]
+        if overlay is not None:
+            argv += ["--identity-overlay", str(overlay)]
+        result = subprocess.run(argv, capture_output=True, text=True)
         document = (json.loads(result.stdout) if result.returncode == 0
                     else None)
         return result, document
+
+    def overlay(self, scratch, roster):
+        import json
+
+        path = Path(scratch) / "principals.json"
+        path.write_text(json.dumps({
+            "schema_version": 1,
+            "principals": {role: {"name": name}
+                           for role, name in roster.items()},
+        }), encoding="utf-8")
+        return path
+
+    def test_it_resolves_against_the_overlay_it_is_given(self):
+        # Every expectation in this file has to be independent of whatever
+        # private overlay the machine running the tests carries. Before this
+        # option existed the resolver could only read
+        # homelab/instance/identity/principals.json, so the moment the owner
+        # created one these tests would have started asserting against their
+        # real account names.
+        with tempfile.TemporaryDirectory() as scratch:
+            overlay = self.overlay(scratch, RENAMED_ROSTER)
+            _, renamed = self.resolve(ACCEPTANCE_ROLES, overlay=overlay)
+            absent = Path(scratch) / "no-such-overlay.json"
+            _, contract = self.resolve(ACCEPTANCE_ROLES, overlay=absent)
+        self.assertEqual([entry["name"] for entry in renamed["accounts"]],
+                         ["roster-a", "roster-b", "roster-c"])
+        # An overlay that is not there is the no-overlay case: the tracked
+        # contract's synthetic roster, which is what gates 6 and 8 expect.
+        self.assertEqual([entry["name"] for entry in contract["accounts"]],
+                         ["student", "operator", "directory-admin"])
+        # A rename moves no identifier -- the property the whole scheme rests
+        # on, asserted across the process boundary.
+        self.assertEqual(
+            [entry["uidNumber"] for entry in renamed["accounts"]],
+            [entry["uidNumber"] for entry in contract["accounts"]])
+
+    def test_it_refuses_a_roster_naming_a_reserved_directory_object(self):
+        # The control host is the last point at which nothing has been
+        # installed on the Controller and nothing has been looked up in the
+        # directory, so a roster fault must fail here as well as in the driver.
+        for role, name in (("domain_administrator", "krbtgt"),
+                           ("standard_user", "administrator"),
+                           ("daily_administrator", "root"),
+                           ("standard_user", "dns-controller")):
+            with self.subTest(name=name), \
+                    tempfile.TemporaryDirectory() as scratch:
+                roster = dict(RENAMED_ROSTER, **{role: name})
+                result, _ = self.resolve(
+                    ACCEPTANCE_ROLES,
+                    overlay=self.overlay(scratch, roster))
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("", result.stdout)
+                self.assertIn("reserved directory object", result.stderr)
+                self.assertIn(role, result.stderr)
 
     def test_it_only_passes_through_the_one_allocation_rule(self):
         from homelab.vm import controller_principals as principals
@@ -666,9 +731,13 @@ class TestDurableAccountRefusals(DurableAccountBase):
         from homelab.vm import controller_principals as principals
 
         simulation = DurableAccountSimulation(self)
+        # `roster-a` is RENAMED_ROSTER's standard_user, which is what the
+        # simulation now resolves against; the other two are directory objects
+        # that exist in every domain and belong to no roster.
         plan, groups = simulation.allocate(
-            ACCEPTANCE_ROLES, existing=["student", "Administrator", "krbtgt"])
-        resolved = principals.directory_account_plan(ACCEPTANCE_ROLES)
+            ACCEPTANCE_ROLES, existing=["roster-a", "Administrator", "krbtgt"])
+        resolved = principals.directory_account_plan(
+            ACCEPTANCE_ROLES, roster=RENAMED_ROSTER)
         # Every identifier in the role's plan came from the one rule, untouched.
         for entry, expected in zip(plan, resolved):
             with self.subTest(role=entry["contract_role"]):
@@ -676,6 +745,10 @@ class TestDurableAccountRefusals(DurableAccountBase):
                                   "loginShell", "unixHomeDirectory"):
                     self.assertEqual(entry[attribute], expected[attribute])
         self.assertEqual(groups, principals.directory_group_allocation())
+        # And nothing anywhere in this file depends on the machine's own
+        # private overlay: these are the placeholder names the test wrote.
+        self.assertEqual([entry["name"] for entry in plan],
+                         ["roster-a", "roster-b", "roster-c"])
         # Only the account the directory does not have is created, and the one
         # that survived a relaunch keeps its password: no file is even needed
         # for it.
@@ -805,22 +878,86 @@ class TestDurableAccountRefusals(DurableAccountBase):
                 self.assertFalse(
                     simulation.password_paths_are_accepted(plan))
 
+    PROTECTED = {"exists": True, "isreg": True, "uid": 0, "mode": "0600",
+                 "size": 21}
+
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
     def test_an_unprotected_password_file_is_refused_by_the_role(self):
         simulation = DurableAccountSimulation(self)
-        protected = {"exists": True, "isreg": True, "uid": 0, "mode": "0600",
-                     "size": 21}
-        self.assertTrue(simulation.password_file_is_accepted(protected))
+        self.assertTrue(simulation.password_files_are_accepted(
+            {"standard_user": self.PROTECTED}))
         for label, stat in (
-            ("missing", dict(protected, exists=False)),
-            ("group readable", dict(protected, mode="0640")),
-            ("world readable", dict(protected, mode="0644")),
-            ("not owned by root", dict(protected, uid=1000)),
-            ("not a regular file", dict(protected, isreg=False)),
-            ("empty", dict(protected, size=0)),
+            ("missing", dict(self.PROTECTED, exists=False)),
+            ("group readable", dict(self.PROTECTED, mode="0640")),
+            ("world readable", dict(self.PROTECTED, mode="0644")),
+            ("not owned by root", dict(self.PROTECTED, uid=1000)),
+            ("not a regular file", dict(self.PROTECTED, isreg=False)),
+            ("empty", dict(self.PROTECTED, size=0)),
         ):
             with self.subTest(file=label):
-                self.assertFalse(simulation.password_file_is_accepted(stat))
+                self.assertFalse(simulation.password_files_are_accepted(
+                    {"standard_user": stat}))
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_the_refusal_says_which_account_and_why_without_naming_it(self):
+        # The defect this replaces: the stat loop and the assert BOTH carried
+        # no_log, so the single most likely first-run failure -- a password file
+        # that is missing or not 0600 -- reached the operator as
+        # `(item=(censored due to no_log))` and nothing else. Removing the
+        # no_log outright would have put the resolved account name, and the
+        # path built from it, into a retained transcript instead.
+        simulation = DurableAccountSimulation(self)
+        for stat, reason in (
+            (dict(self.PROTECTED, exists=False), "no file at that path"),
+            (dict(self.PROTECTED, isreg=False), "not a regular file"),
+            (dict(self.PROTECTED, uid=1000), "not owned by root"),
+            (dict(self.PROTECTED, mode="0640"), "not mode 0600"),
+            (dict(self.PROTECTED, size=0), "empty"),
+        ):
+            with self.subTest(reason=reason):
+                self.assertEqual(
+                    simulation.password_faults({"daily_administrator": stat}),
+                    [f"daily_administrator: {reason}"])
+        # Every account with something wrong is reported, not just the first.
+        self.assertEqual(
+            sorted(simulation.password_faults({
+                "standard_user": dict(self.PROTECTED, exists=False),
+                "domain_administrator": dict(self.PROTECTED, size=0),
+            })),
+            ["domain_administrator: empty",
+             "standard_user: no file at that path"])
+        # And a correctly staged file produces no verdict at all.
+        self.assertEqual(
+            simulation.password_faults({"standard_user": self.PROTECTED}), [])
+        # Nothing derived from a name or a path can reach the message: the
+        # simulation deliberately hands the expression both, and neither
+        # survives into the verdict.
+        verdicts = " ".join(simulation.password_faults({
+            "standard_user": dict(self.PROTECTED, exists=False)}))
+        self.assertNotIn("roster-", verdicts)
+        self.assertNotIn("/run/secrets", verdicts)
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_a_rotation_is_prechecked_like_a_creation(self):
+        # The role's stated guarantee is that it stops before anything is
+        # installed on the target. The precheck used to select only accounts
+        # being CREATED, so a `reset_password: true` / `create: false` run --
+        # the documented rotation -- skipped it entirely and discovered a
+        # missing file inside the driver, after the driver had been installed
+        # and with the failure censored.
+        simulation = DurableAccountSimulation(self)
+        plan = [
+            {"contract_role": "standard_user", "create": True,
+             "reset_password": False},
+            {"contract_role": "daily_administrator", "create": False,
+             "reset_password": True},
+            {"contract_role": "domain_administrator", "create": False,
+             "reset_password": False},
+        ]
+        self.assertEqual(
+            sorted(entry["contract_role"]
+                   for entry in simulation.credentials_needed(plan)),
+            ["daily_administrator", "standard_user"])
 
     @unittest.skipIf(JINJA_REASON, JINJA_REASON)
     def test_a_resolved_identity_that_is_not_the_directory_s_is_refused(self):
@@ -888,18 +1025,93 @@ class TestDurableAccountSecrecy(DurableAccountBase):
                             r"|provision-accounts)")
 
     def test_the_tasks_that_touch_a_credential_file_do_not_log(self):
-        # stat returns a checksum of the file it inspected, which for a
-        # one-line password file is a hash of the password itself.
+        # CONTRACT CHANGED 2026-08-17. This used to require no_log on the
+        # ASSERT as well, and its stated reason -- "stat returns a checksum of
+        # the file it inspected" -- was already stale, because the stat sets
+        # get_checksum: false. What the two no_logs actually hid was the
+        # explanation: a missing or wrongly-permissioned password file, the
+        # single most likely first-run failure, surfaced as
+        # `(item=(censored due to no_log))` and nothing more.
+        #
+        # What must stay censored is anything carrying a resolved account NAME:
+        # the stat loop's item is the account's own plan entry, and the driver's
+        # argv is the whole plan. What must NOT be censored is the verdict, and
+        # the assert that reports it is now name-free by construction.
         for name in (
-            "Inspect the password file of every durable account to be created",
-            "Require a protected password file for every new durable account",
+            "Inspect the password file of every durable account that needs one",
             "Create and converge the durable directory accounts",
         ):
-            with self.subTest(task=name):
+            with self.subTest(censored=name):
                 self.assertIs(self.named(name).get("no_log"), True)
         inspect = self.named(
-            "Inspect the password file of every durable account to be created")
+            "Inspect the password file of every durable account that needs one")
         self.assertIs(inspect["ansible.builtin.stat"]["get_checksum"], False)
+        self.assertEqual(inspect["loop_control"]["label"],
+                         "{{ item.contract_role }}")
+        for name in (
+            "Reduce each staged password file to a name-free verdict",
+            "Require a protected password file for every durable account "
+            "needing one",
+            "Read the durable account driver's own diagnostic",
+            "Report why the durable directory account convergence failed",
+        ):
+            with self.subTest(readable=name):
+                self.assertIsNot(self.named(name).get("no_log"), True)
+
+    def test_a_failed_convergence_reports_the_drivers_own_diagnostic(self):
+        # Nothing read /run/homelab-provision-accounts.status, so the driver's
+        # only diagnosable output went nowhere -- unlike the first-domain path,
+        # whose status file the factory payload cats on failure. The driver's
+        # task cannot lose its no_log (its argv carries every account name), so
+        # a rescue reads the file the driver writes instead: root-owned 0600,
+        # bounded, credential-redacted, accounts named by contract role.
+        feeder = next(
+            task for task in self.block()["block"]
+            if task.get("name")
+            == "Converge the durable accounts with an ephemeral credential feeder")
+        self.assertIn("rescue", feeder)
+        names = [task.get("name") for task in feeder["rescue"]]
+        self.assertEqual(
+            names,
+            ["Read the durable account driver's own diagnostic",
+             "Report why the durable directory account convergence failed"])
+        read, report = feeder["rescue"]
+        path = self.defaults()["homelab_ad_account_diagnostic_file"]
+        self.assertEqual(read["ansible.builtin.slurp"]["src"],
+                         "{{ homelab_ad_account_diagnostic_file }}")
+        self.assertIs(read["failed_when"], False)
+        self.assertTrue(path.startswith("/run/"), path)
+        # ONE declaration: the driver is told the same path.
+        self.assertIn("{{ homelab_ad_account_diagnostic_file }}",
+                      self.driver()["ansible.builtin.command"]["argv"])
+        # A rescue swallows the failure, so it has to fail again or a
+        # half-converged directory would report success.
+        self.assertIn("ansible.builtin.fail", report)
+        self.assertIn("b64decode", str(report["ansible.builtin.fail"]["msg"]))
+
+    def test_no_task_in_the_durable_section_labels_a_loop_with_a_name(self):
+        # A loop label is printed for every item, on every run, and lands in
+        # whatever transcript the operator keeps. Elsewhere this repository
+        # deliberately reduces the roster to a fingerprint digest for exactly
+        # this reason (vm/arch_identity_run.py). The contract role identifies
+        # the account just as precisely and is tracked vocabulary.
+        for task in self.durable_tasks():
+            label = task.get("loop_control", {}).get("label")
+            if label is None:
+                continue
+            with self.subTest(task=task.get("name")):
+                self.assertNotIn("item.name", label)
+                self.assertNotIn("item.item.name", label)
+        # Nor may a message interpolate one.
+        for task in self.durable_tasks():
+            for key in ("ansible.builtin.assert", "ansible.builtin.fail"):
+                body = task.get(key)
+                if not isinstance(body, dict):
+                    continue
+                message = str(body.get("fail_msg", "") or body.get("msg", ""))
+                with self.subTest(task=task.get("name")):
+                    self.assertNotIn("item.name", message)
+                    self.assertNotIn("item.item.name", message)
 
     def test_the_driver_is_installed_privately_and_always_removed(self):
         feeder = next(
@@ -938,6 +1150,52 @@ class TestDurableAccountSecrecy(DurableAccountBase):
         self.assertNotRegex(driver, r"print\([^)]*credential")
         self.assertNotRegex(driver, r"(?:print|write)\s*\(\s*value\s*\)")
 
+    def test_only_an_authorized_rotation_can_rewrite_a_credential(self):
+        # The driver's own comment used to claim the setpassword branch was
+        # "only reachable with --allow-password-reset and an explicit
+        # per-account reset_password". It was not: the branch was keyed on
+        # `name in credentials`, and a credential is read for every account the
+        # role planned to CREATE. Any disagreement between the account listing
+        # the role took and the driver's own search therefore rewrote the
+        # password of an account that already existed -- silently, and with the
+        # rotation switch off. This cannot be exercised without Samba, so the
+        # shape is pinned here.
+        driver = (ROLE / "files/provision-accounts.py").read_text()
+        self.assertNotIn("elif name in credentials:", driver)
+        self.assertIn('elif entry.get("reset_password"):', driver)
+        branch = driver[driver.index('elif entry.get("reset_password"):'):]
+        branch = branch[:branch.index("samdb.setpassword")]
+        self.assertIn("if not args.allow_password_reset:", branch)
+
+    def test_the_driver_only_ever_looks_up_a_user(self):
+        # A bare (sAMAccountName=x) matches a group or a computer that happens
+        # to carry the name, and every branch after the search would then treat
+        # that object as the account: attributes replaced on it, a
+        # userPrincipalName stamped onto it, possibly a password written to it.
+        driver = (ROLE / "files/provision-accounts.py").read_text()
+        self.assertNotIn('expression = f"(sAMAccountName={name})"', driver)
+        self.assertNotIn('f"(sAMAccountName={name})",', driver)
+        self.assertEqual(
+            2, driver.count("(&(objectCategory=person)(objectClass=user)"),
+            "both the convergence search and the verification search must be "
+            "constrained to a user object")
+
+    def test_the_driver_names_accounts_by_contract_role_only(self):
+        # Everything this program writes down -- its diagnostic file and its
+        # stdout summary alike -- is read back by Ansible and kept in whatever
+        # transcript the operator keeps, so a real account name must not reach
+        # it (ADR 0046).
+        driver = (ROLE / "files/provision-accounts.py").read_text()
+        self.assertIn("def described(entry):", driver)
+        for forbidden in ('{entry[\'name\']}', "{name}: ", ": {name}"):
+            with self.subTest(interpolation=forbidden):
+                self.assertNotIn(forbidden, driver)
+        # The summary counts groups separately from accounts: a well-known
+        # group name is not an account, and mixing them made "which of my
+        # accounts changed" unanswerable.
+        self.assertIn('summary["groups_updated"].append(group)', driver)
+        self.assertNotIn('summary["updated"].append(group)', driver)
+
     def test_a_durable_account_is_never_deleted_or_rolled_back(self):
         # controller_principals.py rolls back what it created because that
         # Controller is disposable. Deleting a durable account would destroy
@@ -963,7 +1221,10 @@ class TestDurableAccountDriver(unittest.TestCase):
     GROUPS = '{"Domain Users": 10513, "Domain Admins": 10512}'
 
     def entry(self, **overrides):
-        base = {"name": "a", "role": "standard", "create": True,
+        # contract_role is required, not decorative: it is how every message
+        # this driver writes down identifies an account without naming it.
+        base = {"contract_role": "standard_user", "name": "a",
+                "role": "standard", "create": True,
                 "uidNumber": 10000, "gidNumber": 10513,
                 "loginShell": "/bin/bash", "unixHomeDirectory": "/home/a"}
         base.update(overrides)
@@ -1031,7 +1292,14 @@ class TestDurableAccountDriver(unittest.TestCase):
             "uidNumber allocation collides": [
                 self.entry(name="a", create=False),
                 self.entry(name="b", create=False,
+                           contract_role="daily_administrator",
                            unixHomeDirectory="/home/b")],
+            "contract_role is invalid": [
+                self.entry(create=False, contract_role="Standard_User")],
+            "repeats a contract role": [
+                self.entry(name="a", create=False),
+                self.entry(name="b", create=False,
+                           uidNumber=10001, unixHomeDirectory="/home/b")],
             "uidNumber is out of range": [
                 self.entry(create=False, uidNumber=1000)],
             "identifier ranges collide": [
@@ -1052,9 +1320,52 @@ class TestDurableAccountDriver(unittest.TestCase):
 
     def test_it_refuses_a_group_plan_missing_a_well_known_group(self):
         result, recorded, _ = self.run_driver(
-            [self.entry(create=False)], groups='{"Domain Users": 10513}')
+            [self.entry(create=False, gidNumber=10513)],
+            groups='{"Domain Users": 10513}')
         self.assertNotEqual(0, result.returncode)
         self.assertIn("missing a group", recorded)
+
+    def test_it_refuses_a_reserved_directory_object_before_samba(self):
+        # SAFE_NAME admits `administrator`, `krbtgt`, `guest` and `root`, and
+        # Active Directory matches sAMAccountName case-insensitively. Without
+        # this refusal an overlay naming one of them needed no credential at
+        # all -- the account "already exists" -- and the driver ADOPTED it:
+        # uidNumber, gidNumber, loginShell, unixHomeDirectory and
+        # userPrincipalName were stamped onto the KDC's own account, or onto
+        # the built-in domain administrator, before any fail-closed check ran.
+        for name in ("administrator", "krbtgt", "guest", "root", "nobody",
+                     "daemon", "bin", "sys", "dns-controller"):
+            with self.subTest(name=name):
+                result, recorded, _ = self.run_driver(
+                    [self.entry(name=name, create=False,
+                                unixHomeDirectory="/home/" + name)])
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("reserved directory object", recorded)
+                # And by role, not by the name it refused.
+                self.assertIn("standard_user", recorded)
+
+    def test_the_resolver_refuses_the_same_reserved_names(self):
+        # Two enforcement points on purpose -- the control host, where nothing
+        # has been installed yet, and the guest, at the moment of use -- so the
+        # two lists have to be the same list.
+        import re
+
+        def constants(path):
+            source = path.read_text()
+            names = re.search(
+                r"RESERVED_NAMES = frozenset\(\{(.*?)\}\)", source, re.S)
+            prefixes = re.search(r"RESERVED_PREFIXES = \((.*?)\)", source)
+            self.assertIsNotNone(names, path)
+            self.assertIsNotNone(prefixes, path)
+            return (set(re.findall(r'"([^"]+)"', names.group(1))),
+                    set(re.findall(r'"([^"]+)"', prefixes.group(1))))
+
+        driver = constants(self.DRIVER)
+        resolver = constants(RESOLVER)
+        self.assertEqual(driver, resolver)
+        self.assertIn("krbtgt", driver[0])
+        self.assertIn("administrator", driver[0])
+        self.assertIn("dns-", driver[1])
 
     def test_it_refuses_to_rotate_a_password_without_the_switch(self):
         # An account that already exists keeps its password. Rewriting one
@@ -1065,7 +1376,11 @@ class TestDurableAccountDriver(unittest.TestCase):
                 [self.entry(create=False, reset_password=True,
                             password_file=path)], directory=scratch)
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("refusing to rotate the password of a", recorded)
+            # By ROLE, never by name: this text is written to a file Ansible
+            # reads back and prints.
+            self.assertIn(
+                "refusing to rotate the password of standard_user", recorded)
+            self.assertNotIn("of a:", recorded)
             self.assertIn("homelab_ad_account_password_reset_enabled", recorded)
             # With the switch, the same plan gets as far as reading the file --
             # and stops on this unprivileged file's ownership, not on the
@@ -1134,22 +1449,40 @@ class DurableAccountSimulation:
             "stdout_lines": list(existing)}
         return variables
 
-    def resolved(self, roles):
+    def resolved(self, roles, roster=None):
         """The plan the control-host resolver renders for *roles*, verbatim.
 
         Run for real rather than reconstructed: the point of the bridge is that
         the guest consumes exactly what the one rule produced.
+
+        Resolved against a PLACEHOLDER overlay this test writes, never against
+        whatever `homelab/instance/identity/principals.json` the machine
+        running the tests happens to carry. Without that, the moment the owner
+        created their own overlay these expectations would have started
+        asserting against their real account names -- names that would then
+        appear in a failure message, a CI log and a transcript, which is
+        exactly what ADR 0046 exists to prevent -- and the tests would have
+        passed or failed depending on whose checkout they ran in.
         """
         import json
 
-        result = subprocess.run(
-            [sys.executable, str(RESOLVER),
-             "--roles", ",".join(roles),
-             "--admin-group", self.defaults["homelab_ad_posix_admin_group"],
-             "--group-rids-json",
-             json.dumps(self.defaults["homelab_ad_posix_group_rids"])],
-            capture_output=True, text=True,
-        )
+        with tempfile.TemporaryDirectory() as scratch:
+            overlay = Path(scratch) / "principals.json"
+            overlay.write_text(json.dumps({
+                "schema_version": 1,
+                "principals": {role: {"name": name} for role, name
+                               in (roster or RENAMED_ROSTER).items()},
+            }), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(RESOLVER),
+                 "--roles", ",".join(roles),
+                 "--admin-group",
+                 self.defaults["homelab_ad_posix_admin_group"],
+                 "--group-rids-json",
+                 json.dumps(self.defaults["homelab_ad_posix_group_rids"]),
+                 "--identity-overlay", str(overlay)],
+                capture_output=True, text=True,
+            )
         self.case.assertEqual(0, result.returncode, result.stderr)
         return json.loads(result.stdout)
 
@@ -1168,10 +1501,41 @@ class DurableAccountSimulation:
             "Require a password-file path for every declared durable account",
             dict(self.defaults, homelab_ad_account_plan=plan))
 
-    def password_file_is_accepted(self, stat):
+    def password_faults(self, stats):
+        """The name-free verdicts the role derives from a set of stat results.
+
+        *stats* maps contract role -> stat dict: exactly the shape of the
+        results the role registers from its own per-account stat loop.
+        """
+        results = [{"item": {"contract_role": role,
+                             "name": "roster-" + role[0],
+                             "password_file": "/run/secrets/roster-" + role[0]},
+                    "stat": value}
+                   for role, value in stats.items()]
+        expression = self.case.named(
+            "Reduce each staged password file to a name-free verdict")[
+                "ansible.builtin.set_fact"][
+                    "homelab_ad_account_password_faults"]
+        return self.render(expression, dict(
+            self.defaults,
+            homelab_ad_account_password={"results": results}))
+
+    def password_files_are_accepted(self, stats):
         return self.holds(
-            "Require a protected password file for every new durable account",
-            dict(self.defaults, item={"stat": stat}))
+            "Require a protected password file for every durable account "
+            "needing one",
+            dict(self.defaults,
+                 homelab_ad_account_password_faults=self.password_faults(
+                     stats)))
+
+    def credentials_needed(self, plan):
+        """Which accounts the role decides must have a file staged this run."""
+        expression = self.case.named(
+            "Select the durable accounts whose credential must be staged now")[
+                "ansible.builtin.set_fact"][
+                    "homelab_ad_account_credentials_needed"]
+        return self.render(
+            expression, dict(self.defaults, homelab_ad_account_plan=plan))
 
     def allocation_is_accepted(self, entry, stdout, renumber=False):
         return self.holds(

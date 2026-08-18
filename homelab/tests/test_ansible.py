@@ -329,7 +329,10 @@ class TestDomainControllerStorage(unittest.TestCase):
         task = self.named("Export optional per-user UNAS home shares")
         block = task["ansible.builtin.blockinfile"]["block"]
         self.assertIn("[homes]", block)
-        self.assertIn("path = /srv/unas/%S", block)
+        # ONE declaration of the share root: this used to be a `/srv/unas`
+        # literal while homelab_ad_share_root (then
+        # homelab_ad_account_share_root) was wired to nothing at all.
+        self.assertIn("path = {{ homelab_ad_share_root }}/%S", block)
         self.assertIn("valid users = %S", block)
         self.assertIn("read only = no", block)
         self.assertIn("browseable = no", block)
@@ -337,7 +340,11 @@ class TestDomainControllerStorage(unittest.TestCase):
     def test_the_share_root_directory_is_created(self):
         task = self.named("Create the optional per-user UNAS share root")
         options = task["ansible.builtin.file"]
-        self.assertEqual(options["path"], "/srv/unas")
+        self.assertEqual(options["path"], "{{ homelab_ad_share_root }}")
+        self.assertEqual(
+            self.defaults()["homelab_ad_share_root"], "/srv/unas",
+            "controller_principals.py stages the acceptance roster under this "
+            "path with its own literal, so the default may not move")
         self.assertEqual(options["state"], "directory")
 
     def test_rfc2307_idmap_lets_the_share_owner_read_their_files(self):
@@ -534,7 +541,7 @@ class TestDomainControllerShareNameResolution(unittest.TestCase):
         self.assertEqual(argv[0], "/usr/bin/testparm")
         self.assertIn("--section-name=homes", argv)
         self.assertIn("--parameter-name=path", argv)
-        self.assertIn("/srv/unas/%S", task["failed_when"])
+        self.assertIn("homelab_ad_share_root ~ '/%S'", task["failed_when"])
         self.assertIn("rc != 0", task["failed_when"])
         self.assertIs(task["changed_when"], False)
 
@@ -712,14 +719,15 @@ class TestDurableDirectoryAccounts(unittest.TestCase):
                       if task.get("name")
                       == "Export optional per-user UNAS home shares")
         served = export["ansible.builtin.blockinfile"]["block"]
-        root = self.defaults()["homelab_ad_account_share_root"]
-        self.assertIn(f"path = {root}/%S", served)
+        # They cannot diverge any more: both are the same variable, and the
+        # test above pins its default.
+        self.assertIn("path = {{ homelab_ad_share_root }}/%S", served)
         create = self.named(
             "Create each durable account's per-user storage directory")
         options = create["ansible.builtin.file"]
         self.assertEqual(
             options["path"],
-            "{{ homelab_ad_account_share_root }}/{{ item.name }}")
+            "{{ homelab_ad_share_root }}/{{ item.name }}")
         # Numeric owner and group, from the directory-stored POSIX identity:
         # the same chown controller_principals.py performs, and it must not
         # depend on the name service being warm.
@@ -755,7 +763,12 @@ class TestDurableDirectoryAccounts(unittest.TestCase):
                           "unixHomeDirectory"):
             with self.subTest(attribute=attribute):
                 self.assertIn(attribute, argv[4])
-                self.assertIn(f"'{attribute}: '", posix["failed_when"])
+                # Anchored per-line regex, not a substring. The substring test
+                # this used to make ("'uidNumber: ' in stdout") was satisfied
+                # by a stored `uidNumber: 105123` when the plan said 10512, so
+                # an account numbered ten times too high verified clean.
+                self.assertIn(f"'(?m)^{attribute}:", posix["failed_when"])
+                self.assertIn("$')", posix["failed_when"])
         self.assertIn("rc != 0", posix["failed_when"])
         self.assertIs(posix["changed_when"], False)
         self.assertNotIn("ignore_errors", posix)
@@ -821,6 +834,13 @@ class TestInstanceTemplate(unittest.TestCase):
 
     TEMPLATE = ROOT / "instance-example"
 
+    # group_vars lives INSIDE inventory/. Ansible looks for group and host
+    # variables in the directory the inventory source lives in and nowhere
+    # else, so the `instance-example/group_vars/` this template used to ship
+    # was loaded by nothing: every variable in it fell back to its role
+    # default, silently, including the whole durable-account declaration.
+    GROUP_VARS = "inventory/group_vars"
+
     def load(self, relative):
         return yaml.safe_load((self.TEMPLATE / relative).read_text())
 
@@ -834,23 +854,102 @@ class TestInstanceTemplate(unittest.TestCase):
                 self.assertIsInstance(yaml.safe_load(path.read_text()), dict)
 
     def test_it_supplies_every_variable_the_common_role_leaves_empty(self):
-        supplied = self.load("group_vars/all.yml")
+        supplied = self.load(f"{self.GROUP_VARS}/all.yml")
         for name, value in self.role_defaults("common").items():
             if value in ([], "", None):
                 with self.subTest(variable=name):
                     self.assertIn(name, supplied)
 
     def test_the_controller_group_names_the_optional_role_switches(self):
-        supplied = self.load("group_vars/controllers.yml")
+        supplied = self.load(f"{self.GROUP_VARS}/controllers.yml")
         for switch in ("homelab_services_enabled", "homelab_identity_enabled"):
             self.assertIn(switch, supplied)
             self.assertFalse(supplied[switch], f"{switch} must default to off")
 
+    def inventory_groups(self):
+        """Every group name this inventory defines, at any nesting depth."""
+        found = set()
+
+        def walk(children):
+            for name, body in (children or {}).items():
+                found.add(name)
+                walk((body or {}).get("children"))
+
+        walk(self.load("inventory/hosts.yml")["all"]["children"])
+        return found
+
     def test_the_inventory_has_the_groups_the_playbooks_target(self):
-        inventory = self.load("inventory/hosts.yml")
-        groups = inventory["all"]["children"]
-        self.assertIn("controllers", groups)
-        self.assertIn("workstations", groups)
+        # Named for what it now checks. It used to assert `controllers` and
+        # `workstations` and stop there, while the ONE role-bearing playbook --
+        # playbooks/bootstrap-controller.yml, the only play that carries
+        # domain_controller -- targets `bootstrap_controllers`, which no
+        # inventory defined. The documented escape hatch
+        # (`make homelab-bootstrap-controller INVENTORY=...`) therefore matched
+        # zero hosts and printed a warning rather than failing, so the durable
+        # directory accounts had no wired path to the Controller at all.
+        groups = self.inventory_groups()
+        for path in sorted((ANSIBLE / "playbooks").glob("*.yml")):
+            for play in yaml.safe_load(path.read_text()):
+                pattern = play["hosts"]
+                self.assertNotIn(
+                    "{{", str(pattern),
+                    f"{path.name} targets a templated pattern this test "
+                    "cannot resolve")
+                for name in str(pattern).replace(":", ",").split(","):
+                    name = name.strip().lstrip("&!")
+                    if not name or name in ("all", "*", "localhost"):
+                        continue
+                    with self.subTest(playbook=path.name, group=name):
+                        self.assertIn(name, groups)
+
+    def test_the_controller_is_in_both_groups_that_converge_it(self):
+        # The Controller has to be a member of `controllers` as well, whichever
+        # play reaches it: group_vars are resolved per HOST from every group it
+        # belongs to, and group_vars/controllers.yml is where every AD variable
+        # lives. A Controller listed only under `bootstrap_controllers` would be
+        # reachable by the play that carries the role and would then fail on the
+        # role's very first assert with all four identity variables empty.
+        children = self.load("inventory/hosts.yml")["all"]["children"]
+        bootstrap = children["bootstrap_controllers"]
+        self.assertEqual(list(bootstrap["children"]), ["controllers"])
+        self.assertNotIn(
+            "hosts", bootstrap,
+            "declare bootstrap_controllers as a parent of controllers rather "
+            "than as a second list of the same hosts, which can drift")
+
+    def test_the_group_variables_live_where_ansible_looks_for_them(self):
+        # Ansible resolves group_vars/ and host_vars/ relative to the inventory
+        # SOURCE. A group_vars/ beside inventory/ rather than inside it is
+        # parsed by nothing: `ansible-inventory --list` shows `ansible_user` as
+        # the host's only variable, and every role default silently applies.
+        self.assertTrue((self.TEMPLATE / self.GROUP_VARS).is_dir())
+        self.assertTrue(
+            (self.TEMPLATE / self.GROUP_VARS / "all.yml").is_file())
+        self.assertFalse(
+            (self.TEMPLATE / "group_vars").exists(),
+            "group_vars must live inside inventory/, not beside it")
+
+    def test_the_controller_group_supplies_the_permanent_ad_identity(self):
+        # The domain_controller role's FIRST task asserts all four of these are
+        # non-empty, before it touches anything. The role ships them empty on
+        # purpose (a default here would be somebody else's realm), so a template
+        # that does not name them means the first host-side run dies on task 1
+        # with no indication of what to fill in.
+        supplied = self.load(f"{self.GROUP_VARS}/controllers.yml")
+        defaults = self.role_defaults("domain_controller")
+        for name in ("homelab_ad_dns_domain", "homelab_ad_realm",
+                     "homelab_ad_netbios_domain",
+                     "homelab_ad_expected_hostname"):
+            with self.subTest(variable=name):
+                self.assertEqual(defaults[name], "",
+                                 "the role must keep no public default")
+                self.assertIn(name, supplied)
+                self.assertTrue(str(supplied[name]).strip())
+        # Off, and staged out of band: first provisioning is one deliberate run
+        # and its credential never enters this overlay.
+        self.assertIs(supplied["homelab_ad_provision_enabled"], False)
+        self.assertEqual(supplied["homelab_ad_admin_password_file"], "")
+        self.assertEqual(supplied["homelab_ad_directory_accounts"], [])
 
     def test_the_template_carries_no_key_material(self):
         # A template with a real-looking key in it is a key somebody will use.
@@ -883,10 +982,20 @@ class TestInstanceTemplate(unittest.TestCase):
                              configuration, re.MULTILINE)
         self.assertIsNotNone(callback, "no stdout_callback is declared")
         self.assertIn(callback.group(1), ("default", "ansible.builtin.default"))
-        # The replacement only renders as YAML with this option set.
-        self.assertRegex(configuration, r"(?m)^result_format\s*=\s*yaml$",
-                         msg="result_format=yaml is what restores the YAML "
-                             "output the removed callback used to give")
+        # The replacement only renders as YAML with this option set -- under
+        # the key ansible-core actually reads. `result_format` is the option's
+        # name ON THE CALLBACK PLUGIN; the ini key in [defaults] is
+        # `callback_result_format` (ansible-core's result_format_callback
+        # documentation fragment). Spelled the other way ansible-core ignored
+        # it without a word and every host-side run printed JSON, which
+        # `ansible-config dump --type all` reports as
+        # `result_format(default) = json`. This test asserted the spelling that
+        # does nothing.
+        self.assertRegex(
+            configuration, r"(?m)^callback_result_format\s*=\s*yaml$",
+            msg="callback_result_format=yaml is the recognised ini key; "
+                "result_format=yaml in a configuration file is inert")
+        self.assertNotRegex(configuration, r"(?m)^result_format\s*=")
 
 
 class TestNoInstanceData(unittest.TestCase):

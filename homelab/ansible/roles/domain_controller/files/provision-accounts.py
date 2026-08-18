@@ -31,7 +31,59 @@ import stat as stat_module
 from pathlib import Path
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+SAFE_CONTRACT_ROLE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 POSIX_ATTRIBUTES = ("uidNumber", "gidNumber", "loginShell", "unixHomeDirectory")
+
+# Directory objects this program refuses to touch, compared case-insensitively
+# because Active Directory matches sAMAccountName case-insensitively and
+# SAFE_NAME only admits lower case.
+#
+# Without this list the create decision was purely "is this name in the account
+# listing the role took", so a reserved name needed no credential at all and
+# was ADOPTED: the attribute convergence below stamped uidNumber, gidNumber,
+# loginShell, unixHomeDirectory and userPrincipalName onto it BEFORE any
+# fail-closed check ran. An overlay naming `krbtgt` therefore rewrote the KDC's
+# own account and only then raised; one naming `administrator` completed
+# "successfully" and handed the built-in domain administrator a POSIX identity
+# and a per-user share.
+#
+#   * administrator, guest, krbtgt are created by Samba's own provisioning and
+#     belong to the directory, not to any roster.
+#   * root, daemon, bin, sys, nobody are local UNIX system accounts on every
+#     managed machine, and nsswitch consults files before winbind, so a
+#     directory account with one of those names can never resolve to itself.
+#
+# RESERVED_PREFIXES covers Samba's per-DC DNS service account, `dns-<netbios>`,
+# whose suffix this program cannot know.
+#
+# The same two constants are restated in files/resolve-directory-accounts.py so
+# the control host refuses before anything is installed on the target, and a
+# unit test asserts the two copies agree.
+RESERVED_NAMES = frozenset({
+    "administrator", "guest", "krbtgt",
+    "root", "daemon", "bin", "sys", "nobody",
+})
+RESERVED_PREFIXES = ("dns-",)
+
+
+def reserved(name):
+    """True when *name* is a directory object no roster may adopt."""
+    folded = str(name).strip().lower()
+    return (folded in RESERVED_NAMES
+            or any(folded.startswith(prefix)
+                   for prefix in RESERVED_PREFIXES))
+
+
+def described(entry):
+    """How this program names an account in anything it writes down.
+
+    The CONTRACT ROLE, never the account's own name. The name is instance data
+    (ADR 0046) and this program's diagnostic is read back by Ansible, printed to
+    a terminal and kept in whatever transcript the operator keeps; the role is
+    tracked vocabulary that identifies the account just as precisely.
+    """
+    return str(entry.get("contract_role") or "an undeclared contract role")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--plan-json", required=True)
@@ -71,6 +123,22 @@ def validated(plan, groups, base):
         raise ValueError("durable account name is invalid")
     if len(set(names)) != len(names):
         raise ValueError("durable account roster repeats a name")
+    # Before anything else is decided, and before Samba is imported at all: a
+    # reserved object must never be looked up, let alone adopted and mutated.
+    for entry in plan:
+        if reserved(entry.get("name")):
+            raise ValueError(
+                f"durable account for {described(entry)} names a reserved "
+                "directory object; the built-in domain accounts and the local "
+                "UNIX system accounts belong to nobody's roster")
+    roles = [entry.get("contract_role") for entry in plan]
+    if any(not isinstance(role, str) or not SAFE_CONTRACT_ROLE.fullmatch(role)
+           for role in roles):
+        # Required, not optional: it is how every message this program writes
+        # names an account without naming it.
+        raise ValueError("durable account contract_role is invalid")
+    if len(set(roles)) != len(roles):
+        raise ValueError("durable account roster repeats a contract role")
     for entry in plan:
         if entry.get("role") not in ("standard", "administrator"):
             raise ValueError("durable account role is invalid")
@@ -115,40 +183,47 @@ def credential(entry):
     order is shape, then mode, then ownership, then content: nothing is read
     out of a file that any account other than root could have written.
     """
+    who = described(entry)
     path = entry.get("password_file") or ""
     if not path:
         raise ValueError(
-            f"{entry['name']} does not exist and no password-file path was "
-            "declared for it")
+            f"the account for {who} does not exist and no password-file path "
+            "was declared for it")
     try:
         info = os.lstat(path)
     except OSError as error:
         raise ValueError(
-            f"password file for {entry['name']} is missing or unreadable: "
+            f"password file for {who} is missing or unreadable: "
             f"{error.strerror}") from error
     if not stat_module.S_ISREG(info.st_mode):
-        raise ValueError(f"password file for {entry['name']} is not a regular file")
+        raise ValueError(f"password file for {who} is not a regular file")
     if stat_module.S_IMODE(info.st_mode) != 0o600:
-        raise ValueError(f"password file for {entry['name']} is not mode 0600")
+        raise ValueError(f"password file for {who} is not mode 0600")
     if info.st_uid != 0:
-        raise ValueError(f"password file for {entry['name']} is not owned by root")
+        raise ValueError(f"password file for {who} is not owned by root")
     try:
         first_line = Path(path).read_text(encoding="utf-8").splitlines()[0]
     except (OSError, IndexError, UnicodeError) as error:
         raise ValueError(
             f"cannot read a first line from the password file for "
-            f"{entry['name']}: {error}") from error
+            f"{who}: {error}") from error
     value = first_line.strip()
     if not value:
         raise ValueError(
-            f"password file for {entry['name']} must have a nonempty first line")
+            f"password file for {who} must have a nonempty first line")
     return value
 
 
 status = ""
 returncode = 1
 credentials = {}
-summary = {"changed": False, "created": [], "updated": [], "verified": []}
+# Every list here holds CONTRACT ROLES, never account names: this document is
+# printed on stdout, read back by Ansible and kept in whatever transcript the
+# operator keeps. Groups are counted separately from accounts because a
+# well-known group name is not an account and mixing them made "which of my
+# accounts changed" unanswerable.
+summary = {"changed": False, "created": [], "updated": [], "verified": [],
+           "groups_updated": []}
 try:
     plan, groups = validated(
         parsed(args.plan_json, "--plan-json"),
@@ -165,7 +240,7 @@ try:
         wants_reset = bool(entry.get("reset_password"))
         if wants_reset and not args.allow_password_reset:
             raise ValueError(
-                f"refusing to rotate the password of {entry['name']}: set "
+                f"refusing to rotate the password of {described(entry)}: set "
                 "homelab_ad_account_password_reset_enabled for that deliberate "
                 "run and return it to false immediately afterwards")
         if entry.get("create") or wants_reset:
@@ -194,11 +269,17 @@ try:
             str(value), FLAG_MOD_REPLACE, attribute)
         samdb.modify(update)
 
-    def one(expression, attrs):
+    def one(expression, attrs, what="a directory object"):
+        """The single object *expression* selects, or None.
+
+        *what* is how the object is named if this refuses: a well-known group
+        name or a contract role, never an account name and never the filter
+        itself -- the filter carries the name.
+        """
         results = samdb.search(expression=expression, attrs=attrs)
         if len(results) > 1:
             raise RuntimeError(
-                "directory object is not stored exactly once: " + expression)
+                f"{what} is not stored exactly once in the directory")
         return results[0] if results else None
 
     # Groups first, so no account is ever created carrying a gidNumber the
@@ -207,14 +288,14 @@ try:
     for group in sorted(groups):
         gid = groups[group]
         expression = f"(&(objectClass=group)(sAMAccountName={group}))"
-        record = one(expression, ["sAMAccountName", "gidNumber"])
+        record = one(expression, ["sAMAccountName", "gidNumber"], group)
         if record is None:
             raise RuntimeError(f"well-known group is missing: {group}")
         if integers(record, "gidNumber") != [gid]:
             replace(record.dn, "gidNumber", gid)
             summary["changed"] = True
-            summary["updated"].append(group)
-        verified = one(expression, ["gidNumber"])
+            summary["groups_updated"].append(group)
+        verified = one(expression, ["gidNumber"], group)
         if verified is None or integers(verified, "gidNumber") != [gid]:
             raise RuntimeError(f"gidNumber of {group} is invalid")
 
@@ -222,10 +303,28 @@ try:
         f"(&(objectClass=group)(sAMAccountName={args.admin_group}))")
     for entry in plan:
         name = entry["name"]
-        expression = f"(sAMAccountName={name})"
+        who = described(entry)
+        # objectCategory=person keeps this on the user path. A bare
+        # (sAMAccountName=x) matches a group, a computer or any other object
+        # that happens to carry the name, and every branch below would then
+        # treat that object as this account: attributes replaced on it, a
+        # userPrincipalName stamped onto it, a password possibly written to it.
+        # sAMAccountName is unique across the whole domain, so a collision here
+        # means the roster wants a name something else already owns -- which
+        # samdb.newuser then refuses by itself, loudly, having changed nothing.
+        expression = (f"(&(objectCategory=person)(objectClass=user)"
+                      f"(sAMAccountName={name}))")
         record = one(expression, ["sAMAccountName"] + list(POSIX_ATTRIBUTES)
-                     + ["userPrincipalName"])
+                     + ["userPrincipalName"], who)
         if record is None:
+            if not entry.get("create"):
+                # The role's account listing said this account exists; this
+                # search says it does not. Creating it here would need a
+                # credential the plan never staged, so this stops.
+                raise RuntimeError(
+                    f"the directory does not hold the account for {who}, but "
+                    "this run was planning to converge it in place; the roster "
+                    "and the directory disagree, so nothing was written")
             samdb.newuser(
                 name, credentials[name],
                 force_password_change_at_next_login_req=False,
@@ -235,22 +334,33 @@ try:
                 unixhome=entry["unixHomeDirectory"],
             )
             summary["changed"] = True
-            summary["created"].append(name)
-        elif name in credentials:
-            # Only reachable with --allow-password-reset and an explicit
-            # per-account reset_password, both checked above.
+            summary["created"].append(who)
+        elif entry.get("reset_password"):
+            # The ONLY branch that rewrites an existing credential, and it is
+            # keyed on the plan's own per-account flag. Keying it on "a
+            # credential was read for this account" was wrong: a credential is
+            # also read for an account the role planned to CREATE, so any
+            # disagreement between the account listing the role took and this
+            # search -- a name added between the two, a listing that failed to
+            # mention it -- silently rewrote the password of an account that
+            # already existed.
+            if not args.allow_password_reset:
+                raise RuntimeError(
+                    f"refusing to rotate the password of {who} without "
+                    "--allow-password-reset")
             samdb.setpassword(
                 expression, credentials[name],
                 force_change_at_next_login=False)
             summary["changed"] = True
-            summary["updated"].append(name)
+            summary["updated"].append(who)
 
         record = one(expression, ["sAMAccountName", "objectSid",
                                   "userPrincipalName", "userAccountControl",
                                   "msDS-User-Account-Control-Computed",
-                                  "pwdLastSet"] + list(POSIX_ATTRIBUTES))
+                                  "pwdLastSet"] + list(POSIX_ATTRIBUTES),
+                     who)
         if record is None:
-            raise RuntimeError(f"durable account was not stored: {name}")
+            raise RuntimeError(f"durable account was not stored: {who}")
         for attribute in POSIX_ATTRIBUTES:
             wanted = entry[attribute]
             if isinstance(wanted, int):
@@ -260,17 +370,18 @@ try:
             if observed != [wanted]:
                 replace(record.dn, attribute, wanted)
                 summary["changed"] = True
-                if name not in summary["updated"]:
-                    summary["updated"].append(name)
+                if who not in summary["updated"]:
+                    summary["updated"].append(who)
         expected_upn = f"{name}@{realm}"
         if strings(record, "userPrincipalName") != [expected_upn]:
             replace(record.dn, "userPrincipalName", expected_upn)
             summary["changed"] = True
-            if name not in summary["updated"]:
-                summary["updated"].append(name)
+            if who not in summary["updated"]:
+                summary["updated"].append(who)
 
         if entry["role"] == "administrator":
-            group_record = one(admin_expression, ["member"])
+            group_record = one(
+                admin_expression, ["member"], args.admin_group)
             if group_record is None:
                 raise RuntimeError(
                     f"well-known group is missing: {args.admin_group}")
@@ -279,35 +390,43 @@ try:
                 samdb.add_remove_group_members(
                     args.admin_group, [name], add_members_operation=True)
                 summary["changed"] = True
-                if name not in summary["updated"]:
-                    summary["updated"].append(name)
+                if who not in summary["updated"]:
+                    summary["updated"].append(who)
 
     # Fail-closed verification of the end state, so a half-converged account
     # stops the run instead of producing a workstation nobody can log in to.
-    admin_record = one(admin_expression, ["member"])
+    admin_record = one(admin_expression, ["member"], args.admin_group)
+    if admin_record is None:
+        # A missing privilege group is a directory fault, not a membership
+        # fault. Reported as "membership is wrong" it sent the reader looking
+        # at the roster instead of at the domain.
+        raise RuntimeError(f"well-known group is missing: {args.admin_group}")
     admin_members = [
-        value.lower() for value in strings(admin_record or {}, "member")]
+        value.lower() for value in strings(admin_record, "member")]
     for entry in plan:
         name = entry["name"]
+        who = described(entry)
         record = one(
-            f"(sAMAccountName={name})",
+            f"(&(objectCategory=person)(objectClass=user)"
+            f"(sAMAccountName={name}))",
             ["sAMAccountName", "objectSid", "userPrincipalName",
              "userAccountControl", "msDS-User-Account-Control-Computed",
              "pwdLastSet"] + list(POSIX_ATTRIBUTES),
+            who,
         )
         if record is None:
-            raise RuntimeError(f"durable account is missing: {name}")
+            raise RuntimeError(f"durable account is missing: {who}")
         if strings(record, "sAMAccountName") != [name]:
-            raise RuntimeError(f"durable account name is invalid: {name}")
+            raise RuntimeError(f"durable account name is invalid: {who}")
         if strings(record, "userPrincipalName") != [f"{name}@{realm}"]:
-            raise RuntimeError(f"durable account UPN is invalid: {name}")
+            raise RuntimeError(f"durable account UPN is invalid: {who}")
         for attribute in POSIX_ATTRIBUTES:
             wanted = entry[attribute]
             observed = (integers(record, attribute) if isinstance(wanted, int)
                         else strings(record, attribute))
             if observed != [wanted]:
                 raise RuntimeError(
-                    f"durable account {attribute} is invalid: {name}")
+                    f"durable account {attribute} is invalid: {who}")
         controls = integers(record, "userAccountControl")
         computed = integers(record, "msDS-User-Account-Control-Computed")
         if (len(controls) != 1
@@ -316,19 +435,19 @@ try:
                 or len(computed) != 1
                 or computed[0] & (0x0010 | 0x800000) != 0):
             raise RuntimeError(
-                f"durable account is disabled, locked or passwordless: {name}")
+                f"durable account is disabled, locked or passwordless: {who}")
         password_set = integers(record, "pwdLastSet")
         if len(password_set) != 1 or password_set[0] <= 0:
-            raise RuntimeError(f"durable account has no password set: {name}")
+            raise RuntimeError(f"durable account has no password set: {who}")
         sids = [bytes(value) for value in record.get("objectSid", [])]
         if len(sids) != 1 or not sids[0]:
-            raise RuntimeError(f"durable account has no SID: {name}")
+            raise RuntimeError(f"durable account has no SID: {who}")
         is_admin = str(record.dn).lower() in admin_members
         if is_admin != (entry["role"] == "administrator"):
             raise RuntimeError(
                 f"durable account {args.admin_group} membership is wrong: "
-                f"{name}")
-        summary["verified"].append(name)
+                f"{who}")
+        summary["verified"].append(who)
     returncode = 0
     status = "exit=0\n"
 except BaseException as error:  # noqa: BLE001 - reported, never swallowed

@@ -13,6 +13,11 @@ sys.path.insert(0, str(ROOT / "vm"))
 
 import controller_factory  # noqa: E402
 
+
+def _script_text():
+    """The convergence payload for the default spec."""
+    return controller_factory._script(controller_factory.FactorySpec())
+
 NONCE = "a" * 64
 GUEST_MAC = "52:54:00:11:11:11"
 
@@ -134,11 +139,24 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertNotIn(
                 "log file = /run/telos-factory-auth-audit", script)
             self.assertIn(
-                "grep -Fxc $'\\tlog level = 0 auth_json_audit:3@", script)
-            self.assertIn(
+                "auth_audit_line=$'\\tlog level = 0 auth_json_audit:3@",
+                script)
+            self.assertIn('grep -Fxc "$auth_audit_line"', script)
+            # CONTRACT CHANGED 2026-08-17. This used to require the literal
+            # `! grep -Eq ... auth_json_audit` pre-check. Bash exempts a
+            # `!`-prefixed pipeline from `set -e`, so that line could never
+            # fail closed: on a persistent instance's second convergence it
+            # passed, a second copy of the audit line was written, and the
+            # verify below then failed -- after the write, leaving the durable
+            # smb.conf unusable by every later run.
+            self.assertNotIn(
                 "! grep -Eq '^[[:space:]]*[^#;].*auth_json_audit'",
                 script,
             )
+            self.assertIn(
+                'if [[ "$auth_audit_any" != "$auth_audit_ours" ]]; then',
+                script)
+            self.assertIn('grep -Fxv "$auth_audit_line"', script)
             self.assertIn(
                 "testparm -s /etc/samba/smb.conf >/dev/null 2>&1", script)
             self.assertNotIn("--parameter-name='log level'", script)
@@ -186,6 +204,114 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             self.assertLess(
                 script.index("probe.sendto"),
                 script.index("clock.receipt"))
+
+    def audit_step(self):
+        """The payload's auth-audit config step, retargeted at a scratch file.
+
+        Executed rather than pattern-matched: this is the step that poisoned a
+        persistent instance's durable /etc/samba/smb.conf, and the fault was
+        not visible in the text -- it was in `set -e` semantics.
+        """
+        script = _script_text()
+        start = script.index("echo 'TELOS FACTORY STEP auth-audit-config-write'")
+        end = script.index("echo 'TELOS FACTORY STEP auth-audit-restart'")
+        body = script[start:end].replace("/etc/samba/smb.conf", '"$CONF"')
+        body = body.replace('testparm -s "$CONF" >/dev/null 2>&1', "true")
+        return "set -euo pipefail\n" + body
+
+    def run_audit_step(self, directory, content):
+        conf = Path(directory) / "smb.conf"
+        conf.write_text(content)
+        step = Path(directory) / "audit-step.sh"
+        step.write_text(self.audit_step())
+        result = subprocess.run(
+            ["bash", str(step)], capture_output=True, text=True,
+            env=dict(os.environ, CONF=str(conf)))
+        return result, conf.read_text()
+
+    AUDIT_LINE = ("\tlog level = 0 auth_json_audit:3@"
+                  "/run/telos-factory-auth-audit/auth.jsonl\n")
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_the_audit_configuration_step_converges_instead_of_appending(self):
+        # A persistent instance keeps /etc/samba/smb.conf across bring-ups and
+        # no role ever templates it, so `make ... RECONVERGE=1` ran this step a
+        # second time against a file that already carried the line. The old
+        # pre-check was `! grep -Eq ...`, which bash exempts from errexit, so
+        # it could not stop anything: the second run inserted a SECOND copy and
+        # only then failed its own verify -- after the write. Every later run
+        # failed identically, and the only way out was hand-editing smb.conf
+        # over the console. With no --reconverge a converged instance is
+        # refused outright, so there was no working way to run the play at all.
+        with tempfile.TemporaryDirectory() as scratch:
+            content = "[global]\n\tworkgroup = FACTORY\n"
+            for run in (1, 2, 3):
+                with self.subTest(run=run):
+                    result, content = self.run_audit_step(scratch, content)
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual(1, content.count(self.AUDIT_LINE))
+                    self.assertEqual(1, content.count("auth_json_audit"))
+            self.assertTrue(content.startswith("[global]\n"))
+            self.assertIn("\tworkgroup = FACTORY\n", content)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_the_audit_configuration_step_repairs_a_poisoned_file(self):
+        # The state a pre-2026-08-17 payload left behind. Converging it costs
+        # nothing extra and is the difference between a persistent instance
+        # that can be re-run and one that needs console surgery.
+        with tempfile.TemporaryDirectory() as scratch:
+            result, content = self.run_audit_step(
+                scratch,
+                "[global]\n" + self.AUDIT_LINE + self.AUDIT_LINE
+                + "\tworkgroup = FACTORY\n")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, content.count(self.AUDIT_LINE))
+        self.assertIn("\tworkgroup = FACTORY\n", content)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_the_audit_configuration_step_refuses_a_foreign_setting(self):
+        # The property the vacuous pre-check was reaching for, now able to
+        # fail: an auth_json_audit setting this payload did not write is
+        # somebody else's decision about where authentication events go, and it
+        # is refused BEFORE anything is written.
+        foreign = "\tlog level = 3 auth_json_audit:5@/var/log/elsewhere\n"
+        with tempfile.TemporaryDirectory() as scratch:
+            result, content = self.run_audit_step(
+                scratch, "[global]\n" + foreign + "\tworkgroup = FACTORY\n")
+        self.assertEqual(2, result.returncode)
+        self.assertIn("did not write", result.stderr)
+        # Nothing was written: the file is exactly as it was found.
+        self.assertEqual(
+            content, "[global]\n" + foreign + "\tworkgroup = FACTORY\n")
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_the_audit_configuration_step_refuses_a_missing_global_section(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            result, _ = self.run_audit_step(scratch, "[homes]\n")
+        self.assertNotEqual(0, result.returncode)
+
+    def test_the_payload_declares_no_durable_directory_account(self):
+        # The property that keeps this payload hermetic, stated rather than
+        # inherited: the disposable Controller's roster is synthetic, per-run
+        # and staged over the serial console by controller_principals.py, and
+        # the role's whole durable-account section is gated on this list being
+        # non-empty. Durable accounts travel the host-side path instead --
+        # playbooks/bootstrap-controller.yml from a control host that has the
+        # private identity overlay and an operator who can stage a credential
+        # file -- so nothing here may ever put a real account name, or a
+        # credential per account, onto a medium built for a disposable guest.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = controller_factory.FactoryBundle(
+                ROOT.parent, root / "factory.iso",
+                authorization_nonce=NONCE)
+            stage = bundle.stage(root / "stage")
+            variables = json.loads((stage / "factory-vars.json").read_text())
+            staged = sorted(
+                path.name for path in stage.rglob("*") if path.is_file())
+        self.assertEqual(variables["homelab_ad_directory_accounts"], [])
+        # One credential on the medium, the synthetic domain Administrator's.
+        self.assertEqual(1, sum(1 for name in staged if name == "ad-admin"))
 
     def test_verifier_covers_ad_dns_pxe_http_and_authority_split(self):
         checks = "\n".join(controller_factory.verification_commands(
