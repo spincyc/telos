@@ -2937,7 +2937,15 @@ class RescuePasswordTests(SerialTranscriptCase):
             (Path(__file__).resolve().parents[1] / "workstations"
              / "identity_lifecycle.json").read_text(encoding="utf-8"))
         rescue = contract["principals"]["local_rescue"]
-        self.assertEqual(rescue["name"], RESCUE_PRINCIPAL)
+        # The contract names the SYNTHETIC account, so compare it against the
+        # roster resolved with the overlay held out of the way. RESCUE_PRINCIPAL
+        # itself follows the overlay, and an owner who renames the break-glass
+        # account has not broken the acceptance contract.
+        from homelab.workstations.arch_second import identity_roster
+        contract_roster = identity_roster(
+            overlay_path=Path(__file__).with_name(
+                "no-such-identity-overlay.json"))
+        self.assertEqual(rescue["name"], contract_roster["local_rescue"])
         self.assertEqual(rescue["domain_role"], "none")
         from homelab.vm.controller_principals import POSIX_ALLOCATION
         self.assertNotIn(RESCUE_PRINCIPAL, POSIX_ALLOCATION["users"])

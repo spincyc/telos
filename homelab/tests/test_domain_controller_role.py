@@ -564,9 +564,15 @@ class TestOneUidRuleInOnePlace(DurableAccountBase):
         self.assertEqual(principals.directory_group_allocation(),
                          {"Domain Users": 10513, "Domain Admins": 10512})
         # The disposable acceptance path itself: the same numbers, untouched.
+        # Read from the no-overlay allocation resolved above, not from the
+        # module-level one -- that resolves WITH whatever overlay the machine
+        # running the tests happens to have, so keying it by a synthetic name
+        # raises KeyError on the owner's own checkout. The numbers stay pinned;
+        # only the lookup stops depending on whose machine this is.
+        acceptance = principals._posix_allocation(roster)
         self.assertEqual(
-            principals.POSIX_ALLOCATION["users"]["student"]["uidNumber"], 10000)
-        self.assertEqual(principals.POSIX_ALLOCATION["groups"],
+            acceptance["users"]["student"]["uidNumber"], 10000)
+        self.assertEqual(acceptance["groups"],
                          {"Domain Users": 10513, "Domain Admins": 10512})
 
 

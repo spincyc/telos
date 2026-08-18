@@ -352,9 +352,15 @@ class ArchSecondTests(unittest.TestCase):
         # sudoers rule, and no password is ever staged for local-rescue.
         self.assertIn(
             "useradd --create-home --groups wheel --shell /bin/bash", script)
-        self.assertIn("local-rescue", script)
+        # Derived, not pinned: render_installer bakes the RESOLVED names into
+        # the script, so an overlay that renames a role renames these too. The
+        # synthetic defaults are asserted as a contract in IdentityRosterTests,
+        # where the overlay is deliberately held out of the way.
+        roster = identity_roster()
+        self.assertIn(roster["local_rescue"], script)
         self.assertIn("%wheel ALL=(ALL:ALL) ALL", script)
-        self.assertIn("operator ALL=(ALL:ALL) ALL", script)
+        self.assertIn(
+            f"{roster['daily_administrator']} ALL=(ALL:ALL) ALL", script)
         self.assertNotIn("passwd local-rescue", script)
         self.assertNotIn("chpasswd", script)
         # Disabled, not empty: useradd with no -p leaves "!" in /etc/shadow,
