@@ -87,6 +87,16 @@ FACTORY_COMPARE_EVIDENCE ?=
 # persistence must be asked for by name, never inferred.
 PERSISTENT_DC_ROOT ?= build/homelab/vm/persistent-dc
 PERSISTENT_DC ?=
+# Lifecycle recovery (gate 11). All three were used by the recipes below long
+# before they were declared here, which made a reader guess at their shape.
+# RECOVERY_RUN names a fresh run-bundle directory and has no default: a
+# recovery run must be aimed deliberately. RECOVERY_BOOT is a non-empty opt-in
+# that forwards --boot, so the default costs no guest boot. RECOVERY_EVIDENCE
+# names an already-produced recovery-evidence.jsonl for the read-only judge.
+RECOVERY_RUN ?=
+RECOVERY_BOOT ?=
+RECOVERY_EVIDENCE ?=
+
 # Both empty by default so the convergence keeps its own long in-guest bound and
 # never reconverges by accident. FACTORY_DURATION is deliberately NOT reused: its
 # 120-second default would abort a Samba provisioning run.
@@ -141,6 +151,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-bootstrap-vm-plan homelab-bootstrap-vm-status \
 	homelab-bootstrap-vm-create homelab-bootstrap-vm-run \
 	homelab-bootstrap-vm-boot homelab-bootstrap-vm-destroy \
+	homelab-bootstrap-vm-install \
 	homelab-bootstrap-network-preflight homelab-bootstrap-network-plan \
 	homelab-bootstrap-network-host-plan homelab-bootstrap-network-host-prepare \
 	homelab-bootstrap-network-receipt homelab-bootstrap-network-authorize \
@@ -552,6 +563,44 @@ homelab-bootstrap-vm-destroy:
 	fi
 	@$(PYTHON) homelab/vm/bootstrap_dc.py destroy --confirm '$(CONFIRM)'
 
+# Install the canonical Controller image: the one step every live factory
+# activity waits on, and until now a long manual console session. This boots
+# the Arch ISO's kernel directly with console=ttyS0, so the manual `e` edit at
+# the boot menu is gone, and answers the installer's prompts over the serial
+# line the way the acceptance matrix already does (ADR 0058).
+#
+# Two answers are yours and are not automated away. CONFIRM carries the erasure
+# phrase the installer asks you to type; the driver relays exactly those bytes
+# and holds no copy of the phrase it could send on its own, so a person still
+# answers the confirmation. The console password is read by getpass at your
+# terminal and is never a Make variable, an environment variable, a file, or an
+# argv element.
+#
+# Without APPLY=1 this is a dry run that prints the launch boundary and starts
+# nothing. With APPLY=1 it refuses unless the manifest declares this exact disk
+# serial and the image is still byte-identical to a newly created one, so it
+# cannot be pointed at a Controller that already works.
+homelab-bootstrap-vm-install: $(if $(strip $(ISO)),,homelab-media-arch)
+	@if [ -z '$(SEED_ISO)' ]; then \
+		echo 'require SEED_ISO=<the offline TELOS_SEED medium>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 and CONFIRM=<the erasure phrase the installer asks you to type> to install'; \
+		$(PYTHON) homelab/vm/bootstrap_install.py \
+			--iso '$(if $(ISO),$(ISO),$(ARCH_ISO))' \
+			--seed-iso '$(SEED_ISO)'; \
+	else \
+		if [ -z '$(CONFIRM)' ]; then \
+			echo 'refusing to erase the canonical image; require CONFIRM=<the erasure phrase the installer asks you to type>' >&2; \
+			exit 2; \
+		fi; \
+		$(PYTHON) homelab/vm/bootstrap_install.py \
+			--iso '$(if $(ISO),$(ISO),$(ARCH_ISO))' \
+			--seed-iso '$(SEED_ISO)' \
+			--confirm '$(CONFIRM)' --apply; \
+	fi
+
 # Physical attachment is a separate gate from VM creation and service
 # convergence. NETWORK_CONFIG stays in the private overlay and must describe a
 # tap and bridge that the operator created before running these targets.
@@ -746,10 +795,11 @@ homelab-factory-persistent-plan:
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
 		exit 2; \
 	fi
-	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+	@$(PYTHON) homelab/vm/bootstrap_dc.py \
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+		persistent-up \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
-		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
 
 homelab-factory-persistent-status:
@@ -772,16 +822,18 @@ homelab-factory-persistent-up:
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to create and boot the persistent instance'; \
-		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-up \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
 	else \
-		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-up \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-up \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
 			--apply; \
 	fi
@@ -810,10 +862,11 @@ homelab-factory-persistent-converge-plan:
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
 		exit 2; \
 	fi
-	@$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+	@$(PYTHON) homelab/vm/bootstrap_dc.py \
+		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+		persistent-converge \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
-		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
 
 homelab-factory-persistent-converge:
@@ -823,16 +876,18 @@ homelab-factory-persistent-converge:
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to provision the directory; it will ask at this terminal for the local-rescue and Administrator passwords'; \
-		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-converge \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
 	else \
-		$(PYTHON) homelab/vm/bootstrap_dc.py persistent-converge \
+		$(PYTHON) homelab/vm/bootstrap_dc.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			persistent-converge \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
 			$(if $(RECONVERGE),--reconverge) \
 			$(if $(PERSISTENT_CONVERGE_TIMEOUT),--timeout '$(PERSISTENT_CONVERGE_TIMEOUT)') \
@@ -1181,12 +1236,27 @@ homelab-private-check:
 
 # Seed the private instance overlay from the tracked template. Never overwrites:
 # the overlay is not in Git, so clobbering it loses the only copy.
+# Seed only the template paths that are actually missing. The old form tested
+# the top-level directory and nothing else, so a checkout that already had
+# homelab/instance/ but not, say, homelab/instance/identity/ was told
+# "leaving it alone" and silently got nothing -- which is this checkout's real
+# state, and left the roster with no principals file to read. An existing file
+# is never overwritten: local answers and inventories are the operator's.
 homelab-instance:
-	@if [ -d homelab/instance ]; then \
-		echo "homelab/instance already exists, leaving it alone"; \
+	@seeded=$$(find homelab/instance-example -type f -printf '%P\n' | sort | \
+		while read -r item; do \
+			if [ ! -e "homelab/instance/$$item" ]; then \
+				mkdir -p "homelab/instance/$$(dirname "$$item")"; \
+				cp "homelab/instance-example/$$item" "homelab/instance/$$item"; \
+				printf '  %s\n' "$$item"; \
+			fi; \
+		done); \
+	if [ -z "$$seeded" ]; then \
+		echo "homelab/instance already holds every template path; nothing was changed"; \
 	else \
-		cp -r homelab/instance-example homelab/instance; \
-		echo "seeded homelab/instance from the template; fill in the placeholders"; \
+		echo "seeded these missing paths from homelab/instance-example:"; \
+		printf '%s\n' "$$seeded"; \
+		echo "fill in their placeholders before using them"; \
 	fi
 
 # Syntax-check the convergence playbooks. Structural invariants are covered by

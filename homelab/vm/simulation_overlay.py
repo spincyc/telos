@@ -30,6 +30,13 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+try:
+    from .controller_image import ControllerImageError
+    from .controller_image import assert_installed as _assert_installed
+except ImportError:  # Direct execution from homelab/vm.
+    from controller_image import ControllerImageError
+    from controller_image import assert_installed as _assert_installed
+
 #: Exclusivity lock beside a controller state directory's disk. One name for
 #: both models: a disposable run locks the canonical state directory and a
 #: persistent instance locks its own, so neither can ever be run twice at once.
@@ -67,6 +74,14 @@ PERSISTENT_MODE = "persistent"
 #: rewrite adds it only after the guest has *proved* it converged, so the marker
 #: can understate convergence after a crash but can never overstate it.
 PERSISTENT_CONVERGENCE_KEY = "converged"
+#: The marker key recording that a convergence *reached* the stage that
+#: provisions the directory. Written the moment the guest announces that stage,
+#: not at the end: a run that dies after provisioning but before its
+#: convergence record leaves a directory whose Administrator password is
+#: already set, and a later attempt must not confidently ask for a new one it
+#: cannot apply. Its absence means "no attempt has ever got that far".
+PERSISTENT_PROVISIONING_KEY = "provisioning_attempted"
+
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
 #: later bring-up compares against to prove the same directory came back rather
@@ -87,6 +102,24 @@ DESTROY_CONFIRMATION_PREFIX = "DESTROY"
 # unchanged. The budget is tiny so a real un-inspectable process is not masked.
 _PROCESS_INSPECT_ATTEMPTS = 6
 _PROCESS_INSPECT_BACKOFF_SECONDS = 0.05
+
+
+def assert_installed_controller_image(disk: Path, *, subject: str) -> None:
+    """Refuse a Controller source image that holds no installation.
+
+    ``_regular_file`` was the only content gate a persistent bring-up had, so
+    a never-installed canonical seeded an 80 GiB blank instance, booted it to a
+    UEFI dead end, recorded a ``seeded_from`` hash of an empty image, and
+    exited 0. The check is read-only and non-privileged; see
+    ``controller_image`` for what it actually looks at.
+    """
+    _assert_installed(
+        disk, subject=subject,
+        remedy=(
+            "Install it first with `make homelab-bootstrap-vm-install "
+            "APPLY=1 ISO=<arch iso> SEED_ISO=<seed iso> "
+            "CONFIRM=<the erasure phrase the installer asks for>`, then "
+            "retry."))
 
 
 class CanonicalDiskInUse(RuntimeError):
@@ -715,6 +748,51 @@ class PersistentControllerInstance:
         self._write_marker(marker)
         return marker
 
+    # -- provisioning attempt --------------------------------------------
+    def provisioning_attempted(self) -> dict | None:
+        """When a convergence last *reached* the directory-provisioning stage.
+
+        Distinct from ``convergence`` on purpose. A convergence record means
+        the whole run succeeded; this means only that the guest got as far as
+        the stage that creates the directory. The gap between them is the
+        dangerous window: the role skips provisioning whenever ``sam.ldb``
+        exists, so a failure inside it leaves a directory whose Administrator
+        password is the one typed on that attempt, while the host marker still
+        says "never converged". A caller that keys a *new password* prompt on
+        ``convergence() is None`` alone will ask for, confirm, and silently
+        discard a credential that cannot take effect.
+        """
+        record = self.read_marker().get(PERSISTENT_PROVISIONING_KEY)
+        if record is None:
+            return None
+        if not isinstance(record, dict) or not isinstance(
+                record.get("attempted_utc"), str):
+            raise PersistentInstanceInvalid(
+                "persistent provisioning record has no attempted_utc time")
+        return record
+
+    def record_provisioning_attempt(self) -> dict:
+        """Note, once, that a run reached the provisioning stage.
+
+        Idempotent: the first attempt's timestamp is the one that matters, and
+        a later attempt must not make the record look fresher than the state
+        it describes.
+        """
+        marker = self.read_marker()
+        existing = marker.get(PERSISTENT_PROVISIONING_KEY)
+        if isinstance(existing, dict) and existing.get("attempted_utc"):
+            return marker
+        marker[PERSISTENT_PROVISIONING_KEY] = {
+            "attempted_utc": datetime.now(UTC).isoformat(),
+            "note": (
+                "a convergence reached the directory-provisioning stage. If "
+                "it did provision, the domain Administrator password is the "
+                "one typed on that attempt and cannot be changed by running "
+                "convergence again"),
+        }
+        self._write_marker(marker)
+        return marker
+
     def _write_marker(self, marker: dict) -> None:
         staging = self.state / PERSISTENT_MARKER_STAGING_NAME
         # O_NOFOLLOW so a planted symlink at the staging name cannot redirect a
@@ -761,6 +839,14 @@ class PersistentControllerInstance:
             if not _regular_file(path):
                 raise PersistentInstanceInvalid(
                     f"{label} must be a regular, non-symlink file: {path}")
+        # Structural, not advisory: every path that seeds an instance comes
+        # through here, so no caller can create a persistent instance from an
+        # image that has never been installed.
+        try:
+            assert_installed_controller_image(
+                canonical_disk, subject="the canonical controller disk")
+        except ControllerImageError as error:
+            raise PersistentInstanceInvalid(str(error)) from error
 
         self.state.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(

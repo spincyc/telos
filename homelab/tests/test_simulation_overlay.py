@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import fake_image_tools  # noqa: E402
 import simulation_overlay  # noqa: E402
 
 
@@ -404,19 +406,24 @@ class TestPersistentControllerInstance(unittest.TestCase):
         self.canonical = self.root / "canonical"
         self.canonical.mkdir()
         self.disk = self.canonical / simulation_overlay.ACCEPTANCE_DISK_NAME
-        self.disk.write_bytes(b"canonical disk")
+        # An installed canonical, because seeding from a never-installed one is
+        # now refused. ``test_creation_refuses_a_canonical_that_was_never_installed``
+        # covers the other side.
+        fake_image_tools.installed_image(self.disk, b" canonical disk")
         self.vars = self.canonical / "OVMF_VARS.fd"
         self.vars.write_bytes(b"canonical vars")
         self.proc = self.root / "proc"
         self.proc.mkdir()
         self.instances = self.root / "instances"
 
-    def _fake_qemu_img(self, argv, **_kwargs):
-        # qemu-img create writes the guard overlay; qemu-img convert writes the
-        # instance's independent copy; qemu-img info is the lock probe.
-        if argv[1] in {"create", "convert"}:
-            Path(argv[-1]).write_bytes(b"seeded from canonical")
-        return subprocess.CompletedProcess(argv, 0)
+    def _fake_qemu_img(self, argv, **kwargs):
+        # ``create`` writes the guard overlay, ``convert`` writes the
+        # instance's independent copy, ``info`` is the lock probe -- and
+        # ``info``/``map``/``dd`` plus ``sfdisk`` are what the installed-image
+        # gate reads. ``fake_image_tools`` answers all of them consistently
+        # from the source file's content, so the gate runs for real here
+        # instead of being patched out.
+        return fake_image_tools.image_tool(argv, **kwargs)
 
     def _patch_qemu_img(self):
         patch = mock.patch.object(
@@ -527,7 +534,9 @@ class TestPersistentControllerInstance(unittest.TestCase):
             self.instance(state=canonical_state).destroy("DESTROY lab-dc1")
         with self.assertRaises(simulation_overlay.AcceptanceStateProtected):
             self.instance(state=self.canonical).create(self.disk, self.vars)
-        self.assertEqual(self.disk.read_bytes(), b"canonical disk")
+        self.assertEqual(
+            self.disk.read_bytes(),
+            fake_image_tools.INSTALLED + b" canonical disk")
 
     def test_symlinked_persistent_state_is_refused(self):
         self.instances.mkdir()
@@ -567,7 +576,9 @@ class TestPersistentControllerInstance(unittest.TestCase):
             marker["seeded_from"]["disk_sha256"],
             simulation_overlay.sha256(self.disk))
         self.assertEqual(marker["mode"], "persistent")
-        self.assertEqual(self.disk.read_bytes(), b"canonical disk")
+        self.assertEqual(
+            self.disk.read_bytes(),
+            fake_image_tools.INSTALLED + b" canonical disk")
         self.assertEqual(self.vars.read_bytes(), b"canonical vars")
         self.assertEqual(target.state.stat().st_mode & 0o777, 0o700)
         for path in (target.disk, target.vars, target.marker):
@@ -612,6 +623,78 @@ class TestPersistentControllerInstance(unittest.TestCase):
             simulation_overlay.PersistentInstanceInvalid, "instance name"
         ):
             target.create(self.disk, self.vars)
+
+    # -- the source image must actually hold an installation -------------
+    def test_creation_refuses_a_canonical_that_was_never_installed(self):
+        """A blank canonical used to seed a worthless 80 GiB instance.
+
+        ``_regular_file`` was the only content gate, so creation succeeded,
+        the marker recorded the hash of an empty image, and the failure did
+        not surface until the guest booted to a UEFI dead end.
+        """
+        self._patch_qemu_img()
+        fake_image_tools.blank_image(self.disk, b" never installed")
+        target = self.instance()
+        with self.assertRaises(
+                simulation_overlay.PersistentInstanceInvalid) as raised:
+            target.create(self.disk, self.vars)
+        message = str(raised.exception)
+        self.assertIn("not an installed Controller image", message)
+        self.assertIn("entirely unallocated", message)
+        # It names the way out rather than leaving the operator guessing.
+        self.assertIn("homelab-bootstrap-vm-install", message)
+        # Nothing was created, and the canonical was not touched.
+        self.assertFalse(target.state.exists())
+        self.assertFalse(self.instances.exists())
+
+    def test_creation_refuses_a_canonical_that_cannot_be_inspected(self):
+        """An unreadable image is refused exactly like a provably blank one."""
+        def broken(argv, **kwargs):
+            if argv[0] == "qemu-img" and argv[1] == "info":
+                return subprocess.CompletedProcess(argv, 0, "not json", "")
+            return self._fake_qemu_img(argv, **kwargs)
+
+        with mock.patch.object(
+                simulation_overlay.subprocess, "run", side_effect=broken):
+            with self.assertRaises(
+                    simulation_overlay.PersistentInstanceInvalid):
+                self.instance().create(self.disk, self.vars)
+        self.assertFalse(self.instances.exists())
+
+    # -- the provisioning-attempt record ---------------------------------
+    def test_an_instance_reports_no_provisioning_attempt_until_one_is_made(self):
+        target = self.seeded()
+        self.assertIsNone(target.provisioning_attempted())
+
+    def test_a_provisioning_attempt_is_recorded_once_and_survives_a_reread(self):
+        """The first attempt's timestamp is the one that matters.
+
+        A later attempt must not make the record look fresher than the state
+        it describes, and the record must outlive the run that wrote it --
+        that is the whole point of writing it before the run can finish.
+        """
+        target = self.seeded()
+        first = target.record_provisioning_attempt()
+        recorded = first[simulation_overlay.PERSISTENT_PROVISIONING_KEY]
+        again = target.record_provisioning_attempt()
+        self.assertEqual(
+            recorded,
+            again[simulation_overlay.PERSISTENT_PROVISIONING_KEY])
+        reread = self.instance().provisioning_attempted()
+        self.assertEqual(recorded, reread)
+        self.assertIn("attempted_utc", reread)
+        # A provisioning attempt is not a convergence: an instance that only
+        # got that far still reports no directory at all.
+        self.assertIsNone(target.convergence())
+
+    def test_a_malformed_provisioning_record_fails_closed(self):
+        target = self.seeded()
+        marker = target.read_marker()
+        marker[simulation_overlay.PERSISTENT_PROVISIONING_KEY] = {"note": "x"}
+        target._write_marker(marker)
+        with self.assertRaises(
+                simulation_overlay.PersistentInstanceInvalid):
+            self.instance().provisioning_attempted()
 
     # -- exclusivity -----------------------------------------------------
     def test_bring_up_takes_an_exclusive_lock_in_its_own_directory(self):

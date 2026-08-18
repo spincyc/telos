@@ -16,12 +16,108 @@ from typing import BinaryIO, Callable
 
 try:
     from .controller_factory import FactoryBundle
-    from .serial_automation import SerialAutomation
+    from .serial_automation import SerialAutomation, SerialAutomationError
 except ImportError:
     from controller_factory import FactoryBundle
-    from serial_automation import SerialAutomation
+    from serial_automation import SerialAutomation, SerialAutomationError
 
 DISK_SERIAL = "TELOS-BOOTSTRAP-DC1"
+
+
+def arch_volume_label(iso: Path) -> str:
+    """The Arch ISO's volume identifier, which ``archisolabel=`` must carry.
+
+    Module-level because two callers need it: the disposable acceptance
+    controller below, and ``bootstrap_install``, which boots the same kernel
+    and initramfs against the *canonical* image. One reader, one refusal.
+    """
+    volume = subprocess.run(
+        ["xorriso", "-indev", str(iso), "-pvd_info"],
+        check=True, capture_output=True, text=True)
+    match = re.search(r"^\s*Volume id\s*:\s*'([A-Z0-9_]{1,32})'\s*$",
+                      volume.stdout + volume.stderr, re.MULTILINE)
+    if not match:
+        raise RuntimeError("Arch ISO has no safe volume identifier")
+    return match.group(1)
+
+
+def extract_arch_boot_files(
+    iso: Path, kernel: Path, initramfs: Path,
+) -> None:
+    """Copy the ISO's kernel and initramfs out so QEMU can boot them directly.
+
+    Direct kernel boot is what removes the manual ``e`` edit at the boot menu:
+    ``console=ttyS0,115200n8`` goes on the command line here instead of being
+    typed by a person at a graphical prompt they cannot see.
+    """
+    for source, destination in (
+        ("/arch/boot/x86_64/vmlinuz-linux", kernel),
+        ("/arch/boot/x86_64/initramfs-linux.img", initramfs),
+    ):
+        subprocess.run(
+            ["xorriso", "-osirrox", "on", "-indev", str(iso),
+             "-extract", source, str(destination)],
+            check=True, capture_output=True)
+
+
+def isolated_qemu_prefix(code: Path, vars_: Path, *, name: str) -> list[str]:
+    """The shared, network-free QEMU preamble for an offline guest."""
+    return [
+        "qemu-system-x86_64", "-nodefaults",
+        "-name", name,
+        "-machine", "q35,accel=kvm", "-cpu", "host",
+        "-smp", "4", "-m", "8192",
+        "-display", "none", "-monitor", "none", "-serial", "stdio",
+        "-drive",
+        f"if=pflash,format=raw,readonly=on,file={code}",
+        "-drive", f"if=pflash,format=raw,file={vars_}",
+    ]
+
+
+def direct_kernel_install_command(
+    prefix: list[str],
+    *,
+    disk: Path,
+    disk_format: str,
+    kernel: Path,
+    initramfs: Path,
+    arch_label: str,
+    arch_iso: Path,
+    seed_iso: Path,
+    disk_serial: str = DISK_SERIAL,
+) -> list[str]:
+    """One argv shape for both installation targets.
+
+    The disposable acceptance controller writes a temporary raw disk and the
+    canonical driver writes ``bootstrap-dc.qcow2``; nothing else about the
+    boot differs, so ``disk`` and ``disk_format`` are the only seam. Keeping
+    one shape is the point: an acceptance run that passes proves the argv the
+    operator's real installation uses.
+    """
+    command = prefix + [
+        "-nic", "none",
+        "-kernel", str(kernel),
+        "-initrd", str(initramfs),
+        "-append",
+        "archisobasedir=arch "
+        f"archisolabel={arch_label} console=ttyS0,115200n8",
+        "-drive",
+        f"if=none,id=osdisk,format={disk_format},cache=none,file={disk}",
+        "-device",
+        f"virtio-blk-pci,drive=osdisk,serial={disk_serial},bootindex=2",
+        "-device", "virtio-scsi-pci,id=mediabus",
+    ]
+    for identifier, media, index in (
+        ("installmedia", arch_iso, 1),
+        ("seedmedia", seed_iso, 3),
+    ):
+        command += [
+            "-drive",
+            f"if=none,id={identifier},media=cdrom,readonly=on,file={media}",
+            "-device",
+            f"scsi-cd,bus=mediabus.0,drive={identifier},bootindex={index}",
+        ]
+    return command
 
 
 class DisposableFactoryController:
@@ -72,22 +168,8 @@ class DisposableFactoryController:
             ["qemu-img", "create", "-f", "raw", str(self.disk), "80G"],
             check=True, capture_output=True)
         shutil.copy2(template, self.vars)
-        volume = subprocess.run(
-            ["xorriso", "-indev", str(self.arch_iso), "-pvd_info"],
-            check=True, capture_output=True, text=True)
-        match = re.search(r"^\s*Volume id\s*:\s*'([A-Z0-9_]{1,32})'\s*$",
-                          volume.stdout + volume.stderr, re.MULTILINE)
-        if not match:
-            raise RuntimeError("Arch ISO has no safe volume identifier")
-        self.arch_label = match.group(1)
-        for source, destination in (
-            ("/arch/boot/x86_64/vmlinuz-linux", self.kernel),
-            ("/arch/boot/x86_64/initramfs-linux.img", self.initramfs),
-        ):
-            subprocess.run(
-                ["xorriso", "-osirrox", "on", "-indev", str(self.arch_iso),
-                 "-extract", source, str(destination)],
-                check=True, capture_output=True)
+        self.arch_label = arch_volume_label(self.arch_iso)
+        extract_arch_boot_files(self.arch_iso, self.kernel, self.initramfs)
         os.chmod(self.disk, 0o600)
         os.chmod(self.vars, 0o600)
         os.chmod(self.kernel, 0o600)
@@ -98,42 +180,18 @@ class DisposableFactoryController:
     def _base(self) -> list[str]:
         if not self.prepared:
             raise RuntimeError("factory controller state is not prepared")
-        return [
-            "qemu-system-x86_64", "-nodefaults",
-            "-name", "telos-factory-controller",
-            "-machine", "q35,accel=kvm", "-cpu", "host",
-            "-smp", "4", "-m", "8192",
-            "-display", "none", "-monitor", "none", "-serial", "stdio",
-            "-drive",
-            f"if=pflash,format=raw,readonly=on,file={self.code.resolve()}",
-            "-drive", f"if=pflash,format=raw,file={self.vars.resolve()}",
-        ]
+        return isolated_qemu_prefix(
+            self.code.resolve(), self.vars.resolve(),
+            name="telos-factory-controller")
 
     def install_command(self) -> list[str]:
-        command = self._base() + [
-            "-nic", "none",
-            "-kernel", str(self.kernel.resolve()),
-            "-initrd", str(self.initramfs.resolve()),
-            "-append",
-            "archisobasedir=arch "
-            f"archisolabel={self.arch_label} console=ttyS0,115200n8",
-            "-drive",
-            f"if=none,id=osdisk,format=raw,cache=none,file={self.disk.resolve()}",
-            "-device",
-            f"virtio-blk-pci,drive=osdisk,serial={DISK_SERIAL},bootindex=2",
-            "-device", "virtio-scsi-pci,id=mediabus",
-        ]
-        for identifier, media, index in (
-            ("installmedia", self.arch_iso, 1),
-            ("seedmedia", self.seed_iso, 3),
-        ):
-            command += [
-                "-drive",
-                f"if=none,id={identifier},media=cdrom,readonly=on,file={media}",
-                "-device",
-                f"scsi-cd,bus=mediabus.0,drive={identifier},bootindex={index}",
-            ]
-        return command
+        return direct_kernel_install_command(
+            self._base(),
+            disk=self.disk.resolve(), disk_format="raw",
+            kernel=self.kernel.resolve(),
+            initramfs=self.initramfs.resolve(),
+            arch_label=self.arch_label,
+            arch_iso=self.arch_iso, seed_iso=self.seed_iso)
 
     @staticmethod
     def _factory_media(path: Path) -> Path:
@@ -330,12 +388,27 @@ class FactoryInstallSerial:
         writer: BinaryIO,
         password: bytes,
         *,
+        confirmation: bytes | None = None,
         timeout: float = 1200,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not password or b"\n" in password or b"\r" in password:
             raise ValueError("factory password must be one non-empty line")
+        if confirmation is not None and (
+                not confirmation
+                or b"\n" in confirmation or b"\r" in confirmation):
+            raise ValueError(
+                "the erasure confirmation must be one non-empty line")
         self.password = password
+        # ADR 0058: the acceptance matrix answers the confirmation itself,
+        # "the way a person would". That is what the default is for, and it is
+        # only ever reached by the disposable, temporary-disk path.
+        # ``bootstrap_install`` targets the *canonical* image and always
+        # supplies this, so the phrase that erases the real Controller disk
+        # exists nowhere but in what the operator typed.
+        self.confirmation = (
+            f"ERASE {DISK_SERIAL}".encode()
+            if confirmation is None else confirmation)
         self.console = SerialAutomation(
             reader, writer, None, timeout=timeout, clock=clock)
 
@@ -372,9 +445,20 @@ class FactoryInstallSerial:
             + rb" to continue:\s*$",
             "disk-erasure-prompt",
         )
-        console._send(
-            f"ERASE {DISK_SERIAL}".encode(), "disk-erasure-authorized")
-        console._wait(rb"New password:\s*$", "console-password-prompt")
+        console._send(self.confirmation, "disk-erasure-authorized")
+        # A relayed confirmation can be wrong -- the operator typed it -- and
+        # the installer answers a mismatch with one ``install-controller:``
+        # line and exit 2. Waiting only for the password prompt would turn a
+        # typo into a full timeout, so the refusal is matched too and named.
+        answered = console._wait(
+            rb"New password:\s*$"
+            rb"|(?:^|\n)install-controller: (?P<refused>[^\n]*)\n",
+            "console-password-prompt",
+        )
+        if answered.group("refused") is not None:
+            raise SerialAutomationError(
+                "the installer refused before setting a password: "
+                + answered.group("refused").decode("utf-8", "replace"))
         console._send(self.password, "console-password-sent")
         console._wait(
             rb"Retype new password:\s*$", "console-password-confirm-prompt")
@@ -439,11 +523,13 @@ def run_install(
     state: DisposableFactoryController,
     password: bytes,
     *,
+    confirmation: bytes | None = None,
     timeout: float = 1800,
 ) -> FactoryInstallResult:
     protocol = FactoryInstallSerial(
         # Replaced with QEMU pipes before the protocol starts.
-        subprocess.DEVNULL, subprocess.DEVNULL, password, timeout=timeout)  # type: ignore[arg-type]
+        subprocess.DEVNULL, subprocess.DEVNULL, password,  # type: ignore[arg-type]
+        confirmation=confirmation, timeout=timeout)
     result = _run_qemu(
         state.install_command(), protocol, timeout=timeout)
     assert isinstance(result, FactoryInstallResult)

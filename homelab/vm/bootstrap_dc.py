@@ -20,9 +20,12 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 try:
     from .controller_factory import FactoryBundle, FactorySpec
+    from .controller_image import ControllerImageError
+    from .controller_image import probe as probe_controller_image
     from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
     from .serial_automation import SerialAutomation, SerialAutomationError
@@ -33,9 +36,12 @@ try:
         PERSISTENT_MARKER_NAME,
         PERSISTENT_VARS_NAME,
         PersistentControllerInstance,
+        assert_installed_controller_image,
     )
 except ImportError:  # Direct execution from homelab/.
     from controller_factory import FactoryBundle, FactorySpec
+    from controller_image import ControllerImageError
+    from controller_image import probe as probe_controller_image
     from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
     from serial_automation import SerialAutomation, SerialAutomationError
@@ -46,6 +52,7 @@ except ImportError:  # Direct execution from homelab/.
         PERSISTENT_MARKER_NAME,
         PERSISTENT_VARS_NAME,
         PersistentControllerInstance,
+        assert_installed_controller_image,
     )
 
 
@@ -406,17 +413,71 @@ def create(state: Path, apply: bool) -> int:
     return 0
 
 
+#: Written beside ``manifest.json`` by ``bootstrap_install``. Named here so
+#: ``status`` can report an installation this factory actually performed
+#: instead of inferring one, and so the name has a single owner.
+INSTALL_RECEIPT_NAME = "install-receipt.json"
+
+
+def _installation_report(files: dict[str, Path]) -> tuple[bool | None, str]:
+    """Whether the canonical image holds an installed Controller, and why.
+
+    ``None`` means "could not be determined", which is reported as unknown
+    rather than swallowed: this is a status query, and the one thing it must
+    not do is call an image ready when nobody has checked.
+    """
+    try:
+        state = probe_controller_image(files["disk"])
+    except ControllerImageError as error:
+        return None, f"unknown; the image could not be inspected ({error})"
+    if not state.installed:
+        return False, f"not installed; {state.reason}"
+    receipt = files["state"] / INSTALL_RECEIPT_NAME
+    if not _regular_file(receipt):
+        return True, (
+            f"installed ({state.reason}), but not by this factory: there is "
+            f"no {INSTALL_RECEIPT_NAME} beside the manifest")
+    try:
+        recorded = json.loads(receipt.read_text())
+        when = recorded["installed_utc"]
+        digest = recorded["disk"]["sha256_after"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        return True, (
+            f"installed ({state.reason}); its receipt is unreadable ({error})")
+    current = _sha256(files["disk"])
+    drift = "" if current == digest else (
+        f"; the disk has changed since (now {current})")
+    return True, f"installed by this factory {when}, disk sha256 {digest}{drift}"
+
+
 def status(state: Path) -> int:
     files = paths(state)
     safe = _safe_state_path(state)
     regular = safe and all(
         _regular_file(files[key]) for key in ("disk", "vars", "manifest"))
-    ready = regular and _private_state(files)
-    print(f"{NAME}: {'ready' if ready else 'absent or incomplete'}")
+    private = regular and _private_state(files)
+    installed, installation = (
+        _installation_report(files) if private else (None, "unknown"))
+    # "Ready" used to mean only that three files exist with the right modes,
+    # which a never-installed 197,888-byte image satisfies -- and every
+    # consumer inherited the blind spot. Readiness now requires a proven
+    # installation, and every other outcome exits nonzero and says which one
+    # it is.
+    if not private:
+        headline = "absent or incomplete"
+    elif installed is True:
+        headline = "ready"
+    elif installed is False:
+        headline = "created but not installed"
+    else:
+        headline = "present; installation state unknown"
+    print(f"{NAME}: {headline}")
     print(f"state: {state}")
+    if private:
+        print(f"installation: {installation}")
     print("network: isolated (QEMU socket segment on host loopback)")
     print("convergence: deferred until the physical-network gate is approved")
-    return 0 if ready else 1
+    return 0 if installed is True else 1
 
 
 def run(
@@ -676,6 +737,17 @@ def persistent_up(
         problems += [str(canonical[key]) + " is missing"
                      for key in ("disk", "vars")
                      if not _regular_file(canonical[key])]
+        # Seeding from a never-installed canonical produces an 80 GiB blank
+        # instance that boots to a UEFI dead end and a marker recording the
+        # hash of an empty image -- with a success-shaped exit. Refuse before
+        # anything is created or locked, and say what to do about it.
+        if not problems:
+            try:
+                assert_installed_controller_image(
+                    canonical["disk"],
+                    subject=f"the canonical image {canonical['disk']}")
+            except ControllerImageError as error:
+                problems.append(str(error))
     if problems:
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)
@@ -722,9 +794,15 @@ class _AnnouncedEvents(list):
     touching ``serial_automation.py``, which every acceptance gate shares.
     """
 
+    def __init__(self, on_event: Callable[[str], None] | None = None) -> None:
+        super().__init__()
+        self.on_event = on_event
+
     def append(self, event: object) -> None:
         super().append(event)
         print(f"  {event}", flush=True)
+        if self.on_event is not None:
+            self.on_event(str(event))
 
 
 def _controlling_terminal() -> bool:
@@ -876,6 +954,34 @@ def _attach_simulated_gateway(
         f"instance's loopback segment on 127.0.0.1:{port}")
 
 
+#: The payload announces this stage immediately before the play that creates
+#: the directory (``controller_factory.py``: ``TELOS FACTORY STEP ansible``).
+#: Recording on the *start* of the stage rather than its completion is the
+#: conservative choice: a failure inside the play can leave a provisioned
+#: directory, and the record exists to stop a later run from believing
+#: otherwise.
+PROVISIONING_STAGE_EVENT = "controller-convergence-stage-ansible"
+
+
+def _provisioning_recorder(
+    target: PersistentControllerInstance,
+) -> Callable[[str], None]:
+    """Persist "this run reached provisioning" the moment the guest says so."""
+    def record(event: str) -> None:
+        if event != PROVISIONING_STAGE_EVENT:
+            return
+        try:
+            target.record_provisioning_attempt()
+        except (RuntimeError, OSError) as error:
+            # Never kill a live provisioning run over a host-side note, but
+            # never hide it either: without this record a later attempt would
+            # ask for an Administrator password it cannot apply.
+            print(f"  warning: could not record the provisioning attempt "
+                  f"({error}); if this run fails, do NOT let a retry set a "
+                  f"new Administrator password", file=sys.stderr, flush=True)
+    return record
+
+
 def _drive_persistent_convergence(
     process: subprocess.Popen[bytes],
     password: bytes,
@@ -884,6 +990,7 @@ def _drive_persistent_convergence(
     *,
     install_seed: bool,
     timeout: float,
+    on_event: Callable[[str], None] | None = None,
 ) -> dict:
     """Log in normally, converge the durable disk, and prove what it now holds.
 
@@ -903,7 +1010,7 @@ def _drive_persistent_convergence(
     console = SerialAutomation(
         process.stdout, process.stdin, password,
         timeout=PERSISTENT_CONSOLE_TIMEOUT)
-    console.events = _AnnouncedEvents()
+    console.events = _AnnouncedEvents(on_event)
     console._wait(
         rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
         "persistent-login-prompt")
@@ -996,12 +1103,21 @@ def persistent_converge(
     files = persistent_paths(state)
     existing = target.exists()
     recorded = None
+    attempted = None
     if existing:
         try:
             recorded = target.convergence()
+            attempted = target.provisioning_attempted()
         except (ValueError, RuntimeError) as error:
             print(f"error: {error}", file=sys.stderr)
             return 2
+    # The domain Administrator password can only ever be *set* by the run that
+    # provisions the directory; the role skips provisioning once ``sam.ldb``
+    # exists. Prompting is therefore keyed on whether any run has reached the
+    # provisioning stage, not on whether one has finished -- otherwise a
+    # failure in the window between those two facts makes every retry ask for,
+    # confirm, and silently discard a credential that cannot take effect.
+    prompts_for_administrator = recorded is None and attempted is None
     spec = FactorySpec()
     try:
         command = qemu_command(
@@ -1026,8 +1142,17 @@ def persistent_converge(
     print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
           "password the offline installer told you to type; it is held in "
           "memory only and is neither changed nor recorded")
-    print("domain Administrator: provisioned with a password you type here, "
-          "then left enabled so the directory stays administrable")
+    if prompts_for_administrator:
+        print("domain Administrator: provisioned with a password you type "
+              "here, then left enabled so the directory stays administrable")
+    elif recorded is not None:
+        print("domain Administrator: already provisioned; its password is the "
+              "one typed then and is NOT asked for or changed here")
+    else:
+        print(f"domain Administrator: an earlier attempt reached the "
+              f"provisioning stage ({attempted['attempted_utc']}) without "
+              "finishing, so the directory may already hold a password you "
+              "typed then. This will not ask for a new one")
     print("convergence medium: a per-run TELOS_FACTORY CD built into a private "
           "mode-0700 directory, attached read-only, and destroyed afterwards")
     if seed_iso is not None:
@@ -1051,12 +1176,32 @@ def persistent_converge(
             "convergent play again. A reconvergence does NOT change the domain "
             "Administrator password, because provisioning is skipped once a "
             "directory exists")
+    if recorded is None and attempted is not None and not reconverge:
+        problems.append(
+            f"{instance} has an unfinished convergence that already reached "
+            f"the directory-provisioning stage ({attempted['attempted_utc']}). "
+            "If it provisioned, the domain Administrator password is the one "
+            "you typed then and cannot be changed by converging again, so "
+            "this refuses rather than asking you for a new one it would "
+            "discard. Pass --reconverge to continue with the existing "
+            "credential, or destroy and recreate the instance for a directory "
+            "with a password you choose now")
     if seed_iso is not None and not _regular_file(seed_iso):
         problems.append(f"{seed_iso} is missing")
     if not existing:
         problems += [str(canonical[key]) + " is missing"
                      for key in ("disk", "vars")
                      if not _regular_file(canonical[key])]
+        if not problems:
+            try:
+                assert_installed_controller_image(
+                    canonical["disk"],
+                    subject=f"the canonical image {canonical['disk']}")
+            except ControllerImageError as error:
+                problems.append(str(error))
+    # Every refusal above happens before the first prompt, deliberately: an
+    # operator must never type an unrecoverable secret into a run that cannot
+    # possibly succeed.
     if problems:
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)
@@ -1067,7 +1212,7 @@ def persistent_converge(
     try:
         console_password = _typed_secret(
             f"{CONSOLE_ACCOUNT} console password: ")
-        if recorded is None:
+        if prompts_for_administrator:
             administrator = _typed_secret(
                 "new domain Administrator password: ",
                 confirm="retype domain Administrator password: ")
@@ -1117,7 +1262,8 @@ def persistent_converge(
             PERSISTENT_SOCKET_PORT, run_root / "gateway.log", guest=guest)
         record = _drive_persistent_convergence(
             guest, console_password, nonce, spec,
-            install_seed=seed_iso is not None, timeout=timeout)
+            install_seed=seed_iso is not None, timeout=timeout,
+            on_event=_provisioning_recorder(target))
     except BaseException as error:
         failure = error
     finally:

@@ -2,11 +2,44 @@
 
 from pathlib import Path
 import re
+import shlex
+import shutil
+import subprocess
+import sys
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+sys.path.insert(0, str(ROOT / "homelab" / "vm"))
+
+
+def emitted(target: str, **variables: str) -> list[list[str]]:
+    """Every ``bootstrap_dc.py`` argv a target's recipe would really run.
+
+    Asserting on Makefile *text* cannot catch an argument in the wrong place,
+    and that is exactly the class of defect that made every persistent target
+    die for any operator who set ``FACTORY_CONTROLLER_STATE``: ``--state-dir``
+    is declared on the top-level parser only, and the recipes emitted it after
+    the subcommand. ``make -n`` expands the recipe for real; the caller then
+    feeds each argv to the parser that would receive it.
+    """
+    assignments = [f"{name}={value}" for name, value in variables.items()]
+    result = subprocess.run(
+        ["make", "-n", target, *assignments],
+        cwd=ROOT, check=True, capture_output=True, text=True)
+    joined = result.stdout.replace("\\\n", " ")
+    commands = []
+    for statement in joined.replace("\n", ";").split(";"):
+        if "bootstrap_dc.py" not in statement:
+            continue
+        parts = shlex.split(statement)
+        index = next(
+            position for position, part in enumerate(parts)
+            if part.endswith("bootstrap_dc.py"))
+        commands.append(parts[index + 1:])
+    return commands
 
 
 def recipe(target: str) -> str:
@@ -170,6 +203,152 @@ class FactoryMakeTargetTests(unittest.TestCase):
         for forbidden in ("qemu", "fetch-", "curl", "wget"):
             self.assertNotIn(forbidden, text)
 
+    def test_factory_recover_is_apply_gated_and_requires_its_run(self):
+        text = recipe("homelab-factory-recover")
+        # A recovery run is aimed deliberately: no default run bundle exists.
+        self.assertIn("require RECOVERY_RUN=", text)
+        self.assertIn("--run '$(RECOVERY_RUN)'", text)
+        # Dry run by default; APPLY=1 is what writes evidence and result.json.
+        self.assertIn("APPLY", text)
+        self.assertIn("dry run", text)
+        self.assertEqual(1, text.count("--apply"))
+        self.assertIn("homelab-lifecycle-recovery", text)
+        # A guest boot is opt-in, and --boot is forwarded only when asked for.
+        self.assertEqual(2, text.count("$(if $(RECOVERY_BOOT),--boot)"))
+        self.assertNotIn("--boot ", text.replace(
+            "$(if $(RECOVERY_BOOT),--boot)", ""))
+
+    def test_factory_recover_judge_is_read_only_and_needs_produced_evidence(self):
+        text = recipe("homelab-factory-recover-judge")
+        self.assertIn("require RECOVERY_EVIDENCE=", text)
+        self.assertIn("'$(RECOVERY_EVIDENCE)'", text)
+        self.assertIn("lifecycle_recovery.py", text)
+        # Grading never runs, boots, or applies anything.
+        self.assertNotIn("--apply", text)
+        self.assertNotIn("APPLY", text)
+        for forbidden in ("qemu", "--boot", "curl", "wget"):
+            self.assertNotIn(forbidden, text)
+
+    def test_the_recovery_variables_are_declared_not_only_used(self):
+        # They were used by the recipes long before they were declared, which
+        # left a reader to guess at their shape and their defaults.
+        for name in ("RECOVERY_RUN", "RECOVERY_BOOT", "RECOVERY_EVIDENCE"):
+            with self.subTest(variable=name):
+                self.assertRegex(
+                    MAKEFILE, rf"(?m)^{name} \?=\s*$",
+                    f"{name} is used but never declared with an empty default")
+
+    def test_persistent_recipes_emit_argv_the_cli_actually_accepts(self):
+        """The whole class of defect, not just the one instance of it.
+
+        ``make homelab-factory-persistent-plan PERSISTENT_DC=x
+        FACTORY_CONTROLLER_STATE=y`` died with "unrecognized arguments:
+        --state-dir", because the option is declared on the top-level parser
+        and the recipe emitted it after the subcommand. No test anywhere fed a
+        generated recipe's argv to the parser that receives it; this one does,
+        for every persistent target and both sides of its APPLY gate.
+        """
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        import bootstrap_dc
+
+        variables = {
+            "PERSISTENT_DC": "lab-dc1",
+            # The variable whose mere presence broke every one of them.
+            "FACTORY_CONTROLLER_STATE": "build/homelab/vm/bootstrap-dc",
+            "SEED_ISO": "seed.iso",
+            "RECONVERGE": "1",
+            "PERSISTENT_CONVERGE_TIMEOUT": "100",
+            "CONFIRM": "DESTROY lab-dc1",
+        }
+        targets = (
+            "homelab-factory-persistent-plan",
+            "homelab-factory-persistent-status",
+            "homelab-factory-persistent-up",
+            "homelab-factory-persistent-converge-plan",
+            "homelab-factory-persistent-converge",
+            "homelab-factory-persistent-destroy",
+        )
+        for target in targets:
+            for apply in ("", "1"):
+                with self.subTest(target=target, APPLY=apply):
+                    commands = emitted(target, APPLY=apply, **variables)
+                    self.assertTrue(
+                        commands, f"{target} emits no bootstrap_dc.py argv")
+                    for argv in commands:
+                        parsed = bootstrap_dc.parser().parse_args(argv)
+                        # And the state directory really is the one the
+                        # operator asked for, not the default.
+                        if "--state-dir" in argv:
+                            self.assertEqual(
+                                str(parsed.state_dir),
+                                variables["FACTORY_CONTROLLER_STATE"])
+
+    def test_bootstrap_vm_install_is_apply_and_confirm_gated(self):
+        text = recipe("homelab-bootstrap-vm-install")
+        self.assertIn("bootstrap_install.py", text)
+        self.assertIn("require SEED_ISO=", text)
+        self.assertIn("--seed-iso '$(SEED_ISO)'", text)
+        # Dry run by default; the erase needs both APPLY=1 and a CONFIRM the
+        # operator typed. The confirmation is only ever passed on the applied
+        # side, so a dry run cannot answer the guest's prompt.
+        self.assertIn("dry run", text)
+        self.assertEqual(1, text.count("--apply"))
+        self.assertEqual(1, text.count("--confirm '$(CONFIRM)'"))
+        self.assertIn("refusing to erase the canonical image", text)
+        self.assertIn("[ -z '$(CONFIRM)' ]", text)
+        # The recipe never spells the phrase out as a value it could pass:
+        # what reaches --confirm is only ever $(CONFIRM).
+        recipe_lines = commands("homelab-bootstrap-vm-install")
+        self.assertNotIn("ERASE TELOS-BOOTSTRAP-DC1", recipe_lines)
+
+    def test_bootstrap_vm_install_dry_run_emits_no_confirmation_and_no_apply(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        import bootstrap_install
+
+        for apply, expect_confirm in (("", False), ("1", True)):
+            with self.subTest(APPLY=apply):
+                result = subprocess.run(
+                    ["make", "-n", "homelab-bootstrap-vm-install",
+                     f"APPLY={apply}", "SEED_ISO=seed.iso", "ISO=arch.iso",
+                     "CONFIRM=ERASE TELOS-BOOTSTRAP-DC1"],
+                    cwd=ROOT, check=True, capture_output=True, text=True)
+                joined = result.stdout.replace("\\\n", " ")
+                argv = None
+                for statement in joined.replace("\n", ";").split(";"):
+                    if "bootstrap_install.py" not in statement:
+                        continue
+                    parts = shlex.split(statement)
+                    index = next(
+                        position for position, part in enumerate(parts)
+                        if part.endswith("bootstrap_install.py"))
+                    candidate = parts[index + 1:]
+                    if ("--apply" in candidate) == bool(apply):
+                        argv = candidate
+                self.assertIsNotNone(argv)
+                parsed = bootstrap_install.parser().parse_args(argv)
+                self.assertEqual(bool(apply), parsed.apply)
+                self.assertEqual(
+                    expect_confirm, parsed.confirm is not None)
+
+    def test_homelab_instance_seeds_missing_paths_without_overwriting(self):
+        """All-or-nothing on the top directory seeded nothing, silently.
+
+        A checkout with ``homelab/instance/`` but no ``identity/`` -- this
+        one -- was told "leaving it alone" and got no principals file at all.
+        """
+        text = recipe("homelab-instance")
+        self.assertNotIn("leaving it alone", text)
+        self.assertNotIn(
+            "cp -r homelab/instance-example homelab/instance", text)
+        self.assertIn("homelab/instance-example", text)
+        # Per-path, and only when the destination is absent: an operator's own
+        # answers and inventory are never overwritten.
+        self.assertIn('[ ! -e "homelab/instance/$$item" ]', text)
+        for destructive in ("rm ", "rm -", "--force", "mv "):
+            self.assertNotIn(destructive, text)
+
     def test_persistent_targets_are_phony_and_opt_in_by_name(self):
         phony = re.search(
             r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)",
@@ -210,7 +389,11 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("APPLY", text)
         self.assertIn("dry run", text)
         self.assertEqual(1, text.count("--apply"))
-        self.assertIn("bootstrap_dc.py persistent-up", text)
+        self.assertIn("bootstrap_dc.py", text)
+        # ``--state-dir`` is a top-level option, so it precedes the
+        # subcommand; ``test_persistent_recipes_emit_argv_the_cli_actually_accepts``
+        # proves the emitted argv really parses.
+        self.assertIn("persistent-up \\", text)
         self.assertIn("--instance '$(PERSISTENT_DC)'", text)
         # A first bring-up may carry the read-only convergence medium; never
         # installer media, which would reinstall over the retained directory.
@@ -222,7 +405,11 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("APPLY", text)
         self.assertIn("dry run", text)
         self.assertEqual(1, text.count("--apply"))
-        self.assertIn("bootstrap_dc.py persistent-converge", text)
+        self.assertIn("bootstrap_dc.py", text)
+        # ``--state-dir`` is a top-level option, so it precedes the
+        # subcommand; ``test_persistent_recipes_emit_argv_the_cli_actually_accepts``
+        # proves the emitted argv really parses.
+        self.assertIn("persistent-converge \\", text)
         self.assertIn("--instance '$(PERSISTENT_DC)'", text)
         # Credentials are typed at the terminal, so no Make variable may carry
         # one and no answer file may be named.

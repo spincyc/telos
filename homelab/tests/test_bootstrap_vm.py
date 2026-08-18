@@ -9,6 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fake_image_tools
 
 from vm import bootstrap_dc, simulation_overlay
 
@@ -664,6 +667,87 @@ class BootstrapVmTests(unittest.TestCase):
                 self.assertEqual(bootstrap_dc.status(state), 1)
             self.assertTrue(actual.exists())
 
+    def test_status_separates_a_created_image_from_an_installed_one(self):
+        """``status`` used to call a never-installed 197,888-byte image ready.
+
+        Readiness meant only "three files exist with the right modes", which a
+        blank canonical satisfies, and every consumer inherited the blind
+        spot. It now reports what the image actually holds, and who installed
+        it when the receipt says so.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            state.mkdir(mode=0o700)
+            files = bootstrap_dc.paths(state)
+            for key in ("vars", "manifest"):
+                files[key].write_bytes(b"x")
+                files[key].chmod(0o600)
+            fake_image_tools.blank_image(files["disk"])
+            files["disk"].chmod(0o600)
+
+            def report():
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = bootstrap_dc.status(state)
+                return code, out.getvalue()
+
+            with mock.patch.object(
+                    bootstrap_dc.subprocess, "run",
+                    side_effect=fake_image_tools.image_tool):
+                code, text = report()
+                self.assertEqual(code, 1)
+                self.assertIn("created but not installed", text)
+                self.assertIn("entirely unallocated", text)
+
+                fake_image_tools.installed_image(files["disk"])
+                files["disk"].chmod(0o600)
+                code, text = report()
+                self.assertEqual(code, 0)
+                self.assertIn(f"{bootstrap_dc.NAME}: ready", text)
+                # Installed, but this factory has no record of doing it.
+                self.assertIn("not by this factory", text)
+
+                digest = bootstrap_dc._sha256(files["disk"])
+                receipt = state / bootstrap_dc.INSTALL_RECEIPT_NAME
+                receipt.write_text(json.dumps({
+                    "installed_utc": "2026-08-17T00:00:00+00:00",
+                    "disk": {"sha256_after": digest},
+                }))
+                receipt.chmod(0o600)
+                code, text = report()
+                self.assertEqual(code, 0)
+                self.assertIn("installed by this factory", text)
+                self.assertIn(digest, text)
+                self.assertNotIn("has changed since", text)
+
+                # Drift between the receipt and the disk is reported, not hidden.
+                fake_image_tools.installed_image(files["disk"], b" changed")
+                files["disk"].chmod(0o600)
+                code, text = report()
+                self.assertEqual(code, 0)
+                self.assertIn("the disk has changed since", text)
+
+    def test_status_reports_an_uninspectable_image_as_unknown_not_ready(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            state.mkdir(mode=0o700)
+            files = bootstrap_dc.paths(state)
+            for key in ("disk", "vars", "manifest"):
+                files[key].write_bytes(b"x")
+                files[key].chmod(0o600)
+
+            def broken(argv, **_kwargs):
+                return subprocess.CompletedProcess(argv, 0, "not json", "")
+
+            with mock.patch.object(
+                    bootstrap_dc.subprocess, "run", side_effect=broken):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = bootstrap_dc.status(state)
+            # Fail closed: an image nobody could inspect is never "ready".
+            self.assertEqual(code, 1)
+            self.assertIn("installation state unknown", out.getvalue())
+
     def test_run_refuses_world_readable_state(self):
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp) / "state"
@@ -690,6 +774,11 @@ class PersistentControllerCliTests(unittest.TestCase):
         for key in ("disk", "vars", "manifest"):
             files[key].write_bytes(b"canonical " + key.encode())
             files[key].chmod(0o600)
+        # An INSTALLED canonical. Seeding from a never-installed one is now
+        # refused outright, and the refusal has its own tests below; every
+        # case here is about what happens once there is something to seed.
+        fake_image_tools.installed_image(files["disk"], b" canonical disk")
+        files["disk"].chmod(0o600)
         self.persistent_root = self.root / "persistent"
 
     def call(self, *argv, expect):
@@ -699,10 +788,10 @@ class PersistentControllerCliTests(unittest.TestCase):
         self.assertEqual(result, expect, err.getvalue() or out.getvalue())
         return out.getvalue(), err.getvalue()
 
-    def _fake_qemu_img(self, argv, **_kwargs):
-        if argv[1] in {"create", "convert"}:
-            Path(argv[-1]).write_bytes(b"seeded")
-        return subprocess.CompletedProcess(argv, 0)
+    def _fake_qemu_img(self, argv, **kwargs):
+        # Models the real tools rather than stubbing them: the installed-image
+        # gate really runs here and really reads what these answer.
+        return fake_image_tools.image_tool(argv, **kwargs)
 
     def test_default_acceptance_command_is_unchanged_by_the_new_options(self):
         # The persistent mode added keyword-only options to qemu_command. The
@@ -758,7 +847,7 @@ class PersistentControllerCliTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(
             bootstrap_dc.paths(self.canonical)["disk"].read_bytes(),
-            b"canonical disk")
+            fake_image_tools.INSTALLED + b" canonical disk")
 
     def test_persistent_up_seeds_then_boots_the_instance_disk_in_place(self):
         state = self.persistent_root / "lab-dc1"
@@ -768,7 +857,9 @@ class PersistentControllerCliTests(unittest.TestCase):
         # module object, so a single dispatching patch serves both the seeding
         # qemu-img calls and the guest launch.
         def dispatch(argv, **kwargs):
-            if argv[0] == "qemu-img":
+            # qemu-img *and* sfdisk: both are image-inspection tools the
+            # installed-image gate runs before anything is seeded.
+            if argv[0] in {"qemu-img", "sfdisk"}:
                 return self._fake_qemu_img(argv, **kwargs)
             guests.append(list(argv))
             return subprocess.CompletedProcess(argv, 0)
@@ -797,6 +888,43 @@ class PersistentControllerCliTests(unittest.TestCase):
         self.call(
             "persistent-status", "--instance", "lab-dc1",
             "--persistent-root", str(self.persistent_root), expect=0)
+
+    def test_persistent_up_refuses_a_canonical_that_was_never_installed(self):
+        """The bring-up used to "succeed" and produce a worthless instance.
+
+        Its only content gate was ``_regular_file``, so a never-installed
+        canonical seeded an 80 GiB blank, booted it to a UEFI dead end, and
+        recorded a ``seeded_from`` hash of an empty image -- with exit 0.
+        """
+        fake_image_tools.blank_image(
+            bootstrap_dc.paths(self.canonical)["disk"], b" never installed")
+        guests = []
+
+        def dispatch(argv, **kwargs):
+            if argv[0] in {"qemu-img", "sfdisk"}:
+                return self._fake_qemu_img(argv, **kwargs)
+            guests.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch.object(
+                bootstrap_dc, "ovmf_pair",
+                return_value=(Path("/code"), Path("/vars"))), \
+                mock.patch.object(
+                    bootstrap_dc.shutil, "which", return_value="/usr/bin/x"), \
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run", side_effect=dispatch):
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-up",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--apply", expect=2)
+        self.assertIn("not an installed Controller image", err)
+        self.assertIn("entirely unallocated", err)
+        # The message names the target that fixes it.
+        self.assertIn("homelab-bootstrap-vm-install", err)
+        # No guest, no instance, no lock, nothing half-made.
+        self.assertEqual(guests, [])
+        self.assertFalse(self.persistent_root.exists())
 
     def test_persistent_seed_medium_is_read_only_and_must_exist(self):
         seed = self.root / "convergence.iso"
@@ -938,6 +1066,11 @@ class PersistentConvergenceTests(unittest.TestCase):
         for key in ("disk", "vars", "manifest"):
             files[key].write_bytes(b"canonical " + key.encode())
             files[key].chmod(0o600)
+        # An INSTALLED canonical. Seeding from a never-installed one is now
+        # refused outright, and the refusal has its own tests below; every
+        # case here is about what happens once there is something to seed.
+        fake_image_tools.installed_image(files["disk"], b" canonical disk")
+        files["disk"].chmod(0o600)
         self.persistent_root = self.root / "persistent"
         self.state = self.persistent_root / "lab-dc1"
         self.typed = []
@@ -950,10 +1083,8 @@ class PersistentConvergenceTests(unittest.TestCase):
         self.assertEqual(result, expect, err.getvalue() or out.getvalue())
         return out.getvalue(), err.getvalue()
 
-    def _fake_qemu_img(self, argv, **_kwargs):
-        if argv[0] == "qemu-img" and argv[1] in {"create", "convert"}:
-            Path(argv[-1]).write_bytes(b"seeded from canonical")
-        return subprocess.CompletedProcess(argv, 0)
+    def _fake_qemu_img(self, argv, **kwargs):
+        return fake_image_tools.image_tool(argv, **kwargs)
 
     def _getpass(self, prompt):
         self.typed.append(prompt)
@@ -1086,7 +1217,7 @@ class PersistentConvergenceTests(unittest.TestCase):
         popen.assert_not_called()
         self.assertEqual(
             bootstrap_dc.paths(self.canonical)["disk"].read_bytes(),
-            b"canonical disk")
+            fake_image_tools.INSTALLED + b" canonical disk")
 
     # -- credentials -----------------------------------------------------
     def test_credentials_come_from_a_terminal_or_the_run_refuses(self):
@@ -1098,6 +1229,9 @@ class PersistentConvergenceTests(unittest.TestCase):
                 mock.patch.object(
                     bootstrap_dc, "_controlling_terminal",
                     return_value=False), \
+                mock.patch.object(
+                    bootstrap_dc.subprocess, "run",
+                    side_effect=self._fake_qemu_img), \
                 mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
             _, err = self.call(
                 "--state-dir", str(self.canonical), "persistent-converge",
@@ -1161,7 +1295,7 @@ class PersistentConvergenceTests(unittest.TestCase):
         # the whole reason this design logs in instead of injecting.
         self.assertEqual(
             (self.state / simulation_overlay.PERSISTENT_DISK_NAME).read_bytes(),
-            b"seeded from canonical")
+            fake_image_tools.INSTALLED + b" canonical disk")
         self.assertEqual(
             sorted(entry.name for entry in self.state.iterdir()),
             sorted([
@@ -1237,6 +1371,66 @@ class PersistentConvergenceTests(unittest.TestCase):
         # collected as though it were.
         self.assertEqual(len(self.typed), 1)
         self.assertIn("console", self.typed[0])
+
+    # -- the source image, and what is asked for before it is checked ----
+    def test_converge_refuses_a_blank_canonical_before_asking_for_anything(self):
+        fake_image_tools.blank_image(
+            bootstrap_dc.paths(self.canonical)["disk"], b" never installed")
+        _, err = self.converge("--apply", expect=2)
+        self.assertIn("not an installed Controller image", err)
+        self.assertIn("homelab-bootstrap-vm-install", err)
+        # The whole point of the ordering: an operator must never type an
+        # unrecoverable secret into a run that cannot possibly succeed. The
+        # old code prompted first and hung to the 300 s console timeout.
+        self.assertEqual(self.typed, [])
+        self.assertEqual(self.launched, [])
+        self.assertFalse(self.persistent_root.exists())
+
+    def test_a_retry_after_a_provisioning_attempt_never_asks_for_a_new_password(self):
+        """The Administrator prompt follows the guest, not the host marker.
+
+        The convergence record is only written after a fully successful run,
+        but the role skips provisioning as soon as ``sam.ldb`` exists. Any
+        failure between those two points used to make every retry ask for,
+        confirm, and silently discard a new Administrator password while the
+        directory kept the one typed on the first attempt.
+        """
+        def die_after_provisioning(*_args, on_event=None, **_kwargs):
+            self.assertIsNotNone(on_event)
+            on_event(bootstrap_dc.PROVISIONING_STAGE_EVENT)
+            raise RuntimeError("the guest died after provisioning")
+
+        self.converge("--apply", expect=2, drive=die_after_provisioning)
+        instance = simulation_overlay.PersistentControllerInstance(
+            self.state, instance="lab-dc1")
+        # The fact outlived the run that produced it, and it is not mistaken
+        # for a convergence.
+        self.assertIsNotNone(instance.provisioning_attempted())
+        self.assertIsNone(instance.convergence())
+
+        self.typed.clear()
+        _, err = self.converge("--apply", expect=2)
+        self.assertIn("already reached the directory-provisioning stage", err)
+        self.assertIn("--reconverge", err)
+        self.assertIn("destroy and recreate", err)
+        self.assertEqual(self.typed, [])
+
+        self.typed.clear()
+        out, _ = self.converge("--apply", "--reconverge")
+        # Only the console credential: the Administrator password cannot be
+        # changed from here, so it is not collected as though it could.
+        self.assertEqual(len(self.typed), 1)
+        self.assertIn("console", self.typed[0])
+        self.assertIn("may already hold a password you typed then", out)
+
+    def test_a_first_convergence_still_asks_for_the_administrator_password(self):
+        """The fail-closed rule must not refuse the case it exists to serve."""
+        self.converge("--apply")
+        # Console once, Administrator twice: it is typed and confirmed.
+        self.assertEqual(len(self.typed), 3)
+        self.assertIn("console", self.typed[0])
+        self.assertIn("Administrator", self.typed[1])
+        self.assertIn("Administrator", self.typed[2])
 
     # -- one root command over the console -------------------------------
     def test_a_console_root_command_never_carries_the_credential(self):
