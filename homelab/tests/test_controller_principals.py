@@ -231,7 +231,11 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         # (arch-storage-denied).  Both the reachable-storage checks depend on
         # these owned directories existing on the serving Controller.
         program = controller_principals._STAGE_PROGRAM
-        self.assertIn('path = "/srv/unas/" + name', program)
+        # The root now arrives as a substituted JSON literal, so this asserts
+        # the rendered form rather than a second spelling of the path.
+        self.assertIn(
+            'path = "' + controller_principals.SHARE_ROOT + '" + "/" + name',
+            program)
         self.assertIn("os.makedirs(path, mode=0o700, exist_ok=True)", program)
         self.assertIn(
             'os.chown(path, unix["uidNumber"], unix["gidNumber"])', program)
@@ -241,7 +245,9 @@ class ControllerPrincipalSerialTests(unittest.TestCase):
         # The disposable Controller's share roots are torn down with the
         # principals so a reused canonical state never retains stale shares.
         program = controller_principals._DESTROY_PROGRAM
-        self.assertIn('shutil.rmtree("/srv/unas/" + name', program)
+        self.assertIn(
+            'shutil.rmtree("' + controller_principals.SHARE_ROOT
+            + '" + "/" + name', program)
 
     def test_posix_allocation_rejects_collisions(self):
         validate = controller_principals._validated_posix_allocation
@@ -1003,6 +1009,42 @@ print(json.dumps({{
         self.assertEqual("ksh", observed["material_daily_admin"])
         # And the resolved source names the overlay that produced it.
         self.assertIn("patched by overlay", observed["source"])
+
+
+class ShareRootParityTests(unittest.TestCase):
+    """One share root, declared twice, held honest here.
+
+    Gate 9 proves a per-user share under this root. The Ansible role declares
+    it as ``homelab_ad_share_root`` for the host-side path; this module holds
+    its own copy because a program staged over the serial console cannot read
+    an Ansible variable. Two copies are the design -- an unchecked pair is not.
+    A mismatch would put the persistent Controller's per-user directories
+    somewhere ``[homes]`` does not serve, and the first symptom would be a
+    failed login on a physical machine.
+    """
+
+    def role_default(self) -> str:
+        homelab = Path(__file__).resolve().parents[1]
+        defaults = (homelab / "ansible" / "roles" / "domain_controller"
+                    / "defaults" / "main.yml").read_text(encoding="utf-8")
+        for line in defaults.splitlines():
+            if line.startswith("homelab_ad_share_root:"):
+                return line.split(":", 1)[1].strip()
+        self.fail("homelab_ad_share_root is not declared by the role")
+
+    def test_the_module_and_the_role_declare_the_same_share_root(self):
+        self.assertEqual(self.role_default(), controller_principals.SHARE_ROOT)
+
+    def test_the_staged_program_carries_no_second_literal(self):
+        # The programs must reach the root through the substituted constant,
+        # so changing SHARE_ROOT changes what the guest actually creates.
+        rendered = json.dumps(controller_principals.SHARE_ROOT)
+        for program in (controller_principals._STAGE_PROGRAM,
+                        controller_principals._DESTROY_PROGRAM):
+            self.assertIn(rendered, program)
+            self.assertNotIn(
+                controller_principals.SHARE_ROOT + "/", program,
+                "the root is spelled out a second time instead of substituted")
 
 
 if __name__ == "__main__":

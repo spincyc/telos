@@ -387,6 +387,13 @@ def _programs(roster: Mapping[str, str]) -> tuple[str, str, tuple[str, ...]]:
 # principal in the private overlay cannot leave a stale hardcoded name behind
 # in the guest program -- which would have failed as "unexpected principal
 # roster" from inside a disposable VM, the least diagnosable place available.
+#: The per-user share root gate 9 proves. The Ansible role declares the same
+#: path as ``homelab_ad_share_root``; a guest program staged over the serial
+#: console cannot read an Ansible variable, so the two are separate copies held
+#: honest by a parity test rather than one import. Substituted as a JSON string
+#: literal, so it can only ever be data in the program text.
+SHARE_ROOT = "/srv/unas"
+
 _STAGE_PROGRAM_TEMPLATE = r"""
 import json
 import sys
@@ -536,7 +543,7 @@ try:
     import os
     for name in order:
         unix = posix["users"][name]
-        path = "/srv/unas/" + name
+        path = @SHARE_ROOT@ + "/" + name
         os.makedirs(path, mode=0o700, exist_ok=True)
         os.chown(path, unix["uidNumber"], unix["gidNumber"])
         os.chmod(path, 0o700)
@@ -596,7 +603,7 @@ for name in names:
         failures.append("PrincipalRemains")
 import shutil
 for name in names:
-    shutil.rmtree("/srv/unas/" + name, ignore_errors=True)
+    shutil.rmtree(@SHARE_ROOT@ + "/" + name, ignore_errors=True)
 if failures:
     raise RuntimeError("principal destruction failed: " + ",".join(failures))
 """
@@ -626,7 +633,7 @@ def _substituted(
     return template.replace("@ROSTER_JSON@", roster_json).replace(
         "@POSIX_JSON@",
         json.dumps(allocation, sort_keys=True, separators=(",", ":")),
-    )
+    ).replace("@SHARE_ROOT@", json.dumps(SHARE_ROOT))
 
 
 _ROSTER_JSON = _roster_json(_ROLES, _DOMAIN_ADMIN)
