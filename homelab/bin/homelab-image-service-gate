@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Judge a booted candidate image's declared systemd services from a capture.
+
+A thin shim over homelab/lib/image_service_gate.py, mirroring
+homelab/bin/homelab-image-promotion-gate: the judge is pure and host-side, so
+this runs without a guest, without root, and without QEMU.
+"""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from homelab.lib.image_service_gate import main  # noqa: E402
+
+
+raise SystemExit(main())
