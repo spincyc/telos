@@ -1,6 +1,6 @@
 # Homelab documentation pass
 
-Document version: `20260814.001`
+Document version: `20260817.001`
 
 Status: in progress — the first two guides shipped 2026-08-12 (`2680c23`):
 [`docs/factory-guide.md`](docs/factory-guide.md) (human) and
@@ -89,7 +89,7 @@ fixed with useful content rather than decoration.
 | 4 | Network design | Explain the address aesthetic, small scan-friendly ranges, and device classes | Exact UniFi objects and order, restricted provisioning Wi-Fi, DHCP/DNS authority boundaries, firewall matrix, discovery exceptions, capacity measurements, conflict tests, and recovery from a broken isolated network | gap |
 | 5 | Directory and DNS | Explain one identity across Windows and Arch, cached logons, and travel limits | Samba AD/DNS deployment, validation, time synchronization, administrator tiers, user lifecycle, temporary revocation phases, backup/restore, disaster recovery, and authority handoff | gap |
 | 6 | PXE and install media | Explain wired boot, Wi-Fi limitations, provenance, and what remains manual | Arch and Windows acquisition, hashes/signatures, immutable release layout, wimboot, firmware boot order, restricted network credentials, update publication, rollback, and offline recovery | partial |
-| 7 | Workstation factory | **shipped 2026-08-12: [`docs/factory-guide.md`](docs/factory-guide.md)** | **shipped 2026-08-12: [`docs/operator-runbook.md`](docs/operator-runbook.md)** — real Make targets in lifecycle order paired with the proven evidence, pass/fail gate table, troubleshooting, rollback/rebuild/verify; reserved aggregate names flagged. Remaining: site navigation wiring (leak scanner rejects the lab address), the gate-9 storage-check correction noted below, and refreshing the gate table as gates 8/11 close | drafted; site wiring and gate-table refresh outstanding |
+| 7 | Workstation factory | **shipped 2026-08-12: [`docs/factory-guide.md`](docs/factory-guide.md)** | **shipped 2026-08-12: [`docs/operator-runbook.md`](docs/operator-runbook.md)** — real Make targets in lifecycle order paired with the proven evidence, pass/fail gate table, troubleshooting, rollback/rebuild/verify; reserved aggregate names flagged. Remaining: site navigation wiring (the leak scanner rejects the lab address) and the corrections listed below | drafted; site wiring outstanding |
 | 8 | Windows owner and operator paths | Normal use, automatic updates, travel, and first-response recovery | Windows 11 Pro update policy, firmware licensing, AD join/cache tests, local rescue, boot repair, storage fallback, diagnostic capture, reimage decision, and decommission | partial |
 | 9 | Arch owner and operator paths | Normal use, automatic updates, travel, and first-response recovery | Gated automatic update design, Arch News handling, health checks, rollback, AD/SSSD cache behavior, UID/time verification, boot repair, package-state evidence, and reimage decision | gap |
 | 10 | User storage | Explain local-first homes and optional NAS behavior | Primary and backup NAS SMB/NFS tradeoffs, per-user share automation, UID/GID and timestamp tests, offline/nonblocking mounts, permissions, backup semantics, restore proof, and failure injection | gap |
@@ -102,26 +102,38 @@ fixed with useful content rather than decoration.
 
 ## Known corrections outstanding in the shipped guides
 
-Found 2026-08-14 by an evidence audit against on-disk artifacts. These are
-defects in `docs/operator-runbook.md`, which this pass owns:
+Closed 2026-08-17, kept only as history: the two corrections previously listed
+here — the gate-9 "no storage check" misdescription and the gate table pinned to
+ledger `20260812.001` — were both applied to `docs/operator-runbook.md`. Do not
+re-open them.
 
-- **Gate 9 is misdescribed (line ~396).** The runbook says gate 9 is `PENDING`
-  with *"no target yet: the identity contract carries no storage check"*. The
-  second half is false: `homelab/workstations/acceptance.json` carries six
-  `optional-storage` checks — `windows-smb-{available,unreachable,denied}` and
-  `arch-smb-{available,unreachable,denied}` — and
-  `homelab/workstations/windows_identity_acceptance.py` exercises the Windows
-  three through the `optional-storage-offline` and
-  `optional-storage-access-denied` evidence checks, both of which PASSED inside
-  the 2026-08-13 gate-6 evidence. The correct
-  entry is `PASS (Windows) / NOT RUN (Arch)`, with the note that gate 9 needs no
-  target of its own because it is graded inside the gate-6 and gate-8 identity
-  acceptances, and that only the three Arch storage checks remain.
-- **The gate table is pinned to a stale ledger version.** Its heading reads "as
-  of ledger `20260812.001`"; `WORKSTATION-FACTORY-STATE.md` is now
-  `20260814.001`. Re-pin it and re-check gates 6, 10, and 11 against their
-  judges' verbatim output, which name `deferred` and `out_of_scope` checks that
-  the runbook's bare `PASS` markers hide.
+Outstanding as of 2026-08-17, in the documents this pass owns:
+
+- **Site navigation wiring is still deferred.** Neither `docs/factory-guide.md`
+  nor `docs/operator-runbook.md` is referenced by `site/site.json` or
+  `scripts/site`, because both carry the lab address the leak scanner rejects.
+  This is the one item keeping gate 13 in progress; the recipe is documented and
+  the decision is open.
+- **The canonical-Controller-image blocker must be retired when the reinstall is
+  driven.** It is currently recorded in three places — the runbook's "Blocker:
+  the canonical Controller image is absent", the banner at the top of
+  `HANDOFF.md`, and the first bullet of the state ledger's blockers — plus the
+  short "Blocked today" pointers at each live-target instruction site. All of
+  them come out together, and only after a real reinstall.
+- **The persistent-instance documentation carries a NOT RUN marker.** The
+  runbook's "The persistent directory instance" section and the
+  "Persistent controller instance (not a gate)" section of
+  `FACTORY-MAKE-TARGETS.md` describe an implemented, unit-tested, never-executed
+  surface. Re-verify both against a real run before removing the marker; nothing
+  in them may be promoted to the present indicative until then.
+- **Gate 12's verdict needs re-checking when the repeat driver lands.** The
+  runbook and the ledger now say gate 12 is blocked on the absent image and on
+  the missing aggregate `homelab-factory-repeat` driver — a reserved name, not
+  implemented — and not on any gate. Both statements move together.
+- **`docs/factory-guide.md` covers the persistent instance only by pointer.**
+  The human guide still describes one mode (disposable controller) with a clause
+  pointing at the runbook. If the persistent path becomes a normal operator
+  workflow, the guide needs its own short human-level explanation.
 
 ## Page pattern
 

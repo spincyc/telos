@@ -59,12 +59,23 @@ rest of the disk. It installs signed packages only from the read-only seed,
 creates the fixed host name `bootstrap-dc`, installs systemd-boot, and enables
 the serial console.
 
-Near the end, `passwd` prompts twice for a temporary console password for
-`local-rescue`. Type it directly at the guest console. Do not place it in a
-command, Make variable, answer file, transcript or repository. Root is locked,
-SSH root login is disabled, and SSH password and keyboard-interactive
-authentication are disabled; the temporary password is for local console
-testing and `sudo` only.
+Near the end, `passwd` prompts twice for the `local-rescue` console password.
+Type it directly at the guest console. Do not place it in a command, Make
+variable, answer file, transcript or repository — and **record it somewhere
+durable, because losing it costs the whole image.**
+
+This is not a temporary or disposable credential (superseded 2026-08-14). It is
+the **only** credential that can ever open this image: root is locked, no
+authorized key is installed, there is no init shell, and SSH root login,
+password, and keyboard-interactive authentication are all disabled. Nothing in
+this repository can open a canonical image whose console password is gone, and
+the only recovery is a full reinstall. It is also what
+`make homelab-factory-persistent-converge` logs in with — that convergence
+reaches the guest only over the serial console — so a persistent instance cannot
+be provisioned without it either. See "Keep the `local-rescue` password" in
+[`homelab/docs/operator-runbook.md`](../docs/operator-runbook.md) for the
+reinstall recipe and for what the same loss costs once a directory has been
+provisioned.
 
 No private inventory, address plan, household identity, credential or secret is
 read from or written to the public seed. The install does not contact a mirror
@@ -80,5 +91,13 @@ controller image is the unattended, terminal-friendly installation path.
 The VM is temporary infrastructure, but its directory data becomes durable
 once it provisions the real domain. Destruction therefore requires
 `APPLY=1 CONFIRM=bootstrap-dc` and refuses unexpected or symlinked files.
-Ansible convergence from the host cannot begin while the socket-only boundary
-is in force; it waits for the separately approved physical-network gate.
+**Inventory-driven** host Ansible — a run that reaches the guest over the
+network from a private inventory, e.g.
+`make homelab-bootstrap-controller INVENTORY=<private inventory>` — cannot begin
+while the socket-only boundary is in force; it waits for the separately approved
+physical-network gate. That caveat is scoped to those runs only (superseded in
+part 2026-08-14): `make homelab-factory-persistent-converge` converges a
+loopback-only persistent instance **in place, over the serial console**, needing
+no network path and no harness credential. Commit `087c888` additionally
+repaired the removed `community.general.yaml` callback still named in
+`ansible.cfg`, which had aborted every host-side Ansible run.

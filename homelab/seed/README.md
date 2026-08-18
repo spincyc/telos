@@ -71,9 +71,18 @@ Run the interactive installer:
 
 It accepts only the VM disk with serial `TELOS-BOOTSTRAP-DC1` and requires
 the exact phrase `ERASE TELOS-BOOTSTRAP-DC1` before erasing it. It then
-prompts at the console for the temporary `local-rescue` password twice. The
-operator must type it directly; it must not appear in a command, answer file,
-Make variable, transcript, or Git repository.
+prompts at the console for the `local-rescue` password twice. The operator must
+type it directly; it must not appear in a command, answer file, Make variable,
+transcript, or Git repository.
+
+**That password is not temporary, and losing it costs the whole image**
+(superseded 2026-08-14). It is the only credential that can ever open the
+installed image — root is locked, no authorized key is installed, there is no
+init shell, and SSH password authentication is off — and it is what
+`make homelab-factory-persistent-converge` logs in with over the serial console.
+Record it in the owner's own durable secret store, never in this repository. See
+"Keep the `local-rescue` password" in
+[`homelab/docs/operator-runbook.md`](../docs/operator-runbook.md).
 
 The installer creates a 1 GiB FAT32 EFI System Partition and uses the rest of
 the disk for an ext4 root filesystem. It installs only signed packages carried
@@ -101,9 +110,12 @@ bootctl status
 systemctl --failed
 ```
 
-Record only pass/fail results. Do not record the password. Keep the VM
-loopback-isolated until permanent key-based administration replaces the
-temporary password and the separate network-attachment gate is approved.
+Record only pass/fail results. Never write the password into evidence, a
+transcript, or the repository; keep it in the owner's own durable secret store.
+Keep the VM loopback-isolated until the separate network-attachment gate is
+approved. Key-based administration does **not** supersede this password: serial
+console convergence uses it, and it remains the sole break-glass credential for
+the image.
 
 ## Existing isolated Controller VM
 

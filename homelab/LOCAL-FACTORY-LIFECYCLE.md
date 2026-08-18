@@ -420,6 +420,13 @@ gaps remain before the contract can pass:
 12. expose the complete lifecycle through dry-run-default Make targets and one
     final aggregate acceptance target.
 
+Status of that list as of 2026-08-17: items 7, 8, and 9 — same-disk
+Windows-first-then-Arch installation, the Windows identity probes, and the Arch
+identity probes — are live-proven, at gates 7, 6, and 8 respectively. The
+authoritative per-item state is the gate table in
+[WORKSTATION-FACTORY-STATE.md](WORKSTATION-FACTORY-STATE.md); read it rather
+than this dated list.
+
 For the VM path, prefer Q35/OVMF with an emulated device set supported by stock
 WinPE (for example AHCI/NVMe storage and an e1000e NIC), and separately verify
 that its firmware really exposes UEFI network boot. Virtio storage or

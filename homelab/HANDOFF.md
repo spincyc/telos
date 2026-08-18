@@ -1,9 +1,38 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-08-14 (documentation reconciliation against on-disk
-evidence; gate 6 was proved 2026-08-13).
+**Last updated:** 2026-08-17 (documentation reconciliation against on-disk
+evidence; gate 6 was proved 2026-08-13, gate 8 on 2026-08-14).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
+
+> ## BLOCKER — read before running anything
+>
+> **The canonical Controller image is gone, and no live factory target can
+> execute until it is reinstalled.**
+> `build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2` is a 197,888-byte **empty
+> disk** (its `manifest.json` records `created_utc` `2026-08-14T20:52:55Z`) and
+> `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
+> 2026-08-14 with explicit owner authorization after its `local-rescue` console
+> password was lost — the only credential that can ever open it (root locked, no
+> authorized key, no init shell, SSH password auth off) — and **the interactive
+> console reinstall was staged but never driven.**
+>
+> Every gate runner, all six `homelab-factory-persistent` targets, and
+> `make homelab-sim-auto-run` boot or copy that image, so each of them would run
+> against an empty disk today.
+>
+> Prerequisites are staged and verified: the seed ISO
+> `homelab/var/seed/telos-controller-seed.iso`, SHA-256
+> `66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`, and the
+> signature-verified
+> `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`.
+>
+> **The repair recipe already exists verbatim — do not re-derive it:**
+> `homelab/docs/operator-runbook.md`, section "Keep the `local-rescue`
+> password", and `homelab/vm/README.md`, section "Interactive offline
+> installation". Only the owner can drive the console install. Record the new
+> `local-rescue` password somewhere durable this time. Rebuilding the image
+> invalidates no retained gate receipt.
 
 ---
 
@@ -26,13 +55,44 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 9 Optional storage failure | rides gates 6 and 8, no target of its own by design | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half in the passing 2026-08-14 gate-8 run, whose `arch-storage-{attached,denied,absent-login}` checks are gate 9's three (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
-| 12 Repeatability (twice-through) | — | **NOT RUN** — needs gates 8 and 9 live |
+| 12 Repeatability (twice-through) | — | **NOT RUN** — no gate blocks it any more (6–10 all pass); it needs the canonical Controller image back and an aggregate `homelab-factory-repeat` driver, which is reserved and unimplemented |
 | 13 Documentation | — | guides added (`homelab/docs/`), **already public on `origin/main`**; "unpublished" = not wired into the generated site (they carry the lab address the site leak scanner rejects) |
 | 14 External integration | physical / UniFi / ThinkPad | **HARD-BLOCKED on explicit owner authorization** — do not attempt |
 
 Owner directive in force: *proceed through gates 6–13 without stopping for
 per-gate approval; stop only at genuine blocks or gate 14.* Gate 14 needs a
 separate explicit go-ahead.
+
+### What landed after the gate-8 pass — implemented, unit-tested, NEVER RUN LIVE
+
+Fourteen commits (`7ef4f23`, `7be4e46`, `e357736`, `6d98eed`, `8c759e0`,
+`76cc439`, `11cff9a`, `b00a7cb`, `d3aed78`, `8ffa25c`, `087c888`, `eea7808`,
+`d3d1d50`, `c84798a`) landed after the gate-8 evidence and **none of them has
+executed live.** Treat every claim below as the designed contract, not observed
+behaviour.
+
+- **A persistent Controller instance beside the disposable one** (`7ef4f23`
+  through `8ffa25c`): six new targets,
+  `homelab-factory-persistent-{plan,status,up,converge-plan,converge,destroy}`,
+  each requiring `PERSISTENT_DC=<name>` and living under `PERSISTENT_DC_ROOT`
+  (`build/homelab/vm/persistent-dc`), never under the canonical acceptance
+  state. Bring-up seeds the instance *from* the canonical image and then boots
+  it in place; convergence provisions AD in place over the `local-rescue`
+  serial console, leaves the built-in Administrator enabled, and needs
+  `RECONVERGE=1` to run a second time. Durable accounts are declared once in the
+  gitignored overlay and provisioned by
+  `make homelab-bootstrap-controller INVENTORY=<private inventory>`. Documented
+  in `homelab/docs/operator-runbook.md`, "The persistent directory instance".
+- **`087c888` — the removed `community.general.yaml` callback** was still named
+  in `ansible.cfg` and aborted **every** host-side Ansible run. Fixed; without
+  this nothing host-side converges.
+- **`eea7808`** gives the Controller a network identity that survives a reboot,
+  so a persistent instance keeps its address across power cycles.
+- **`d3d1d50`** lets a Controller image that has been simulated against be
+  destroyed again (the destroy lock refused it).
+- **`c84798a`** documents that a lost `local-rescue` console password costs the
+  whole image — which is exactly what then happened; see the blocker banner at
+  the top of this file.
 
 ---
 
@@ -109,7 +169,8 @@ credential still matches. This turns 68-min-per-attempt into ~40-min
 identity-only cycles. **Delete the stash when done — it holds a one-use
 credential** (I deleted `pub-stash`/`pub-stash2` at session end).
 
-The gate-6 flow (each step APPLY=1, controller state = `build/homelab/vm/bootstrap-dc`):
+The gate-6 flow (each step APPLY=1, controller state = `build/homelab/vm/bootstrap-dc`
+— **blocked today: that image is empty, see the blocker banner at the top**):
 ```
 make homelab-windows-install-prepare APPLY=1                      # → bundle path
 make homelab-windows-install-run APPLY=1 WINDOWS_RUN=<bundle> FACTORY_DURATION=7200
@@ -136,14 +197,34 @@ attempt's `acceptance-progress.json` (`passed_count`, `next_check`,
 
 ---
 
-## 3. Gate 8 (NEXT LANE) — precise state and next step
+## 3. Gate 8 (DONE) — what was proven and how
 
-`make homelab-arch-identity-{prepare,run,judge}`. Prepare is wired and works.
-Three live runs (one 2026-08-13, two 2026-08-14) took this from "no menu at all"
-to a fully proven boot chain. The best run is
-`homelab/var/factory/arch-identity/run-20260814T120114Z-5fafdb4897ff`:
-`menu_seen`, `entry_selected`, `entry_committed`, `handoff_seen`, `getty_seen`
-all true, `menu_retries: 0`.
+**Result: GATE 8 PASSES, 21 of 21 checks, proven live 2026-08-14.** Run 16,
+bundle `homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159`,
+evidence `evidence/identity-lifecycle.jsonl`:
+
+```
+make homelab-arch-identity-judge \
+  ARCH_IDENTITY_EVIDENCE=homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159/evidence/identity-lifecycle.jsonl
+# -> PASS: 21 checks, external_access=False
+```
+
+Because the two `arch-storage-*` checks are gate 9's Arch half, **gate 9's
+outstanding proof closed with it.** Note `boot_stalls: 1` in the passing run:
+the firmware stall recurred and the bounded power-cycle retry absorbed it.
+
+**No gate-8 blocker remains.** What is still open around it:
+- **The firmware boot stall is not root-caused.** It hit 3 of 16 runs and the
+  bounded power-cycle retry recovers it. Retained evidence narrowed the
+  mechanism: QMP reported `status: running` with `reason: timed-out`, so the
+  vCPU was running -- which eliminates stalled device emulation and host I/O and
+  leaves a firmware spin in the first ESP read. A framebuffer frame, the QMP
+  event stream and the switch log are retained on each occurrence.
+- **The fleet template drift**: `ansible/roles/identity_client/templates/sssd.conf.j2`
+  should carry the same `offline_timeout` bounds the installer now sets.
+
+Re-running the gate needs the canonical Controller image back — see the blocker
+banner at the top of this file:
 
 ```
 make homelab-arch-identity-prepare APPLY=1 \
@@ -154,6 +235,12 @@ make homelab-arch-identity-run APPLY=1 ARCH_IDENTITY_BUNDLE=<bundle> FACTORY_DUR
 A gate-8 run fails fast (~6 min on a boot failure, ~7 to the login), so
 iterating the boundary against an existing gate-7 disk is cheap. Each attempt is
 a fresh `identity-prepare`, which builds a new overlay — never a re-install.
+
+### How it got there — the run-by-run history
+
+Everything below this line is the historical record of the sixteen live runs and
+the eight distinct root causes they exposed. It is kept so the faults and the
+refuted hypotheses are not re-derived; it is not a statement of current state.
 
 ### What was fixed, and why the previously recorded diagnosis was wrong
 Do not re-derive these. Both are committed with their evidence.
@@ -335,12 +422,6 @@ because the controller role runs fresh on every gate-8 run.
 | 15 | (superseded) | share mounted; the identity guard refused a pass reporting owner_uid=1 -- the harness had truncated 10001 on a partial read |
 | 16 | `arch-identity/run-20260814T172142Z-495164bc7159` | **GATE 8 PASSES. 21 of 21.** Judge: `PASS: 21 checks, external_access=False` |
 
-**Gate 8 is proven.** Evidence
-`homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159/evidence/identity-lifecycle.jsonl`;
-judge with `make homelab-arch-identity-judge ARCH_IDENTITY_EVIDENCE=<that file>`.
-Because the two `arch-storage-*` checks are gate 9's Arch half, **gate 9's
-outstanding proof closes with it**.
-
 The last two faults, for the record. The per-user share never resolved because
 the Controller's own name service had no directory source at all -- `smbd`
 clones its `[homes]` section only when it can look the requested name up as a
@@ -351,17 +432,9 @@ printed `10001`, because the measurement pattern had no line anchor and a serial
 chunk boundary inside the number matched its leading digits.
 
 Note `boot_stalls: 1` in the passing run: the firmware stall recurred and the
-power-cycle retry absorbed it. That fault is still not root-caused -- see below.
-
-**No gate-8 blocker remains.** What is still open around it:
-- **The firmware boot stall is not root-caused.** It hit 3 of 16 runs and the
-  bounded power-cycle retry recovers it. Retained evidence narrowed the
-  mechanism: QMP reported `status: running` with `reason: timed-out`, so the
-  vCPU was running -- which eliminates stalled device emulation and host I/O and
-  leaves a firmware spin in the first ESP read. A framebuffer frame, the QMP
-  event stream and the switch log are retained on each occurrence.
-- **The fleet template drift**: `ansible/roles/identity_client/templates/sssd.conf.j2`
-  should carry the same `offline_timeout` bounds the installer now sets.
+power-cycle retry absorbed it. That fault is still not root-caused; it and the
+`sssd.conf.j2` template drift are listed at the top of this section as the two
+things still open around a passing gate 8.
 
 ### How the design premise was wrong (fixed in 73d7f32)
 Gate 8 asserts its gate-7 disk *arrives joined* and only verifies with
@@ -400,7 +473,9 @@ makes the login prompt appear only after the join completed — no readiness
 polling needed.
 
 Each installer change requires **one fresh gate-7 install**, because the unit
-only reaches a disk through an install:
+only reaches a disk through an install (**blocked today: a gate-7 install boots
+the canonical Controller image, which is empty — see the blocker banner at the
+top**):
 ```
 # Omit WINDOWS_RUN: the default --windows-disk is the standalone base the last
 # passing gate-7 run overlaid. Note WINDOWS_RUN is forwarded as --windows-disk,
@@ -499,11 +574,20 @@ no headroom for a single spurious refusal.
 1. `git log --oneline -20`, read `WORKSTATION-FACTORY-STATE.md` gate table.
 2. Re-lease the AIQ work if continuing (a new task, since TASK-2 is done): `aiq
    status` / `aiq dequeue`.
-3. Gate 8: diff `arch_identity_run.py` vs `dualboot_acceptance.py` on
-   OVMF/serial; get the systemd-boot menu onto ttyS0; iterate the arch-identity
-   run (fails fast, cheap) against the 141601Z disk; do a fresh gate-7 install if
-   the disk is stale.
-4. Gate 9 needs no separate work — its three remaining Arch checks are graded
-   inside a passing gate-8 run. Gate 11 needs the live guest-boot hook (not
-   another loopback run). Gate 12 needs gates 8/9 live first. Gate 14 only with
-   explicit owner go-ahead.
+3. **Reinstall the canonical Controller image** — nothing live runs until this
+   is done. The recipe is verbatim in `homelab/docs/operator-runbook.md` ("Keep
+   the `local-rescue` password") and `homelab/vm/README.md` ("Interactive
+   offline installation"); the seed ISO and the signature-verified Arch ISO are
+   already staged. Only the owner can drive the console install, and the new
+   `local-rescue` password must be recorded durably. See the blocker banner at
+   the top of this file.
+4. Then, in order: gate 11 needs the live guest-boot hook (not another loopback
+   run); gate 12 needs an aggregate `homelab-factory-repeat` driver — a reserved name,
+   not implemented — and a live twice-through — **no gate blocks it any more**, gates 6–10 all pass; gate 14
+   only with explicit owner go-ahead.
+
+Superseded 2026-08-17, recorded so it is not re-derived: this list used to open
+with gate-8 serial/OVMF work and to say gate 12 needed gates 8/9 live first.
+Gate 8 passed 2026-08-14 (21/21) and gate 9 closed inside it, and the serial
+diagnosis was itself wrong — the console *was* routed to ttyS0; the pristine
+firmware variables carried no boot option pointing at systemd-boot. See §3.

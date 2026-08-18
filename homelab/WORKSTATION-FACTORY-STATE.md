@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20260814.001`
+Document version: `20260817.001`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-08-14
+Last evidence/workstream review: 2026-08-17
 
-Repository baseline reviewed: `d917aa0`
+Repository baseline reviewed: `c84798a`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -181,11 +181,37 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | 9 | Optional storage failure | Prove per-user SMB authorization when present and successful login with no delay or hard failure when the NAS is absent. Record UID/GID and timestamp measurements before reconsidering NFS. | **PASS 2026-08-14.** This gate has no target of its own by design and is graded inside the gate-6 and gate-8 identity acceptances: `homelab/workstations/acceptance.json` carries six `optional-storage` checks, and the three `windows-smb-*` ones are exercised by `windows_identity_acceptance.py` while the three `arch-smb-*` ones are the gate-8 runner's `arch-storage-{attached,denied,absent-login}`. The Windows half is live-proven in the 2026-08-13 gate-6 evidence (`optional-storage-offline` and `optional-storage-access-denied` among its 24 passed checks); the Arch half is live-proven in the passing 2026-08-14 gate-8 run (`arch-identity/run-20260814T172142Z-495164bc7159`). Controller side was already complete and test-locked 2026-08-12 (`11c2c5f`): the per-user `[homes]` share over `/srv/unas/<user>`, rfc2307 identities so an owner reads their own directory and a foreigner is denied, and the storage name published to the controller's own address, which the gate-8 runner repoints for the absent-login proof. The attached check now also records the UID, GID and file mtime this gate's proof asks for, and refuses a pass whose identifiers disagree with what the directory staged -- which is what makes them a stability proof. Two faults had to be fixed to get the Arch half green, both in `HANDOFF.md` §3: the storage alias had no `servicePrincipalName` for the `cifs/` ticket `mount.cifs` asks the KDC for, and the Controller's own name service had no directory source at all. |
 | 10 | Dual-boot acceptance | From cold boot, select and log into both systems; verify Windows-default five-second policy, disk measurements, EFI recovery choices, and no cross-OS partition damage. | **PASS 2026-08-11**: bundle `dualboot-acceptance/run-20260811T170510Z-a619bcb1f028` records `observed`/`dualboot-accepted`, all eight checks green. From cold boot the firmware started `Linux Boot Manager` (systemd-boot), the five-second menu rendered Windows-default (measured ~5s), Windows BOOTED — observation `boot-observed`, six retained frames — but this run drove no Windows login and no Windows shutdown: the bundle's `result.json` records `windows_clean_shutdown: false` and `windows_login_proven: false`, and the `windows-default-boot` event records `clean_shutdown: false`, `login_proven: false`, `input_sent: false`. Boot 2 rendered the menu again (Linux-first NVRAM held — Windows adopted the blob-bearing entry and did not self-promote, `c15dff7`/`83be6bf`), the drive paused the countdown and arrow-navigated to Arch then pressed Enter (`6d8823b`), Arch handed off on ttyS0 to its getty login surface, the GPT was byte-unchanged, and both EFI boot managers plus the recovery entry were present. The judge grades it verbatim `{"checks": 8, "deferred": ["windows-login-driven", "arch-authenticated-login"], "external_access": false, "result": "pass", "schema_version": 1, "windows_login_proven": false}` (re-run 2026-08-14 via `python3 homelab/bin/homelab-dualboot-acceptance judge <bundle>/evidence/dualboot-events.jsonl`; the Make entry point is `homelab-dualboot-acceptance-judge DUALBOOT_EVIDENCE=…`). BOTH deferrals must be read with the pass: Windows login is deferred to gate 6's identity stream (where it is proven), and Arch AUTHENTICATED login is deferred to gate 8 — gate 10 proved only that Arch reached its ttyS0 getty prompt. |
 | 11 | Lifecycle recovery | Exercise controller restart/loss, PXE release rollback, failed install, broken boot, directory/DNS loss, update failure, workstation remint, and controller reconstruction from public inputs plus a synthetic private overlay. | PARTIAL. Runner + judge implemented `f39f3a1` (`make homelab-factory-recover`, `homelab-factory-recover-judge RECOVERY_EVIDENCE=…`) and unit-tested. The 3-live/5-deferred split is structural, not a run result: `homelab/vm/lifecycle_recovery.py` gates every guest-boot scenario behind an opt-in `boot` hook, so without a live boot those five can only ever render `not-run` with a recorded reason — the module never fabricates a live pass. Three scenarios are provable in the loopback lab with no guest (pxe-release-rollback, update-failure-rollback per ADR 0075, workstation-remint); the five needing a live guest boot (controller-restart, failed-install-recovery, broken-boot-repair, directory-dns-loss, controller-reconstruction) record their observable contract and defer the boot proof. The judge's verdict on any such stream is `result: partial` by construction (`"pass" if not deferred else "partial"`), naming every deferred scenario. Do not read this gate as "proven": read the retained artifact. Retained evidence as of 2026-08-14: `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/{recovery-evidence.jsonl,result.json}` — 8 scenarios, `pass: 3`, `not_run: 5`, `fail: 0`, judge `result: partial`. Any earlier claim of a date-stamped live pass for this gate had no retained artifact behind it. Closing gate 11 to `pass` requires supplying the live boot hook, not another loopback run. |
-| 12 | Repeatability | Destroy disposable state and repeat the entire factory at least twice from a clean local input set; compare manifests and explain any nondeterministic bytes. | verifier + comparator implemented `b3244e8` (`make homelab-factory-verify`, `homelab/vm/factory_verify.py`); live twice-through pending gates 6-10 |
-| 13 | Documentation/publication | Human and operator guides match tested commands, contain no private data, pass links/site checks, and expose exact supported and unsupported states. | human guide + operator runbook added 2026-08-12 (`2680c23`, `homelab/docs/`): real make targets in lifecycle order paired with the proven evidence, pass/fail gate table, troubleshooting, rollback/rebuild/verify; reserved aggregate names flagged, pending gates marked not-working. "Unpublished" here means EXACTLY ONE thing: neither guide is wired into the generated site (`site/site.json` and `scripts/site` reference neither file), because they carry the lab address the site leak scanner rejects. It does NOT mean private — both files are committed and present on the public `origin/main` of `github.com/spincyc/telos`, so treat them as world-readable and keep them free of real hostnames, IPs, MACs, and serials. Site check green; site wiring deferred with a documented recipe. |
+| 12 | Repeatability | Destroy disposable state and repeat the entire factory at least twice from a clean local input set; compare manifests and explain any nondeterministic bytes. | **NOT RUN.** Verifier + comparator implemented `b3244e8` (`make homelab-factory-verify`, `homelab/vm/factory_verify.py`). The blocker recorded here until 2026-08-17 -- "pending gates 6-10" -- is SATISFIED: gates 6, 7, 8, 9 and 10 all pass. Two things block the live twice-through now, and neither is a gate: (1) the canonical Controller image is absent, so no live target can run at all -- see the first bullet under [Current blockers and cautions](#current-blockers-and-cautions); (2) there is no aggregate repeat driver -- `homelab-factory-repeat` is reserved and NOT implemented, so a twice-through today means re-running the per-gate targets by hand and comparing receipts with `homelab-factory-verify`. |
+| 13 | Documentation/publication | Human and operator guides match tested commands, contain no private data, pass links/site checks, and expose exact supported and unsupported states. | human guide + operator runbook added 2026-08-12 (`2680c23`, `homelab/docs/`): real make targets in lifecycle order paired with the proven evidence, pass/fail gate table, troubleshooting, rollback/rebuild/verify; reserved aggregate names flagged, pending gates marked not-working. "Unpublished" here means EXACTLY ONE thing: neither guide is wired into the generated site (`site/site.json` and `scripts/site` reference neither file), because they carry the lab address the site leak scanner rejects. It does NOT mean private — both files are committed and present on the public `origin/main` of `github.com/spincyc/telos`, so treat them as world-readable and keep them free of real hostnames, IPs, MACs, and serials. Site check green; site wiring deferred with a documented recipe. Documentation refreshed 2026-08-17: the runbook's gate-8/gate-9 verdicts were corrected to their live passes, the gate-12 blocker restated, the persistent-instance path given a NOT RUN marker, and the six `homelab-factory-persistent-*` targets plus `PERSISTENT_DC_ROOT`/`RECONVERGE`/`PERSISTENT_CONVERGE_TIMEOUT` documented. The site-navigation wiring remains the outstanding item, so this gate stays in progress rather than closing. |
 | 14 | External integration | Only after a new explicit authorization: read-only UniFi review, separately approved changes, physical attachment, then ThinkPad X13 Gen 6 Intel pilot. | blocked by design |
 
 ## Current blockers and cautions
+
+- **CURRENT BLOCKER 2026-08-14 — the canonical Controller image is gone, so no
+  live factory target can execute today.**
+  `build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2` is a 197,888-byte EMPTY
+  disk (its `manifest.json` records `created_utc` `2026-08-14T20:52:55Z`) and
+  `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
+  2026-08-14 with explicit owner authorization because its `local-rescue`
+  console password was lost, and that password is the ONLY credential that can
+  ever open the image: root is locked, there is no authorized key, no init
+  shell, and SSH password authentication is off. **The interactive console
+  reinstall was staged but never driven.** Until it is, every live target that
+  boots or copies `build/homelab/vm/bootstrap-dc` — all the gate runners, all
+  six `homelab-factory-persistent` targets, and `homelab-sim-auto-run` — runs
+  against an empty disk. Prerequisites are staged and verified: the seed ISO
+  `homelab/var/seed/telos-controller-seed.iso`, SHA-256
+  `66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`, and the
+  signature-verified `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`
+  (SHA-256 `4e82dced1c4fd3e498b22a853f8db2a4d262d32b97e7e07d97390d9e425ffe5e`,
+  fingerprint `3E80CA1A8B89F69CBA57D98A76A5EF9054449A5C`). The repair recipe
+  already exists verbatim in two places and must not be re-derived: the
+  runbook's ["Keep the `local-rescue` password"](docs/operator-runbook.md)
+  section and ["Interactive offline installation"](vm/README.md) in
+  `homelab/vm/README.md`. Only the owner can drive the console install; the
+  console password must be recorded somewhere durable this time. Rebuilding the
+  image invalidates no retained gate receipt — the disk digest is captured per
+  run at prepare time and no tracked artifact pins it.
 
 - RESOLVED 2026-08-12 (owner chose "Hand off at install"): the gate-5 install now RETAINS the recovery publication.iso mode-0600 for the identity phase (`_retain_private_publication`, commit `0ef9fe6`) instead of destroying it; the destruction proof lives at the identity recovery gate. Note the operational consequence recorded in memory [[gate6-publication-single-use]]: each install yields exactly one gate-6 attempt, and a gate-6 run that fails after the credential actions (incl. the final publish) burns the publication and forces a fresh 68-min install. The historical analysis below is kept for context. --- BLOCKER (needs an owner design decision) 2026-08-12: the gate-6 identity acceptance requires a recovery `publication.iso` in the retained Windows bundle (`windows_identity_factory.py:588`), but a SUCCESSFUL gate-5 install DESTROYS its `publication.iso` by design (`windows_install_run.py:291`, commit `7b4bf6e`). The original bundle `run-20260728T114233Z-afecdf7cc9d0` only carried a usable publication because its own `result.json` recorded `fail` (a since-fixed validator double-count bug counted the single PXE boot twice), so its teardown skipped the destroy -- an ACCIDENTAL artifact. Gate 6's 24-check acceptance is genuinely PROVEN (attempt `20260812T043214Z-28ff545de0ce`, 24/24, which then ran the recovery gate that consumed that accidental publication). A fresh gate-5 install (`run-20260812T140120Z-70433b9dba26`, 2026-08-12, `observed`/`native-windows-clean-shutdown`) produced a native-ready `windows.qcow2` but correctly destroyed its publication, and the ephemeral local-rescue credential is retained nowhere -- so no matching recovery publication can be rebuilt. To make gate-6 repeatably runnable THROUGH the final publish (which emits `acceptance-evidence.jsonl`, the stream gate-8 prepare subsets into its bundle as `windows-evidence.jsonl` — see the gate-6 row for the three-filename explanation), the factory needs the recovery-publication provisioning made deliberate. RECOMMENDED FIX: the gate-5 install should HAND OFF the recovery publication to the identity phase (retain it mode-0600 in the bundle) rather than destroy it -- the credential-media DESTRUCTION PROOF already belongs to the identity recovery gate, which destroys it at the end of a successful acceptance (exactly what attempt 66 did). This restores the original working model deliberately and unifies the destruction proof at the recovery gate. It changes a passed gate's (gate 5) security teardown, so it is surfaced for owner confirmation rather than changed unilaterally mid-run. Alternative: provision a distinct recovery publication (with the installed disk's credential) as a separate retained artifact. Everything else in the lifecycle is done or owner-blocked.
 
@@ -597,9 +623,13 @@ Do not skip a gate or turn a planned assertion into a reported pass.
   controller-auth code runs, so the receipt-origin work is not implicated.
   Both questions it raised are now closed. The boot path lost its coordinates
   because both boot raises passed `diagnostic=None`; fixed. Controller-state
-  drift was checked and disproven: `build/homelab/vm/bootstrap-dc` still dates
-  from 2026-07-27 and the paired `windows.qcow2` from 2026-07-28, while each
-  attempt writes only its own overlay, so four runs mutated neither. Do not
+  drift was checked and disproven **as measured on 2026-07-30**:
+  `build/homelab/vm/bootstrap-dc` still dated from 2026-07-27 and the paired
+  `windows.qcow2` from 2026-07-28, while each attempt writes only its own
+  overlay, so four runs mutated neither. That dating is history only: the
+  canonical image was destroyed and recreated empty on 2026-08-14 (see the
+  current blocker above), which falsifies the timestamps but not the finding —
+  those four runs still mutated nothing. Do not
   read a fourth failure as four of a kind, and do not re-derive the drift
   hypothesis.
 - A fifth attempt reproduced the boundary and rendered none of the coordinates
@@ -753,6 +783,10 @@ when new evidence is actually needed:
 make homelab-sim-auto-run APPLY=1
 ```
 
+**Blocked today:** this boots `build/homelab/vm/bootstrap-dc`, which is an empty
+disk — see the canonical-image blocker in
+[Current blockers and cautions](#current-blockers-and-cautions).
+
 This command generates and wipes its own one-run password. Never supply the
 operator's `local-rescue` password in Make, the environment, a command, or an
 answer file. `make homelab-sim-run APPLY=1` is the separate final human gate;
@@ -763,27 +797,36 @@ attachment.
 Everything the previous version of this paragraph prescribed is DONE and must
 not be re-derived: the Controller netboot output is built, release sets
 `20260727.001`–`.005` are accepted with `.005` selected, the UEFI iPXE request
-and both installer handoffs are proven, and gates 1–7 and 10 pass (gate 4's
+and both installer handoffs are proven, and gates 1–10 pass (gate 4's
 packet evidence proves the Controller emits no DHCP or ProxyDHCP frame).
 
 The genuinely next implementation actions, in order:
 
-1. **Gate 8 (Arch join and login)** — the only gate blocking the twice-through.
-   Make the arch-identity boundary redirect the UEFI/OVMF console to ttyS0 the
-   way the gate-10 dual-boot boundary does, so the systemd-boot menu renders on
-   the workstation serial; then re-run against the gate-7 disk. Details and the
-   exact comparison to make are in the gate-8 row above and in
-   [HANDOFF.md](HANDOFF.md) §3.
-2. **Gate 9's three Arch storage checks** — they ride along inside a passing
-   gate-8 run; no separate work is expected.
-3. **Gate 11** — supply the live guest-boot hook so the five deferred recovery
+1. **Reinstall the canonical Controller image** — the precondition for
+   everything else, because nothing live can run without it. Drive the
+   interactive console install per the runbook's
+   ["Keep the `local-rescue` password"](docs/operator-runbook.md) recipe and
+   ["Interactive offline installation"](vm/README.md); the seed ISO and the
+   signature-verified Arch ISO are already staged. Record the `local-rescue`
+   console password durably — it is the only credential that can open the
+   resulting image.
+2. **Gate 11** — supply the live guest-boot hook so the five deferred recovery
    scenarios can render a real pass instead of `not-run`; the loopback three
    already pass and re-running them changes nothing.
-4. **Gate 12 (repeatability)** — only after gates 8 and 9 are live: run the
-   sealed-input lifecycle twice from destroyed disposable state and compare
-   receipts with `homelab-factory-verify`.
-5. **Gate 13** — decide the site-wiring question for `homelab/docs/` (the guides
+3. **Gate 12 (repeatability)** — write the aggregate repeat driver that
+   `homelab-factory-repeat` names; it is reserved and not implemented. Then run the sealed-input lifecycle twice
+   from destroyed disposable state and compare receipts with
+   `homelab-factory-verify`. No gate blocks this any more; the image and the
+   driver do.
+4. **Gate 13** — decide the site-wiring question for `homelab/docs/` (the guides
    are already public in Git; the open item is the leak scanner and navigation).
+
+Superseded 2026-08-17, kept so it is not re-derived: this list previously opened
+with gate 8's serial routing and gate 9's storage checks. Both are done — gate 8
+passed live 2026-08-14 and gate 9 closed inside it — and the gate-8 diagnosis
+recorded here was wrong. The boundary did route the console to ttyS0; what the
+pristine firmware variables lacked was any boot option pointing at
+systemd-boot, so nothing rendered. See [HANDOFF.md](HANDOFF.md) §3.
 
 Do not add an aggregate target that reports success for a gate whose live proof
 is absent. Follow

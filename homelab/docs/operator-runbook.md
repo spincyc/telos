@@ -5,7 +5,8 @@ factory on one Arch build host. Every command below is a real `make` target
 verified against the [Makefile](../../Makefile) and the
 [Make contract](../FACTORY-MAKE-TARGETS.md). Every evidence claim matches the
 [factory state ledger](../WORKSTATION-FACTORY-STATE.md); where a step is not yet
-proven live, it is marked **PENDING** and never described as working.
+proven live, it is marked **NOT RUN** (or **PENDING**) and never described as
+working.
 
 Pair this with the [human guide](factory-guide.md) for orientation.
 
@@ -31,6 +32,30 @@ Pair this with the [human guide](factory-guide.md) for orientation.
   hostnames, addresses, and credentials live only in the private overlay
   (`telos-private`) and must never enter this tree.
 
+### Blocker: the canonical Controller image is absent
+
+**As of 2026-08-14 no live target in this runbook can execute.**
+`build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2` is a 197,888-byte empty disk
+and `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
+2026-08-14 with owner authorization after its `local-rescue` console password
+was lost — the only credential that can ever open it — and **the interactive
+console reinstall was staged but never driven.** Every gate runner, every
+`homelab-factory-persistent` target, and `make homelab-sim-auto-run` boot or
+copy that image, so today they would run against an empty disk.
+
+Prerequisites for the reinstall are staged and verified: the seed ISO
+`homelab/var/seed/telos-controller-seed.iso` (SHA-256
+`66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`) and the
+signature-verified `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`. The
+recipe is already written out below in
+[Keep the `local-rescue` password](#keep-the-local-rescue-password) and in
+[`homelab/vm/README.md`](../vm/README.md) under "Interactive offline
+installation"; only the owner can drive the console install. Record the new
+`local-rescue` password durably — losing it costs the whole image again.
+
+Steps marked **Blocked today** below all wait on this one repair. Rebuilding the
+image invalidates no retained gate receipt.
+
 ### Target names: real vs reserved
 
 [FACTORY-MAKE-TARGETS.md](../FACTORY-MAKE-TARGETS.md) reserves several aggregate
@@ -54,13 +79,13 @@ deps -> media -> cache-seal -> offline-check
    windows-install (gate 5) -> windows-identity (gate 6)
                                     |
                                     v
-   arch-install (gate 7) -> arch-identity (gate 8, PENDING)
+   arch-install (gate 7) -> arch-identity (gate 8)
                                     |
                                     v
              dualboot-acceptance (gate 10)
                                     |
                                     v
-                verify -> recover -> (repeat, PENDING)
+                verify -> recover -> (repeat, NOT RUN)
 ```
 
 ## Common variables and their defaults
@@ -225,6 +250,10 @@ make homelab-windows-install-run WINDOWS_RUN=<prepared bundle> APPLY=1
 # FACTORY_DURATION=<seconds> bounds the live run (default 120)
 ```
 
+> **Blocked today:** this needs the canonical Controller image at
+> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
 `-prepare` builds a disposable private bundle; `-run` PXE-boots WinPE and
 installs Windows 11 Pro to the approved layout against a fresh overlay, then
 reboots with no ISO/PXE attachment. **Evidence — gate 5 PASS 2026-08-10**,
@@ -244,6 +273,10 @@ make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<private JSONL>
 # optional on prepare/run: FACTORY_CONTROLLER_STATE=<state>
 #   WINDOWS_SUBMIT_FOCUS_TABS=<n> WINDOWS_REVIEWED_SUBMIT_FOCUS=1
 ```
+
+> **Blocked today:** this needs the canonical Controller image at
+> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
 
 **Evidence — gate 6 PASS, 24 of 24 contracted checks, 2026-08-13**, attempt
 `20260813T191519Z-28a9f6ee07f5` on bundle
@@ -285,6 +318,10 @@ make homelab-arch-install-prepare APPLY=1
 make homelab-arch-install-run ARCH_RUN=<prepared arch bundle> APPLY=1
 ```
 
+> **Blocked today:** this needs the canonical Controller image at
+> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
 `-prepare` builds a fresh qcow2 overlay over the persistent Windows disk (NVMe
 serial `TELOS-WIN-0001`, Windows partitions preserved) and prints the loopback
 QEMU command. `-run` PXE-boots archiso, hot-attaches the disk, installs Arch into
@@ -299,7 +336,7 @@ packages from the controller-served signed repo, `TELOS ARCH JOIN VERIFIED`
 (live `net ads join` + `testjoin`), SSSD/local-rescue provisioning, and
 systemd-boot `default auto-windows`. (Cold-boot NVRAM proof belongs to gate 10.)
 
-### 3.2 Arch join and login — **PENDING (gate 8)**
+### 3.2 Arch join and login — **PASS 2026-08-14, 21 of 21 (gate 8)**
 
 ```sh
 make homelab-arch-identity-prepare \
@@ -309,11 +346,29 @@ make homelab-arch-identity-run ARCH_IDENTITY_BUNDLE=<joined arch bundle> APPLY=1
 make homelab-arch-identity-judge ARCH_IDENTITY_EVIDENCE=<produced JSONL>
 ```
 
-The targets exist and the live boundary is wired (synthetic principals now carry
-POSIX attributes, staged per run). **This gate has not passed live.** Its
-SSSD-identity, UID/GID-stability, cached-offline-login, update-gate, rollback,
-and local-rescue proofs are still to be produced. Do not report gate 8 as
-working.
+> **Blocked today:** this needs the canonical Controller image at
+> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
+**Evidence — gate 8 PASS 2026-08-14, 21 of 21 checks**, bundle
+`homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159`, stream
+`evidence/identity-lifecycle.jsonl`. Judge it read-only with:
+
+```sh
+make homelab-arch-identity-judge \
+  ARCH_IDENTITY_EVIDENCE=homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159/evidence/identity-lifecycle.jsonl
+```
+
+which prints `PASS: 21 checks, external_access=False`. That run proves the
+SSSD identity, UID/GID stability, named user and administrator behaviour,
+cached-offline login, uncached denial, local rescue, identity restore, and the
+three `arch-storage-*` checks that are gate 9's Arch half. Sixteen live runs and
+eight distinct root causes got there; the narrative is in
+[`HANDOFF.md`](../HANDOFF.md) §3 and is not repeated here. Still open around the
+gate, but not blocking it: the firmware boot stall (3 of 16 runs, absorbed by a
+bounded power-cycle retry) is not root-caused, and the fleet
+`sssd.conf.j2` template should carry the same `offline_timeout` bounds the
+installer sets.
 
 ---
 
@@ -341,6 +396,15 @@ proven by gate 6's identity stream, not this gate.**
 
 ## The persistent directory instance (not part of any gate)
 
+> **NOT RUN as of 2026-08-17.** Everything in this section is implemented and
+> unit-tested (`homelab/tests/test_bootstrap_vm.py`,
+> `homelab/tests/test_simulation_overlay.py`,
+> `homelab/tests/test_domain_controller_role.py`) but has **never been executed
+> live**. Read it as the designed contract, not as observed behaviour, and do
+> not report any of it as working. It is additionally blocked today: bring-up
+> seeds the instance *from* the canonical Controller image, which is empty — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
 Everything above is the **acceptance** factory, and its controller is disposable
 on purpose: the canonical image carries no directory, the role provisions one
 whenever `sam.ldb` is absent, and teardown discards the overlay after
@@ -365,6 +429,10 @@ make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
     CONFIRM='DESTROY <name>'
 ```
 
+> **Blocked today:** bring-up creates the instance by seeding it *from* the
+> canonical Controller image, so today it would seed an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
 Bring-up creates the instance when it is absent and boots it in place; a second
 bring-up **reuses** the disk rather than re-seeding it, which is what makes the
 directory durable. Boot-in-place was chosen over committing an overlay back
@@ -379,8 +447,20 @@ credentials at your terminal, and it builds a disc that briefly carries one:
 ```sh
 make homelab-factory-persistent-converge-plan PERSISTENT_DC=<name>   # read-only
 make homelab-factory-persistent-converge APPLY=1 PERSISTENT_DC=<name> \
-    [SEED_ISO=homelab/var/seed/telos-controller-seed.iso]
+    [SEED_ISO=homelab/var/seed/telos-controller-seed.iso] \
+    [RECONVERGE=1] [PERSISTENT_CONVERGE_TIMEOUT=<seconds>]
 ```
+
+Three variables belong to this path alone and have no default worth guessing at:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PERSISTENT_DC_ROOT` | `build/homelab/vm/persistent-dc` | Parent of every persistent instance. Instances resolve under it and the name is validated, which is what keeps the canonical acceptance state unreachable as a persistent target. |
+| `RECONVERGE` | unset | Required to converge an instance a second time. Without it a convergence never re-runs, so an operator who needs to repeat one **must** pass `RECONVERGE=1`. |
+| `PERSISTENT_CONVERGE_TIMEOUT` | unset | Overrides the convergence's own long in-guest bound, in seconds. |
+
+`FACTORY_DURATION` is deliberately **not** reused here: its 120-second default
+would abort a Samba provisioning run mid-flight.
 
 It converges **in place**, over the `local-rescue` console password the offline
 installer had you type — so it needs no harness credential, and the durable ESP is
@@ -404,6 +484,20 @@ Real account names are instance data, so they are named in the gitignored
 overlay, never in a tracked file — see `homelab/instance-example/identity/`.
 Absent that file every account keeps the synthetic contract name, which is
 exactly what the acceptance gates expect.
+
+Convergence brings up the directory; the **durable accounts** in that roster are
+provisioned by a separate target, against the private inventory:
+
+```sh
+make homelab-bootstrap-controller INVENTORY=<private inventory>   # --check by default
+make homelab-bootstrap-controller INVENTORY=<private inventory> APPLY=1
+```
+
+Check mode is the default and `APPLY=1` is required to mutate the guest. Its two
+preconditions are opt-in and off by default — `homelab_ad_provision_enabled` and
+`homelab_ad_admin_password_file` (root-owned, mode 0600, a path and never a
+value) — both documented under "Durable directory accounts" in
+[`homelab/ansible/roles/domain_controller/README.md`](../ansible/roles/domain_controller/README.md).
 
 Two properties worth knowing before you rely on it. Durable account passwords
 enter as **file paths** — root-owned, mode 0600 — and never as values, so nothing
@@ -468,6 +562,10 @@ make homelab-factory-recover RECOVERY_RUN=<fresh run bundle dir> APPLY=1
 make homelab-factory-recover-judge RECOVERY_EVIDENCE=<produced recovery-evidence.jsonl>
 ```
 
+> **Blocked today:** this needs the canonical Controller image at
+> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
+> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
 Exercises controller restart/loss, PXE release rollback, failed-install
 recovery, broken-boot repair, directory/DNS loss, update-failure handling,
 workstation remint, and controller reconstruction. **Evidence — gate 11
@@ -480,19 +578,24 @@ PARTIAL:** three scenarios are **proven live** in the loopback lab (2026-08-12):
 contract and **defer** the boot proof; the judge returns verdict `partial`,
 which is honest deferral, not a pass.
 
-### 5.3 Repeatability — **PENDING (gate 12)**
+### 5.3 Repeatability — **NOT RUN (gate 12)**
 
 The verifier and receipt comparator are implemented
 (`homelab/vm/factory_verify.py`), but a full twice-through of the whole
-lifecycle from destroyed disposable state is **pending gates 6–10 running
-together live**. The reserved `homelab-factory-repeat` and
-`homelab-factory-fresh-clone` aggregate targets are **not implemented**; repeat
-by re-running Stages 0–5 from the sealed cache and comparing receipts with
-`homelab-factory-verify`.
+lifecycle from destroyed disposable state has never run. **The old blocker —
+"pending gates 6–10" — is satisfied as of 2026-08-14: gates 6, 7, 8, 9 and 10
+all pass.** What blocks it now is not a gate:
+
+1. the canonical Controller image is absent, so no live target can run at all —
+   see [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent);
+2. there is no aggregate repeat driver. `homelab-factory-repeat` and
+   `homelab-factory-fresh-clone` are reserved and **not implemented**, so a
+   twice-through means re-running Stages 0–5 from the sealed cache by hand and
+   comparing receipts with `homelab-factory-verify`.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20260814.001`)
+## Pass/fail gate summary (as of ledger `20260817.001`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
@@ -503,11 +606,11 @@ by re-running Stages 0–5 from the sealed cache and comparing receipts with
 | 5 | Windows-first install | `homelab-windows-install-{prepare,run}` | **PASS** |
 | 6 | Windows join/login | `homelab-windows-identity-{prepare,run,judge}` | **PASS**, 24/24 contracted checks; judge also reports `deferred: [disable-reenable]` and `out_of_scope: [firmware-activation, live-microsoft-update]` |
 | 7 | Arch-second install | `homelab-arch-install-{prepare,run}` | **PASS** |
-| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **NOT RUN** — boot chain proven live 2026-08-14 (menu, Enter-commit, EFI handoff, ttyS0 getty); blocked on an in-run domain join, see the state ledger's gate-8 row |
-| 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** (Windows) / **NOT RUN** (Arch) |
+| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PASS**, 21/21, proven live 2026-08-14 (bundle `arch-identity/run-20260814T172142Z-495164bc7159`; judge prints `PASS: 21 checks, external_access=False`) |
+| 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
 | 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
 | 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`; the five defer by construction until a live boot hook exists |
-| 12 | Repeatability | `homelab-factory-verify` (comparator) | **PENDING** |
+| 12 | Repeatability | `homelab-factory-verify` (comparator only; the repeat driver is reserved and not implemented) | **NOT RUN** — no longer blocked by any gate; blocked on the absent canonical Controller image and the missing aggregate driver |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** |
 
@@ -518,8 +621,10 @@ identity gates. `homelab/workstations/acceptance.json` carries six
 `homelab/workstations/windows_identity_acceptance.py` gates the Windows side
 through `optional-storage-offline` and `optional-storage-access-denied`. Both of
 those passed in the 2026-08-13 gate-6 run, so the Windows half is live-proven.
-The three `arch-smb-*` checks are driven by `arch_identity_run.py` and are the
-only part still outstanding; they can only run inside a passing gate-8 run.
+The three `arch-smb-*` checks are driven by `arch_identity_run.py` as
+`arch-storage-{attached,denied,absent-login}`, and they **passed inside the
+gate-8 run of 2026-08-14** (`arch-identity/run-20260814T172142Z-495164bc7159`),
+which closes gate 9's Arch half.
 
 An earlier revision of this section claimed the identity contract carries no
 storage check. That was wrong — corrected 2026-08-14.

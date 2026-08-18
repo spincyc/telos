@@ -1,9 +1,9 @@
 # Workstation factory Make contract
 
-Document version: `20260814.001`
+Document version: `20260817.001`
 
 Status: partly implemented. Targets marked **implemented** exist in the Makefile
-today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-14.
+today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-17.
 Targets marked **reserved** do not exist; the local per-gate lifecycle that
 actually runs is a separate, real set of targets — see
 [Implemented per-gate lifecycle](#implemented-per-gate-lifecycle), which is the
@@ -69,7 +69,7 @@ substitutes already implemented under different names
 ## Implemented per-gate lifecycle
 
 This is what actually runs today, gate by gate. Every name below was verified
-present in the Makefile on 2026-08-14. Each mutating target needs `APPLY=1`.
+present in the Makefile on 2026-08-17. Each mutating target needs `APPLY=1`.
 
 | Gate | Targets | Required variables |
 |---:|---|---|
@@ -81,7 +81,7 @@ present in the Makefile on 2026-08-14. Each mutating target needs `APPLY=1`.
 | 10 | `homelab-dualboot-acceptance-prepare`, `homelab-dualboot-acceptance-run`, `homelab-dualboot-acceptance-judge` | `DUALBOOT_EVIDENCE=` |
 | 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_EVIDENCE=` |
 | 3 (bundle) | `homelab-factory-controller-bundle` | — |
-| 12 | `homelab-factory-verify` | — |
+| 12 | `homelab-factory-verify` | — (comparator only; the repeat driver is reserved — `homelab-factory-repeat` is not implemented, so this target compares receipts and never performs a repeatability run) |
 
 Gate 9 deliberately has no target of its own: its `optional-storage` checks are
 graded inside the gate-6 and gate-8 identity acceptances.
@@ -113,6 +113,41 @@ dualboot-acceptance-{prepare,run,judge}
 verify -> recover -> recover-judge -> [clean] -> [repeat]
                                        ^-- reserved, not implemented
 ```
+
+## Persistent controller instance (not a gate)
+
+Six further targets exist in the Makefile and belong to no gate. They run a
+**persistent** directory server — one whose `/var/lib/samba` survives a
+bring-up — beside the disposable acceptance controller. No acceptance target
+references them, and nothing here runs unless `PERSISTENT_DC` names an instance:
+persistence must be asked for by name and is never inferred.
+
+| Target | Mutates | Contract |
+|---|---|---|
+| `homelab-factory-persistent-plan` | no | Read-only. Prints what a bring-up would do for `PERSISTENT_DC`. |
+| `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists and whether its directory is provisioned. |
+| `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. |
+| `homelab-factory-persistent-converge-plan` | no | Read-only plan for the provisioning step. |
+| `homelab-factory-persistent-converge` | `APPLY=1` | Provisions Active Directory into the instance in place, over the `local-rescue` console password typed at the operator's terminal. Long-running; prompts for credentials interactively and writes none of them to a file, a Make variable, an environment variable, or argv. |
+| `homelab-factory-persistent-destroy` | `APPLY=1` + `CONFIRM='DESTROY <name>'` | Disk-erasing: deletes a real directory server, so it needs the stable instance name and the exact confirmation carrying that name. |
+
+**Every one of the six requires `PERSISTENT_DC=<instance name>`** and exits 2
+without it. `PERSISTENT_DC` has no default.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PERSISTENT_DC` | *(none; required)* | Stable instance name. Instances resolve under `PERSISTENT_DC_ROOT` and the name is validated, so the canonical acceptance state is unreachable as a persistent target. |
+| `PERSISTENT_DC_ROOT` | `build/homelab/vm/persistent-dc` | Parent directory of every persistent instance. |
+| `RECONVERGE` | unset | Required to converge an instance a **second** time; without it a convergence never re-runs. |
+| `PERSISTENT_CONVERGE_TIMEOUT` | unset | Overrides the convergence's own long in-guest bound, in seconds. |
+| `SEED_ISO` | unset | Optional seed ISO for bring-up and convergence. |
+| `CONFIRM` | unset | `DESTROY <instance name>`, required by `-destroy`. |
+
+`FACTORY_DURATION` is deliberately **not** reused on this path: its 120-second
+default would abort a Samba provisioning run. Verdict: this whole surface is
+implemented and unit-tested but **NOT RUN** — it has never executed live as of
+2026-08-17. See "The persistent directory instance" in
+[docs/operator-runbook.md](docs/operator-runbook.md).
 
 ## Required common inputs
 

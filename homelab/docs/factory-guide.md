@@ -20,7 +20,10 @@ In order, one run:
 1. starts from a clean public checkout and locally verified Arch and Windows
    media;
 2. builds a disposable **controller** (Samba Active Directory, DNS, PXE network
-   boot, and an HTTP package service);
+   boot, and an HTTP package service) — that is the acceptance mode; a second,
+   opt-in **persistent** controller mode exists for a directory you can log back
+   into, described under "The persistent directory instance" in the
+   [operator runbook](operator-runbook.md) and not yet run live;
 3. network-boots a throwaway **workstation** through that controller;
 4. installs **Windows 11 Pro first, then Arch Linux second** on one UEFI/GPT
    disk, preserving Windows and its recovery data;
