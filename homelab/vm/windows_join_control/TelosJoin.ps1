@@ -13,12 +13,27 @@ $root = $volume.DriveLetter + ':\'
 $document = Get-Content -LiteralPath ($root + 'join.json') -Raw |
     ConvertFrom-Json
 $usernameParts = @(([string]$document.username).Split('@'))
+# The daily operator's NAME is instance data.  The host resolves it from the
+# one identity roster (workstations/arch_second.identity_roster, optionally
+# patched by the owner's gitignored private overlay) and writes the resolved
+# UPN into join.json.  Pinning the synthetic acceptance name here refused
+# every join document the moment the owner renamed that principal -- from
+# inside the guest, over COM1, with nothing to say which side was wrong.
+# (windows_join_iso._assert_scripts_agree_with_roster still refuses any
+# control script that pins a local part again, so the backstop survives.)
+# So validate the SHAPE and take the name from the document: the local part
+# must match the same lowercase form the host-side gates admit, within the
+# 20-character Active Directory sAMAccountName limit, and the realm half must
+# be the realm this same document already proved.
+$operatorParts = @(([string]$document.operator).Split('@'))
 if ($document.schema_version -ne 2 -or
     $document.nonce -notmatch '^[a-f0-9]{32}$' -or
     $document.domain -notmatch '^[A-Za-z0-9.-]{1,253}$' -or
     $document.realm -notmatch '^[A-Z0-9.-]{1,253}$' -or
     $document.realm -cne ([string]$document.domain).ToUpperInvariant() -or
-    $document.operator -cne ('operator@' + [string]$document.realm) -or
+    $operatorParts.Count -ne 2 -or
+    $operatorParts[0] -cnotmatch '^[a-z][a-z0-9-]{0,19}$' -or
+    $operatorParts[1] -cne [string]$document.realm -or
     $usernameParts.Count -ne 2 -or
     $usernameParts[0] -cnotmatch '^tj-[a-f0-9]{16}$' -or
     $usernameParts[1] -cne [string]$document.realm -or

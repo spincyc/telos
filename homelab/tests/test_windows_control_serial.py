@@ -17,6 +17,14 @@ from homelab.vm.windows_control_serial import (
     parse_probe_start,
     receive_probe_record,
 )
+from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
+
+
+# Derived, not pinned: this fixture needs the guest's probe record to name the
+# daily operator, and every consumer of that record resolves the name from the
+# one roster loader.  test_controller_principals owns the assertion about WHICH
+# names the synthetic contract carries.
+OPERATOR = DAILY_ADMINISTRATOR
 
 
 def record(action="domain-state"):
@@ -25,7 +33,7 @@ def record(action="domain-state"):
             "part_of_domain": True,
             "domain": "FACTORY.TEST",
             "secure_channel": True,
-            "operator": "operator@FACTORY.TEST",
+            "operator": f"{OPERATOR}@FACTORY.TEST",
             "operator_local_administrator": True,
         },
         "current-session-state": {
@@ -37,11 +45,11 @@ def record(action="domain-state"):
             "domain_administrator": False,
         },
         "interactive-operator": {
-            "principal": r"FACTORY\operator",
+            "principal": rf"FACTORY\{OPERATOR}",
             "principal_sid": "S-1-5-21-1-2-3-1104",
-            "operator": "operator@AD.FACTORY.TEST",
+            "operator": f"{OPERATOR}@AD.FACTORY.TEST",
             "operator_sid": "S-1-5-21-1-2-3-1104",
-            "console_principal": r"FACTORY\operator",
+            "console_principal": rf"FACTORY\{OPERATOR}",
             "console_sid": "S-1-5-21-1-2-3-1104",
             "authenticated": True,
             "authentication_type": "Kerberos",

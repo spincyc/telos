@@ -5,6 +5,19 @@ import socket
 from unittest import mock
 
 from homelab.vm import windows_identity_adapter as subject
+from homelab.vm.controller_principals import (
+    DAILY_ADMINISTRATOR,
+    DIRECTORY_PRINCIPALS,
+    STANDARD_USER,
+)
+
+
+# Derived, not pinned: these fixtures need SOME principal to drive the adapter
+# with, and the adapter itself resolves its principals from the one roster
+# loader.  Which names the synthetic contract carries is asserted in
+# test_controller_principals, against the contract read with the private
+# overlay held out of the way.
+OPERATOR_UPN = f"{DAILY_ADMINISTRATOR}@FACTORY.TEST"
 
 
 class WindowsIdentityAdapterTests(unittest.TestCase):
@@ -116,9 +129,9 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             adapter = self.adapter(Path(name))
             adapter._reauthenticate = mock.Mock()
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "ab" * 16)
+                OPERATOR_UPN, "private", "ab" * 16)
             adapter._reauthenticate.assert_called_once_with(
-                "operator@FACTORY.TEST",
+                OPERATOR_UPN,
                 "private",
                 domain_operator=True,
                 diagnostic_nonce="ab" * 16,
@@ -812,14 +825,14 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 adapter = self.adapter(Path(name), boundary)
 
                 result = adapter.credential_action(
-                    "windows-standard-online", "student", "secret")
+                    "windows-standard-online", STANDARD_USER, "secret")
 
             self.assertEqual({"result": "pass"}, result)
             material = build.call_args.args[1]
             self.assertEqual("connected-domain-login", material["action"])
             self.assertEqual("FACTORY.TEST", material["domain"])
             self.assertEqual(
-                "FACTORY\\student",
+                f"FACTORY\\{STANDARD_USER}",
                 execute.call_args.kwargs["expected_principal"],
             )
 
@@ -830,7 +843,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
             adapter = self.adapter(Path(name))
             with self.assertRaisesRegex(
                     subject.WindowsIdentityAdapterError, "not mapped"):
-                adapter.credential_action("unknown", "student", "secret")
+                adapter.credential_action("unknown", STANDARD_USER, "secret")
             build.assert_not_called()
 
     def test_credential_serial_failure_precedes_private_iso_creation(self):
@@ -854,7 +867,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                         subject.WindowsIdentityAdapterError,
                         "serial acquisition") as caught:
                     adapter.credential_action(
-                        "windows-standard-online", "student", "secret")
+                        "windows-standard-online", STANDARD_USER, "secret")
 
             build.assert_not_called()
             diagnostic = caught.exception.diagnostic
@@ -892,7 +905,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 with self.assertRaises(
                         subject.WindowsIdentityAdapterError) as caught:
                     adapter.credential_action(
-                        "windows-standard-online", "student", secret)
+                        "windows-standard-online", STANDARD_USER, secret)
 
             self.assertNotIn(secret, str(caught.exception))
             self.assertEqual([], list(
@@ -942,7 +955,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                 with self.assertRaises(
                         subject.WindowsIdentityAdapterError) as caught:
                     adapter.credential_action(
-                        "windows-standard-online", "student", "secret")
+                        "windows-standard-online", STANDARD_USER, "secret")
 
                 # The terminal frame is still retained at failure.
                 self.assertEqual(
@@ -1054,7 +1067,7 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
                         subject.WindowsIdentityAdapterError,
                         "media creation failed"):
                     adapter.credential_action(
-                        "windows-standard-online", "student", "secret")
+                        "windows-standard-online", STANDARD_USER, "secret")
 
             self.assertEqual([], list(
                 Path(name).glob("windows-credential-*.iso")))
@@ -1102,11 +1115,8 @@ class WindowsIdentityAdapterTests(unittest.TestCase):
 
             self.assertIs(
                 mock.sentinel.principals,
-                adapter.stage_principals({
-                    "student": "one",
-                    "operator": "two",
-                    "directory-admin": "three",
-                }),
+                adapter.stage_principals(dict(zip(
+                    DIRECTORY_PRINCIPALS, ("one", "two", "three")))),
             )
             self.assertIs(
                 mock.sentinel.join,

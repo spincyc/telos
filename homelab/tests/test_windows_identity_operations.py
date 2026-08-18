@@ -15,6 +15,10 @@ from homelab.vm.windows_identity_run import (
     PrivateIdentityMaterial,
     WindowsIdentityRunError,
 )
+from homelab.vm.controller_principals import (
+    DIRECTORY_PRINCIPALS,
+    STANDARD_USER,
+)
 
 
 class WindowsIdentityOperationsTests(unittest.TestCase):
@@ -36,10 +40,13 @@ class WindowsIdentityOperationsTests(unittest.TestCase):
 
         def acceptance(local, principals):
             self.assertIs(local, replacement)
-            self.assertEqual(
-                {"student", "operator", "directory-admin"}, set(principals))
+            # WHICH three names the synthetic contract carries is
+            # test_controller_principals' assertion, not this one: here the
+            # subject is that run_scoped_acceptance hands the acceptance the
+            # staged principals as a read-only mapping.
+            self.assertEqual(set(DIRECTORY_PRINCIPALS), set(principals))
             with self.assertRaises(TypeError):
-                principals["student"] = "replacement"
+                principals[STANDARD_USER] = "replacement"
             self.assertIs(material._new_local, replacement)
             events.append(("accept", local, dict(principals)))
 

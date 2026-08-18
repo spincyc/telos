@@ -1,3 +1,8 @@
+import json
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from itertools import product
@@ -30,7 +35,11 @@ from homelab.vm.controller_principals import (
     DOMAIN_ADMINISTRATOR,
     STANDARD_USER,
 )
-from homelab.workstations.arch_second import DIRECTORY_ROLES, identity_roster
+from homelab.workstations.arch_second import (
+    CONTRACT_ROLES,
+    DIRECTORY_ROLES,
+    identity_roster,
+)
 
 from homelab.tests.test_windows_identity_acceptance import details
 
@@ -38,6 +47,43 @@ from homelab.tests.test_windows_identity_acceptance import details
 # synthetic acceptance names, whether or not this machine has an overlay.
 CONTRACT_ROSTER = identity_roster(
     overlay_path=Path(__file__).with_name("no-such-identity-overlay.json"))
+# The realm-qualified daily operator the join fixtures below drive, derived
+# exactly as windows_join_iso derives the value it writes into join.json.  The
+# synthetic contract's own names are asserted deliberately, and only through
+# CONTRACT_ROSTER above, so an overlay cannot perturb that judgement.
+OPERATOR_UPN = f"{DAILY_ADMINISTRATOR}@FACTORY.TEST"
+# THE RECURSION GUARD.  PrivateOverlayRegressionTests below copies this whole
+# tree into a temporary checkout and runs a slice of the suite there -- and
+# THIS module is in that slice, so without a guard the child re-runs the test
+# that started it, copies the tree again, and keeps going until the disk is
+# full.  That is not hypothetical: it happened, and it filled a shared /tmp
+# before it failed.
+#
+# Two independent guards, because one is not enough for a defect whose only
+# symptom is exhausted disk:
+#
+#   * the environment marker this test sets on its child -- cheap, explicit,
+#     and the reason the child stops on the FIRST check;
+#   * the absence of ``.git``, which overlaid_checkout never copies or links.
+#     This one stops a child that inherited no environment at all, so the
+#     guard fails CLOSED: the only way to run is to be the original working
+#     tree.  A source export with no ``.git`` therefore skips, which is the
+#     safe direction.
+OVERLAY_CHECKOUT_MARKER = "TELOS_TEST_IDENTITY_OVERLAY_CHECKOUT"
+REPOSITORY = Path(__file__).resolve().parents[2]
+
+
+def overlaid_checkout_guard(repository: Path, environment) -> str | None:
+    """Why this process must not build an overlaid checkout, or ``None``."""
+    if environment.get(OVERLAY_CHECKOUT_MARKER):
+        return (
+            f"{OVERLAY_CHECKOUT_MARKER} is set: this process IS the child an "
+            "overlaid-checkout test started")
+    if not (repository / ".git").exists():
+        return (
+            f"{repository} is not the original working tree (it carries no "
+            ".git, which every checkout this test copies leaves out)")
+    return None
 
 
 class CredentialRoleMapTests(unittest.TestCase):
@@ -639,9 +685,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
-                "student": "Student-Secret-47!",
-                "operator": "Operator-Secret-47!",
-                "directory-admin": "Directory-Secret-47!",
+                STANDARD_USER: "Student-Secret-47!",
+                DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
             })
             return production
 
@@ -720,9 +766,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
-                "student": "Student-Secret-47!",
-                "operator": "Operator-Secret-47!",
-                "directory-admin": "Directory-Secret-47!",
+                STANDARD_USER: "Student-Secret-47!",
+                DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
             })
 
         with tempfile.TemporaryDirectory() as name, mock.patch.object(
@@ -791,9 +837,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
-                "student": "Student-Secret-47!",
-                "operator": "Operator-Secret-47!",
-                "directory-admin": "Directory-Secret-47!",
+                STANDARD_USER: "Student-Secret-47!",
+                DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
             })
 
         with tempfile.TemporaryDirectory() as name, mock.patch.object(
@@ -837,9 +883,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         callbacks = self.callbacks([])
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
-                "student": "Student-Secret-47!",
-                "operator": "Operator-Secret-47!",
-                "directory-admin": "Directory-Secret-47!",
+                STANDARD_USER: "Student-Secret-47!",
+                DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
             })
 
         with tempfile.TemporaryDirectory() as name, mock.patch.object(
@@ -877,9 +923,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
         def execute_production(**kwargs):
             kwargs["run_acceptance"]("Local-Secret-47!", {
-                "student": "Student-Secret-47!",
-                "operator": "Operator-Secret-47!",
-                "directory-admin": "Directory-Secret-47!",
+                STANDARD_USER: "Student-Secret-47!",
+                DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
             })
             raise RuntimeError("principal cleanup failed")
 
@@ -923,9 +969,9 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "windows-joined",
                 local_credential="Local-Secret-47!",
                 principals={
-                    "student": "Student-Secret-47!",
-                    "operator": "Operator-Secret-47!",
-                    "directory-admin": "Directory-Secret-47!",
+                    STANDARD_USER: "Student-Secret-47!",
+                    DAILY_ADMINISTRATOR: "Operator-Secret-47!",
+                    DOMAIN_ADMINISTRATOR: "Directory-Secret-47!",
                 },
                 join_proof={"schema_version": 1},
             )
@@ -946,11 +992,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     "result": "pass",
                     "observed_at": "2026-07-28T15:00:00Z",
                     "observation": ({
-                        "principal": r"FACTORY\operator",
+                        "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                         "principal_sid": "S-1-5-21-1-2-3-1104",
-                        "operator": "operator@FACTORY.TEST",
+                        "operator": OPERATOR_UPN,
                         "operator_sid": "S-1-5-21-1-2-3-1104",
-                        "console_principal": r"FACTORY\operator",
+                        "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                         "console_sid": "S-1-5-21-1-2-3-1104",
                         "authenticated": True,
                         "authentication_type": "Kerberos",
@@ -962,7 +1008,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                         "part_of_domain": True,
                         "domain": "FACTORY.TEST",
                         "secure_channel": True,
-                        "operator": "operator@FACTORY.TEST",
+                        "operator": OPERATOR_UPN,
                         "operator_local_administrator": True,
                     }),
                 },
@@ -981,7 +1027,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 material["username"],
             )
             self.assertEqual("FACTORY.TEST", material["realm"])
-            self.assertEqual("operator@FACTORY.TEST", material["operator"])
+            self.assertEqual(OPERATOR_UPN, material["operator"])
 
         with tempfile.TemporaryDirectory() as name, mock.patch.object(
             subject, "build_join_iso", side_effect=fake_build,
@@ -1013,14 +1059,14 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "boot_completed": True,
             "domain_joined": True,
             "domain": "FACTORY.TEST",
-            "operator": "operator@FACTORY.TEST",
+            "operator": OPERATOR_UPN,
             "operator_local_administrator": True,
         }, execute.call_args.kwargs["probe_after_reboot"]())
         callbacks.reauthenticate_domain_operator.assert_called_once()
         reauth_args = (
             callbacks.reauthenticate_domain_operator.call_args.args)
         self.assertEqual(
-            ("operator@FACTORY.TEST", "Operator-Secret-47!"),
+            (OPERATOR_UPN, "Operator-Secret-47!"),
             reauth_args[:2],
         )
         self.assertRegex(reauth_args[2], r"^[a-f0-9]{32}$")
@@ -1040,7 +1086,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     "part_of_domain": 1,
                     "domain": "FACTORY.TEST",
                     "secure_channel": True,
-                    "operator": "operator@FACTORY.TEST",
+                    "operator": OPERATOR_UPN,
                     "operator_local_administrator": True,
                 },
             },
@@ -1049,7 +1095,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         with self.assertRaisesRegex(
                 subject.WindowsIdentityOrchestratorError, "probe is invalid"):
             subject._post_reboot_proof(
-                callbacks, "operator@FACTORY.TEST")
+                callbacks, OPERATOR_UPN)
 
     def test_post_reboot_probe_rebinds_receive_and_parse_failures(self):
         secret = "post-reboot-private-message"
@@ -1069,7 +1115,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     subject.WindowsIdentityOrchestratorError,
                 ) as caught:
                     subject._post_reboot_proof(
-                        callbacks, "operator@FACTORY.TEST")
+                        callbacks, OPERATOR_UPN)
                 error = caught.exception
                 self.assertEqual(
                     "windows-rebooted-joined", error.diagnostic.check)
@@ -1089,11 +1135,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "action": "interactive-operator",
             "result": "pass",
             "observation": {
-                "principal": r"FACTORY\operator",
+                "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "principal_sid": "S-1-5-21-1-2-3-1104",
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_sid": "S-1-5-21-1-2-3-1104",
-                "console_principal": r"FACTORY\operator",
+                "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "console_sid": "S-1-5-21-1-2-3-1104",
                 "authenticated": True,
                 "authentication_type": "Kerberos",
@@ -1111,7 +1157,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "part_of_domain": True,
                 "domain": "FACTORY.TEST",
                 "secure_channel": True,
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_local_administrator": True,
             },
         }
@@ -1152,7 +1198,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     subject.WindowsIdentityOrchestratorError,
                 ) as caught:
                     subject._post_reboot_proof(
-                        callbacks, "operator@FACTORY.TEST")
+                        callbacks, OPERATOR_UPN)
                 error = caught.exception
                 self.assertEqual(
                     "windows-rebooted-joined", error.diagnostic.check)
@@ -1204,11 +1250,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                             "action": "interactive-operator",
                             "result": "pass",
                             "observation": {
-                                "principal": r"FACTORY\operator",
+                                "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                                 "principal_sid": "S-1-5-21-1-2-3-1104",
-                                "operator": "operator@FACTORY.TEST",
+                                "operator": OPERATOR_UPN,
                                 "operator_sid": "S-1-5-21-1-2-3-1104",
-                                "console_principal": r"FACTORY\operator",
+                                "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                                 "console_sid": "S-1-5-21-1-2-3-1104",
                                 "authenticated": True,
                                 "authentication_type": "Kerberos",
@@ -1226,7 +1272,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                                 "part_of_domain": True,
                                 "domain": "FACTORY.TEST",
                                 "secure_channel": True,
-                                "operator": "operator@FACTORY.TEST",
+                                "operator": OPERATOR_UPN,
                                 "operator_local_administrator": True,
                             },
                         },
@@ -1240,7 +1286,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     subject.WindowsIdentityOrchestratorError,
                 ) as caught:
                     subject._post_reboot_proof(
-                        callbacks, "operator@FACTORY.TEST")
+                        callbacks, OPERATOR_UPN)
                 error = caught.exception
                 self.assertEqual(
                     f"static-probe.{action}.validate",
@@ -1254,11 +1300,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         secret = "private-internal-validation-detail"
         valid_observations = {
             "interactive-operator": {
-                "principal": r"FACTORY\operator",
+                "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "principal_sid": "S-1-5-21-1-2-3-1104",
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_sid": "S-1-5-21-1-2-3-1104",
-                "console_principal": r"FACTORY\operator",
+                "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "console_sid": "S-1-5-21-1-2-3-1104",
                 "authenticated": True,
                 "authentication_type": "Kerberos",
@@ -1271,7 +1317,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 "part_of_domain": True,
                 "domain": "FACTORY.TEST",
                 "secure_channel": True,
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_local_administrator": True,
             },
         }
@@ -1295,7 +1341,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
         ) as caught:
             subject._post_reboot_proof(
                 callbacks,
-                ActiveExpectedOperator("operator@FACTORY.TEST"),
+                ActiveExpectedOperator(OPERATOR_UPN),
             )
         error = caught.exception
         self.assertEqual(
@@ -1330,7 +1376,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                     subject.WindowsIdentityOrchestratorError,
                 ) as caught:
                     subject._post_reboot_proof(
-                        staged_callbacks, "operator@FACTORY.TEST")
+                        staged_callbacks, OPERATOR_UPN)
                 error = caught.exception
                 self.assertEqual(
                     f"static-probe.{action}.validate",
@@ -1355,7 +1401,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 subject.WindowsIdentityOrchestratorError,
             ) as caught:
                 subject._post_reboot_proof(
-                    callbacks, "operator@FACTORY.TEST")
+                    callbacks, OPERATOR_UPN)
         error = caught.exception
         self.assertEqual(
             "static-probe.domain-state.validate",
@@ -1376,11 +1422,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "action": "interactive-operator",
             "result": "pass",
             "observation": {
-                "principal": r"FACTORY\operator",
+                "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "principal_sid": "S-1-5-21-1-2-3-1104",
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_sid": "S-1-5-21-1-2-3-1104",
-                "console_principal": r"FACTORY\operator",
+                "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "console_sid": "S-1-5-21-1-2-3-1104",
                 "authenticated": True,
                 "authentication_type": "Kerberos",
@@ -1459,11 +1505,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "action": "interactive-operator",
             "result": "pass",
             "observation": {
-                "principal": r"FACTORY\operator",
+                "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "principal_sid": "S-1-5-21-1-2-3-1104",
-                "operator": "operator@FACTORY.TEST",
+                "operator": OPERATOR_UPN,
                 "operator_sid": "S-1-5-21-1-2-3-1104",
-                "console_principal": r"FACTORY\operator",
+                "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
                 "console_sid": "S-1-5-21-1-2-3-1104",
                 "authenticated": True,
                 "authentication_type": "Kerberos",
@@ -1497,7 +1543,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                         subject.WindowsIdentityOrchestratorError,
                     ) as caught:
                         subject._post_reboot_proof(
-                            callbacks, "operator@FACTORY.TEST")
+                            callbacks, OPERATOR_UPN)
                     error = caught.exception
                     self.assertEqual(
                         "windows-rebooted-joined",
@@ -1805,11 +1851,11 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
 
     def test_post_reboot_probe_rejects_unbound_interactive_operator(self):
         identity = {
-            "principal": r"FACTORY\operator",
+            "principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
             "principal_sid": "S-1-5-21-1-2-3-1104",
-            "operator": "operator@FACTORY.TEST",
+            "operator": OPERATOR_UPN,
             "operator_sid": "S-1-5-21-1-2-3-1104",
-            "console_principal": r"FACTORY\operator",
+            "console_principal": rf"FACTORY\{DAILY_ADMINISTRATOR}",
             "console_sid": "S-1-5-21-1-2-3-1104",
             "authenticated": True,
             "authentication_type": "Kerberos",
@@ -1819,10 +1865,10 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
             "local_profile": True,
         }
         mutations = {
-            "wrong operator": {"operator": "operator@OTHER.TEST"},
-            "wrong principal": {"principal": r"FACTORY\student"},
+            "wrong operator": {"operator": f"{DAILY_ADMINISTRATOR}@OTHER.TEST"},
+            "wrong principal": {"principal": rf"FACTORY\{STANDARD_USER}"},
             "wrong console name": {
-                "console_principal": r"FACTORY\student"},
+                "console_principal": rf"FACTORY\{STANDARD_USER}"},
             "wrong token": {"principal_sid": "S-1-5-21-1-2-3-1105"},
             "wrong console": {"console_sid": "S-1-5-21-1-2-3-1105"},
             "wrong profile": {"profile_sid": "S-1-5-21-1-2-3-1105"},
@@ -1855,7 +1901,7 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                         subject.WindowsIdentityOrchestratorError,
                         "interactive operator"):
                     subject._post_reboot_proof(
-                        callbacks, "operator@FACTORY.TEST")
+                        callbacks, OPERATOR_UPN)
                 self.assertEqual(["interactive-operator"], observed)
 
     def test_static_probe_rebind_preserves_only_normalized_error_type(self):
@@ -2018,6 +2064,229 @@ class WindowsIdentityOrchestratorTests(unittest.TestCase):
                 self.assertEqual(
                     f"join-guest.{phase}", guest.diagnostic.operation)
                 self.assertIsNone(wrapped.coordinate)
+
+
+class PrivateOverlayRegressionTests(unittest.TestCase):
+    """The Windows-lane suite must FOLLOW a renamed roster, not pin one.
+
+    Commit ee8b5e6 taught the Windows production modules to derive their
+    principals from the one roster loader, but the fixtures still spelled the
+    synthetic acceptance names.  The whole lane therefore went red the moment
+    an owner created ``homelab/instance/identity/principals.json`` -- dozens of
+    tests, every one of them on a pinned literal and none on a production
+    defect, so it read as "your private overlay broke the factory".
+
+    Nothing in the suite could catch that, because the developer's own machine
+    has no overlay: the overlay path is fixed relative to the RESOLVED
+    ``homelab/`` directory (arch_second.identity_overlay_path), and every
+    module that derives a root calls ``Path(__file__).resolve()``, so a symlink
+    farm resolves straight back to this checkout.  This test therefore copies
+    the tree into a temporary directory, writes an overlay there, and runs the
+    affected suites in a subprocess against it.  The developer's real
+    ``homelab/instance/`` is never touched, read, or relied on -- an owner who
+    has one gets it overwritten in the COPY -- so the result is the same on
+    every machine.
+
+    The names are synthetic and built here rather than written down: ADR 0046
+    keeps real account names out of every tracked file, and ``homelab/tests/**``
+    is itself scanned by the site instance-leak gate.
+    """
+
+    # The modules whose fixtures name a principal, including this one: six of
+    # the failures this guards against were in this file.  Listed explicitly
+    # rather than discovered, because a slice that silently shrank would still
+    # pass.  Running this module inside the child is what makes the recursion
+    # guard above load-bearing.
+    SLICE = (
+        "homelab.tests.test_controller_auth_diagnostic",
+        "homelab.tests.test_controller_join_material",
+        "homelab.tests.test_controller_principals",
+        "homelab.tests.test_windows_control_serial",
+        "homelab.tests.test_windows_identity_adapter",
+        "homelab.tests.test_windows_identity_adapter_integration",
+        "homelab.tests.test_windows_identity_operations",
+        "homelab.tests.test_windows_identity_orchestrator",
+        "homelab.tests.test_windows_join_iso",
+    )
+
+    def require_original_checkout(self):
+        reason = overlaid_checkout_guard(REPOSITORY, os.environ)
+        if reason:
+            self.skipTest(reason)
+
+    def temporary_root(self) -> Path:
+        """A private, ATTRIBUTABLE temporary root, removed on the way out.
+
+        Named rather than anonymous so that anything this test does leak can
+        be told apart from every other lane's temporary state by whoever has
+        to clean up a shared /tmp.
+        """
+        root = Path(tempfile.mkdtemp(prefix="telos-overlay-regression-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        return root
+
+    def renamed_roster(self) -> dict:
+        """Every contract role renamed, so no synthetic default survives."""
+        return {
+            role: f"overlaid-{index}"
+            for index, role in enumerate(CONTRACT_ROLES)
+        }
+
+    def overlaid_checkout(self, root: Path, principals: dict) -> Path:
+        checkout = root / "checkout"
+        checkout.mkdir()
+        for entry in REPOSITORY.iterdir():
+            # Everything outside homelab/ is reached by path only, so a
+            # symlink is enough and keeps this cheap.  .git is deliberately
+            # NOT copied or linked: no subprocess started here can then reach
+            # this repository's history, and its absence is the fail-closed
+            # half of overlaid_checkout_guard.
+            if entry.name not in ("homelab", ".git"):
+                (checkout / entry.name).symlink_to(entry)
+        shutil.copytree(
+            REPOSITORY / "homelab",
+            checkout / "homelab",
+            ignore=shutil.ignore_patterns("var", "__pycache__"),
+            symlinks=True,
+        )
+        # var/ holds the built media -- gigabytes, and read by path only.
+        (checkout / "homelab" / "var").symlink_to(
+            REPOSITORY / "homelab" / "var")
+        overlay = (
+            checkout / "homelab" / "instance" / "identity"
+            / "principals.json"
+        )
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        overlay.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "principals": {
+                    role: {"name": name} for role, name in principals.items()
+                },
+            }),
+            encoding="utf-8",
+        )
+        return checkout
+
+    def run_in(self, checkout, arguments, *, temporary, marked=True):
+        environment = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            # Every temporary file the child makes lands under a directory
+            # this test owns and removes, never in the shared /tmp.
+            "TMPDIR": str(temporary),
+        }
+        environment.pop(OVERLAY_CHECKOUT_MARKER, None)
+        if marked:
+            environment[OVERLAY_CHECKOUT_MARKER] = "1"
+        return subprocess.run(
+            [sys.executable, *arguments],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+
+    # ---- the guard, tested directly: it is what makes the rest safe ----
+
+    def test_the_guard_refuses_any_checkout_this_test_could_have_made(self):
+        root = self.temporary_root()
+        (root / ".git").mkdir()
+        self.assertIsNone(overlaid_checkout_guard(root, {}))
+        self.assertIn(
+            OVERLAY_CHECKOUT_MARKER,
+            overlaid_checkout_guard(root, {OVERLAY_CHECKOUT_MARKER: "1"}),
+        )
+        # overlaid_checkout copies no .git, so this is the state EVERY child
+        # is in -- and it stops even a child that inherited no environment.
+        shutil.rmtree(root / ".git")
+        self.assertIn(
+            "not the original working tree",
+            overlaid_checkout_guard(root, {}),
+        )
+        if (REPOSITORY / ".git").exists():
+            self.assertIsNone(overlaid_checkout_guard(REPOSITORY, {}))
+
+    def test_the_guard_stops_a_child_that_inherited_no_marker(self):
+        """The end-to-end proof, run with the environment marker withheld.
+
+        An unguarded version of this class passes locally right up until it
+        exhausts a disk: the child re-runs the module that started it.  So
+        start a child on THIS class with no marker at all and prove that it
+        skips rather than building a grandchild checkout.
+        """
+        self.require_original_checkout()
+        root = self.temporary_root()
+        checkout = self.overlaid_checkout(root, self.renamed_roster())
+        temporary = root / "child-temp"
+        temporary.mkdir()
+
+        completed = self.run_in(
+            checkout,
+            [
+                "-m", "unittest", "-v",
+                f"{__name__}.PrivateOverlayRegressionTests",
+            ],
+            temporary=temporary,
+            marked=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr[-4000:])
+        self.assertIn("not the original working tree", completed.stderr)
+        self.assertIn("skipped", completed.stderr)
+        # A grandchild would have built its checkout here, under the child's
+        # own TMPDIR.  Nothing did.
+        self.assertEqual([], sorted(temporary.iterdir()))
+
+    # ---- the regression itself ----
+
+    def test_the_windows_lane_follows_an_overlay_renamed_roster(self):
+        self.require_original_checkout()
+        principals = self.renamed_roster()
+        self.assertEqual(
+            set(CONTRACT_ROLES), set(principals),
+            "rename every role, so no synthetic default can carry a test")
+        root = self.temporary_root()
+        checkout = self.overlaid_checkout(root, principals)
+        temporary = root / "child-temp"
+        temporary.mkdir()
+
+        # First prove the copy actually resolves the overlay.  Without this a
+        # copy that failed to inject one would pass this test vacuously --
+        # which is the very failure mode being guarded against.
+        resolved = self.run_in(
+            checkout,
+            [
+                "-c",
+                "from homelab.vm.controller_principals import ("
+                "DIRECTORY_PRINCIPALS, DAILY_ADMINISTRATOR, STANDARD_USER); "
+                "print(DIRECTORY_PRINCIPALS, DAILY_ADMINISTRATOR, "
+                "STANDARD_USER)",
+            ],
+            temporary=temporary,
+        )
+        self.assertEqual(0, resolved.returncode, resolved.stderr[-4000:])
+        expected = tuple(principals[role] for role in DIRECTORY_ROLES)
+        self.assertEqual(
+            f"{expected} {principals['daily_administrator']} "
+            f"{principals['standard_user']}",
+            resolved.stdout.strip(),
+        )
+        for name in expected:
+            self.assertNotIn(name, CONTRACT_ROSTER.values())
+
+        completed = self.run_in(
+            checkout,
+            ["-m", "unittest", "-q", *self.SLICE],
+            temporary=temporary,
+        )
+
+        self.assertEqual(
+            0, completed.returncode,
+            "the Windows identity suite pinned a principal the roster "
+            "renamed:\n" + completed.stderr[-8000:],
+        )
 
 
 if __name__ == "__main__":

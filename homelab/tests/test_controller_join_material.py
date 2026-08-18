@@ -12,6 +12,7 @@ from homelab.vm.controller_join_material import (
     ControllerJoinSerial,
     OneUseDomainJoinMaterial,
 )
+from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
 
 
 SECRET = "Join-secret-DoNotDisclose-47!"
@@ -241,8 +242,11 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
         self.assertTrue(proof.destruction_proved)
         self.assertEqual(SECRET, observed[0])
         self.assertEqual(SECRET, observed[1]["credential"])
+        # The operator UPN the module publishes is DERIVED from the one
+        # roster loader, exactly as the module derives it; the subject here is
+        # that it is realm-qualified and reaches the consumer once.
         self.assertEqual(
-            "operator@SYNTHETIC.TEST", observed[1]["operator"])
+            f"{DAILY_ADMINISTRATOR}@SYNTHETIC.TEST", observed[1]["operator"])
         self.assertNotIn(SECRET, repr(material))
         with self.assertRaisesRegex(
                 ControllerJoinMaterialError, "one-use"):

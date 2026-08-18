@@ -12,6 +12,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 from homelab.vm import windows_identity_adapter as subject
+from homelab.vm.controller_principals import (
+    DAILY_ADMINISTRATOR,
+    STANDARD_USER,
+)
 from homelab.vm.windows_gui import Image
 from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
@@ -26,6 +30,18 @@ from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
+
+
+# The principals these fixtures drive the adapter with, resolved by the one
+# roster loader the adapter itself reads (controller_principals ->
+# arch_second.identity_roster).  Nothing here is asserting WHICH names the
+# synthetic contract carries -- test_controller_principals.CONTRACT_ROSTER owns
+# that -- so pinning the synthetic names only made every one of these tests
+# fail the moment the owner's private overlay renamed a principal, against
+# production code that had already been taught to derive.
+OPERATOR_UPN = f"{DAILY_ADMINISTRATOR}@FACTORY.TEST"
+DOMAIN_SIGN_IN_STATE = (
+    f"focused password field for domain account {OPERATOR_UPN}")
 
 
 class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
@@ -71,8 +87,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     def _domain_reauthentication_fixture(self):
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         return sign_in, mock.sentinel.desktop, mock.Mock(
             initial_sign_in_delay=0,
@@ -132,7 +147,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual("controller-auth-arm", caught.exception.reauth_operation)
         self.assertIs(
@@ -169,7 +184,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual("controller-auth-arm", caught.exception.reauth_operation)
         self.assertIs(
@@ -202,7 +217,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     cleanup_proved=True))
             adapter = self.adapter(rotation_plan=plan)
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
         interaction_type.return_value.type_secret.assert_called_once()
         self.assertEqual(
             adapter.controller_auth_result.collection.value,
@@ -227,7 +242,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         ):
             adapter = self.adapter(rotation_plan=plan)
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
         interaction_type.return_value.type_secret.assert_called_once()
         self.assertEqual(
             adapter.controller_auth_result.collection.value,
@@ -283,7 +298,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                             subject.WindowsLocalReauthenticationError
                     ) as caught:
                         adapter.reauthenticate_domain_operator(
-                            "operator@FACTORY.TEST", "private", "a" * 32)
+                            OPERATOR_UPN, "private", "a" * 32)
                 self.assertEqual(
                     caught.exception.reauth_operation, "controller-auth-arm")
                 self.assertIs(
@@ -353,7 +368,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                             subject.WindowsLocalReauthenticationError
                     ) as caught:
                         adapter.reauthenticate_domain_operator(
-                            "operator@FACTORY.TEST", "private", "a" * 32)
+                            OPERATOR_UPN, "private", "a" * 32)
                 self.assertEqual(
                     caught.exception.reauth_operation, "controller-auth-arm")
                 self.assertEqual(
@@ -386,7 +401,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
         self.assertEqual(
             caught.exception.reauth_operation, "controller-auth-arm")
         self.assertEqual(
@@ -426,7 +441,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             controller_type.return_value.armed = False
             adapter = self.adapter(rotation_plan=plan)
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
         self.assertEqual(
             adapter.controller_auth_result.collection.value,
             "receipt-unavailable")
@@ -476,7 +491,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                             subject.WindowsLocalReauthenticationError
                     ) as caught:
                         adapter.reauthenticate_domain_operator(
-                            "operator@FACTORY.TEST", "private", "a" * 32)
+                            OPERATOR_UPN, "private", "a" * 32)
 
                 self.assertEqual(
                     failure_operation, caught.exception.reauth_operation)
@@ -522,11 +537,11 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
 
         controller_type.assert_called_once_with(
             self.boundary.controller_console,
-            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
+            ControllerAuthExpectation(DAILY_ADMINISTRATOR, "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
             timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
             post_arm_timeout=adapter.timeout,
             clock=adapter.clock,
@@ -639,7 +654,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual(
             "desktop-sign-in-persisted", caught.exception.reauth_operation)
@@ -702,7 +717,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             with self.assertRaises(
                     subject.WindowsLocalReauthenticationError) as caught:
                 adapter.reauthenticate_domain_operator(
-                    "operator@FACTORY.TEST", "private", "a" * 32)
+                    OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual(
             "diagnostic-arm-launch", caught.exception.reauth_operation)
@@ -785,7 +800,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 principal = (
                     "telosadmin"
                     if action == "local-rescue-login"
-                    else "student"
+                    else STANDARD_USER
                 )
                 adapter.credential_action(check, principal, "private")
                 material = build.call_args.args[1]
@@ -800,7 +815,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                     (
                         "TELOS-WIN-01\\telosadmin"
                         if action == "local-rescue-login"
-                        else "FACTORY\\student"
+                        else f"FACTORY\\{STANDARD_USER}"
                     ),
                     execute.call_args.kwargs["expected_principal"],
                 )
@@ -808,7 +823,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         build.reset_mock()
         execute.reset_mock()
         adapter.credential_action(
-            "combined-dependencies-offline", "student", "private")
+            "combined-dependencies-offline", STANDARD_USER, "private")
         self.assertEqual(
             "cached-domain-login", build.call_args.args[1]["action"])
 
@@ -843,7 +858,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         adapter = self.adapter()
 
         adapter.credential_action(
-            "windows-standard-online", "student", "private")
+            "windows-standard-online", STANDARD_USER, "private")
 
         connect.assert_called_once_with(self.serial_socket, timeout=7)
         self.assertIs(
@@ -877,7 +892,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self.boundary.controller_console = console
         adapter = self.adapter()
 
-        adapter.stage_principals({"student": "private"})
+        adapter.stage_principals({STANDARD_USER: "private"})
         adapter.stage_join_principal("private")
 
         principal_type.assert_called_once_with(
@@ -914,8 +929,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -956,7 +970,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             "calibration-required",
         ):
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
 
         self.qmp.type_text.assert_any_call(
             "TelosPublicCalibration1", timeout=mock.ANY)
@@ -1167,8 +1181,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
     ):
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         desktop = mock.sentinel.desktop
         load_references.return_value = (
@@ -1214,12 +1227,12 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
 
         adapter.reauthenticate_domain_operator(
-            "operator@FACTORY.TEST", "private", "a" * 32)
+            OPERATOR_UPN, "private", "a" * 32)
 
         diagnostic_factory.assert_called_once()
         controller_type.assert_called_once_with(
             self.boundary.controller_console,
-            ControllerAuthExpectation("operator", "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
+            ControllerAuthExpectation(DAILY_ADMINISTRATOR, "FACTORY", "10.1.31.11", realm="FACTORY.TEST"),
             timeout=subject.CONTROLLER_AUTH_TIMEOUT_SECONDS,
             post_arm_timeout=min(
                 adapter.timeout,
@@ -1228,7 +1241,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
         diagnostic_arguments = diagnostic_factory.call_args.kwargs
         self.assertEqual(
-            "operator@FACTORY.TEST", diagnostic_arguments["principal"])
+            OPERATOR_UPN, diagnostic_arguments["principal"])
         self.assertGreater(diagnostic_arguments["timeout"], 0)
         self.assertLessEqual(diagnostic_arguments["timeout"], 15)
         self.assertEqual("a" * 32, diagnostic_arguments["nonce"])
@@ -1298,8 +1311,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         # window is unchanged.
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -1349,7 +1361,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
 
         adapter.reauthenticate_domain_operator(
-            "operator@FACTORY.TEST", "private", "a" * 32)
+            OPERATOR_UPN, "private", "a" * 32)
 
         # The secret is still typed exactly once.
         interaction.type_secret.assert_called_once_with(
@@ -1395,8 +1407,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -1434,7 +1445,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             )
 
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "b" * 32)
+                OPERATOR_UPN, "private", "b" * 32)
 
         secret_index = ordering.mock_calls.index(
             mock.call.type_secret("private", timeout=mock.ANY))
@@ -1470,8 +1481,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -1517,7 +1527,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             ) as caught,
         ):
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "c" * 32)
+                OPERATOR_UPN, "private", "c" * 32)
 
         self.assertEqual("submit", caught.exception.reauth_operation)
         keys = interaction_type.return_value.key.call_args_list
@@ -1535,8 +1545,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -1565,7 +1574,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual(
             "diagnostic-arm-launch", caught.exception.reauth_operation)
@@ -1593,8 +1602,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         load_references.return_value = (
             sign_in, mock.sentinel.desktop,
@@ -1630,7 +1638,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "a" * 32)
+                OPERATOR_UPN, "private", "a" * 32)
 
         self.assertEqual(
             "desktop-sign-in-near-reference",
@@ -1660,8 +1668,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         desktop = mock.sentinel.desktop
         load_references.return_value = (
@@ -1687,7 +1694,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         )
 
         adapter.reauthenticate_domain_operator(
-            "operator@FACTORY.TEST", "private", "a" * 32)
+            OPERATOR_UPN, "private", "a" * 32)
 
         interaction_type.return_value.observe_ephemeral.assert_called_once_with(
             desktop, 11, alternatives=(("sign-in", sign_in),))
@@ -1707,7 +1714,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "b" * 32)
+                OPERATOR_UPN, "private", "b" * 32)
         self.assertEqual("desktop", caught.exception.reauth_operation)
         self.assertIsNone(caught.exception.post_submit_diagnostic)
         self.assertIs(
@@ -1730,7 +1737,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "c" * 32)
+                OPERATOR_UPN, "private", "c" * 32)
         self.assertIs(
             subject.PostSubmitDiagnosticCollection.
             SUBMITTED_RECEIPT_UNAVAILABLE,
@@ -1750,7 +1757,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "d" * 32)
+                OPERATOR_UPN, "private", "d" * 32)
         self.assertIs(
             subject.PostSubmitDiagnosticCleanup.
             CLEANUP_RECEIPT_UNAVAILABLE,
@@ -1775,8 +1782,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         desktop = mock.sentinel.desktop
         load_references.return_value = (
@@ -1805,7 +1811,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "e" * 32)
+                OPERATOR_UPN, "private", "e" * 32)
 
         self.assertEqual(
             "diagnostic-cleanup", caught.exception.reauth_operation)
@@ -1882,8 +1888,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         desktop = mock.Mock(state_kind="desktop")
         load_references.return_value = (
@@ -1908,7 +1913,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 subject.WindowsLocalReauthenticationError) as caught,
         ):
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "f" * 32)
+                OPERATOR_UPN, "private", "f" * 32)
 
         self.assertEqual(
             "desktop-near-reference", caught.exception.reauth_operation)
@@ -1941,8 +1946,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         self._stub_controller_auth()
         sign_in = mock.Mock(
             state_kind="sign-in",
-            state="focused password field for domain account "
-            "operator@FACTORY.TEST",
+            state=DOMAIN_SIGN_IN_STATE,
         )
         local_desktop = mock.Mock(state_kind="desktop")
         load_references.return_value = (
@@ -1965,7 +1969,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         adapter = self.adapter(rotation_plan=plan)
 
         adapter.reauthenticate_domain_operator(
-            "operator@FACTORY.TEST", "private", "a" * 32)
+            OPERATOR_UPN, "private", "a" * 32)
 
         load_identity_reference.assert_called_once_with(
             manifest, expected_guest=plan.expected_guest)
@@ -1979,7 +1983,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         with self.assertRaises(
                 subject.WindowsLocalReauthenticationError) as caught:
             adapter.reauthenticate_domain_operator(
-                "operator@FACTORY.TEST", "private", "b" * 32)
+                OPERATOR_UPN, "private", "b" * 32)
         self.assertEqual(
             "prove-password-target", caught.exception.reauth_operation)
 
@@ -2057,9 +2061,7 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
         for domain_operator, principal, state in (
             (False, ".\\telosadmin",
              "focused password field for local account telosadmin"),
-            (True, "operator@FACTORY.TEST",
-             "focused password field for domain account "
-             "operator@FACTORY.TEST"),
+            (True, OPERATOR_UPN, DOMAIN_SIGN_IN_STATE),
         ):
             with self.subTest(domain_operator=domain_operator):
                 self.qmp.reset_mock()

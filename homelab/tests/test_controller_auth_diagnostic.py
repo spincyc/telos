@@ -35,6 +35,15 @@ from homelab.vm.windows_identity_orchestrator import (
     _local_reauthentication_coordinate,
 )
 from homelab.vm.windows_join_iso import WindowsJoinFailureCoordinate
+from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
+
+
+# The account this diagnostic is told to expect, DERIVED.  Nothing here asserts
+# WHICH name the synthetic contract carries -- test_controller_principals owns
+# that, against the contract read with the private overlay held out of the way
+# -- so pinning the synthetic name here would only make the suite fail on an
+# overlay-renamed roster the production code already follows.
+OPERATOR = DAILY_ADMINISTRATOR
 
 
 def _prearm_receipts(session):
@@ -96,14 +105,14 @@ def _exit_receipt(token, value):
 class ControllerAuthDiagnosticTests(unittest.TestCase):
     def setUp(self):
         self.expected = ControllerAuthExpectation(
-            "operator", "FACTORY", "10.1.31.11",
+            OPERATOR, "FACTORY", "10.1.31.11",
             "S-1-5-21-1-2-3-1104",
         )
 
     def event(self, **changes):
         event = {
             "type": "Authentication",
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "FACTORY",
             "remoteAddress": "ipv4:10.1.31.11:49152",
             "serviceDescription": "KDC",
@@ -141,7 +150,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         never the NetBIOS domain; attempt nineteen's real operator auth was
         misclassified uncorrelated against the NetBIOS-only expectation."""
         realm_expected = ControllerAuthExpectation(
-            "operator", "FACTORY", "10.1.31.11",
+            OPERATOR, "FACTORY", "10.1.31.11",
             "S-1-5-21-1-2-3-1104", realm="AD.FACTORY.TEST")
         # Kerberos audit carries the realm form.
         self.assertEqual(
@@ -172,29 +181,29 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
     def test_realm_expectation_rejects_malformed_realm(self):
         with self.assertRaises(ValueError):
             ControllerAuthExpectation(
-                "operator", "FACTORY", "10.1.31.11", realm="not a realm!")
+                OPERATOR, "FACTORY", "10.1.31.11", realm="not a realm!")
 
     def test_upn_account_form_correlates_only_with_declared_realm(self):
         realm_expected = ControllerAuthExpectation(
-            "operator", "FACTORY", "10.1.31.11",
+            OPERATOR, "FACTORY", "10.1.31.11",
             "S-1-5-21-1-2-3-1104", realm="AD.FACTORY.TEST")
         # The audit may render the account itself in UPN form.
         self.assertEqual(
             classify_auth_events(
-                (self.event(account="operator@AD.FACTORY.TEST"),),
+                (self.event(account=f"{OPERATOR}@AD.FACTORY.TEST"),),
                 realm_expected),
             ControllerAuthCode.AUTHENTICATED)
         # Only the expectation's own realm joins the account: a foreign
         # UPN suffix does not correlate.
         self.assertEqual(
             classify_auth_events(
-                (self.event(account="operator@OTHER.REALM.TEST"),),
+                (self.event(account=f"{OPERATOR}@OTHER.REALM.TEST"),),
                 realm_expected),
             ControllerAuthCode.UNCORRELATED)
         # Without a declared realm the UPN account form stays rejected.
         self.assertEqual(
             classify_auth_events(
-                (self.event(account="operator@AD.FACTORY.TEST"),),
+                (self.event(account=f"{OPERATOR}@AD.FACTORY.TEST"),),
                 self.expected),
             ControllerAuthCode.UNCORRELATED)
 
@@ -624,7 +633,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         import subprocess
         import sys
         payload = {
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
             "realm": "AD.FACTORY.TEST",
@@ -2127,7 +2136,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             controller_auth=coordinate.controller_auth,
         )
         self.assertIn("controller-auth=authenticated", diagnostic.render())
-        self.assertNotIn("operator", diagnostic.render())
+        self.assertNotIn(OPERATOR, diagnostic.render())
         self.assertFalse(supplemental_only(False, result))
 
     def test_partial_jsonl_tail_waits_until_complete_or_deadline(self):
@@ -2169,7 +2178,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
     def test_guest_flushes_ordered_nonce_bound_prearm_receipts(self):
         token = "a" * 32
         payload = {
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
             "realm": "AD.FACTORY.TEST",
@@ -2232,7 +2241,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
             return expectation
 
         payload = {
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
             "realm": "AD.FACTORY.TEST",
@@ -2270,7 +2279,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         """The Controller's RESULT line carries the bounded mismatch counts
         so an uncorrelated verdict names what the watcher saw."""
         payload = {
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "FACTORY",
             "workstation_ip": "10.1.31.11",
             "realm": "AD.FACTORY.TEST",
@@ -2287,7 +2296,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
         record = json.dumps({
             "timestamp": timestamp,
             "type": "Authentication",
-            "account": "operator",
+            "account": OPERATOR,
             "domain": "AD.FACTORY.TEST",
             "remoteAddress": "ipv4:10.1.31.4:49152",
             "serviceDescription": "KDC",
@@ -2509,7 +2518,7 @@ class ControllerAuthDiagnosticTests(unittest.TestCase):
                     side_effect=subprocess_module.TimeoutExpired(
                         ["samba-tool"], 5)):
                 with self.assertRaisesRegex(RuntimeError, "sink-invalid"):
-                    subject._staged_sid("operator")
+                    subject._staged_sid(OPERATOR)
 
     def test_effective_configuration_rejects_bad_config_file_or_syntax(self):
         variants = (

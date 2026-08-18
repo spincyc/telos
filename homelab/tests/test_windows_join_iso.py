@@ -314,30 +314,34 @@ class WindowsJoinIsoTests(unittest.TestCase):
                         {**MATERIAL, "username": username})
 
     def test_a_control_script_pinning_another_operator_is_refused(self):
-        # TelosJoin.ps1 validates the join document with
-        # ``$document.operator -cne ('operator@' + $document.realm)``.  That
-        # literal lives outside this module, so a roster that renamed the daily
-        # administrator would have every join document refused INSIDE the
-        # Windows guest, over the control serial, with nothing to say which
-        # side was wrong.  Check the agreement where it is still cheap.
+        # The tracked guest script pins NOTHING.  It validates the join
+        # document's operator by SHAPE and takes the name from the document
+        # itself, so an overlay-renamed daily administrator needs no edit
+        # inside the Windows guest.  The build-time guard survives as the
+        # backstop for any control script that pins a literal again: that
+        # script would refuse every join document INSIDE the guest, over the
+        # control serial, with nothing to say which side was wrong.
         tracked = SCRIPT.read_text(encoding="utf-8")
-        pinned = SCRIPT_OPERATOR_PIN.findall(tracked)
-        self.assertEqual([DAILY_ADMINISTRATOR], pinned)
+        self.assertEqual([], SCRIPT_OPERATOR_PIN.findall(tracked))
+        self.assertIn(
+            "$operatorParts[0] -cnotmatch '^[a-z][a-z0-9-]{0,19}$'", tracked)
+        self.assertIn(
+            "$operatorParts[1] -cne [string]$document.realm", tracked)
+        _assert_scripts_agree_with_roster((SCRIPT,))
         with tempfile.TemporaryDirectory() as temporary:
-            disagreeing = Path(temporary) / "TelosJoin.ps1"
+            # Written out rather than derived from the tracked script, so the
+            # guard is exercised even now that nothing tracked pins a name.
+            agreeing = Path(temporary) / "Agreeing.ps1"
+            agreeing.write_text(
+                f"$expected = '{DAILY_ADMINISTRATOR}@' + $document.realm\n",
+                encoding="utf-8")
+            _assert_scripts_agree_with_roster((agreeing,))
+            disagreeing = Path(temporary) / "Disagreeing.ps1"
             disagreeing.write_text(
-                tracked.replace(
-                    f"'{DAILY_ADMINISTRATOR}@'", "'someone-else@'"),
+                "$expected = 'someone-else@' + $document.realm\n",
                 encoding="utf-8")
             with self.assertRaisesRegex(WindowsJoinIsoError, "someone-else"):
                 _assert_scripts_agree_with_roster((disagreeing,))
-            # A script that pins NOTHING passes: parameterising the guest side
-            # is the better fix and must not be blocked by this guard.
-            unpinned = Path(temporary) / "Unpinned.ps1"
-            unpinned.write_text(
-                tracked.replace(f"'{DAILY_ADMINISTRATOR}@'", "$expected"),
-                encoding="utf-8")
-            _assert_scripts_agree_with_roster((unpinned,))
 
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(
@@ -765,7 +769,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     "boot_completed": True,
                     "domain_joined": True,
                     "domain": "ad.example.test",
-                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator": OPERATOR,
                     "operator_local_administrator": True,
                     **({"serial_was_closed": serial.closed}
                        if not serial.closed else {}),
@@ -1250,7 +1254,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     "boot_completed": True,
                     "domain_joined": True,
                     "domain": "ad.example.test",
-                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator": OPERATOR,
                     "operator_local_administrator": True,
                 },
                 expected_domain="ad.example.test",
@@ -1264,7 +1268,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                         "boot_completed": False,
                         "domain_joined": True,
                         "domain": "ad.example.test",
-                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator": OPERATOR,
                         "operator_local_administrator": True,
                     },
                     expected_domain="ad.example.test",
@@ -1293,7 +1297,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                     "boot_completed": True,
                     "domain_joined": True,
                     "domain": "ad.example.test",
-                    "operator": "operator@AD.EXAMPLE.TEST",
+                    "operator": OPERATOR,
                     "operator_local_administrator": True,
                 },
                 expected_domain="AD.EXAMPLE.TEST",
@@ -1308,7 +1312,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                         "boot_completed": True,
                         "domain_joined": True,
                         "domain": "other.example.test",
-                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator": OPERATOR,
                         "operator_local_administrator": True,
                     },
                     expected_domain="AD.EXAMPLE.TEST",
@@ -1337,7 +1341,7 @@ class WindowsJoinIsoTests(unittest.TestCase):
                         "boot_completed": True,
                         "domain_joined": False,
                         "domain": "ad.example.test",
-                        "operator": "operator@AD.EXAMPLE.TEST",
+                        "operator": OPERATOR,
                         "operator_local_administrator": False,
                         "private-extra": "secret-value",
                     },
