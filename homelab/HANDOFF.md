@@ -1,7 +1,7 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-08-17 (documentation reconciliation against on-disk
-evidence; gate 6 was proved 2026-08-13, gate 8 on 2026-08-14).
+**Last updated:** 2026-08-17 (second reconciliation pass, against
+`1ec5506..f8d0348`; gate 6 was proved 2026-08-13, gate 8 on 2026-08-14).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
 
@@ -14,12 +14,14 @@ per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
 > `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
 > 2026-08-14 with explicit owner authorization after its `local-rescue` console
 > password was lost — the only credential that can ever open it (root locked, no
-> authorized key, no init shell, SSH password auth off) — and **the interactive
-> console reinstall was staged but never driven.**
+> authorized key, no init shell, SSH password auth off) — and **the reinstall
+> has still not been driven.**
 >
-> Every gate runner, all six `homelab-factory-persistent` targets, and
-> `make homelab-sim-auto-run` boot or copy that image, so each of them would run
-> against an empty disk today.
+> Every gate runner, all six `homelab-factory-persistent` targets,
+> `make homelab-factory-repeat APPLY=1`, and `make homelab-sim-auto-run` boot or
+> copy that image, so each of them would run against an empty disk today.
+> `make homelab-bootstrap-vm-status` says `created but not installed` and exits
+> non-zero; `make homelab-factory-repeat` refuses to apply and names the remedy.
 >
 > Prerequisites are staged and verified: the seed ISO
 > `homelab/var/seed/telos-controller-seed.iso`, SHA-256
@@ -27,12 +29,36 @@ per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
 > signature-verified
 > `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`.
 >
-> **The repair recipe already exists verbatim — do not re-derive it:**
-> `homelab/docs/operator-runbook.md`, section "Keep the `local-rescue`
-> password", and `homelab/vm/README.md`, section "Interactive offline
-> installation". Only the owner can drive the console install. Record the new
-> `local-rescue` password somewhere durable this time. Rebuilding the image
-> invalidates no retained gate receipt.
+> **CHANGED 2026-08-17 (`7b29624`): the repair is now one guarded Make target,
+> and it has NOT RUN.**
+>
+> ```sh
+> make homelab-bootstrap-vm-install APPLY=1 CONFIRM='<the erasure phrase>' \
+>     ISO=homelab/var/media/arch/archlinux-x86_64.iso \
+>     SEED_ISO=homelab/var/seed/telos-controller-seed.iso
+> ```
+>
+> It boots the Arch ISO's kernel directly with `console=ttyS0` and answers the
+> offline installer's prompts over the serial line, so the manual `e` edit at the
+> boot menu is gone. ADR 0058 sanctions this: it forbids an unattended path
+> *inside* the installer and prescribes driving the interactive one externally.
+> The two answers that matter stay the operator's — the erasure phrase arrives
+> through `CONFIRM=` and is relayed verbatim (the driver holds neither the phrase
+> nor the disk serial), and the new `local-rescue` password is typed **twice**
+> into `getpass` at the controlling terminal, never a file, argv, an environment
+> variable, or a Make variable. It refuses any disk that is not byte-identical to
+> a freshly created qcow2 of the declared size, so it can erase the empty image
+> it is meant to erase and never a working Controller.
+>
+> **No live install has been driven through it.** It is the supported path and it
+> is unproven. **The manual console recipe remains the fallback and already
+> exists verbatim — do not re-derive it:** `homelab/docs/operator-runbook.md`,
+> section "Keep the `local-rescue` password", and `homelab/vm/README.md`, section
+> "Interactive offline installation".
+>
+> Record the new `local-rescue` password somewhere durable this time — **losing
+> it costs the whole image again.** Rebuilding the image invalidates no retained
+> gate receipt.
 
 ---
 
@@ -54,8 +80,8 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 8 Arch join and login | SSSD identity lifecycle | **PASS — 21/21, proven 2026-08-14** (see §3) |
 | 9 Optional storage failure | rides gates 6 and 8, no target of its own by design | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half in the passing 2026-08-14 gate-8 run, whose `arch-storage-{attached,denied,absent-login}` checks are gate 9's three (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
-| 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0) |
-| 12 Repeatability (twice-through) | — | **NOT RUN** — no gate blocks it any more (6–10 all pass); it needs the canonical Controller image back and an aggregate `homelab-factory-repeat` driver, which is reserved and unimplemented |
+| 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0). 2 of the 5 hooks now *implemented* (`2c3cd56`) but **NOT RUN**; 3 stay stubs for want of primitives (see §1 new-work list) |
+| 12 Repeatability (twice-through) | — | **NOT RUN** — no gate blocks it any more (6–10 all pass), and the aggregate `homelab-factory-repeat` driver now **exists** (`27d8af9`/`2aaa7fe`) with all 16 checks wired to a producer. It needs the canonical Controller image back and two live lifecycles; `host_network_changes` still cannot honestly PASS and `artifact_scan` needs a scanned tree |
 | 13 Documentation | — | guides added (`homelab/docs/`), **already public on `origin/main`**; "unpublished" = not wired into the generated site (they carry the lab address the site leak scanner rejects) |
 | 14 External integration | physical / UniFi / ThinkPad | **HARD-BLOCKED on explicit owner authorization** — do not attempt |
 
@@ -83,6 +109,8 @@ behaviour.
   gitignored overlay and provisioned by
   `make homelab-bootstrap-controller INVENTORY=<private inventory>`. Documented
   in `homelab/docs/operator-runbook.md`, "The persistent directory instance".
+  **Correction 2026-08-17: the durable-account sub-path was NOT implemented in
+  any usable sense** — see the durable-accounts entry in the next section.
 - **`087c888` — the removed `community.general.yaml` callback** was still named
   in `ansible.cfg` and aborted **every** host-side Ansible run. Fixed; without
   this nothing host-side converges.
@@ -93,6 +121,72 @@ behaviour.
 - **`c84798a`** documents that a lost `local-rescue` console password costs the
   whole image — which is exactly what then happened; see the blocker banner at
   the top of this file.
+
+### Second batch, `1ec5506..f8d0348` (2026-08-17) — also NEVER RUN LIVE
+
+Fourteen more commits landed the same day. **Nothing in this batch has run
+against a live guest.** Read every item as the designed contract.
+
+- **`7b29624` — `make homelab-bootstrap-vm-install`.** The canonical Controller
+  reinstall is no longer only a long hand-driven console session. See the
+  blocker banner at the top of this file for the exact invocation, the guards,
+  and what stays the operator's to type. **NOT RUN.** Same commit:
+  `homelab-bootstrap-vm-status` now separates "created but not installed" from
+  "ready" and reads the install receipt; `homelab-factory-persistent-up` and
+  `-converge` refuse an uninstalled source, and converge checks *before* it
+  prompts for the unrecoverable console password; `--state-dir` now precedes the
+  subcommand in all six persistent recipes (previously **every** persistent
+  target died for anyone who set `FACTORY_CONTROLLER_STATE`); and
+  `make homelab-instance` seeds missing subdirectories instead of doing nothing
+  when the overlay directory already exists.
+- **`27d8af9` + `2aaa7fe` — `make homelab-factory-repeat` is real.** Gate 12's
+  aggregate driver: six lifecycle phases in order, one union receipt, because no
+  single phase bundle can carry the gate. `FACTORY_DURATION` is forwarded as the
+  **per-phase** budget and its 120 s default is far too small for a real
+  lifecycle. The dry run is read-only and safe; today it refuses to apply and
+  names `make homelab-bootstrap-vm-install` as the remedy, reading the real
+  partition table rather than a size floor. **NOT RUN.**
+- **`0c2df66` — `make homelab-image-service-gate`.** A host-side judge that
+  grades a booted candidate image's declared systemd services from a retained
+  guest console transcript (`IMAGE_PROFILE` and `IMAGE_TRANSCRIPT` required,
+  `IMAGE_SERVICE_TOKEN`/`IMAGE_SERVICE_EVIDENCE` optional). **The live capture
+  half does not exist** — producing a transcript needs a booted candidate image,
+  which needs root — so the judge is available and the capture is the blocked
+  half, the same split both identity gates use.
+- **`2c3cd56` — two of gate 11's five live-boot hooks are implemented**
+  (`directory-dns-loss`, `controller-reconstruction`), backed by token-scoped
+  markers the guest itself printed. Three remain stubs because their primitives
+  do not exist: a Controller *restart* (as distinct from the SIGSTOP/SIGCONT
+  outage), a bootloader break-and-repair, and install fault injection. Verdict
+  stays `partial` until all five exist **and** a live boot runs.
+- **`aec5747`, `390e5cf`, `280c99d` — gate 12's last four producers.** All
+  sixteen checks now have a wired producer. Two honest limits:
+  `host_network_changes` **cannot legitimately render PASS today** — its `unifi`
+  counter is unprovable without a run-window host egress ledger that nothing
+  produces — and `artifact_scan` requires a scanned tree.
+- **`ee8b5e6` — the Windows identity lane derives its principals from the
+  private overlay roster** instead of hardcoding `student`/`operator`/
+  `directory-admin` in ~15 places. With no overlay every value is byte-identical,
+  so the **gate-6 and gate-8 verdicts are untouched** — but using an overlay is
+  no longer fatal, and the synthetic names are no longer a fixed contract.
+- **`f8d0348` — durable directory accounts were unreachable, and are now
+  repaired but UNPROVEN.** An adversarial review found they could not be
+  provisioned by any wired path; six independent breaks, the worst being that
+  Ansible resolves `group_vars` relative to the **inventory source**, so an
+  overlay holding `group_vars` one level above its inventory was read by nothing
+  and every AD variable silently fell back to its role default. Provisioning is
+  now host-side and only host-side; the in-guest path is declared dead rather
+  than half-wired. `RECONVERGE=1` also no longer poisons the durable disk (the
+  old guard was a bash `!`-prefixed pipeline, which `errexit` exempts).
+  **Do not describe durable accounts as working.**
+- **`90e8b52`** derives each role's required Python imports by AST extraction and
+  proves them at the promotion gate; it found `ldb` surviving only as a
+  transitive pacman dependency of samba. **`f677d06`** gives Windows guests a
+  deliberately *diagnostic* COM1 progress reporter, because no virtio driver
+  exists anywhere in this tree. **`a879b15`** records why gate 10's two deferrals
+  cannot be closed and that the Controller image is not what blocks them.
+  **`4d91958`** forbids discarding the working tree while lanes share the
+  checkout — undo by path, never a bare pathspec.
 
 ---
 
@@ -575,19 +669,28 @@ no headroom for a single spurious refusal.
 2. Re-lease the AIQ work if continuing (a new task, since TASK-2 is done): `aiq
    status` / `aiq dequeue`.
 3. **Reinstall the canonical Controller image** — nothing live runs until this
-   is done. The recipe is verbatim in `homelab/docs/operator-runbook.md` ("Keep
+   is done. The supported route is `make homelab-bootstrap-vm-install APPLY=1
+   CONFIRM=… ISO=… SEED_ISO=…`, which prompts twice at your own terminal for the
+   new `local-rescue` password; **it has NOT RUN**. The hand-driven console
+   recipe is verbatim in `homelab/docs/operator-runbook.md` ("Keep
    the `local-rescue` password") and `homelab/vm/README.md` ("Interactive
-   offline installation"); the seed ISO and the signature-verified Arch ISO are
-   already staged. Only the owner can drive the console install, and the new
+   offline installation") and remains the fallback; the seed ISO and the
+   signature-verified Arch ISO are already staged. The new
    `local-rescue` password must be recorded durably. See the blocker banner at
    the top of this file.
-4. Then, in order: gate 11 needs the live guest-boot hook (not another loopback
-   run); gate 12 needs an aggregate `homelab-factory-repeat` driver — a reserved name,
-   not implemented — and a live twice-through — **no gate blocks it any more**, gates 6–10 all pass; gate 14
-   only with explicit owner go-ahead.
+4. Then, in order: gate 11 needs the three remaining live guest-boot hooks (the
+   other two are implemented but NOT RUN, and the three need primitives that do
+   not exist); gate 12 needs the image back plus a live twice-through through
+   `make homelab-factory-repeat` — the driver **exists** now, and **no gate
+   blocks it any more**, gates 6–10 all pass; durable directory accounts need a
+   first live provisioning run against a real directory; gate 14 only with
+   explicit owner go-ahead.
 
 Superseded 2026-08-17, recorded so it is not re-derived: this list used to open
 with gate-8 serial/OVMF work and to say gate 12 needed gates 8/9 live first.
 Gate 8 passed 2026-08-14 (21/21) and gate 9 closed inside it, and the serial
 diagnosis was itself wrong — the console *was* routed to ttyS0; the pristine
 firmware variables carried no boot option pointing at systemd-boot. See §3.
+Superseded later the same day: item 4 said gate 12 needed an aggregate
+`homelab-factory-repeat` driver that was "a reserved name, not implemented". It
+is implemented (`27d8af9`).

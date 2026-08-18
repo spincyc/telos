@@ -34,24 +34,31 @@ Pair this with the [human guide](factory-guide.md) for orientation.
 
 ### Blocker: the canonical Controller image is absent
 
-**As of 2026-08-14 no live target in this runbook can execute.**
+**As of 2026-08-17 no live target in this runbook can execute.**
 `build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2` is a 197,888-byte empty disk
 and `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
 2026-08-14 with owner authorization after its `local-rescue` console password
-was lost — the only credential that can ever open it — and **the interactive
-console reinstall was staged but never driven.** Every gate runner, every
-`homelab-factory-persistent` target, and `make homelab-sim-auto-run` boot or
-copy that image, so today they would run against an empty disk.
+was lost — the only credential that can ever open it. Every gate runner, every
+`homelab-factory-persistent` target, `make homelab-factory-repeat APPLY=1`, and
+`make homelab-sim-auto-run` boot or copy that image, so today they would run
+against an empty disk. `make homelab-bootstrap-vm-status` says so directly and
+exits non-zero:
 
-Prerequisites for the reinstall are staged and verified: the seed ISO
-`homelab/var/seed/telos-controller-seed.iso` (SHA-256
+```text
+bootstrap-dc: created but not installed
+installation: not installed; the image is entirely unallocated; nothing has
+              ever been written to it
+```
+
+**The repair is now one guarded target,
+[`homelab-bootstrap-vm-install`](#05-reinstall-the-canonical-controller-image),
+and it has NOT RUN.** It is the supported path; the hand-driven console session
+remains documented as the fallback. Prerequisites are staged and verified: the
+seed ISO `homelab/var/seed/telos-controller-seed.iso` (SHA-256
 `66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`) and the
-signature-verified `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`. The
-recipe is already written out below in
-[Keep the `local-rescue` password](#keep-the-local-rescue-password) and in
-[`homelab/vm/README.md`](../vm/README.md) under "Interactive offline
-installation"; only the owner can drive the console install. Record the new
-`local-rescue` password durably — losing it costs the whole image again.
+signature-verified `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`.
+Record the new `local-rescue` password durably — **losing it costs the whole
+image again.**
 
 Steps marked **Blocked today** below all wait on this one repair. Rebuilding the
 image invalidates no retained gate receipt.
@@ -60,12 +67,16 @@ image invalidates no retained gate receipt.
 
 [FACTORY-MAKE-TARGETS.md](../FACTORY-MAKE-TARGETS.md) reserves several aggregate
 names that are **not implemented as Make targets**. Do not invoke them; use the
-granular targets in this runbook. Reserved-but-absent (verified with `grep` of
-the Makefile): `homelab-factory-controller`, `homelab-factory-authority-check`,
-`homelab-factory-windows`, `homelab-factory-arch`,
-`homelab-factory-dualboot-check`, `homelab-factory-clean`,
-`homelab-factory-repeat`, `homelab-factory-fresh-clone`. Each maps to the real
+granular targets in this runbook. Reserved-but-absent, seven names (verified
+with `grep` of the Makefile on 2026-08-17): `homelab-factory-controller`,
+`homelab-factory-authority-check`, `homelab-factory-windows`,
+`homelab-factory-arch`, `homelab-factory-dualboot-check`,
+`homelab-factory-clean`, `homelab-factory-fresh-clone`. Each maps to the real
 targets below.
+
+Corrected 2026-08-17: this list read *eight* and included
+`homelab-factory-repeat`, which is now implemented — see
+[5.3 Repeatability](#53-repeatability--not-run-gate-12).
 
 ## Lifecycle map
 
@@ -178,6 +189,68 @@ make homelab-factory-offline-check
 seal plus the workstation repo against `homelab/package-contract.json`. It never
 downloads and never silently rewrites the receipt. Every target below this line
 must run with the host network unavailable.
+
+### 0.5 Reinstall the canonical Controller image
+
+**Required today — nothing live below runs until this is done, and it is
+NOT RUN.** See
+[Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+
+```sh
+make homelab-bootstrap-vm-status                       # read-only; says what is there
+
+make homelab-bootstrap-vm-install \
+    ISO=homelab/var/media/arch/archlinux-x86_64.iso \
+    SEED_ISO=homelab/var/seed/telos-controller-seed.iso        # dry run
+
+make homelab-bootstrap-vm-install APPLY=1 \
+    CONFIRM='<the erasure phrase the installer asks you to type>' \
+    ISO=homelab/var/media/arch/archlinux-x86_64.iso \
+    SEED_ISO=homelab/var/seed/telos-controller-seed.iso        # installs
+```
+
+`homelab-bootstrap-vm-install` (`7b29624`) boots the Arch ISO's kernel directly
+with `console=ttyS0`, so the manual `e` edit at the boot menu is gone, and
+answers the offline installer's prompts over the serial line. ADR
+[0058](../decisions/0058-pty-driven-acceptance-testing.md) sanctions exactly
+this: it forbids an unattended path *inside* the installer and prescribes
+driving the interactive one externally, answering prompts as a person would.
+
+**You still type both things that matter.** The erasure phrase arrives through
+`CONFIRM` and is relayed verbatim — the driver contains neither the phrase nor
+the disk serial, asserted against its own source — and the new `local-rescue`
+console password is read **twice** by `getpass` at your terminal and is never a
+Make variable, an environment variable, a file, or an argv element. `SEED_ISO`
+is required (exit 2 without it), and `APPLY=1` without `CONFIRM` exits 2.
+
+Without `APPLY=1` this prints the launch boundary and starts nothing. Verified
+2026-08-17, the dry run reports the disk and its serial, that the image is
+byte-identical to a newly created 80G qcow2 (`this erases nothing that exists`),
+both ISO digests, `network: none`, and the exact `qemu-system-x86_64` argv.
+
+It refuses to run as root, against a symlinked or mis-permissioned state
+directory, a manifest whose serial or format is wrong, a disk any process holds
+open, an argv naming the serial anything but exactly once, an argv carrying a
+network device, a missing controlling terminal, mismatched password entries, and
+a guest that claims success on a disk that still does not probe as installed.
+Above all it refuses a disk that is not byte-identical to a freshly created
+qcow2 of the declared size, with the reference generated by the local
+`qemu-img` at run time — so it can erase the empty image it is meant to erase
+and never a working Controller.
+
+**Evidence when it runs:** `build/homelab/vm/bootstrap-dc/install-receipt.json`
+(mode 0600) and a secret-redacted `install-console.log`; afterwards
+`make homelab-bootstrap-vm-status` reports `ready` and names what installed it.
+
+> **NOT RUN:** no live install has been driven through this target. It is the
+> supported path, but it is unproven. The hand-driven console session remains
+> the documented fallback — see
+> [`homelab/vm/README.md`](../vm/README.md), "Interactive offline installation",
+> and [Keep the `local-rescue` password](#keep-the-local-rescue-password) below.
+> **Record the new `local-rescue` password somewhere durable. Losing it costs
+> the whole image** — root is locked, there is no authorized key, no init shell,
+> and SSH password authentication is off, so nothing in this repository can open
+> an image whose console password is gone.
 
 ---
 
@@ -507,6 +580,18 @@ make homelab-bootstrap-controller INVENTORY=<private inventory>   # --check by d
 make homelab-bootstrap-controller INVENTORY=<private inventory> APPLY=1
 ```
 
+> **NOT RUN and unproven — do not describe durable accounts as working.** An
+> adversarial review on 2026-08-17 found this path could not provision an
+> account by any wired route at all. Six independent breaks were repaired in
+> `f8d0348`, the sixth being that Ansible resolves `group_vars` relative to the
+> **inventory source**, so an overlay holding `group_vars` one level above its
+> inventory was read by nothing and every AD variable silently fell back to its
+> role default. Provisioning is now host-side and only host-side, stated rather
+> than implied: the factory bundle declares an empty account list with the
+> reason, so the in-guest path is testably dead rather than half-wired. None of
+> this has been exercised against a live directory. Treat it as designed and
+> repaired, never as proven.
+
 Check mode is the default and `APPLY=1` is required to mutate the guest. Its two
 preconditions are opt-in and off by default — `homelab_ad_provision_enabled` and
 `homelab_ad_admin_password_file` (root-owned, mode 0600, a path and never a
@@ -518,6 +603,14 @@ enter as **file paths** — root-owned, mode 0600 — and never as values, so no
 puts a secret in a template, a log or the process table. And the accounts age
 under the domain's password policy: nothing here sets a never-expiring password,
 because that would hide a real property.
+
+Real account names come from the private overlay roster, and since `ee8b5e6`
+the Windows identity lane derives its principals from that roster instead of
+hardcoding `student` / `operator` / `directory-admin` in about fifteen places.
+**Using an overlay is no longer fatal to gate 6.** With no overlay every derived
+value is byte-identical to the literals it replaced, so the gate-6 and gate-8
+verdicts are untouched; with one, a refusal now reports the expected roster, the
+roster it was handed, and where it came from.
 
 ### Keep the `local-rescue` password
 
@@ -538,13 +631,22 @@ make homelab-bootstrap-vm-destroy  APPLY=1 CONFIRM=bootstrap-dc
 make homelab-bootstrap-seed                        # if the seed predates
                                                    # any homelab/seed/ commit
 make homelab-bootstrap-vm-create   APPLY=1
-make homelab-bootstrap-vm-run      APPLY=1 \
+make homelab-bootstrap-vm-install  APPLY=1 \
+    CONFIRM='<the erasure phrase the installer asks you to type>' \
+    ISO=homelab/var/media/arch/archlinux-x86_64.iso \
     SEED_ISO=homelab/var/seed/telos-controller-seed.iso
 ```
 
-Then reinstall from the console, as in `homelab/seed/README.md`. Rebuilding the
-canonical image invalidates no gate receipt: the disk digest is captured per run
-at prepare time by `ControllerOverlay`, and no tracked artifact pins it.
+The last step is [0.5](#05-reinstall-the-canonical-controller-image) and is
+**NOT RUN**. The fallback, if it refuses or misbehaves, is the hand-driven
+console session: `make homelab-bootstrap-vm-run APPLY=1
+SEED_ISO=homelab/var/seed/telos-controller-seed.iso`, then reinstall from the
+console as in `homelab/seed/README.md` and
+[`homelab/vm/README.md`](../vm/README.md) ("Interactive offline installation").
+
+Rebuilding the canonical image invalidates no gate receipt: the disk digest is
+captured per run at prepare time by `ControllerOverlay`, and no tracked artifact
+pins it.
 
 Once a directory **is** provisioned, the same loss is expensive rather than cheap:
 the accounts, the domain SID and every machine's join live only on that disk.
@@ -586,30 +688,121 @@ workstation remint, and controller reconstruction. **Evidence — gate 11
 PARTIAL:** three scenarios are **proven live** in the loopback lab (2026-08-12):
 `pxe-release-rollback`, `update-failure-rollback` (per ADR
 [0075](../decisions/0075-automatic-gated-arch-workstation-updates.md)), and
-`workstation-remint`. The five that need a live guest boot
-(`controller-restart`, `failed-install-recovery`, `broken-boot-repair`,
-`directory-dns-loss`, `controller-reconstruction`) record their observable
-contract and **defer** the boot proof; the judge returns verdict `partial`,
-which is honest deferral, not a pass.
+`workstation-remint`.
+
+**Changed 2026-08-17 (`2c3cd56`):** two of the five live-boot hooks are now
+*implemented* — `directory-dns-loss` and `controller-reconstruction` — driven
+over the gate-8 loopback identity topology, with every judged field backed by a
+token-scoped marker the guest itself printed (`controller_frozen` is proven by
+the workstation refusing an unprimed domain principal, not by the host's own
+SIGSTOP flag). `2aaa7fe` also made this target forward the identity bundle and
+controller state those hooks need; without it they would have deferred even
+under `RECOVERY_BOOT=1`.
+
+**They have NOT RUN:** implementing a hook is not running it, and no live boot
+has been driven. The remaining three (`controller-restart`,
+`failed-install-recovery`, `broken-boot-repair`) stay stubs because the
+primitives they need do not exist — there is no way to power-cycle a live
+Controller and re-establish its console (the boundary exposes an outage, not a
+restart), nothing can break a guest's bootloader and repair it, and no
+fault-injection seam can make an install fail on purpose. The judge returns
+verdict `partial`, which is honest deferral, not a pass, and will keep doing so
+until all five exist **and** a live boot runs.
 
 ### 5.3 Repeatability — **NOT RUN (gate 12)**
 
-The verifier and receipt comparator are implemented
-(`homelab/vm/factory_verify.py`), but a full twice-through of the whole
-lifecycle from destroyed disposable state has never run. **The old blocker —
-"pending gates 6–10" — is satisfied as of 2026-08-14: gates 6, 7, 8, 9 and 10
-all pass.** What blocks it now is not a gate:
+```sh
+make homelab-factory-repeat                        # read-only dry run; safe any time
+make homelab-factory-repeat APPLY=1 FACTORY_DURATION=<per-phase seconds>
+```
 
-1. the canonical Controller image is absent, so no live target can run at all —
-   see [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent);
-2. there is no aggregate repeat driver. `homelab-factory-repeat` and
-   `homelab-factory-fresh-clone` are reserved and **not implemented**, so a
-   twice-through means re-running Stages 0–5 from the sealed cache by hand and
-   comparing receipts with `homelab-factory-verify`.
+The aggregate repeat driver now exists (`27d8af9`, wired by `2aaa7fe`), so the
+second blocker recorded here until 2026-08-17 — "`homelab-factory-repeat` is
+reserved and not implemented" — is **gone**. No phase bundle can reach gate 12
+alone: install order needs both installs in one list and the login checks need
+both operating systems in one receipt, so the driver runs the phases in order
+and assembles one union receipt from their bundles.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REPEAT_EVIDENCE_ROOT` | `homelab/var/factory/repeat` | Aggregate bundle per iteration. |
+| `REPEAT_WORK_ROOT` | `homelab/var/factory/repeat-work` | Disposable work root, destroyed before each iteration. |
+| `REPEAT_ITERATIONS` | `2` | Gate 12 requires at least 2. |
+| `REPEAT_RECEIPT` | unset | Optional path for the comparison receipt. |
+| `FACTORY_DURATION` | `120` | Forwarded to each phase as its **per-phase** budget. |
+
+**The 120-second `FACTORY_DURATION` default is far too small for a real
+lifecycle** — a single Windows install alone has run 68 minutes — and the value
+applies to *every* phase, not to the run. Budget per phase and expect hours.
+
+The dry run starts nothing. Verified 2026-08-17 it prints the loopback boundary,
+the iteration count, both roots, the release set, the six phases in order
+(`windows-install`, `windows-identity`, `arch-install`, `arch-identity`,
+`dualboot-acceptance`, `lifecycle-recovery`, each naming the Make target that
+really runs it), the four producer measurements now available, and any
+precondition that would refuse. Today it refuses, naming the remedy:
+
+```text
+! refuses to apply: canonical Controller image …/bootstrap-dc.qcow2 is not an
+  installed Controller: the image is entirely unallocated; nothing has ever
+  been written to it. No live lifecycle can run against it; run
+  `make homelab-bootstrap-vm-install` first
+```
+
+That refusal reads the real partition table and is fail-closed, so a partially
+written disk over a size floor does not satisfy it.
+
+**All sixteen gate-12 checks now have a wired producer.** The four that never
+had one — `login`, `optional_storage_absence_nonblocking`,
+`host_network_changes`, `artifact_scan` — landed in `aec5747`, `390e5cf` and
+`280c99d`. Two honest limits go with that:
+
+- `host_network_changes` **cannot legitimately render PASS today.** Its `unifi`
+  counter is unprovable without a run-window host egress ledger, which nothing
+  produces; a snapshot pair cannot prove a connection that opened and closed
+  between snapshots. The sentinel is deliberately not an integer, so a producer
+  that omits the field leaves the check NOT RUN and one that emits an unproven
+  counter renders FAIL. Neither can render PASS.
+- `artifact_scan` requires a scanned tree; without one the check stays NOT RUN.
+
+What still blocks the live twice-through is therefore one thing, and it is not a
+gate: the canonical Controller image is absent, so no live target can run at all
+— see [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent)
+and [0.5](#05-reinstall-the-canonical-controller-image). The old blocker
+"pending gates 6–10" was satisfied 2026-08-14: gates 6, 7, 8, 9 and 10 all pass.
+
+**Verdict: NOT RUN.** The driver is implemented and unit-tested; it has never
+executed a live lifecycle, `SubprocessLifecycle` has never executed, the phase
+table was read off the Makefile rather than confirmed against a live lifecycle,
+and every end-to-end test fabricates its bundles. What is proven is that the
+aggregation is deterministic, not that two real lifecycles agree.
+
+### 5.4 Declared-service gate for a candidate image — **judge only**
+
+```sh
+make homelab-image-service-gate \
+  IMAGE_PROFILE=<installer-live|controller-seed|workstation-install> \
+  IMAGE_TRANSCRIPT=<retained guest console capture> \
+  [IMAGE_SERVICE_TOKEN=<run token>] [IMAGE_SERVICE_EVIDENCE=<output path>]
+```
+
+`homelab-image-service-gate` (`0c2df66`) grades a booted candidate image's
+declared systemd services against the tracked contract, from a retained guest
+console transcript. It is pure host-side: no guest, no root, no QEMU, and no
+registry override. `IMAGE_PROFILE` and `IMAGE_TRANSCRIPT` are both required
+(exit 2 without either). An undeclared but enabled unit degrades the verdict to
+`partial` and is named rather than failing outright, since stock systemd presets
+legitimately enable units the contract has no opinion about; only `pass` may be
+read as "services verified".
+
+**The live capture half does not exist.** Producing the transcript needs a
+booted candidate image, which needs root, so the judge is **available** and the
+capture is **BLOCKED**. `services_verified` is therefore **NOT RUN**. This is
+the same split both identity gates already use.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20260817.001`)
+## Pass/fail gate summary (as of ledger `20260817.002`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
@@ -623,8 +816,8 @@ all pass.** What blocks it now is not a gate:
 | 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PASS**, 21/21, proven live 2026-08-14 (bundle `arch-identity/run-20260814T172142Z-495164bc7159`; judge prints `PASS: 21 checks, external_access=False`) |
 | 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
 | 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
-| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`; the five defer by construction until a live boot hook exists |
-| 12 | Repeatability | `homelab-factory-verify` (comparator only; the repeat driver is reserved and not implemented) | **NOT RUN** — no longer blocked by any gate; blocked on the absent canonical Controller image and the missing aggregate driver |
+| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`. Two of the five live-boot hooks are now *implemented* (`directory-dns-loss`, `controller-reconstruction`, `2c3cd56`) but **NOT RUN**; three remain stubs for want of a Controller restart, a bootloader break-and-repair, and install fault injection. Verdict stays `partial` until all five exist and a live boot runs. |
+| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **NOT RUN** — no longer blocked by any gate, and no longer blocked by a missing driver. All sixteen checks now have a wired producer (`aec5747`, `390e5cf`, `280c99d`), but `host_network_changes` cannot legitimately render PASS without a run-window host egress ledger that does not exist, and `artifact_scan` needs a scanned tree. Blocked on the absent canonical Controller image plus two live lifecycles. |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** |
 
@@ -709,6 +902,9 @@ transport.
 - **Clean up a run:** the reserved `homelab-factory-clean` target is **not
   implemented**; remove a named disposable run bundle under `homelab/var/factory/`
   directly, and never delete sealed media or another run's evidence.
+- **Reinstall the canonical Controller image:** `homelab-bootstrap-vm-install`
+  (see [0.5](#05-reinstall-the-canonical-controller-image)); **NOT RUN**, with
+  the hand-driven console session as the documented fallback.
 
 ## Final verification and evidence to retain
 
@@ -728,6 +924,8 @@ make check                       # site manifest, tests, tmt registry gate
 make homelab-factory-offline-check
 make homelab-pxe-authority-audit SWITCH=<run>/evidence/switch.jsonl
 make homelab-factory-verify FACTORY_EVIDENCE=<run dir>   # dry run without APPLY
+make homelab-factory-repeat      # dry run: phase plan, producers, refusals
+make homelab-bootstrap-vm-status # is the canonical image installed?
 ```
 
 None of these boot a guest, mutate evidence, or touch the network.

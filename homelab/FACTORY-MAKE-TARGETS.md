@@ -1,9 +1,10 @@
 # Workstation factory Make contract
 
-Document version: `20260817.001`
+Document version: `20260817.002`
 
 Status: partly implemented. Targets marked **implemented** exist in the Makefile
-today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-17.
+today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-17
+(re-verified after `f8d0348`).
 Targets marked **reserved** do not exist; the local per-gate lifecycle that
 actually runs is a separate, real set of targets — see
 [Implemented per-gate lifecycle](#implemented-per-gate-lifecycle), which is the
@@ -57,14 +58,17 @@ explicitly, e.g. "PASS (Windows) / NOT RUN (Arch)".
 | Acceptance | `homelab-factory-verify` | **implemented** | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
 | Recovery | `homelab-factory-recover` | **implemented** | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. Graded by **`homelab-factory-recover-judge RECOVERY_EVIDENCE=…`** (implemented). |
 | Cleanup | `homelab-factory-clean` | **reserved** | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
-| Repeat | `homelab-factory-repeat` | **reserved** | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. |
+| Repeat | `homelab-factory-repeat` | **implemented** (`27d8af9`, `2aaa7fe`) | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. Aggregates every phase bundle into one receipt, because no single phase can carry gate 12. Dry run is read-only; see [The repeat driver](#the-repeat-driver). **NOT RUN** — it has never driven a live lifecycle. |
 | Fresh clone | `homelab-factory-fresh-clone` | **reserved** | Clone the public repository into a disposable directory, resolve and record the commit, acquire/import inputs, then invoke the same lifecycle. |
 
-Eight names in the table above do not exist in the Makefile:
-`homelab-factory-{controller,authority-check,windows,arch,dualboot-check,clean,repeat,fresh-clone}`.
-`make` will fail with "No rule to make target". Two of the eight have real
+Seven names in the table above do not exist in the Makefile:
+`homelab-factory-{controller,authority-check,windows,arch,dualboot-check,clean,fresh-clone}`.
+`make` will fail with "No rule to make target". Two of the seven have real
 substitutes already implemented under different names
 (`homelab-factory-controller-bundle`, `homelab-pxe-authority-audit`).
+
+Corrected 2026-08-17: this list read *eight* and included
+`homelab-factory-repeat`, which `27d8af9` implemented. The count is now seven.
 
 ## Implemented per-gate lifecycle
 
@@ -81,7 +85,7 @@ present in the Makefile on 2026-08-17. Each mutating target needs `APPLY=1`.
 | 10 | `homelab-dualboot-acceptance-prepare`, `homelab-dualboot-acceptance-run`, `homelab-dualboot-acceptance-judge` | `DUALBOOT_EVIDENCE=` |
 | 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_EVIDENCE=` |
 | 3 (bundle) | `homelab-factory-controller-bundle` | — |
-| 12 | `homelab-factory-verify` | — (comparator only; the repeat driver is reserved — `homelab-factory-repeat` is not implemented, so this target compares receipts and never performs a repeatability run) |
+| 12 | `homelab-factory-repeat`, `homelab-factory-verify` | `REPEAT_EVIDENCE_ROOT=`, `REPEAT_WORK_ROOT=`, `REPEAT_ITERATIONS=`, `REPEAT_RECEIPT=`, `FACTORY_DURATION=` (see [The repeat driver](#the-repeat-driver)); `homelab-factory-verify` remains the per-bundle comparator |
 
 Gate 9 deliberately has no target of its own: its `optional-storage` checks are
 graded inside the gate-6 and gate-8 identity acceptances.
@@ -110,9 +114,138 @@ arch-install-{prepare,run} -> arch-identity-{prepare,run,judge}
 dualboot-acceptance-{prepare,run,judge}
                          |
                          v
-verify -> recover -> recover-judge -> [clean] -> [repeat]
-                                       ^-- reserved, not implemented
+verify -> recover -> recover-judge -> [clean] -> repeat
+                                       ^-- clean is reserved and absent;
+                                           repeat is implemented and NOT RUN
 ```
+
+## The repeat driver
+
+`homelab-factory-repeat` (`27d8af9`, wired into the Make contract by `2aaa7fe`)
+is gate 12's aggregate driver. No single phase bundle can reach gate 12 on its
+own — install order needs both installs in one list and the login checks need
+both operating systems in one receipt — so the driver runs the phases in order
+and assembles one union receipt from their bundles.
+
+```sh
+make homelab-factory-repeat                       # read-only dry run
+make homelab-factory-repeat APPLY=1               # runs the lifecycle
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REPEAT_EVIDENCE_ROOT` | `homelab/var/factory/repeat` | Where the aggregate bundle of each iteration is written. |
+| `REPEAT_WORK_ROOT` | `homelab/var/factory/repeat-work` | Disposable work root, destroyed before each iteration. |
+| `REPEAT_ITERATIONS` | `2` | Gate 12 requires at least 2. |
+| `REPEAT_RECEIPT` | unset | Optional path for the comparison receipt. |
+| `FACTORY_DURATION` | `120` | Forwarded to each phase as its **per-phase** budget, not a whole-run budget. |
+| `FACTORY_RELEASES` | unset | Optional release set; the dry run reports `homelab/var/pxe`. |
+
+**`FACTORY_DURATION`'s 120-second default is far too small for a real
+lifecycle.** A single Windows install alone has run 68 minutes. Whatever value
+is supplied applies to *every* phase, so budget per phase and expect the
+apply path to take hours, not minutes.
+
+The dry run starts nothing and is safe at any time. Verified 2026-08-17 it
+prints the loopback boundary, the iteration count, both roots, the release set,
+the six lifecycle phases in order — `windows-install`, `windows-identity`,
+`arch-install`, `arch-identity`, `dualboot-acceptance`, `lifecycle-recovery`,
+each naming the Make target that really runs it — the four producer
+measurements now available (`host_network_changes`, `login`,
+`optional_storage_absence_nonblocking`, `artifact_scan`), and any precondition
+that would refuse. Today it refuses, naming the remedy:
+
+```text
+! refuses to apply: canonical Controller image …/bootstrap-dc.qcow2 is not an
+  installed Controller: the image is entirely unallocated; nothing has ever
+  been written to it. No live lifecycle can run against it; run
+  `make homelab-bootstrap-vm-install` first
+```
+
+That refusal reads the actual partition table through `controller_image.probe`
+and is fail-closed, so a partially written disk over a size floor does not
+satisfy it.
+
+Verdict: **NOT RUN.** The driver is implemented and unit-tested; it has never
+executed a live lifecycle, and every end-to-end test fabricates its bundles, so
+what is proven is that the aggregation is deterministic — not that two real
+lifecycles agree.
+
+## Installing the canonical Controller image
+
+`homelab-bootstrap-vm-install` (`7b29624`) drives the interactive offline
+installer against the canonical Controller disk over the serial console, which
+was previously a long hand-driven console session. ADR
+[0058](decisions/0058-pty-driven-acceptance-testing.md) sanctions exactly this:
+it forbids an unattended path *inside* the installer and prescribes driving the
+interactive one externally, answering prompts as a person would.
+
+```sh
+make homelab-bootstrap-vm-install \
+    ISO=homelab/var/media/arch/archlinux-x86_64.iso \
+    SEED_ISO=homelab/var/seed/telos-controller-seed.iso          # dry run
+
+make homelab-bootstrap-vm-install APPLY=1 \
+    CONFIRM='<the erasure phrase the installer asks you to type>' \
+    ISO=homelab/var/media/arch/archlinux-x86_64.iso \
+    SEED_ISO=homelab/var/seed/telos-controller-seed.iso          # installs
+```
+
+The two answers that matter stay the operator's. `CONFIRM` carries the erasure
+phrase and is relayed verbatim — the driver holds neither the phrase nor the
+disk serial, asserted against its own source — and the new `local-rescue`
+console password is read twice by `getpass` at the controlling terminal, never
+from a file, argv, an environment variable, or a Make variable. `SEED_ISO` is
+required and the target exits 2 without it; `APPLY=1` without `CONFIRM` exits 2.
+
+The guards are the point. It refuses to run as root, a symlinked or
+mis-permissioned state directory, a manifest whose serial or format is wrong, a
+disk any process holds open, an argv naming the serial anything but exactly
+once, an argv carrying a network device, a missing controlling terminal,
+mismatched password entries, and a guest that claims success on a disk that
+still does not probe as installed. Above all it refuses a disk that is not
+byte-identical to a freshly created qcow2 of the declared size, with the
+reference generated by the local `qemu-img` at run time — so it can erase the
+empty image it is meant to erase and never a working Controller.
+
+Verdict: **NOT RUN.** No live install has been driven through this target. The
+manual console recipe in [`homelab/vm/README.md`](vm/README.md) ("Interactive
+offline installation") remains documented as the fallback. **Losing the
+`local-rescue` password still costs the whole image** — root is locked, there is
+no authorized key, no init shell, and SSH password authentication is off, so
+nothing in this repository can open an image whose console password is gone.
+
+`homelab-bootstrap-vm-status` reads the install receipt and now distinguishes
+"created but not installed" from "ready", and exits non-zero on the former.
+
+## Grading a candidate image's declared services
+
+`homelab-image-service-gate` (`0c2df66`) grades a booted candidate image's
+declared systemd services against the tracked contract, from a retained guest
+console transcript. It is a pure host-side judge: no guest, no root, no QEMU,
+and no registry override.
+
+```sh
+make homelab-image-service-gate \
+  IMAGE_PROFILE=<installer-live|controller-seed|workstation-install> \
+  IMAGE_TRANSCRIPT=<retained guest console capture> \
+  [IMAGE_SERVICE_TOKEN=<run token>] [IMAGE_SERVICE_EVIDENCE=<output path>]
+```
+
+`IMAGE_PROFILE` and `IMAGE_TRANSCRIPT` are both required; the target exits 2
+without either. The transcript is a token-scoped, line-anchored marker frame
+rather than JSONL, because `ttyS0` interleaves kernel messages with program
+output at arbitrary byte boundaries; a framed line either matches whole or is
+refused, and the frame carries its own record count so a truncated capture is
+distinguishable from a short one. An undeclared but enabled unit degrades the
+verdict to `partial` and is named rather than failing outright; only `pass` may
+be read as "services verified".
+
+**The live capture half does not exist.** Producing the transcript needs a
+booted candidate image, which needs root, so the judge is available today and
+the capture is the blocked half. This is the same split both identity gates
+already use. Verdict for the pair: judge **implemented**, capture **BLOCKED**,
+and `services_verified` therefore **NOT RUN**.
 
 ## Persistent controller instance (not a gate)
 
@@ -126,13 +259,18 @@ persistence must be asked for by name and is never inferred.
 |---|---|---|
 | `homelab-factory-persistent-plan` | no | Read-only. Prints what a bring-up would do for `PERSISTENT_DC`. |
 | `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists and whether its directory is provisioned. |
-| `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. |
+| `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. Since `7b29624` it **refuses an uninstalled canonical image** instead of silently seeding an instance from a blank disk. |
 | `homelab-factory-persistent-converge-plan` | no | Read-only plan for the provisioning step. |
-| `homelab-factory-persistent-converge` | `APPLY=1` | Provisions Active Directory into the instance in place, over the `local-rescue` console password typed at the operator's terminal. Long-running; prompts for credentials interactively and writes none of them to a file, a Make variable, an environment variable, or argv. |
+| `homelab-factory-persistent-converge` | `APPLY=1` | Provisions Active Directory into the instance in place, over the `local-rescue` console password typed at the operator's terminal. Long-running; prompts for credentials interactively and writes none of them to a file, a Make variable, an environment variable, or argv. Since `7b29624` it **checks the canonical image before it prompts**, so an uninstalled source no longer costs you the unrecoverable console password first, and a retried convergence only asks for a new Administrator password when provisioning was actually attempted. |
 | `homelab-factory-persistent-destroy` | `APPLY=1` + `CONFIRM='DESTROY <name>'` | Disk-erasing: deletes a real directory server, so it needs the stable instance name and the exact confirmation carrying that name. |
 
 **Every one of the six requires `PERSISTENT_DC=<instance name>`** and exits 2
 without it. `PERSISTENT_DC` has no default.
+
+Fixed 2026-08-17 (`7b29624`): all six recipes emitted `--state-dir` *after* the
+subcommand, so every persistent target died for anyone who set
+`FACTORY_CONTROLLER_STATE`. The option now precedes the subcommand in all six,
+with a test that runs each generated recipe through the real parser.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -148,6 +286,17 @@ default would abort a Samba provisioning run. Verdict: this whole surface is
 implemented and unit-tested but **NOT RUN** — it has never executed live as of
 2026-08-17. See "The persistent directory instance" in
 [docs/operator-runbook.md](docs/operator-runbook.md).
+
+The **durable directory accounts** that this path exists to carry are a
+separate target (`make homelab-bootstrap-controller INVENTORY=<private
+inventory>`) and are **NOT RUN and unproven**. An adversarial review on
+2026-08-17 found they could not be provisioned by any wired path at all; six
+independent breaks were repaired in `f8d0348` — including Ansible resolving
+`group_vars` relative to the inventory source, so an overlay holding
+`group_vars` one level above its inventory was read by nothing. The path is now
+host-side and only host-side, and the in-guest alternative is declared dead
+rather than half-wired. None of that has been exercised against a live
+directory: treat durable accounts as designed and repaired, never as working.
 
 ## Required common inputs
 
@@ -185,6 +334,13 @@ rather than reimplemented:
 - `homelab-sim-deps`, `homelab-sim-auto-plan`
 - `homelab-sim-auto-run`, `homelab-sim-auto-repeat`
 - `homelab-image-promotion-gate`
+- `homelab-image-service-gate` (see
+  [Grading a candidate image's declared services](#grading-a-candidate-images-declared-services))
+- `homelab-bootstrap-vm-status`, `homelab-bootstrap-vm-install` (see
+  [Installing the canonical Controller image](#installing-the-canonical-controller-image))
+- `homelab-instance` — seeds a private overlay skeleton. Since `7b29624` it
+  seeds **missing subdirectories** instead of doing nothing when the overlay
+  directory already exists.
 
 The promotion gate is the common static precondition for promoting any
 Arch-derived image. It is read-only: it audits a candidate root through a
@@ -205,7 +361,9 @@ so an unaccounted binary, an unowned path, a missing package signature, and an
 installed version that drifted from the seed closure are distinguishable
 without inspecting the candidate by hand. Passing this gate is necessary and
 not sufficient: booting the candidate and verifying declared services remain
-separate gates, and promotion still needs explicit authority.
+separate gates, and promotion still needs explicit authority. The
+declared-services half now has a host-side judge —
+`homelab-image-service-gate`, above — whose live capture step is still blocked.
 
 The aggregate factory targets may delegate to a leaf only after its inputs and
 outputs match this contract. In particular, do not claim the current simulator
