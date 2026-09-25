@@ -416,6 +416,20 @@ class TestDurableAccountsAreInertByDefault(DurableAccountBase):
         self.assertNotIn("homelab_ad_directory_accounts", above)
 
 
+def contract_roster() -> dict[str, str]:
+    """The tracked contract's roster, whatever overlay this machine carries.
+
+    ``directory_account_plan`` with no roster resolves the private overlay,
+    which may pin UIDs; a test of the positional default must not change
+    verdict on the machine of an owner who pinned them.
+    """
+    from homelab.workstations.arch_second import identity_roster
+
+    with tempfile.TemporaryDirectory() as scratch:
+        return identity_roster(
+            overlay_path=Path(scratch) / "no-principals.json")
+
+
 class TestOneUidRuleInOnePlace(DurableAccountBase):
     """The UID rule is written once, is role-positional, and this role has none.
 
@@ -450,7 +464,9 @@ class TestOneUidRuleInOnePlace(DurableAccountBase):
     def test_the_surviving_rule_is_role_positional(self):
         from homelab.vm import controller_principals as principals
 
-        plan = principals.directory_account_plan(ACCEPTANCE_ROLES)
+        contract = contract_roster()
+        plan = principals.directory_account_plan(
+            ACCEPTANCE_ROLES, roster=contract)
         base = principals.POSIX_BASE
         self.assertEqual(
             [entry["contract_role"] for entry in plan],
@@ -469,12 +485,13 @@ class TestOneUidRuleInOnePlace(DurableAccountBase):
         # The order the instance happens to declare its roles in is immaterial:
         # the identifier belongs to the role, not to a position in a list.
         self.assertEqual(plan, principals.directory_account_plan(
-            list(reversed(ACCEPTANCE_ROLES))))
+            list(reversed(ACCEPTANCE_ROLES)), roster=contract))
 
     def test_renaming_an_account_moves_no_uid(self):
         from homelab.vm import controller_principals as principals
 
-        contract = principals.directory_account_plan(ACCEPTANCE_ROLES)
+        contract = principals.directory_account_plan(
+            ACCEPTANCE_ROLES, roster=contract_roster())
         renamed = principals.directory_account_plan(
             ACCEPTANCE_ROLES, roster=RENAMED_ROSTER)
         self.assertNotEqual([entry["name"] for entry in contract],
