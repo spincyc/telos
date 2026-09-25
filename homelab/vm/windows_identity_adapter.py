@@ -89,6 +89,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCollection,
     PostSubmitDiagnosticError,
 )
+from .windows_guest_principals import contract_principals
 
 CONTROLLER_AUTH_TIMEOUT_SECONDS = 60.0
 # The armed window must cover everything between arming the Controller
@@ -116,6 +117,33 @@ SECRET_ENTRY_BAND_HALF_HEIGHT = 48
 # contributes well under one unit over the band, while masked dots
 # contribute several, so a small threshold separates them decisively.
 SECRET_ENTRY_BASELINE_DISTANCE = 1.0
+
+
+def _domain_sign_in_states(principal: str) -> frozenset[str]:
+    """The reference states that may stand for *principal*'s sign-in form.
+
+    A reference's ``state`` records what was on screen when it was captured,
+    and the tracked post-join operator reference was captured under the
+    identity contract's roster, so it names the contract's daily
+    administrator. A private overlay renames the principal typed here, not
+    the reference: requiring the resolved name refused the tracked reference
+    before a single frame was compared, which is how the first real-name
+    gate-6 run (2026-09-24) failed at prove-password-target within a minute.
+    The pixels do not care: the typed UPN is a small part of the crop, and
+    the tracked operator and local-account references -- different typed
+    names on the same form -- differ by 0.73 against a 6.0 threshold.
+
+    So a reference captured for this very principal, or the contract-roster
+    capture of the SAME role in the SAME realm, is accepted. The local-account
+    reference is not, and neither is any other name.
+    """
+    _local, separator, realm = principal.rpartition("@")
+    if not separator or not realm:
+        return frozenset()
+    contract_upn = f"{contract_principals()['daily_administrator']}@{realm}"
+    return frozenset(
+        f"focused password field for domain account {upn}"
+        for upn in (principal, contract_upn))
 
 
 class WindowsIdentityAdapterError(WindowsIdentityRunError):
@@ -948,12 +976,11 @@ class NativeWindowsAcceptanceAdapter:
             ) and (
                 not selection_calibrated or (
                     sign_in.state_kind == "sign-in"
-                    and sign_in.state == (
-                        "focused password field for domain account "
-                        f"{principal}"
+                    and sign_in.state in (
+                        _domain_sign_in_states(principal)
                         if domain_operator
-                        else "focused password field for local account "
-                        f"{self.local_principal}"
+                        else {"focused password field for local account "
+                              f"{self.local_principal}"}
                     )
                 )
             )

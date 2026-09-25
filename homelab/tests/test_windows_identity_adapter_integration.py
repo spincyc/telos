@@ -248,6 +248,99 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
             adapter.controller_auth_result.collection.value,
             "receipt-unavailable")
 
+    def test_the_tracked_operator_reference_stands_for_a_renamed_operator(
+        self,
+    ):
+        # The tracked reference is the one gate 6 actually loads. Its state
+        # names the contract roster's daily administrator, because that is
+        # who was typed when it was captured; a private overlay renames the
+        # principal but not the capture. The first real-name gate-6 run
+        # (2026-09-24) refused it before comparing a single frame.
+        import json
+
+        from homelab.vm.windows_guest_principals import contract_principals
+
+        manifest = (
+            Path(subject.__file__).resolve().parent
+            / "windows_identity_references"
+            / "windows-11-25h2-en-us-1280x800"
+            / "post-join-operator-sign-in.json")
+        tracked = json.loads(manifest.read_text(encoding="utf-8"))["state"]
+        realm = tracked.rpartition("@")[2]
+        contract = contract_principals()["daily_administrator"]
+        self.assertEqual(
+            tracked,
+            f"focused password field for domain account {contract}@{realm}")
+        renamed = f"renamed-daily@{realm}"
+        self.assertIn(tracked, subject._domain_sign_in_states(renamed))
+        # Its own capture is accepted too, so a private recapture would be.
+        self.assertIn(
+            f"focused password field for domain account {renamed}",
+            subject._domain_sign_in_states(renamed))
+        # Never the local-account form, and never another realm's operator.
+        self.assertNotIn(
+            "focused password field for local account telosadmin",
+            subject._domain_sign_in_states(renamed))
+        self.assertNotIn(
+            tracked, subject._domain_sign_in_states("renamed-daily@OTHER.TEST"))
+        self.assertEqual(frozenset(), subject._domain_sign_in_states("no-realm"))
+
+    def test_a_renamed_operator_reauthenticates_against_the_contract_capture(
+        self,
+    ):
+        from homelab.vm.windows_guest_principals import contract_principals
+
+        contract = contract_principals()["daily_administrator"]
+        captured = (
+            f"focused password field for domain account {contract}@FACTORY.TEST")
+        for state, admitted in (
+            (captured, True),
+            ("focused password field for local account telosadmin", False),
+            ("focused password field for domain account "
+             "someone-else@FACTORY.TEST", False),
+        ):
+            with self.subTest(state=state):
+                sign_in, desktop, plan = (
+                    self._domain_reauthentication_fixture())
+                sign_in.state = state
+                with (
+                    mock.patch.object(
+                        subject, "DAILY_ADMINISTRATOR", "renamed-daily"),
+                    mock.patch.object(
+                        subject, "_load_references",
+                        return_value=(
+                            sign_in, desktop, mock.sentinel.security,
+                            mock.sentinel.change)),
+                    mock.patch.object(
+                        subject, "_private_evidence_root",
+                        return_value=self.root / "reauth-evidence"),
+                    mock.patch.object(
+                        subject, "_GuiInteraction") as interaction_type,
+                    mock.patch.object(
+                        subject, "_prove_secret_entry_departure"),
+                    mock.patch.object(
+                        subject, "ControllerAuthDiagnosticSession",
+                        side_effect=RuntimeError("prelaunch unavailable")),
+                ):
+                    adapter = self.adapter(rotation_plan=plan)
+                    if admitted:
+                        adapter.reauthenticate_domain_operator(
+                            "renamed-daily@FACTORY.TEST", "private", "a" * 32)
+                        interaction_type.return_value.type_secret \
+                            .assert_called_once()
+                    else:
+                        with self.assertRaises(
+                                subject.WindowsLocalReauthenticationError
+                        ) as caught:
+                            adapter.reauthenticate_domain_operator(
+                                "renamed-daily@FACTORY.TEST", "private",
+                                "a" * 32)
+                        self.assertEqual(
+                            "prove-password-target",
+                            caught.exception.reauth_operation)
+                        interaction_type.return_value.type_secret \
+                            .assert_not_called()
+
     def test_controller_arm_unproved_cleanup_aborts_before_secret(self):
         for collection in (
             ControllerAuthCollection.SINK_INVALID,
