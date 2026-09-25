@@ -148,9 +148,14 @@ exists.
 
 > **Current Windows limit**
 >
-> The Windows target reaches WinPE. It does not yet erase a disk or perform an
-> unattended installation. That remains blocked until the disk-serial
-> authorization and reviewed setup script are complete.
+> In the isolated QEMU factory, the Windows target installs completely: on
+> 2026-08-10 it network-booted WinPE and installed Windows 11 Pro onto a fresh
+> disposable disk authorized by its serial. That run uses private, generated
+> automation that is permitted only for disposable QEMU disks and is never part
+> of a release. A physical workstation stays interactive: the operator supplies
+> the real identity and credential values and authorizes the erase against the
+> hardware disk serial. That physical path has not yet been run on real
+> hardware.
 
 ## 6. Design UniFi before touching UniFi
 

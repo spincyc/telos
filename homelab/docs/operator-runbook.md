@@ -32,47 +32,39 @@ Pair this with the [human guide](factory-guide.md) for orientation.
   hostnames, addresses, and credentials live only in the private overlay
   (`telos-private`) and must never enter this tree.
 
-### Blocker: the canonical Controller image is absent
+### Resolved 2026-09-24: the canonical Controller image is installed
 
-**As of 2026-08-17 no live target in this runbook can execute.**
-`build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2` is a 197,888-byte empty disk
-and `build/homelab/vm/persistent-dc/` is empty. The image was destroyed
-2026-08-14 with owner authorization after its `local-rescue` console password
-was lost — the only credential that can ever open it. Every gate runner, every
-`homelab-factory-persistent` target, `make homelab-factory-repeat APPLY=1`, and
-`make homelab-sim-auto-run` boot or copy that image, so today they would run
-against an empty disk. `make homelab-bootstrap-vm-status` says so directly and
-exits non-zero:
+**No live target in this runbook is blocked on the image any more.** From
+2026-08-14 until 2026-09-24 `build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2`
+was a 197,888-byte empty disk — the image had been destroyed with owner
+authorization after its `local-rescue` console password was lost — and
+`make homelab-bootstrap-vm-status` reported `created but not installed`. Every
+step below carried a **Blocked today** marker; those markers were removed when
+the image was installed.
 
-```text
-bootstrap-dc: created but not installed
-installation: not installed; the image is entirely unallocated; nothing has
-              ever been written to it
-```
+On 2026-09-24 the owner ran
+[`homelab-bootstrap-vm-install`](#05-reinstall-the-canonical-controller-image)
+for the first time, and it succeeded first time (receipt `installed_utc`
+`2026-09-25T01:30:06Z`). `make homelab-bootstrap-vm-status` now reports `ready`.
 
-**The repair is now one guarded target,
-[`homelab-bootstrap-vm-install`](#05-reinstall-the-canonical-controller-image),
-and it has NOT RUN.** It is the supported path; the hand-driven console session
-remains documented as the fallback. Prerequisites are staged and verified: the
-seed ISO `homelab/var/seed/telos-controller-seed.iso` (SHA-256
-`66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`) and the
-signature-verified `homelab/var/media/arch/archlinux-2026.08.01-x86_64.iso`.
-Record the new `local-rescue` password durably — **losing it costs the whole
-image again.**
-
-Steps marked **Blocked today** below all wait on this one repair. Rebuilding the
-image invalidates no retained gate receipt.
+Every gate runner, every `homelab-factory-persistent` target,
+`make homelab-factory-repeat APPLY=1`, and `make homelab-sim-auto-run` boot or
+copy that image, so confirm `make homelab-bootstrap-vm-status` says `ready`
+before any live step. Keep the `local-rescue` password somewhere durable —
+**losing it costs the whole image again**; see
+[Keep the `local-rescue` password](#keep-the-local-rescue-password). Rebuilding
+the image invalidates no retained gate receipt.
 
 ### Target names: real vs reserved
 
 [FACTORY-MAKE-TARGETS.md](../FACTORY-MAKE-TARGETS.md) reserves several aggregate
 names that are **not implemented as Make targets**. Do not invoke them; use the
 granular targets in this runbook. Reserved-but-absent, seven names (verified
-with `grep` of the Makefile on 2026-08-17): `homelab-factory-controller`,
-`homelab-factory-authority-check`, `homelab-factory-windows`,
-`homelab-factory-arch`, `homelab-factory-dualboot-check`,
-`homelab-factory-clean`, `homelab-factory-fresh-clone`. Each maps to the real
-targets below.
+with `grep` of the Makefile on 2026-08-17, and again on 2026-09-24):
+`homelab-factory-controller`, `homelab-factory-authority-check`,
+`homelab-factory-windows`, `homelab-factory-arch`,
+`homelab-factory-dualboot-check`, `homelab-factory-clean`,
+`homelab-factory-fresh-clone`. Each maps to the real targets below.
 
 Corrected 2026-08-17: this list read *eight* and included
 `homelab-factory-repeat`, which is now implemented — see
@@ -192,9 +184,11 @@ must run with the host network unavailable.
 
 ### 0.5 Reinstall the canonical Controller image
 
-**Required today — nothing live below runs until this is done, and it is
-NOT RUN.** See
-[Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+**Done 2026-09-24 — run this again only if the image is lost,** and then only
+after destroying and recreating the disk as in
+[Keep the `local-rescue` password](#keep-the-local-rescue-password), because it
+refuses any disk that is not freshly created. Its first live run succeeded; see
+[Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed).
 
 ```sh
 make homelab-bootstrap-vm-status                       # read-only; says what is there
@@ -242,9 +236,13 @@ and never a working Controller.
 (mode 0600) and a secret-redacted `install-console.log`; afterwards
 `make homelab-bootstrap-vm-status` reports `ready` and names what installed it.
 
-> **NOT RUN:** no live install has been driven through this target. It is the
-> supported path, but it is unproven. The hand-driven console session remains
-> the documented fallback — see
+> **PASS — one live run, 2026-09-24.** The owner's run, the target's first,
+> drove all 19 console events from the archiso login through
+> `console-password-updated`, `installation-complete` and `poweroff-observed`;
+> QEMU exited 0, and the disk now holds a GPT with two partitions (one ESP) and
+> 2,539,716,608 bytes allocated. One run on this host is the whole scope of that
+> pass. Corrected 2026-09-24: this callout read NOT RUN. The hand-driven console
+> session remains the documented fallback — see
 > [`homelab/vm/README.md`](../vm/README.md), "Interactive offline installation",
 > and [Keep the `local-rescue` password](#keep-the-local-rescue-password) below.
 > **Record the new `local-rescue` password somewhere durable. Losing it costs
@@ -323,10 +321,6 @@ make homelab-windows-install-run WINDOWS_RUN=<prepared bundle> APPLY=1
 # FACTORY_DURATION=<seconds> bounds the live run (default 120)
 ```
 
-> **Blocked today:** this needs the canonical Controller image at
-> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
-
 `-prepare` builds a disposable private bundle; `-run` PXE-boots WinPE and
 installs Windows 11 Pro to the approved layout against a fresh overlay, then
 reboots with no ISO/PXE attachment. **Evidence — gate 5 PASS 2026-08-10**,
@@ -346,10 +340,6 @@ make homelab-windows-identity-judge WINDOWS_IDENTITY_EVIDENCE=<private JSONL>
 # optional on prepare/run: FACTORY_CONTROLLER_STATE=<state>
 #   WINDOWS_SUBMIT_FOCUS_TABS=<n> WINDOWS_REVIEWED_SUBMIT_FOCUS=1
 ```
-
-> **Blocked today:** this needs the canonical Controller image at
-> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
 
 **Evidence — gate 6 PASS, 24 of 24 contracted checks, 2026-08-13**, attempt
 `20260813T191519Z-28a9f6ee07f5` on bundle
@@ -391,10 +381,6 @@ make homelab-arch-install-prepare APPLY=1
 make homelab-arch-install-run ARCH_RUN=<prepared arch bundle> APPLY=1
 ```
 
-> **Blocked today:** this needs the canonical Controller image at
-> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
-
 `-prepare` builds a fresh qcow2 overlay over the persistent Windows disk (NVMe
 serial `TELOS-WIN-0001`, Windows partitions preserved) and prints the loopback
 QEMU command. `-run` PXE-boots archiso, hot-attaches the disk, installs Arch into
@@ -418,10 +404,6 @@ make homelab-arch-identity-prepare \
 make homelab-arch-identity-run ARCH_IDENTITY_BUNDLE=<joined arch bundle> APPLY=1
 make homelab-arch-identity-judge ARCH_IDENTITY_EVIDENCE=<produced JSONL>
 ```
-
-> **Blocked today:** this needs the canonical Controller image at
-> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
 
 **Evidence — gate 8 PASS 2026-08-14, 21 of 21 checks**, bundle
 `homelab/var/factory/arch-identity/run-20260814T172142Z-495164bc7159`, stream
@@ -483,14 +465,15 @@ Nothing is destroyed by the mistake, but the run is wasted.
 
 ## The persistent directory instance (not part of any gate)
 
-> **NOT RUN as of 2026-08-17.** Everything in this section is implemented and
+> **NOT RUN as of 2026-09-24.** Everything in this section is implemented and
 > unit-tested (`homelab/tests/test_bootstrap_vm.py`,
 > `homelab/tests/test_simulation_overlay.py`,
 > `homelab/tests/test_domain_controller_role.py`) but has **never been executed
 > live**. Read it as the designed contract, not as observed behaviour, and do
-> not report any of it as working. It is additionally blocked today: bring-up
-> seeds the instance *from* the canonical Controller image, which is empty — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+> not report any of it as working. It is no longer blocked by the canonical
+> image, which bring-up seeds the instance from and which was installed
+> 2026-09-24 — see
+> [Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed).
 
 Everything above is the **acceptance** factory, and its controller is disposable
 on purpose: the canonical image carries no directory, the role provisions one
@@ -500,7 +483,8 @@ and 12 depend on — and it also means no account can survive relaunching the
 directory.
 
 A **persistent instance** exists alongside it for the case where you want a
-workstation you can log back into. It is opt-in by name, lives in its own state
+workstation you can log back into — although no workstation can be installed
+against one yet (below). It is opt-in by name, lives in its own state
 directory, boots its own qcow2 with no backing file, and is deliberately *not*
 hash-fenced, because that disk is the durable directory and is expected to
 change. The acceptance canonical keeps its strict fence, and is unreachable as a
@@ -516,9 +500,15 @@ make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
     CONFIRM='DESTROY <name>'
 ```
 
-> **Blocked today:** bring-up creates the instance by seeding it *from* the
-> canonical Controller image, so today it would seed an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
+> **No workstation can be installed against a persistent instance yet.** Every
+> workstation runner wraps the Controller in `DisposableBootDisk`
+> (`factory_runner.py`, `windows_install_run.py`, `windows_identity_run.py`,
+> `arch_install_run.py`, `arch_identity_run.py`), and a bundle prepared against
+> the permanent realm is refused in `homelab/vm/arch_install_run.py` before any
+> process starts. That durable workstation flow is unbuilt — finding 7 of the
+> 2026-08-17 review of this path, the one that was never fixed, tracked as local
+> work item TASK-28. Until it exists, an instance can hold a durable directory
+> and durable accounts, and nothing joins it.
 
 Bring-up creates the instance when it is absent and boots it in place; a second
 bring-up **reuses** the disk rather than re-seeding it, which is what makes the
@@ -570,39 +560,78 @@ not provisioned, so neither implies a domain that is not there.
 Real account names are instance data, so they are named in the gitignored
 overlay, never in a tracked file — see `homelab/instance-example/identity/`.
 Absent that file every account keeps the synthetic contract name, which is
-exactly what the acceptance gates expect.
+exactly what the acceptance gates expect. The durable-account targets below are
+the exception: they refuse rather than fall back.
 
 Convergence brings up the directory; the **durable accounts** in that roster are
-provisioned by a separate target, against the private inventory:
+staged by a separate pair of targets, over the serial console (`73dbd2b`):
+
+```sh
+make homelab-factory-persistent-accounts-plan PERSISTENT_DC=<name>   # read-only
+make homelab-factory-persistent-accounts APPLY=1 PERSISTENT_DC=<name> \
+    [IDENTITY_OVERLAY=<principals.json>] [RESTAGE=1] \
+    [PERSISTENT_ACCOUNTS_TIMEOUT=<seconds>]
+```
+
+The serial console is the only channel that reaches a *simulated* persistent
+instance: its only NIC is a QEMU socket netdev to the userspace gateway, with no
+NAT and no route to the host LAN, so host-side Ansible cannot reach it at all.
+The applied run asks at your terminal for the `local-rescue` password and then
+one password per directory role, each different; none reaches a file, an
+argument, an environment or Make variable, the instance marker, or a transcript.
+The plan names contract roles, `uidNumber`/`gidNumber` and the roster
+fingerprint, never the real names. The daily administrator is staged as a
+standard directory account and never joins Domain Admins (gate 8's
+`domain-admin-separate`). After a completed or an unfinished staging run a
+second one is refused unless you pass `RESTAGE=1`, which does not reset the
+password of an account the directory already holds.
+
+**Both durable paths refuse an incomplete roster** (`0e588db`, 2026-09-24). They
+run only if `homelab/instance/identity/principals.json` exists **and** itself
+names all three directory roles — `standard_user`, `daily_administrator` and
+`domain_administrator`. The inert template, or a file naming only some roles, is
+refused with the synthetic name each unnamed role would have taken, rather than
+minting permanent synthetic accounts; `local_rescue` is a local account, not a
+directory SID, and may stay unnamed. The plan refuses before printing anything,
+so you learn this from the plan, not after typing credentials.
+
+The host-side Ansible path remains for a Controller reachable over SSH — that
+is, after network attachment — against the private inventory:
 
 ```sh
 make homelab-bootstrap-controller INVENTORY=<private inventory>   # --check by default
 make homelab-bootstrap-controller INVENTORY=<private inventory> APPLY=1
 ```
 
-> **NOT RUN and unproven — do not describe durable accounts as working.** An
-> adversarial review on 2026-08-17 found this path could not provision an
-> account by any wired route at all. Six independent breaks were repaired in
-> `f8d0348`, the sixth being that Ansible resolves `group_vars` relative to the
-> **inventory source**, so an overlay holding `group_vars` one level above its
-> inventory was read by nothing and every AD variable silently fell back to its
-> role default. Provisioning is now host-side and only host-side, stated rather
-> than implied: the factory bundle declares an empty account list with the
-> reason, so the in-guest path is testably dead rather than half-wired. None of
-> this has been exercised against a live directory. Treat it as designed and
-> repaired, never as proven.
+Corrected 2026-09-24: this section routed the persistent instance's durable
+accounts through `homelab-bootstrap-controller` alone, which cannot reach a
+simulated instance.
 
-Check mode is the default and `APPLY=1` is required to mutate the guest. Its two
-preconditions are opt-in and off by default — `homelab_ad_provision_enabled` and
-`homelab_ad_admin_password_file` (root-owned, mode 0600, a path and never a
-value) — both documented under "Durable directory accounts" in
+> **NOT RUN and unproven — do not describe durable accounts as working.**
+> Neither path has run live. An adversarial review on 2026-08-17 found the
+> Ansible path could not provision an account by any wired route at all. Six
+> independent breaks were repaired in `f8d0348`, the sixth being that Ansible
+> resolves `group_vars` relative to the **inventory source**, so an overlay
+> holding `group_vars` one level above its inventory was read by nothing and
+> every AD variable silently fell back to its role default. Ansible provisioning
+> is now host-side and only host-side, stated rather than implied: the factory
+> bundle declares an empty account list with the reason, so the in-guest
+> Ansible path is testably dead rather than half-wired. None of this has been
+> exercised against a live directory. Treat it as designed and repaired, never
+> as proven.
+
+On the Ansible path check mode is the default and `APPLY=1` is required to
+mutate the guest. Its two preconditions are opt-in and off by default —
+`homelab_ad_provision_enabled` and `homelab_ad_admin_password_file`
+(root-owned, mode 0600, a path and never a value) — both documented under
+"Durable directory accounts" in
 [`homelab/ansible/roles/domain_controller/README.md`](../ansible/roles/domain_controller/README.md).
 
-Two properties worth knowing before you rely on it. Durable account passwords
-enter as **file paths** — root-owned, mode 0600 — and never as values, so nothing
-puts a secret in a template, a log or the process table. And the accounts age
-under the domain's password policy: nothing here sets a never-expiring password,
-because that would hide a real property.
+Two properties of the Ansible path worth knowing before you rely on it. Durable
+account passwords enter as **file paths** — root-owned, mode 0600 — and never as
+values, so nothing puts a secret in a template, a log or the process table. And
+the accounts age under the domain's password policy: nothing here sets a
+never-expiring password, because that would hide a real property.
 
 Real account names come from the private overlay roster, and since `ee8b5e6`
 the Windows identity lane derives its principals from that roster instead of
@@ -637,9 +666,9 @@ make homelab-bootstrap-vm-install  APPLY=1 \
     SEED_ISO=homelab/var/seed/telos-controller-seed.iso
 ```
 
-The last step is [0.5](#05-reinstall-the-canonical-controller-image) and is
-**NOT RUN**. The fallback, if it refuses or misbehaves, is the hand-driven
-console session: `make homelab-bootstrap-vm-run APPLY=1
+The last step is [0.5](#05-reinstall-the-canonical-controller-image); its first
+live run, on 2026-09-24, succeeded. The fallback, if it refuses or misbehaves,
+is the hand-driven console session: `make homelab-bootstrap-vm-run APPLY=1
 SEED_ISO=homelab/var/seed/telos-controller-seed.iso`, then reinstall from the
 console as in `homelab/seed/README.md` and
 [`homelab/vm/README.md`](../vm/README.md) ("Interactive offline installation").
@@ -677,10 +706,6 @@ make homelab-factory-recover RECOVERY_RUN=<fresh run bundle dir> APPLY=1
 #   optional FACTORY_RELEASES=<set> SEED_ISO=<seed> FACTORY_DURATION=<seconds>
 make homelab-factory-recover-judge RECOVERY_EVIDENCE=<produced recovery-evidence.jsonl>
 ```
-
-> **Blocked today:** this needs the canonical Controller image at
-> `build/homelab/vm/bootstrap-dc`, which is an empty disk — see
-> [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent).
 
 Exercises controller restart/loss, PXE release rollback, failed-install
 recovery, broken-boot repair, directory/DNS loss, update-failure handling,
@@ -740,7 +765,8 @@ the iteration count, both roots, the release set, the six phases in order
 (`windows-install`, `windows-identity`, `arch-install`, `arch-identity`,
 `dualboot-acceptance`, `lifecycle-recovery`, each naming the Make target that
 really runs it), the four producer measurements now available, and any
-precondition that would refuse. Today it refuses, naming the remedy:
+precondition that would refuse. Against a never-installed canonical image it
+refuses, naming the remedy; this is what it printed until 2026-09-24:
 
 ```text
 ! refuses to apply: canonical Controller image …/bootstrap-dc.qcow2 is not an
@@ -750,7 +776,8 @@ precondition that would refuse. Today it refuses, naming the remedy:
 ```
 
 That refusal reads the real partition table and is fail-closed, so a partially
-written disk over a size floor does not satisfy it.
+written disk over a size floor does not satisfy it. Since the canonical image
+was installed on 2026-09-24 the dry run no longer refuses.
 
 **All sixteen gate-12 checks now have a wired producer.** The four that never
 had one — `login`, `optional_storage_absence_nonblocking`,
@@ -765,16 +792,19 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   counter renders FAIL. Neither can render PASS.
 - `artifact_scan` requires a scanned tree; without one the check stays NOT RUN.
 
-What still blocks the live twice-through is therefore one thing, and it is not a
-gate: the canonical Controller image is absent, so no live target can run at all
-— see [Blocker: the canonical Controller image is absent](#blocker-the-canonical-controller-image-is-absent)
-and [0.5](#05-reinstall-the-canonical-controller-image). The old blocker
-"pending gates 6–10" was satisfied 2026-08-14: gates 6, 7, 8, 9 and 10 all pass.
+Nothing blocks the live twice-through any more except running it: two live
+lifecycles, with the two limits above. The canonical Controller image was
+installed on 2026-09-24 — see
+[Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed)
+— and the old blocker "pending gates 6–10" was satisfied 2026-08-14: gates 6, 7,
+8, 9 and 10 all pass. Corrected 2026-09-24: this paragraph named the absent
+canonical image as the one remaining blocker.
 
 **Verdict: NOT RUN.** The driver is implemented and unit-tested; it has never
-executed a live lifecycle, `SubprocessLifecycle` has never executed, the phase
-table was read off the Makefile rather than confirmed against a live lifecycle,
-and every end-to-end test fabricates its bundles. What is proven is that the
+completed a live lifecycle — `SubprocessLifecycle`'s only execution was an
+accidental, interrupted launch from inside the unit suite on 2026-09-24, fixed
+by `272d693` — the phase table was read off the Makefile rather than confirmed
+against a live lifecycle, and every end-to-end test fabricates its bundles. What is proven is that the
 aggregation is deterministic, not that two real lifecycles agree.
 
 ### 5.4 Declared-service gate for a candidate image — **judge only**
@@ -802,7 +832,7 @@ the same split both identity gates already use.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20260817.002`)
+## Pass/fail gate summary (as of ledger `20260924.001`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
@@ -817,7 +847,7 @@ the same split both identity gates already use.
 | 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
 | 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
 | 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`. Two of the five live-boot hooks are now *implemented* (`directory-dns-loss`, `controller-reconstruction`, `2c3cd56`) but **NOT RUN**; three remain stubs for want of a Controller restart, a bootloader break-and-repair, and install fault injection. Verdict stays `partial` until all five exist and a live boot runs. |
-| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **NOT RUN** — no longer blocked by any gate, and no longer blocked by a missing driver. All sixteen checks now have a wired producer (`aec5747`, `390e5cf`, `280c99d`), but `host_network_changes` cannot legitimately render PASS without a run-window host egress ledger that does not exist, and `artifact_scan` needs a scanned tree. Blocked on the absent canonical Controller image plus two live lifecycles. |
+| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **NOT RUN** — no longer blocked by any gate, and no longer blocked by a missing driver. All sixteen checks now have a wired producer (`aec5747`, `390e5cf`, `280c99d`), but `host_network_changes` cannot legitimately render PASS without a run-window host egress ledger that does not exist, and `artifact_scan` needs a scanned tree. The canonical Controller image is installed (2026-09-24); what remains is two live lifecycles. |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** |
 
@@ -903,8 +933,9 @@ transport.
   implemented**; remove a named disposable run bundle under `homelab/var/factory/`
   directly, and never delete sealed media or another run's evidence.
 - **Reinstall the canonical Controller image:** `homelab-bootstrap-vm-install`
-  (see [0.5](#05-reinstall-the-canonical-controller-image)); **NOT RUN**, with
-  the hand-driven console session as the documented fallback.
+  (see [0.5](#05-reinstall-the-canonical-controller-image)); **PASS**, one live
+  run on 2026-09-24, with the hand-driven console session as the documented
+  fallback.
 
 ## Final verification and evidence to retain
 
