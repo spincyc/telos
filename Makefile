@@ -957,8 +957,6 @@ homelab-factory-persistent-converge:
 			--apply; \
 	fi
 
-# Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
-# stable instance name, and the exact confirmation carrying that name.
 # Stage the owner's DURABLE account roster into a persistent instance, over the
 # serial console. Separate from -converge because the console is the only
 # channel that reaches a SIMULATED persistent instance at all: that guest has
@@ -1016,6 +1014,8 @@ homelab-factory-persistent-accounts:
 			--apply; \
 	fi
 
+# Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
+# stable instance name, and the exact confirmation carrying that name.
 homelab-factory-persistent-destroy:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
