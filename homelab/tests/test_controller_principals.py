@@ -891,6 +891,37 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         self.assertNotIn("local_rescue", self.OVERLAY["principals"])
         self.assertEqual("local-rescue", self.roster.roster["local_rescue"])
 
+    def test_change_at_first_logon_is_opt_in_and_durable_only(self):
+        plain = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.roster)
+        first = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.roster, first_logon=True)
+        self.assertNotIn('"first_logon":true', plain._stage_program)
+        self.assertIn('"first_logon":true', first._stage_program)
+        self.assertEqual(plain.roles, first.roles)
+        # The disposable acceptance lanes log in as these accounts.
+        with self.assertRaisesRegex(ValueError, "durable roster only"):
+            ControllerPrincipalSerial(
+                io.BytesIO(), io.BytesIO(), first_logon=True)
+
+    def test_the_policy_is_lifted_only_around_account_creation(self):
+        stage = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.roster,
+            first_logon=True)._stage_program
+        lifted = stage.index("set_password_policy(policy_saved[0] & ~1, 0)")
+        created = stage.index("samdb.newuser(")
+        restored = stage.index("set_password_policy(*policy_saved)")
+        self.assertLess(lifted, created)
+        self.assertLess(created, restored)
+        # Restored in a finally clause, so a failed stage restores it too,
+        # and a restore that fails is its own named failure.
+        self.assertIn("finally:", stage[created:restored])
+        self.assertIn("password-policy-not-restored", stage[restored:])
+        self.assertIn("force_password_change_at_next_login_req=first_logon",
+                      stage)
+        # The verification demands an expired password here and nowhere else.
+        self.assertIn("expired = 0x800000 if first_logon else 0", stage)
+
     def test_a_durable_console_answers_sudos_own_prompt(self):
         # A persistent instance's console account has a password the operator
         # typed into the offline installer, so the durable path must take the

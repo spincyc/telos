@@ -551,7 +551,9 @@ def _principal_result_pattern(result: bytes) -> bytes:
         + rb"(?:^|\n)" + re.escape(result) + rb"(?P<rc>[0-9]+)(?=[\r\n])")
 
 
-def _programs(roster: object) -> tuple[str, str, tuple[str, ...]]:
+def _programs(
+    roster: object, *, first_logon: bool = False,
+) -> tuple[str, str, tuple[str, ...]]:
     """Bake one resolved roster into the two guest programs, plus its order.
 
     The single place a roster becomes a guest program.  The module constants
@@ -571,7 +573,8 @@ def _programs(roster: object) -> tuple[str, str, tuple[str, ...]]:
              + tuple(user.name for user in additional))
     allocation = _validated_posix_allocation(
         _allocation(names, uid_numbers, additional), accounts=len(roles))
-    roster_json = _roster_json(roles, names["domain_administrator"])
+    roster_json = _roster_json(
+        roles, names["domain_administrator"], first_logon)
     return (
         _substituted(_STAGE_PROGRAM_TEMPLATE, roster_json, allocation),
         _substituted(_DESTROY_PROGRAM_TEMPLATE, roster_json, allocation),
@@ -599,13 +602,18 @@ _STAGE_PROGRAM_TEMPLATE = r"""
 import json
 import sys
 
-from ldb import FLAG_MOD_REPLACE, Message, MessageElement
+from ldb import FLAG_MOD_REPLACE, SCOPE_BASE, Message, MessageElement
 from samba.auth import system_session
 from samba.param import LoadParm
 from samba.samdb import SamDB
 
 roster = json.loads('@ROSTER_JSON@')
 order = roster["order"]
+# Change-at-first-logon staging: the passwords typed are temporary, each
+# account must change its password at its first logon, and the domain policy
+# is lifted ONLY while these accounts are created, then restored and verified.
+first_logon = roster.get("first_logon") is True
+policy_saved = None
 values = json.load(sys.stdin)
 expected = set(order)
 if set(values) != expected or len(order) != len(expected):
@@ -638,6 +646,29 @@ def integers(record, attribute):
 def strings(record, attribute):
     return [str(value) for value in record.get(attribute, [])]
 
+def password_policy():
+    results = samdb.search(
+        base=samdb.get_default_basedn(), scope=SCOPE_BASE,
+        attrs=["pwdProperties", "minPwdLength"])
+    if len(results) != 1:
+        raise RuntimeError("domain password policy is not readable")
+    properties = integers(results[0], "pwdProperties")
+    length = integers(results[0], "minPwdLength")
+    if len(properties) != 1 or len(length) != 1:
+        raise RuntimeError("domain password policy is not readable")
+    return properties[0], length[0]
+
+def set_password_policy(properties, length):
+    update = Message()
+    update.dn = samdb.get_default_basedn()
+    update["pwdProperties"] = MessageElement(
+        str(properties), FLAG_MOD_REPLACE, "pwdProperties")
+    update["minPwdLength"] = MessageElement(
+        str(length), FLAG_MOD_REPLACE, "minPwdLength")
+    samdb.modify(update)
+    if password_policy() != (properties, length):
+        raise RuntimeError("domain password policy did not take effect")
+
 def failure_reason(error):
     # Printed on stdout because stderr is closed: a category, never a value.
     # The program's own raises carry fixed, name-free messages; an LdbError's
@@ -657,6 +688,10 @@ def failure_reason(error):
     return type(error).__name__.lower()
 
 try:
+    if first_logon:
+        # Complexity is bit 1 of pwdProperties; every other bit is kept.
+        policy_saved = password_policy()
+        set_password_policy(policy_saved[0] & ~1, 0)
     # Groups first, so no staged user ever carries a gidNumber the
     # directory cannot resolve.  Replacing a deterministic gidNumber is
     # idempotent, so a failed stage needs no group rollback: the next
@@ -680,7 +715,7 @@ try:
         unix = posix["users"][name]
         samdb.newuser(
             name, values[name],
-            force_password_change_at_next_login_req=False,
+            force_password_change_at_next_login_req=first_logon,
             uidnumber=unix["uidNumber"],
             gidnumber=unix["gidNumber"],
             loginshell=unix["loginShell"],
@@ -723,12 +758,16 @@ try:
             raise RuntimeError("staged principal UPN is invalid")
         controls = integers(record, "userAccountControl")
         computed = integers(record, "msDS-User-Account-Control-Computed")
+        # UF_PASSWORD_EXPIRED (0x800000) is computed, and is exactly what a
+        # change-at-first-logon account must show; any other account, never.
+        expired = 0x800000 if first_logon else 0
         if (
             len(controls) != 1
             or controls[0] & 0x0200 == 0
             or controls[0] & (0x0002 | 0x0020 | 0x800000) != 0
             or len(computed) != 1
-            or computed[0] & (0x0010 | 0x800000) != 0
+            or computed[0] & 0x0010 != 0
+            or computed[0] & 0x800000 != expired
         ):
             raise RuntimeError("staged principal account control is invalid")
         expires = integers(record, "accountExpires")
@@ -741,7 +780,11 @@ try:
         if bad_passwords not in ([], [0]):
             raise RuntimeError("staged principal bad-password count is invalid")
         password_set = integers(record, "pwdLastSet")
-        if len(password_set) != 1 or password_set[0] <= 0:
+        if first_logon:
+            if password_set != [0]:
+                raise RuntimeError(
+                    "staged principal is not due to change its password")
+        elif len(password_set) != 1 or password_set[0] <= 0:
             raise RuntimeError("staged principal password state is invalid")
         sid_values = [bytes(value) for value in record.get("objectSid", [])]
         if len(sid_values) != 1 or not sid_values[0] or sid_values[0] in sids:
@@ -792,6 +835,16 @@ except BaseException as error:
             + ",".join(rollback_failures))
     print("\n__TELOS_PRINCIPAL_FAILURE=" + reason, flush=True)
     raise
+finally:
+    # Restored on success and on failure alike, and proven, before the
+    # program's return code can report anything.
+    if policy_saved is not None:
+        try:
+            set_password_policy(*policy_saved)
+        except BaseException:
+            print("\n__TELOS_PRINCIPAL_FAILURE=password-policy-not-restored",
+                  flush=True)
+            raise
 """
 
 _DESTROY_PROGRAM_TEMPLATE = r"""
@@ -839,11 +892,16 @@ if failures:
 # one safe Python string literal -- checked rather than assumed, because the
 # whole point of the private overlay is that these names are no longer literals
 # a reader of this file can see.
-def _roster_json(roles: tuple[str, ...], domain_administrator: str) -> str:
-    document = json.dumps(
-        {"order": list(roles), "domain_administrator": domain_administrator},
-        sort_keys=True, separators=(",", ":"),
-    )
+def _roster_json(
+    roles: tuple[str, ...], domain_administrator: str,
+    first_logon: bool = False,
+) -> str:
+    fields: dict[str, object] = {
+        "order": list(roles), "domain_administrator": domain_administrator}
+    if first_logon:
+        # Only when asked for, so every existing program is byte-identical.
+        fields["first_logon"] = True
+    document = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     if "'" in document or "\\" in document:
         raise ValueError(
             "Controller principal roster is not one safe string literal")
@@ -887,6 +945,7 @@ class ControllerPrincipalSerial:
         password: bytes | None = None,
         roster: object = None,
         roster_source: str | None = None,
+        first_logon: bool = False,
     ) -> None:
         """Bind one console to one roster.
 
@@ -907,16 +966,27 @@ class ControllerPrincipalSerial:
         and its additional standard users with it: ``roles`` then lists those
         users after the directory roles, and ``stage`` requires a credential
         for each.
+
+        *first_logon* stages every account with a TEMPORARY password it must
+        change at its first logon; the domain password policy is lifted only
+        while the accounts are created, then restored and proven. Durable
+        rosters only: the disposable acceptance lanes log in as these accounts
+        and must never meet an expired password.
         """
+        if first_logon and roster is None:
+            raise ValueError(
+                "change-at-first-logon staging is for a durable roster only")
         self.console = SerialAutomation(
             reader, writer, password, timeout=timeout)
+        self.first_logon = bool(first_logon)
         if roster is None:
             self.roles = _ROLES
             self.roster_source = ROSTER_SOURCE
             self._stage_program = _STAGE_PROGRAM
             self._destroy_program = _DESTROY_PROGRAM
         else:
-            stage, destroy, roles = _programs(roster)
+            stage, destroy, roles = _programs(
+                roster, first_logon=first_logon)
             self.roles = roles
             self.roster_source = (
                 ROSTER_SOURCE if roster_source is None else roster_source)

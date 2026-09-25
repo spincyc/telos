@@ -1464,6 +1464,7 @@ def _drive_persistent_accounts(
     timeout: float,
     on_stage: Callable[[], None] | None = None,
     on_event: Callable[[str], None] | None = None,
+    first_logon: bool = False,
 ):
     """Log in normally, prove the directory is live, then stage the roster.
 
@@ -1509,7 +1510,8 @@ def _drive_persistent_accounts(
         on_stage()
     serial = principals.ControllerPrincipalSerial(
         process.stdout, process.stdin, timeout=timeout,
-        password=password, roster=roster, roster_source=roster_source)
+        password=password, roster=roster, roster_source=roster_source,
+        first_logon=first_logon)
     # The same shared-console substitution the Windows and Arch identity lanes
     # make: the protocol runs over the session that is already authenticated,
     # instead of opening a second one that would have to log in again.
@@ -1560,6 +1562,7 @@ def persistent_accounts(
     overlay_path: Path | None = None,
     restage: bool = False,
     timeout: float = PERSISTENT_ACCOUNTS_TIMEOUT,
+    first_logon: bool = False,
 ) -> int:
     """Stage the owner's DURABLE account roster over the serial console.
 
@@ -1685,6 +1688,14 @@ def persistent_accounts(
               "directory: plain standard accounts, never Domain Admins, "
               "never given workstation sudo, never staged or checked by an "
               "acceptance gate")
+    if first_logon:
+        print("passwords: TEMPORARY. Each account must change its password at "
+              "its first logon, and the new one must meet the directory's "
+              f"default policy (at least "
+              f"{principals.DIRECTORY_MIN_PASSWORD_LENGTH} characters from "
+              f"{principals.DIRECTORY_PASSWORD_CLASSES} character classes). "
+              "That policy is lifted only while these accounts are created, "
+              "then restored and proven before staging reports success")
     print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
           "password the offline installer told you to type, then one password "
           "per account above. All are held in memory only, echo-suppressed on "
@@ -1741,8 +1752,9 @@ def persistent_accounts(
         console_password = _typed_secret(
             f"{CONSOLE_ACCOUNT} console password: ")
         for entry in plan:
+            kind = "temporary" if first_logon else "new directory"
             typed = _typed_secret(
-                f"new directory password for {entry['contract_role']} "
+                f"{kind} password for {entry['contract_role']} "
                 f"({entry['name']}): ",
                 confirm=f"retype password for {entry['contract_role']}: ")
             # Python cannot wipe an immutable object, and the guest program
@@ -1753,8 +1765,11 @@ def persistent_accounts(
             typed = b""
             # Judged here, before anything boots: inside the Controller a
             # refused password is only "stage returned 1" (2026-09-25).
-            problem = principals.directory_password_problem(
-                values[entry["name"]], entry["name"])
+            # A temporary password is set with the policy lifted and must be
+            # changed at first logon, so only a permanent one is judged here.
+            problem = None if first_logon else (
+                principals.directory_password_problem(
+                    values[entry["name"]], entry["name"]))
             if problem is not None:
                 raise ValueError(
                     f"the password for {entry['contract_role']} {problem}; "
@@ -1796,7 +1811,7 @@ def persistent_accounts(
         result = _drive_persistent_accounts(
             guest, console_password, values,
             roster=roster, roster_source=source, timeout=timeout,
-            on_stage=_accounts_recorder(target))
+            on_stage=_accounts_recorder(target), first_logon=first_logon)
     except BaseException as error:
         failure = error
     finally:
@@ -1848,6 +1863,7 @@ def persistent_accounts(
             for entry in plan
         ],
         "domain_admin_roles": list(principals.DIRECTORY_ADMIN_ROLES),
+        "password_change_at_first_logon": first_logon,
         "credentials": (
             "one per account, typed by the operator at their terminal; "
             "held in memory, echo-suppressed on the wire, and never written "
@@ -2004,6 +2020,11 @@ def parser() -> argparse.ArgumentParser:
                      "does NOT reset the password of an account the directory "
                      "already holds")
             persistent_parser.add_argument(
+                "--change-at-first-logon", action="store_true",
+                help="the passwords typed are TEMPORARY: each account must "
+                     "change its password at its first logon, and the domain "
+                     "policy is lifted only while the accounts are created")
+            persistent_parser.add_argument(
                 "--timeout", type=float, default=PERSISTENT_ACCOUNTS_TIMEOUT,
                 help="bound on the in-guest staging program, in seconds")
         if name == "persistent-destroy":
@@ -2039,7 +2060,8 @@ def main(argv: list[str] | None = None) -> int:
             args.persistent_root, args.instance, args.apply,
             canonical_state=args.state_dir,
             overlay_path=args.identity_overlay,
-            restage=args.restage, timeout=args.timeout)
+            restage=args.restage, timeout=args.timeout,
+            first_logon=args.change_at_first_logon)
     if command == "persistent-status":
         return persistent_status(args.persistent_root, args.instance)
     if command == "persistent-destroy":

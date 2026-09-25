@@ -2025,6 +2025,54 @@ class PersistentAccountsCliTests(unittest.TestCase):
         self.assertIn("its own password", err)
         self.assertEqual([], self.launched)
 
+    def test_temporary_passwords_are_staged_to_change_at_first_logon(self):
+        # The owner's choice on 2026-09-25: easy temporary passwords now, and
+        # each person sets a policy-compliant one at their first logon.
+        self.seed()
+        typed, captured = [], {}
+
+        def easy(prompt):
+            typed.append(prompt)
+            if "console password" in prompt:
+                return self.CONSOLE
+            role = re.search(r" for (\S+?)(?: \(|:)", prompt).group(1)
+            return "easy-" + role
+
+        def drive(*args, **kwargs):
+            captured.update(kwargs)
+            return self._stage_result(*args, **kwargs)
+
+        with self.harness(drive):
+            with mock.patch.object(
+                    bootstrap_dc.getpass, "getpass", side_effect=easy):
+                out, _ = self.call(
+                    "--state-dir", str(self.canonical), "persistent-accounts",
+                    "--instance", "lab-dc1",
+                    "--persistent-root", str(self.persistent_root),
+                    "--identity-overlay", str(self.overlay),
+                    "--change-at-first-logon", "--apply", expect=0)
+        self.assertIs(True, captured.get("first_logon"))
+        self.assertIn("TEMPORARY", out)
+        self.assertTrue(any(prompt.startswith("temporary password for ")
+                            for prompt in typed))
+        record = json.dumps(self.marker())
+        self.assertIn('"password_change_at_first_logon": true', record)
+        for prompt in typed:
+            self.assertNotIn("easy-", record)
+
+    def test_without_the_flag_nothing_is_staged_to_change_at_first_logon(self):
+        self.seed()
+        captured = {}
+
+        def drive(*args, **kwargs):
+            captured.update(kwargs)
+            return self._stage_result(*args, **kwargs)
+
+        self.accounts("--apply", drive=drive)
+        self.assertIs(False, captured.get("first_logon"))
+        self.assertIn('"password_change_at_first_logon": false',
+                      json.dumps(self.marker()))
+
     def test_a_password_the_directory_would_refuse_fails_before_booting(self):
         # 2026-09-25: a refused password surfaced only as "Controller stage
         # returned 1" after a full boot, because the stage program's stderr is

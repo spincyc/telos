@@ -298,6 +298,7 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 | `IDENTITY_OVERLAY` | unset | Optional private roster for the account targets; unset, it resolves `homelab/instance/identity/principals.json`. It carries names, never a credential. |
 | `RESTAGE` | unset | Required to stage accounts again after a completed or an unfinished staging run. It does not reset the password of an account the directory already holds. |
 | `PERSISTENT_ACCOUNTS_TIMEOUT` | unset | Overrides the in-guest bound on the account staging program, in seconds (600 by default). |
+| `CHANGE_AT_FIRST_LOGON` | unset | `1` makes the typed passwords TEMPORARY: each account must change its password at its first logon, the host skips its policy pre-check, and the in-guest program lifts the domain password policy only while creating the accounts, then restores and proves it. Without it every typed password must already meet the default policy (7 characters, 3 classes), checked before anything boots. |
 | `SEED_ISO` | unset | Optional seed ISO for bring-up and convergence. |
 | `CONFIRM` | unset | `DESTROY <instance name>`, required by `-destroy`. |
 

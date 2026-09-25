@@ -571,8 +571,17 @@ staged by a separate pair of targets, over the serial console (`73dbd2b`):
 make homelab-factory-persistent-accounts-plan PERSISTENT_DC=<name>   # read-only
 make homelab-factory-persistent-accounts APPLY=1 PERSISTENT_DC=<name> \
     [IDENTITY_OVERLAY=<principals.json>] [RESTAGE=1] \
-    [PERSISTENT_ACCOUNTS_TIMEOUT=<seconds>]
+    [CHANGE_AT_FIRST_LOGON=1] [PERSISTENT_ACCOUNTS_TIMEOUT=<seconds>]
 ```
+
+Each typed password must meet Samba AD's default policy — at least 7
+characters from at least 3 of uppercase, lowercase, digits and symbols, and not
+containing the account name — and the host checks that before anything boots
+(`efedf50`). With `CHANGE_AT_FIRST_LOGON=1` the passwords are **temporary**
+instead: they are not policy-checked, each account must change its password at
+its first logon (when the new one must meet the policy), and the domain policy is
+lifted only while the accounts are created, then restored and verified by the
+same in-guest program. **NOT RUN** live as of 2026-09-25.
 
 The serial console is the only channel that reaches a *simulated* persistent
 instance: its only NIC is a QEMU socket netdev to the userspace gateway, with no

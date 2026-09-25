@@ -987,7 +987,8 @@ homelab-factory-persistent-accounts-plan:
 		persistent-accounts \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
-		$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)')
+		$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+		$(if $(CHANGE_AT_FIRST_LOGON),--change-at-first-logon)
 
 homelab-factory-persistent-accounts:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
@@ -1001,7 +1002,8 @@ homelab-factory-persistent-accounts:
 			persistent-accounts \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)'); \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			$(if $(CHANGE_AT_FIRST_LOGON),--change-at-first-logon); \
 	else \
 		$(PYTHON) homelab/vm/bootstrap_dc.py \
 			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
@@ -1009,6 +1011,7 @@ homelab-factory-persistent-accounts:
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
 			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			$(if $(CHANGE_AT_FIRST_LOGON),--change-at-first-logon) \
 			$(if $(RESTAGE),--restage) \
 			$(if $(PERSISTENT_ACCOUNTS_TIMEOUT),--timeout '$(PERSISTENT_ACCOUNTS_TIMEOUT)') \
 			--apply; \
