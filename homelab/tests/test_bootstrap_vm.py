@@ -1724,8 +1724,11 @@ class PersistentAccountsCliTests(unittest.TestCase):
             list(principals.DIRECTORY_ROLES), roster=self.roster)
         # Every real name this run could put anywhere it must not.
         self.names = tuple(entry["name"] for entry in self.plan)
+        # Shaped to pass the directory's default policy (seven characters,
+        # three classes): the host now refuses anything weaker before booting.
         self.secrets = tuple(
-            f"{entry['contract_role']}-secret-typed" for entry in self.plan)
+            f"{entry['contract_role']}-Secret-Typed-{index}"
+            for index, entry in enumerate(self.plan))
 
     # -- harness ---------------------------------------------------------
     def call(self, *argv, expect):
@@ -2012,7 +2015,7 @@ class PersistentAccountsCliTests(unittest.TestCase):
                     bootstrap_dc.getpass, "getpass",
                     side_effect=lambda prompt: (
                         self.CONSOLE if "console password" in prompt
-                        else "one-secret-for-everyone")):
+                        else "One-Secret-For-Everyone-1")):
                 _, err = self.call(
                     "--state-dir", str(self.canonical), "persistent-accounts",
                     "--instance", "lab-dc1",
@@ -2021,6 +2024,33 @@ class PersistentAccountsCliTests(unittest.TestCase):
                     "--apply", expect=2)
         self.assertIn("its own password", err)
         self.assertEqual([], self.launched)
+
+    def test_a_password_the_directory_would_refuse_fails_before_booting(self):
+        # 2026-09-25: a refused password surfaced only as "Controller stage
+        # returned 1" after a full boot, because the stage program's stderr is
+        # closed. The host now applies the directory's default policy first.
+        self.seed()
+        for weak, reason in (
+            ("abc12", "shorter than 7"),
+            ("lowercase-only", "fewer than 3"),
+        ):
+            with self.subTest(reason=reason), self.harness():
+                with mock.patch.object(
+                        bootstrap_dc.getpass, "getpass",
+                        side_effect=lambda prompt, weak=weak: (
+                            self.CONSOLE if "console password" in prompt
+                            else weak)):
+                    _, err = self.call(
+                        "--state-dir", str(self.canonical),
+                        "persistent-accounts",
+                        "--instance", "lab-dc1",
+                        "--persistent-root", str(self.persistent_root),
+                        "--identity-overlay", str(self.overlay),
+                        "--apply", expect=2)
+                self.assertIn(reason, err)
+                self.assertIn("Nothing was booted", err)
+                self.assertNotIn(weak, err)
+                self.assertEqual([], self.launched)
 
     def test_no_credential_reaches_argv_the_marker_or_the_report(self):
         self.seed()

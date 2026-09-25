@@ -1345,5 +1345,68 @@ class ShareRootParityTests(unittest.TestCase):
                 "the root is spelled out a second time instead of substituted")
 
 
+
+class DirectoryPasswordPolicyTests(unittest.TestCase):
+    """The host judges a typed durable password the way the directory will."""
+
+    def test_the_default_policy_is_applied(self):
+        problem = controller_principals.directory_password_problem
+        self.assertIsNone(problem("Short1!", "roster-a"))
+        self.assertIsNone(problem("longlowercase7!", "roster-a"))
+        self.assertIn("shorter than 7", problem("Ab1!xy", "roster-a"))
+        self.assertIn("fewer than 3", problem("lowercaseonly", "roster-a"))
+        self.assertIn("fewer than 3", problem("lower-and-symbols", "roster-a"))
+        self.assertIn("account name",
+                      problem("My-Roster-A-Pass1", "roster-a"))
+        # A two-character name is too short to be a meaningful match.
+        self.assertIsNone(problem("Xy-Password-1", "xy"))
+
+    def test_a_reason_never_repeats_the_password(self):
+        for password in ("abc", "lowercaseonly", "Has-roster-a-1"):
+            reason = controller_principals.directory_password_problem(
+                password, "roster-a")
+            self.assertIsNotNone(reason)
+            self.assertNotIn(password, reason)
+
+
+class PrincipalResultPatternTests(unittest.TestCase):
+    """The stage's return code, with the category a failure prints first."""
+
+    def pattern(self):
+        import re as _re
+
+        return _re.compile(
+            controller_principals._principal_result_pattern(
+                b"__TELOS_PRINCIPAL_RC_tok="), _re.MULTILINE)
+
+    def test_a_failure_carries_its_category(self):
+        buffer = (b"\r\n__TELOS_PRINCIPAL_FAILURE=password-policy\r\n"
+                  b"Traceback noise that never names a value\r\n"
+                  b"\r\n__TELOS_PRINCIPAL_RC_tok=1\r\n")
+        match = self.pattern().search(buffer)
+        self.assertEqual(b"1", match.group("rc"))
+        self.assertEqual(b"password-policy", match.group("reason"))
+
+    def test_a_success_has_no_category(self):
+        match = self.pattern().search(b"\r\n__TELOS_PRINCIPAL_RC_tok=0\r\n")
+        self.assertEqual(b"0", match.group("rc"))
+        self.assertIsNone(match.group("reason"))
+
+    def test_a_partial_read_matches_nothing(self):
+        line = b"\n__TELOS_PRINCIPAL_RC_tok=127\r\n"
+        for cut in range(len(line) - 2):
+            self.assertIsNone(self.pattern().search(line[:cut]))
+
+    def test_the_stage_program_prints_a_category_and_never_a_value(self):
+        stage, _destroy, _roles = controller_principals._programs(
+            controller_principals._ACCEPTANCE)
+        self.assertIn("__TELOS_PRINCIPAL_FAILURE=", stage)
+        self.assertIn('return "password-policy"', stage)
+        self.assertIn('return "account-exists"', stage)
+        # The only thing printed on failure is the category.
+        self.assertNotIn("print(values", stage)
+        self.assertNotIn("print(error", stage)
+
+
 if __name__ == "__main__":
     unittest.main()

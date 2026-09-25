@@ -1751,6 +1751,15 @@ def persistent_accounts(
             # dropped in the ``finally`` below.
             values[entry["name"]] = typed.decode("utf-8")
             typed = b""
+            # Judged here, before anything boots: inside the Controller a
+            # refused password is only "stage returned 1" (2026-09-25).
+            problem = principals.directory_password_problem(
+                values[entry["name"]], entry["name"])
+            if problem is not None:
+                raise ValueError(
+                    f"the password for {entry['contract_role']} {problem}; "
+                    "the directory's default policy would refuse it. Nothing "
+                    "was booted")
     except (ValueError, EOFError, KeyboardInterrupt) as error:
         values.clear()
         print(f"error: {error or type(error).__name__}", file=sys.stderr)

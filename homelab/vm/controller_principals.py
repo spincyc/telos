@@ -460,6 +460,43 @@ def directory_group_allocation() -> dict[str, int]:
     return dict(_validated_posix_allocation(_posix_allocation())["groups"])
 
 
+#: Samba AD's default password policy, which nothing in this repository
+#: changes (no ``samba-tool domain passwordsettings`` anywhere): at least
+#: seven characters, drawn from at least three character classes.
+DIRECTORY_MIN_PASSWORD_LENGTH = 7
+DIRECTORY_PASSWORD_CLASSES = 3
+
+
+def directory_password_problem(password: str, account: str) -> str | None:
+    """Why the directory would refuse *password* for *account*, or ``None``.
+
+    A durable account's password is typed by the operator, and the directory
+    judges it only inside the Controller, where the stage program's stderr is
+    deliberately closed so no traceback can carry a credential. A refused
+    password therefore used to surface as a bare "Controller stage returned 1"
+    after a full boot (2026-09-25). This applies the same default rules on the
+    host, before anything boots. The reason names the rule, never the value.
+    """
+    if len(password) < DIRECTORY_MIN_PASSWORD_LENGTH:
+        return (f"is shorter than {DIRECTORY_MIN_PASSWORD_LENGTH} "
+                "characters")
+    classes = sum((
+        any(character.isupper() for character in password),
+        any(character.islower() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() for character in password),
+        any(character.isalpha() and not (
+            character.isupper() or character.islower())
+            for character in password),
+    ))
+    if classes < DIRECTORY_PASSWORD_CLASSES:
+        return (f"uses fewer than {DIRECTORY_PASSWORD_CLASSES} of: uppercase "
+                "letters, lowercase letters, digits, symbols")
+    if len(account) >= 3 and account.casefold() in password.casefold():
+        return "contains the account name"
+    return None
+
+
 def durable_directory_roster(
     overlay_path: Path | None = None,
     roles: Sequence[str] = DIRECTORY_ROLES,
@@ -496,6 +533,22 @@ def durable_directory_roster(
     return identity_declaration(
         overlay_path=overlay_path, require_overlay=True,
         require_named=tuple(role for role in DIRECTORY_ROLES if role in roles))
+
+
+PRINCIPAL_FAILURE_MARKER = b"__TELOS_PRINCIPAL_FAILURE="
+
+
+def _principal_result_pattern(result: bytes) -> bytes:
+    """The program's return code, and the failure category printed before it.
+
+    Both are anchored on a real line ending (a serial read can stop mid-line;
+    see ``arch_identity_run.measured_probe_pattern``). The category is
+    diagnostic only: the return code alone decides success.
+    """
+    return (
+        rb"(?:(?:^|\n)" + re.escape(PRINCIPAL_FAILURE_MARKER)
+        + rb"(?P<reason>[a-z0-9+-]{1,96})(?=[\r\n])[\s\S]*?)?"
+        + rb"(?:^|\n)" + re.escape(result) + rb"(?P<rc>[0-9]+)(?=[\r\n])")
 
 
 def _programs(roster: object) -> tuple[str, str, tuple[str, ...]]:
@@ -584,6 +637,24 @@ def integers(record, attribute):
 
 def strings(record, attribute):
     return [str(value) for value in record.get(attribute, [])]
+
+def failure_reason(error):
+    # Printed on stdout because stderr is closed: a category, never a value.
+    # The program's own raises carry fixed, name-free messages; an LdbError's
+    # text can carry a DN, so only its code and a classification cross.
+    import re as _re
+    arguments = getattr(error, "args", ())
+    if type(error).__name__ == "LdbError" and len(arguments) >= 2:
+        code, message = arguments[0], str(arguments[1]).lower()
+        if code == 19 and "password" in message:
+            return "password-policy"
+        if code == 68:
+            return "account-exists"
+        return "ldb-" + str(code) if isinstance(code, int) else "ldb"
+    if (type(error) in (RuntimeError, ValueError) and arguments
+            and isinstance(arguments[0], str)):
+        return _re.sub(r"[^a-z0-9]+", "-", arguments[0].lower()).strip("-")[:80]
+    return type(error).__name__.lower()
 
 try:
     # Groups first, so no staged user ever carries a gidNumber the
@@ -695,7 +766,8 @@ try:
         os.makedirs(path, mode=0o700, exist_ok=True)
         os.chown(path, unix["uidNumber"], unix["gidNumber"])
         os.chmod(path, 0o700)
-except BaseException:
+except BaseException as error:
+    reason = failure_reason(error)
     rollback_failures = []
     for name in reversed(created):
         try:
@@ -713,9 +785,12 @@ except BaseException:
         except BaseException as error:
             rollback_failures.append(type(error).__name__)
     if rollback_failures:
+        print("\n__TELOS_PRINCIPAL_FAILURE=" + reason + "+rollback-failed",
+              flush=True)
         raise RuntimeError(
             "staged principal rollback failed: "
             + ",".join(rollback_failures))
+    print("\n__TELOS_PRINCIPAL_FAILURE=" + reason, flush=True)
     raise
 """
 
@@ -932,16 +1007,17 @@ class ControllerPrincipalSerial:
                 console._send(
                     console.password, operation + "-sudo-password-sent")
             match = console._wait(
-                rb"(?:^|\n)" + re.escape(result)
-                + rb"([0-9]+)\s*(?:\n|$)",
+                _principal_result_pattern(result),
                 operation + "-return-code-observed")
         except SerialAutomationError as error:
             raise ControllerPrincipalError(
                 f"Controller {operation} protocol failed") from error
-        returncode = int(match.group(1))
+        returncode = int(match.group("rc"))
         if returncode:
+            reason = match.group("reason")
             raise ControllerPrincipalError(
-                f"Controller {operation} returned {returncode}")
+                f"Controller {operation} returned {returncode}"
+                + (f": {reason.decode('ascii')}" if reason else ""))
         return ControllerPrincipalResult(
             operation, names, tuple(console.events))
 
