@@ -80,7 +80,7 @@ present in the Makefile on 2026-08-17. Each mutating target needs `APPLY=1`.
 | 4 | `homelab-pxe-authority-audit` | `SWITCH=<run>/evidence/switch.jsonl` |
 | 5 | `homelab-windows-install-prepare`, `homelab-windows-install-run` | `WINDOWS_RUN=<bundle>`, `FACTORY_DURATION=` |
 | 6 | `homelab-windows-identity-prepare`, `homelab-windows-identity-run`, `homelab-windows-identity-judge` | `WINDOWS_RUN=`, `WINDOWS_IDENTITY_ATTEMPT=`, `FACTORY_CONTROLLER_STATE=`, `WINDOWS_IDENTITY_EVIDENCE=` |
-| 7 | `homelab-arch-install-prepare`, `homelab-arch-install-run` | `WINDOWS_RUN=<a Windows disk bundle>` |
+| 7 | `homelab-arch-install-prepare`, `homelab-arch-install-run` | `WINDOWS_RUN=<a Windows install bundle>/windows.qcow2` — the disk file; unlike gates 5–6, a bundle directory is refused at `APPLY=1` |
 | 8, 9 (Arch half) | `homelab-arch-identity-prepare`, `homelab-arch-identity-run`, `homelab-arch-identity-judge` | `ARCH_RUN=`, `WINDOWS_IDENTITY_EVIDENCE=` (consumed via `--windows-evidence`), `ARCH_IDENTITY_BUNDLE=`, `ARCH_IDENTITY_EVIDENCE=` |
 | 10 | `homelab-dualboot-acceptance-prepare`, `homelab-dualboot-acceptance-run`, `homelab-dualboot-acceptance-judge` | `DUALBOOT_EVIDENCE=` |
 | 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_EVIDENCE=` |

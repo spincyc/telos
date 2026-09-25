@@ -377,7 +377,8 @@ conceivable one. `acceptance-progress.json` records
 
 ```sh
 make homelab-arch-install-prepare APPLY=1
-#   optional WINDOWS_RUN=<gate-5 bundle> to overlay the real Windows disk
+#   optional WINDOWS_RUN=<gate-5 bundle>/windows.qcow2 to overlay that Windows
+#   disk -- the disk FILE, not the bundle directory (gate 6 takes the directory)
 make homelab-arch-install-run ARCH_RUN=<prepared arch bundle> APPLY=1
 ```
 
