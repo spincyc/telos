@@ -636,10 +636,16 @@ never-expiring password, because that would hide a real property.
 Real account names come from the private overlay roster, and since `ee8b5e6`
 the Windows identity lane derives its principals from that roster instead of
 hardcoding `student` / `operator` / `directory-admin` in about fifteen places.
-**Using an overlay is no longer fatal to gate 6.** With no overlay every derived
-value is byte-identical to the literals it replaced, so the gate-6 and gate-8
-verdicts are untouched; with one, a refusal now reports the expected roster, the
-roster it was handed, and where it came from.
+With no overlay every derived value is byte-identical to the literals it
+replaced, so the gate-6 and gate-8 verdicts are untouched; with one, a refusal
+reports the expected roster, the roster it was handed, and where it came from.
+**Corrected 2026-09-24:** this paragraph said an overlay was no longer fatal to
+gate 6. It was, until `efcaf6d`: the guest-side PowerShell still pinned the
+synthetic names. The probe now renders the host roster into the staged control
+disc, the post-submit diagnostic checks the name's shape, and a build-time guard
+refuses a guest script that pins a name. A gate-6 run with an overlay has
+**NOT RUN**; its post-join sign-in reference image was captured with the
+synthetic operator and may need recapturing for a renamed one.
 
 ### Keep the `local-rescue` password
 

@@ -1,6 +1,6 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-09-24 (reconciliation against `90f0b15..0e588db`: the
+**Last updated:** 2026-09-24 (reconciliation against `90f0b15..efcaf6d`: the
 canonical Controller image was reinstalled 2026-09-24; gate 6 was proved
 2026-08-13, gate 8 on 2026-08-14). Previous pass: 2026-08-17, against
 `1ec5506..f8d0348`.
@@ -169,8 +169,12 @@ Read every other item as the designed contract.
 - **`ee8b5e6` — the Windows identity lane derives its principals from the
   private overlay roster** instead of hardcoding `student`/`operator`/
   `directory-admin` in ~15 places. With no overlay every value is byte-identical,
-  so the **gate-6 and gate-8 verdicts are untouched** — but using an overlay is
-  no longer fatal, and the synthetic names are no longer a fixed contract.
+  so the **gate-6 and gate-8 verdicts are untouched**. **Corrected 2026-09-24:**
+  this bullet said using an overlay was "no longer fatal" to gate 6. It still
+  was: the guest-side PowerShell kept the synthetic names until `efcaf6d`
+  (TASK-26) — the probe now renders the host roster into the staged control
+  disc and the post-submit diagnostic checks only the name's shape. That is
+  unit-tested and **unrun live**; see §7 item 4.
 - **`f8d0348` — durable directory accounts were unreachable, and are now
   repaired but UNPROVEN.** An adversarial review found they could not be
   provisioned by any wired path; six independent breaks, the worst being that
@@ -275,8 +279,8 @@ identity-only cycles. **Delete the stash when done — it holds a one-use
 credential** (I deleted `pub-stash`/`pub-stash2` at session end).
 
 The gate-6 flow (each step APPLY=1, controller state = `build/homelab/vm/bootstrap-dc`
-— reinstalled 2026-09-24, see the banner at the top; a real-name run waits for
-TASK-26, §7):
+— reinstalled 2026-09-24, see the banner at the top; a real-name run needs the
+§7 item 4 caveat):
 ```
 make homelab-windows-install-prepare APPLY=1                      # → bundle path
 make homelab-windows-install-run APPLY=1 WINDOWS_RUN=<bundle> FACTORY_DURATION=7200
@@ -703,13 +707,20 @@ no headroom for a single spurious refusal.
    is now proven by one live run, and the hand-driven console recipe in
    `homelab/docs/operator-runbook.md` ("Keep the `local-rescue` password") and
    `homelab/vm/README.md` ("Interactive offline installation") is the fallback.
-4. **Wait for the Windows guest scripts to stop pinning synthetic names
-   (TASK-26, being fixed in parallel).** `ee8b5e6` derived the Python side of
-   the Windows lane from the roster, but guest-side PowerShell still hardcodes
-   the synthetic account names (`Invoke-TelosIdentityProbe.ps1`, and
-   `TelosPostSubmitDiagnostic.ps1` throws unless the operator is `operator`), so
-   a real `principals.json` would fail gate 6. The real-name rehearsal of gates
-   5–8 must not spend a ~69-minute gate-5 install until that lands.
+4. **The Windows guest scripts no longer pin synthetic names (TASK-26,
+   `efcaf6d`, 2026-09-24) — unit-tested, not yet run live.**
+   `Invoke-TelosIdentityProbe.ps1` names each principal by a `{{role}}`
+   placeholder that `build_control_iso` renders from the host roster into the
+   staged copy only (with no overlay the staged probe is byte-identical to the
+   one gate 6 proved), `TelosPostSubmitDiagnostic.ps1` validates the operator
+   name by shape, and `homelab/vm/windows_guest_principals.py` refuses any
+   tracked guest script that pins a UPN literal or a synthetic account name.
+   **One risk only a live run settles:** the post-join operator sign-in check
+   compares a screen crop against
+   `windows_identity_references/.../post-join-operator-sign-in.ppm`, captured
+   with the synthetic operator typed in; a renamed daily administrator may miss
+   that distance threshold and need the reference recaptured. Budget for it in
+   the first real-name gate-6 run.
 5. **Then prove the roster derivation on the cheap path, before anything durable.**
    The owner asked on 2026-08-18 whether to mint a real workstation against an
    ephemeral Controller first, to avoid iterating on workstation faults by
@@ -748,7 +759,7 @@ no headroom for a single spurious refusal.
      in `identity/directory.json`, separate documents with separate loaders, so
      nothing forces them together and no new flow is needed.
 
-   So, once TASK-26 lands: run gates 5–8 with `principals.json` seeded (real
+   So: run gates 5–8 with `principals.json` seeded (real
    names, synthetic realm); then converge a **throwaway-named** persistent
    instance and stage its accounts (`homelab-factory-persistent-accounts`,
    which since `0e588db` refuses unless `principals.json` names all three
@@ -782,4 +793,5 @@ is implemented (`27d8af9`).
 Superseded 2026-09-24: item 3 said to reinstall the canonical Controller image
 and that the target had NOT RUN. The owner installed it 2026-09-24 through that
 target, first time. The list now puts TASK-26 ahead of the real-name rehearsal
-and names the durable workstation flow (TASK-28) as its own step.
+and names the durable workstation flow (TASK-28) as its own step. TASK-26 then
+landed the same day (`efcaf6d`), so item 4 records it as done and unrun.

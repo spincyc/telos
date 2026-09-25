@@ -114,22 +114,23 @@ Outstanding as of 2026-08-17, in the documents this pass owns:
   `scripts/site`, because both carry the lab address the leak scanner rejects.
   This is the one item keeping gate 13 in progress; the recipe is documented and
   the decision is open.
-- **The canonical-Controller-image blocker must be retired when the reinstall is
-  driven.** It is currently recorded in three places — the runbook's "Blocker:
-  the canonical Controller image is absent", the banner at the top of
-  `HANDOFF.md`, and the first bullet of the state ledger's blockers — plus the
-  short "Blocked today" pointers at each live-target instruction site. All of
-  them come out together, and only after a real reinstall.
+- **~~The canonical-Controller-image blocker must be retired when the
+  reinstall is driven.~~ Done 2026-09-24** (`1e56a43`): the owner installed the
+  image through `make homelab-bootstrap-vm-install`, and the runbook section,
+  the `HANDOFF.md` banner, the state ledger's first blocker and the per-site
+  "Blocked today" pointers were retired together.
 - **The persistent-instance documentation carries a NOT RUN marker.** The
   runbook's "The persistent directory instance" section and the
   "Persistent controller instance (not a gate)" section of
   `FACTORY-MAKE-TARGETS.md` describe an implemented, unit-tested, never-executed
   surface. Re-verify both against a real run before removing the marker; nothing
   in them may be promoted to the present indicative until then.
-- **Gate 12's verdict needs re-checking when the repeat driver lands.** The
-  runbook and the ledger now say gate 12 is blocked on the absent image and on
-  the missing aggregate `homelab-factory-repeat` driver — a reserved name, not
-  implemented — and not on any gate. Both statements move together.
+- **Gate 12's verdict needs re-checking after its first live twice-through.**
+  Both earlier blockers are gone: the aggregate `homelab-factory-repeat` driver
+  exists (`27d8af9`) and the canonical image is installed (2026-09-24). The
+  runbook and the ledger now say gate 12 needs two live lifecycles, and that
+  `host_network_changes` cannot render PASS without a run-window egress
+  observation nothing produces. Both statements move together.
 - **`docs/factory-guide.md` covers the persistent instance only by pointer.**
   The human guide still describes one mode (disposable controller) with a clause
   pointing at the runbook. If the persistent path becomes a normal operator

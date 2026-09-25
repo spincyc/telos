@@ -827,11 +827,10 @@ The genuinely next implementation actions, in order:
 2. **The real-name rehearsal of gates 5–8** — real names from
    `identity/principals.json` under the synthetic realm, then a
    throwaway-named persistent instance, then the instance to keep; the
-   rationale is `HANDOFF.md` §7. It must wait for the Windows guest scripts to
-   stop pinning the synthetic names (local work item TASK-26, being fixed in
-   parallel): `Invoke-TelosIdentityProbe.ps1` and
-   `TelosPostSubmitDiagnostic.ps1` still hardcode them, so a real roster would
-   fail gate 6.
+   rationale is `HANDOFF.md` §7. The Windows guest scripts stopped pinning the
+   synthetic names in `efcaf6d` (local work item TASK-26, 2026-09-24), which is
+   unit-tested and unrun live; the post-join sign-in reference image may need
+   recapturing for a renamed daily administrator.
 3. **The durable workstation flow (TASK-28)** — it does not exist. Every
    workstation runner wraps the Controller in `DisposableBootDisk`, and a
    bundle prepared against the permanent realm is refused by
