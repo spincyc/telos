@@ -2303,6 +2303,20 @@ class InstallerRealmTests(unittest.TestCase):
     it.
     """
 
+    def setUp(self):
+        # The realm half of a render reads no identity document, but the
+        # roster half resolves the principal names through the private
+        # overlay -- which the docstring above forbids. Point it at a path
+        # that does not exist, so the synthetic bytes are the contract's on
+        # every machine, including one whose owner has seeded real names.
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.object(
+            arch_second, "identity_overlay_path",
+            return_value=Path(temporary.name) / "no-principals.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def render(self, realm=None, hostname="workstation"):
         return render_installer(
             disk_path="/dev/vda", disk_serial="LAPTOP-1",
