@@ -9,6 +9,15 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from typing import Mapping
+
+from .windows_guest_principals import (
+    GUEST_ROLES,
+    WindowsGuestPrincipalError,
+    audit_guest_script,
+    guest_roster,
+    render_guest_script,
+)
 
 
 class WindowsControlIsoError(RuntimeError):
@@ -51,6 +60,16 @@ FORBIDDEN_POWERSHELL = (
     "invoke-expression",
     "downloadstring",
 )
+
+# The probe resolves the directory principals by NAME, but it rides a static
+# disc with no per-run document to carry them, and its launch line is typed
+# through the Run dialog within MAX_PROBE_LAUNCH_CHARS -- too tight for three
+# names.  So the tracked script names each principal by a ``{{role}}``
+# placeholder and build_control_iso renders the host-derived roster into the
+# STAGED copy only.  With no private overlay the rendered script is
+# byte-for-byte the script gate 6 proved; with one, only those string
+# literals differ.  The host judges the same resolved names
+# (windows_identity_orchestrator), so the two cannot drift.
 
 
 def probe_launch_command(
@@ -136,7 +155,37 @@ def audit_payload(asset_root: Path = ASSET_ROOT) -> dict[str, object]:
         if f"'{action.casefold()}'" not in folded:
             raise WindowsControlIsoError(
                 f"control script does not implement action {action}")
+    try:
+        roles = audit_guest_script(
+            script, label=SCRIPT.name, placeholders=True)
+    except WindowsGuestPrincipalError as error:
+        raise WindowsControlIsoError(str(error)) from error
+    if roles != frozenset(GUEST_ROLES):
+        raise WindowsControlIsoError(
+            "control script must name every directory principal through "
+            "its roster placeholder")
     return manifest
+
+
+def render_probe_script(
+    asset_root: Path = ASSET_ROOT,
+    roster: Mapping[str, str] | None = None,
+) -> bytes:
+    """Return the probe exactly as it ships: the host roster rendered in."""
+    try:
+        source = (Path(asset_root) / SCRIPT.name).read_bytes().decode(
+            "ascii")
+        rendered = render_guest_script(
+            source, guest_roster() if roster is None else roster)
+    except (OSError, UnicodeDecodeError,
+            WindowsGuestPrincipalError) as error:
+        raise WindowsControlIsoError(
+            f"control script cannot be rendered: {error}") from error
+    folded = rendered.casefold()
+    if any(token in folded for token in FORBIDDEN_POWERSHELL):
+        raise WindowsControlIsoError(
+            "control script contains a mutating or secret-capable primitive")
+    return rendered.encode("ascii")
 
 
 def build_control_iso(
@@ -144,8 +193,14 @@ def build_control_iso(
     *,
     asset_root: Path = ASSET_ROOT,
     runner=subprocess.run,
+    roster: Mapping[str, str] | None = None,
 ) -> Path:
-    """Build an ISO 9660 disc containing only the audited static payload."""
+    """Build an ISO 9660 disc containing only the audited static payload.
+
+    *roster* is ``{role: name}`` for the directory roles and defaults to the
+    host-derived roster; the probe is the one staged file that differs from
+    its tracked source, and only by those names.
+    """
     output = Path(output)
     if output.exists() or output.is_symlink():
         raise WindowsControlIsoError("control ISO destination must be absent")
@@ -154,13 +209,17 @@ def build_control_iso(
         raise WindowsControlIsoError(
             "control ISO parent must be a regular directory")
     manifest = audit_payload(asset_root)
+    probe = render_probe_script(asset_root, roster)
     with tempfile.TemporaryDirectory(
             prefix=".windows-control-", dir=parent) as temporary:
         temporary_root = Path(temporary)
         stage = temporary_root / "payload"
         stage.mkdir(mode=0o700)
         for name in sorted(EXPECTED_FILES):
-            shutil.copyfile(Path(asset_root) / name, stage / name)
+            if name == SCRIPT.name:
+                (stage / name).write_bytes(probe)
+            else:
+                shutil.copyfile(Path(asset_root) / name, stage / name)
             (stage / name).chmod(0o444)
         receipt = {
             "schema_version": 1,

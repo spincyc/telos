@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import socket
 import tempfile
 import threading
@@ -12,8 +13,8 @@ from unittest import mock
 from homelab.vm.windows_join_iso import (
     DuplexJoinSerial,
     JOIN_DEVICE,
+    POST_SUBMIT_DIAGNOSTIC_SCRIPT,
     SCRIPT,
-    SCRIPT_OPERATOR_PIN,
     JoinMediaChannel,
     JoinMediaState,
     WindowsJoinIsoError,
@@ -24,6 +25,14 @@ from homelab.vm.windows_join_iso import (
     launch_join_command,
 )
 from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
+from homelab.vm.windows_guest_principals import (
+    GUEST_NAME,
+    GUEST_NAME_POWERSHELL,
+    contract_principals,
+)
+from homelab.vm.windows_postsubmit_diagnostic import (
+    PostSubmitDiagnosticSession,
+)
 from homelab.vm.windows_public_command import MAX_PUBLIC_COMMAND_CHARS
 
 
@@ -313,35 +322,151 @@ class WindowsJoinIsoTests(unittest.TestCase):
                         private / "join.iso",
                         {**MATERIAL, "username": username})
 
-    def test_a_control_script_pinning_another_operator_is_refused(self):
-        # The tracked guest script pins NOTHING.  It validates the join
-        # document's operator by SHAPE and takes the name from the document
-        # itself, so an overlay-renamed daily administrator needs no edit
-        # inside the Windows guest.  The build-time guard survives as the
-        # backstop for any control script that pins a literal again: that
-        # script would refuse every join document INSIDE the guest, over the
-        # control serial, with nothing to say which side was wrong.
+    def test_a_join_script_pinning_any_principal_is_refused(self):
+        # Neither tracked join script pins a name.  Both validate the daily
+        # operator by SHAPE and take it from the join document (the
+        # diagnostic through the config.json TelosJoin writes), so an
+        # overlay-renamed daily administrator needs no edit inside the guest.
+        # The build-time guard is the backstop for a script that pins a
+        # literal again: that script would refuse every join document INSIDE
+        # the guest, over the control serial, with nothing to say which side
+        # was wrong.
         tracked = SCRIPT.read_text(encoding="utf-8")
-        self.assertEqual([], SCRIPT_OPERATOR_PIN.findall(tracked))
         self.assertIn(
-            "$operatorParts[0] -cnotmatch '^[a-z][a-z0-9-]{0,19}$'", tracked)
+            f"$operatorParts[0] -cnotmatch {GUEST_NAME_POWERSHELL}", tracked)
         self.assertIn(
             "$operatorParts[1] -cne [string]$document.realm", tracked)
-        _assert_scripts_agree_with_roster((SCRIPT,))
+        _assert_scripts_agree_with_roster(
+            (SCRIPT, POST_SUBMIT_DIAGNOSTIC_SCRIPT))
+        # The old guard looked only for 'name@' and accepted a pin that
+        # equalled the RESOLVED name -- exactly the pin that passes with no
+        # overlay and fails the moment one exists.  Every synthetic contract
+        # name is now refused in every account shape, and a literal UPN local
+        # part is refused whatever the name, overlay or not.
+        upn = "$expected = '{name}@' + $document.realm\n"
+        shapes = (
+            upn,
+            "$sid = Resolve-AccountSid ($domain + '\\{name}')\n",
+            "if ($config.operator_name -cne '{name}') {{ throw 'x' }}\n",
+        )
+        cases = [
+            (name, shape)
+            for name in sorted(contract_principals().values())
+            for shape in shapes
+        ] + [(DAILY_ADMINISTRATOR, upn), ("someone-else", upn)]
         with tempfile.TemporaryDirectory() as temporary:
-            # Written out rather than derived from the tracked script, so the
-            # guard is exercised even now that nothing tracked pins a name.
-            agreeing = Path(temporary) / "Agreeing.ps1"
-            agreeing.write_text(
-                f"$expected = '{DAILY_ADMINISTRATOR}@' + $document.realm\n",
+            for index, (name, shape) in enumerate(cases):
+                with self.subTest(name=name, shape=shape):
+                    script = Path(temporary) / f"Pinned{index}.ps1"
+                    script.write_text(
+                        shape.format(name=name), encoding="utf-8")
+                    with self.assertRaisesRegex(
+                            WindowsJoinIsoError,
+                            f"pins a principal name: '{re.escape(name)}'"):
+                        _assert_scripts_agree_with_roster((script,))
+            # A script the guard cannot lex is refused, not waved through.
+            unlexable = Path(temporary) / "Unterminated.ps1"
+            unlexable.write_text("$x = 'never closed\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                    WindowsJoinIsoError, "unterminated string"):
+                _assert_scripts_agree_with_roster((unlexable,))
+            # A placeholder would reach the guest verbatim: join scripts are
+            # shipped as tracked, never rendered.
+            placeholder = Path(temporary) / "Placeholder.ps1"
+            placeholder.write_text(
+                "$x = '{{daily_administrator}}@' + $realm\n",
                 encoding="utf-8")
-            _assert_scripts_agree_with_roster((agreeing,))
-            disagreeing = Path(temporary) / "Disagreeing.ps1"
-            disagreeing.write_text(
-                "$expected = 'someone-else@' + $document.realm\n",
-                encoding="utf-8")
-            with self.assertRaisesRegex(WindowsJoinIsoError, "someone-else"):
-                _assert_scripts_agree_with_roster((disagreeing,))
+            with self.assertRaisesRegex(WindowsJoinIsoError, "unrendered"):
+                _assert_scripts_agree_with_roster((placeholder,))
+
+    def test_post_submit_diagnostic_takes_the_operator_from_its_config(self):
+        """A renamed daily administrator reaches the diagnostic unchanged.
+
+        The diagnostic used to throw unless config.json said literally
+        ``operator``, so with a renamed roster the host never got its armed
+        receipt and the post-join sign-in failed.  The name travels host ->
+        join.json -> TelosJoin.ps1 -> config.json; this follows it along that
+        path and checks the diagnostic admits it by the same shape TelosJoin
+        admits, then binds it through the host's exact arm command.
+        """
+        diagnostic = POST_SUBMIT_DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
+        join_script = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            f"$config.operator_name -cnotmatch {GUEST_NAME_POWERSHELL}",
+            diagnostic)
+        # TelosJoin writes config.json's operator_name/realm by splitting
+        # the document's operator, and the diagnostic rebuilds the exact
+        # principal the host's arm command must carry from those two fields.
+        self.assertIn(
+            "operator_name = $operator.Split('@')[0]", join_script)
+        self.assertIn(
+            "operator_realm = $operator.Split('@')[1]", join_script)
+        self.assertIn(
+            "[void](Read-ExactCommand @('arm') $nonce $operatorPrincipal)",
+            diagnostic)
+        self.assertIn(
+            "[string]$config.operator_name + '@' +", diagnostic)
+        canonical = re.search(
+            r"'\{\"command\":\"' \+ \[string\]\$record\.command \+ "
+            r"'\",\"nonce\":\"' \+\s+\$Nonce \+ '\",\"principal\":\"' \+ "
+            r"\$ExpectedPrincipal \+\s+'\",\"schema_version\":1\}'",
+            diagnostic)
+        self.assertIsNotNone(canonical)
+        # The one PowerShell pattern both scripts use is the host's
+        # GUEST_NAME, so a name the host can deliver is a name both admit.
+        self.assertEqual(
+            f"'^{GUEST_NAME.pattern}$'", GUEST_NAME_POWERSHELL)
+
+        renamed = "renamed-daily"
+        for operator_name in (DAILY_ADMINISTRATOR, renamed):
+            self.assertIsNotNone(GUEST_NAME.fullmatch(operator_name))
+        for refused in ("Operator", "a" * 21, "1abc", "renamed daily", ""):
+            self.assertIsNone(GUEST_NAME.fullmatch(refused))
+
+        # Follow the resolved daily administrator (a renamed one when the
+        # overlay regression runs this module) through the real builder.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            observed = {}
+
+            def runner(command, *, check):
+                stage = Path(command[-1])
+                observed["join"] = json.loads(
+                    (stage / "join.json").read_text(encoding="utf-8"))
+                observed["diagnostic"] = (
+                    stage / POST_SUBMIT_DIAGNOSTIC_SCRIPT.name
+                ).read_bytes()
+                Path(command[command.index("-o") + 1]).write_bytes(b"iso")
+
+            build_join_iso(root / "join.iso", MATERIAL, runner=runner)
+        self.assertEqual(
+            POST_SUBMIT_DIAGNOSTIC_SCRIPT.read_bytes(), observed["diagnostic"])
+        operator_name, realm = observed["join"]["operator"].split("@")
+        self.assertEqual(DAILY_ADMINISTRATOR, operator_name)
+        self.assertIsNotNone(GUEST_NAME.fullmatch(operator_name))
+
+        # The host's arm command for that principal is byte-for-byte the
+        # canonical line the diagnostic rebuilds from config.json -- for the
+        # resolved name and for a renamed one alike.
+        for name in (operator_name, renamed):
+            with self.subTest(name=name):
+                host, guest = socket.socketpair()
+                self.addCleanup(host.close)
+                self.addCleanup(guest.close)
+                session = PostSubmitDiagnosticSession(
+                    host, NONCE, f"{name}@{realm}", timeout=5,
+                    pause=lambda _delay: None)
+                guest.sendall((json.dumps({
+                    "schema_version": 1, "event": "armed", "nonce": NONCE,
+                }, sort_keys=True, separators=(",", ":")) + "\n").encode(
+                    "ascii"))
+                session.arm()
+                expected_principal = name + "@" + realm
+                self.assertEqual(
+                    '{"command":"arm","nonce":"' + NONCE
+                    + '","principal":"' + expected_principal
+                    + '","schema_version":1}\n',
+                    guest.recv(1024).decode("ascii"))
 
     def test_script_has_load_marker_release_gate_join_and_reboot_order(self):
         script = Path(

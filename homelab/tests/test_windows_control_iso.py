@@ -1,11 +1,17 @@
 """Contracts for the secret-free, read-only Windows control disc."""
 
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from homelab.vm.controller_factory import FactorySpec
+from homelab.vm.controller_principals import (
+    DAILY_ADMINISTRATOR,
+    DOMAIN_ADMINISTRATOR,
+    STANDARD_USER,
+)
 from homelab.vm.windows_control_iso import (
     ASSET_ROOT,
     MAX_PROBE_LAUNCH_CHARS,
@@ -14,7 +20,56 @@ from homelab.vm.windows_control_iso import (
     build_control_iso,
     probe_launch_command,
     probe_launch_marker,
+    render_probe_script,
 )
+from homelab.vm.windows_guest_principals import (
+    contract_principals,
+    guarded_names,
+    principal_pins,
+)
+
+
+# Built here rather than written down: ADR 0046 keeps real account names out
+# of every tracked file, and every role is renamed so no synthetic default can
+# carry a test.
+RENAMED = {
+    "standard_user": "renamed-user",
+    "daily_administrator": "renamed-admin",
+    "domain_administrator": "renamed-dadmin",
+}
+
+
+def probe_account_lines(roster):
+    """The six lines where the probe names a directory principal."""
+    return (
+        f"$operator = '{roster['daily_administrator']}@' + "
+        "$ControllerDomain.ToUpperInvariant()",
+        f"'{roster['standard_user']}', '{roster['daily_administrator']}', "
+        f"'{roster['domain_administrator']}' |",
+        f"$operator = '{roster['daily_administrator']}@' + (",
+        "$standardSid = Resolve-AccountSid ($domain + "
+        f"'\\{roster['standard_user']}')",
+        "$operatorSid = Resolve-AccountSid ($domain + "
+        f"'\\{roster['daily_administrator']}')",
+        f"$domain + '\\{roster['domain_administrator']}')",
+    )
+
+
+def staged_payload(test, **kwargs):
+    """Build the control ISO with a capturing runner; return staged bytes."""
+    observed = {}
+
+    def runner(command, *, check):
+        test.assertTrue(check)
+        stage = Path(command[-1])
+        observed.update({
+            item.name: item.read_bytes() for item in stage.iterdir()})
+        Path(command[command.index("-o") + 1]).write_bytes(b"iso")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        build_control_iso(
+            Path(temporary) / "control.iso", runner=runner, **kwargs)
+    return observed
 
 
 class WindowsControlIsoTests(unittest.TestCase):
@@ -40,7 +95,10 @@ class WindowsControlIsoTests(unittest.TestCase):
         self.assertIn("'optional-storage:available'", script)
         self.assertIn("'optional-storage:authorization-denied'", script)
         self.assertIn("GetBytes('authorize')", script)
-        self.assertIn("'operator@'", script)
+        # The tracked probe names principals only by roster placeholder; the
+        # names are rendered into the staged copy (tests below).
+        self.assertIn("'{{daily_administrator}}@'", script)
+        self.assertEqual([], principal_pins(script, guarded_names()))
         self.assertIn("'S-1-5-32-544'", script)
         self.assertIn("Get-LocalGroupMember", script)
         spec = FactorySpec()
@@ -209,6 +267,143 @@ class WindowsControlIsoTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     WindowsControlIsoError, "mutating"):
                 audit_payload(assets)
+
+
+class ControlProbeRosterTests(unittest.TestCase):
+    """The probe resolves the principals the host roster names, not literals.
+
+    It used to pin the synthetic acceptance names, so a seeded overlay made
+    interactive-operator and domain-state report ``operator@...`` while the
+    host expected the renamed daily administrator, and managed-identity-state
+    resolve accounts the directory no longer had.
+    """
+
+    def test_a_renamed_roster_reaches_every_account_the_probe_resolves(self):
+        staged = staged_payload(self, roster=RENAMED)
+        probe = staged["Invoke-TelosIdentityProbe.ps1"].decode("ascii")
+        for line in probe_account_lines(RENAMED):
+            with self.subTest(line=line):
+                self.assertIn(line, probe)
+        # No synthetic name survives as an account, and no placeholder
+        # reaches the guest.
+        for name in contract_principals().values():
+            for shape in (f"'{name}@'", f"\\{name}'", f"'{name}'"):
+                self.assertNotIn(shape, probe)
+        self.assertNotIn("{{", probe)
+        # Rendering touches only those literals.
+        tracked = (ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1").read_bytes()
+        expected = tracked.decode("ascii")
+        for role, name in RENAMED.items():
+            expected = expected.replace("{{" + role + "}}", name)
+        self.assertEqual(expected, probe)
+        # The public receipt describes the bytes that actually ship, and the
+        # manifest is copied untouched.
+        receipt = json.loads(staged["receipt.json"])
+        self.assertEqual(
+            hashlib.sha256(staged["Invoke-TelosIdentityProbe.ps1"]).hexdigest(),
+            receipt["files"]["Invoke-TelosIdentityProbe.ps1"])
+        self.assertEqual(
+            (ASSET_ROOT / "manifest.json").read_bytes(),
+            staged["manifest.json"])
+        # The Run-dialog launch line carries no name, so it is unchanged and
+        # still within its bound.
+        for action in audit_payload()["actions"]:
+            command = probe_launch_command(action)
+            self.assertLessEqual(len(command), MAX_PROBE_LAUNCH_CHARS)
+            for name in RENAMED.values():
+                self.assertNotIn(name, command)
+
+    def test_the_contract_roster_renders_the_synthetic_acceptance_probe(self):
+        # With no private overlay the host roster IS the contract, and the
+        # staged probe must be the script gate 6 proved: every placeholder
+        # becomes the synthetic name and nothing else moves.
+        contract = contract_principals()
+        roster = {role: contract[role] for role in RENAMED}
+        probe = render_probe_script(roster=roster).decode("ascii")
+        for line in probe_account_lines(roster):
+            with self.subTest(line=line):
+                self.assertIn(line, probe)
+        self.assertNotIn("{{", probe)
+
+    def test_the_default_build_follows_the_resolved_roster(self):
+        # Under the overlay regression this is a renamed roster; without an
+        # overlay it is the contract.  Either way the staged probe names
+        # exactly what the host will judge.
+        resolved = {
+            "standard_user": STANDARD_USER,
+            "daily_administrator": DAILY_ADMINISTRATOR,
+            "domain_administrator": DOMAIN_ADMINISTRATOR,
+        }
+        probe = staged_payload(self)[
+            "Invoke-TelosIdentityProbe.ps1"].decode("ascii")
+        for line in probe_account_lines(resolved):
+            with self.subTest(line=line):
+                self.assertIn(line, probe)
+
+    def test_the_audit_refuses_a_probe_that_pins_or_drops_a_principal(self):
+        tracked = (ASSET_ROOT / "Invoke-TelosIdentityProbe.ps1").read_text(
+            encoding="utf-8")
+        contract = contract_principals()
+        cases = (
+            # The regression itself: a synthetic name pinned again, in each
+            # shape the probe used.
+            ("pins a principal name",
+             "'{{daily_administrator}}@' + $ControllerDomain",
+             f"'{contract['daily_administrator']}@' + $ControllerDomain"),
+            ("pins a principal name",
+             "($domain + '\\{{standard_user}}')",
+             f"($domain + '\\{contract['standard_user']}')"),
+            ("pins a principal name",
+             "'{{standard_user}}', '{{daily_administrator}}'",
+             f"'{contract['standard_user']}', '{{{{daily_administrator}}}}'"),
+            # A probe that stops resolving one role at all.
+            ("every directory principal",
+             "{{domain_administrator}}", "{{daily_administrator}}"),
+            ("unknown principal role",
+             "'{{standard_user}}', '{{daily_administrator}}'",
+             "'{{local_rescue}}', '{{daily_administrator}}'"),
+            ("malformed principal placeholder",
+             "$domain + '\\{{domain_administrator}}')",
+             "$domain + '\\{{domain_administrator}')"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, (message, old, new) in enumerate(cases):
+                with self.subTest(message=message, new=new):
+                    self.assertIn(old, tracked)
+                    assets = Path(temporary) / f"assets-{index}"
+                    assets.mkdir()
+                    for item in ASSET_ROOT.iterdir():
+                        (assets / item.name).write_bytes(item.read_bytes())
+                    (assets / "Invoke-TelosIdentityProbe.ps1").write_text(
+                        tracked.replace(old, new), encoding="utf-8")
+                    with self.assertRaisesRegex(
+                            WindowsControlIsoError, message):
+                        audit_payload(assets)
+                    with self.assertRaisesRegex(
+                            WindowsControlIsoError, message):
+                        build_control_iso(
+                            Path(temporary) / f"control-{index}.iso",
+                            asset_root=assets,
+                            runner=lambda *_args, **_kwargs: self.fail(
+                                "xorriso ran for a refused payload"))
+
+    def test_rendering_refuses_a_roster_the_guest_would_not_admit(self):
+        for roster in (
+            {**RENAMED, "daily_administrator": "Renamed-Admin"},
+            {**RENAMED, "daily_administrator": "a" * 21},
+            {**RENAMED, "daily_administrator": "renamed'admin"},
+            {**RENAMED, "domain_administrator": RENAMED["daily_administrator"]},
+            {k: v for k, v in RENAMED.items() if k != "standard_user"},
+        ):
+            with self.subTest(roster=roster):
+                with self.assertRaisesRegex(
+                        WindowsControlIsoError, "cannot be rendered"):
+                    render_probe_script(roster=roster)
+        # A name that would smuggle a forbidden primitive into the rendered
+        # text is refused by the same audit the tracked text passed.
+        with self.assertRaisesRegex(WindowsControlIsoError, "mutating"):
+            render_probe_script(
+                roster={**RENAMED, "standard_user": "add-computer"})
 
 
 if __name__ == "__main__":

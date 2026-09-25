@@ -30,6 +30,10 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCollection,
 )
 from .controller_principals import DAILY_ADMINISTRATOR
+from .windows_guest_principals import (
+    WindowsGuestPrincipalError,
+    audit_guest_script,
+)
 from .controller_auth_diagnostic import (
     ControllerAuthArmSubphase,
     ControllerAuthCollection,
@@ -284,16 +288,6 @@ JOIN_USERNAME = re.compile(
     r"tj-[a-f0-9]{16}@(?=.{1,253}\Z)(?![-.])"
     r"(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
 )
-# A UPN local part pinned as a literal inside a control script.  The guest-side
-# TelosJoin.ps1 validates the join document with
-# ``$document.operator -cne ('operator@' + $document.realm)``, so a script that
-# still pins a name the roster no longer resolves to would refuse every join
-# document this module builds -- from inside the Windows guest, over the
-# control serial, with no way to say which side was wrong.  The scripts live
-# outside this module, so the agreement is CHECKED here rather than assumed: a
-# script that pins nothing passes, and a script that pins the resolved daily
-# administrator passes.
-SCRIPT_OPERATOR_PIN = re.compile(r"'([A-Za-z0-9][A-Za-z0-9._-]{0,63})@'")
 JOIN_NODE = "telos-join-media"
 JOIN_DEVICE = "telos-join-cd"
 JOIN_PARENT = "telos-join-bot"
@@ -445,16 +439,28 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
 
 
 def _assert_scripts_agree_with_roster(assets: tuple[Path, ...]) -> None:
-    """Refuse a control script that pins a principal the roster renamed."""
+    """Refuse a join script that pins any principal name at all.
+
+    Both scripts take the daily operator from join.json (TelosJoin.ps1
+    directly, TelosPostSubmitDiagnostic.ps1 through the config.json TelosJoin
+    writes) and validate only its shape.  A literal name in either would
+    refuse every join document once the overlay renamed that principal --
+    inside the guest, over the control serial, with no way to say which side
+    was wrong.  The guard used to look only for ``'name@'`` and to accept a
+    pin that happened to equal the resolved name, which is exactly the pin
+    that passes with no overlay and breaks with one.  Now any literal UPN
+    local part and any synthetic contract name used as an account are
+    refused, with or without an overlay, and a script the guard cannot lex
+    is refused too (windows_guest_principals).
+    """
     for asset in assets:
-        source = asset.read_text(encoding="utf-8")
-        for pinned in SCRIPT_OPERATOR_PIN.findall(source):
-            if pinned != DAILY_ADMINISTRATOR:
-                raise WindowsJoinIsoError(
-                    f"{asset} pins the join operator as {pinned!r} but the "
-                    f"identity roster resolves the daily administrator to "
-                    f"{DAILY_ADMINISTRATOR!r}; the guest would refuse every "
-                    "join document this builds")
+        try:
+            source = asset.read_bytes().decode("ascii")
+            audit_guest_script(source, label=str(asset), placeholders=False)
+        except (OSError, UnicodeDecodeError,
+                WindowsGuestPrincipalError) as error:
+            raise WindowsJoinIsoError(
+                f"join script refused: {error}") from error
 
 
 def build_join_iso(

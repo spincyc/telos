@@ -256,7 +256,7 @@ function Get-Probe {
         'interactive-operator' {
             $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
             $computer = Get-CimInstance Win32_ComputerSystem
-            $operator = 'operator@' + $ControllerDomain.ToUpperInvariant()
+            $operator = '{{daily_administrator}}@' + $ControllerDomain.ToUpperInvariant()
             $operatorSid = Resolve-AccountSid $operator
             $consolePrincipal = [string]$computer.UserName
             $consoleSid = Resolve-AccountSid $consolePrincipal
@@ -330,7 +330,7 @@ function Get-Probe {
             # The bool is still emitted so the serial observation schema is
             # satisfied; the acceptance mapper drops it from the event.
             $synthetic = @(
-                'student', 'operator', 'directory-admin' |
+                '{{standard_user}}', '{{daily_administrator}}', '{{domain_administrator}}' |
                     ForEach-Object {
                         $null -ne (
                             Resolve-AccountSid (
@@ -357,7 +357,7 @@ function Get-Probe {
             $operatorLocalAdministrator = $false
             if ($computer.PartOfDomain) {
                 $secure = Get-SecureChannelState
-                $operator = 'operator@' + (
+                $operator = '{{daily_administrator}}@' + (
                     [string]$computer.Domain
                 ).ToUpperInvariant()
                 $operatorSid = (
@@ -393,10 +393,10 @@ function Get-Probe {
             } else {
                 ''
             }
-            $standardSid = Resolve-AccountSid ($domain + '\student')
-            $operatorSid = Resolve-AccountSid ($domain + '\operator')
+            $standardSid = Resolve-AccountSid ($domain + '\{{standard_user}}')
+            $operatorSid = Resolve-AccountSid ($domain + '\{{daily_administrator}}')
             $directoryAdminSid = Resolve-AccountSid (
-                $domain + '\directory-admin')
+                $domain + '\{{domain_administrator}}')
             $domainAdminsSid = Get-DomainAdministratorSid $domain
             $operatorDomainAdmin = Test-DomainGroupMemberBySid `
                 $domainAdminsSid $operatorSid

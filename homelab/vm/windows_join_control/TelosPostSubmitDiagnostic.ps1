@@ -186,10 +186,15 @@ public static class TelosAuditPolicy {
 
     $config = Get-Content -LiteralPath $configPath -Raw |
         ConvertFrom-Json
+    # The daily operator's NAME is instance data. TelosJoin.ps1 copied it
+    # from the host-built join document, which the host resolved from the
+    # identity roster, so validate only its SHAPE -- the same pattern
+    # TelosJoin.ps1 admits -- and let the principal in the host's exact
+    # arm command below bind it to the account the host expects.
     if ($config.schema_version -ne 1 -or
         $config.nonce -notmatch '^[a-f0-9]{32}$' -or
         $config.operator_sid -notmatch '^S-\d(?:-\d+)+$' -or
-        $config.operator_name -cne 'operator' -or
+        $config.operator_name -cnotmatch '^[a-z][a-z0-9-]{0,19}$' -or
         $config.operator_realm -notmatch '^[A-Z0-9.-]{1,253}$') {
         throw 'diagnostic configuration is invalid'
     }
