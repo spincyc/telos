@@ -644,9 +644,12 @@ reports the expected roster, the roster it was handed, and where it came from.
 gate 6. It was, until `efcaf6d`: the guest-side PowerShell still pinned the
 synthetic names. The probe now renders the host roster into the staged control
 disc, the post-submit diagnostic checks the name's shape, and a build-time guard
-refuses a guest script that pins a name. A gate-6 run with an overlay has
-**NOT RUN**; its post-join sign-in reference image was captured with the
-synthetic operator and may need recapturing for a renamed one.
+refuses a guest script that pins a name. **A gate-6 run with an overlay
+PASSED 2026-09-24** (24 checks), after two more fixes the live run exposed:
+the operator sign-in reference's recorded state no longer has to name the
+typed principal (`6d8f104`), and gate 8 reads the disk's roster fingerprint
+only from a complete line (`f7bbf13`). The reference image itself did not
+need recapturing. Evidence paths are in `HANDOFF.md` §7.
 
 ### Keep the `local-rescue` password
 

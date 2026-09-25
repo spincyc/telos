@@ -827,10 +827,11 @@ The genuinely next implementation actions, in order:
 2. **The real-name rehearsal of gates 5–8** — real names from
    `identity/principals.json` under the synthetic realm, then a
    throwaway-named persistent instance, then the instance to keep; the
-   rationale is `HANDOFF.md` §7. The Windows guest scripts stopped pinning the
-   synthetic names in `efcaf6d` (local work item TASK-26, 2026-09-24), which is
-   unit-tested and unrun live; the post-join sign-in reference image may need
-   recapturing for a renamed daily administrator.
+   rationale is `HANDOFF.md` §7. **The gates 5–8 half PASSED 2026-09-24**
+   with real names (gate 6 judge `pass`, 24 checks; gate 8 `PASS: 21
+   checks`), after `efcaf6d`, `6d8f104` and `f7bbf13`; bundles and attempts
+   are listed in `HANDOFF.md` §7 item 5. The persistent-instance half has
+   not run.
 3. **The durable workstation flow (TASK-28)** — it does not exist. Every
    workstation runner wraps the Controller in `DisposableBootDisk`, and a
    bundle prepared against the permanent realm is refused by

@@ -708,19 +708,19 @@ no headroom for a single spurious refusal.
    `homelab/docs/operator-runbook.md` ("Keep the `local-rescue` password") and
    `homelab/vm/README.md` ("Interactive offline installation") is the fallback.
 4. **The Windows guest scripts no longer pin synthetic names (TASK-26,
-   `efcaf6d`, 2026-09-24) — unit-tested, not yet run live.**
+   `efcaf6d`, 2026-09-24) — PROVEN LIVE the same day by the real-name
+   rehearsal in item 5.**
    `Invoke-TelosIdentityProbe.ps1` names each principal by a `{{role}}`
    placeholder that `build_control_iso` renders from the host roster into the
    staged copy only (with no overlay the staged probe is byte-identical to the
    one gate 6 proved), `TelosPostSubmitDiagnostic.ps1` validates the operator
    name by shape, and `homelab/vm/windows_guest_principals.py` refuses any
    tracked guest script that pins a UPN literal or a synthetic account name.
-   **One risk only a live run settles:** the post-join operator sign-in check
-   compares a screen crop against
-   `windows_identity_references/.../post-join-operator-sign-in.ppm`, captured
-   with the synthetic operator typed in; a renamed daily administrator may miss
-   that distance threshold and need the reference recaptured. Budget for it in
-   the first real-name gate-6 run.
+   The risk recorded here — that the post-join operator sign-in reference,
+   captured with the synthetic operator typed in, would miss its distance
+   threshold for a renamed one — did **not** materialise: the typed UPN moves
+   that crop by under one unit. What did break was the reference's recorded
+   *state* string, which names the captured principal; fixed in `6d8f104`.
 5. **Then prove the roster derivation on the cheap path, before anything durable.**
    The owner asked on 2026-08-18 whether to mint a real workstation against an
    ephemeral Controller first, to avoid iterating on workstation faults by
@@ -759,8 +759,23 @@ no headroom for a single spurious refusal.
      in `identity/directory.json`, separate documents with separate loaders, so
      nothing forces them together and no new flow is needed.
 
-   So: run gates 5–8 with `principals.json` seeded (real
-   names, synthetic realm); then converge a **throwaway-named** persistent
+   **DONE 2026-09-24 — the real-name rehearsal passes gates 5–8** with
+   `principals.json` naming the standard user and the daily administrator
+   (domain administrator left synthetic) under the synthetic realm: gate 5
+   `windows-installs/run-20260925T022641Z-b918669ae1f1` (observed, ~68 min);
+   gate 6 attempt `attempt-20260925T035509Z-3a7559cc42a5`, judge `pass`, 24
+   checks, the same single `disable-reenable` deferral as 2026-08-13; gate 7
+   `arch-installs/run-20260925T044037Z-dd94354503e9`
+   (`arch-installed-windows-preserved`); gate 8
+   `arch-identity/run-20260925T044915Z-f44567dac8c6`, judge `PASS: 21
+   checks`. It found two real defects, both fixed and re-proven in the same
+   runs: the operator sign-in reference's recorded state pinned the captured
+   name (`6d8f104`; gate 6 refused within a minute of the join), and the
+   disk-roster fingerprint was read from a split serial chunk (`f7bbf13`;
+   gate 8 read `1f942b04b` of `1f942b04b72754e6` and refused its own disk).
+   Two earlier gate-6 attempts in the same bundle are the failing evidence.
+
+   Next: converge a **throwaway-named** persistent
    instance and stage its accounts (`homelab-factory-persistent-accounts`,
    which since `0e588db` refuses unless `principals.json` names all three
    directory roles) to shake out the Controller-side code; only then create the
