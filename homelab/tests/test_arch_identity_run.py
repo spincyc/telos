@@ -3166,6 +3166,27 @@ class RosterTests(unittest.TestCase):
         self.assertIn(PROBE_ROSTER_VERB.encode("ascii"),
                       session.channel.sent[0])
 
+    def test_a_partial_read_cannot_truncate_the_roster_fingerprint(self):
+        # The 2026-09-24 rehearsal read nine hex digits of a sixteen-digit
+        # fingerprint: the pattern ended in a word boundary, which also
+        # matches at the end of a buffer whose serial chunk stopped inside the
+        # value, and the mismatch guard then refused a disk whose fingerprint
+        # began with the host's own.
+        import re as _re
+        from homelab.vm.arch_identity_run import (
+            PROBE_ROSTER_MARKER, roster_probe_pattern)
+
+        pattern = _re.compile(roster_probe_pattern("tok"), _re.MULTILINE)
+        line = (
+            f"{PROBE_ROSTER_MARKER}tok=1f942b04b72754e6\r\n".encode("ascii"))
+        for cut in range(len(line) - 2):
+            self.assertIsNone(
+                pattern.search(line[:cut]),
+                f"a read cut at {cut} bytes matched a partial fingerprint")
+        found = pattern.search(line)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.group(1), b"1f942b04b72754e6")
+
     def test_a_disk_installed_under_another_roster_fails_closed(self):
         # A disk carries its roster baked in (probe helper, sudoers rules,
         # break-glass useradd), so driving it with different names would refuse a

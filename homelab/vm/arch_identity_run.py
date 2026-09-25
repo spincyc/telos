@@ -536,6 +536,22 @@ def measured_probe_pattern(
     return rb"(?:" + rb"|".join(alternatives) + rb")"
 
 
+def roster_probe_pattern(token: str) -> bytes:
+    """The roster fingerprint line, anchored on a real line ending.
+
+    Same failure, same remedy as ``measured_probe_pattern``. The fingerprint
+    used to end in ``\\b``, and a word boundary also matches at the end of the
+    buffer, so a serial chunk that stopped inside the hex digits matched their
+    leading part. The 2026-09-24 real-name rehearsal read ``1f942b04b`` -- the
+    first nine characters of the host's own ``1f942b04b72754e6`` -- from a line
+    the retained serial log shows cut off mid-value, and refused the disk as
+    "installed with a different identity roster". The terminator is a
+    lookahead so it is not consumed.
+    """
+    prefix = f"{PROBE_ROSTER_MARKER}{token}=".encode("ascii")
+    return re.escape(prefix) + rb"([0-9a-f]{8,64})(?=[\r\n])"
+
+
 def new_boot_facts() -> dict[str, object]:
     """Secret-free workstation boot/login lifecycle facts for the evidence."""
     return {
@@ -870,11 +886,9 @@ class ArchIdentityDrive:
         token = self.channel.token
         command = f"{PROBE_HELPER} {PROBE_ROSTER_VERB} {token}".encode("ascii")
         self.channel._send(command, "arch-probe-roster-sent")
-        prefix = f"{PROBE_ROSTER_MARKER}{token}=".encode("ascii")
         try:
             match = self.channel._wait(
-                re.escape(prefix) + rb"([0-9a-f]{8,64})\b",
-                "arch-probe-roster-observed")
+                roster_probe_pattern(token), "arch-probe-roster-observed")
         except (ArchIdentityError, lifecycle.EvidenceError):
             raise
         except Exception as error:  # bounded serial failure: name the stage
