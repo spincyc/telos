@@ -760,6 +760,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         "principals": {
             "standard_user": {"name": "ava"},
             "daily_administrator": {"name": "ksh"},
+            "domain_administrator": {"name": "roster-c"},
         },
     }
 
@@ -794,11 +795,11 @@ class DurableDirectoryRosterTests(unittest.TestCase):
 
     def test_a_durable_roster_bakes_its_own_programs_and_its_own_names(self):
         stage, destroy, roles = controller_principals._programs(self.roster)
-        self.assertEqual(("ava", "ksh", "directory-admin"), roles)
+        self.assertEqual(("ava", "ksh", "roster-c"), roles)
         for program in (stage, destroy):
-            self.assertIn('"order":["ava","ksh","directory-admin"]', program)
+            self.assertIn('"order":["ava","ksh","roster-c"]', program)
             # The synthetic acceptance names are nowhere in a durable program.
-            for synthetic in ("student", "operator"):
+            for synthetic in ("student", "operator", "directory-admin"):
                 self.assertNotIn(f'"{synthetic}"', program)
         # One rule, two rosters: the durable POSIX numbers are the acceptance
         # allocation's numbers for the same ROLE positions.
@@ -812,7 +813,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         self.assertEqual(
             ("domain_administrator",),
             controller_principals.DIRECTORY_ADMIN_ROLES)
-        self.assertIn('"domain_administrator":"directory-admin"', stage)
+        self.assertIn('"domain_administrator":"roster-c"', stage)
         membership = stage.split(
             "add_remove_group_members(", 1)[1].split(")", 1)[0]
         self.assertIn('"Domain Admins"', membership)
@@ -829,7 +830,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         serial = ControllerPrincipalSerial(
             io.BytesIO(), io.BytesIO(), roster=self.roster,
             roster_source="a private overlay")
-        self.assertEqual(("ava", "ksh", "directory-admin"), serial.roles)
+        self.assertEqual(("ava", "ksh", "roster-c"), serial.roles)
         # The module's own (possibly synthetic) roster is not what this console
         # accepts, and the refusal names the source it was told about.
         with self.assertRaises(ValueError) as raised:
@@ -845,6 +846,49 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         self.assertEqual(controller_principals.ROSTER_SOURCE,
                          default.roster_source)
         self.assertIsNone(default.console.password)
+
+    def test_an_overlay_that_names_nobody_is_a_refusal(self):
+        # The template `make homelab-instance` copies is exactly this: it
+        # exists, so require_overlay alone accepted it, and every durable
+        # account took its synthetic name -- permanently.
+        inert = self.root / "inert.json"
+        inert.write_text(json.dumps({"schema_version": 1, "principals": {}}),
+                         encoding="utf-8")
+        with self.assertRaises(
+                controller_principals.IdentityRosterError) as raised:
+            controller_principals.durable_directory_roster(inert)
+        message = str(raised.exception)
+        self.assertIn(str(inert), message)
+        self.assertIn("synthetic acceptance roster", message)
+        for role in DIRECTORY_ROLES:
+            self.assertIn(role, message)
+
+    def test_an_overlay_that_leaves_a_directory_role_unnamed_is_a_refusal(self):
+        partial = self.root / "partial.json"
+        partial.write_text(json.dumps({
+            "schema_version": 1,
+            "principals": {
+                "standard_user": {"name": "ava"},
+                "daily_administrator": {"name": "ksh"},
+            },
+        }), encoding="utf-8")
+        with self.assertRaises(
+                controller_principals.IdentityRosterError) as raised:
+            controller_principals.durable_directory_roster(partial)
+        message = str(raised.exception)
+        # It names the unnamed role and the synthetic name it would have got.
+        self.assertIn("domain_administrator -> directory-admin", message)
+        self.assertNotIn("standard_user ->", message)
+        # A caller that plans only the named roles is not refused.
+        self.assertEqual("ksh", controller_principals.durable_directory_roster(
+            partial, roles=("standard_user", "daily_administrator"),
+        )["daily_administrator"])
+
+    def test_the_break_glass_role_need_not_be_named(self):
+        # local_rescue is a LOCAL account, never a directory SID, so leaving it
+        # to its contract name mints nothing permanent in the directory.
+        self.assertNotIn("local_rescue", self.OVERLAY["principals"])
+        self.assertEqual("local-rescue", self.roster["local_rescue"])
 
     def test_a_durable_console_answers_sudos_own_prompt(self):
         # A persistent instance's console account has a password the operator

@@ -939,6 +939,7 @@ def identity_roster_source(
 
 def identity_roster(
     overlay_path: Path | None = None, *, require_overlay: bool = False,
+    require_named: Sequence[str] = (),
 ) -> dict[str, str]:
     """Resolve ``{contract role: principal name}`` once, for every reader.
 
@@ -961,7 +962,18 @@ def identity_roster(
     would be told a directory full of ``student``/``operator`` accounts
     succeeded.  Callers that mint durable identities pass ``True`` and get a
     refusal naming the exact path that was not there.
+
+    *require_named* closes the same hole one level down, and implies
+    *require_overlay*.  The overlay is a SPARSE patch, so an overlay that
+    exists but leaves a role out -- the inert template ``make
+    homelab-instance`` copies names none at all -- still resolves that role to
+    its synthetic acceptance name.  A durable caller lists the roles it will
+    make permanent, and each of them must be named by the overlay itself.
     """
+    unknown = [role for role in require_named if role not in CONTRACT_ROLES]
+    if unknown:
+        raise IdentityRosterError(
+            f"cannot require the overlay to name unknown role {unknown[0]!r}")
     contract = json.loads(
         identity_contract_path().read_text(encoding="utf-8"))
     principals = contract["principals"]
@@ -972,12 +984,24 @@ def identity_roster(
         overlay_path = identity_overlay_path()
     overlay = _identity_overlay_names(overlay_path)
     overlaid = overlay is not None
-    if not overlaid and require_overlay:
+    if not overlaid and (require_overlay or require_named):
         raise IdentityRosterError(
             f"identity roster overlay {overlay_path} does not exist and this "
             "caller may not fall back to the synthetic acceptance roster; "
             "seed it from homelab/instance-example/identity/")
     source = identity_roster_source(overlay_path, overlaid=overlaid)
+    unnamed = [role for role in require_named if role not in (overlay or {})]
+    if unnamed:
+        # Refused before any name is validated or returned: the roles below
+        # would otherwise be minted under the synthetic names shown, with
+        # permanent SIDs, and reported as a success.
+        fallback = ", ".join(f"{role} -> {roster[role]}" for role in unnamed)
+        raise IdentityRosterError(
+            f"identity roster overlay {overlay_path} does not name "
+            f"{', '.join(unnamed)}; this caller mints permanent identities "
+            f"and may not fill a role from the synthetic acceptance roster "
+            f"({fallback}). Name every one of {', '.join(require_named)} in "
+            f"the overlay; roster source: {source}")
     roster.update(overlay or {})
     for role in CONTRACT_ROLES:
         name = roster[role]

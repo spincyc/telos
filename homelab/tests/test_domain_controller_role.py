@@ -620,22 +620,55 @@ class TestDurableAccountResolver(DurableAccountBase):
         # homelab/instance/identity/principals.json, so the moment the owner
         # created one these tests would have started asserting against their
         # real account names.
+        from homelab.vm import controller_principals as principals
+        from homelab.workstations.arch_second import identity_roster
+
         with tempfile.TemporaryDirectory() as scratch:
             overlay = self.overlay(scratch, RENAMED_ROSTER)
             _, renamed = self.resolve(ACCEPTANCE_ROLES, overlay=overlay)
             absent = Path(scratch) / "no-such-overlay.json"
-            _, contract = self.resolve(ACCEPTANCE_ROLES, overlay=absent)
+            contract = principals.directory_account_plan(
+                ACCEPTANCE_ROLES, roster=identity_roster(overlay_path=absent))
         self.assertEqual([entry["name"] for entry in renamed["accounts"]],
                          ["roster-a", "roster-b", "roster-c"])
-        # An overlay that is not there is the no-overlay case: the tracked
-        # contract's synthetic roster, which is what gates 6 and 8 expect.
-        self.assertEqual([entry["name"] for entry in contract["accounts"]],
-                         ["student", "operator", "directory-admin"])
         # A rename moves no identifier -- the property the whole scheme rests
         # on, asserted across the process boundary.
         self.assertEqual(
             [entry["uidNumber"] for entry in renamed["accounts"]],
-            [entry["uidNumber"] for entry in contract["accounts"]])
+            [entry["uidNumber"] for entry in contract])
+
+    def test_it_never_fills_a_durable_role_from_the_synthetic_roster(self):
+        # This program runs only when durable accounts are declared, so every
+        # account it plans is permanent. An absent overlay, the inert template
+        # `make homelab-instance` copies, and an overlay that skips a declared
+        # role must all stop convergence -- never plan synthetic accounts.
+        partial = {role: name for role, name in RENAMED_ROSTER.items()
+                   if role != "domain_administrator"}
+        with tempfile.TemporaryDirectory() as scratch:
+            cases = (
+                ("an absent overlay", Path(scratch) / "no-such-overlay.json",
+                 "does not exist"),
+                ("the inert template", self.overlay(scratch, {}),
+                 "does not name"),
+            )
+            for label, overlay, reason in cases:
+                with self.subTest(overlay=label):
+                    result, _ = self.resolve(ACCEPTANCE_ROLES, overlay=overlay)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertEqual("", result.stdout)
+                    self.assertIn(reason, result.stderr)
+                    self.assertIn("synthetic acceptance roster", result.stderr)
+        with tempfile.TemporaryDirectory() as scratch:
+            overlay = self.overlay(scratch, partial)
+            result, _ = self.resolve(ACCEPTANCE_ROLES, overlay=overlay)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("domain_administrator", result.stderr)
+            # Declaring only the roles the overlay names is accepted.
+            result, document = self.resolve(
+                ["standard_user", "daily_administrator"], overlay=overlay)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual([entry["name"] for entry in document["accounts"]],
+                             ["roster-a", "roster-b"])
 
     def test_it_refuses_a_roster_naming_a_reserved_directory_object(self):
         # The control host is the last point at which nothing has been
@@ -658,8 +691,12 @@ class TestDurableAccountResolver(DurableAccountBase):
 
     def test_it_only_passes_through_the_one_allocation_rule(self):
         from homelab.vm import controller_principals as principals
+        from homelab.workstations.arch_second import identity_roster
 
-        result, document = self.resolve(ACCEPTANCE_ROLES)
+        with tempfile.TemporaryDirectory() as scratch:
+            overlay = self.overlay(scratch, RENAMED_ROSTER)
+            result, document = self.resolve(ACCEPTANCE_ROLES, overlay=overlay)
+            roster = identity_roster(overlay_path=overlay)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(document["schema"], 1)
         self.assertEqual(document["posix_base"], principals.POSIX_BASE)
@@ -671,7 +708,8 @@ class TestDurableAccountResolver(DurableAccountBase):
         # The resolver adds no keying of its own; this is the property that
         # makes "one rule, one place" true across the process boundary.
         self.assertEqual(document["accounts"],
-                         principals.directory_account_plan(ACCEPTANCE_ROLES))
+                         principals.directory_account_plan(
+                             ACCEPTANCE_ROLES, roster=roster))
 
     def test_it_refuses_a_declaration_it_cannot_turn_into_a_plan(self):
         for label, roles, extra in (
@@ -687,8 +725,13 @@ class TestDurableAccountResolver(DurableAccountBase):
             ("a group RID map that is not JSON",
              ACCEPTANCE_ROLES, {"rids": "not-json"}),
         ):
-            with self.subTest(refusal=label):
-                result, _ = self.resolve(roles, **extra)
+            # A complete overlay, so each refusal is for its own reason and
+            # not merely for a missing roster.
+            with self.subTest(refusal=label), \
+                    tempfile.TemporaryDirectory() as scratch:
+                result, _ = self.resolve(
+                    roles, overlay=self.overlay(scratch, RENAMED_ROSTER),
+                    **extra)
                 self.assertNotEqual(0, result.returncode)
                 self.assertEqual("", result.stdout)
                 self.assertIn("error:", result.stderr)

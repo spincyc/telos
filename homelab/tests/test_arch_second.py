@@ -2067,6 +2067,37 @@ class RosterLoaderTests(unittest.TestCase):
         self.assertEqual(
             self.contract_roster(), identity_roster(overlay_path=self.ABSENT))
 
+    def test_a_durable_caller_can_require_named_roles(self):
+        # An overlay is a sparse patch, so "it exists" does not mean "it names
+        # the accounts": the inert template names nobody. A durable caller
+        # lists the roles it will make permanent, and each must be named by
+        # the overlay itself rather than filled from the contract.
+        partial = self.overlay({
+            "schema_version": 1,
+            "principals": {"standard_user": {"name": "roster-a"}},
+        })
+        self.assertEqual("roster-a", identity_roster(
+            overlay_path=partial, require_named=("standard_user",),
+        )["standard_user"])
+        with self.assertRaisesRegex(
+                IdentityRosterError,
+                "does not name daily_administrator.*synthetic acceptance "
+                "roster.*daily_administrator -> operator"):
+            identity_roster(overlay_path=partial, require_named=(
+                "standard_user", "daily_administrator"))
+        # It implies require_overlay: an absent overlay names nobody.
+        with self.assertRaisesRegex(IdentityRosterError, "may not fall back"):
+            identity_roster(overlay_path=self.ABSENT,
+                            require_named=("standard_user",))
+        # A misspelled requirement is a refusal, not a vacuous pass.
+        with self.assertRaisesRegex(IdentityRosterError, "unknown role"):
+            identity_roster(overlay_path=partial,
+                            require_named=("standard-user",))
+        # Callers that require nothing are untouched.
+        self.assertEqual(identity_roster(overlay_path=partial),
+                         identity_roster(overlay_path=partial,
+                                         require_named=()))
+
     def test_every_refusal_names_where_the_roster_came_from(self):
         # A rejected roster used to say only what was wrong with it, never
         # whether the offending name came from the tracked contract or from the

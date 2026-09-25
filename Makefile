@@ -967,9 +967,10 @@ homelab-factory-persistent-converge:
 # (make homelab-bootstrap-controller INVENTORY=...) cannot reach it.
 #
 # It refuses the synthetic acceptance roster outright. The names come from the
-# owner's gitignored overlay under homelab/instance/identity/, resolved with
-# require_overlay, because minting permanent student/operator SIDs because an
-# overlay was missing is exactly the failure this exists to prevent.
+# owner's gitignored overlay under homelab/instance/identity/, which must exist
+# AND itself name every directory role: minting permanent student/operator SIDs
+# because an overlay was missing, or was the inert template, or renamed only
+# some roles, is exactly the failure this exists to prevent.
 #
 # One password per contract role is typed at your terminal. Nothing is read
 # from a file, a Make variable, an environment variable or argv, and nothing is

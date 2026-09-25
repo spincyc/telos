@@ -172,6 +172,15 @@ the acceptance gates expect. The template beside this README is deliberately
 inert for the same reason: `principals` is empty, so `make homelab-instance`
 copies it without changing a single name.
 
+That fallback is for the **disposable** acceptance lane only. The durable
+directory paths — `make homelab-factory-persistent-accounts` and the
+`domain_controller` role's durable accounts — mint permanent SIDs, so they
+refuse unless this file exists **and itself names** every directory role they
+provision (`standard_user`, `daily_administrator`, `domain_administrator`). The
+inert template, or a file that renames only some of them, is refused with the
+synthetic name each unnamed role would have taken; nothing is provisioned.
+`local_rescue` is a local account, never a directory SID, and may stay unnamed.
+
 ### Shape
 
 A sparse patch of the contract's own `principals` block, so a reader who knows

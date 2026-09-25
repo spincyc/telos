@@ -32,7 +32,10 @@ itself.
 
 Refusals are named and fail closed.  In particular it refuses ``local_rescue``:
 ADR 0055/0063 keep the break-glass administrator a LOCAL account at UID 1000 on
-the workstation, never a directory principal.
+the workstation, never a directory principal.  And it refuses to fill a
+declared role from the synthetic acceptance roster: the accounts it plans are
+permanent, so a missing overlay, or one that leaves a declared role unnamed,
+stops convergence rather than minting the acceptance accounts.
 """
 
 from __future__ import annotations
@@ -111,11 +114,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--identity-overlay", type=Path, default=None,
         help="resolve the roster against this private overlay instead of "
-             "the one this checkout's instance/ holds. Reads names, never a "
-             "credential; a path that does not exist resolves to the tracked "
-             "contract's synthetic roster, which is what makes a test of this "
-             "program independent of whatever overlay the developer's own "
-             "machine happens to carry.")
+             "the one this checkout's instance/ holds, so a test of this "
+             "program is independent of whatever overlay the developer's own "
+             "machine happens to carry. Reads names, never a credential. A "
+             "path that does not exist, or an overlay that leaves a declared "
+             "role unnamed, is a refusal.")
     arguments = parser.parse_args(argv)
 
     principals = _principals()
@@ -139,16 +142,17 @@ def main(argv: list[str] | None = None) -> int:
             "the role's declared privilege group disagrees with "
             f"{principals.POSIX_ADMIN_GROUP!r}")
 
-    roster = None
-    if arguments.identity_overlay is not None:
-        try:
-            from homelab.workstations.arch_second import identity_roster
-            roster = identity_roster(overlay_path=arguments.identity_overlay)
-        except Exception as error:  # noqa: BLE001 - reported, never swallowed
-            raise ResolverError(
-                f"the identity roster could not be resolved from "
-                f"{arguments.identity_overlay}: "
-                f"{type(error).__name__}: {error}") from error
+    # The role runs this program only when durable accounts are declared, so
+    # the roster is the DURABLE one: the overlay must exist and must itself
+    # name every declared directory role. Falling back to the synthetic
+    # acceptance names here would mint permanent accounts nobody asked for.
+    try:
+        roster = principals.durable_directory_roster(
+            arguments.identity_overlay, roles=_roles(arguments.roles))
+    except Exception as error:  # noqa: BLE001 - reported, never swallowed
+        raise ResolverError(
+            f"the durable identity roster could not be resolved: "
+            f"{type(error).__name__}: {error}") from error
 
     try:
         accounts = principals.directory_account_plan(

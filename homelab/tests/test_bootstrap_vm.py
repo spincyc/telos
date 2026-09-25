@@ -1677,6 +1677,7 @@ PRIVATE_OVERLAY = {
     "principals": {
         "standard_user": {"name": "ava"},
         "daily_administrator": {"name": "ksh"},
+        "domain_administrator": {"name": "roster-c"},
     },
 }
 

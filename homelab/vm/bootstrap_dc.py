@@ -1551,10 +1551,12 @@ def persistent_accounts(
 
     Four properties matter more than the mechanism:
 
-    * *the synthetic roster is refused.* ``durable_directory_roster`` is
-      ``identity_roster(require_overlay=True)``, so a missing or unreadable
-      private overlay is a named refusal and never a directory full of
-      permanent ``student``/``operator`` SIDs reported as a success.
+    * *the synthetic roster is refused.* ``durable_directory_roster``
+      requires the private overlay to exist and to name every directory role
+      itself, so a missing or unreadable overlay -- or the inert template, or
+      one that renames only some roles -- is a named refusal and never a
+      directory holding permanent ``student``/``operator`` SIDs reported as a
+      success.
     * *the privilege separation is not this verb's to widen.* The Domain
       Admins membership is derived, in the guest program, from
       ``DIRECTORY_ADMIN_ROLES``; ``daily_administrator`` is absent from it, so

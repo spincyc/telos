@@ -338,10 +338,11 @@ def directory_group_allocation() -> dict[str, int]:
 
 def durable_directory_roster(
     overlay_path: Path | None = None,
+    roles: Sequence[str] = DIRECTORY_ROLES,
 ) -> dict[str, str]:
     """Resolve the roster a DURABLE directory may be provisioned from.
 
-    ``identity_roster(require_overlay=True)`` and nothing else.  The module
+    ``identity_roster(require_named=...)`` and nothing else.  The module
     roster resolved at import (``_ROSTER``) is deliberately NOT reused: it is
     allowed to fall back to the tracked contract's synthetic acceptance names,
     which is right for the disposable Controller every gate throws away and
@@ -350,12 +351,20 @@ def durable_directory_roster(
     mistyped its path — gets a refusal naming the exact file, never a
     directory full of ``student``/``operator`` accounts reported as a success.
 
+    An overlay that EXISTS is not enough either.  It is a sparse patch, and the
+    template ``make homelab-instance`` copies names nobody, so every directory
+    role in *roles* must be named by the overlay itself.  Roles that are not
+    directory roles are left to ``directory_account_plan`` to refuse, with its
+    own reason.
+
     *overlay_path* exists for the same reason the domain_controller role's
     control-host resolver has ``--identity-overlay``: a test must be able to
     resolve a roster it wrote itself, without reading or writing whatever
     private overlay the developer's own machine happens to carry.
     """
-    return identity_roster(overlay_path=overlay_path, require_overlay=True)
+    return identity_roster(
+        overlay_path=overlay_path, require_overlay=True,
+        require_named=tuple(role for role in DIRECTORY_ROLES if role in roles))
 
 
 def _programs(roster: Mapping[str, str]) -> tuple[str, str, tuple[str, ...]]:
