@@ -30,6 +30,13 @@ and takes no password argument: a durable account's credential reaches Samba
 only through the driver, which opens a root-owned 0600 file on the target
 itself.
 
+Besides the declared roles, the plan always carries every ADDITIONAL standard
+user the overlay lists under ``additional_standard_users``: durable-only
+accounts with no contract role, planned as plain ``standard`` accounts under a
+name-free ``contract_role`` label (``additional_standard_user_<uidNumber>``)
+and reported again, as labels, in the document's ``additional_standard_users``
+so the role can check the plan against both declarations.
+
 Refusals are named and fail closed.  In particular it refuses ``local_rescue``:
 ADR 0055/0063 keep the break-glass administrator a LOCAL account at UID 1000 on
 the workstation, never a directory principal.  And it refuses to fill a
@@ -131,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     # here rather than trusted: they are externally fixed Active Directory
     # constants, and a role whose declaration disagreed with the allocation
     # would verify a gidNumber nothing had staged.  The gidNumber ARITHMETIC is
-    # not restated -- it lives only in controller_principals.
+    # not restated -- controller_principals owns the allocation, over the
+    # numbers the roster loader judges.
     if rids != principals.POSIX_GROUP_RIDS:
         raise ResolverError(
             "the role's declared well-known group RIDs disagree with "
@@ -146,6 +154,12 @@ def main(argv: list[str] | None = None) -> int:
     # the roster is the DURABLE one: the overlay must exist and must itself
     # name every declared directory role. Falling back to the synthetic
     # acceptance names here would mint permanent accounts nobody asked for.
+    #
+    # It is the whole durable DECLARATION, passed on as one object: each
+    # directory role's uidNumber (the overlay's uid_number pin, else its
+    # positional default) and every additional standard user the overlay lists
+    # travel with the names, so the plan below cannot fall back to positional
+    # numbers or drop one of those users.
     try:
         roster = principals.durable_directory_roster(
             arguments.identity_overlay, roles=_roles(arguments.roles))
@@ -182,6 +196,14 @@ def main(argv: list[str] | None = None) -> int:
         "admin_group": principals.POSIX_ADMIN_GROUP,
         "groups": principals.directory_group_allocation(),
         "accounts": accounts,
+        # The labels of the durable-only standard users the overlay declares,
+        # reported apart from ``accounts`` so the role can require the plan to
+        # hold exactly the declared roles PLUS exactly these -- no fewer, and
+        # none it cannot account for. Empty when the overlay lists none.
+        "additional_standard_users": [
+            principals.additional_standard_user_label(user.uid_number)
+            for user in roster.additional_standard_users
+        ],
     }
     json.dump(document, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")

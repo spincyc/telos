@@ -730,12 +730,12 @@ def identity_overlay_path() -> Path:
 
 # The contract's four principal roles, in the one order that matters: the
 # first three are the DIRECTORY roles, and a directory role's position in this
-# tuple is what fixes its uidNumber in
-# vm/controller_principals.directory_account_plan -- for the disposable
-# acceptance roster and for a persistent instance's durable directory accounts
-# alike, because that is the only place the rule is written.  Keying the
-# allocation on the ROLE rather than on the name is what lets a name change
-# without moving a UID; appending a role appends a UID and moves none.
+# tuple is what fixes its DEFAULT uidNumber (``directory_uid_numbers`` below;
+# the private overlay may pin a different one) -- for the disposable acceptance
+# roster and for a persistent instance's durable directory accounts alike,
+# because that is the only place the rule is written.  Keying the allocation
+# on the ROLE rather than on the name is what lets a name change without
+# moving a UID; appending a role appends a UID and moves none.
 CONTRACT_ROLES = (
     "standard_user",
     "daily_administrator",
@@ -744,8 +744,8 @@ CONTRACT_ROLES = (
 )
 # ``local_rescue`` is deliberately excluded: ADR 0055/0063 keep the break-glass
 # administrator a LOCAL account (UID 1000 on this disk), never a directory
-# principal, so nothing stages it in the directory and it owns no uidNumber
-# from the directory allocation.
+# principal, so nothing stages it in the directory, it owns no uidNumber from
+# the directory allocation, and an overlay pinning one is refused.
 DIRECTORY_ROLES = CONTRACT_ROLES[:3]
 # ...and it is therefore the ONE role whose name becomes a local UNIX account:
 # an ``useradd`` in the rendered installer, a sudoers rule, and the account the
@@ -779,9 +779,11 @@ LOCAL_ROLE = CONTRACT_ROLES[3]
 # after every package is in place -- an authority no static list can match.
 # That guard deliberately exempts the break-glass account, because ADR 0055/0063
 # make it local by design, and that exemption is exactly the hole these names
-# close.  Restating the directory reservations (``administrator``, ``guest``,
-# ``krbtgt``, the ``dns-`` prefix) here would be a third copy of a list two
-# files already keep in step, and they mean nothing to a local UNIX account.
+# close.  The directory reservations (``administrator``, ``guest``, ``krbtgt``,
+# the ``dns-`` prefix) mean nothing to a local UNIX account, so they do not
+# bind this role; their copy below (DIRECTORY_RESERVED_NAMES) binds only the
+# overlay's additional standard users, which reach the directory by a path
+# neither of the other two copies sees.
 #
 # Compared without case folding, unlike the directory list: ``SAFE_PRINCIPAL``
 # admits lower case only and is checked first, so there is no ``Root`` for this
@@ -800,10 +802,234 @@ def _reserved_local_name(name: str) -> bool:
                    for prefix in LOCAL_RESERVED_PREFIXES))
 
 
-# Only the NAME is instance data.  ``domain_role`` and ``workstation_role`` are
-# policy the lifecycle judge grades (workstations/identity_lifecycle.py
-# validate_contract), so an overlay may not restate or move them.
-OVERLAY_PRINCIPAL_KEYS = ("name",)
+# Directory objects no ADDITIONAL standard user may be named after.  The third
+# copy of the list ``ansible/roles/domain_controller/files/provision-accounts.py``
+# enforces at the moment of use and its control-host resolver restates, held
+# equal to both by a test.  It exists because additional standard users (below)
+# reach the directory by a path those two never see: ``persistent-accounts``
+# stages them over the Controller serial console, where nothing else would stop
+# an overlay minting a directory ``root`` or adopting ``krbtgt``.  It binds the
+# additional users alone -- the contract roles keep the arrangement the comment
+# above the local reservations describes.
+DIRECTORY_RESERVED_NAMES = frozenset({
+    "administrator", "guest", "krbtgt",
+    "root", "daemon", "bin", "sys", "nobody",
+})
+DIRECTORY_RESERVED_PREFIXES = ("dns-",)
+
+
+def _reserved_directory_name(name: str) -> bool:
+    """True when *name* belongs to the directory or to every managed machine."""
+    return (name in DIRECTORY_RESERVED_NAMES
+            or any(name.startswith(prefix)
+                   for prefix in DIRECTORY_RESERVED_PREFIXES)
+            or _reserved_local_name(name))
+
+
+# ---------------------------------------------------------------------------
+# The directory POSIX identifier frame.  ADR 0055: UID and GID come from the
+# directory, and every SSSD client runs with ``ldap_id_mapping = False``.
+#
+# Owned HERE, beside the roster loader, because the private overlay may pin a
+# directory role's uidNumber and declare durable-only standard users with their
+# own, and a number that cannot work must be refused where the overlay is read
+# -- for every reader at once, this installer included -- rather than by
+# whichever lane happens to stage it first.  ``vm/controller_principals``
+# re-exports these and builds the rest of the allocation (primary group, shell,
+# home, plans, guest programs) from them.
+#
+# Every directory uidNumber lies in DIRECTORY_UID_BASE..DIRECTORY_UID_MAX:
+#
+#   * below 10000 is the workstations' LOCAL account space: system accounts
+#     under 1000 and the break-glass administrator at 1000, which ADR 0055/0063
+#     keep local.  A directory user there would shadow or be shadowed by one.
+#   * 60000 is the top of the regular-user range on the installed disk --
+#     shadow's ``UID_MAX`` in Arch's /etc/login.defs and systemd's documented
+#     1000..60000 "regular users" range.  Directly above it systemd reserves
+#     60001..60513 (systemd-homed), 60514..60577 (host users mapped into
+#     containers) and 61184..65519 (DynamicUser= services); 65534 is
+#     ``nobody`` and 65535 the 16-bit ``(uid_t) -1``.  Far above, the
+#     Controller's own idmap.ldb allocates xidNumbers from 3000000 to every SID
+#     without a uidNumber, which ``idmap_ldb:use rfc2307 = yes`` would let
+#     collide with a directory UID.
+#
+# SSSD sets no narrower window: neither the fleet template
+# (ansible/roles/identity_client/templates/sssd.conf.j2) nor this installer's
+# rendering sets ``min_id``/``max_id``, whose defaults (1 and 0) are no limit.
+DIRECTORY_UID_BASE = 10000
+DIRECTORY_UID_MAX = 60000
+# gidNumber = base + the group's well-known Active Directory RID (Domain Admins
+# 512 -> 10512, Domain Users 513 -> 10513).  Both sit inside the user range, so
+# a user number equal to either is refused: SSSD resolves users and groups from
+# one directory, and an identifier that is both is neither.
+DIRECTORY_GROUP_RIDS = {"Domain Users": 513, "Domain Admins": 512}
+
+
+def directory_group_gids() -> dict[str, int]:
+    """The gidNumber of each well-known group every SSSD client must resolve."""
+    return {group: DIRECTORY_UID_BASE + rid
+            for group, rid in DIRECTORY_GROUP_RIDS.items()}
+
+
+def directory_uid_numbers(
+    pins: Mapping[str, int] | None = None,
+) -> dict[str, int]:
+    """THE directory uidNumber rule, for the three directory roles.
+
+    A role whose ``uid_number`` the private overlay pins keeps it; every other
+    role gets ``DIRECTORY_UID_BASE`` + its position in ``DIRECTORY_ROLES``
+    (standard user 10000, daily administrator 10001, domain administrator
+    10002).  So an overlay that pins nothing -- and the absent overlay of every
+    acceptance run -- allocates exactly the numbers gates 6 and 8 prove, and
+    renaming an account still moves no UID.  A pin never shifts another role:
+    a collision is refused by ``validate_directory_identifiers``, never
+    resolved here.
+    """
+    pins = {} if pins is None else pins
+    return {
+        role: pins.get(role, DIRECTORY_UID_BASE + index)
+        for index, role in enumerate(DIRECTORY_ROLES)
+    }
+
+
+def _json_integer(value: object) -> bool:
+    """True for a JSON integer; ``true`` is an int to Python and is refused."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+@dataclass(frozen=True)
+class AdditionalStandardUser:
+    """One durable-only standard directory user from the private overlay.
+
+    Declared under the overlay's ``additional_standard_users``.  Such a user has
+    no contract role: nothing bakes it onto a workstation disk and no
+    acceptance gate stages or checks it.  Only the durable paths
+    (``persistent-accounts`` and the domain_controller role) create it, always
+    as a plain ``standard`` account -- never Domain Admins, never workstation
+    sudo -- and it logs in to a workstation only because the disk's SSSD uses
+    ``access_provider = ad``.
+    """
+
+    name: str
+    uid_number: int
+
+
+@dataclass(frozen=True)
+class IdentityDeclaration:
+    """Everything the private overlay declares, resolved and validated once.
+
+    ``roster`` is ``identity_roster()``'s answer, all four contract roles.
+    ``uid_numbers`` is each DIRECTORY role's uidNumber under
+    ``directory_uid_numbers``.  ``additional_standard_users`` are the
+    durable-only accounts; a disposable acceptance lane must drop them.
+    """
+
+    roster: Mapping[str, str]
+    uid_numbers: Mapping[str, int]
+    additional_standard_users: tuple[AdditionalStandardUser, ...]
+    source: str
+
+
+def validate_directory_identifiers(
+    roster: Mapping[str, str],
+    uid_numbers: Mapping[str, int],
+    additional_standard_users: Sequence[Any] = (),
+    *,
+    source: str,
+) -> None:
+    """Refuse any directory identifier that could not work, by name.
+
+    One pass over every uidNumber the directory would hold -- each directory
+    role's (pinned or positional) and each additional standard user's -- plus
+    the additional users' names.  Called by the loader for every overlay and
+    again by ``vm/controller_principals`` for a caller-built declaration, so the
+    rule has one implementation.  Additional users are described by their
+    position in the overlay, never by name: a refusal is printed at a terminal
+    and may be kept in a transcript (ADR 0046).
+    """
+    if set(uid_numbers) != set(DIRECTORY_ROLES):
+        raise IdentityRosterError(
+            "identity roster uidNumbers must cover exactly the directory "
+            f"roles {list(DIRECTORY_ROLES)}; roster source: {source}")
+    positional = directory_uid_numbers()
+    claims: list[tuple[str, object]] = []
+    for role in DIRECTORY_ROLES:
+        origin = ("positional default"
+                  if uid_numbers[role] == positional[role] else "pinned")
+        claims.append((f"{role} ({origin})", uid_numbers[role]))
+    names = {name: role for role, name in roster.items()}
+    additional: dict[str, str] = {}
+    for index, user in enumerate(additional_standard_users):
+        who = f"additional_standard_users[{index}]"
+        name = getattr(user, "name", None)
+        if not isinstance(name, str) or not SAFE_PRINCIPAL.fullmatch(name):
+            raise IdentityRosterError(
+                f"identity roster name for {who} is not safely "
+                f"representable; roster source: {source}")
+        if len(name) > SAMACCOUNTNAME_LIMIT:
+            raise IdentityRosterError(
+                f"identity roster name for {who} exceeds the "
+                f"{SAMACCOUNTNAME_LIMIT}-character Active Directory "
+                f"sAMAccountName limit; roster source: {source}")
+        if _reserved_directory_name(name):
+            raise IdentityRosterError(
+                f"identity roster name for {who} is a reserved directory "
+                "object or local system account (Administrator, Guest, "
+                "krbtgt, a dns-* service account, root and the other local "
+                "system accounts, or systemd's own prefix); it belongs to the "
+                f"directory or to every managed machine, not to a roster; "
+                f"roster source: {source}")
+        if name in names:
+            raise IdentityRosterError(
+                f"identity roster name for {who} is the {names[name]} "
+                "account's name; an additional standard user must be distinct "
+                "from every roster name, local_rescue included; roster "
+                f"source: {source}")
+        if name in additional:
+            raise IdentityRosterError(
+                f"identity roster name for {who} repeats "
+                f"{additional[name]}; roster source: {source}")
+        additional[name] = who
+        claims.append((who, getattr(user, "uid_number", None)))
+    groups = {gid: group for group, gid in directory_group_gids().items()}
+    owners: dict[int, str] = {}
+    for who, uid in claims:
+        if not _json_integer(uid):
+            raise IdentityRosterError(
+                f"identity roster uid_number for {who} must be a JSON integer; "
+                f"roster source: {source}")
+        if not DIRECTORY_UID_BASE <= uid <= DIRECTORY_UID_MAX:
+            raise IdentityRosterError(
+                f"identity roster uid_number {uid} for {who} is outside the "
+                f"directory range {DIRECTORY_UID_BASE}..{DIRECTORY_UID_MAX}: "
+                "below it is the workstations' local account space (ADR "
+                "0055), above it systemd's reserved ranges and nobody; "
+                f"roster source: {source}")
+        if uid in groups:
+            raise IdentityRosterError(
+                f"identity roster uid_number {uid} for {who} is the gidNumber "
+                f"of {groups[uid]}; a directory user and a directory group "
+                f"may not share an identifier; roster source: {source}")
+        if uid in owners:
+            raise IdentityRosterError(
+                f"identity roster uid_number {uid} is claimed by both "
+                f"{owners[uid]} and {who}. Every directory uidNumber must be "
+                "distinct, and a pin never shifts another role's number: pin "
+                "that role too, or choose another number; roster source: "
+                f"{source}")
+        owners[uid] = who
+
+
+# The NAME is instance data, and so -- optionally -- is the directory uidNumber
+# of a directory role (``uid_number``; see ``directory_uid_numbers``).
+# ``domain_role`` and ``workstation_role`` are policy the lifecycle judge grades
+# (workstations/identity_lifecycle.py validate_contract), so an overlay may not
+# restate or move them.
+OVERLAY_PRINCIPAL_KEYS = ("name", "uid_number")
+# The overlay's optional list of durable-only standard directory users, each
+# ``{"name": ..., "uid_number": ...}`` with both keys required.
+OVERLAY_ADDITIONAL_USERS = "additional_standard_users"
+OVERLAY_ADDITIONAL_USER_KEYS = ("name", "uid_number")
 OVERLAY_SCHEMA_VERSION = 1
 
 
@@ -818,8 +1044,23 @@ def _overlay_documentation_key(key: object) -> bool:
     return isinstance(key, str) and key.startswith("_")
 
 
-def _identity_overlay_names(path: Path) -> dict[str, str] | None:
-    """Read the private overlay's sparse ``principals`` patch, or nothing.
+@dataclass(frozen=True)
+class _OverlayDocument:
+    """What one private overlay declares, structurally checked, not yet judged.
+
+    ``names`` is the sparse ``principals`` patch, ``uid_pins`` the directory
+    roles it pins a ``uid_number`` for, and ``additional`` its durable-only
+    standard users.  Names and numbers are judged against the resolved roster
+    by ``identity_declaration``, which alone knows the whole roster.
+    """
+
+    names: dict[str, object]
+    uid_pins: dict[str, int]
+    additional: tuple[AdditionalStandardUser, ...]
+
+
+def _identity_overlay(path: Path) -> _OverlayDocument | None:
+    """Read the private overlay, or nothing.
 
     Returns ``None`` -- distinct from an empty patch -- for the ONE condition
     that may fall back: the file genuinely is not there.  Then every name stays
@@ -867,7 +1108,7 @@ def _identity_overlay_names(path: Path) -> dict[str, str] | None:
             f"{OVERLAY_SCHEMA_VERSION}")
     unknown = [
         key for key in document
-        if key not in {"schema_version", "principals"}
+        if key not in {"schema_version", "principals", OVERLAY_ADDITIONAL_USERS}
         and not _overlay_documentation_key(key)
     ]
     if unknown:
@@ -878,7 +1119,8 @@ def _identity_overlay_names(path: Path) -> dict[str, str] | None:
     if not isinstance(principals, dict):
         raise IdentityRosterError(
             f"identity roster overlay {path} principals is not a JSON object")
-    names: dict[str, str] = {}
+    names: dict[str, object] = {}
+    uid_pins: dict[str, int] = {}
     for role, declaration in principals.items():
         if _overlay_documentation_key(role):
             continue
@@ -897,13 +1139,64 @@ def _identity_overlay_names(path: Path) -> dict[str, str] | None:
         if extra:
             raise IdentityRosterError(
                 f"identity roster overlay {path} role {role!r} may only set "
-                f"{OVERLAY_PRINCIPAL_KEYS[0]!r}")
+                f"{' and '.join(repr(key) for key in OVERLAY_PRINCIPAL_KEYS)}")
         if "name" not in declaration:
             raise IdentityRosterError(
                 f"identity roster overlay {path} role {role!r} declares no "
                 "name")
         names[role] = declaration["name"]
-    return names
+        if "uid_number" not in declaration:
+            continue
+        if role not in DIRECTORY_ROLES:
+            # Refused, never ignored: a number the owner wrote down and nothing
+            # applies is a number they will later believe in.
+            raise IdentityRosterError(
+                f"identity roster overlay {path} pins a uid_number for "
+                f"{role}, which is a LOCAL account (UID 1000 on the "
+                "workstation disk, ADR 0055/0063) and owns no directory "
+                "uidNumber; remove the pin")
+        if not _json_integer(declaration["uid_number"]):
+            raise IdentityRosterError(
+                f"identity roster overlay {path} role {role!r} uid_number "
+                "must be a JSON integer")
+        uid_pins[role] = declaration["uid_number"]
+    additional = document.get(OVERLAY_ADDITIONAL_USERS, [])
+    if not isinstance(additional, list):
+        raise IdentityRosterError(
+            f"identity roster overlay {path} {OVERLAY_ADDITIONAL_USERS} is not "
+            "a JSON array")
+    users: list[AdditionalStandardUser] = []
+    for index, declaration in enumerate(additional):
+        # By position, never by name, like every loader refusal of these.
+        who = f"{OVERLAY_ADDITIONAL_USERS}[{index}]"
+        if not isinstance(declaration, dict):
+            raise IdentityRosterError(
+                f"identity roster overlay {path} {who} is not a JSON object")
+        extra = [
+            key for key in declaration
+            if key not in OVERLAY_ADDITIONAL_USER_KEYS
+            and not _overlay_documentation_key(key)
+        ]
+        if extra:
+            raise IdentityRosterError(
+                f"identity roster overlay {path} {who} may only set "
+                + " and ".join(
+                    repr(key) for key in OVERLAY_ADDITIONAL_USER_KEYS))
+        if "name" not in declaration:
+            raise IdentityRosterError(
+                f"identity roster overlay {path} {who} declares no name")
+        if "uid_number" not in declaration:
+            raise IdentityRosterError(
+                f"identity roster overlay {path} {who} declares no "
+                "uid_number; an additional standard user has no role position "
+                "to default from, so its number must be explicit")
+        if not _json_integer(declaration["uid_number"]):
+            raise IdentityRosterError(
+                f"identity roster overlay {path} {who} uid_number must be a "
+                "JSON integer")
+        users.append(AdditionalStandardUser(
+            declaration["name"], declaration["uid_number"]))
+    return _OverlayDocument(names, uid_pins, tuple(users))
 
 
 def identity_roster_source(
@@ -943,12 +1236,35 @@ def identity_roster(
 ) -> dict[str, str]:
     """Resolve ``{contract role: principal name}`` once, for every reader.
 
-    This is the SINGLE roster loader.  ``_identity_principals()`` below (which
-    bakes the names onto the installed disk), ``vm/controller_principals.py``
-    (which derives the directory POSIX allocation and the staged roster) and
-    ``vm/arch_identity_run.py`` (which logs in as the daily administrator and
-    sets the rescue password) all consult it, so the two historical sources of
-    principal names cannot drift apart.
+    The names-only view of ``identity_declaration``, the SINGLE roster loader.
+    ``_identity_principals()`` below (which bakes the names onto the installed
+    disk), ``vm/controller_principals.py`` (which derives the directory POSIX
+    allocation and the staged roster) and ``vm/arch_identity_run.py`` (which
+    logs in as the daily administrator and sets the rescue password) all
+    consult it, so the two historical sources of principal names cannot drift
+    apart.  Because it IS that loader, an overlay whose ``uid_number`` pins or
+    additional standard users cannot work is refused here too -- by the
+    installer as surely as by the directory lanes that apply them.
+    """
+    return dict(identity_declaration(
+        overlay_path, require_overlay=require_overlay,
+        require_named=require_named).roster)
+
+
+def identity_declaration(
+    overlay_path: Path | None = None, *, require_overlay: bool = False,
+    require_named: Sequence[str] = (),
+) -> IdentityDeclaration:
+    """Resolve the whole private declaration once: names, UIDs, extra users.
+
+    This is the SINGLE roster loader; ``identity_roster`` is its names.  On top
+    of the roster it resolves each directory role's uidNumber
+    (``directory_uid_numbers``: the overlay's pin, else the positional default)
+    and the overlay's durable-only additional standard users, and judges every
+    one of them with ``validate_directory_identifiers`` before anything is
+    returned.  With no overlay, or one that pins nothing and lists no extra
+    user, the numbers are exactly the positional ones every acceptance gate
+    already proves.
 
     Precedence is contract first, private overlay second.  With no overlay the
     result is the synthetic acceptance roster verbatim, which is what keeps
@@ -982,8 +1298,9 @@ def identity_roster(
     }
     if overlay_path is None:
         overlay_path = identity_overlay_path()
-    overlay = _identity_overlay_names(overlay_path)
-    overlaid = overlay is not None
+    document = _identity_overlay(overlay_path)
+    overlaid = document is not None
+    overlay = document.names if document is not None else None
     if not overlaid and (require_overlay or require_named):
         raise IdentityRosterError(
             f"identity roster overlay {overlay_path} does not exist and this "
@@ -1039,7 +1356,15 @@ def identity_roster(
         # would collide in the directory POSIX allocation.
         raise IdentityRosterError(
             f"identity roster names are not distinct; roster source: {source}")
-    return {role: roster[role] for role in CONTRACT_ROLES}
+    resolved = {role: roster[role] for role in CONTRACT_ROLES}
+    uid_numbers = directory_uid_numbers(
+        document.uid_pins if document is not None else None)
+    additional = document.additional if document is not None else ()
+    validate_directory_identifiers(
+        resolved, uid_numbers, additional, source=source)
+    return IdentityDeclaration(
+        roster=resolved, uid_numbers=uid_numbers,
+        additional_standard_users=tuple(additional), source=source)
 
 
 def identity_roster_fingerprint(roster: Mapping[str, str] | None = None) -> str:

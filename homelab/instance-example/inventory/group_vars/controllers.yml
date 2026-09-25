@@ -113,6 +113,11 @@ homelab_storage_address: ""
 #
 # `local_rescue` is refused outright. It is a LOCAL account at UID 1000 on the
 # workstation (ADR 0055, ADR 0063) and must never become a directory principal.
+#
+# People with no contract role are not listed here either: declare them under
+# `additional_standard_users` in identity/principals.json. Whenever this list
+# is non-empty every one of them is converged too, as a plain standard account
+# named `additional_standard_user_<uidNumber>` in every log line.
 homelab_ad_directory_accounts: []
 # - standard_user           # unprivileged directory account
 # - daily_administrator     # passworded sudo on the workstation, NOT a Domain

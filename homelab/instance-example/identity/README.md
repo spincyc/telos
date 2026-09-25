@@ -6,7 +6,7 @@ the same directory and neither has a fallback the durable path may take:
 | File | Declares | Absent |
 | --- | --- | --- |
 | [`directory.json`](#the-permanent-directory-identity-directoryjson) | **What the directory is** — realm, NetBIOS name, DNS domain, controller FQDNs, address | The durable path refuses. Acceptance is unaffected. |
-| [`principals.json`](#private-principal-roster) | **Who is in it** — the real account names | Every account keeps the synthetic contract name. |
+| [`principals.json`](#private-principal-roster) | **Who is in it** — the real account names, optionally their directory UIDs, and any additional standard users | Every account keeps the synthetic contract name and its positional UID. |
 
 ## The permanent directory identity (`directory.json`)
 
@@ -196,42 +196,130 @@ the contract already knows this file. Name only the roles you want renamed:
 }
 ```
 
-Rules the loader enforces, each fail-closed:
+Two optional additions, both shown in the template's `_example_*` keys:
+
+```json
+{
+  "schema_version": 1,
+  "principals": {
+    "standard_user":        {"name": "<standard-user>",        "uid_number": 10003},
+    "daily_administrator":  {"name": "<daily-administrator>",  "uid_number": 10001},
+    "domain_administrator": {"name": "<domain-administrator>", "uid_number": 10000}
+  },
+  "additional_standard_users": [
+    {"name": "<additional-standard-user>", "uid_number": 10002}
+  ]
+}
+```
+
+- **`uid_number`** beside a directory role's `name` pins that role's directory
+  `uidNumber` (see [UIDs](#uids)).
+- **`additional_standard_users`** lists people who have no contract role: see
+  [Additional standard users](#additional-standard-users).
+
+Rules the loader enforces, each fail-closed. The loader is
+`homelab/workstations/arch_second.identity_declaration`, and every reader in the
+table above goes through it, so a file one of them refuses, all of them refuse —
+the workstation installer included, even though it uses no UID:
 
 | Rule | Why |
 | --- | --- |
 | `schema_version` must be `1` | An unversioned file cannot be migrated later |
-| Only `schema_version` and `principals` at the top level | A typo must be refused, not silently ignored back to the synthetic default |
+| Only `schema_version`, `principals` and `additional_standard_users` at the top level | A typo must be refused, not silently ignored back to the synthetic default |
 | Keys beginning `_` are documentation and ignored | JSON has no comments and this file is hand-edited |
-| A role may only set `name` | `domain_role` and `workstation_role` are policy the lifecycle judge grades, not instance data |
+| A role may only set `name` and, for a directory role, `uid_number` | `domain_role` and `workstation_role` are policy the lifecycle judge grades, not instance data |
 | Role must be one of the four below | A misspelled role would leave the real account unnamed |
-| A name must match `^[a-z][a-z0-9-]{0,31}$` | Names flow into shell words, sudoers rules, SMB share names and Kerberos principals; anything needing quoting is refused rather than escaped |
+| A name must match `^[a-z][a-z0-9-]{0,31}$`, and a directory account's is at most 20 characters | Names flow into shell words, sudoers rules, SMB share names and Kerberos principals; anything needing quoting is refused rather than escaped. 20 is Active Directory's `sAMAccountName` limit |
 | All four names must be distinct | Two roles sharing a name collapses the very separation the lifecycle proves, and collides in the directory POSIX allocation |
+| `local_rescue` may not carry a `uid_number` | It is a local account at UID 1000 on the disk and owns no directory number; a pin nothing applies would be a number you later believe in |
+| Every `uid_number` is a JSON integer (not `true`, not `10000.0`, not a string) from **10000 to 60000**, and never 10512 or 10513 | See [UIDs](#uids) for the range; 10512 and 10513 are the Domain Admins and Domain Users `gidNumber`s |
+| Every directory UID is distinct — pinned roles, unpinned roles at their positional default, and additional standard users alike | A pin never shifts another account's number. Pinning `domain_administrator` to 10000 while `standard_user` is unpinned (and so 10000 by default) is refused, naming both; pin `standard_user` too |
+| Each `additional_standard_users` entry has exactly `name` and `uid_number`, both required | Such a user has no role position to default a number from |
+| An additional standard user's name obeys the directory-account name rules above, is not a reserved directory object or system account (`administrator`, `guest`, `krbtgt`, `dns-*`, `root`, `daemon`, `bin`, `sys`, `nobody`, `systemd-*`), and differs from every roster name — `local_rescue`'s included — and from every other additional user | The same reservations the domain_controller role's resolver and driver enforce; this copy also covers the serial-console path, which passes through neither |
 | A file that exists but cannot be understood is an error | Falling back to the synthetic names would install accounts you did not ask for |
+
+Refusals about an additional standard user name it by its position
+(`additional_standard_users[0]`), never by name, because a refusal is printed at
+your terminal and may be kept in a transcript.
 
 ### The four roles
 
-| Role | What it is | UID | Notes |
+| Role | What it is | Default UID | Notes |
 | --- | --- | --- | --- |
 | `standard_user` | Unprivileged directory account | 10000 | No `wheel`, no sudo rule |
 | `daily_administrator` | Directory account with **passworded** sudo on the workstation | 10001 | Deliberately **not** a Domain Admins member (ADR 0055): the everyday elevated account is not a directory administrator |
 | `domain_administrator` | Directory account in **Domain Admins** | 10002 | Deliberately never resolved on the workstation, so an offline lookup of it is denied |
 | `local_rescue` | Local break-glass administrator, `wheel`, passworded sudo | 1000 (local) | **Never a directory account and never `root`** (ADR 0055, ADR 0063). It is the only way in while the directory is down |
 
-UIDs belong to the **role**, not to the name: renaming an account never moves a
-UID, and adding a role appends one without moving any existing one. The rule is
-written once, in
-`homelab/vm/controller_principals.directory_account_plan`, and both the
-disposable acceptance Controller and the durable directory of a persistent
-instance derive their numbers from it.
+### UIDs
+
+A directory role's UID is **positional by default and pinnable per instance.**
+Unpinned, it is 10000 + the role's position in the contract — the numbers in the
+table above, which is what every acceptance gate proves when there is no
+overlay. A `uid_number` beside the role's `name` replaces that default for this
+instance and moves nothing else.
+
+Either way the number belongs to the **role**, not to the name: renaming an
+account never moves a UID, and adding a role appends one without moving any
+existing one. The rule is written once — the numbers in
+`homelab/workstations/arch_second.directory_uid_numbers`, the accounts in
+`homelab/vm/controller_principals.directory_account_plan` — and every lane
+derives from it. A pin applies in the **disposable** acceptance lanes too
+(gates 6 and 8 stage the directory roles at your pinned numbers, and gate 8's
+storage check compares against them), so a rehearsal exercises the numbers your
+durable directory will hold.
+
+Why 10000–60000: below 10000 is the workstation's **local** account space
+(system accounts under 1000, the break-glass account at 1000, ADR 0055). 60000
+is the top of the regular-user range on the installed disk (`UID_MAX` in Arch's
+`/etc/login.defs`, and systemd's documented 1000–60000 range); just above it
+systemd reserves 60001–60513 (systemd-homed), 60514–60577 (container users) and
+61184–65519 (DynamicUser services), 65534 is `nobody`, and far above, the
+Controller's own idmap allocates from 3000000 for every SID without a UID.
+Neither SSSD configuration sets `min_id`/`max_id`, so SSSD imposes nothing
+narrower.
 
 `local_rescue` has no directory UID at all — it is a local account on the disk,
-which is the whole point of it, and the durable-account resolver refuses it by
-name so no instance variable can smuggle it into the directory.
+which is the whole point of it. Pinning one is refused, and the durable-account
+resolver refuses the role by name so no instance variable can smuggle it into
+the directory.
 
 A durable account that the directory has **already** allocated keeps its number:
 convergence refuses to move a `uidNumber`, because files on every workstation,
 the per-user share directory and every ACL keyed on that number cannot follow it.
+So **choose pins before the first durable staging**. Adding or changing a pin
+for an account that already exists is a migration: the `domain_controller` role
+refuses it unless you re-own that account's files and set
+`homelab_ad_account_renumber_enabled` for that one run, and
+`make homelab-factory-persistent-accounts` cannot do it at all: it creates every
+planned account in one run and stops on the first one the directory already
+holds, so it can neither renumber an account nor add one to a directory that
+already holds the others.
+
+Nothing baked onto a workstation disk depends on a UID — the disk resolves
+every directory account through SSSD at login — so pinning a UID needs no
+fresh gate-7 install. Only a name change does.
+
+### Additional standard users
+
+`additional_standard_users` lists people with **no contract role**: an ordinary
+standard directory account each, with an explicit `uid_number`.
+
+- **Durable only.** They are created only by the two durable paths —
+  `make homelab-factory-persistent-accounts` (which asks for one password per
+  account, these included) and the `domain_controller` role, which plans every
+  one listed here whenever `homelab_ad_directory_accounts` is non-empty. No
+  acceptance gate stages or checks them, and nothing about them is baked onto a
+  workstation disk.
+- **Never privileged.** Never Domain Admins (both durable paths verify the
+  group's membership in both directions), never a workstation sudo rule.
+- **Can log in anywhere joined.** The workstation's SSSD uses
+  `access_provider = ad`, so any directory account with POSIX attributes can
+  log in; nothing on the disk has to list them.
+- **Named by UID, not by name, in everything retained.** Plans, the instance
+  marker, the role's loop labels and its driver's diagnostic call one
+  `additional_standard_user_<uidNumber>`, and a rotation through the role names
+  that label in `homelab_ad_account_password_reset_roles`.
 
 ### The break-glass administrator derives from this file too
 
@@ -299,5 +387,7 @@ and has not been made.
 The names are baked onto the disk at install time — into the identity probe
 helper, the sudoers rules and the break-glass `useradd`. A disk installed under
 one roster is refused by the gate-8 drive against another, by name, comparing a
-fingerprint the probe reports. **Changing this file requires a fresh gate-7
-install.**
+fingerprint the probe reports. **Changing a name in this file requires a fresh
+gate-7 install.** A `uid_number` pin or an additional standard user does not:
+neither is baked onto the disk, and the fingerprint covers the four names only.
+Their cost is on the directory side instead — see [UIDs](#uids).

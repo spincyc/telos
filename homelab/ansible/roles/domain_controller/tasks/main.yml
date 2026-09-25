@@ -643,7 +643,10 @@
 # must not be handed the owner's private overlay. Nothing in this role derives a
 # uidNumber; the rule lives only in
 # homelab/vm/controller_principals.directory_account_plan and is keyed on the
-# ROLE, so renaming an account moves no UID and appending a role renumbers none.
+# ROLE (or on the overlay's own uid_number pin), so renaming an account moves no
+# UID and appending a role renumbers none. The same overlay's
+# `additional_standard_users` -- durable-only standard accounts with no contract
+# role -- are planned with the declared roles whenever this section runs.
 #
 # Why this is not just "samba-tool user create":
 #   * `samba-tool user create <name> <password>` takes the password
@@ -680,7 +683,9 @@
           - homelab_ad_account_password_file_template is search('{name}')
           - homelab_ad_account_password_file_template is match('/')
           - homelab_ad_account_password_reset_roles
-            | difference(homelab_ad_directory_accounts) | length == 0
+            | difference(homelab_ad_directory_accounts)
+            | reject('match', '^additional_standard_user_[0-9]+$')
+            | list | length == 0
         fail_msg: >-
           homelab_ad_directory_accounts is not a usable declaration. It names
           the contract roles this instance keeps as durable directory accounts
@@ -689,7 +694,8 @@
           once, in homelab/instance/identity/principals.json.
           homelab_ad_account_password_file_template must be an absolute path
           containing `{name}`, and every role named for a password reset must
-          also be declared here.
+          also be declared here, or be an additional standard user's
+          `additional_standard_user_<uidNumber>` label.
 
     - name: Resolve the durable account roster on the Ansible control host
       # THE BRIDGE. The account plan is derived where the one roster loader and
@@ -735,14 +741,41 @@
       # thing the role must confirm for itself, because a plan that silently
       # covered fewer roles than were declared would converge fewer accounts
       # than the owner asked for and report success.
+      #
+      # Two declarations feed the plan. This role's own list names the contract
+      # ROLES; the private overlay's `additional_standard_users` names the
+      # durable-only standard users, which have no role and are planned under
+      # an `additional_standard_user_<uidNumber>` label whenever durable
+      # accounts are converged at all -- this role has no switch for them,
+      # because the overlay is where the owner already said they exist. So the
+      # plan must hold exactly the declared roles, plus exactly the labels the
+      # resolver reports for the overlay, each of those a plain `standard`
+      # account, and nothing else. A rotation may only name an account the
+      # plan actually holds.
       ansible.builtin.assert:
         that:
           - homelab_ad_directory_plan.schema == 1
+          - homelab_ad_directory_plan.additional_standard_users is defined
           - homelab_ad_directory_plan.accounts | length ==
             homelab_ad_directory_accounts | length
+            + homelab_ad_directory_plan.additional_standard_users | length
           - homelab_ad_directory_plan.accounts
-            | map(attribute='contract_role') | sort ==
-            homelab_ad_directory_accounts | sort
+            | map(attribute='contract_role')
+            | reject('match', '^additional_standard_user_[0-9]+$')
+            | sort == homelab_ad_directory_accounts | sort
+          - homelab_ad_directory_plan.accounts
+            | map(attribute='contract_role')
+            | select('match', '^additional_standard_user_[0-9]+$')
+            | sort ==
+            homelab_ad_directory_plan.additional_standard_users | sort
+          - homelab_ad_directory_plan.accounts
+            | selectattr('contract_role', 'match',
+                         '^additional_standard_user_[0-9]+$')
+            | rejectattr('role', 'equalto', 'standard') | list | length == 0
+          - homelab_ad_account_password_reset_roles
+            | difference(homelab_ad_directory_plan.accounts
+                         | map(attribute='contract_role') | list)
+            | list | length == 0
           - homelab_ad_directory_plan.admin_group ==
             homelab_ad_posix_admin_group
           - homelab_ad_directory_plan.groups | length ==
@@ -751,8 +784,11 @@
             homelab_ad_posix_group_rids | list | sort
         fail_msg: >-
           The resolved durable account plan does not cover exactly the declared
-          contract roles, or does not allocate exactly the well-known groups
-          this role verifies. Nothing has been changed on the Controller.
+          contract roles plus the additional standard users the private
+          overlay lists (each a plain standard account), a password reset
+          names an account the plan does not hold, or the plan does not
+          allocate exactly the well-known groups this role verifies. Nothing
+          has been changed on the Controller.
 
     - name: List the directory accounts that already exist
       # What makes the whole section idempotent, and what decides which
@@ -840,11 +876,13 @@
         label: "{{ item.contract_role }}"
 
     - name: Refuse to renumber a durable account the directory already holds
-      # The rule is role-positional, so this can only fire for a directory whose
-      # accounts were allocated under some other keying -- for instance the
-      # declaration-order keying this role applied before the roster became one
-      # declaration. An account carrying no uidNumber at all is not a renumber:
-      # the driver stages it below.
+      # The rule is role-positional unless the private overlay pins a
+      # uid_number, so this fires for a directory whose accounts were allocated
+      # under some other keying -- for instance the declaration-order keying
+      # this role applied before the roster became one declaration -- and for a
+      # pin added or changed after the account already existed. An account
+      # carrying no uidNumber at all is not a renumber: the driver stages it
+      # below.
       #
       # The condition is anchored at both ends so a stored 105123 cannot satisfy an
       # expected 10512, and `\\s` is written doubled: this is a Jinja string

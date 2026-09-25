@@ -1440,7 +1440,7 @@ def _drive_persistent_accounts(
     password: bytes,
     values: dict[str, str],
     *,
-    roster: dict[str, str],
+    roster: object,
     roster_source: str,
     timeout: float,
     on_stage: Callable[[], None] | None = None,
@@ -1457,6 +1457,10 @@ def _drive_persistent_accounts(
     credential is written, carries the credentials over the guest shell's own
     stdin rather than argv, answers sudo's private prompt from the console
     account, and fails closed on a nonzero result.
+
+    *roster* is the durable declaration ``durable_directory_roster`` returned,
+    passed whole so its uid_number pins and additional standard users reach
+    the guest program with its names.
     """
     principals = _controller_principals()
     if process.stdout is None or process.stdin is None:
@@ -1562,7 +1566,9 @@ def persistent_accounts(
       ``DIRECTORY_ADMIN_ROLES``; ``daily_administrator`` is absent from it, so
       the owner's everyday elevated account gets a passworded workstation sudo
       and never a Domain Admins membership (ADR 0055; gate 8's
-      ``domain-admin-separate``).
+      ``domain-admin-separate``).  The overlay's additional standard users are
+      staged here too -- one of the only two paths that ever creates them --
+      as plain standard accounts, each with its own prompt.
     * *no credential reaches durable state.* Every password is typed at the
       operator's terminal, held in memory, echo-suppressed on the wire and
       carried on the guest shell's stdin. None reaches argv, an environment
@@ -1601,11 +1607,16 @@ def persistent_accounts(
     # and the applied one: an operator must learn that their private overlay is
     # missing from a plan, not from a refusal after they have typed four
     # credentials.
+    #
+    # ``roster`` is the whole durable declaration -- names, uid_number pins and
+    # the overlay's additional standard users -- and travels as one object to
+    # the plan and to the console, so neither can fall back to positional
+    # numbers or drop an additional user.
     try:
         roster = principals.durable_directory_roster(overlay_path)
         plan = principals.directory_account_plan(
             list(principals.DIRECTORY_ROLES), roster=roster)
-        fingerprint = principals.identity_roster_fingerprint(roster)
+        fingerprint = principals.identity_roster_fingerprint(roster.roster)
         source = principals.identity_roster_source(overlay_path)
     except (principals.IdentityRosterError, principals.DirectoryPlanError,
             OSError, ValueError) as error:
@@ -1633,7 +1644,8 @@ def persistent_accounts(
     elif attempted is not None:
         print("unfinished staging: an earlier run reached the directory at "
               f"{attempted['attempted_utc']} without proving it finished")
-    print("accounts, by contract role. Real account names are instance data "
+    print("accounts, by contract role (an additional standard user, which has "
+          "none, by its uidNumber label). Real account names are instance data "
           "(ADR 0046): they are never printed here, never recorded in the "
           "instance marker, and appear only in the prompts at your own "
           "terminal, so you know whose password you are setting:")
@@ -1646,9 +1658,17 @@ def persistent_accounts(
           + f" joins {principals.POSIX_ADMIN_GROUP}. daily_administrator is "
           "the workstation's passworded-sudo administrator and is never a "
           "Domain Admins member (ADR 0055; gate 8 domain-admin-separate)")
+    if roster.additional_standard_users:
+        print(f"additional standard users: "
+              f"{len(roster.additional_standard_users)}, listed above by "
+              "uidNumber label. Declared by the private overlay's "
+              "additional_standard_users and staged ONLY into a durable "
+              "directory: plain standard accounts, never Domain Admins, "
+              "never given workstation sudo, never staged or checked by an "
+              "acceptance gate")
     print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
           "password the offline installer told you to type, then one password "
-          "per contract role. All are held in memory only, echo-suppressed on "
+          "per account above. All are held in memory only, echo-suppressed on "
           "the wire, and never written to a file, argv, an environment "
           "variable, a Make variable, the instance marker, or this transcript")
     print("fabric: a simulated gateway peer on "
@@ -1721,7 +1741,7 @@ def persistent_accounts(
         # staged principals must be distinguishable by credential, and two
         # identical passwords usually mean a mistyped prompt.
         values.clear()
-        print("error: each contract role needs its own password; two of the "
+        print("error: each account needs its own password; two of the "
               "credentials you typed are identical", file=sys.stderr)
         return 2
 
@@ -1801,7 +1821,7 @@ def persistent_accounts(
         ],
         "domain_admin_roles": list(principals.DIRECTORY_ADMIN_ROLES),
         "credentials": (
-            "one per contract role, typed by the operator at their terminal; "
+            "one per account, typed by the operator at their terminal; "
             "held in memory, echo-suppressed on the wire, and never written "
             "to a file, argv, an environment variable, this marker, or a "
             "transcript"),

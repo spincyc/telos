@@ -578,14 +578,21 @@ The serial console is the only channel that reaches a *simulated* persistent
 instance: its only NIC is a QEMU socket netdev to the userspace gateway, with no
 NAT and no route to the host LAN, so host-side Ansible cannot reach it at all.
 The applied run asks at your terminal for the `local-rescue` password and then
-one password per directory role, each different; none reaches a file, an
+one password per account — each directory role, and each of the overlay's
+`additional_standard_users` — each different; none reaches a file, an
 argument, an environment or Make variable, the instance marker, or a transcript.
-The plan names contract roles, `uidNumber`/`gidNumber` and the roster
-fingerprint, never the real names. The daily administrator is staged as a
-standard directory account and never joins Domain Admins (gate 8's
-`domain-admin-separate`). After a completed or an unfinished staging run a
-second one is refused unless you pass `RESTAGE=1`, which does not reset the
-password of an account the directory already holds.
+The plan names contract roles (an additional standard user by its
+`additional_standard_user_<uidNumber>` label), `uidNumber`/`gidNumber` and the
+roster fingerprint, never the real names. Each `uidNumber` is the overlay's
+`uid_number` pin for that role, or its positional default; see
+`homelab/instance-example/identity/README.md` for the rules, and choose pins
+before the first staging. The daily administrator and every additional standard
+user are staged as standard directory accounts and never join Domain Admins
+(gate 8's `domain-admin-separate`). After a completed or an unfinished staging
+run a second one is refused unless you pass `RESTAGE=1`, which does not reset
+the password of an account the directory already holds — and staging stops on
+the first account the directory already holds, so it cannot add one person to a
+directory that has the others.
 
 **Both durable paths refuse an incomplete roster** (`0e588db`, 2026-09-24). They
 run only if `homelab/instance/identity/principals.json` exists **and** itself

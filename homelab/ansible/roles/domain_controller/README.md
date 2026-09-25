@@ -167,18 +167,20 @@ never be handed different UIDs than the acceptance path proves:
 
 | Attribute           | Value                                                    |
 | ------------------- | -------------------------------------------------------- |
-| `uidNumber`         | `POSIX_BASE` + the role's position in `DIRECTORY_ROLES`   |
+| `uidNumber`         | the overlay's `uid_number` pin for the role, else `POSIX_BASE` + the role's position in `DIRECTORY_ROLES` |
 | `gidNumber`         | the Domain Users gid, `POSIX_BASE` + RID 513              |
 | `loginShell`        | `POSIX_LOGIN_SHELL`                                       |
 | `unixHomeDirectory` | `POSIX_HOME_ROOT/<name>`                                  |
 
 The identifier belongs to the **role**, so renaming an account in the overlay
 moves no UID, and declaring one more role appends one UID without moving any
-existing one. Domain Users and Domain Admins are given `POSIX_BASE` + their
-well-known RIDs (10513 and 10512) so a client with directory-provided
-identifiers can resolve both groups; `homelab_ad_posix_group_rids` declares
-*which* groups this role verifies and the resolver refuses to render a plan if
-it disagrees with the allocation.
+existing one. A pin, and every number's range and distinctness, is judged by the
+roster loader; the rules are in
+`homelab/instance-example/identity/README.md`. Domain Users and Domain Admins
+are given `POSIX_BASE` + their well-known RIDs (10513 and 10512) so a client
+with directory-provided identifiers can resolve both groups;
+`homelab_ad_posix_group_rids` declares *which* groups this role verifies and the
+resolver refuses to render a plan if it disagrees with the allocation.
 
 Convergence **refuses to move** a uidNumber the directory already allocated —
 files on every workstation, the per-user share directory and every ACL keyed on
@@ -202,6 +204,21 @@ check this role cannot
 perform for itself is persistence: bring the instance up, confirm both accounts
 exist with their attributes, shut it down, bring it up again, and confirm the
 accounts and the domain SID survived.
+
+### Additional standard users
+
+The overlay may also list `additional_standard_users`: people with no contract
+role. They are not declared here. Whenever `homelab_ad_directory_accounts` is
+non-empty, the resolver plans every one the overlay lists, after the declared
+roles, as a plain `standard` account with its own required `uid_number`, under
+the name-free label `additional_standard_user_<uidNumber>` in the
+`contract_role` field every loop label and driver message uses. The resolver
+also reports those labels separately, and the role requires the plan to hold
+exactly the declared roles plus exactly those labels, each `standard`; the
+driver refuses such an account as anything but `standard`. Stage each one's
+password file from the same template; rotate one by naming its label in
+`homelab_ad_account_password_reset_roles`. The disposable acceptance Controller
+never stages them.
 
 ### Diagnosing a failure
 

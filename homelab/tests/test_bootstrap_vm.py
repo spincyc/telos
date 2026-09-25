@@ -2,6 +2,7 @@ import base64
 import contextlib
 import io
 import json
+import re
 import socket
 import subprocess
 import tempfile
@@ -1695,6 +1696,7 @@ class PersistentAccountsCliTests(unittest.TestCase):
     """
 
     CONSOLE = "console-secret-typed"
+    OVERLAY = PRIVATE_OVERLAY
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -1711,7 +1713,7 @@ class PersistentAccountsCliTests(unittest.TestCase):
         self.persistent_root = self.root / "persistent"
         self.state = self.persistent_root / "lab-dc1"
         self.overlay = self.root / "principals.json"
-        self.overlay.write_text(json.dumps(PRIVATE_OVERLAY), encoding="utf-8")
+        self.overlay.write_text(json.dumps(self.OVERLAY), encoding="utf-8")
         self.absent_overlay = self.root / "no-such-overlay.json"
         self.typed = []
         self.launched = []
@@ -1740,8 +1742,11 @@ class PersistentAccountsCliTests(unittest.TestCase):
         self.typed.append(prompt)
         if "console password" in prompt:
             return self.CONSOLE
+        # The label is matched exactly: ``standard_user`` is a substring of an
+        # additional standard user's ``additional_standard_user_<uid>`` label.
+        asked = re.search(r" for (\S+?)(?: \(|:)", prompt)
         for entry, secret in zip(self.plan, self.secrets):
-            if entry["contract_role"] in prompt:
+            if asked and entry["contract_role"] == asked.group(1):
                 return secret
         raise AssertionError(f"unexpected prompt: {prompt}")
 
@@ -2149,6 +2154,7 @@ class PersistentAccountsConsoleTests(unittest.TestCase):
     """
 
     CONSOLE = b"console-secret-typed"
+    OVERLAY = PRIVATE_OVERLAY
 
     def setUp(self):
         self.observed = {}
@@ -2158,7 +2164,7 @@ class PersistentAccountsConsoleTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         overlay = Path(self.temporary.name) / "principals.json"
-        overlay.write_text(json.dumps(PRIVATE_OVERLAY), encoding="utf-8")
+        overlay.write_text(json.dumps(self.OVERLAY), encoding="utf-8")
         self.roster = principals.durable_directory_roster(overlay)
         self.plan = principals.directory_account_plan(
             list(principals.DIRECTORY_ROLES), roster=self.roster)
@@ -2310,6 +2316,137 @@ class PersistentAccountsConsoleTests(unittest.TestCase):
         # The attempt IS recorded: the guest was handed the credentials, so a
         # later run must not assume the directory is untouched.
         self.assertEqual(["reached"], self.staged)
+
+
+# The owner's requested layout, 2026-09-25, with PLACEHOLDER names (ADR 0046):
+# domain administrator 10000, daily administrator 10001, one additional standard
+# user 10002, standard user 10003; local_rescue keeps its contract name.
+OWNER_LAYOUT = {
+    "schema_version": 1,
+    "principals": {
+        "standard_user": {"name": "roster-a", "uid_number": 10003},
+        "daily_administrator": {"name": "roster-b", "uid_number": 10001},
+        "domain_administrator": {"name": "roster-c", "uid_number": 10000},
+    },
+    "additional_standard_users": [
+        {"name": "roster-e", "uid_number": 10002},
+    ],
+}
+EXTRA_LABEL = "additional_standard_user_10002"
+
+
+class PersistentAccountsOwnerLayoutCliTests(PersistentAccountsCliTests):
+    """Every persistent-accounts guarantee again, under uid pins and an extra user.
+
+    Inherits the whole CLI suite -- no real name printed or recorded, one
+    distinct credential per account, refusals before any prompt -- and runs it
+    against the owner's layout, so the additional standard user is held to all
+    of it too.
+    """
+
+    OVERLAY = OWNER_LAYOUT
+
+    def test_the_daily_administrator_never_joins_domain_admins(self):
+        principals = bootstrap_dc._controller_principals()
+        by_role = {entry["contract_role"]: entry for entry in self.plan}
+        self.assertEqual("administrator",
+                         by_role["domain_administrator"]["role"])
+        for label in ("standard_user", "daily_administrator", EXTRA_LABEL):
+            self.assertEqual("standard", by_role[label]["role"], label)
+        stage, _destroy, _roles = principals._programs(self.roster)
+        group = stage.split('add_remove_group_members(', 1)[1].split(')', 1)[0]
+        self.assertIn('roster["domain_administrator"]', group)
+        for name in ("roster-a", "roster-b", "roster-e"):
+            self.assertNotIn(name, group)
+
+    def test_the_plan_numbers_every_account_from_the_overlay(self):
+        self.seed()
+        out, _ = self.accounts()
+        for label, uid in (("standard_user", 10003),
+                           ("daily_administrator", 10001),
+                           ("domain_administrator", 10000),
+                           (EXTRA_LABEL, 10002)):
+            self.assertIn(f"  {label}: directory role ", out)
+            self.assertRegex(
+                out, rf"(?m)^  {label}: directory role \w+, uidNumber {uid}, ")
+        self.assertIn("additional standard users: 1", out)
+        self.assertNotIn("roster-e", self.nameless(out))
+
+    def test_the_additional_user_is_prompted_staged_and_recorded(self):
+        self.seed()
+        handed = []
+
+        def drive(*args, **kwargs):
+            handed.append(kwargs["roster"])
+            return self._stage_result(*args, **kwargs)
+
+        out, _ = self.accounts("--apply", drive=drive)
+        # Its own prompt and confirmation, by label; the name shows only in
+        # the prompt at the operator's own terminal.
+        asked = [prompt for prompt in self.typed if EXTRA_LABEL in prompt]
+        self.assertEqual(2, len(asked))
+        self.assertIn("(roster-e)", asked[0])
+        # The console was handed the whole declaration -- pins and extra user.
+        self.assertEqual(1, len(handed))
+        self.assertEqual(
+            ["roster-e"],
+            [user.name for user in handed[0].additional_standard_users])
+        self.assertEqual(10000, handed[0].uid_numbers["domain_administrator"])
+        self.assertEqual([sorted(["roster-a", "roster-b", "roster-c",
+                                  "roster-e"])], self.staged_calls)
+        self.assertIn(f"  {EXTRA_LABEL}: directory role standard, "
+                      "uidNumber 10002", out)
+        record = self.marker()[simulation_overlay.PERSISTENT_ACCOUNTS_KEY]
+        self.assertEqual(
+            [("standard_user", 10003), ("daily_administrator", 10001),
+             ("domain_administrator", 10000), (EXTRA_LABEL, 10002)],
+            [(account["contract_role"], account["uidNumber"])
+             for account in record["accounts"]])
+        self.assertEqual(["domain_administrator"],
+                         record["domain_admin_roles"])
+
+    def test_an_overlay_the_loader_refuses_is_refused_before_any_prompt(self):
+        self.seed()
+        clash = json.loads(json.dumps(OWNER_LAYOUT))
+        clash["principals"]["standard_user"].pop("uid_number")
+        broken = self.root / "clash.json"
+        broken.write_text(json.dumps(clash), encoding="utf-8")
+        with mock.patch.object(bootstrap_dc.getpass, "getpass") as prompt, \
+                mock.patch.object(bootstrap_dc.subprocess, "Popen") as popen:
+            _, err = self.call(
+                "--state-dir", str(self.canonical), "persistent-accounts",
+                "--instance", "lab-dc1",
+                "--persistent-root", str(self.persistent_root),
+                "--identity-overlay", str(broken), "--apply", expect=2)
+        self.assertIn("claimed by both", err)
+        prompt.assert_not_called()
+        popen.assert_not_called()
+
+
+class PersistentAccountsOwnerLayoutConsoleTests(PersistentAccountsConsoleTests):
+    """The serial exchange under the owner's layout, down to the guest program."""
+
+    OVERLAY = OWNER_LAYOUT
+
+    def test_the_guest_program_creates_the_pinned_and_additional_accounts(self):
+        self.drive()
+        self.assertEqual([], self.failures)
+        command = self.observed["stage-command"]
+        encoded = re.search(rb"b64decode\('([A-Za-z0-9+/=]+)'\)", command)
+        self.assertIsNotNone(encoded)
+        program = base64.b64decode(encoded.group(1)).decode("utf-8")
+        self.assertIn(
+            '"order":["roster-a","roster-b","roster-c","roster-e"]', program)
+        for name, uid in (("roster-a", 10003), ("roster-b", 10001),
+                          ("roster-c", 10000), ("roster-e", 10002)):
+            self.assertIn(
+                f'"{name}":{{"gidNumber":10513,"loginShell":"/bin/bash",'
+                f'"uidNumber":{uid}', program)
+        self.assertIn('"domain_administrator":"roster-c"', program)
+        payload = json.loads(base64.b64decode(
+            self.observed["stage-payload"]).decode("utf-8"))
+        self.assertEqual(
+            ["roster-a", "roster-b", "roster-c", "roster-e"], sorted(payload))
 
 
 class DisposablePathUnchangedTests(unittest.TestCase):

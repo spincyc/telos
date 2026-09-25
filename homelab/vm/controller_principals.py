@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
@@ -27,11 +27,17 @@ if str(_WORKSTATIONS) not in sys.path:
     sys.path.insert(0, str(_WORKSTATIONS))
 from arch_second import (  # noqa: E402
     CONTRACT_ROLES,
+    DIRECTORY_GROUP_RIDS,
     DIRECTORY_ROLES,
+    DIRECTORY_UID_BASE,
+    DIRECTORY_UID_MAX,
     IdentityRosterError,
-    identity_roster,
+    directory_group_gids,
+    directory_uid_numbers,
+    identity_declaration,
     identity_roster_fingerprint,
     identity_roster_source,
+    validate_directory_identifiers,
 )
 
 
@@ -55,7 +61,14 @@ class ControllerPrincipalResult:
 # Reading them here instead of pinning a second hardcoded tuple is what stops
 # the two historical sources of principal names from drifting apart; with no
 # overlay present these are exactly ("student", "operator", "directory-admin").
-_ROSTER = identity_roster()
+_DECLARATION = identity_declaration()
+_ROSTER = dict(_DECLARATION.roster)
+# What every DISPOSABLE lane stages: the overlay's names AND its uid_number
+# pins -- so a rehearsal exercises the numbers production will hold, and gate
+# 8's storage check compares against them -- but never its additional standard
+# users.  Those exist only in the owner's durable directory; an acceptance run
+# neither creates nor checks them.
+_ACCEPTANCE = replace(_DECLARATION, additional_standard_users=())
 _ROLES = tuple(_ROSTER[role] for role in DIRECTORY_ROLES)
 _DOMAIN_ADMIN = _ROSTER["domain_administrator"]
 # Where _ROSTER came from, for every refusal below.  A rejected roster used to
@@ -97,18 +110,30 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
 # THIS IS THE ONE DIRECTORY POSIX ALLOCATION RULE.  It is deterministic and
 # public:
 #
-#   users:  uidNumber = 10000 + the principal's ROLE position in
-#           arch_second.DIRECTORY_ROLES (standard user, daily administrator,
-#           domain administrator -- the same order the old hardcoded roster
-#           had, so the numbers are unchanged)
+#   users:  uidNumber = the ``uid_number`` the owner's private overlay pins for
+#           the role, if it pins one; otherwise 10000 + the principal's ROLE
+#           position in arch_second.DIRECTORY_ROLES (standard user, daily
+#           administrator, domain administrator -- the same order the old
+#           hardcoded roster had, so with no pin the numbers are unchanged).
+#           A durable-only additional standard user carries its own, required,
+#           ``uid_number``.
 #   groups: gidNumber = 10000 + the group's well-known Active Directory RID
 #           (Domain Admins 512 -> 10512, Domain Users 513 -> 10513)
 #
-# Keying the user allocation on the ROLE rather than on the NAME is what makes
-# it safe for the owner to rename a principal: renaming standard_user moves no
-# UID, because "10000" belongs to the standard-user role and not to the string
+# The NUMBERS -- base, ceiling, group RIDs, pin-or-position, and every refusal
+# of a number that cannot work -- are written once, beside the roster loader
+# (arch_second.directory_uid_numbers and validate_directory_identifiers),
+# because a pin is declared in the overlay and must be judged where the overlay
+# is read.  This module turns them into ACCOUNTS: primary group, shell, home,
+# durable plans and guest programs.
+#
+# Keying the default on the ROLE rather than on the NAME is what makes it safe
+# for the owner to rename a principal: renaming standard_user moves no UID,
+# because "10000" belongs to the standard-user role and not to the string
 # "student".  Appending a role appends a UID and moves none of the existing
-# ones, because the position of every earlier role is unchanged.
+# ones, because the position of every earlier role is unchanged.  A pin moves
+# only the role that carries it, and never silently shifts another: a pin equal
+# to another role's number is refused.
 #
 # Both consumers derive their numbers from ``directory_account_plan`` below and
 # neither restates the arithmetic:
@@ -124,20 +149,22 @@ if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
 # (RID 513) is each account's Active Directory primary group.  The base sits
 # far above the workstations' first local ordinary-user UID (1000, the
 # break-glass account), which ADR 0055 requires to stay local.
-_POSIX_BASE = 10000
+_POSIX_BASE = DIRECTORY_UID_BASE
+_POSIX_UID_MAX = DIRECTORY_UID_MAX
 _POSIX_LOGIN_SHELL = "/bin/bash"
 _POSIX_HOME_ROOT = "/home"
 _POSIX_PRIMARY_GROUP = "Domain Users"
 # "Domain Admins" is the privilege group the Arch identity probe resolves
 # with getent (workstations/arch_second.py); both groups must own a
 # gidNumber before any SSSD client can resolve them.
-_POSIX_GROUP_RIDS = {"Domain Users": 513, "Domain Admins": 512}
+_POSIX_GROUP_RIDS = dict(DIRECTORY_GROUP_RIDS)
 _POSIX_ADMIN_GROUP = "Domain Admins"
 
 # The public names of the same constants, for readers outside this module (the
 # domain_controller role's control-host resolver).  Underscored aliases are kept
 # because this module's own tests and templates already read them.
 POSIX_BASE = _POSIX_BASE
+POSIX_UID_MAX = _POSIX_UID_MAX
 POSIX_LOGIN_SHELL = _POSIX_LOGIN_SHELL
 POSIX_HOME_ROOT = _POSIX_HOME_ROOT
 POSIX_PRIMARY_GROUP = _POSIX_PRIMARY_GROUP
@@ -160,6 +187,21 @@ DIRECTORY_ADMIN_ROLES = ("domain_administrator",)
 # instance variable cannot smuggle it into the directory.
 LOCAL_ONLY_ROLES = tuple(
     role for role in CONTRACT_ROLES if role not in DIRECTORY_ROLES)
+
+# How a durable plan names an ADDITIONAL standard user wherever the plan's
+# ``contract_role`` goes: prompts, the plan printout, the instance marker, the
+# domain_controller role's loop labels and its driver's diagnostic.  Such a
+# user has no contract role, and its real name is instance data (ADR 0046), so
+# it is labelled by its uidNumber instead -- unique by validation, stable when
+# the overlay is reordered or the person renamed, and already public.  The
+# domain_controller role matches the same pattern; a test holds the two equal.
+ADDITIONAL_STANDARD_USER_LABEL = "additional_standard_user_{uid_number}"
+ADDITIONAL_STANDARD_USER_PATTERN = r"^additional_standard_user_[0-9]+$"
+
+
+def additional_standard_user_label(uid_number: int) -> str:
+    """The name-free label an additional standard user is planned under."""
+    return ADDITIONAL_STANDARD_USER_LABEL.format(uid_number=uid_number)
 
 
 class DirectoryPlanError(ValueError):
@@ -203,40 +245,100 @@ def _validated_roster(roster: Mapping[str, str]) -> dict[str, str]:
     return {role: roster[role] for role in DIRECTORY_ROLES}
 
 
-def _posix_allocation(
-    roster: Mapping[str, str] | None = None,
-) -> dict[str, dict]:
-    """Derive the deterministic POSIX allocation from the resolved roster.
+def _declared(
+    roster: object = None,
+) -> tuple[dict[str, str], dict[str, int], tuple]:
+    """``(names, uidNumbers, additional users)`` for one *roster* argument.
 
-    *roster* is a parameter so a test can prove the allocation for a renamed
-    roster without reloading this module; production always uses the resolved
-    one.
+    Every public entry point below takes one *roster*, in one of three shapes:
+
+    * ``None`` -- the disposable acceptance declaration resolved at import:
+      the overlay's names and ``uid_number`` pins, never its additional
+      standard users.
+    * a DECLARATION -- ``durable_directory_roster()``'s result, or anything
+      else carrying ``roster``, ``uid_numbers`` and
+      ``additional_standard_users`` attributes.  Its pins and its additional
+      users go wherever it goes, so a durable caller cannot drop them by
+      forgetting a second argument.  Recognised by those attributes rather than
+      by class: ``arch_second`` is imported under more than one module name,
+      and an ``isinstance`` miss here would silently fall through to
+      positional numbers.
+    * a bare ``{contract role: name}`` mapping -- a test's hand-built roster.
+      It declares no pin and no additional user, so it gets exactly the
+      positional numbers.
+
+    Whatever the shape, the names and numbers are re-judged by the loader's
+    own rule (``validate_directory_identifiers``), because a declaration is a
+    public argument and the loader may never have seen it.
     """
     if roster is None:
-        roster = _ROSTER
-    roster = _validated_roster(roster)
-    groups = {
-        name: _POSIX_BASE + rid for name, rid in _POSIX_GROUP_RIDS.items()
-    }
+        roster = _ACCEPTANCE
+    uid_numbers = getattr(roster, "uid_numbers", None)
+    if uid_numbers is None:
+        names: Mapping[str, str] = roster  # type: ignore[assignment]
+        uid_numbers = directory_uid_numbers()
+        additional: tuple = ()
+        source = ROSTER_SOURCE
+    else:
+        names = roster.roster  # type: ignore[attr-defined]
+        additional = tuple(
+            roster.additional_standard_users)  # type: ignore[attr-defined]
+        source = getattr(roster, "source", ROSTER_SOURCE)
+    validated = _validated_roster(names)
+    try:
+        validate_directory_identifiers(
+            {role: names[role] for role in CONTRACT_ROLES if role in names},
+            dict(uid_numbers), additional, source=source)
+    except IdentityRosterError as error:
+        raise DirectoryPlanError(str(error)) from error
+    return validated, dict(uid_numbers), additional
+
+
+def _allocation(
+    names: Mapping[str, str],
+    uid_numbers: Mapping[str, int],
+    additional: Sequence,
+) -> dict[str, dict]:
+    """The POSIX records for one judged declaration, directory roles first."""
+    groups = directory_group_gids()
+    accounts = [(names[role], uid_numbers[role]) for role in DIRECTORY_ROLES]
+    accounts += [(user.name, user.uid_number) for user in additional]
     users = {
-        roster[role]: {
-            "uidNumber": _POSIX_BASE + index,
+        name: {
+            "uidNumber": uid,
             "gidNumber": groups[_POSIX_PRIMARY_GROUP],
             "loginShell": _POSIX_LOGIN_SHELL,
-            "unixHomeDirectory": _POSIX_HOME_ROOT + "/" + roster[role],
+            "unixHomeDirectory": _POSIX_HOME_ROOT + "/" + name,
         }
-        for index, role in enumerate(DIRECTORY_ROLES)
+        for name, uid in accounts
     }
     return {"users": users, "groups": groups}
 
 
-def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
-    """Refuse any POSIX allocation whose identifiers could collide."""
+def _posix_allocation(roster: object = None) -> dict[str, dict]:
+    """Derive the deterministic POSIX allocation from a resolved roster.
+
+    *roster* is any shape ``_declared`` accepts.  It is a parameter so a test
+    can prove the allocation for a renamed or pinned roster without reloading
+    this module; the acceptance lanes always use the one resolved at import.
+    """
+    return _allocation(*_declared(roster))
+
+
+def _validated_posix_allocation(
+    allocation: Mapping[str, dict], accounts: int = len(DIRECTORY_ROLES),
+) -> dict:
+    """Refuse any POSIX allocation whose identifiers could collide.
+
+    *accounts* is how many users the allocation must hold: the directory roles,
+    plus a durable declaration's additional standard users.
+    """
     users = allocation["users"]
     groups = allocation["groups"]
     uids = [user["uidNumber"] for user in users.values()]
     gids = list(groups.values())
-    if any(not isinstance(uid, int) or uid < _POSIX_BASE for uid in uids):
+    if any(not isinstance(uid, int) or isinstance(uid, bool)
+           or not _POSIX_BASE <= uid <= _POSIX_UID_MAX for uid in uids):
         raise ValueError("Controller POSIX uidNumber is out of range")
     if any(not isinstance(gid, int) or gid < _POSIX_BASE for gid in gids):
         raise ValueError("Controller POSIX gidNumber is out of range")
@@ -247,10 +349,10 @@ def _validated_posix_allocation(allocation: Mapping[str, dict]) -> dict:
     if set(uids) & set(gids):
         raise ValueError(
             "Controller POSIX user and group identifier ranges collide")
-    if len(users) != len(DIRECTORY_ROLES):
+    if len(users) != accounts:
         raise ValueError(
             f"Controller POSIX allocation holds {len(users)} accounts for "
-            f"{len(DIRECTORY_ROLES)} directory roles")
+            f"{accounts} declared accounts")
     for user in users.values():
         if user["gidNumber"] not in gids:
             raise ValueError(
@@ -277,20 +379,27 @@ def directory_role(contract_role: str) -> str:
 
 def directory_account_plan(
     contract_roles: Sequence[str],
-    roster: Mapping[str, str] | None = None,
+    roster: object = None,
 ) -> list[dict]:
-    """Derive the durable directory accounts for *contract_roles*, in UID order.
+    """Derive the durable directory accounts for *contract_roles*.
 
     The single derivation both lanes use.  *contract_roles* names WHICH contract
     roles become directory principals on this instance; it never names an
     account and never influences a uidNumber, because the returned list is
-    ordered by, and numbered from, each role's position in
-    ``arch_second.DIRECTORY_ROLES``.  So the order the caller writes its roles
-    in is immaterial, renaming an account in the private overlay moves no UID,
-    and declaring one more role appends one UID.
+    ordered by each role's position in ``arch_second.DIRECTORY_ROLES`` and
+    numbered by ``arch_second.directory_uid_numbers`` (the overlay's pin, else
+    that position).  So the order the caller writes its roles in is immaterial,
+    renaming an account in the private overlay moves no UID, and declaring one
+    more role appends one UID.
 
-    *roster* is a parameter so a test can derive a plan for a renamed roster
-    without reloading this module; production always uses the resolved one.
+    *roster* is any shape ``_declared`` accepts.  A DURABLE declaration
+    (``durable_directory_roster()``) also contributes every additional standard
+    user its overlay lists, after the roles and in the overlay's order, each a
+    plain ``standard`` account whose ``contract_role`` is its name-free label
+    (``additional_standard_user_label``).  They are planned whatever
+    *contract_roles* says: they belong to no role, and a durable path that
+    plans accounts at all plans every one the overlay declares.  The
+    acceptance default (``None``) never carries any.
     """
     if isinstance(contract_roles, str):
         raise DirectoryPlanError("directory roles must be a list of roles")
@@ -310,19 +419,34 @@ def directory_account_plan(
                 f"{list(DIRECTORY_ROLES)}")
     if len(set(requested)) != len(requested):
         raise DirectoryPlanError("a directory role is declared twice")
-    if roster is None:
-        roster = _ROSTER
-    allocation = _validated_posix_allocation(_posix_allocation(roster))
+    names, uid_numbers, additional = _declared(roster)
+    allocation = _validated_posix_allocation(
+        _allocation(names, uid_numbers, additional),
+        accounts=len(DIRECTORY_ROLES) + len(additional))
     plan = []
     for role in DIRECTORY_ROLES:
         if role not in requested:
             continue
-        name = roster[role]
+        name = names[role]
         unix = allocation["users"][name]
         plan.append({
             "contract_role": role,
             "name": name,
             "role": directory_role(role),
+            "uidNumber": unix["uidNumber"],
+            "gidNumber": unix["gidNumber"],
+            "loginShell": unix["loginShell"],
+            "unixHomeDirectory": unix["unixHomeDirectory"],
+        })
+    for user in additional:
+        unix = allocation["users"][user.name]
+        plan.append({
+            "contract_role": additional_standard_user_label(user.uid_number),
+            "name": user.name,
+            # Never an administrator: nothing in the overlay can say otherwise,
+            # and both durable paths verify Domain Admins membership in both
+            # directions, so an additional user found in it fails convergence.
+            "role": "standard",
             "uidNumber": unix["uidNumber"],
             "gidNumber": unix["gidNumber"],
             "loginShell": unix["loginShell"],
@@ -339,15 +463,22 @@ def directory_group_allocation() -> dict[str, int]:
 def durable_directory_roster(
     overlay_path: Path | None = None,
     roles: Sequence[str] = DIRECTORY_ROLES,
-) -> dict[str, str]:
-    """Resolve the roster a DURABLE directory may be provisioned from.
+):
+    """Resolve the declaration a DURABLE directory may be provisioned from.
 
-    ``identity_roster(require_named=...)`` and nothing else.  The module
-    roster resolved at import (``_ROSTER``) is deliberately NOT reused: it is
-    allowed to fall back to the tracked contract's synthetic acceptance names,
-    which is right for the disposable Controller every gate throws away and
-    catastrophic for a persistent instance, where the resulting SIDs are
-    permanent.  An operator who has not seeded the private overlay — or who
+    ``identity_declaration(require_named=...)`` and nothing else, returned
+    WHOLE: its ``roster`` (names), each directory role's ``uid_numbers``
+    (pinned or positional) and the overlay's ``additional_standard_users``.
+    Hand it, as one object, to ``directory_account_plan``, ``_programs`` or
+    ``ControllerPrincipalSerial``; a caller that passes only ``.roster`` gets
+    positional numbers and no additional users, which is the acceptance
+    answer and never the durable one.
+
+    The module roster resolved at import (``_ROSTER``) is deliberately NOT
+    reused: it is allowed to fall back to the tracked contract's synthetic
+    acceptance names, which is right for the disposable Controller every gate
+    throws away and catastrophic for a persistent instance, where the resulting
+    SIDs are permanent.  An operator who has not seeded the private overlay — or who
     mistyped its path — gets a refusal naming the exact file, never a
     directory full of ``student``/``operator`` accounts reported as a success.
 
@@ -362,24 +493,32 @@ def durable_directory_roster(
     resolve a roster it wrote itself, without reading or writing whatever
     private overlay the developer's own machine happens to carry.
     """
-    return identity_roster(
+    return identity_declaration(
         overlay_path=overlay_path, require_overlay=True,
         require_named=tuple(role for role in DIRECTORY_ROLES if role in roles))
 
 
-def _programs(roster: Mapping[str, str]) -> tuple[str, str, tuple[str, ...]]:
+def _programs(roster: object) -> tuple[str, str, tuple[str, ...]]:
     """Bake one resolved roster into the two guest programs, plus its order.
 
     The single place a roster becomes a guest program.  The module constants
-    below are this function applied to the import-time roster; a durable path
-    applies it to the overlay-required roster instead, so the two can differ in
-    NAMES without ever differing in RULE — same POSIX allocation, same
+    below are this function applied to the import-time acceptance declaration;
+    a durable path applies it to the overlay-required declaration instead, so
+    the two can differ in NAMES -- and a durable one by its additional standard
+    users -- without ever differing in RULE: same POSIX allocation, same
     validation, same Domain Admins membership derived from the same role.
+
+    The order is the directory roles, then any additional standard users.
+    Those are created, verified and given a share root exactly like the
+    standard user; the program adds ``roster["domain_administrator"]`` alone to
+    Domain Admins, so no overlay can make one an administrator.
     """
-    validated = _validated_roster(roster)
-    roles = tuple(validated[role] for role in DIRECTORY_ROLES)
-    allocation = _validated_posix_allocation(_posix_allocation(validated))
-    roster_json = _roster_json(roles, validated["domain_administrator"])
+    names, uid_numbers, additional = _declared(roster)
+    roles = (tuple(names[role] for role in DIRECTORY_ROLES)
+             + tuple(user.name for user in additional))
+    allocation = _validated_posix_allocation(
+        _allocation(names, uid_numbers, additional), accounts=len(roles))
+    roster_json = _roster_json(roles, names["domain_administrator"])
     return (
         _substituted(_STAGE_PROGRAM_TEMPLATE, roster_json, allocation),
         _substituted(_DESTROY_PROGRAM_TEMPLATE, roster_json, allocation),
@@ -646,7 +785,7 @@ def _substituted(
 
 
 _ROSTER_JSON = _roster_json(_ROLES, _DOMAIN_ADMIN)
-_STAGE_PROGRAM, _DESTROY_PROGRAM, _PROGRAM_ROLES = _programs(_ROSTER)
+_STAGE_PROGRAM, _DESTROY_PROGRAM, _PROGRAM_ROLES = _programs(_ACCEPTANCE)
 if _PROGRAM_ROLES != _ROLES:
     # Structural, and unconditional like the roster gate above: the programs
     # baked at import and the names this module publishes must be one
@@ -671,7 +810,7 @@ class ControllerPrincipalSerial:
         *,
         timeout: float = 90.0,
         password: bytes | None = None,
-        roster: Mapping[str, str] | None = None,
+        roster: object = None,
         roster_source: str | None = None,
     ) -> None:
         """Bind one console to one roster.
@@ -688,7 +827,11 @@ class ControllerPrincipalSerial:
         module resolved at import".  ``None`` keeps every existing caller on
         the module constants, byte for byte.  A supplied roster is baked into
         this instance's own guest programs by ``_programs``, so the names this
-        object validates are exactly the names its programs create.
+        object validates are exactly the names its programs create.  A durable
+        DECLARATION (``durable_directory_roster()``) brings its uid_number pins
+        and its additional standard users with it: ``roles`` then lists those
+        users after the directory roles, and ``stage`` requires a credential
+        for each.
         """
         self.console = SerialAutomation(
             reader, writer, password, timeout=timeout)

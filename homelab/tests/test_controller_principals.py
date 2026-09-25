@@ -21,6 +21,7 @@ from homelab.vm.controller_principals import (
 from homelab.workstations.arch_second import (
     CONTRACT_ROLES,
     DIRECTORY_ROLES,
+    identity_declaration,
     identity_roster,
 )
 from homelab.vm.serial_automation import (
@@ -882,13 +883,13 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         # A caller that plans only the named roles is not refused.
         self.assertEqual("ksh", controller_principals.durable_directory_roster(
             partial, roles=("standard_user", "daily_administrator"),
-        )["daily_administrator"])
+        ).roster["daily_administrator"])
 
     def test_the_break_glass_role_need_not_be_named(self):
         # local_rescue is a LOCAL account, never a directory SID, so leaving it
         # to its contract name mints nothing permanent in the directory.
         self.assertNotIn("local_rescue", self.OVERLAY["principals"])
-        self.assertEqual("local-rescue", self.roster["local_rescue"])
+        self.assertEqual("local-rescue", self.roster.roster["local_rescue"])
 
     def test_a_durable_console_answers_sudos_own_prompt(self):
         # A persistent instance's console account has a password the operator
@@ -1053,6 +1054,259 @@ print(json.dumps({{
         self.assertEqual("ksh", observed["material_daily_admin"])
         # And the resolved source names the overlay that produced it.
         self.assertIn("patched by overlay", observed["source"])
+
+
+# The owner's requested layout, 2026-09-25, with PLACEHOLDER names (ADR 0046):
+# domain administrator 10000, daily administrator 10001, one additional standard
+# user 10002, standard user 10003; local_rescue keeps its contract name.
+OWNER_LAYOUT = {
+    "schema_version": 1,
+    "principals": {
+        "standard_user": {"name": "roster-a", "uid_number": 10003},
+        "daily_administrator": {"name": "roster-b", "uid_number": 10001},
+        "domain_administrator": {"name": "roster-c", "uid_number": 10000},
+    },
+    "additional_standard_users": [
+        {"name": "roster-e", "uid_number": 10002},
+    ],
+}
+# (contract_role, name, directory role, uidNumber) of every durable account the
+# owner's layout must produce, in plan order.
+OWNER_PLAN = [
+    ("standard_user", "roster-a", "standard", 10003),
+    ("daily_administrator", "roster-b", "standard", 10001),
+    ("domain_administrator", "roster-c", "administrator", 10000),
+    ("additional_standard_user_10002", "roster-e", "standard", 10002),
+]
+
+
+class UidPinAndAdditionalUserTests(unittest.TestCase):
+    """uid_number pins and additional standard users, through every derivation.
+
+    The loader judges the overlay; these prove what the allocation, the durable
+    plan, the guest programs and the console do with a judged declaration --
+    and that the disposable acceptance default never carries an additional
+    user.  Every overlay is a temporary file.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.overlay = self.write(OWNER_LAYOUT)
+        self.durable = controller_principals.durable_directory_roster(
+            self.overlay)
+
+    def write(self, document, name="principals.json"):
+        path = self.root / name
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def summary(plan):
+        return [(entry["contract_role"], entry["name"], entry["role"],
+                 entry["uidNumber"]) for entry in plan]
+
+    def test_the_owners_layout_is_the_durable_plan(self):
+        plan = controller_principals.directory_account_plan(
+            list(DIRECTORY_ROLES), roster=self.durable)
+        self.assertEqual(OWNER_PLAN, self.summary(plan))
+        for entry in plan:
+            with self.subTest(account=entry["contract_role"]):
+                self.assertEqual(10513, entry["gidNumber"])
+                self.assertEqual("/bin/bash", entry["loginShell"])
+                self.assertEqual("/home/" + entry["name"],
+                                 entry["unixHomeDirectory"])
+        # Additional users are planned whatever subset of roles is declared:
+        # they belong to no role.
+        subset = controller_principals.directory_account_plan(
+            ["daily_administrator"], roster=self.durable)
+        self.assertEqual([OWNER_PLAN[1], OWNER_PLAN[3]], self.summary(subset))
+
+    def test_the_owners_layout_is_the_allocation(self):
+        allocation = controller_principals._validated_posix_allocation(
+            controller_principals._posix_allocation(self.durable), accounts=4)
+        self.assertEqual(
+            {"roster-a": 10003, "roster-b": 10001, "roster-c": 10000,
+             "roster-e": 10002},
+            {name: user["uidNumber"]
+             for name, user in allocation["users"].items()})
+        self.assertEqual({"Domain Users": 10513, "Domain Admins": 10512},
+                         allocation["groups"])
+
+    def test_the_owners_layout_is_baked_into_both_guest_programs(self):
+        stage, destroy, roles = controller_principals._programs(self.durable)
+        self.assertEqual(("roster-a", "roster-b", "roster-c", "roster-e"),
+                         roles)
+        for program in (stage, destroy):
+            self.assertIn(
+                '"order":["roster-a","roster-b","roster-c","roster-e"]',
+                program)
+        for name, uid in (("roster-a", 10003), ("roster-b", 10001),
+                          ("roster-c", 10000), ("roster-e", 10002)):
+            with self.subTest(name=name):
+                self.assertIn(
+                    f'"{name}":{{"gidNumber":10513,"loginShell":"/bin/bash",'
+                    f'"uidNumber":{uid}', stage)
+        # Domain Admins still takes the domain administrator alone, by role.
+        self.assertIn('"domain_administrator":"roster-c"', stage)
+        membership = stage.split(
+            "add_remove_group_members(", 1)[1].split(")", 1)[0]
+        self.assertIn('roster["domain_administrator"]', membership)
+        self.assertNotIn("roster-e", membership)
+
+    def test_a_durable_console_wants_a_credential_for_every_account(self):
+        serial = ControllerPrincipalSerial(
+            io.BytesIO(), io.BytesIO(), roster=self.durable,
+            roster_source="a private overlay")
+        self.assertEqual(("roster-a", "roster-b", "roster-c", "roster-e"),
+                         serial.roles)
+        three = {name: f"Secret-{index}-47!"
+                 for index, name in enumerate(serial.roles[:3])}
+        with self.assertRaisesRegex(ValueError, "roster-e"):
+            serial.stage(three)
+        self.assertEqual(
+            set(serial.roles),
+            set(serial._values(dict(three, **{"roster-e": "Secret-9-47!"}))))
+
+    def test_a_declaration_from_either_import_path_keeps_its_pins(self):
+        # arch_second is importable as ``arch_second`` (what this module uses)
+        # and as ``homelab.workstations.arch_second``; they are distinct module
+        # objects with distinct classes.  A declaration built through the other
+        # one must still be recognised as a declaration, never silently read as
+        # a bare name mapping with positional numbers.
+        from homelab.workstations import arch_second as other
+        declared = other.identity_declaration(overlay_path=self.overlay)
+        self.assertEqual(
+            OWNER_PLAN, self.summary(controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES), roster=declared)))
+
+    def test_a_bare_name_mapping_gets_positional_numbers_only(self):
+        names = dict(self.durable.roster)
+        self.assertEqual(
+            [("standard_user", "roster-a", "standard", 10000),
+             ("daily_administrator", "roster-b", "standard", 10001),
+             ("domain_administrator", "roster-c", "administrator", 10002)],
+            self.summary(controller_principals.directory_account_plan(
+                list(DIRECTORY_ROLES), roster=names)))
+
+    def test_no_pin_means_todays_allocation_and_programs_exactly(self):
+        # With no overlay, and with an overlay that renames but pins nothing,
+        # the declaration path and the historical bare-roster path produce the
+        # same allocation, the same plan and byte-identical guest programs.
+        absent = identity_declaration(
+            overlay_path=self.root / "no-such-overlay.json")
+        renamed_only = controller_principals.durable_directory_roster(
+            self.write({
+                "schema_version": 1,
+                "principals": {
+                    role: {"name": entry["name"]}
+                    for role, entry in OWNER_LAYOUT["principals"].items()},
+            }, name="names-only.json"))
+        for declared in (absent, renamed_only):
+            with self.subTest(source=declared.source.split()[-1]):
+                bare = dict(declared.roster)
+                self.assertEqual(
+                    controller_principals._programs(bare),
+                    controller_principals._programs(declared))
+                self.assertEqual(
+                    controller_principals._posix_allocation(bare),
+                    controller_principals._posix_allocation(declared))
+                self.assertEqual(
+                    controller_principals.directory_account_plan(
+                        list(DIRECTORY_ROLES), roster=bare),
+                    controller_principals.directory_account_plan(
+                        list(DIRECTORY_ROLES), roster=declared))
+                self.assertEqual(
+                    [10000, 10001, 10002],
+                    [entry["uidNumber"]
+                     for entry in controller_principals.directory_account_plan(
+                         list(DIRECTORY_ROLES), roster=declared)])
+        self.assertEqual(
+            {"student": 10000, "operator": 10001, "directory-admin": 10002},
+            {name: user["uidNumber"] for name, user in
+             controller_principals._posix_allocation(absent)["users"].items()})
+
+    def test_a_caller_built_declaration_is_judged_again(self):
+        from dataclasses import replace
+        cases = {
+            "claimed by both": replace(
+                self.durable,
+                uid_numbers=dict(self.durable.uid_numbers,
+                                 standard_user=10000)),
+            "outside the directory range": replace(
+                self.durable,
+                uid_numbers=dict(self.durable.uid_numbers,
+                                 standard_user=60001)),
+            "reserved directory object": replace(
+                self.durable,
+                additional_standard_users=(
+                    type(self.durable.additional_standard_users[0])(
+                        "krbtgt", 10002),)),
+        }
+        for reason, declared in cases.items():
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(
+                        controller_principals.DirectoryPlanError, reason):
+                    controller_principals.directory_account_plan(
+                        list(DIRECTORY_ROLES), roster=declared)
+                with self.assertRaisesRegex(
+                        controller_principals.DirectoryPlanError, reason):
+                    controller_principals._programs(declared)
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            controller_principals._validated_posix_allocation({
+                "users": {"a": {"uidNumber": 60001, "gidNumber": 10513}},
+                "groups": {"Domain Users": 10513}}, accounts=1)
+
+    def test_the_acceptance_lanes_apply_pins_and_never_stage_extra_users(self):
+        # The disposable lanes resolve the overlay at IMPORT, so this runs in a
+        # child interpreter with the loader pointed at a temporary overlay --
+        # never the owner's real one, and never disturbing this process's
+        # already-imported modules.
+        root = Path(__file__).resolve().parents[2]
+        program = f"""
+import io, json, sys
+sys.path.insert(0, {str(root / "homelab" / "workstations")!r})
+import pathlib
+import arch_second
+arch_second.identity_overlay_path = (
+    lambda: pathlib.Path({str(self.overlay)!r}))
+sys.path.insert(0, {str(root)!r})
+from homelab.vm import controller_principals as cp
+from homelab.vm import windows_identity_run as run
+from homelab.vm import arch_identity_run as arch
+print(json.dumps({{
+    "principals": list(cp.DIRECTORY_PRINCIPALS),
+    "windows": list(run.DIRECTORY_PRINCIPALS),
+    "uids": {{name: user["uidNumber"]
+              for name, user in cp.POSIX_ALLOCATION["users"].items()}},
+    "console": list(cp.ControllerPrincipalSerial(
+        io.BytesIO(), io.BytesIO()).roles),
+    "plan": [entry["contract_role"]
+             for entry in cp.directory_account_plan(
+                 list(cp.DIRECTORY_ROLES))],
+    "program_mentions_extra": "roster-e" in cp._STAGE_PROGRAM
+        or "roster-e" in cp._DESTROY_PROGRAM,
+    "operator": arch.OPERATOR_PRINCIPAL,
+}}))
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            capture_output=True, text=True, cwd=str(root), check=False)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        observed = json.loads(completed.stdout)
+        staged = ["roster-a", "roster-b", "roster-c"]
+        self.assertEqual(staged, observed["principals"])
+        self.assertEqual(staged, observed["windows"])
+        self.assertEqual(staged, observed["console"])
+        self.assertEqual(list(DIRECTORY_ROLES), observed["plan"])
+        self.assertFalse(observed["program_mentions_extra"])
+        # A rehearsal exercises the production numbers: the pins apply, and
+        # gate 8's storage check compares against this very allocation.
+        self.assertEqual(
+            {"roster-a": 10003, "roster-b": 10001, "roster-c": 10000},
+            observed["uids"])
+        self.assertEqual("roster-b", observed["operator"])
 
 
 class ShareRootParityTests(unittest.TestCase):

@@ -2555,5 +2555,359 @@ class InstallerRealmTests(unittest.TestCase):
                     self.render(realm)
 
 
+# The owner's requested layout, 2026-09-25, with PLACEHOLDER names (ADR 0046:
+# no real name in a tracked file): the domain administrator at 10000, the daily
+# administrator at 10001, one additional standard user at 10002 and the
+# standard user at 10003.  local_rescue keeps its contract name.
+OWNER_LAYOUT = {
+    "schema_version": 1,
+    "principals": {
+        "standard_user": {"name": "roster-a", "uid_number": 10003},
+        "daily_administrator": {"name": "roster-b", "uid_number": 10001},
+        "domain_administrator": {"name": "roster-c", "uid_number": 10000},
+    },
+    "additional_standard_users": [
+        {"name": "roster-e", "uid_number": 10002},
+    ],
+}
+
+
+class DirectoryIdentifierDeclarationTests(unittest.TestCase):
+    """Per-role uid_number pins and additional standard users, in the loader.
+
+    ``identity_declaration`` is the ONE loader, so every refusal here is one
+    the installer, the acceptance lanes and both durable paths all make.  Every
+    overlay is a temporary file; the owner's real overlay is never read.
+    """
+
+    ABSENT = Path("/nonexistent/telos/identity/principals.json")
+    POSITIONAL = {"standard_user": 10000, "daily_administrator": 10001,
+                  "domain_administrator": 10002}
+
+    def overlay(self, document) -> Path:
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        path = Path(root) / "principals.json"
+        path.write_text(
+            document if isinstance(document, str) else json.dumps(document),
+            encoding="utf-8")
+        return path
+
+    def declare(self, document):
+        return arch_second.identity_declaration(
+            overlay_path=self.overlay(document))
+
+    def owner(self, **changes):
+        """The owner's layout with some top-level or per-role changes."""
+        document = json.loads(json.dumps(OWNER_LAYOUT))
+        for role, entry in changes.pop("principals", {}).items():
+            if entry is None:
+                document["principals"].pop(role, None)
+            else:
+                document["principals"][role] = entry
+        document.update(changes)
+        return document
+
+    def refuse(self, document, reason):
+        with self.assertRaisesRegex(IdentityRosterError, reason) as raised:
+            self.declare(document)
+        return str(raised.exception)
+
+    # ---- No pin: exactly today's numbers ------------------------------
+
+    def test_no_overlay_and_an_unpinned_overlay_keep_the_positional_numbers(self):
+        absent = arch_second.identity_declaration(overlay_path=self.ABSENT)
+        self.assertEqual(self.POSITIONAL, dict(absent.uid_numbers))
+        self.assertEqual((), absent.additional_standard_users)
+        self.assertEqual(identity_roster(overlay_path=self.ABSENT),
+                         dict(absent.roster))
+        self.assertEqual(self.POSITIONAL, arch_second.directory_uid_numbers())
+        renamed = self.declare({
+            "schema_version": 1,
+            "principals": {"standard_user": {"name": "roster-a"},
+                           "daily_administrator": {"name": "roster-b"}},
+        })
+        self.assertEqual(self.POSITIONAL, dict(renamed.uid_numbers))
+        self.assertEqual((), renamed.additional_standard_users)
+
+    def test_the_shipped_template_is_still_inert(self):
+        template = (Path(__file__).resolve().parents[1] / "instance-example"
+                    / "identity" / "principals.json")
+        declared = arch_second.identity_declaration(overlay_path=template)
+        self.assertEqual(self.POSITIONAL, dict(declared.uid_numbers))
+        self.assertEqual((), declared.additional_standard_users)
+        self.assertEqual(identity_roster(overlay_path=self.ABSENT),
+                         dict(declared.roster))
+        document = json.loads(template.read_text(encoding="utf-8"))
+        # The worked examples are documentation keys, and placeholders.
+        self.assertNotIn("additional_standard_users", document)
+        for entry in document["_example_additional_standard_users"]:
+            self.assertRegex(entry["name"], r"^<[a-z-]+>$")
+        # Copied into place, the worked examples are the owner's layout shape
+        # and resolve cleanly -- the template does not document a refusal.
+        worked = {
+            "schema_version": 1,
+            "principals": {
+                role: dict(entry, name=f"roster-{index}")
+                for index, (role, entry) in enumerate(
+                    document["_example_pinned_principals"].items())},
+            "additional_standard_users": [
+                dict(entry, name="roster-x")
+                for entry in document["_example_additional_standard_users"]],
+        }
+        self.assertEqual(
+            {"standard_user": 10003, "daily_administrator": 10001,
+             "domain_administrator": 10000},
+            dict(self.declare(worked).uid_numbers))
+
+    # ---- The owner's layout ------------------------------------------
+
+    def test_the_owners_layout_resolves(self):
+        declared = self.declare(OWNER_LAYOUT)
+        self.assertEqual(
+            {"standard_user": 10003, "daily_administrator": 10001,
+             "domain_administrator": 10000},
+            dict(declared.uid_numbers))
+        self.assertEqual(
+            [("roster-e", 10002)],
+            [(user.name, user.uid_number)
+             for user in declared.additional_standard_users])
+        self.assertEqual(
+            {"standard_user": "roster-a", "daily_administrator": "roster-b",
+             "domain_administrator": "roster-c",
+             "local_rescue": "local-rescue"},
+            dict(declared.roster))
+        # identity_roster is the same resolution's names, and an additional
+        # user is never one of them: nothing bakes one onto a disk.
+        self.assertEqual(dict(declared.roster), identity_roster(
+            overlay_path=self.overlay(OWNER_LAYOUT)))
+
+    def test_a_pin_moves_only_the_role_that_carries_it(self):
+        declared = self.declare({
+            "schema_version": 1,
+            "principals": {"daily_administrator": {
+                "name": "roster-b", "uid_number": 10050}},
+        })
+        self.assertEqual(
+            dict(self.POSITIONAL, daily_administrator=10050),
+            dict(declared.uid_numbers))
+
+    def test_the_range_bounds_are_inclusive(self):
+        for uid in (10000, 60000):
+            with self.subTest(uid=uid):
+                declared = self.declare(self.owner(principals={
+                    "standard_user": {"name": "roster-a", "uid_number": 60000
+                                      if uid == 60000 else 10003},
+                    "domain_administrator": {"name": "roster-c",
+                                             "uid_number": 10000}}))
+                self.assertIn(uid, declared.uid_numbers.values())
+
+    def test_the_arch_disk_does_not_depend_on_a_uid(self):
+        # Nothing an installed disk carries may depend on a directory UID: the
+        # disk resolves every directory account through SSSD at login.  So the
+        # installer rendered for a roster must be byte-identical whether or not
+        # the same overlay also pins numbers and lists additional users.
+        names_only = {
+            "schema_version": 1,
+            "principals": {
+                role: {"name": entry["name"]}
+                for role, entry in OWNER_LAYOUT["principals"].items()},
+        }
+        rendered = []
+        for document in (names_only, OWNER_LAYOUT):
+            with mock.patch.object(arch_second, "identity_overlay_path",
+                                   return_value=self.overlay(document)):
+                rendered.append(render_installer(
+                    disk_path="/dev/vda", disk_serial="LAPTOP-1",
+                    hostname="workstation", expected_sizes_mib=SIZES))
+        self.assertEqual(rendered[0], rendered[1])
+        # The overlay really was the one rendered from...
+        self.assertIn("roster-b", rendered[1])
+        # ...and neither a pinned number nor an additional user reached it.
+        self.assertNotIn("roster-e", rendered[1])
+        self.assertNotIn("10003", rendered[1])
+        # The roster fingerprint gate 8 compares is over the four names only.
+        self.assertEqual(
+            identity_roster_fingerprint(identity_roster(
+                overlay_path=self.overlay(names_only))),
+            identity_roster_fingerprint(identity_roster(
+                overlay_path=self.overlay(OWNER_LAYOUT))))
+
+    # ---- Refusals, each named ------------------------------------------
+
+    def test_a_pin_on_another_roles_default_is_refused_never_shifted(self):
+        # domain_administrator pinned to 10000 while standard_user is unpinned
+        # and therefore 10000 by default: refused, naming both, rather than
+        # quietly moving standard_user somewhere else.
+        message = self.refuse(
+            self.owner(principals={"standard_user": {"name": "roster-a"}}),
+            "claimed by both")
+        self.assertIn("uid_number 10000", message)
+        self.assertIn("standard_user (positional default)", message)
+        self.assertIn("domain_administrator (pinned)", message)
+        self.assertIn("pin that role too", message)
+
+    def test_an_additional_user_may_not_take_any_other_accounts_number(self):
+        cases = {
+            "an unpinned role's positional default": self.owner(
+                principals={"domain_administrator": {"name": "roster-c"}}),
+            "a pinned role's number": self.owner(
+                additional_standard_users=[
+                    {"name": "roster-e", "uid_number": 10001}]),
+            "another additional user's number": self.owner(
+                additional_standard_users=[
+                    {"name": "roster-e", "uid_number": 10002},
+                    {"name": "roster-f", "uid_number": 10002}]),
+        }
+        for label, document in cases.items():
+            with self.subTest(clash=label):
+                self.refuse(document, "claimed by both")
+
+    def test_a_uid_number_must_be_a_json_integer(self):
+        for value in (True, False, 10000.0, "10000", None, [10000]):
+            with self.subTest(value=value):
+                self.refuse(
+                    self.owner(principals={"domain_administrator": {
+                        "name": "roster-c", "uid_number": value}}),
+                    "uid_number must be a JSON integer")
+                self.refuse(
+                    self.owner(additional_standard_users=[
+                        {"name": "roster-e", "uid_number": value}]),
+                    r"additional_standard_users\[0\] uid_number must be a "
+                    "JSON integer")
+
+    def test_a_uid_number_outside_the_directory_range_is_refused(self):
+        for uid in (-1, 0, 1000, 9999, 60001, 65534, 65535, 3000000):
+            with self.subTest(uid=uid):
+                message = self.refuse(
+                    self.owner(additional_standard_users=[
+                        {"name": "roster-e", "uid_number": uid}]),
+                    "outside the directory range 10000..60000")
+                self.assertIn(f"uid_number {uid} ", message)
+                self.refuse(
+                    self.owner(principals={"standard_user": {
+                        "name": "roster-a", "uid_number": uid}}),
+                    "outside the directory range")
+
+    def test_a_group_gid_is_never_a_user_uid(self):
+        for gid, group in ((10512, "Domain Admins"), (10513, "Domain Users")):
+            with self.subTest(gid=gid):
+                self.refuse(
+                    self.owner(principals={"standard_user": {
+                        "name": "roster-a", "uid_number": gid}}),
+                    f"is the gidNumber of {group}")
+                self.refuse(
+                    self.owner(additional_standard_users=[
+                        {"name": "roster-e", "uid_number": gid}]),
+                    f"is the gidNumber of {group}")
+        self.assertEqual({"Domain Users": 10513, "Domain Admins": 10512},
+                         arch_second.directory_group_gids())
+
+    def test_the_break_glass_account_may_not_be_pinned(self):
+        message = self.refuse(
+            self.owner(principals={"local_rescue": {
+                "name": "roster-d", "uid_number": 10009}}),
+            "pins a uid_number for local_rescue")
+        self.assertIn("LOCAL account", message)
+
+    def test_unknown_keys_are_still_refused(self):
+        cases = (
+            (self.owner(principals={"standard_user": {
+                "name": "roster-a", "uid": 10003}}), "may only set"),
+            (self.owner(principals={"standard_user": {
+                "name": "roster-a", "uid_number": 10003,
+                "domain_role": "administrator"}}), "may only set"),
+            (self.owner(additional_standard_users=[{
+                "name": "roster-e", "uid_number": 10002,
+                "role": "administrator"}]),
+             r"additional_standard_users\[0\] may only set"),
+            (dict(self.owner(), additional_users=[]), "unknown key"),
+            (self.owner(additional_standard_users={"roster-e": 10002}),
+             "not a JSON array"),
+            (self.owner(additional_standard_users=["roster-e"]),
+             r"additional_standard_users\[0\] is not a JSON object"),
+            (self.owner(additional_standard_users=[{"uid_number": 10002}]),
+             r"additional_standard_users\[0\] declares no name"),
+            (self.owner(additional_standard_users=[{"name": "roster-e"}]),
+             r"declares no uid_number"),
+        )
+        for document, reason in cases:
+            with self.subTest(reason=reason):
+                self.refuse(document, reason)
+
+    def test_documentation_keys_stay_allowed_everywhere(self):
+        document = self.owner(
+            _example_additional_standard_users=[{"name": "<who>"}],
+            additional_standard_users=[
+                {"_who": "a note", "name": "roster-e", "uid_number": 10002}])
+        document["principals"]["standard_user"]["_why"] = "a note"
+        self.assertEqual(
+            ("roster-e",),
+            tuple(user.name for user in
+                  self.declare(document).additional_standard_users))
+
+    def test_an_additional_users_name_obeys_the_directory_rules(self):
+        def extra(name):
+            return self.owner(additional_standard_users=[
+                {"name": name, "uid_number": 10002}])
+
+        for unsafe in ("Roster-E", "0roster", "roster e", "roster;e", "",
+                       "a" * 33, 47):
+            with self.subTest(name=unsafe):
+                self.refuse(extra(unsafe), "not safely representable")
+        self.refuse(extra("a" * (SAMACCOUNTNAME_LIMIT + 1)),
+                    "sAMAccountName limit")
+        self.declare(extra("a" * SAMACCOUNTNAME_LIMIT))
+        for reserved in ("administrator", "guest", "krbtgt", "dns-factory",
+                         "root", "daemon", "bin", "sys", "nobody",
+                         "systemd-network"):
+            with self.subTest(name=reserved):
+                self.refuse(extra(reserved), "reserved directory object")
+        # Distinct from every roster name, the break-glass account included --
+        # even when the overlay leaves that role at its contract name.
+        for role, name in (("standard_user", "roster-a"),
+                           ("domain_administrator", "roster-c"),
+                           ("local_rescue", "local-rescue")):
+            with self.subTest(role=role):
+                self.refuse(extra(name), f"is the {role} account's name")
+        self.refuse(
+            self.owner(additional_standard_users=[
+                {"name": "roster-e", "uid_number": 10002},
+                {"name": "roster-e", "uid_number": 10004}]),
+            r"additional_standard_users\[1\] repeats "
+            r"additional_standard_users\[0\]")
+
+    def test_a_refusal_names_an_additional_user_by_position_only(self):
+        # A refusal is printed at the operator's terminal and may be retained;
+        # the person's name is instance data (ADR 0046).
+        message = self.refuse(
+            self.owner(additional_standard_users=[
+                {"name": "roster-e", "uid_number": 10002},
+                {"name": "roster-f", "uid_number": 10001}]),
+            "claimed by both")
+        self.assertIn("additional_standard_users[1]", message)
+        self.assertNotIn("roster-f", message)
+        message = self.refuse(
+            self.owner(additional_standard_users=[
+                {"name": "roster-e", "uid_number": 10002},
+                {"name": "roster-e", "uid_number": 10004}]),
+            "repeats")
+        self.assertNotIn("roster-e", message.split("roster source")[0])
+
+    def test_a_caller_built_declaration_is_judged_by_the_same_rule(self):
+        roster = dict(identity_roster(overlay_path=self.ABSENT))
+        with self.assertRaisesRegex(IdentityRosterError, "cover exactly"):
+            arch_second.validate_directory_identifiers(
+                roster, {"standard_user": 10000}, source="a test")
+        with self.assertRaisesRegex(IdentityRosterError, "claimed by both"):
+            arch_second.validate_directory_identifiers(
+                roster, dict(self.POSITIONAL, daily_administrator=10000),
+                source="a test")
+        arch_second.validate_directory_identifiers(
+            roster, self.POSITIONAL,
+            (arch_second.AdditionalStandardUser("roster-e", 10003),),
+            source="a test")
+
+
 if __name__ == "__main__":
     unittest.main()

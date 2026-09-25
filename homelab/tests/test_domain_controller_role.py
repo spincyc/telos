@@ -1470,6 +1470,234 @@ class TestDurableAccountDriver(unittest.TestCase):
         self.assertIn("one of the arguments", result.stderr)
 
 
+# The owner's requested layout, 2026-09-25, with PLACEHOLDER names (ADR 0046):
+# domain administrator 10000, daily administrator 10001, one additional standard
+# user 10002, standard user 10003; local_rescue keeps its contract name.
+OWNER_LAYOUT = {
+    "schema_version": 1,
+    "principals": {
+        "standard_user": {"name": "roster-a", "uid_number": 10003},
+        "daily_administrator": {"name": "roster-b", "uid_number": 10001},
+        "domain_administrator": {"name": "roster-c", "uid_number": 10000},
+    },
+    "additional_standard_users": [
+        {"name": "roster-e", "uid_number": 10002},
+    ],
+}
+EXTRA_LABEL = "additional_standard_user_10002"
+
+
+class TestDurablePinsAndAdditionalUsers(DurableAccountBase):
+    """The role's half of uid_number pins and additional standard users.
+
+    The resolver must carry both into the plan, the role must hold that plan to
+    exactly its declared roles plus exactly the overlay's additional users, and
+    the driver must refuse an additional user as anything but ``standard``.
+    """
+
+    def resolve(self, roles, document):
+        import json
+
+        with tempfile.TemporaryDirectory() as scratch:
+            overlay = Path(scratch) / "principals.json"
+            overlay.write_text(json.dumps(document), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(RESOLVER),
+                 "--roles", ",".join(roles),
+                 "--admin-group", "Domain Admins",
+                 "--group-rids-json",
+                 '{"Domain Users": 513, "Domain Admins": 512}',
+                 "--identity-overlay", str(overlay)],
+                capture_output=True, text=True)
+            from homelab.vm import controller_principals as principals
+            expected = None
+            if result.returncode == 0:
+                expected = principals.directory_account_plan(
+                    roles, roster=principals.durable_directory_roster(
+                        overlay, roles=roles))
+        return result, (json.loads(result.stdout)
+                        if result.returncode == 0 else None), expected
+
+    def test_the_resolver_renders_the_owners_layout(self):
+        result, document, expected = self.resolve(ACCEPTANCE_ROLES,
+                                                  OWNER_LAYOUT)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            [("standard_user", "roster-a", "standard", 10003),
+             ("daily_administrator", "roster-b", "standard", 10001),
+             ("domain_administrator", "roster-c", "administrator", 10000),
+             (EXTRA_LABEL, "roster-e", "standard", 10002)],
+            [(entry["contract_role"], entry["name"], entry["role"],
+              entry["uidNumber"]) for entry in document["accounts"]])
+        self.assertEqual([EXTRA_LABEL], document["additional_standard_users"])
+        # One rule across the process boundary: exactly the in-process plan.
+        self.assertEqual(expected, document["accounts"])
+        # Planned whatever subset of roles the instance declares.
+        result, document, _ = self.resolve(["standard_user"], OWNER_LAYOUT)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(["standard_user", EXTRA_LABEL],
+                         [entry["contract_role"]
+                          for entry in document["accounts"]])
+
+    def test_an_overlay_without_extras_reports_none_and_plans_as_before(self):
+        names_only = {
+            "schema_version": 1,
+            "principals": {role: {"name": name}
+                           for role, name in RENAMED_ROSTER.items()},
+        }
+        result, document, _ = self.resolve(ACCEPTANCE_ROLES, names_only)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([], document["additional_standard_users"])
+        self.assertEqual([10000, 10001, 10002],
+                         [entry["uidNumber"]
+                          for entry in document["accounts"]])
+
+    def test_the_resolver_refuses_what_the_loader_refuses(self):
+        import copy
+
+        clash = copy.deepcopy(OWNER_LAYOUT)
+        clash["principals"]["standard_user"].pop("uid_number")
+        rescue = copy.deepcopy(OWNER_LAYOUT)
+        rescue["principals"]["local_rescue"] = {
+            "name": "roster-d", "uid_number": 10009}
+        reserved = copy.deepcopy(OWNER_LAYOUT)
+        reserved["additional_standard_users"][0]["name"] = "krbtgt"
+        for label, document, reason in (
+            ("a pin on an unpinned role's default", clash, "claimed by both"),
+            ("a pinned break-glass account", rescue, "local_rescue"),
+            ("a reserved additional user", reserved,
+             "reserved directory object"),
+        ):
+            with self.subTest(refusal=label):
+                result, _, _ = self.resolve(ACCEPTANCE_ROLES, document)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("", result.stdout)
+                self.assertIn(reason, result.stderr)
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_the_role_holds_the_plan_to_both_declarations(self):
+        simulation = DurableAccountSimulation(self)
+        plan = simulation.resolved(ACCEPTANCE_ROLES, document=OWNER_LAYOUT)
+        self.assertTrue(simulation.plan_is_accepted(ACCEPTANCE_ROLES, plan))
+        extra = plan["accounts"][-1]
+        self.assertEqual(EXTRA_LABEL, extra["contract_role"])
+        for label, mutated in (
+            ("the additional user dropped",
+             dict(plan, accounts=plan["accounts"][:-1])),
+            ("the additional user promoted to administrator",
+             dict(plan, accounts=plan["accounts"][:-1]
+                  + [dict(extra, role="administrator")])),
+            ("an additional user the resolver did not report",
+             dict(plan, additional_standard_users=[])),
+            ("a reported additional user missing from the plan",
+             dict(plan, additional_standard_users=[
+                 EXTRA_LABEL, "additional_standard_user_10009"])),
+            ("no report at all",
+             {key: value for key, value in plan.items()
+              if key != "additional_standard_users"}),
+            ("a declared role replaced by another additional user",
+             dict(plan, accounts=plan["accounts"][1:] + [
+                 dict(extra, contract_role="additional_standard_user_10009")],
+                  additional_standard_users=[
+                      EXTRA_LABEL, "additional_standard_user_10009"])),
+        ):
+            with self.subTest(plan=label):
+                self.assertFalse(simulation.plan_is_accepted(
+                    ACCEPTANCE_ROLES, mutated))
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_an_additional_user_is_rotated_by_its_label_only(self):
+        simulation = DurableAccountSimulation(self)
+        # Accepted before resolution, because the role cannot know the labels
+        # until the resolver has run...
+        self.assertTrue(simulation.roster_is_accepted(
+            ACCEPTANCE_ROLES, reset_roles=[EXTRA_LABEL]))
+        self.assertFalse(simulation.roster_is_accepted(
+            ACCEPTANCE_ROLES, reset_roles=["roster-e"]))
+        # ...and held to the plan after it: a label nothing planned is refused
+        # rather than silently rotating nothing.
+        plan = simulation.resolved(ACCEPTANCE_ROLES, document=OWNER_LAYOUT)
+        self.assertTrue(simulation.plan_is_accepted(
+            ACCEPTANCE_ROLES, plan, reset_roles=[EXTRA_LABEL]))
+        self.assertFalse(simulation.plan_is_accepted(
+            ACCEPTANCE_ROLES, plan,
+            reset_roles=["additional_standard_user_10009"]))
+        allocated, _ = simulation.allocate(
+            ACCEPTANCE_ROLES, reset_roles=[EXTRA_LABEL],
+            document=OWNER_LAYOUT)
+        by_label = {entry["contract_role"]: entry for entry in allocated}
+        self.assertIs(True, by_label[EXTRA_LABEL]["reset_password"])
+        self.assertIs(False, by_label["standard_user"]["reset_password"])
+
+    @unittest.skipIf(JINJA_REASON, JINJA_REASON)
+    def test_an_additional_user_gets_its_own_password_file_and_share(self):
+        simulation = DurableAccountSimulation(self)
+        plan, _ = simulation.allocate(ACCEPTANCE_ROLES, document=OWNER_LAYOUT)
+        template = self.defaults()["homelab_ad_account_password_file_template"]
+        extra = next(entry for entry in plan
+                     if entry["contract_role"] == EXTRA_LABEL)
+        self.assertEqual(template.replace("{name}", "roster-e"),
+                         extra["password_file"])
+        self.assertIs(True, extra["create"])
+        self.assertTrue(simulation.password_paths_are_accepted(plan))
+        self.assertTrue(simulation.share_is_accepted(
+            extra, {"exists": True, "isdir": True, "uid": 10002,
+                    "gid": 10513, "mode": "0700"}))
+        # And it is never a Domain Admins member: the membership check fails
+        # if it is in the group.
+        admin = next(entry["name"] for entry in plan
+                     if entry["role"] == "administrator")
+        self.assertFalse(simulation.admin_membership_fails(plan, [admin]))
+        self.assertTrue(
+            simulation.admin_membership_fails(plan, [admin, "roster-e"]))
+
+    def test_the_driver_refuses_an_additional_user_as_an_administrator(self):
+        driver = TestDurableAccountDriver()
+        entry = driver.entry(contract_role=EXTRA_LABEL, create=False)
+        result, recorded, _ = driver.run_driver(
+            [dict(entry, role="administrator")])
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("may only be a standard account", recorded)
+        self.assertIn(EXTRA_LABEL, recorded)
+        result, recorded, _ = driver.run_driver(
+            [driver.entry(create=False, uidNumber=60001)])
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("uidNumber is out of range", recorded)
+
+    def test_every_copy_of_the_shared_constants_agrees(self):
+        # The driver runs where neither Python module is importable, and the
+        # role is YAML, so each restates what it enforces; these hold the
+        # copies equal.
+        import re
+
+        from homelab.vm import controller_principals as principals
+        from homelab.workstations import arch_second
+
+        source = TestDurableAccountDriver.DRIVER.read_text()
+        self.assertIn(f"POSIX_UID_MAX = {arch_second.DIRECTORY_UID_MAX}\n",
+                      source)
+        self.assertIn(
+            f're.compile(r"{principals.ADDITIONAL_STANDARD_USER_PATTERN}")',
+            source)
+        tasks = (ROLE / "tasks/main.yml").read_text()
+        self.assertIn(f"'{principals.ADDITIONAL_STANDARD_USER_PATTERN}'",
+                      tasks)
+        self.assertTrue(re.fullmatch(
+            principals.ADDITIONAL_STANDARD_USER_PATTERN,
+            principals.additional_standard_user_label(10002)))
+        self.assertEqual(principals.POSIX_UID_MAX,
+                         arch_second.DIRECTORY_UID_MAX)
+        # The directory reservations: driver, resolver, and the loader's copy
+        # that covers the serial-console path neither of them sees.
+        names = re.search(
+            r"\nRESERVED_NAMES = frozenset\(\{(.*?)\}\)", source, re.S)
+        prefixes = re.search(r"\nRESERVED_PREFIXES = \((.*?)\)", source)
+        self.assertEqual(set(re.findall(r'"([^"]+)"', names.group(1))),
+                         set(arch_second.DIRECTORY_RESERVED_NAMES))
+        self.assertEqual(set(re.findall(r'"([^"]+)"', prefixes.group(1))),
+                         set(arch_second.DIRECTORY_RESERVED_PREFIXES))
+
+
 class DurableAccountSimulation:
     """Evaluate the role's own expressions, reproducing Ansible's loops."""
 
@@ -1498,8 +1726,11 @@ class DurableAccountSimulation:
             "stdout_lines": list(existing)}
         return variables
 
-    def resolved(self, roles, roster=None):
+    def resolved(self, roles, roster=None, document=None):
         """The plan the control-host resolver renders for *roles*, verbatim.
+
+        *document* replaces the whole overlay when given -- for the uid_number
+        pins and additional standard users a names-only *roster* cannot say.
 
         Run for real rather than reconstructed: the point of the bridge is that
         the guest consumes exactly what the one rule produced.
@@ -1517,7 +1748,7 @@ class DurableAccountSimulation:
 
         with tempfile.TemporaryDirectory() as scratch:
             overlay = Path(scratch) / "principals.json"
-            overlay.write_text(json.dumps({
+            overlay.write_text(json.dumps(document or {
                 "schema_version": 1,
                 "principals": {role: {"name": name} for role, name
                                in (roster or RENAMED_ROSTER).items()},
@@ -1540,10 +1771,11 @@ class DurableAccountSimulation:
             "Validate the declared durable account roster",
             self.variables(roles, reset_roles=reset_roles, template=template))
 
-    def plan_is_accepted(self, roles, plan):
+    def plan_is_accepted(self, roles, plan, reset_roles=()):
         return self.holds(
             "Require the resolved plan to cover exactly the declared roles",
-            dict(self.variables(roles), homelab_ad_directory_plan=plan))
+            dict(self.variables(roles, reset_roles=reset_roles),
+                 homelab_ad_directory_plan=plan))
 
     def password_paths_are_accepted(self, plan):
         return self.holds(
@@ -1612,11 +1844,13 @@ class DurableAccountSimulation:
             homelab_ad_account_plan=plan,
             homelab_ad_admin_members={"rc": 0, "stdout_lines": members})))
 
-    def allocate(self, roles, existing=(), reset_roles=(), template=None):
+    def allocate(self, roles, existing=(), reset_roles=(), template=None,
+                 document=None):
         """Run the role's set_facts over a really-resolved plan, as Ansible would."""
         variables = self.variables(
             roles, existing, reset_roles=reset_roles, template=template)
-        variables["homelab_ad_directory_plan"] = self.resolved(roles)
+        variables["homelab_ad_directory_plan"] = self.resolved(
+            roles, document=document)
         reset = self.case.named(
             "Start the durable POSIX allocation from an empty plan")
         for key, value in reset["ansible.builtin.set_fact"].items():

@@ -33,6 +33,15 @@ from pathlib import Path
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_CONTRACT_ROLE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 POSIX_ATTRIBUTES = ("uidNumber", "gidNumber", "loginShell", "unixHomeDirectory")
+# The top of the directory uidNumber range. Restated from
+# homelab/workstations/arch_second.DIRECTORY_UID_MAX, which says why it is
+# 60000, because this driver runs where that module is not; a unit test asserts
+# the two agree. The bottom is --posix-base.
+POSIX_UID_MAX = 60000
+# How the plan labels a durable-only additional standard user, which has no
+# contract role (controller_principals.ADDITIONAL_STANDARD_USER_PATTERN, held
+# equal by the same test). Such an account may only ever be `standard`.
+ADDITIONAL_STANDARD_USER = re.compile(r"^additional_standard_user_[0-9]+$")
 
 # Directory objects this program refuses to touch, compared case-insensitively
 # because Active Directory matches sAMAccountName case-insensitively and
@@ -142,6 +151,11 @@ def validated(plan, groups, base):
     for entry in plan:
         if entry.get("role") not in ("standard", "administrator"):
             raise ValueError("durable account role is invalid")
+        if (ADDITIONAL_STANDARD_USER.fullmatch(entry["contract_role"])
+                and entry["role"] != "standard"):
+            raise ValueError(
+                f"durable account for {described(entry)} is an additional "
+                "standard user and may only be a standard account")
         for attribute in ("loginShell", "unixHomeDirectory"):
             value = entry.get(attribute)
             if (not isinstance(value, str) or not value.startswith("/")
@@ -150,7 +164,7 @@ def validated(plan, groups, base):
     uids = [entry.get("uidNumber") for entry in plan]
     gids = list(groups.values())
     if any(not isinstance(uid, int) or isinstance(uid, bool) or uid < base
-           for uid in uids):
+           or uid > POSIX_UID_MAX for uid in uids):
         raise ValueError("durable account uidNumber is out of range")
     if any(not isinstance(gid, int) or isinstance(gid, bool) or gid < base
            for gid in gids):
