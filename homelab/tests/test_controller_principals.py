@@ -759,8 +759,8 @@ class DurableDirectoryRosterTests(unittest.TestCase):
     OVERLAY = {
         "schema_version": 1,
         "principals": {
-            "standard_user": {"name": "ava"},
-            "daily_administrator": {"name": "ksh"},
+            "standard_user": {"name": "person-a"},
+            "daily_administrator": {"name": "person-b"},
             "domain_administrator": {"name": "roster-c"},
         },
     }
@@ -796,17 +796,17 @@ class DurableDirectoryRosterTests(unittest.TestCase):
 
     def test_a_durable_roster_bakes_its_own_programs_and_its_own_names(self):
         stage, destroy, roles = controller_principals._programs(self.roster)
-        self.assertEqual(("ava", "ksh", "roster-c"), roles)
+        self.assertEqual(("person-a", "person-b", "roster-c"), roles)
         for program in (stage, destroy):
-            self.assertIn('"order":["ava","ksh","roster-c"]', program)
+            self.assertIn('"order":["person-a","person-b","roster-c"]', program)
             # The synthetic acceptance names are nowhere in a durable program.
             for synthetic in ("student", "operator", "directory-admin"):
                 self.assertNotIn(f'"{synthetic}"', program)
         # One rule, two rosters: the durable POSIX numbers are the acceptance
         # allocation's numbers for the same ROLE positions.
-        self.assertIn('"ava":{"gidNumber":10513,"loginShell":"/bin/bash",'
+        self.assertIn('"person-a":{"gidNumber":10513,"loginShell":"/bin/bash",'
                       '"uidNumber":10000', stage)
-        self.assertIn('"ksh":{"gidNumber":10513,"loginShell":"/bin/bash",'
+        self.assertIn('"person-b":{"gidNumber":10513,"loginShell":"/bin/bash",'
                       '"uidNumber":10001', stage)
 
     def test_only_the_domain_administrator_joins_domain_admins(self):
@@ -819,7 +819,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
             "add_remove_group_members(", 1)[1].split(")", 1)[0]
         self.assertIn('"Domain Admins"', membership)
         self.assertIn('roster["domain_administrator"]', membership)
-        self.assertNotIn("ksh", membership)
+        self.assertNotIn("person-b", membership)
         plan = controller_principals.directory_account_plan(
             list(DIRECTORY_ROLES), roster=self.roster)
         by_role = {entry["contract_role"]: entry for entry in plan}
@@ -831,7 +831,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         serial = ControllerPrincipalSerial(
             io.BytesIO(), io.BytesIO(), roster=self.roster,
             roster_source="a private overlay")
-        self.assertEqual(("ava", "ksh", "roster-c"), serial.roles)
+        self.assertEqual(("person-a", "person-b", "roster-c"), serial.roles)
         # The module's own (possibly synthetic) roster is not what this console
         # accepts, and the refusal names the source it was told about.
         with self.assertRaises(ValueError) as raised:
@@ -840,7 +840,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("a private overlay", message)
         self.assertIn("student", message)
-        self.assertIn("ava", message)
+        self.assertIn("person-a", message)
         # A default console is byte-for-byte unchanged.
         default = ControllerPrincipalSerial(io.BytesIO(), io.BytesIO())
         self.assertEqual(ROLES, default.roles)
@@ -869,8 +869,8 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         partial.write_text(json.dumps({
             "schema_version": 1,
             "principals": {
-                "standard_user": {"name": "ava"},
-                "daily_administrator": {"name": "ksh"},
+                "standard_user": {"name": "person-a"},
+                "daily_administrator": {"name": "person-b"},
             },
         }), encoding="utf-8")
         with self.assertRaises(
@@ -881,7 +881,7 @@ class DurableDirectoryRosterTests(unittest.TestCase):
         self.assertIn("domain_administrator -> directory-admin", message)
         self.assertNotIn("standard_user ->", message)
         # A caller that plans only the named roles is not refused.
-        self.assertEqual("ksh", controller_principals.durable_directory_roster(
+        self.assertEqual("person-b", controller_principals.durable_directory_roster(
             partial, roles=("standard_user", "daily_administrator"),
         ).roster["daily_administrator"])
 
@@ -1004,7 +1004,7 @@ class WindowsLaneDerivesItsRosterTests(unittest.TestCase):
 
     def test_a_renamed_roster_reaches_every_windows_lane_module(self):
         # The reviewer's reproduction, run against the REAL modules in a child
-        # interpreter: a private overlay naming ava/ksh used to produce
+        # interpreter: a private overlay naming real accounts used to produce
         # "STAGE REFUSED: ValueError Controller principal roster is invalid".
         # A child process because the roster resolves at import and this suite
         # must not disturb the parent's already-imported modules -- nor read or
@@ -1016,8 +1016,8 @@ class WindowsLaneDerivesItsRosterTests(unittest.TestCase):
             overlay.write_text(json.dumps({
                 "schema_version": 1,
                 "principals": {
-                    "standard_user": {"name": "ava"},
-                    "daily_administrator": {"name": "ksh"},
+                    "standard_user": {"name": "person-a"},
+                    "daily_administrator": {"name": "person-b"},
                 },
             }), encoding="utf-8")
             program = f"""
@@ -1071,18 +1071,20 @@ print(json.dumps({{
         observed = json.loads(completed.stdout)
         # Staging succeeds under the renamed roster; this is the exact call
         # that used to raise.
-        self.assertEqual(["ava", "directory-admin", "ksh"], observed["staged"])
         self.assertEqual(
-            ["ava", "ksh", "directory-admin"], observed["roles"])
+            sorted(["person-a", "person-b", "directory-admin"]),
+            observed["staged"])
+        self.assertEqual(
+            ["person-a", "person-b", "directory-admin"], observed["roles"])
         # Renaming moves no UID: the allocation is keyed on the ROLE.
         self.assertEqual(
-            {"ava": 10000, "ksh": 10001, "directory-admin": 10002},
+            {"person-a": 10000, "person-b": 10001, "directory-admin": 10002},
             observed["uids"])
         # Every Windows-lane consumer followed.
-        self.assertEqual("ksh", observed["daily_admin_check"])
-        self.assertEqual("ava", observed["standard_check"])
-        self.assertEqual("ksh@AD.FACTORY.TEST", observed["join_operator"])
-        self.assertEqual("ksh", observed["material_daily_admin"])
+        self.assertEqual("person-b", observed["daily_admin_check"])
+        self.assertEqual("person-a", observed["standard_check"])
+        self.assertEqual("person-b@AD.FACTORY.TEST", observed["join_operator"])
+        self.assertEqual("person-b", observed["material_daily_admin"])
         # And the resolved source names the overlay that produced it.
         self.assertIn("patched by overlay", observed["source"])
 

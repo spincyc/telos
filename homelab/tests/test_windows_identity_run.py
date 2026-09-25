@@ -125,7 +125,7 @@ class WindowsIdentityRunTests(unittest.TestCase):
             # hardcoded roster in stage_controller_principals -- so the test
             # asserted a literal against itself and could not fail while the
             # roster loader existed.  With the owner's private overlay in
-            # place, controller_principals stages ava/ksh/directory-admin and
+            # place, controller_principals stages person-a/person-b/directory-admin and
             # refuses any other roster, and this run died at
             # stage_controller_principals with "Controller principal roster is
             # invalid".  Assert the SEAM: what is staged is exactly what

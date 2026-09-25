@@ -1669,15 +1669,15 @@ class PersistentConvergenceTests(unittest.TestCase):
         self.assertNotIn("Administrator", bootstrap_dc.DOMAIN_SID_COMMAND)
 
 
-# The owner's real roster, as the private overlay declares it: `ava` a standard
-# user and `ksh` a daily administrator who is deliberately NOT a Domain Admins
+# The owner's real roster, as the private overlay declares it: `person-a` a standard
+# user and `person-b` a daily administrator who is deliberately NOT a Domain Admins
 # member.  Written to a temporary file and passed by name, so this suite never
 # reads or writes whatever overlay this machine actually carries.
 PRIVATE_OVERLAY = {
     "schema_version": 1,
     "principals": {
-        "standard_user": {"name": "ava"},
-        "daily_administrator": {"name": "ksh"},
+        "standard_user": {"name": "person-a"},
+        "daily_administrator": {"name": "person-b"},
         "domain_administrator": {"name": "roster-c"},
     },
 }
@@ -2197,9 +2197,9 @@ class PersistentAccountsCliTests(unittest.TestCase):
         self.assertEqual(
             ("domain_administrator",), principals.DIRECTORY_ADMIN_ROLES)
         by_role = {entry["contract_role"]: entry for entry in self.plan}
-        self.assertEqual("ksh", by_role["daily_administrator"]["name"])
+        self.assertEqual("person-b", by_role["daily_administrator"]["name"])
         self.assertEqual("standard", by_role["daily_administrator"]["role"])
-        self.assertEqual("ava", by_role["standard_user"]["name"])
+        self.assertEqual("person-a", by_role["standard_user"]["name"])
         self.assertEqual("standard", by_role["standard_user"]["role"])
         self.assertEqual(
             "administrator", by_role["domain_administrator"]["role"])
@@ -2212,8 +2212,8 @@ class PersistentAccountsCliTests(unittest.TestCase):
         group = stage.split('add_remove_group_members(', 1)[1].split(')', 1)[0]
         self.assertIn('"Domain Admins"', group)
         self.assertIn('roster["domain_administrator"]', group)
-        self.assertNotIn("ksh", group)
-        self.assertNotIn("ava", group)
+        self.assertNotIn("person-b", group)
+        self.assertNotIn("person-a", group)
         # ...and nothing here grants NOPASSWD or a local wheel membership.
         for forbidden in ("NOPASSWD", "wheel"):
             self.assertNotIn(forbidden, stage)

@@ -735,7 +735,7 @@ class TestPersistentControllerInstance(unittest.TestCase):
         """
         target = self.seeded()
         named = json.loads(json.dumps(self.RECORD))
-        named["accounts"][0]["name"] = "ava"
+        named["accounts"][0]["name"] = "person-a"
         with self.assertRaisesRegex(
                 simulation_overlay.PersistentInstanceInvalid,
                 "must not carry an account name"):
