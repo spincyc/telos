@@ -138,6 +138,7 @@ DOMAIN_SID_COMMAND = (
     "/usr/bin/wbinfo -D \"$(/usr/bin/wbinfo --own-domain)\"; } 2>/dev/null | "
     "/usr/bin/grep -oE 'S-1-5-21(-[0-9]{1,10}){3}' | /usr/bin/head -1"
 )
+DOMAIN_SID_VALUE = rb"S-1-5-21(?:-[0-9]{1,10}){3}"
 REPOSITORY = Path(__file__).resolve().parents[2]
 SYS_CLASS_NET = Path("/sys/class/net")
 _NET_NAME = re.compile(r"^[a-zA-Z0-9_.-]{1,15}$")
@@ -878,6 +879,27 @@ def _typed_secret(prompt: str, *, confirm: str | None = None) -> bytes:
     return value.encode("utf-8")
 
 
+def _console_value_pattern(emitted: bytes, value: bytes) -> bytes:
+    """One ``_console_root`` value line, anchored on a real line ending.
+
+    The value used to end in ``\\s*(?:\\n|$)``, and ``$`` also matches at the end
+    of the buffer, so a serial chunk that stopped inside the value matched its
+    leading part. The first live persistent convergence (2026-09-25) recorded
+    a domain SID whose last sub-authority was the two leading digits of the
+    ten-digit value the directory's disk holds (and holds no other). Same
+    class, same remedy as
+    ``arch_identity_run.measured_probe_pattern`` and ``roster_probe_pattern``:
+    a lookahead terminator, not consumed.
+    """
+    return (
+        rb"(?:^|\n)" + re.escape(emitted) + rb"(" + value + rb")(?=[\r\n])")
+
+
+def _console_result_pattern(result: bytes) -> bytes:
+    """The return-code line, anchored the same way as a value line."""
+    return rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)(?=[\r\n])"
+
+
 def _console_root(
     console: SerialAutomation,
     command: str,
@@ -922,12 +944,9 @@ def _console_root(
     observed = None
     if value is not None:
         match = console._wait(
-            rb"(?:^|\n)" + re.escape(emitted) + rb"(" + value + rb")\s*(?:\n|$)",
-            label + "-value")
+            _console_value_pattern(emitted, value), label + "-value")
         observed = match.group(1)
-    match = console._wait(
-        rb"(?:^|\n)" + re.escape(result) + rb"([0-9]+)\s*(?:\n|$)",
-        label + "-result")
+    match = console._wait(_console_result_pattern(result), label + "-result")
     if int(match.group(1)) != 0:
         raise SerialAutomationError(
             f"persistent controller command failed: {label}")
@@ -1096,7 +1115,7 @@ def _drive_persistent_convergence(
         console, ADMINISTRATOR_ENABLE, "persistent-administrator-enable")
     sid = _console_root(
         console, DOMAIN_SID_COMMAND, "persistent-domain-sid",
-        value=rb"S-1-5-21(?:-[0-9]{1,10}){3}")
+        value=DOMAIN_SID_VALUE)
     record = {
         "converged_utc": datetime.now(UTC).isoformat(),
         "realm": spec.realm,

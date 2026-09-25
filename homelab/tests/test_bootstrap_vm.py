@@ -2488,5 +2488,41 @@ class DisposablePathUnchangedTests(unittest.TestCase):
         ])
 
 
+
+class ConsoleValueAnchorTests(unittest.TestCase):
+    """A console value is read from a complete line, never a split chunk."""
+
+    def test_a_partial_read_cannot_truncate_the_domain_sid(self):
+        # The first live persistent convergence (2026-09-25) recorded a SID
+        # whose last sub-authority was two digits of a ten-digit value: the
+        # pattern accepted end-of-buffer as a terminator. Synthetic SID here.
+        import re as _re
+
+        emitted = b"__TELOS_PERSISTENT_VALUE_tok="
+        pattern = _re.compile(
+            bootstrap_dc._console_value_pattern(
+                emitted, bootstrap_dc.DOMAIN_SID_VALUE),
+            _re.MULTILINE)
+        line = emitted + b"S-1-5-21-1111111111-2222222222-1000000007\r\n"
+        for cut in range(len(line) - 2):
+            self.assertIsNone(
+                pattern.search(b"\n" + line[:cut]),
+                f"a read cut at {cut} bytes matched a partial SID")
+        found = pattern.search(b"\n" + line)
+        self.assertEqual(
+            b"S-1-5-21-1111111111-2222222222-1000000007", found.group(1))
+
+    def test_a_partial_read_cannot_truncate_a_return_code(self):
+        import re as _re
+
+        result = b"__TELOS_PERSISTENT_RC_tok="
+        pattern = _re.compile(
+            bootstrap_dc._console_result_pattern(result), _re.MULTILINE)
+        line = result + b"127\r\n"
+        for cut in range(len(line) - 2):
+            self.assertIsNone(pattern.search(b"\n" + line[:cut]))
+        self.assertEqual(b"127", pattern.search(b"\n" + line).group(1))
+
+
 if __name__ == "__main__":
     unittest.main()
