@@ -1,11 +1,45 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-09-24 (reconciliation against `90f0b15..efcaf6d`: the
-canonical Controller image was reinstalled 2026-09-24; gate 6 was proved
-2026-08-13, gate 8 on 2026-08-14). Previous pass: 2026-08-17, against
-`1ec5506..f8d0348`.
+**Last updated:** 2026-09-25 (against `90f0b15..HEAD`; previous passes
+2026-09-24 and 2026-08-17).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
+
+## Start here (2026-09-25)
+
+**Goal on the critical path:** a *keepable* dual-boot workstation whose
+accounts live in a persistent directory (aiq TASK-21), then the physical path
+(gate 14, owner go-ahead only).
+
+| Piece | State |
+|---|---|
+| Canonical Controller image | **Installed** 2026-09-24 (first live run of `homelab-bootstrap-vm-install`) |
+| Gates 5–8 with the owner's real names | **PASS** 2026-09-24 (gate 6 judge 24 checks, gate 8 21) — §7 item 5 |
+| Private roster (`homelab/instance/identity/principals.json`, gitignored) | All three directory roles named and UID-pinned, plus one `additional_standard_users` entry. **Names are instance data: never write them into a tracked file or a commit message** (ADR 0046) |
+| Persistent directory, throwaway instance `rehearsal` | **Converged** under the permanent realm and holding the **four durable accounts** (temporary passwords, change at first logon) — 2026-09-25, owner-run |
+| Durable workstation flow (TASK-28) | **Does not exist.** The next piece of work: §7 item 6 |
+| Keeper directory instance | Not created. After TASK-28 works against `rehearsal`: destroy it, converge the keeper, stage accounts with `CHANGE_AT_FIRST_LOGON=1` |
+
+**Owner-only steps** (they read passwords at the owner's terminal; hand over
+the exact command, never run them yourself): `homelab-bootstrap-vm-install`,
+`homelab-factory-persistent-converge APPLY=1`,
+`homelab-factory-persistent-accounts APPLY=1`. Everything else in the
+loopback factory is agent-runnable under the standing directive in §1.
+
+**Rules learned the hard way this pass** (details in §5):
+
+- After any lab-state change, run the unit suite with `qemu-system-x86_64`
+  shimmed to refuse and log; zero calls proves nothing booted. A test once
+  launched a real Windows install (`272d693`).
+- No test may read `build/`, `homelab/var/`, or `homelab/instance/`: the owner's
+  overlay now pins UIDs and names, and three tests silently depended on its
+  absence (`4e19ffb`, `cdc316c`); one still reads the seed ISO (TASK-30).
+- A serial-console capture of a variable-length value must end in a line-end
+  lookahead `(?=[\r\n])`. End-of-buffer matches a split read: three live
+  failures (`06f01af`, `f7bbf13`, `05eec6e`). Symptom: "X vs Y" where X is a
+  prefix of Y.
+- The in-guest principal program closes stderr on purpose; failures now print a
+  credential-free `__TELOS_PRINCIPAL_FAILURE=<category>` line (`efedf50`).
 
 > ## RESOLVED 2026-09-24 — the canonical Controller image is installed
 >
@@ -619,6 +653,9 @@ no headroom for a single spurious refusal.
 - Do NOT reintroduce UAC-bypass techniques (scheduled-task/EncodedCommand
   elevation) — rejected this session.
 - Put temp files in the session scratchpad, not the attempt dir.
+- Real account names, the owner's realm and its domain SID are instance data:
+  keep them out of tracked files **and commit messages**; tests use
+  placeholder names (`roster-a`) and synthetic SIDs.
 - End commits with a `Co-Authored-By:` trailer naming **the model actually
   acting**, e.g. `Co-Authored-By: <acting model name> <noreply@anthropic.com>`.
   Do not copy a version from an old commit: the history already carries
@@ -794,14 +831,36 @@ no headroom for a single spurious refusal.
    and `96f2d16` only turned the gap into an explicit refusal of a bundle
    prepared against the permanent realm. This is finding 7 of the 2026-08-17
    review of the persistent path, the one finding that was never fixed.
-7. Then, as before: gate 11 needs the three remaining live guest-boot hooks (the
+   **Awaiting the owner's go-ahead** (aiq TASK-28 is blocked on exactly that;
+   the owner said on 2026-09-25 they will continue in a fresh session). The
+   2026-09-24 gap analysis sized it at 6–10 files and 1–3k lines plus live
+   runs: console access to the persistent Controller over the owner-typed
+   `local-rescue` password and sudo (reuse `bootstrap_dc._console_root` and
+   the `sudo -k -p` path in `controller_join_material.py`); joining the
+   persistent instance to the workstation switch instead of its point-to-point
+   socket; skipping per-run domain provisioning and synthetic-principal
+   staging; PXE publication on the persistent Controller; a realm check
+   against the instance record; a Windows join-only runner; somewhere to keep
+   the workstation disk; and re-authentication after the directory relaunches.
+   Develop it against `rehearsal`. The durable accounts must change their
+   password at first logon, so any live login the flow drives as one of them
+   first has to perform that change.
+7. **Then the keeper:** `make homelab-factory-persistent-destroy APPLY=1
+   PERSISTENT_DC=rehearsal CONFIRM='DESTROY rehearsal'` (NOT RUN — destroy has
+   never run), then `homelab-factory-persistent-converge` and
+   `homelab-factory-persistent-accounts CHANGE_AT_FIRST_LOGON=1` for the
+   instance to keep, both owner-run. The domain SID is born at that
+   convergence; nothing backs a persistent instance up yet.
+8. Then, as before: gate 11 needs the three remaining live guest-boot hooks (the
    other two are implemented but NOT RUN, and the three need primitives that do
    not exist); gate 12 needs a live twice-through through
    `make homelab-factory-repeat` — the image is back, the driver **exists**, and
    **no gate blocks it**, gates 6–10 all pass — with `host_network_changes` and
-   `artifact_scan` carrying their recorded honest limits; durable directory
-   accounts need a first live staging run against a real directory; gate 14
-   only with explicit owner go-ahead.
+   `artifact_scan` carrying their recorded honest limits; gate 14 only with
+   explicit owner go-ahead. Open owner decisions for the physical path: is gate
+   11 `partial` acceptable closure; build the run-window egress observation for
+   gate 12 or waive that check; whether ADR 0077's gates-11–13-before-physical
+   ordering stands; and the gate-14 go-ahead with its attachment values.
 
 Superseded 2026-08-17, recorded so it is not re-derived: this list used to open
 with gate-8 serial/OVMF work and to say gate 12 needed gates 8/9 live first.
