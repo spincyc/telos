@@ -466,15 +466,18 @@ Nothing is destroyed by the mistake, but the run is wasted.
 
 ## The persistent directory instance (not part of any gate)
 
-> **NOT RUN as of 2026-09-24.** Everything in this section is implemented and
-> unit-tested (`homelab/tests/test_bootstrap_vm.py`,
-> `homelab/tests/test_simulation_overlay.py`,
-> `homelab/tests/test_domain_controller_role.py`) but has **never been executed
-> live**. Read it as the designed contract, not as observed behaviour, and do
-> not report any of it as working. It is no longer blocked by the canonical
-> image, which bring-up seeds the instance from and which was installed
-> 2026-09-24 — see
-> [Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed).
+> **Serial-console path PROVEN LIVE 2026-09-25, once each, on a throwaway
+> instance.** `homelab-factory-persistent-converge` provisioned the owner's
+> permanent realm in place, and `homelab-factory-persistent-accounts` (with
+> `CHANGE_AT_FIRST_LOGON=1`) staged the four durable accounts at their pinned
+> UIDs; both finished with a clean poweroff. Three defects surfaced on the way
+> and are fixed: the recorded domain SID was read from a split serial chunk
+> (`05eec6e`; the instance converged before it keeps a truncated SID in its
+> marker), a refused password was an unexplained "stage returned 1"
+> (`efedf50`), and there was no way to start with temporary passwords
+> (`1b04fd3`). Still **NOT RUN**: `-up` on its own, `RECONVERGE=1`,
+> `-destroy`, the Ansible accounts path, and any workstation against a
+> persistent instance (TASK-28).
 
 Everything above is the **acceptance** factory, and its controller is disposable
 on purpose: the canonical image carries no directory, the role provisions one
@@ -581,7 +584,9 @@ containing the account name — and the host checks that before anything boots
 instead: they are not policy-checked, each account must change its password at
 its first logon (when the new one must meet the policy), and the domain policy is
 lifted only while the accounts are created, then restored and verified by the
-same in-guest program. **NOT RUN** live as of 2026-09-25.
+same in-guest program. **Proven live 2026-09-25** on the throwaway instance: the
+run exits 0 only after every account shows a pending password change and the
+saved policy is restored and re-read.
 
 The serial console is the only channel that reaches a *simulated* persistent
 instance: its only NIC is a QEMU socket netdev to the userspace gateway, with no
@@ -624,8 +629,8 @@ Corrected 2026-09-24: this section routed the persistent instance's durable
 accounts through `homelab-bootstrap-controller` alone, which cannot reach a
 simulated instance.
 
-> **NOT RUN and unproven — do not describe durable accounts as working.**
-> Neither path has run live. An adversarial review on 2026-08-17 found the
+> **The Ansible path is NOT RUN and unproven** (the serial-console path above
+> ran live on 2026-09-25). An adversarial review on 2026-08-17 found the
 > Ansible path could not provision an account by any wired route at all. Six
 > independent breaks were repaired in `f8d0348`, the sixth being that Ansible
 > resolves `group_vars` relative to the **inventory source**, so an overlay

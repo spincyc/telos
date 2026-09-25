@@ -775,11 +775,17 @@ no headroom for a single spurious refusal.
    gate 8 read `1f942b04b` of `1f942b04b72754e6` and refused its own disk).
    Two earlier gate-6 attempts in the same bundle are the failing evidence.
 
-   Next: converge a **throwaway-named** persistent
-   instance and stage its accounts (`homelab-factory-persistent-accounts`,
-   which since `0e588db` refuses unless `principals.json` names all three
-   directory roles) to shake out the Controller-side code; only then create the
-   instance you intend to keep.
+   **Also DONE 2026-09-25:** a **throwaway-named** persistent instance
+   (`rehearsal`) was converged under the permanent realm and given the four
+   durable accounts (pinned UIDs, one of them an `additional_standard_users`
+   entry, all with temporary passwords changed at first logon). Fixes found on
+   the way: `05eec6e` (domain SID read from a split serial chunk — this
+   instance's marker still holds the truncated SID), `efedf50` (explain a
+   failed stage; refuse a policy-violating password before booting),
+   `1b04fd3` (`CHANGE_AT_FIRST_LOGON=1`). Keep `rehearsal` as the directory
+   TASK-28 is developed against, so workstation faults never touch the keeper;
+   create the instance you intend to keep only once a workstation can be
+   minted against a persistent directory.
 6. **Build the durable workstation flow (TASK-28) before expecting a keepable
    workstation.** No runner can install a workstation against a persistent
    instance: every workstation runner wraps the Controller in

@@ -303,10 +303,11 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 | `CONFIRM` | unset | `DESTROY <instance name>`, required by `-destroy`. |
 
 `FACTORY_DURATION` is deliberately **not** reused on this path: its 120-second
-default would abort a Samba provisioning run. Verdict: this whole surface is
-implemented and unit-tested but **NOT RUN** — none of its applying targets has
-executed live as of 2026-09-24. It is no longer blocked by the canonical image,
-which was installed that day. See "The persistent directory instance" in
+default would abort a Samba provisioning run. Verdict: `-converge` and
+`-accounts` are **PASS — one live run each, 2026-09-25**, on a throwaway
+instance (`-converge` seeds the instance itself, so `-up` has not run on its
+own); `-destroy`, `RECONVERGE=1` and `RESTAGE` over accounts that already exist
+are **NOT RUN**. See "The persistent directory instance" in
 [docs/operator-runbook.md](docs/operator-runbook.md).
 
 **No workstation can be installed against a persistent instance yet.** Every

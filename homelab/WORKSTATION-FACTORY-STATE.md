@@ -830,8 +830,9 @@ The genuinely next implementation actions, in order:
    rationale is `HANDOFF.md` §7. **The gates 5–8 half PASSED 2026-09-24**
    with real names (gate 6 judge `pass`, 24 checks; gate 8 `PASS: 21
    checks`), after `efcaf6d`, `6d8f104` and `f7bbf13`; bundles and attempts
-   are listed in `HANDOFF.md` §7 item 5. The persistent-instance half has
-   not run.
+   are listed in `HANDOFF.md` §7 item 5. The persistent-instance half ran
+   live on 2026-09-25 against the throwaway instance `rehearsal` (converge
+   and four durable accounts); the keeper is created after TASK-28.
 3. **The durable workstation flow (TASK-28)** — it does not exist. Every
    workstation runner wraps the Controller in `DisposableBootDisk`, and a
    bundle prepared against the permanent realm is refused by
