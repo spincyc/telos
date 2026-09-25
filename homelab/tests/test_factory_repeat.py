@@ -13,7 +13,9 @@ gate 12 itself needs two live lifecycles no test can substitute for.
 import io
 import json
 import os
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -743,12 +745,35 @@ class RepeatReceiptTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 
+def fresh_canonical_disk(root: Path) -> Path | None:
+    """A never-installed 80G qcow2, exactly what homelab-bootstrap-vm-create makes.
+
+    Never the checkout's own ``build/homelab/vm/bootstrap-dc`` image: on
+    2026-09-24 the owner installed that image, and a test that ran
+    ``factory_repeat.main(["--apply", ...])`` against it expecting a refusal
+    instead started a real Windows install from inside the unit suite. A unit
+    test's verdict must not depend on the state of the operator's lab, and no
+    unit test may be one installed disk away from a live lifecycle.  ``None``
+    when ``qemu-img`` is absent, so a caller can skip rather than probe bytes
+    no partition-table reader understands.
+    """
+    qemu_img = shutil.which("qemu-img")
+    if qemu_img is None:
+        return None
+    disk = root / "bootstrap-dc.qcow2"
+    subprocess.run([qemu_img, "create", "-q", "-f", "qcow2", str(disk), "80G"],
+                   check=True)
+    return disk
+
+
 class PreconditionTests(TemporaryRootTests):
-    def test_the_real_canonical_image_is_refused_today(self):
-        # Not a hypothetical: build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2
-        # is a 197,888-byte never-installed disk, and every phase boots it.
-        problem = factory_repeat.controller_image_problem(
-            REPOSITORY / factory_repeat.CANONICAL_CONTROLLER_DISK)
+    def test_a_fresh_canonical_image_is_refused(self):
+        # What homelab-bootstrap-vm-create leaves behind: a 197,888-byte
+        # never-installed qcow2, which every phase would otherwise boot.
+        disk = fresh_canonical_disk(self.root)
+        if disk is None:
+            self.skipTest("qemu-img is required to create a real qcow2")
+        problem = factory_repeat.controller_image_problem(disk)
         self.assertIsNotNone(problem)
         # The verdict comes from the partition-table probe, not a size floor,
         # and it names the remedy rather than leaving the operator to find it.
@@ -834,15 +859,20 @@ class ApplyRefusalTests(TemporaryRootTests):
             self.assertIn(phase.name, printed)
         self.assertIn("refuses to apply", printed)
 
-    def test_main_refuses_apply_against_the_real_canonical_image(self):
+    def test_main_refuses_apply_against_a_fresh_canonical_image(self):
+        # The CLI entry builds the REAL subprocess lifecycle, so the disk it is
+        # handed must be one this test created; see fresh_canonical_disk.
+        disk = fresh_canonical_disk(self.root)
+        if disk is None:
+            disk = self.root / "empty.qcow2"
+            disk.write_bytes(b"x" * 197_888)
         errors = io.StringIO()
         real_stdout, real_stderr = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = io.StringIO(), errors
         try:
             status = factory_repeat.main([
                 "--apply",
-                "--controller-disk",
-                str(REPOSITORY / factory_repeat.CANONICAL_CONTROLLER_DISK),
+                "--controller-disk", str(disk),
                 "--evidence-root", str(self.root / "evidence"),
                 "--work-root", str(self.root / "work"),
                 "--releases", str(self.release_set()),
