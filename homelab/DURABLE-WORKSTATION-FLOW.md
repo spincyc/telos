@@ -94,6 +94,8 @@ driven only for the daily administrator, on Arch, and other users change
 theirs at first physical logon; Arch's `ad_server` pins the bootstrap FQDN;
 the Arch hostname is owner-chosen and Windows keeps gate 5's generated name;
 the proven temporary Domain Admin join principal is kept for `rehearsal`.
-Still open with the owner: break-glass custody on a kept machine, backups
-for the keeper directory and kept disks, and join-principal privilege for
-the keeper.
+Owner decision 2026-09-30, break-glass custody: during the durable join runs
+the owner types a distinct Windows local-administrator password and a
+distinct Arch `local-rescue` password; the factory never stores either.
+Still open with the owner: backups for the keeper directory and kept disks,
+and join-principal privilege for the keeper.
