@@ -23,7 +23,9 @@ In order, one run:
    boot, and an HTTP package service) — that is the acceptance mode; a second,
    opt-in **persistent** controller mode exists for a directory you can log back
    into, described under "The persistent directory instance" in the
-   [operator runbook](operator-runbook.md) and not yet run live;
+   [operator runbook](operator-runbook.md). Its directory setup and account
+   creation have run once, on a throwaway instance (2026-09-25); no
+   workstation can join it yet;
 3. network-boots a throwaway **workstation** through that controller;
 4. installs **Windows 11 Pro first, then Arch Linux second** on one UEFI/GPT
    disk, preserving Windows and its recovery data;
@@ -115,5 +117,6 @@ Rebuild rather than repair: because installation does only what cannot be done
 later and everything else is converged from the repository, the normal fix for a
 damaged image is to re-run the factory from the sealed media. Recovery scenarios
 (release rollback, remint, controller reconstruction, update-failure rollback)
-have a dedicated target and are graded fail-closed; the runbook shows which are
-proven live today and which still defer their proof to a future live guest.
+have a dedicated target and are graded fail-closed; the runbook shows which
+pass today, in the loopback lab without booting a guest, and which still defer
+their proof to a future live guest.

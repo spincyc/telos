@@ -1,12 +1,12 @@
 # Homelab documentation pass
 
-Document version: `20260817.001`
+Document version: `20260930.001`
 
 Status: in progress — the first two guides shipped 2026-08-12 (`2680c23`):
 [`docs/factory-guide.md`](docs/factory-guide.md) (human) and
 [`docs/operator-runbook.md`](docs/operator-runbook.md) (operator). Both are
 committed and present on public `origin/main`, but neither is wired into the
-generated site yet (`site/site.json` and `scripts/site` reference neither), so
+generated site yet (`site/site.json` references neither), so
 "unpublished" for these two means "not in the site navigation", not "private".
 They are credited against pass-sequence row 7 below.
 
@@ -66,7 +66,9 @@ Two of those four checks now exist and run in `make check` and
 `make homelab-check`: `tools/doc-make-target-drift` rejects a documented Make
 target the Makefile does not define, and `scripts/site check` rejects leaked
 instance data (real addresses, MACs, disk serials, and RFC 1918 CIDRs judged by
-prefix length as well as network address). A document may declare names it does
+prefix length as well as network address). Since 2026-09-30 that includes the
+two guides under `docs/`, judged like the other homelab narratives against
+the sanctioned synthetic ranges; before, nothing scanned them. A document may declare names it does
 not claim to implement — a `reserved`/`not implemented` paragraph, or a
 `<!-- doc-make-target-drift: proposed -->` marker covering a section — so an
 honest interface proposal stays green while a copy-paste command that would
@@ -107,34 +109,43 @@ here — the gate-9 "no storage check" misdescription and the gate table pinned 
 ledger `20260812.001` — were both applied to `docs/operator-runbook.md`. Do not
 re-open them.
 
-Outstanding as of 2026-08-17, in the documents this pass owns:
+Outstanding as of 2026-08-17, updated 2026-09-30, in the documents this pass
+owns:
 
 - **Site navigation wiring is still deferred.** Neither `docs/factory-guide.md`
-  nor `docs/operator-runbook.md` is referenced by `site/site.json` or
-  `scripts/site`, because both carry the lab address the leak scanner rejects.
+  nor `docs/operator-runbook.md` is referenced by `site/site.json`, because the
+  runbook carries the synthetic lab address the site's prose leak pass rejects.
   This is the one item keeping gate 13 in progress; the recipe is documented and
-  the decision is open.
+  the decision is open. Since 2026-09-30 `scripts/site` scans both guides in
+  its code pass, so they are no longer unscanned while the decision waits.
 - **~~The canonical-Controller-image blocker must be retired when the
   reinstall is driven.~~ Done 2026-09-24** (`1e56a43`): the owner installed the
   image through `make homelab-bootstrap-vm-install`, and the runbook section,
   the `HANDOFF.md` banner, the state ledger's first blocker and the per-site
   "Blocked today" pointers were retired together.
-- **The persistent-instance documentation carries a NOT RUN marker.** The
-  runbook's "The persistent directory instance" section and the
-  "Persistent controller instance (not a gate)" section of
-  `FACTORY-MAKE-TARGETS.md` describe an implemented, unit-tested, never-executed
-  surface. Re-verify both against a real run before removing the marker; nothing
-  in them may be promoted to the present indicative until then.
+- **~~The persistent-instance documentation carries a NOT RUN marker.~~
+  Replaced 2026-09-25** (`b2e8fed`): the serial-console converge and durable
+  accounts ran live on a throwaway instance, and NOT RUN now stays only on
+  `-up` alone, `RECONVERGE=1`, `-destroy`, the Ansible accounts path and any
+  workstation against a persistent instance.
 - **Gate 12's verdict needs re-checking after its first live twice-through.**
   Both earlier blockers are gone: the aggregate `homelab-factory-repeat` driver
   exists (`27d8af9`) and the canonical image is installed (2026-09-24). The
   runbook and the ledger now say gate 12 needs two live lifecycles, and that
   `host_network_changes` cannot render PASS without a run-window egress
-  observation nothing produces. Both statements move together.
+  observation nothing produces; ADR 0080 (2026-09-30) waives it for the
+  loopback factory. Both statements move together.
 - **`docs/factory-guide.md` covers the persistent instance only by pointer.**
   The human guide still describes one mode (disposable controller) with a clause
   pointing at the runbook. If the persistent path becomes a normal operator
   workflow, the guide needs its own short human-level explanation.
+- **Closed 2026-09-30, from that day's cold review:** the runbook's selected
+  release-set digest (it quoted `.001`'s), its "proven live" gate-11 date and
+  release rollback, the open-listed SSSD `offline_timeout` (fixed by
+  `2f86a21`), the `artifact_scan` wording (`b84bc86`), a missing
+  `FACTORY_DURATION` warning, WinPE's disk selection (ADR 0078), the stale
+  controller-seed and Arch inputs, the handoff banner, the NOT RUN durable
+  accounts in the ledger and handoff, and the human guide's persistent mode.
 
 ## Page pattern
 
