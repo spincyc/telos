@@ -55,6 +55,7 @@ injectable factory so this module is fully unit-tested without QEMU.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
@@ -165,26 +166,70 @@ PROBE_HELPER = "/usr/local/sbin/homelab-arch-identity-probe"
 # optionally patched by the owner's gitignored private overlay, through the one
 # loader that also bakes these names onto the installed disk.  With no overlay
 # it is exactly the synthetic acceptance roster.
-ROSTER = identity_roster()
-#: The fingerprint this host expects a driven disk to report back.
-ROSTER_FINGERPRINT = identity_roster_fingerprint(ROSTER)
+#
+# Resolved on first use, not at import, so importing this module reads no file:
+# a unit test pins the overlay first (homelab/tests/identity_overlay_pin.py)
+# instead of silently inheriting whichever overlay its host happens to hold.
+# A live run still resolves it exactly once per process, through the same
+# loader and the same default path, before it prints or boots anything --
+# ``run`` and ``ArchIdentityBoundary.start`` both ask for it first -- so an
+# overlay that exists but cannot be examined or understood still stops the run
+# before any guest exists.  Every later use sees that one resolution.
+@functools.cache
+def resolved_roster() -> dict[str, str]:
+    """``{contract role: principal name}`` for this process, resolved once."""
+    return identity_roster()
 
-# The daily administrator is the principal the live drive logs in as on the
-# ttyS0 getty.  The name comes from the shared roster above; the credential is
-# the per-run synthetic one staged on the disposable Controller
-# (controller_principals), held in memory only and never recorded.
-OPERATOR_PRINCIPAL = str(ROSTER["daily_administrator"])
 
-# The break-glass administrator.  ``identity_lifecycle.json`` gives it
-# ``domain_role: none``, so -- unlike the three principals above -- NO
-# Controller-staged account supplies its credential: ``controller_principals``
-# ``POSIX_ALLOCATION`` stages only the three DIRECTORY roles (by default
-# ``student``, ``operator`` and ``directory-admin``).  Gate 7 installs it with a
-# *disabled* password, and the ``arch-local-rescue`` probe requires ``passwd -S``
-# to report ``P``, so this run generates the credential in memory and sets it
-# once from the root shell ``elevate_operator`` already obtained.  Nothing ever
-# needs the value again, so it is never stored on the boundary.
-RESCUE_PRINCIPAL = str(ROSTER["local_rescue"])
+def roster_fingerprint() -> str:
+    """The fingerprint this host expects a driven disk to report back."""
+    return identity_roster_fingerprint(resolved_roster())
+
+
+def operator_principal() -> str:
+    """The daily administrator: the principal the live drive logs in as.
+
+    It logs in on the ttyS0 getty.  The name comes from the shared roster
+    above; the credential is the per-run synthetic one staged on the
+    disposable Controller (controller_principals), held in memory only and
+    never recorded.
+    """
+    return str(resolved_roster()["daily_administrator"])
+
+
+def rescue_principal() -> str:
+    """The break-glass administrator.
+
+    ``identity_lifecycle.json`` gives it ``domain_role: none``, so -- unlike
+    the three directory principals -- NO Controller-staged account supplies
+    its credential: ``controller_principals`` ``POSIX_ALLOCATION`` stages only
+    the three DIRECTORY roles (by default ``student``, ``operator`` and
+    ``directory-admin``).  Gate 7 installs it with a *disabled* password, and
+    the ``arch-local-rescue`` probe requires ``passwd -S`` to report ``P``, so
+    this run generates the credential in memory and sets it once from the
+    root shell ``elevate_operator`` already obtained.  Nothing ever needs the
+    value again, so it is never stored on the boundary.
+    """
+    return str(resolved_roster()["local_rescue"])
+
+
+# The former import-time constants, still readable as module attributes
+# (``arch_identity_run.OPERATOR_PRINCIPAL``) but resolved on access (PEP 562).
+_LAZY_ROSTER_ATTRIBUTES: dict[str, Callable[[], object]] = {
+    "ROSTER": resolved_roster,
+    "ROSTER_FINGERPRINT": roster_fingerprint,
+    "OPERATOR_PRINCIPAL": operator_principal,
+    "RESCUE_PRINCIPAL": rescue_principal,
+}
+
+
+def __getattr__(name: str) -> object:
+    try:
+        resolve = _LAZY_ROSTER_ATTRIBUTES[name]
+    except KeyError:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}") from None
+    return resolve()
 
 # Gate 7 grants the operator a *passworded* sudoers rule
 # ("operator ALL=(ALL:ALL) ALL" in workstations/arch_second.py — no NOPASSWD),
@@ -895,10 +940,11 @@ class ArchIdentityDrive:
             raise ArchIdentityError(
                 ROSTER_UNREPORTED_FAILURE, check="arch-joined") from error
         observed = match.group(1).decode("ascii")
-        if observed != ROSTER_FINGERPRINT:
+        expected = roster_fingerprint()
+        if observed != expected:
             raise ArchIdentityError(
                 f"{ROSTER_MISMATCH_FAILURE} (disk {observed}, "
-                f"host {ROSTER_FINGERPRINT})",
+                f"host {expected})",
                 check="arch-joined")
         return observed
 
@@ -1149,7 +1195,8 @@ def _require_directory_identity(measured: Mapping[str, object]) -> None:
     """
     from .controller_principals import POSIX_ALLOCATION
 
-    staged = POSIX_ALLOCATION["users"][OPERATOR_PRINCIPAL]
+    operator = operator_principal()
+    staged = POSIX_ALLOCATION["users"][operator]
     expected = {
         "owner_uid": int(staged["uidNumber"]),
         "owner_gid": int(staged["gidNumber"]),
@@ -1159,7 +1206,7 @@ def _require_directory_identity(measured: Mapping[str, object]) -> None:
             raise ArchIdentityError(
                 "arch-storage-attached measured "
                 f"{field}={measured.get(field)!r}, but the directory staged "
-                f"{value} for {OPERATOR_PRINCIPAL}",
+                f"{value} for {operator}",
                 check="arch-storage-attached")
 
 
@@ -1817,7 +1864,7 @@ def login_operator(
         facts["getty_seen"] = True
         for attempt in range(max(1, attempts)):
             console._send(
-                OPERATOR_PRINCIPAL.encode("ascii"),
+                operator_principal().encode("ascii"),
                 "arch-login-username-sent")
             try:
                 console._wait(
@@ -2055,7 +2102,7 @@ def rescue_password_command(token: str) -> tuple[bytes, bytes, bytes]:
     result = b"__TELOS_ARCH_RESCUE_RC_" + tok + b"="
     command = (
         b"stty -echo && printf '\\n" + ready + b"\\n' && "
-        b"LC_ALL=C passwd " + RESCUE_PRINCIPAL.encode("ascii")
+        b"LC_ALL=C passwd " + rescue_principal().encode("ascii")
         + b"; __telos_rc=$?; stty echo; "
         b"printf '\\n" + result + b"%s\\n' \"$__telos_rc\""
     )
@@ -2336,6 +2383,10 @@ class ArchIdentityBoundary:
     # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
+        # The roster first, before a single process is spawned: an overlay
+        # that cannot be resolved stops the run here, as it once stopped the
+        # import, never after a Controller has booted.
+        resolved_roster()
         # run_lifecycle only calls stop() once start() has returned, so a
         # partial start must tear down what it already brought up.
         try:
@@ -2753,7 +2804,7 @@ class ArchIdentityBoundary:
         from .simulation_evidence import private_file
 
         assert self._port is not None and self._qmp_root is not None
-        if OPERATOR_PRINCIPAL not in self._principals:
+        if operator_principal() not in self._principals:
             raise ArchIdentityError(
                 "workstation boot requires the staged operator principal",
                 check="arch-joined")
@@ -2805,7 +2856,7 @@ class ArchIdentityBoundary:
                 check="arch-joined") from error
         console = SerialAutomation(
             process.stdout, process.stdin,
-            self._principals[OPERATOR_PRINCIPAL].encode("ascii"),
+            self._principals[operator_principal()].encode("ascii"),
             timeout=CONSOLE_READY_TIMEOUT)
         # Every console label from here on is timestamped against power-on.
         console.events = TimestampedEvents(console.events, origin=spawned_at)
@@ -3257,6 +3308,9 @@ def run(
     duration: float = DEFAULT_DURATION,
 ) -> int:
     """Validate the bundle, gate on ``--apply``, produce and judge evidence."""
+    # Resolved before anything else, exactly where the import used to resolve
+    # it: a dry run and a live run both refuse an unusable overlay up front.
+    resolved_roster()
     if not 60 <= duration <= MAX_DURATION:
         raise ArchIdentityError(
             f"duration must be between 60 and {MAX_DURATION:g} seconds")

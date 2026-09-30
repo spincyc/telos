@@ -36,6 +36,15 @@ from homelab.vm.arch_identity_run import (
 )
 from homelab.tests.test_arch_identity_run import passing_windows_events
 from homelab.workstations import arch_second
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The gate-7
+    # installer these tests render resolves the roster from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 
 def _sha256(path: Path) -> str:

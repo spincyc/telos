@@ -13,6 +13,15 @@ from unittest import mock
 
 from homelab.vm import arch_install_prepare
 from homelab.workstations import arch_second
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # installer ``prepare`` renders resolves the roster from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 
 def _digest(command):

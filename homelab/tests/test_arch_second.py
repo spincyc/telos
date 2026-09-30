@@ -60,6 +60,18 @@ from workstations.arch_second import (
 import workstations.arch_second as arch_second
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
 from lib.workstation_repo import REPO_NAME
+from homelab.tests.identity_overlay_pin import (
+    overlay_document, pinned_identity_overlay,
+)
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # installer renderer resolves the roster from the DEFAULT overlay path, so
+    # every test here runs with that path pinned to a private one that does
+    # not exist -- the synthetic acceptance roster.  A test that wants an
+    # overlay passes one explicitly or pins its own.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 MIB = 1024**2
 SIZES = (1024, 16, 300 * 1024, 100 * 1024, 2048)
@@ -358,10 +370,10 @@ class ArchSecondTests(unittest.TestCase):
         # sudoers rule, and no password is ever staged for local-rescue.
         self.assertIn(
             "useradd --create-home --groups wheel --shell /bin/bash", script)
-        # Derived, not pinned: render_installer bakes the RESOLVED names into
-        # the script, so an overlay that renames a role renames these too. The
-        # synthetic defaults are asserted as a contract in IdentityRosterTests,
-        # where the overlay is deliberately held out of the way.
+        # Derived, not written out: render_installer bakes the RESOLVED names
+        # into the script, so an overlay that renames a role renames these too
+        # (RosterLoaderTests pins one).  Here the default path is pinned to no
+        # overlay by setUpModule, so this is the synthetic roster.
         roster = identity_roster()
         self.assertIn(roster["local_rescue"], script)
         self.assertIn("%wheel ALL=(ALL:ALL) ALL", script)
@@ -423,9 +435,9 @@ class ArchSecondTests(unittest.TestCase):
             "printf '__TELOS_ARCH_%s_%s=%s\\n' \"$key\" \"$token\" \"$1\"",
             script)
         # Every principal the resolved roster names is baked in.  Read from the
-        # loader rather than written out, so the suite proves the same thing on
-        # a machine that has a private overlay and on one that does not; the
-        # pinned synthetic names live in RosterLoaderTests below.
+        # loader rather than written out -- under setUpModule's pin that is the
+        # synthetic roster on every machine; the synthetic names themselves
+        # are asserted in RosterLoaderTests below.
         for principal in identity_roster().values():
             self.assertIn(principal, script)
 
@@ -653,7 +665,7 @@ class ArchSecondTests(unittest.TestCase):
         line = fstab_lines[0]
         device, mountpoint, fstype, options = line.split()[:4]
         # The share belongs to whichever principal the resolved roster names as
-        # the standard user, so this holds with or without a private overlay.
+        # the standard user (under setUpModule's pin, the synthetic one).
         standard = identity_roster()["standard_user"]
         self.assertEqual(
             device, f"//{STORAGE_HOST_LABEL}.{SYNTHETIC_DOMAIN}/{standard}")
@@ -1776,7 +1788,32 @@ class RosterLoaderTests(unittest.TestCase):
         for declaration in document["_example_principals"].values():
             self.assertRegex(declaration["name"], r"^<[a-z-]+>$")
 
+    def test_the_installer_bakes_the_overlay_at_the_default_path(self):
+        # render_installer takes no roster: it resolves the DEFAULT overlay
+        # path.  With a synthetic overlay pinned there, every renamed name is
+        # baked in, and the fingerprint on the disk is the renamed roster's.
+        renamed = {
+            "standard_user": "roster-a", "daily_administrator": "roster-b",
+            "domain_administrator": "roster-c", "local_rescue": "roster-d",
+        }
+        with pinned_identity_overlay(overlay_document(renamed)):
+            self.assertEqual(renamed, identity_roster())
+            script = render_installer(
+                disk_path="/dev/vda", disk_serial="LAPTOP-1",
+                hostname="workstation", expected_sizes_mib=SIZES)
+        self.assertIn("roster-b ALL=(ALL:ALL) ALL", script)
+        self.assertIn(
+            f"ROSTER_FINGERPRINT='{identity_roster_fingerprint(renamed)}'",
+            script)
+        for name in renamed.values():
+            self.assertIn(name, script)
+        # And the module's no-overlay pin is back in force.
+        self.assertEqual(self.contract_roster(), identity_roster())
+
     def test_the_overlay_lives_only_in_the_gitignored_instance_tree(self):
+        # The test module bound the real function at import; the pin replaced
+        # only the module attribute the loader calls, so this is the real path
+        # (computed, never read).
         overlay = identity_overlay_path()
         homelab = Path(__file__).resolve().parents[1]
         self.assertEqual(

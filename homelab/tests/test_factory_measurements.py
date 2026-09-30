@@ -1,9 +1,10 @@
 """Tests for the gate-12 login and optional-storage measurement producers.
 
 The producer is pure and read-only: these tests build evidence streams from the
-tracked contracts, read the retained gate-6 and gate-8 bundles when the host
-still has them, and never boot a guest, touch the network, or require
-privilege.  The two measurements are also fed through the real
+tracked contracts and never boot a guest, touch the network, or require
+privilege.  Judging the retained gate-6 and gate-8 bundles is an opt-in lab
+check (``TELOS_LAB_EVIDENCE=1``, see ``RetainedEvidenceTests``), never part of
+the default suite.  The two measurements are also fed through the real
 ``factory_verify`` checks that consume them, so the producer and the verifier
 are proven compatible rather than assumed so.
 """
@@ -38,9 +39,14 @@ from homelab.tests.test_windows_identity_acceptance import (  # noqa: E402
 )
 
 # The retained bundles named in the gate-12 mapping.  They are untracked
-# local run output (homelab/var is not in the index), so the tests that read
-# them skip cleanly on a host that never ran the gates, and the synthetic
-# streams below carry the same assertions unconditionally.
+# local run output (homelab/var is not in the index), and HANDOFF section 5
+# forbids a unit test from reading operator lab state, so the tests that judge
+# them are an explicit OPT-IN lab check: they run only with
+# TELOS_LAB_EVIDENCE=1, and without it nothing here so much as looks for these
+# paths.  The synthetic streams below carry every one of the same assertions
+# unconditionally.
+LAB_EVIDENCE_OPT_IN = "TELOS_LAB_EVIDENCE"
+LAB_EVIDENCE = os.environ.get(LAB_EVIDENCE_OPT_IN) == "1"
 REAL_WINDOWS = (
     REPOSITORY / "homelab/var/factory/windows-installs"
     / "run-20260813T171405Z-6729c809fcab/identity"
@@ -123,6 +129,17 @@ class SyntheticEvidenceTests(MeasurementBase):
             self.assertEqual({"online", "offline_cached"}, set(login[system]))
             for value in login[system].values():
                 self.assertIsInstance(value, bool)
+
+    def test_only_booleans_leave_the_producer(self):
+        # No path, hostname, run identifier, or credential reaches a caller.
+        block = factory_measurements.identity_measurements(
+            self.windows_stream(), self.arch_stream())
+        rendered = json.dumps(block, sort_keys=True)
+        self.assertNotIn("/", rendered)
+        for value in list(block["login"].values()) + [block["login"]]:
+            self.assertIsInstance(value, dict)
+        self.assertIsInstance(
+            block["optional_storage_absence_nonblocking"], bool)
 
     def test_the_emitted_vocabulary_is_the_permitted_one(self):
         # A producer that drifted from MEASUREMENT_KEYS would emit evidence no
@@ -371,10 +388,30 @@ class VerifierCompatibilityTests(MeasurementBase):
 
 
 @unittest.skipUnless(
-    REAL_WINDOWS.is_file() and REAL_ARCH.is_file(),
-    "the retained gate-6 and gate-8 evidence bundles are not on this host")
+    LAB_EVIDENCE,
+    f"opt-in lab check: set {LAB_EVIDENCE_OPT_IN}=1 to judge the retained "
+    "gate-6 and gate-8 evidence bundles on this host")
 class RetainedEvidenceTests(unittest.TestCase):
-    """The real retained proofs the gate-12 mapping was derived from."""
+    """OPT-IN LAB CHECK: the real retained proofs the gate-12 mapping cites.
+
+    Not a unit test: it reads operator run state under ``homelab/var``, which
+    no default-suite test may do.  Every assertion here is also made about
+    synthetic streams above, so the default suite loses no coverage of the
+    code; what this adds is a statement about THIS host's evidence -- that the
+    bundles the mapping names still exist and still pass their own judges.
+    Opting in says they should be here, so a missing bundle fails rather than
+    skips.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        missing = [
+            str(path.relative_to(REPOSITORY))
+            for path in (REAL_WINDOWS, REAL_ARCH) if not path.is_file()]
+        if missing:
+            raise AssertionError(
+                f"{LAB_EVIDENCE_OPT_IN}=1 but the retained evidence is not "
+                f"on this host: {', '.join(missing)}")
 
     def test_the_retained_bundles_prove_every_login(self):
         self.assertEqual(

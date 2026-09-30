@@ -2082,10 +2082,11 @@ class PrivateOverlayRegressionTests(unittest.TestCase):
     module that derives a root calls ``Path(__file__).resolve()``, so a symlink
     farm resolves straight back to this checkout.  This test therefore copies
     the tree into a temporary directory, writes an overlay there, and runs the
-    affected suites in a subprocess against it.  The developer's real
-    ``homelab/instance/`` is never touched, read, or relied on -- an owner who
-    has one gets it overwritten in the COPY -- so the result is the same on
-    every machine.
+    affected suites in a subprocess against it.  The copy leaves the host's
+    lab state out entirely -- ``homelab/instance/``, ``homelab/var/`` and
+    ``build/`` are neither copied nor linked (HANDOFF section 5) -- so the only
+    instance data the child can see is the synthetic overlay written here, and
+    the result is the same on every machine.
 
     The names are synthetic and built here rather than written down: ADR 0046
     keeps real account names out of every tracked file, and ``homelab/tests/**``
@@ -2134,6 +2135,19 @@ class PrivateOverlayRegressionTests(unittest.TestCase):
             for index, role in enumerate(CONTRACT_ROLES)
         }
 
+    @staticmethod
+    def without_lab_state(directory: str, names: list[str]) -> set[str]:
+        """``copytree``'s ignore: bytecode anywhere, lab state at the top.
+
+        ``homelab/instance/`` is the owner's private overlay and
+        ``homelab/var/`` the operator's run state; neither is copied, so the
+        child cannot read either and this test reads neither.
+        """
+        ignored = {name for name in names if name == "__pycache__"}
+        if Path(directory) == REPOSITORY / "homelab":
+            ignored |= {"instance", "var"} & set(names)
+        return ignored
+
     def overlaid_checkout(self, root: Path, principals: dict) -> Path:
         checkout = root / "checkout"
         checkout.mkdir()
@@ -2142,18 +2156,17 @@ class PrivateOverlayRegressionTests(unittest.TestCase):
             # symlink is enough and keeps this cheap.  .git is deliberately
             # NOT copied or linked: no subprocess started here can then reach
             # this repository's history, and its absence is the fail-closed
-            # half of overlaid_checkout_guard.
-            if entry.name not in ("homelab", ".git"):
+            # half of overlaid_checkout_guard.  build/ is lab state and is
+            # not linked either.
+            if entry.name not in ("homelab", ".git", "build"):
                 (checkout / entry.name).symlink_to(entry)
         shutil.copytree(
             REPOSITORY / "homelab",
             checkout / "homelab",
-            ignore=shutil.ignore_patterns("var", "__pycache__"),
+            ignore=self.without_lab_state,
             symlinks=True,
         )
-        # var/ holds the built media -- gigabytes, and read by path only.
-        (checkout / "homelab" / "var").symlink_to(
-            REPOSITORY / "homelab" / "var")
+        # The ONLY instance data in the copy: a synthetic overlay.
         overlay = (
             checkout / "homelab" / "instance" / "identity"
             / "principals.json"
@@ -2253,6 +2266,14 @@ class PrivateOverlayRegressionTests(unittest.TestCase):
         checkout = self.overlaid_checkout(root, principals)
         temporary = root / "child-temp"
         temporary.mkdir()
+        # The copy carries no lab state: the synthetic overlay is the whole of
+        # its instance tree, and there is no run state or build output at all.
+        instance = checkout / "homelab" / "instance"
+        self.assertEqual(
+            [Path("identity"), Path("identity/principals.json")],
+            sorted(path.relative_to(instance) for path in instance.rglob("*")))
+        for absent in (checkout / "homelab" / "var", checkout / "build"):
+            self.assertFalse(os.path.lexists(absent), absent)
 
         # First prove the copy actually resolves the overlay.  Without this a
         # copy that failed to inject one would pass this test vacuously --

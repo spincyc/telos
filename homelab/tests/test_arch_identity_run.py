@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -39,7 +40,6 @@ from homelab.vm.arch_identity_run import (
     MENU_NEVER_RENDERED_FAILURE,
     MENU_NOT_COMMITTED_FAILURE,
     MENU_WINDOW_MISSED_FAILURE,
-    OPERATOR_PRINCIPAL,
     REQUIRED_CHECKS,
     RESCUE_CONFIRM_PROMPT_MISSING_FAILURE,
     RESCUE_CREDENTIAL_REJECTED_FAILURE,
@@ -47,11 +47,8 @@ from homelab.vm.arch_identity_run import (
     RESCUE_PASSWD_EXITED_FAILURE,
     RESCUE_PASSWORD_FAILURE,
     RESCUE_PASSWORD_WRITES,
-    RESCUE_PRINCIPAL,
     RESCUE_PROMPT_MISSING_FAILURE,
     RESCUE_UPDATED_DIAGNOSTIC,
-    ROSTER,
-    ROSTER_FINGERPRINT,
     ROSTER_MISMATCH_FAILURE,
     ROSTER_UNREPORTED_FAILURE,
     SUDO_CREDENTIAL_REFUSED_FAILURE,
@@ -121,8 +118,37 @@ from workstations.arch_second import (  # noqa: E402
     PROBE_ROSTER_VERB,
     STORAGE_ATTACHED_MEASUREMENT_MARKERS,
     STORAGE_LOGIN_SECONDS_MARKER,
+    identity_roster,
+    identity_roster_fingerprint,
 )
-from vm.controller_principals import POSIX_ALLOCATION  # noqa: E402
+# Loaded before the pin below, so the pin patches this copy rather than the
+# drive's first lazy import freezing it (see identity_overlay_pin).
+from homelab.vm import controller_principals  # noqa: E402
+from homelab.tests.identity_overlay_pin import (  # noqa: E402
+    overlay_document,
+    pinned_identity_overlay,
+)
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  Every test
+    # here runs with the default overlay path pinned to a private path that
+    # does not exist, so the drive resolves the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# What the drive is expected to resolve under that pin, derived here from the
+# loader with the overlay held out of the way -- never read back from the
+# module under test, whose roster is only resolved on first use.
+ROSTER = identity_roster(
+    overlay_path=Path(__file__).with_name("no-such-identity-overlay.json"))
+ROSTER_FINGERPRINT = identity_roster_fingerprint(ROSTER)
+OPERATOR_PRINCIPAL = ROSTER["daily_administrator"]
+RESCUE_PRINCIPAL = ROSTER["local_rescue"]
+# The directory allocation the disposable Controller stages for that roster,
+# by controller_principals' own rule.
+POSIX_ALLOCATION = controller_principals._validated_posix_allocation(
+    controller_principals._posix_allocation(ROSTER))
 
 MEASURED_MARKERS: dict[str, dict[str, str]] = {
     "arch-storage-attached": dict(STORAGE_ATTACHED_MEASUREMENT_MARKERS),
@@ -3125,11 +3151,24 @@ class RosterTests(unittest.TestCase):
 
     def test_the_drive_reads_its_principals_from_the_shared_roster(self):
         # Not from the contract directly: the names this host types at the getty
-        # must be the names gate 7 baked onto the disk it is driving.
+        # must be the names gate 7 baked onto the disk it is driving.  Under
+        # this module's pin that loader answers the synthetic roster.
         from workstations.arch_second import identity_roster as loader
         self.assertEqual(ROSTER, loader())
-        self.assertEqual(OPERATOR_PRINCIPAL, ROSTER["daily_administrator"])
-        self.assertEqual(RESCUE_PRINCIPAL, ROSTER["local_rescue"])
+        self.assertEqual(ROSTER, arch_identity_run.resolved_roster())
+        self.assertEqual(
+            OPERATOR_PRINCIPAL, arch_identity_run.operator_principal())
+        self.assertEqual(
+            RESCUE_PRINCIPAL, arch_identity_run.rescue_principal())
+        self.assertEqual(
+            ROSTER_FINGERPRINT, arch_identity_run.roster_fingerprint())
+        # The former import-time constants read that same resolution.
+        self.assertEqual(ROSTER, arch_identity_run.ROSTER)
+        self.assertEqual(
+            OPERATOR_PRINCIPAL, arch_identity_run.OPERATOR_PRINCIPAL)
+        self.assertEqual(RESCUE_PRINCIPAL, arch_identity_run.RESCUE_PRINCIPAL)
+        self.assertEqual(
+            ROSTER_FINGERPRINT, arch_identity_run.ROSTER_FINGERPRINT)
         # The staged directory roster and the login principal agree.
         self.assertIn(OPERATOR_PRINCIPAL, POSIX_ALLOCATION["users"])
         # The break-glass account is never a directory principal (ADR 0055).
@@ -3235,6 +3274,134 @@ class RosterTests(unittest.TestCase):
             script)
         # And the drive builds its wait pattern from that same one definition.
         self.assertIn(MARKER, arch_identity_run.PROBE_ROSTER_MARKER)
+
+
+
+class LazyRosterTests(unittest.TestCase):
+    """Importing the drive reads no roster; a run resolves one, first.
+
+    The roster used to be resolved at import, which made every importer --
+    this suite included -- read the owner's private overlay.  It is now
+    resolved on first use; these tests prove the import reads nothing, that
+    a run still refuses an unusable overlay before it does anything else, and
+    that a synthetic overlay renames every principal the drive uses.
+    """
+
+    RENAMED = {
+        "standard_user": "roster-a",
+        "daily_administrator": "roster-b",
+        "domain_administrator": "roster-c",
+        "local_rescue": "roster-d",
+    }
+    # A pin distinct from every positional default (10000..10002), so a pass
+    # can only mean the overlay's number was the one staged and compared.
+    PINNED_UID = 10003
+
+    def roster_error(self) -> type:
+        # arch_second is imported under several names, each its own class
+        # object: catch the one the drive's loader actually raises.
+        loader = arch_identity_run.identity_roster
+        return sys.modules[loader.__module__].IdentityRosterError
+
+    def test_importing_the_drive_resolves_no_roster(self):
+        # A fresh interpreter whose loader refuses to be asked at all: the
+        # import must succeed, and only an access resolves.
+        program = f"""
+import sys
+sys.path.insert(0, {str(ROOT / "workstations")!r})
+import arch_second
+
+class Asked(Exception):
+    pass
+
+def refuse():
+    raise Asked("the overlay path was consulted")
+
+arch_second.identity_overlay_path = refuse
+sys.path.insert(0, {str(ROOT.parent)!r})
+from homelab.vm import arch_identity_run as arch
+print("imported")
+try:
+    arch.OPERATOR_PRINCIPAL
+except Asked:
+    print("resolved on access")
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True,
+            check=False, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(
+            ["imported", "resolved on access"],
+            completed.stdout.splitlines()[:2])
+
+    def test_an_unexaminable_overlay_stops_a_run_before_anything_else(self):
+        # A path whose parent is a regular file: lstat raises ENOTDIR, an
+        # OSError that is not FileNotFoundError, so the overlay's state is
+        # unknown and the loader refuses rather than falling back.
+        with pinned_identity_overlay() as overlay:
+            overlay.parent.write_text("not a directory", encoding="utf-8")
+            printed = io.StringIO()
+            with self.assertRaisesRegex(
+                    self.roster_error(), "could not be examined"), \
+                    mock.patch("sys.stdout", printed):
+                # A bundle that does not exist: had anything run before the
+                # roster, this would be the bundle's refusal instead.
+                run(Path("/nonexistent/telos/bundle"), apply=False,
+                    controller_state=Path("/nonexistent/telos/controller"))
+            self.assertEqual("", printed.getvalue())
+
+    def test_an_invalid_overlay_stops_the_boundary_before_it_spawns(self):
+        with pinned_identity_overlay({"schema_version": 99}), \
+                tempfile.TemporaryDirectory() as name:
+            boundary = ArchIdentityBoundary(make_bundle(Path(name)))
+            with mock.patch.object(boundary, "_start_all") as start_all, \
+                    self.assertRaisesRegex(
+                        self.roster_error(), "schema_version"):
+                boundary.start()
+            start_all.assert_not_called()
+
+    def test_the_roster_is_resolved_once_per_pin(self):
+        with mock.patch.object(
+                arch_identity_run, "identity_roster",
+                wraps=arch_identity_run.identity_roster) as loader:
+            arch_identity_run.resolved_roster.cache_clear()
+            self.addCleanup(arch_identity_run.resolved_roster.cache_clear)
+            arch_identity_run.operator_principal()
+            arch_identity_run.rescue_principal()
+            arch_identity_run.roster_fingerprint()
+            arch_identity_run.ROSTER
+        self.assertEqual(1, loader.call_count)
+
+    def test_a_synthetic_overlay_renames_every_principal_the_drive_uses(self):
+        document = overlay_document(
+            self.RENAMED, {"daily_administrator": self.PINNED_UID})
+        with pinned_identity_overlay(document):
+            renamed_fingerprint = identity_roster_fingerprint(self.RENAMED)
+            self.assertNotEqual(ROSTER_FINGERPRINT, renamed_fingerprint)
+            self.assertEqual(self.RENAMED, arch_identity_run.resolved_roster())
+            self.assertEqual(
+                "roster-b", arch_identity_run.operator_principal())
+            self.assertEqual("roster-d", arch_identity_run.rescue_principal())
+            self.assertEqual(
+                renamed_fingerprint, arch_identity_run.roster_fingerprint())
+            command, _ready, _result = rescue_password_command("feedface")
+            self.assertIn(b"LC_ALL=C passwd roster-d;", command)
+            # A whole lifecycle against a disk installed under the renamed
+            # roster passes, and its storage proof is judged against the
+            # overlay's pinned uidNumber for the renamed operator.
+            session = FakeSession(roster_fingerprint=renamed_fingerprint)
+            session.channel.measurements["owner_uid"] = self.PINNED_UID
+            events = run_lifecycle(session)
+            self.assertTrue(all(
+                event["result"] == "pass" for event in events))
+            # The positional default for the same role is now a mismatch.
+            session = FakeSession(roster_fingerprint=renamed_fingerprint)
+            with self.assertRaisesRegex(ArchIdentityError, "roster-b"):
+                run_lifecycle(session)
+        # The module pin is back in force, and nothing of the overlay stayed.
+        self.assertEqual(ROSTER, arch_identity_run.resolved_roster())
+        self.assertEqual(
+            ROSTER_FINGERPRINT, arch_identity_run.roster_fingerprint())
 
 
 if __name__ == "__main__":
