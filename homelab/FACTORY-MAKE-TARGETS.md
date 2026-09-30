@@ -301,6 +301,7 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 | `CHANGE_AT_FIRST_LOGON` | unset | `1` makes the typed passwords TEMPORARY: each account must change its password at its first logon, the host skips its policy pre-check, and the in-guest program lifts the domain password policy only while creating the accounts, then restores and proves it. Without it every typed password must already meet the default policy (7 characters, 3 classes), checked before anything boots. |
 | `SEED_ISO` | unset | Optional seed ISO for bring-up and convergence. |
 | `CONFIRM` | unset | `DESTROY <instance name>`, required by `-destroy`. |
+| `REPAIR_SID` | unset | `1` lets `-probe` complete a recorded domain SID that is a strict prefix of the live one, after a passing probe. Any other difference is refused. |
 
 `FACTORY_DURATION` is deliberately **not** reused on this path: its 120-second
 default would abort a Samba provisioning run. Verdict: `-converge` and
@@ -309,6 +310,22 @@ instance (`-converge` seeds the instance itself, so `-up` has not run on its
 own); `-destroy`, `RECONVERGE=1` and `RESTAGE` over accounts that already exist
 are **NOT RUN**. See "The persistent directory instance" in
 [docs/operator-runbook.md](docs/operator-runbook.md).
+
+### Probing an instance on the per-run fabric (TASK-28)
+
+A ninth target, added 2026-09-30 as step 3 of
+[DURABLE-WORKSTATION-FLOW.md](DURABLE-WORKSTATION-FLOW.md). Like the eight
+above it requires `PERSISTENT_DC`, and it is a dry run unless `APPLY=1`.
+
+| Target | Mutates | Contract |
+|---|---|---|
+| `homelab-factory-persistent-probe` | `APPLY=1` | The dry run binds the instance and prints the plan; nothing starts. Binding refuses unless the recorded realm, DNS domain and NetBIOS name match `homelab/instance/identity/directory.json` (or `DIRECTORY_IDENTITY`), the declared Controller address, prefix and gateway are the per-run fabric's, and the staged roster fingerprint is current; values are compared, never printed. `APPLY=1` asks once for the `local-rescue` password, before any process starts, then boots the instance's own disk in place under its lock (its own MAC; no QMP, no medium, no pause) on a per-run loopback switch and gateway with no workstation. It proves samba live, reads the realm and domain SID, checks the interface address, the gateway, the A and SRV records and the clock skew, stages and destroys one `tj-` join principal, and powers off over the console. Evidence lands in `homelab/var/factory/persistent-probe/<instance>/<run id>/`: a redacted console transcript, `switch.jsonl`, `fabric.log` and a `result.json` of secret-free checks. |
+
+With `REPAIR_SID=1`, a recorded domain SID that is a strict prefix of the
+live one (the split-read truncation fixed in `05eec6e`) is completed in the
+marker, and only after a passing probe. Any other difference is a different
+directory and is refused before anything is written to it. Verdict:
+**NOT RUN.**
 
 **No workstation can be installed against a persistent instance yet.** Every
 workstation runner wraps the Controller in `DisposableBootDisk`, and a bundle

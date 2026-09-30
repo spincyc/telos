@@ -42,6 +42,25 @@ def emitted(target: str, **variables: str) -> list[list[str]]:
     return commands
 
 
+def emitted_by(target: str, script: str, **variables: str) -> list[list[str]]:
+    """``emitted`` for any script: each argv the recipe passes to *script*."""
+    assignments = [f"{name}={value}" for name, value in variables.items()]
+    result = subprocess.run(
+        ["make", "-n", target, *assignments],
+        cwd=ROOT, check=True, capture_output=True, text=True)
+    joined = result.stdout.replace("\\\n", " ")
+    argvs = []
+    for statement in joined.replace("\n", ";").split(";"):
+        if script not in statement:
+            continue
+        parts = shlex.split(statement)
+        index = next(
+            position for position, part in enumerate(parts)
+            if part.endswith(script))
+        argvs.append(parts[index + 1:])
+    return argvs
+
+
 def recipe(target: str) -> str:
     match = re.search(
         rf"^{re.escape(target)}(?:\s*:[^\n]*)?\n"
@@ -459,6 +478,71 @@ class FactoryMakeTargetTests(unittest.TestCase):
                                   "persistent-converge",
                                   "persistent-destroy"):
                     self.assertNotIn(forbidden, text)
+
+    def test_persistent_probe_is_opt_in_dry_run_first_and_parses(self):
+        """The TASK-28 probe: named instance, dry run by default, real argv."""
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        from homelab.vm import persistent_controller_session
+
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)",
+            MAKEFILE,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIn("homelab-factory-persistent-probe", phony.group("body"))
+        text = recipe("homelab-factory-persistent-probe")
+        self.assertIn("require PERSISTENT_DC=<instance name>", text)
+        self.assertIn("dry run", text)
+        only = commands("homelab-factory-persistent-probe")
+        self.assertEqual(1, only.count("--apply"))
+        # The console password is typed at the terminal; no variable may
+        # carry it, and no medium may be attached to a durable directory.
+        for forbidden in ("PASSWORD", "CREDENTIAL", "SECRET", "--iso",
+                          "--seed-iso"):
+            self.assertNotIn(forbidden, only)
+        self.assertRegex(MAKEFILE, r"(?m)^REPAIR_SID \?=\s*$")
+        variables = {
+            "PERSISTENT_DC": "lab-dc1",
+            "FACTORY_CONTROLLER_STATE": "build/homelab/vm/bootstrap-dc",
+            "DIRECTORY_IDENTITY": "identity.json",
+            "IDENTITY_OVERLAY": "roster.json",
+        }
+        for repair in ("", "1"):
+            with self.subTest(REPAIR_SID=repair):
+                # ``make -n`` prints both sides of the shell's APPLY gate:
+                # the dry run first, then the applied run.
+                argvs = emitted_by(
+                    "homelab-factory-persistent-probe",
+                    "persistent_controller_session.py",
+                    REPAIR_SID=repair, **variables)
+                self.assertEqual(len(argvs), 2)
+                for argv, applied in zip(argvs, (False, True)):
+                    parsed = persistent_controller_session.parser(
+                    ).parse_args(argv)
+                    self.assertEqual(parsed.command, "probe")
+                    self.assertEqual(parsed.instance, "lab-dc1")
+                    self.assertEqual(
+                        str(parsed.state_dir),
+                        variables["FACTORY_CONTROLLER_STATE"])
+                    self.assertEqual(
+                        str(parsed.persistent_root),
+                        "build/homelab/vm/persistent-dc")
+                    self.assertEqual(
+                        str(parsed.directory_identity), "identity.json")
+                    self.assertEqual(
+                        str(parsed.identity_overlay), "roster.json")
+                    self.assertEqual(parsed.apply, applied)
+                    self.assertEqual(parsed.repair_sid, repair == "1")
+
+    def test_persistent_probe_refuses_without_a_named_instance(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        result = subprocess.run(
+            ["make", "homelab-factory-persistent-probe", "PERSISTENT_DC="],
+            cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("require PERSISTENT_DC=<instance name>", result.stderr)
 
     def test_release_set_build_consumes_the_verified_seal(self):
         text = recipe("homelab-pxe-release-set")

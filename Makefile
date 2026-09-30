@@ -122,6 +122,10 @@ DIRECTORY_IDENTITY ?=
 # does NOT reset the password of an account the directory already holds.
 RESTAGE ?=
 PERSISTENT_ACCOUNTS_TIMEOUT ?=
+# Complete a persistent instance's recorded domain SID when it is a strict
+# prefix of the live one (the split-read truncation fixed in 05eec6e). Any other
+# difference is still refused, and nothing is written unless the probe passes.
+REPAIR_SID ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -199,6 +203,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-destroy \
 	homelab-factory-persistent-accounts-plan \
 	homelab-factory-persistent-accounts \
+	homelab-factory-persistent-probe \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1014,6 +1019,43 @@ homelab-factory-persistent-accounts:
 			$(if $(CHANGE_AT_FIRST_LOGON),--change-at-first-logon) \
 			$(if $(RESTAGE),--restage) \
 			$(if $(PERSISTENT_ACCOUNTS_TIMEOUT),--timeout '$(PERSISTENT_ACCOUNTS_TIMEOUT)') \
+			--apply; \
+	fi
+
+# Probe one persistent instance on the PER-RUN loopback fabric, with no
+# workstation (TASK-28, homelab/DURABLE-WORKSTATION-FLOW.md step 3). The dry run
+# checks the binding -- realm, fabric addressing and roster fingerprint agree --
+# and prints the plan; it starts nothing. APPLY=1 boots the instance's own disk
+# in place on a per-run switch and gateway, logs in as local-rescue with the
+# password typed once at this terminal, proves AD live, reads the realm and
+# domain SID, checks the address, gateway, DNS records and clock, stages and
+# destroys one tj- join principal, and powers the guest off over its console.
+# Evidence (redacted transcript, switch.jsonl, result.json) is retained under
+# the gitignored homelab/var/factory/persistent-probe/.
+homelab-factory-persistent-probe:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to boot the instance on the per-run fabric; it will ask at this terminal for the local-rescue password'; \
+		$(PYTHON) homelab/vm/persistent_controller_session.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			probe \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			$(if $(REPAIR_SID),--repair-sid); \
+	else \
+		$(PYTHON) homelab/vm/persistent_controller_session.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			probe \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			$(if $(REPAIR_SID),--repair-sid) \
 			--apply; \
 	fi
 
