@@ -691,10 +691,22 @@ class GateTwelveCheckNineTests(unittest.TestCase):
         self.assertEqual(
             self.status({"host_network_changes": counters}), "FAIL")
 
-    def test_unproven_counters_do_not_render_pass(self):
-        # The classify() rendering: the sentinel is not an int, so the check
-        # fails closed instead of reading an unproven category as a zero.
+    def test_an_unproven_unifi_counter_alone_renders_waived_not_pass(self):
+        # The classify() rendering with no UniFi observation: six proven zeros
+        # and the sentinel in the unifi slot.  ADR 0080 waives exactly that
+        # counter, so the check is WAIVED -- never PASS.
         report = evidence.classify(snapshot(), snapshot())
+        self.assertEqual(["unifi"], report["unproven"])
+        self.assertEqual(factory_verify.UNPROVEN_COUNTER, evidence.UNPROVEN)
+        self.assertEqual(
+            self.status({"host_network_changes": report["counters"]}), "WAIVED")
+
+    def test_another_unproven_counter_is_never_waived(self):
+        # The waiver covers the unifi counter only: an unreadable ruleset
+        # leaves forwarding unproven too, and the check fails closed.
+        unreadable = {"returncode": 1, "stdout": "", "stderr": "denied"}
+        report = evidence.classify(snapshot(), snapshot(nft=unreadable))
+        self.assertEqual(["forwarding", "unifi"], report["unproven"])
         self.assertEqual(
             self.status({"host_network_changes": report["counters"]}), "FAIL")
 

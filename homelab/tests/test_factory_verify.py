@@ -423,6 +423,196 @@ class VerifyRunTests(unittest.TestCase):
             "FAIL", receipt["checks"]["no_host_network_change"]["status"])
 
 
+#: Six proven zeros and the unprovable ``unifi`` slot ADR 0080 waives.
+WAIVED_NETWORK = dict(GOOD_MEASUREMENTS["host_network_changes"], unifi="unproven")
+
+
+class HostNetworkWaiverTests(VerifyRunTests):
+    """ADR 0080: check 9's unifi counter is waived, distinctly from PASS."""
+
+    CHECK = "no_host_network_change"
+
+    def receipt(self, name="run-a", *, release=True, **network):
+        measurements = dict(GOOD_MEASUREMENTS)
+        if network.pop("absent", False):
+            del measurements["host_network_changes"]
+        else:
+            measurements["host_network_changes"] = dict(WAIVED_NETWORK, **network)
+        return factory_verify.verify_run(
+            self.evidence(name=name, measurements=measurements),
+            release_set=self.shared_release_set() if release else None)
+
+    def shared_release_set(self):
+        """One release set per test: ``release_set`` builds a fixed version."""
+        if getattr(self, "_release", None) is None:
+            self._release = self.release_set()
+        return self._release
+
+    def test_an_unproven_unifi_counter_alone_is_waived_naming_adr_0080(self):
+        receipt = self.receipt()
+        check = receipt["checks"][self.CHECK]
+        self.assertEqual("WAIVED", check["status"])
+        self.assertEqual(factory_verify.WAIVED, check["status"])
+        self.assertEqual("ADR 0080", check["waiver"]["adr"])
+        self.assertEqual(["unifi"], check["waiver"]["covers"])
+        self.assertTrue(check["waiver"]["reason"])
+        self.assertIn("ADR 0080", check["detail"])
+        # Every other check still passes; the waiver is the only exception.
+        for name, other in receipt["checks"].items():
+            if name != self.CHECK:
+                self.assertEqual("PASS", other["status"], name)
+        self.assertEqual([], receipt["needs_live_gate"])
+        self.assertEqual(
+            {"pass": 15, "fail": 0, "not_run": 0, "waived": 1},
+            receipt["summary"])
+
+    def test_the_rendered_receipt_names_the_waiver_beside_the_verdict(self):
+        receipt = self.receipt()
+        self.assertEqual("PASS-WITH-WAIVER", receipt["verdict"])
+        self.assertEqual(
+            [dict(factory_verify.HOST_NETWORK_WAIVER, check=self.CHECK)],
+            receipt["waivers"])
+        rendered = json.loads(factory_verify.render_receipt(receipt))
+        self.assertEqual("PASS-WITH-WAIVER", rendered["verdict"])
+        self.assertEqual("ADR 0080", rendered["waivers"][0]["adr"])
+        self.assertEqual(
+            "WAIVED", rendered["checks"][self.CHECK]["status"])
+
+    def test_a_waived_run_is_never_a_plain_pass(self):
+        receipt = self.receipt()
+        self.assertNotEqual("PASS", receipt["verdict"])
+        self.assertNotEqual("NOT-RUN", receipt["verdict"])
+        self.assertNotEqual(
+            factory_verify.PASS, receipt["checks"][self.CHECK]["status"])
+        self.assertNotEqual(
+            factory_verify.NOT_RUN, receipt["checks"][self.CHECK]["status"])
+
+    def test_a_clean_run_carries_no_waiver(self):
+        receipt = factory_verify.verify_run(
+            self.evidence(), release_set=self.shared_release_set())
+        self.assertEqual("PASS", receipt["verdict"])
+        self.assertEqual([], receipt["waivers"])
+        self.assertEqual(0, receipt["summary"]["waived"])
+
+    def test_a_provable_change_beside_an_unproven_unifi_still_fails(self):
+        for category in ("tap", "bridge", "route", "vlan", "forwarding", "listener"):
+            with self.subTest(category=category):
+                receipt = self.receipt(name=f"run-{category}", **{category: 1})
+                check = receipt["checks"][self.CHECK]
+                self.assertEqual("FAIL", check["status"])
+                self.assertIn(category, check["detail"])
+                self.assertNotIn("waiver", check)
+                self.assertEqual("FAIL", receipt["verdict"])
+                self.assertEqual([], receipt["waivers"])
+
+    def test_an_unproven_provable_counter_is_never_waived(self):
+        receipt = self.receipt(forwarding="unproven")
+        self.assertEqual("FAIL", receipt["checks"][self.CHECK]["status"])
+        self.assertIn("forwarding", receipt["checks"][self.CHECK]["detail"])
+
+    def test_a_proven_or_malformed_unifi_value_is_never_waived(self):
+        for index, value in enumerate((1, -1, "garbage", None, False, [0])):
+            with self.subTest(unifi=value):
+                receipt = self.receipt(name=f"run-{index}", unifi=value)
+                self.assertEqual("FAIL", receipt["checks"][self.CHECK]["status"])
+                self.assertEqual("FAIL", receipt["verdict"])
+
+    def test_a_boolean_is_not_a_proven_zero(self):
+        receipt = self.receipt(unifi=0, route=False)
+        self.assertEqual("FAIL", receipt["checks"][self.CHECK]["status"])
+
+    def test_an_absent_measurement_stays_not_run(self):
+        receipt = self.receipt(absent=True)
+        self.assertEqual("NOT-RUN", receipt["checks"][self.CHECK]["status"])
+        self.assertEqual("NOT-RUN", receipt["verdict"])
+        self.assertIn(self.CHECK, receipt["needs_live_gate"])
+        self.assertEqual([], receipt["waivers"])
+
+    def test_an_incomplete_inventory_is_never_waived(self):
+        measurements = dict(GOOD_MEASUREMENTS)
+        measurements["host_network_changes"] = {
+            key: value for key, value in WAIVED_NETWORK.items() if key != "route"}
+        receipt = factory_verify.verify_run(
+            self.evidence(measurements=measurements))
+        self.assertEqual("FAIL", receipt["checks"][self.CHECK]["status"])
+
+    def test_a_waiver_never_masks_a_not_run_check(self):
+        receipt = self.receipt(release=False)
+        self.assertEqual("WAIVED", receipt["checks"][self.CHECK]["status"])
+        self.assertEqual("NOT-RUN", receipt["verdict"])
+        self.assertEqual(["release_set_integrity"], receipt["needs_live_gate"])
+
+    def test_a_waiver_never_masks_a_failing_check(self):
+        measurements = dict(
+            GOOD_MEASUREMENTS, host_network_changes=WAIVED_NETWORK,
+            default_boot="arch")
+        receipt = factory_verify.verify_run(
+            self.evidence(measurements=measurements),
+            release_set=self.shared_release_set())
+        self.assertEqual("WAIVED", receipt["checks"][self.CHECK]["status"])
+        self.assertEqual("FAIL", receipt["verdict"])
+
+    def test_the_sentinel_mirrors_host_network_evidence(self):
+        import host_network_evidence
+        self.assertEqual(
+            host_network_evidence.UNPROVEN, factory_verify.UNPROVEN_COUNTER)
+        self.assertEqual(
+            list(host_network_evidence.CATEGORIES),
+            list(factory_verify.HOST_NETWORK_CATEGORIES))
+
+    # -- twice-through agreement ------------------------------------------
+
+    def test_two_runs_both_waived_compare_equivalent(self):
+        comparison = factory_verify.compare_runs(
+            self.receipt("run-a"), self.receipt("run-b"))
+        self.assertTrue(comparison["equivalent"], comparison)
+        self.assertEqual(0, comparison["divergent_count"])
+
+    def test_a_waived_run_and_a_not_run_run_diverge(self):
+        comparison = factory_verify.compare_runs(
+            self.receipt("run-a"), self.receipt("run-b", absent=True))
+        self.assertFalse(comparison["equivalent"])
+        divergent = {difference["path"] for difference in comparison["differences"]
+                     if difference["classification"] == "divergent"}
+        self.assertIn(f"checks.{self.CHECK}.status", divergent)
+        self.assertIn("verdict", divergent)
+
+    def test_a_waived_run_and_a_proven_pass_diverge(self):
+        clean = factory_verify.verify_run(
+            self.evidence(name="run-b"), release_set=self.shared_release_set())
+        comparison = factory_verify.compare_runs(self.receipt("run-a"), clean)
+        self.assertFalse(comparison["equivalent"])
+
+    def test_waivers_with_different_reasons_diverge(self):
+        first, second = self.receipt("run-a"), self.receipt("run-b")
+        second["checks"][self.CHECK]["waiver"]["reason"] = "another reason"
+        comparison = factory_verify.compare_runs(first, second)
+        self.assertFalse(comparison["equivalent"])
+        self.assertIn(
+            f"checks.{self.CHECK}.waiver.reason",
+            {difference["path"] for difference in comparison["differences"]
+             if difference["classification"] == "divergent"})
+
+    # -- CLI --------------------------------------------------------------
+
+    def test_the_cli_names_the_waiver_and_does_not_fail(self):
+        measurements = dict(GOOD_MEASUREMENTS, host_network_changes=WAIVED_NETWORK)
+        errors = io.StringIO()
+        real_stdout, real_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), errors
+        try:
+            status = factory_verify.main(
+                [str(self.evidence(measurements=measurements)),
+                 "--release-set", str(self.shared_release_set())])
+        finally:
+            sys.stdout, sys.stderr = real_stdout, real_stderr
+        self.assertEqual(0, status)
+        line = errors.getvalue()
+        self.assertTrue(line.startswith("PASS-WITH-WAIVER: factory-verify"), line)
+        self.assertIn("waived=1", line)
+        self.assertIn(f"{self.CHECK} (ADR 0080)", line)
+
+
 class MeasurementProducerTests(VerifyRunTests):
     """Every real producer's block, judged by the checks that read it.
 

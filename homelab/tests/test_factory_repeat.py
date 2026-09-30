@@ -441,6 +441,111 @@ class ProducerSeamTests(unittest.TestCase):
         self.assertIsNone(producer())
 
 
+#: What ``host_network_evidence.classify`` reports with no UniFi observation.
+UNPROVEN_UNIFI = dict(PRODUCED["host_network_changes"], unifi="unproven")
+
+
+class HostNetworkWaiverProducerTests(unittest.TestCase):
+    """ADR 0080 at the producer seam: only the unifi gap reaches the receipt."""
+
+    class Unproven(Exception):
+        def __init__(self, reasons):
+            super().__init__("unproven")
+            self.reasons = dict(reasons)
+
+    def module(self, *, unproven=None, counters=None, classify=True):
+        """A fake ``host_network_evidence`` with the three names the seam uses."""
+        module = type(sys)("fake_host_network_evidence")
+        module.UnprovenCategory = self.Unproven
+        module.calls = []
+
+        def change_counters(before, after):
+            module.calls.append(("change_counters", before, after))
+            if unproven:
+                raise self.Unproven({name: "no observation" for name in unproven})
+            return dict(PRODUCED["host_network_changes"])
+
+        module.change_counters = change_counters
+        if classify:
+            def classify_(before, after):
+                module.calls.append(("classify", before, after))
+                return {"counters": dict(counters or UNPROVEN_UNIFI),
+                        "unproven": sorted(unproven or ())}
+            module.classify = classify_
+        return module
+
+    def test_proven_counters_pass_straight_through(self):
+        module = self.module()
+        self.assertEqual(
+            PRODUCED["host_network_changes"],
+            factory_repeat.host_network_measurement(module, "b", "a"))
+        self.assertEqual([("change_counters", "b", "a")], module.calls)
+
+    def test_only_unifi_unproven_emits_the_sentinel_for_the_verifier(self):
+        module = self.module(unproven=("unifi",))
+        self.assertEqual(
+            UNPROVEN_UNIFI,
+            factory_repeat.host_network_measurement(module, "b", "a"))
+
+    def test_a_provable_change_is_emitted_so_the_verifier_can_fail_it(self):
+        counters = dict(UNPROVEN_UNIFI, route=1)
+        module = self.module(unproven=("unifi",), counters=counters)
+        self.assertEqual(
+            counters, factory_repeat.host_network_measurement(module, "b", "a"))
+
+    def test_any_other_unproven_counter_omits_the_field(self):
+        module = self.module(unproven=("unifi", "forwarding"))
+        self.assertIsNone(
+            factory_repeat.host_network_measurement(module, "b", "a"))
+        self.assertNotIn("classify", [call[0] for call in module.calls])
+
+    def test_a_module_without_classify_omits_the_field(self):
+        module = self.module(unproven=("unifi",), classify=False)
+        self.assertIsNone(
+            factory_repeat.host_network_measurement(module, "b", "a"))
+
+    def test_a_classify_report_disagreeing_with_the_exception_omits_it(self):
+        module = self.module(unproven=("unifi",), counters=dict(
+            PRODUCED["host_network_changes"]))
+        self.assertIsNone(
+            factory_repeat.host_network_measurement(module, "b", "a"))
+
+    def real_snapshot(self, evidence):
+        """A well-formed, fully successful capture of an empty host."""
+        stdout = {evidence.NETNS_COMMAND: "", evidence.SOCKET_COMMAND: "",
+                  evidence.NFT_COMMAND: json.dumps({"nftables": []})}
+        return {"schema": 1, "captured_at": "fixture", "observations": [
+            {"command": list(command), "returncode": 0,
+             "stdout": stdout.get(command, "[]"), "stderr": ""}
+            for command in evidence.COMMANDS]}
+
+    def test_the_real_sibling_yields_a_waived_check_nine(self):
+        evidence = factory_repeat._optional_module("host_network_evidence")
+        if evidence is None or not hasattr(evidence, "classify"):
+            self.skipTest("host_network_evidence is not present")
+        before, after = self.real_snapshot(evidence), self.real_snapshot(evidence)
+        producers = factory_repeat.bind_producers(
+            network_before=before, network_after=after)
+        measured = producers.host_network_changes()
+        self.assertEqual(UNPROVEN_UNIFI, measured)
+        check = factory_verify._check_host_network(
+            {"host_network_changes": measured})
+        self.assertEqual("WAIVED", check["status"])
+        self.assertEqual("ADR 0080", check["waiver"]["adr"])
+
+    def test_the_real_sibling_with_an_unreadable_ruleset_stays_not_run(self):
+        evidence = factory_repeat._optional_module("host_network_evidence")
+        if evidence is None or not hasattr(evidence, "classify"):
+            self.skipTest("host_network_evidence is not present")
+        before, after = self.real_snapshot(evidence), self.real_snapshot(evidence)
+        for item in after["observations"]:
+            if tuple(item["command"]) == evidence.NFT_COMMAND:
+                item.update(returncode=1, stdout="", stderr="denied")
+        producers = factory_repeat.bind_producers(
+            network_before=before, network_after=after)
+        self.assertIsNone(producers.host_network_changes())
+
+
 def sparse_disk(path: Path) -> Path:
     """A qcow2-headed image over the evidence size limit, sparse on disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -827,6 +932,60 @@ class RepeatReceiptTests(unittest.TestCase):
             [self.comparison()])
         self.assertEqual("FAIL", document["verdict"])
 
+    # -- ADR 0080 waiver ----------------------------------------------------
+
+    WAIVER = dict(factory_verify.HOST_NETWORK_WAIVER,
+                  check="no_host_network_change")
+
+    def waived(self, **kwargs):
+        receipt = self.receipt(verdict="PASS-WITH-WAIVER", **kwargs)
+        receipt["waivers"] = [dict(self.WAIVER)]
+        return receipt
+
+    def test_two_waived_equivalent_runs_pass_with_waiver_never_pass(self):
+        document = factory_repeat.repeat_receipt(
+            [self.waived(), self.waived()], [self.comparison()])
+        self.assertEqual("PASS-WITH-WAIVER", document["verdict"])
+        self.assertEqual(factory_verify.PASS_WITH_WAIVER, document["verdict"])
+        self.assertNotEqual(factory_verify.PASS, document["verdict"])
+        # Named once, however many runs carried it.
+        self.assertEqual([self.WAIVER], document["waivers"])
+        self.assertEqual("ADR 0080", document["waivers"][0]["adr"])
+
+    def test_one_waived_run_beside_a_clean_pass_is_still_a_waiver(self):
+        document = factory_repeat.repeat_receipt(
+            [self.waived(), self.receipt()], [self.comparison()])
+        self.assertEqual("PASS-WITH-WAIVER", document["verdict"])
+
+    def test_a_waived_run_beside_a_not_run_run_is_not_run(self):
+        document = factory_repeat.repeat_receipt(
+            [self.waived(),
+             self.receipt(verdict="NOT-RUN", not_run=("no_host_network_change",))],
+            [self.comparison()])
+        self.assertEqual("NOT-RUN", document["verdict"])
+        self.assertEqual(["no_host_network_change"], document["needs_live_gate"])
+
+    def test_a_waiver_never_masks_a_failure_or_a_divergence(self):
+        self.assertEqual("FAIL", factory_repeat.repeat_receipt(
+            [self.waived(), self.receipt(verdict="FAIL")],
+            [self.comparison()])["verdict"])
+        self.assertEqual("FAIL", factory_repeat.repeat_receipt(
+            [self.waived(), self.waived()],
+            [self.comparison(divergent=1)])["verdict"])
+
+    def test_an_unrecognised_run_verdict_fails_closed(self):
+        for verdict in ("WAIVED", "pass", "partial", None):
+            with self.subTest(verdict=verdict):
+                document = factory_repeat.repeat_receipt(
+                    [self.receipt(verdict=verdict), self.receipt()],
+                    [self.comparison()])
+                self.assertEqual("FAIL", document["verdict"])
+
+    def test_a_clean_repeat_records_no_waiver(self):
+        document = factory_repeat.repeat_receipt(
+            [self.receipt(), self.receipt()], [self.comparison()])
+        self.assertEqual([], document["waivers"])
+
 
 # --------------------------------------------------------------------------
 # Preconditions
@@ -950,6 +1109,8 @@ class ApplyRefusalTests(TemporaryRootTests):
         for phase in factory_repeat.PHASES:
             self.assertIn(phase.name, printed)
         self.assertIn("refuses to apply", printed)
+        self.assertIn("Waiver: ADR 0080 covers only the host_network_changes "
+                      "unifi counter", printed)
 
     def test_main_refuses_apply_against_a_fresh_canonical_image(self):
         # The CLI entry builds the REAL subprocess lifecycle, so the disk it is
@@ -1261,6 +1422,55 @@ class RepeatEndToEndTests(TemporaryRootTests):
                      if difference["classification"] == "divergent"]
         self.assertTrue(divergent)
         self.assertIn("verdict", {difference["path"] for difference in divergent})
+
+    def test_two_waived_iterations_pass_with_waiver_never_pass(self):
+        status, printed, errors = self.repeat(
+            producers=wired_producers(host_network_changes=UNPROVEN_UNIFI))
+        # ADR 0080 closes gate 12 with the waiver, so the exit is 0 ...
+        self.assertEqual(0, status)
+        document = json.loads(printed)
+        # ... but nothing in the receipt reads as full acceptance.
+        self.assertEqual("PASS-WITH-WAIVER", document["verdict"])
+        self.assertTrue(document["equivalent"])
+        self.assertEqual(
+            [dict(factory_verify.HOST_NETWORK_WAIVER,
+                  check="no_host_network_change")],
+            document["waivers"])
+        for run in document["runs"]:
+            self.assertEqual("PASS-WITH-WAIVER", run["verdict"])
+            self.assertEqual({"pass": 15, "fail": 0, "not_run": 0, "waived": 1},
+                             run["summary"])
+            self.assertEqual(
+                "WAIVED", run["checks"]["no_host_network_change"]["status"])
+        # Both waived identically, so they agree: only the evidence name varies.
+        self.assertEqual(
+            ["evidence"], [difference["path"] for difference
+                           in document["comparisons"][0]["differences"]])
+        self.assertIn("PASS-WITH-WAIVER: factory-repeat", errors)
+        self.assertIn("no_host_network_change (ADR 0080)", errors)
+        self.assertNotIn("\nPASS: factory-repeat", "\n" + errors)
+
+    def test_a_waived_iteration_and_a_not_run_iteration_disagree(self):
+        bound = []
+
+        def bind(bundles, **kwargs):
+            bound.append(None)
+            return wired_producers(host_network_changes=(
+                UNPROVEN_UNIFI if len(bound) == 1 else None))
+
+        status, printed, _ = self.repeat(bind=bind)
+        self.assertEqual(1, status)
+        document = json.loads(printed)
+        self.assertEqual(["PASS-WITH-WAIVER", "NOT-RUN"],
+                         [run["verdict"] for run in document["runs"]])
+        self.assertNotIn(document["verdict"],
+                         ("PASS", "PASS-WITH-WAIVER"))
+        self.assertFalse(document["equivalent"])
+        divergent = {difference["path"]
+                     for difference in document["comparisons"][0]["differences"]
+                     if difference["classification"] == "divergent"}
+        self.assertIn("checks.no_host_network_change.status", divergent)
+        self.assertIn("no_host_network_change", document["needs_live_gate"])
 
     def test_the_receipt_file_is_private_and_matches_standard_output(self):
         receipt = self.root / "repeat-receipt.json"

@@ -426,6 +426,54 @@ def _producer(key: str, call: Callable[[Callable], object], *,
     return produce
 
 
+def host_network_measurement(module, before, after) -> dict | None:
+    """The ``host_network_changes`` field, honouring ADR 0080's waiver.
+
+    ``change_counters`` returns seven proven integers or raises
+    ``UnprovenCategory``.  When the ONLY unproven counter is one
+    ``factory_verify.HOST_NETWORK_WAIVER`` covers (``unifi``, which no
+    snapshot pair can prove), the other six were proven, so the field is
+    emitted from ``classify`` with that slot holding the unproven sentinel:
+    ``factory_verify`` then grades the six and renders check 9 ``WAIVED`` --
+    or ``FAIL`` if any of them counted a change.  Any other unproven counter
+    omits the field, which keeps the check NOT-RUN exactly as before: the
+    waiver never widens past the one counter it names, and no zero is ever
+    invented for a slot nothing observed.
+    """
+    change_counters = getattr(module, "change_counters", None)
+    if change_counters is None:
+        return None
+    unproven_error = getattr(module, "UnprovenCategory", None)
+    tolerated: tuple = (
+        (unproven_error,) if isinstance(unproven_error, type)
+        and issubclass(unproven_error, BaseException) else ())
+    waivable = set(factory_verify.HOST_NETWORK_WAIVER["covers"])
+    try:
+        return change_counters(before, after)
+    except tolerated as error:
+        if set(getattr(error, "reasons", {}) or {}) != waivable:
+            return None
+    classify = getattr(module, "classify", None)
+    if classify is None:
+        return None
+    report = classify(before, after)
+    counters = report.get("counters") if isinstance(report, dict) else None
+    if (not isinstance(counters, dict)
+            or set(report.get("unproven") or ()) != waivable
+            or any(counters.get(name) != factory_verify.UNPROVEN_COUNTER
+                   for name in waivable)):
+        return None
+    return dict(counters)
+
+
+def _host_network_producer(before, after) -> Callable[[], object] | None:
+    """Bind :func:`host_network_measurement` to the sibling, if it exists."""
+    module, change_counters = _entry_point("host_network_changes")
+    if change_counters is None:
+        return None
+    return lambda: host_network_measurement(module, before, after)
+
+
 def scan_retained_evidence(scan_paths: Callable,
                            evidence_dirs: Sequence[Path]) -> dict | None:
     """The ``artifact_scan`` counters over the evidence an iteration retains.
@@ -480,10 +528,8 @@ def bind_producers(*, windows_evidence: Path | None = None,
                 and Path(windows_evidence).is_file()
                 and Path(arch_evidence).is_file())
     return Producers(
-        host_network_changes=_producer(
-            "host_network_changes",
-            lambda f: f(network_before, network_after),
-            tolerate="UnprovenCategory")
+        host_network_changes=_host_network_producer(
+            network_before, network_after)
         if network_before is not None and network_after is not None else None,
         login=_producer(
             "login",
@@ -776,7 +822,9 @@ def aggregate_status(observations: Sequence[dict], measurements: dict) -> str:
     measurement union is complete.  An incomplete union is still an honest run,
     just a narrower one, so it records the phase vocabulary and leaves the
     unmeasured checks NOT-RUN.  Nothing here can turn an absent measurement
-    into a pass.
+    into a pass.  Complete means PRESENT: a value's content -- including the
+    unproven ``unifi`` slot ADR 0080 waives -- is graded by ``factory_verify``,
+    whose verdict (``PASS-WITH-WAIVER``, never ``PASS``) is what the gate reads.
 
     A phase marked ``result=False`` retains a judged acceptance stream rather
     than a status; its verdict reaches this function through the completeness
@@ -808,15 +856,44 @@ def aggregate_result(*, iteration: int, observations: Sequence[dict],
 
 
 def repeat_verdict(receipts: Sequence[dict], comparisons: Sequence[dict]) -> str:
-    """The gate-12 verdict: every run must pass AND every pair must agree."""
+    """The gate-12 verdict: every run must pass AND every pair must agree.
+
+    A divergence or any failing run fails; any NOT-RUN run holds the verdict
+    at NOT-RUN; a run that passed only with a waiver makes the whole repeat
+    ``PASS-WITH-WAIVER``, never ``PASS``.  A verdict outside
+    ``factory_verify.VERDICTS`` fails closed rather than reading as a pass.
+    Agreement on a waiver is the comparator's job: a waived check embeds its
+    decision record, so two runs agree only when both waived it identically.
+    """
     if any(comparison["divergent_count"] for comparison in comparisons):
         return factory_verify.FAIL
     verdicts = {receipt["verdict"] for receipt in receipts}
-    if factory_verify.FAIL in verdicts:
+    if factory_verify.FAIL in verdicts or not verdicts <= factory_verify.VERDICTS:
         return factory_verify.FAIL
     if factory_verify.NOT_RUN in verdicts:
         return factory_verify.NOT_RUN
+    if factory_verify.PASS_WITH_WAIVER in verdicts:
+        return factory_verify.PASS_WITH_WAIVER
     return factory_verify.PASS
+
+
+def repeat_waivers(receipts: Sequence[dict]) -> list[dict]:
+    """Every distinct waiver any run recorded, each once, by check and ADR."""
+    distinct: list[dict] = []
+    for receipt in receipts:
+        for waiver in receipt.get("waivers") or ():
+            if waiver not in distinct:
+                distinct.append(waiver)
+    return sorted(distinct, key=lambda waiver: (
+        str(waiver.get("check")), str(waiver.get("adr")),
+        str(waiver.get("reason"))))
+
+
+#: The repeat verdicts that close gate 12.  ADR 0080 closes it with the one
+#: waived check, so ``PASS-WITH-WAIVER`` exits 0 like ``PASS`` -- the receipt
+#: and the stderr verdict line, not the exit status, carry the distinction.
+ACCEPTED_VERDICTS = frozenset(
+    {factory_verify.PASS, factory_verify.PASS_WITH_WAIVER})
 
 
 def repeat_receipt(receipts: Sequence[dict],
@@ -836,6 +913,7 @@ def repeat_receipt(receipts: Sequence[dict],
         "comparisons": list(comparisons),
         "needs_live_gate": sorted(
             {name for receipt in receipts for name in receipt["needs_live_gate"]}),
+        "waivers": repeat_waivers(receipts),
     }
 
 
@@ -1077,6 +1155,11 @@ def _plan(stream, *, iterations: int, evidence_root: Path, work_root: Path,
             module, attribute = PRODUCER_ENTRY_POINTS[name]
             print(f"  ! {name} has no producer ({module}.{attribute}); "
                   "it will stay NOT-RUN", file=stream)
+    waiver = factory_verify.HOST_NETWORK_WAIVER
+    print(f"Waiver: {waiver['adr']} covers only the host_network_changes "
+          f"{', '.join(waiver['covers'])} counter; every other counter must be "
+          "a proven zero, and a waived run renders PASS-WITH-WAIVER, never PASS",
+          file=stream)
     for problem in problems:
         print(f"  ! refuses to apply: {problem}", file=stream)
 
@@ -1137,9 +1220,10 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
         factory_verify.write_receipt(document, receipt)
         print(f"receipt written: {receipt}", file=sys.stderr)
     print(f"{document['verdict']}: factory-repeat iterations="
-          f"{document['iterations']} equivalent={document['equivalent']}",
+          f"{document['iterations']} equivalent={document['equivalent']}"
+          f"{factory_verify.waiver_note(document['waivers'])}",
           file=sys.stderr)
-    return 0 if document["verdict"] == factory_verify.PASS else 1
+    return 0 if document["verdict"] in ACCEPTED_VERDICTS else 1
 
 
 def parser() -> argparse.ArgumentParser:

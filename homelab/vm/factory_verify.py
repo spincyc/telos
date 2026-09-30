@@ -12,7 +12,10 @@ It reads one retained factory run's evidence (as produced by
 that classifies every acceptance measurement it can check from evidence alone
 as ``PASS``, ``FAIL``, or ``NOT-RUN``.  A measurement that was never recorded
 stays ``NOT-RUN``; it is never promoted to ``PASS``.  Anything unreadable,
-oversized, unexpected, or ambiguous fails closed to ``FAIL``.  The retained
+oversized, unexpected, or ambiguous fails closed to ``FAIL``.  One check has a
+fourth state, ``WAIVED``, under ADR 0080 (see :data:`HOST_NETWORK_WAIVER`),
+and a run whose only non-``PASS`` check is waived renders the distinct verdict
+``PASS-WITH-WAIVER``, never ``PASS``.  The retained
 *artifacts* are the files; the working trees a real run bundle keeps beside
 them are accepted structurally and named in the receipt rather than inspected.
 
@@ -52,6 +55,39 @@ EVIDENCE_LIMIT = 1024 * 1024
 PASS = "PASS"
 FAIL = "FAIL"
 NOT_RUN = "NOT-RUN"
+#: A check state, never a verdict: the check could not be proven and an
+#: accepted decision record waives exactly that gap.  It is distinct from
+#: ``PASS`` (nothing was proven) and from ``NOT-RUN`` (the measurement exists).
+WAIVED = "WAIVED"
+#: The run verdict when every check passes except ones that are ``WAIVED``.
+#: Distinct from ``PASS`` so a receipt can never be misread as full acceptance;
+#: the receipt's ``waivers`` block names the decision record behind it.
+PASS_WITH_WAIVER = "PASS-WITH-WAIVER"
+VERDICTS = frozenset({PASS, PASS_WITH_WAIVER, FAIL, NOT_RUN})
+
+# ``host_network_changes`` counters, all seven required by check 9.
+HOST_NETWORK_CATEGORIES = (
+    "tap", "bridge", "route", "vlan", "forwarding", "listener", "unifi")
+#: Mirrors ``host_network_evidence.UNPROVEN`` (a test pins the equality): the
+#: sentinel a producer puts in a counter slot no observation stands behind.
+UNPROVEN_COUNTER = "unproven"
+
+#: ADR 0080 (accepted 2026-09-30): the ``unifi`` contact counter cannot be
+#: proven by any snapshot pair -- a connection can open and close between two
+#: snapshots -- and only a run-window host egress ledger could prove it, which
+#: nothing produces.  The owner waived it for the loopback factory, whose
+#: runner conditions (ADR 0077) already confine every guest NIC to an audited
+#: host-loopback hub.  The waiver covers exactly that one counter: every other
+#: counter must still be a proven zero, an absent measurement stays NOT-RUN,
+#: and the waiver lapses at gate 14, where a factory attached to a real network
+#: must prove its egress directly.
+HOST_NETWORK_WAIVER = {
+    "adr": "ADR 0080",
+    "covers": ["unifi"],
+    "reason": (
+        "the unifi contact counter is unprovable without a run-window host "
+        "egress ledger; waived for the loopback factory until gate 14"),
+}
 
 RESULT = "result.json"
 # The read-only gate-4 audit receipt (homelab/vm/pxe_authority_audit.py) is a
@@ -131,6 +167,17 @@ class VerifyError(RuntimeError):
 
 def _record(status: str, detail: str) -> dict:
     return {"status": status, "detail": detail}
+
+
+def _waived(detail: str, waiver: dict) -> dict:
+    """A ``WAIVED`` check carrying the decision record that waives it.
+
+    The waiver travels inside the check record, so ``compare_runs`` treats two
+    iterations as agreeing only when both were waived for the same reason.
+    """
+    return {"status": WAIVED, "detail": detail,
+            "waiver": {key: (list(value) if isinstance(value, list) else value)
+                       for key, value in waiver.items()}}
 
 
 def _safe_regular_bytes(path: Path, limit: int) -> bytes:
@@ -218,20 +265,47 @@ def _check_guest_disks(m: dict) -> dict:
     return _record(PASS, "all guest disks disposable and scoped to the run")
 
 
+def _is_zero_count(value: object) -> bool:
+    """A proven zero count.  ``False`` is not a count, so it is not a zero."""
+    return isinstance(value, int) and not isinstance(value, bool) and value == 0
+
+
 def _check_host_network(m: dict) -> dict:
+    """Check 9, including ADR 0080's waiver of the ``unifi`` counter.
+
+    ``WAIVED`` requires the measurement to be present, all seven counters to
+    be present, every counter the waiver does not cover to be a proven zero,
+    and the covered counter to carry exactly the unproven sentinel.  A proven
+    non-zero or malformed ``unifi`` value, or any change or unproven slot in a
+    provable counter, still fails; an absent measurement stays NOT-RUN,
+    because a waiver never stands in for a measurement that was not taken.
+    """
     changes = m.get("host_network_changes")
     if "host_network_changes" not in m:
         return _record(NOT_RUN, "host network change inventory not recorded")
-    required = {"tap", "bridge", "route", "vlan", "forwarding", "listener", "unifi"}
-    if not isinstance(changes, dict) or not required.issubset(changes):
+    if not isinstance(changes, dict) or not set(HOST_NETWORK_CATEGORIES).issubset(changes):
         return _record(FAIL, "host network change inventory is incomplete")
-    offenders = [
-        name for name in required
-        if not isinstance(changes[name], int) or changes[name] != 0
-    ]
-    if offenders:
-        return _record(FAIL, f"host network change recorded: {', '.join(sorted(offenders))}")
-    return _record(PASS, "no TAP/bridge/route/VLAN/forwarding/listener/UniFi change")
+    offenders = sorted(
+        name for name in HOST_NETWORK_CATEGORIES if not _is_zero_count(changes[name]))
+    if not offenders:
+        return _record(PASS, "no TAP/bridge/route/VLAN/forwarding/listener/UniFi change")
+    covered = HOST_NETWORK_WAIVER["covers"]
+    provable = [name for name in offenders if name not in covered]
+    unproven = [name for name in covered if changes[name] == UNPROVEN_COUNTER]
+    if provable:
+        note = (
+            f"; {', '.join(unproven)} unproven, which {HOST_NETWORK_WAIVER['adr']} "
+            "waives only beside proven-zero counters" if unproven else "")
+        return _record(
+            FAIL, f"host network change recorded or unproven: {', '.join(provable)}{note}")
+    if unproven == offenders:
+        return _waived(
+            "no TAP/bridge/route/VLAN/forwarding/listener change; the unprovable "
+            f"{', '.join(unproven)} counter is waived under {HOST_NETWORK_WAIVER['adr']}",
+            HOST_NETWORK_WAIVER)
+    return _record(
+        FAIL, f"host network change recorded: {', '.join(offenders)} "
+        "(a proven or malformed count is never waived)")
 
 
 def _check_external_connection(m: dict) -> dict:
@@ -448,11 +522,18 @@ def _check_release_set(release_set: Path | None) -> dict:
 
 
 def _verdict(checks: dict[str, dict]) -> str:
+    """FAIL beats NOT-RUN beats a waiver; only an all-PASS run is ``PASS``.
+
+    A waiver never masks a failure or a missing measurement, and a run that
+    needed one is ``PASS-WITH-WAIVER`` so it cannot be read as full acceptance.
+    """
     statuses = {check["status"] for check in checks.values()}
     if FAIL in statuses:
         return FAIL
     if NOT_RUN in statuses:
         return NOT_RUN
+    if WAIVED in statuses:
+        return PASS_WITH_WAIVER
     return PASS
 
 
@@ -461,7 +542,17 @@ def _summarize(checks: dict[str, dict]) -> dict[str, int]:
         "pass": sum(1 for c in checks.values() if c["status"] == PASS),
         "fail": sum(1 for c in checks.values() if c["status"] == FAIL),
         "not_run": sum(1 for c in checks.values() if c["status"] == NOT_RUN),
+        "waived": sum(1 for c in checks.values() if c["status"] == WAIVED),
     }
+
+
+def _waivers(checks: dict[str, dict]) -> list[dict]:
+    """Every waived check and the decision record behind it, by check name."""
+    return [
+        dict(check["waiver"], check=name)
+        for name, check in sorted(checks.items())
+        if check["status"] == WAIVED
+    ]
 
 
 CHECK_NAMES = (
@@ -501,6 +592,7 @@ def _fail_receipt(evidence_dir: Path, detail: str) -> dict:
             name for name, c in checks.items() if c["status"] == NOT_RUN
         ),
         "summary": _summarize(checks),
+        "waivers": _waivers(checks),
     }
 
 
@@ -602,6 +694,11 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
             name for name, c in checks.items() if c["status"] == NOT_RUN
         ),
         "summary": _summarize(checks),
+        # Every WAIVED check with the decision record behind it; empty unless
+        # the verdict is PASS-WITH-WAIVER or a waiver sits beside a FAIL or
+        # NOT-RUN.  Named here so the reason a run is not a plain PASS is one
+        # lookup away from the verdict.
+        "waivers": _waivers(checks),
         # Which pass vocabulary the evidence used.  A phase runner's "observed"
         # and an aggregate driver's "pass" both render one PASS check, so the
         # receipt keeps the distinction here instead of losing it in the counts:
@@ -762,12 +859,22 @@ def write_receipt(document: dict, path) -> Path:
 # --------------------------------------------------------------------------
 
 
+def waiver_note(waivers) -> str:
+    """`` waived: <check> (<ADR>)...`` for a stderr verdict line, or ``""``."""
+    if not waivers:
+        return ""
+    return " waived: " + ", ".join(
+        f"{waiver.get('check')} ({waiver.get('adr')})" for waiver in waivers)
+
+
 def _summary_line(receipt: dict) -> str:
     summary = receipt["summary"]
     return (
         f"{receipt['verdict']}: factory-verify "
         f"pass={summary['pass']} fail={summary['fail']} not-run={summary['not_run']} "
+        f"waived={summary.get('waived', 0)} "
         f"(evidence {receipt['evidence']})"
+        f"{waiver_note(receipt.get('waivers'))}"
     )
 
 
@@ -812,7 +919,8 @@ def main(argv: list[str] | None = None) -> int:
         print("checks:")
         for name in CHECK_NAMES:
             print(f"  - {name}")
-        print("repeat with APPLY=1 to emit the receipt and PASS/FAIL/NOT-RUN summary")
+        print("repeat with APPLY=1 to emit the receipt and "
+              "PASS/PASS-WITH-WAIVER/FAIL/NOT-RUN summary")
         return 0
 
     receipt = verify_run(

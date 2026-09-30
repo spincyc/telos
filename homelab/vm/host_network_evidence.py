@@ -296,9 +296,12 @@ def compare_cycle(
 # ``no_host_network_change`` as:
 #
 #   NOT-RUN  the ``host_network_changes`` key is absent entirely
-#   FAIL     the value is not a mapping, or does not carry all seven of
-#            tap/bridge/route/vlan/forwarding/listener/unifi, or any of those
-#            seven is not an ``int`` or is not ``0``
+#   WAIVED   (ADR 0080) six counters are the integer zero and ``unifi`` holds
+#            exactly the :data:`UNPROVEN` sentinel; the run verdict is then
+#            ``PASS-WITH-WAIVER``, never ``PASS``
+#   FAIL     otherwise, when the value is not a mapping, or does not carry all
+#            seven of tap/bridge/route/vlan/forwarding/listener/unifi, or any
+#            of those seven is not an ``int`` or is not ``0``
 #   PASS     all seven are present and are the integer zero
 #
 # So a category this module cannot prove must never reach that mapping as a
@@ -311,7 +314,8 @@ def compare_cycle(
 #   * :func:`classify` never raises for an unproven category: it puts the
 #     :data:`UNPROVEN` string sentinel in that counter's slot.  A producer
 #     that emits that mapping renders check 9 FAIL, because the sentinel is
-#     not an ``int``.  It can never render PASS.
+#     not an ``int`` -- except when ``unifi`` is the only unproven slot,
+#     which ADR 0080 waives.  It can never render PASS.
 #
 # Nothing here returns a hostname, address, MAC, or interface name.  Object
 # identities are built only to be compared and are never surfaced: the public
@@ -780,7 +784,8 @@ def change_counters(
     support, so a producer may put the result straight into
     ``measurements["host_network_changes"]``.  Catching the exception and
     omitting that key leaves gate-12 check 9 at NOT-RUN; emitting
-    ``classify(...)["counters"]`` instead renders it FAIL.  Neither can
+    ``classify(...)["counters"]`` instead renders it FAIL, or WAIVED under
+    ADR 0080 when ``unifi`` is the only unproven counter.  Neither can
     render PASS.
     """
     report = classify(
