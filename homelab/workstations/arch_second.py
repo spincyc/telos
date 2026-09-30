@@ -24,6 +24,16 @@ which is what makes the gate-8 login possible at all.  A second one-shot unit
 (``DOMAIN_ONLINE_UNIT_NAME``) then holds user sessions -- and therefore the
 ttyS0 login prompt -- until SSSD's AD backend is actually *usable*, which
 ``sssd.service`` reaching active does not prove.
+
+A DURABLE render (``InstallerRealm.durable``: the permanent realm from ADR
+0065's declaration) differs in exactly two places, both about the join
+(DURABLE-WORKSTATION-FLOW.md, step 5).  It performs no install-time join --
+the disposable Controller that serves the install does not serve the permanent
+realm -- and prints ``JOIN_DEFERRED_MARKER`` where the join stood.  And its
+one-shot join unit seals itself: the script writes ``JOIN_ONCE_SEAL_PATH``
+only after ``net ads testjoin`` passed, and the unit is conditioned on that
+file's absence, so the disk joins its permanent domain once.  The synthetic
+render is byte-for-byte what it was; the suite pins it by digest.
 """
 
 from __future__ import annotations
@@ -128,6 +138,16 @@ SAFE_REPO_URL = re.compile(
 JOIN_MEDIA_LABEL = "TELOS_JOIN"
 JOIN_MEDIA_CONSUMED_MARKER = "TELOS ARCH JOIN MEDIA CONSUMED"
 JOIN_VERIFIED_MARKER = "TELOS ARCH JOIN VERIFIED"
+# Printed by a DURABLE render (``InstallerRealm.durable``) in place of the
+# install-time join, which it never performs.  A durable disk is installed
+# with the disposable Controller serving PXE only (DURABLE-WORKSTATION-FLOW.md,
+# step 3): that Controller does not serve the permanent realm this disk is
+# built against, so there is nothing at install time to join, and the join
+# happens later, once, against the persistent Controller (step 7).  The marker
+# is what an install runner holds instead of the two join markers above, and
+# it neither contains nor is contained in either of them, because the runner
+# matches markers as bare substrings.
+JOIN_DEFERRED_MARKER = "TELOS ARCH JOIN DEFERRED"
 
 # Boot-time one-shot re-join (the gate-8 in-run join contract).
 #
@@ -161,6 +181,17 @@ JOIN_ONCE_UNIT_PATH = f"/etc/systemd/system/{JOIN_ONCE_UNIT_NAME}"
 # login prompt appear only after the join has finished.  Gate 8's
 # ``login_operator`` consequently needs no readiness logic and no sleeps.
 JOIN_ONCE_BEFORE_UNITS = ("sssd.service", "systemd-user-sessions.service")
+# The durable render's seal.  A disposable disk must re-join at every gate-8
+# boot, because every gate-8 run provisions a new domain; a durable disk joins
+# its permanent domain exactly once.  So the durable join script writes this
+# root-only file after ``net ads testjoin`` has passed, and the durable unit
+# carries ``ConditionPathExists=!`` on it: every later boot skips the unit --
+# no wait for join media that will never be attached again, no removal of the
+# live host keytab.  A join that fails, or never verifies, writes nothing, so
+# the next boot with join media attached tries again.  The synthetic render
+# carries no seal: its bytes are pinned, and gate 8 needs the re-join.
+JOIN_ONCE_SEAL_DIR = "/var/lib/telos"
+JOIN_ONCE_SEAL_PATH = f"{JOIN_ONCE_SEAL_DIR}/arch-join-once.done"
 # The stale SSSD cache from the install-time join.  It was primed against the
 # PREVIOUS domain's SID, so it is wiped while sssd is still stopped.
 SSSD_CACHE_GLOB = "/var/lib/sss/db/*"
@@ -1455,7 +1486,10 @@ class InstallerRealm:
     ``vm/arch_install_run.require_realm_agreement`` refuses on: a disk built
     for the permanent directory may not be installed against the disposable
     acceptance Controller, and today there is no runner that boots any other
-    one.
+    one.  It is also the one switch ``render_installer`` reads to defer the
+    install-time join and seal the boot-time one, so the realm recorded in a
+    bundle's authorization and the join shape of its installer cannot
+    disagree.
     """
 
     dns_domain: str
@@ -2396,7 +2430,7 @@ umount /run/telos-join/media"""
 
 
 def _render_join_once_script(
-    *, join_media_label: str, realm_dns_domain: str,
+    *, join_media_label: str, realm_dns_domain: str, durable: bool = False,
 ) -> str:
     """Emit the root-only boot-time re-join script the one-shot unit runs.
 
@@ -2404,37 +2438,54 @@ def _render_join_once_script(
     a refused join, or a join that does not verify all leave the unit failed
     and both markers unprinted, so the gate-8 runner's bounded marker waits
     report the named join failure instead of blaming the later login.
+
+    *durable* renders the script a durable disk joins its permanent domain
+    with, once: the same join, plus the seal (``JOIN_ONCE_SEAL_PATH``) written
+    only after ``net ads testjoin`` passed and before the verified marker, so a
+    runner that has read the marker knows the seal is on disk.  Without it the
+    output is byte-for-byte the synthetic script gate 8 depends on.
     """
     stage = _render_join_media_stage(join_media_label)
-    return f"""#!/usr/bin/env bash
+    if durable:
+        header = f"""\
+# Managed by Telos (workstations/arch_second.py), durable render.  One-shot
+# boot-time domain join from the one-use {join_media_label} media the durable
+# join run hot-attaches.  This disk was installed with its join deferred
+# ({JOIN_DEFERRED_MARKER}), so it joins its permanent domain here, exactly
+# once: after `net ads testjoin` passes it writes the seal
+# {JOIN_ONCE_SEAL_PATH}, and the unit's ConditionPathExists skips this
+# script on every later boot."""
+        keytab_note = f"""\
+# No install-time join ran on this disk, so {HOST_KEYTAB_PATH} normally does
+# not exist yet.  One can only be left by an earlier attempt that failed before
+# the seal was written, and it is removed rather than merged for the reason the
+# disposable render removes its own: this join should be the only thing in it.
+# `net ads join` recreates the file from nothing (`kerberos method = secrets and
+# keytab` in the smb.conf this installer wrote), and the join stays the
+# fail-closed gate."""
+        seal = f"""
+# The seal, written only now: `net ads testjoin` above passed (set -e), and the
+# tmpfs credential is already gone.  Root-only, synced before the verified
+# marker, so a runner that read the marker knows the seal survives a power cut.
+install -d -m 0700 -o root -g root {JOIN_ONCE_SEAL_DIR}
+printf '%s\\n' '{realm_dns_domain}' | \\
+  install -m 0600 -o root -g root /dev/stdin {JOIN_ONCE_SEAL_PATH}
+sync"""
+        controller_kind = "persistent"
+        cache_note = """\
+# No install-time join primed the identity cache on this disk, but an earlier
+# attempt that failed before the seal may have let sssd start against a domain
+# this machine had not joined.  The unit is ordered before sssd.service
+# precisely so this can be a clean wipe rather than a restart-and-hope."""
+    else:
+        header = f"""\
 # Managed by Telos gate 7 (workstations/arch_second.py).  One-shot boot-time
 # domain join from the one-use {join_media_label} media the gate-8 runner
 # hot-attaches.  See JOIN_ONCE_SCRIPT_PATH in that module for why this exists:
 # gate 8 provisions a brand-new domain every run, so the machine account the
 # install-time join created is absent from that run's directory and the guest
-# must re-join itself before any login is possible.
-set -euo pipefail
-
-# The credential only ever lives on the one-use media and in a mode-0600
-# tmpfs file.  An EXIT trap removes it on every path, including a failed join,
-# so a failure can never leave the secret behind on a running guest.
-trap 'rm -rf /run/telos-join' EXIT
-
-{stage}
-printf '%s\\n' '{JOIN_MEDIA_CONSUMED_MARKER}' > /dev/console
-
-# network-online.target only proves the link is configured; the disposable
-# Controller is the realm's KDC and DNS, and it has to answer before a join
-# can succeed.  NetworkManager-wait-online is deliberately not enabled (it
-# would be an undeclared service in the package contract), which makes
-# network-online.target cheap rather than meaningful, so readiness is proven
-# here with the same bounded 60 x 2s shape the media wait uses.  The join
-# itself stays the fail-closed gate, so this loop can never mask a failure.
-for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
-  getent hosts '{realm_dns_domain}' >/dev/null 2>&1 && break
-  sleep {JOIN_WAIT_SECONDS}
-done
-
+# must re-join itself before any login is possible."""
+        keytab_note = f"""\
 # The install-time join wrote {HOST_KEYTAB_PATH} against a DIFFERENT domain --
 # different SID, different krbtgt, different machine password -- and Samba
 # refreshes a keytab per principal and key version, not by replacing the file.
@@ -2447,36 +2498,86 @@ done
 # keytab` in the smb.conf this installer wrote), which is how the install-time
 # join created it on a disk that had no keytab at all, and the join stays the
 # fail-closed gate -- a keytab that did not come back leaves testjoin failing
-# and the gate's own host-keytab field empty, never a silent success.
-rm -f {HOST_KEYTAB_PATH}
-net ads join -A /run/telos-join/credentials
-net ads testjoin
-rm -rf /run/telos-join
-printf '%s\\n' '{JOIN_VERIFIED_MARKER}' > /dev/console
-
+# and the gate's own host-keytab field empty, never a silent success."""
+        seal = ""
+        controller_kind = "disposable"
+        cache_note = """\
 # The identity cache was primed against the PREVIOUS domain's SID by the
 # install-time join, so serving it would hand sssd identities whose SIDs no
 # longer exist.  The unit is ordered before sssd.service precisely so this can
-# be a clean wipe rather than a restart-and-hope.
+# be a clean wipe rather than a restart-and-hope."""
+    return f"""#!/usr/bin/env bash
+{header}
+set -euo pipefail
+
+# The credential only ever lives on the one-use media and in a mode-0600
+# tmpfs file.  An EXIT trap removes it on every path, including a failed join,
+# so a failure can never leave the secret behind on a running guest.
+trap 'rm -rf /run/telos-join' EXIT
+
+{stage}
+printf '%s\\n' '{JOIN_MEDIA_CONSUMED_MARKER}' > /dev/console
+
+# network-online.target only proves the link is configured; the {controller_kind}
+# Controller is the realm's KDC and DNS, and it has to answer before a join
+# can succeed.  NetworkManager-wait-online is deliberately not enabled (it
+# would be an undeclared service in the package contract), which makes
+# network-online.target cheap rather than meaningful, so readiness is proven
+# here with the same bounded 60 x 2s shape the media wait uses.  The join
+# itself stays the fail-closed gate, so this loop can never mask a failure.
+for _ in $(seq 1 {JOIN_WAIT_TRIES}); do
+  getent hosts '{realm_dns_domain}' >/dev/null 2>&1 && break
+  sleep {JOIN_WAIT_SECONDS}
+done
+
+{keytab_note}
+rm -f {HOST_KEYTAB_PATH}
+net ads join -A /run/telos-join/credentials
+net ads testjoin
+rm -rf /run/telos-join{seal}
+printf '%s\\n' '{JOIN_VERIFIED_MARKER}' > /dev/console
+
+{cache_note}
 rm -f {SSSD_CACHE_GLOB}
 """
 
 
-def _render_join_once_unit() -> str:
-    """Emit the one-shot join unit; its ordering is the login gate."""
+def _render_join_once_unit(*, durable: bool = False) -> str:
+    """Emit the one-shot join unit; its ordering is the login gate.
+
+    *durable* adds the seal: ``ConditionPathExists=!`` on the file the durable
+    join script writes only after ``net ads testjoin`` passed, so the unit is
+    skipped -- not failed -- on every boot after the one that joined.  A
+    skipped unit still orders nothing wrongly: sssd and user sessions start as
+    they would without it.  Without *durable* the output is byte-for-byte the
+    synthetic unit gate 8 depends on.
+    """
     before = " ".join(JOIN_ONCE_BEFORE_UNITS)
-    return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
+    if durable:
+        managed = ("# Managed by Telos (workstations/arch_second.py), "
+                   "durable render.")
+        controller_kind = "persistent"
+        seal = f"""
+# Sealed: the join script writes this file only after `net ads testjoin`
+# passed, so this disk joins its permanent domain once and every later boot
+# skips the unit instead of waiting for join media that is never attached.
+ConditionPathExists=!{JOIN_ONCE_SEAL_PATH}"""
+    else:
+        managed = "# Managed by Telos gate 7 (workstations/arch_second.py)."
+        controller_kind = "disposable"
+        seal = ""
+    return f"""{managed}
 [Unit]
 Description=Telos one-shot domain join from one-use {JOIN_MEDIA_LABEL} media
 # The join needs a configured link: the realm's KDC and DNS are the
-# disposable Controller, reachable only once DHCP has answered.
+# {controller_kind} Controller, reachable only once DHCP has answered.
 Wants=network-online.target
 After=network-online.target
 # Load-bearing ordering.  sssd must not start against the previous run's
 # domain SID, and serial-getty@ttyS0 is After=systemd-user-sessions.service,
 # so ordering before user sessions is what makes the ttyS0 login prompt
 # appear only after the join finished -- no sleeps anywhere compensate.
-Before={before}
+Before={before}{seal}
 
 [Service]
 Type=oneshot
@@ -2831,6 +2932,79 @@ WantedBy=multi-user.target
 """
 
 
+# The installer's heading for the boot-time join section.  The synthetic text
+# is the one gate 7 has always rendered (its bytes are pinned); the durable one
+# describes the sealed, single join a durable disk makes instead.
+_SYNTHETIC_JOIN_ONCE_PREAMBLE = """\
+# ---- Boot-time one-shot re-join (gate-8 in-run join contract) ----
+# The install-time join above is what gate-7 acceptance proves, and it stays
+# exactly as it is.  It is not enough for gate 8: that gate boots this disk
+# against a FRESHLY PROVISIONED domain whose SAM has never seen this machine
+# account, so the installed system re-joins itself once, early in boot, from
+# one-use media -- the only shape available, because this disk has no
+# pre-login shell to drive a join from.  Root-only script, mode-0644 unit."""
+_DURABLE_JOIN_ONCE_PREAMBLE = """\
+# ---- Boot-time one-shot join, sealed (durable join contract) ----
+# The one and only join this disk makes.  At the boot the durable join run
+# attaches one-use media to, the installed system joins its permanent domain
+# -- the only shape available, because this disk has no pre-login shell to
+# drive a join from -- and then seals the unit, so no later boot waits for
+# media or touches the joined keytab again.
+# Root-only script, mode-0644 unit."""
+
+
+def _render_install_time_join(
+    *, join_media_label: str, kerberos_realm: str, durable: bool,
+) -> tuple[str, str]:
+    """The installer's two install-time join blocks, or the deferral.
+
+    Returns ``(stage, join)``: *stage* stands before the Kerberos, Samba and
+    SSSD configuration is written and *join* after it.  A disposable render
+    consumes the one-use media in *stage* (printing the consumed marker) and
+    joins and verifies in *join* (printing the verified marker) -- exactly the
+    bytes gate 7 has always rendered.
+
+    A durable render reads no media and creates no machine account.  Its disk
+    is installed while the disposable Controller serves PXE only, and that
+    Controller does not serve the permanent realm this disk is built against;
+    joining it there would be joining a domain that does not exist.  So *stage*
+    is only a heading, and *join* prints ``JOIN_DEFERRED_MARKER`` where the
+    join stood.  The configuration the later join needs is still written, and
+    the join happens once, against the persistent Controller, from the sealed
+    boot-time unit.
+    """
+    if durable:
+        stage = f"""\
+# ---- Durable identity client (install-time join deferred) ----
+# This disk is built against the PERMANENT realm
+# {kerberos_realm}, which the disposable Controller
+# serving this install does not serve.  No join media is read here and no
+# machine account is created: the configuration below is written, and the one
+# join this disk makes happens at its first boot against the persistent
+# Controller (the sealed boot-time unit below)."""
+        join = f"""\
+# The install-time join is deferred; this marker stands where a disposable
+# render joins and verifies.
+echo "{JOIN_DEFERRED_MARKER}\""""
+        return stage, join
+    stage = f"""\
+# ---- Synthetic-realm identity client (gate 7 -> gate 8 contract) ----
+# The machine-join credential arrives on one-use removable media; it is read
+# into tmpfs only, never echoed, never written to the installed disk, and the
+# runner destroys the media after the consumed marker below.
+{_render_join_media_stage(join_media_label)}
+echo "{JOIN_MEDIA_CONSUMED_MARKER}\""""
+    join = f"""\
+# Join as the installed hostname, not the live image's; arch-chroot bind
+# mounts /run, so the tmpfs credential file is visible inside the chroot.
+printf '%s' "$hostname" > /proc/sys/kernel/hostname
+arch-chroot /mnt net ads join -A /run/telos-join/credentials
+arch-chroot /mnt net ads testjoin
+rm -rf /run/telos-join
+echo "{JOIN_VERIFIED_MARKER}\""""
+    return stage, join
+
+
 def render_installer(
     *,
     disk_path: str,
@@ -2864,6 +3038,12 @@ def render_installer(
     permanent one is ADR 0065's single declaration and nothing else.  Omitted
     -- the acceptance path -- it is the synthetic realm, resolved without
     reading any file, so every rendered byte is what it has always been.
+
+    A durable *realm* also changes the join, and nothing else about the join
+    is a separate argument: the install-time join is skipped and
+    ``TELOS ARCH JOIN DEFERRED`` printed in its place (no join media is read,
+    no machine account created), and the boot-time one-shot join seals itself
+    after ``net ads testjoin`` so the disk joins its permanent domain once.
     """
     if not SAFE_DISK.fullmatch(disk_path):
         raise InstallContractError("disk path must be a simple /dev path")
@@ -2938,14 +3118,23 @@ def render_installer(
         shlex.quote(name)
         for name in (standard_user, daily_admin, domain_admin))
     storage_mount_root = STORAGE_MOUNT_ROOT
-    # The one-use media consumption is rendered once and used twice: inline
-    # below for the install-time join, and inside the boot-time one-shot join
-    # script, so the two paths cannot drift apart.
-    join_media_stage = _render_join_media_stage(join_media_label)
+    # The one-use media consumption is rendered once and used twice in a
+    # disposable render: inline below for the install-time join, and inside
+    # the boot-time one-shot join script, so the two paths cannot drift apart.
+    # A durable render uses it once, in the boot-time script only: its
+    # install-time join is deferred (``_render_install_time_join``), and its
+    # boot-time join seals itself after ``net ads testjoin``.
+    durable = realm.durable
+    install_join_stage, install_join = _render_install_time_join(
+        join_media_label=join_media_label, kerberos_realm=kerberos_realm,
+        durable=durable)
+    join_once_preamble = (
+        _DURABLE_JOIN_ONCE_PREAMBLE if durable
+        else _SYNTHETIC_JOIN_ONCE_PREAMBLE)
     join_once_script = _render_join_once_script(
         join_media_label=join_media_label,
-        realm_dns_domain=realm_dns_domain)
-    join_once_unit = _render_join_once_unit()
+        realm_dns_domain=realm_dns_domain, durable=durable)
+    join_once_unit = _render_join_once_unit(durable=durable)
     join_once_script_path = JOIN_ONCE_SCRIPT_PATH
     join_once_unit_path = JOIN_ONCE_UNIT_PATH
     join_once_unit_name = JOIN_ONCE_UNIT_NAME
@@ -3049,12 +3238,7 @@ arch-chroot /mnt mkinitcpio -P
 
 arch-chroot /mnt systemctl enable NetworkManager
 
-# ---- Synthetic-realm identity client (gate 7 -> gate 8 contract) ----
-# The machine-join credential arrives on one-use removable media; it is read
-# into tmpfs only, never echoed, never written to the installed disk, and the
-# runner destroys the media after the consumed marker below.
-{join_media_stage}
-echo "{JOIN_MEDIA_CONSUMED_MARKER}"
+{install_join_stage}
 
 install -Dm0644 /dev/stdin /mnt/etc/krb5.conf <<'TELOS_KRB5_EOF'
 {krb5_conf}
@@ -3066,13 +3250,7 @@ install -Dm0600 /dev/stdin /mnt/etc/sssd/sssd.conf <<'TELOS_SSSD_EOF'
 {sssd_conf}
 TELOS_SSSD_EOF
 
-# Join as the installed hostname, not the live image's; arch-chroot bind
-# mounts /run, so the tmpfs credential file is visible inside the chroot.
-printf '%s' "$hostname" > /proc/sys/kernel/hostname
-arch-chroot /mnt net ads join -A /run/telos-join/credentials
-arch-chroot /mnt net ads testjoin
-rm -rf /run/telos-join
-echo "{JOIN_VERIFIED_MARKER}"
+{install_join}
 
 # NSS and PAM the Arch way (no authselect): sss sits next to files.
 sed -i -E 's/^(passwd|group): files/\\1: files sss/' /mnt/etc/nsswitch.conf
@@ -3141,13 +3319,7 @@ cat >> /mnt/etc/fstab <<'TELOS_STORAGE_EOF'
 //{storage_host}/{standard_user} {storage_mount_root}/{standard_user} cifs sec=krb5,multiuser,soft,echo_interval=15,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=10s,x-systemd.idle-timeout=1min 0 0
 TELOS_STORAGE_EOF
 
-# ---- Boot-time one-shot re-join (gate-8 in-run join contract) ----
-# The install-time join above is what gate-7 acceptance proves, and it stays
-# exactly as it is.  It is not enough for gate 8: that gate boots this disk
-# against a FRESHLY PROVISIONED domain whose SAM has never seen this machine
-# account, so the installed system re-joins itself once, early in boot, from
-# one-use media -- the only shape available, because this disk has no
-# pre-login shell to drive a join from.  Root-only script, mode-0644 unit.
+{join_once_preamble}
 install -Dm0700 /dev/stdin /mnt{join_once_script_path} \\
     <<'TELOS_JOIN_ONCE_EOF'
 {join_once_script}

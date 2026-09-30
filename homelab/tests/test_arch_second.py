@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import inspect
 import json
 import os
@@ -56,6 +57,10 @@ from workstations.arch_second import (
 from workstations.arch_second import (
     SYNTHETIC_REALM_SOURCE, InstallerRealm, InstallerRealmError,
     durable_installer_realm, installer_realm, synthetic_installer_realm,
+)
+from workstations.arch_second import (
+    JOIN_DEFERRED_MARKER, JOIN_ONCE_SEAL_DIR, JOIN_ONCE_SEAL_PATH,
+    _render_join_once_script, _render_join_once_unit,
 )
 import workstations.arch_second as arch_second
 from lib.package_contract import PROFILE_OVERLAYS, load_registry, merge_contract
@@ -2590,6 +2595,415 @@ class InstallerRealmTests(unittest.TestCase):
             with self.subTest(realm=realm):
                 with self.assertRaises(InstallContractError):
                     self.render(realm)
+
+
+#: The synthetic render's inputs the golden digests below were taken with: the
+#: prepared bundle's own guest disk, disk serial and hostname
+#: (``vm/arch_install_prepare``'s ``GUEST_DISK``, ``DISK_SERIAL`` and
+#: ``DEFAULT_HOSTNAME``, restated as literals so only the RENDERER can move a
+#: digest), this module's partition sizes, and every other argument at its
+#: default -- the synthetic realm, the ``TELOS_JOIN`` label, the Controller's
+#: workstation repository -- with no roster overlay.
+GOLDEN_RENDER_INPUTS = {
+    "disk_path": "/dev/vda",
+    "disk_serial": "TELOS-WIN-0001",
+    "hostname": "telos-ws1",
+    "expected_sizes_mib": SIZES,
+}
+#: SHA-256 of the synthetic installer, computed from the tree at 9db2eeb (the
+#: HEAD before the durable render existed, exported with ``git archive`` so no
+#: working-tree change could leak in) with the inputs above.  Gate 7 installs
+#: this disk and gates 8 through 10 depend on it, so a durable render may not
+#: move one of its bytes (DURABLE-WORKSTATION-FLOW.md, step 5).  A DELIBERATE
+#: change to the synthetic output -- a package-contract change reaches the
+#: ``pacstrap`` line, for one -- re-pins these values in the same commit, after
+#: reading the diff of the rendered bytes.
+GOLDEN_INSTALLER_SHA256 = (
+    "e0e7e67111709814bb4fb65d5b1cc0bfaffb8f6ff5d4692241097e2ceaa22ea7")
+#: SHA-256 of every file the synthetic installer writes through a quoted
+#: heredoc, keyed by the heredoc's terminator (``#2`` marks the second
+#: occurrence: the join-credential conversion appears inline for the
+#: install-time join and again inside the boot-time join script).  Same tree,
+#: same inputs as the installer digest; it names WHICH file drifted.
+GOLDEN_FILE_SHA256 = {
+    "TELOS_MIRROR_EOF":
+        "8902d61ba8a5999c6addbb6f7109c47c5357ee242639ad415033ff9c69d26b03",
+    "TELOS_PACMAN_EOF":
+        "b2bcafce9319609e3a59b8e19fbfafeba74e04abea19e86621fc560bf8562145",
+    "TELOS_MKINITCPIO_EOF":
+        "c3ea4ae5d4116f7c58357645acded946fb7d590391edb14a94425d50a700574b",
+    "TELOS_JOIN_CRED_EOF":
+        "fac835160e78e5b04bfd7a70a583253c167f156116d00a6b26e68b1955bcdefb",
+    "TELOS_KRB5_EOF":
+        "0fe6613fc431e510bdec655f9a16db6727319935936cfff749efa3464523260e",
+    "TELOS_SMB_EOF":
+        "7415e1b22cced912aaa48bfb9b86f31048279e53343f97e58ae8ce8bfc2f344b",
+    "TELOS_SSSD_EOF":
+        "e176867d938e509f36a5faffad25df6515dbfd906bb154321cfbf7dbf3e960f5",
+    "TELOS_PAM_EOF":
+        "dfb43e32c9f0bf820daa0777c06b5776436eb140c2c3035f1394333453303bf6",
+    "TELOS_SUDO_EOF":
+        "9ee69ecd1b378befa0b3f48f5e8d8c52263b7b908b8f602e9cc4e825ab6bf674",
+    "TELOS_DAILY_EOF":
+        "d49a0704a274d6dda91e6a591e89f386070498ebae8c3d5feb3915718de40b01",
+    "TELOS_PROBE_EOF":
+        "1b764b3443ca3702e03bbb20d3ced41e414b010029718f7798ff36502e210502",
+    "TELOS_STORAGE_EOF":
+        "3dc636037571c3bff20fd33d2e8afbeab5d3e43112805b3f2bc812e1021ae7b6",
+    "TELOS_JOIN_ONCE_EOF":
+        "f5baca8fa72d0366f8d0bc2f18b11d7229832577f9993b3acf86ab413051715b",
+    "TELOS_JOIN_CRED_EOF#2":
+        "fac835160e78e5b04bfd7a70a583253c167f156116d00a6b26e68b1955bcdefb",
+    "TELOS_JOIN_UNIT_EOF":
+        "f586a4e84aaead2a47164b6f4fcb3179c4d720accd04ec08e9ca26f225e8b8fe",
+    "TELOS_DOMAIN_ONLINE_EOF":
+        "ae7d0c69ef1fd05c81ba5ef1bf1d2913b7db76a44be4e2c8f9ce7102509711ee",
+    "TELOS_DOMAIN_UNIT_EOF":
+        "4137bf9c7badd23d0b05b45af1c487a6b0e80b7dd6d0a658bbb2cbd9ecd3f979",
+    "EOF":
+        "54dd71343505eb9e8de67600286ade75de54a83660ec868b19c1c99a30c79f40",
+}
+#: SHA-256 of the bundle's other rendered guest file,
+#: ``vm/arch_install_prepare.render_arch_second_verify()``.  It is assembled
+#: from this module's own source (``inspect.getsource`` of the partition
+#: contract), so an edit here can move it too.  Same tree as above.
+GOLDEN_VERIFY_SHA256 = (
+    "7bd563f465fb0911209e7e9de6da32541ba9300b51c042456da596ca36bca2a3")
+_QUOTED_HEREDOC = re.compile(r"<<'([A-Z0-9_]+)'\n")
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _quoted_heredocs(script: str) -> dict[str, str]:
+    """Every quoted heredoc body in *script*, keyed by terminator, in order.
+
+    A terminator that recurs gets ``#2``, ``#3``... in order of appearance, so
+    the join-credential conversion nested inside the boot-time join script is
+    a file of its own and not silently merged with the install-time one.
+    """
+    bodies: dict[str, str] = {}
+    for match in _QUOTED_HEREDOC.finditer(script):
+        terminator = match.group(1)
+        start = match.end()
+        body = script[start:script.index(f"\n{terminator}\n", start)]
+        key, occurrence = terminator, 2
+        while key in bodies:
+            key = f"{terminator}#{occurrence}"
+            occurrence += 1
+        bodies[key] = body
+    return bodies
+
+
+def _executed_at_install(script: str) -> str:
+    """*script* with every heredoc-delivered FILE body removed.
+
+    What is left is what the live archiso executes at install time.  Files the
+    installer writes onto the disk -- the boot-time join script, the probe, the
+    SSSD configuration -- are cut out, so a command they carry for a LATER
+    boot cannot be mistaken for an install-time one.  The nested join
+    credential conversion is removed with the file that contains it.
+    """
+    kept, position = [], 0
+    while True:
+        match = _QUOTED_HEREDOC.search(script, position)
+        if match is None:
+            kept.append(script[position:])
+            return "".join(kept)
+        end = script.index(f"\n{match.group(1)}\n", match.end())
+        kept.append(script[position:match.end()])
+        position = end + 1
+
+
+class _PinnedRosterRender(unittest.TestCase):
+    """Render with the roster overlay pinned absent, explicitly.
+
+    setUpModule already pins it; this class repeats the pin because a digest
+    that could depend on whose machine runs the suite would pin nothing.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.object(
+            arch_second, "identity_overlay_path",
+            return_value=Path(temporary.name) / "no-principals.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def render(self, realm=None) -> str:
+        return render_installer(**GOLDEN_RENDER_INPUTS, realm=realm)
+
+    def durable_realm(self) -> InstallerRealm:
+        """The permanent realm, by the route a durable bundle takes to it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "directory.json"
+            path.write_text(json.dumps(DURABLE_DOCUMENT), encoding="utf-8")
+            return durable_installer_realm(
+                path,
+                controller_fqdn=(
+                    DURABLE_DOCUMENT["services"]["bootstrap_dc_fqdn"]))
+
+
+class SyntheticGoldenDigestTests(_PinnedRosterRender):
+    """The synthetic installer is byte-identical to the one before step 5.
+
+    ``test_the_synthetic_render_pins_every_realm_bearing_byte`` pins the lines
+    that carry the realm; this pins every byte, because the durable render was
+    added by threading a switch through the very functions that emit the
+    disposable disk's join, and a comment that moved would move nothing a
+    realm-line check can see.
+    """
+
+    def test_every_rendered_file_is_byte_identical(self):
+        files = {
+            key: _sha256(body)
+            for key, body in _quoted_heredocs(self.render()).items()}
+        # The set first: a file the installer newly writes, or no longer
+        # writes, is drift even if every surviving file is unchanged.
+        self.assertEqual(sorted(files), sorted(GOLDEN_FILE_SHA256))
+        for key, expected in GOLDEN_FILE_SHA256.items():
+            with self.subTest(file=key):
+                self.assertEqual(files[key], expected)
+
+    def test_the_whole_installer_is_byte_identical(self):
+        self.assertEqual(_sha256(self.render()), GOLDEN_INSTALLER_SHA256)
+
+    def test_every_route_to_the_synthetic_realm_hits_the_digest(self):
+        # The acceptance route asks for nothing; the others must not be able
+        # to tell the difference, byte for byte.
+        for realm in (synthetic_installer_realm(), installer_realm()):
+            with self.subTest(source=realm.source):
+                self.assertEqual(
+                    _sha256(self.render(realm)), GOLDEN_INSTALLER_SHA256)
+
+    def test_the_synthetic_join_script_and_unit_render_without_a_seal(self):
+        # The two renderers the durable switch was threaded through, called
+        # the way render_installer calls them for a synthetic realm.
+        script = _render_join_once_script(
+            join_media_label=JOIN_MEDIA_LABEL,
+            realm_dns_domain=SYNTHETIC_DOMAIN)
+        self.assertEqual(
+            _sha256(script), GOLDEN_FILE_SHA256["TELOS_JOIN_ONCE_EOF"])
+        self.assertEqual(
+            _sha256(_render_join_once_unit()),
+            GOLDEN_FILE_SHA256["TELOS_JOIN_UNIT_EOF"])
+        self.assertEqual(
+            script, _render_join_once_script(
+                join_media_label=JOIN_MEDIA_LABEL,
+                realm_dns_domain=SYNTHETIC_DOMAIN, durable=False))
+        self.assertEqual(
+            _render_join_once_unit(), _render_join_once_unit(durable=False))
+
+    def test_the_synthetic_render_neither_defers_nor_seals(self):
+        script = self.render()
+        self.assertNotIn(JOIN_DEFERRED_MARKER, script)
+        self.assertNotIn(JOIN_ONCE_SEAL_PATH, script)
+        self.assertNotIn("ConditionPathExists", script)
+
+    def test_the_bundle_verify_script_is_byte_identical(self):
+        # Imported here, not at module scope: the prepare module pulls in the
+        # VM runners, and a fault there should fail this test, not the module.
+        from homelab.vm.arch_install_prepare import render_arch_second_verify
+        self.assertEqual(
+            _sha256(render_arch_second_verify()), GOLDEN_VERIFY_SHA256)
+
+
+class DurableRenderTests(_PinnedRosterRender):
+    """A durable render defers the install-time join and seals the boot one.
+
+    DURABLE-WORKSTATION-FLOW.md, step 5.  The disposable Controller that
+    serves a durable install does not serve the permanent realm, so a join at
+    install time would join a domain that does not exist; the one join happens
+    at a later boot, against the persistent Controller, and must never repeat.
+    """
+
+    def test_the_marker_neither_contains_nor_is_contained_in_another(self):
+        # The install runner matches markers as bare substrings.
+        others = (
+            JOIN_MEDIA_CONSUMED_MARKER, JOIN_VERIFIED_MARKER,
+            DOMAIN_ONLINE_MARKER, DOMAIN_ONLINE_FAILURE_MARKER,
+            DOMAIN_ONLINE_DIAGNOSTIC_MARKER, NVRAM_ENTRIES_MARKER,
+            NVRAM_ORDER_MARKER, STORAGE_DIAGNOSTIC_MARKER)
+        for other in others:
+            with self.subTest(other=other):
+                self.assertNotIn(JOIN_DEFERRED_MARKER, other)
+                self.assertNotIn(other, JOIN_DEFERRED_MARKER)
+        self.assertEqual(JOIN_DEFERRED_MARKER, "TELOS ARCH JOIN DEFERRED")
+
+    def test_the_durable_render_prints_the_deferred_marker_once(self):
+        script = self.render(self.durable_realm())
+        executed = _executed_at_install(script)
+        deferred = f'echo "{JOIN_DEFERRED_MARKER}"'
+        self.assertEqual(executed.count(deferred), 1)
+        # Printed after the configuration the later join needs is written,
+        # and before the boot-time join is installed and enabled.
+        self.assertLess(
+            script.index("<<'TELOS_SSSD_EOF'"), script.index(deferred))
+        self.assertLess(
+            script.index(deferred),
+            script.index(f"arch-chroot /mnt systemctl enable "
+                         f"{JOIN_ONCE_UNIT_NAME}"))
+
+    def test_the_durable_install_joins_nothing_and_reads_no_join_media(self):
+        synthetic = _executed_at_install(self.render())
+        durable = _executed_at_install(self.render(self.durable_realm()))
+        forbidden = (
+            "net ads",
+            "/run/telos-join",
+            "join_dev",
+            f"/dev/disk/by-label/{JOIN_MEDIA_LABEL}",
+            "<<'TELOS_JOIN_CRED_EOF'",
+            "/proc/sys/kernel/hostname",
+            JOIN_MEDIA_CONSUMED_MARKER,
+            JOIN_VERIFIED_MARKER,
+        )
+        for text in forbidden:
+            with self.subTest(text=text):
+                # Present in the disposable install, so its absence below is
+                # the durable render's doing and not the stripping's.
+                self.assertTrue(text in synthetic, "absent from synthetic")
+                self.assertFalse(text in durable, "present in durable")
+        # The media stage survives exactly once: inside the boot-time script.
+        stage = _render_join_media_stage(JOIN_MEDIA_LABEL)
+        script = self.render(self.durable_realm())
+        self.assertEqual(script.count(stage), 1)
+        self.assertIn(stage, _heredoc_body(script, "TELOS_JOIN_ONCE_EOF"))
+
+    def test_the_durable_render_still_ships_the_identity_client(self):
+        realm = self.durable_realm()
+        script = self.render(realm)
+        for terminator in ("TELOS_KRB5_EOF", "TELOS_SMB_EOF",
+                           "TELOS_SSSD_EOF"):
+            with self.subTest(file=terminator):
+                self.assertIn(realm.kerberos_realm,
+                              _heredoc_body(script, terminator).upper())
+        self.assertIn(f"\nad_server = {realm.controller_fqdn}\n", script)
+        for unit in (JOIN_ONCE_UNIT_NAME, DOMAIN_ONLINE_UNIT_NAME):
+            with self.subTest(unit=unit):
+                self.assertIn(
+                    f"arch-chroot /mnt systemctl enable {unit}", script)
+
+    def test_the_durable_join_unit_carries_the_seal(self):
+        unit = _heredoc_body(
+            self.render(self.durable_realm()), "TELOS_JOIN_UNIT_EOF")
+        condition = f"ConditionPathExists=!{JOIN_ONCE_SEAL_PATH}"
+        self.assertEqual(unit.splitlines().count(condition), 1)
+        # A [Unit] directive: after the section opens, before [Service].
+        self.assertLess(unit.index("[Unit]"), unit.index(condition))
+        self.assertLess(unit.index(condition), unit.index("[Service]"))
+        # Everything the login gate relies on is unchanged.
+        for line in ("Type=oneshot", "RemainAfterExit=no",
+                     "After=network-online.target",
+                     f"ExecStart={JOIN_ONCE_SCRIPT_PATH}",
+                     "Before=" + " ".join(JOIN_ONCE_BEFORE_UNITS),
+                     "WantedBy=multi-user.target"):
+            with self.subTest(line=line):
+                self.assertIn(line, unit.splitlines())
+        self.assertNotRegex(unit, r"(?i)password|secret|credential")
+
+    def test_the_seal_is_written_only_after_testjoin_passes(self):
+        realm = self.durable_realm()
+        body = _heredoc_body(
+            self.render(realm), "TELOS_JOIN_ONCE_EOF")
+        lines = body.splitlines()
+        commands = [line for line in lines
+                    if line.strip() and not line.lstrip().startswith("#")]
+        # Every failure before the seal aborts the script: set -e is what
+        # makes "after testjoin" mean "after testjoin passed".
+        self.assertEqual(commands[0], "set -euo pipefail")
+        seal_write = (
+            f"  install -m 0600 -o root -g root /dev/stdin "
+            f"{JOIN_ONCE_SEAL_PATH}")
+        verified = f"printf '%s\\n' '{JOIN_VERIFIED_MARKER}' > /dev/console"
+        ordered = [
+            lines.index("net ads join -A /run/telos-join/credentials"),
+            lines.index("net ads testjoin"),
+            lines.index("rm -rf /run/telos-join"),
+            lines.index(
+                f"install -d -m 0700 -o root -g root {JOIN_ONCE_SEAL_DIR}"),
+            lines.index(f"printf '%s\\n' '{realm.dns_domain}' | \\"),
+            lines.index(seal_write),
+            lines.index("sync"),
+            lines.index(verified),
+        ]
+        self.assertEqual(ordered, sorted(ordered))
+        # Nothing but comments and the credential removal stand between the
+        # verification and the seal, and nothing else writes the seal.
+        between = [line for line in lines[ordered[1] + 1:ordered[3]]
+                   if not line.lstrip().startswith("#")]
+        self.assertEqual(between, ["rm -rf /run/telos-join"])
+        writers = [line for line in commands if JOIN_ONCE_SEAL_PATH in line]
+        self.assertEqual(writers, [seal_write])
+        # The seal names the realm and nothing secret.
+        self.assertTrue(
+            JOIN_ONCE_SEAL_PATH.startswith(JOIN_ONCE_SEAL_DIR + "/"))
+        self.assertNotRegex(
+            "\n".join(lines[ordered[3]:ordered[6] + 1]),
+            r"(?i)password|credential|secret")
+
+    def test_the_durable_join_is_the_disposable_join_plus_the_seal(self):
+        # Rendered for one domain both ways, so only the switch differs: every
+        # command the disposable script runs, in the same order, and exactly
+        # the four seal lines added.
+        def commands(durable: bool) -> list[str]:
+            script = _render_join_once_script(
+                join_media_label=JOIN_MEDIA_LABEL,
+                realm_dns_domain="ad.example.home.arpa", durable=durable)
+            return [line for line in script.splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")]
+
+        disposable, durable = commands(False), commands(True)
+        seal = [
+            f"install -d -m 0700 -o root -g root {JOIN_ONCE_SEAL_DIR}",
+            "printf '%s\\n' 'ad.example.home.arpa' | \\",
+            f"  install -m 0600 -o root -g root /dev/stdin "
+            f"{JOIN_ONCE_SEAL_PATH}",
+            "sync",
+        ]
+        at = durable.index(seal[0])
+        self.assertEqual(durable[at:at + len(seal)], seal)
+        self.assertEqual(durable[:at] + durable[at + len(seal):], disposable)
+
+    def test_a_durable_render_is_refused_by_the_disposable_runner(self):
+        # The existing check, proved against the new bytes: the runner that
+        # boots the disposable Controller refuses a durable render whichever
+        # way its bundle describes the realm.  Imported here for the reason
+        # the verify-script test imports prepare lazily.
+        from homelab.vm.arch_install_run import (
+            CONTROLLER_SPEC, require_realm_agreement)
+
+        realm = self.durable_realm()
+        script = self.render(realm)
+
+        def record(source: InstallerRealm, **overrides) -> dict:
+            fields = {
+                "dns_domain": source.dns_domain,
+                "kerberos_realm": source.kerberos_realm,
+                "netbios_name": source.workgroup,
+                "controller_fqdn": source.controller_fqdn,
+                "durable": source.durable,
+            }
+            fields.update(overrides)
+            return {"realm": fields}
+
+        # Recorded honestly: the permanent realm is refused outright.
+        with self.assertRaisesRegex(RuntimeError, "PERMANENT realm"):
+            require_realm_agreement(record(realm), script)
+        # Recorded as not durable: the realm disagrees with the Controller.
+        with self.assertRaisesRegex(
+                RuntimeError, "is not the realm the Controller"):
+            require_realm_agreement(record(realm, durable=False), script)
+        # Recorded as the acceptance realm: the bytes disagree with the record.
+        synthetic = synthetic_installer_realm()
+        self.assertEqual(synthetic.controller_fqdn, CONTROLLER_SPEC.fqdn)
+        with self.assertRaisesRegex(
+                RuntimeError, "does not pin the authorized domain controller"):
+            require_realm_agreement(record(synthetic), script)
+        # And the check is not vacuous: the synthetic render still passes it.
+        self.assertFalse(
+            require_realm_agreement(record(synthetic), self.render()).durable)
 
 
 # The owner's requested layout, 2026-09-25, with PLACEHOLDER names (ADR 0046:
