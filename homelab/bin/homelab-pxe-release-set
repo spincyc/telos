@@ -94,7 +94,7 @@ def main() -> int:
         return 0
 
     inventory = media_inventory(args)
-    media_seal.verify(args.seal, inventory)
+    sealed = media_seal.verify(args.seal, inventory)
     arch_digest = next(
         record["sha256"] for record in inventory["content"]
         if record["name"] == "arch-iso"
@@ -137,7 +137,7 @@ def main() -> int:
         }
 
     result = pxe_release_set.build(
-        args.releases, args.version, args.seal, inventory, stage_leaves)
+        args.releases, args.version, args.seal, sealed, stage_leaves)
     print(result)
     return 0
 

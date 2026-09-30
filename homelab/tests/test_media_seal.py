@@ -1,4 +1,6 @@
+import contextlib
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -171,6 +173,82 @@ class MediaSealTests(unittest.TestCase):
         seal.write_text(json.dumps(actual))
         with self.assertRaisesRegex(media_seal.SealError, "differs"):
             media_seal.verify(seal, expected)
+
+    def sealed_with(self, expected, change):
+        seal = self.root / "seal.json"
+        media_seal.write(seal, expected)
+        actual = json.loads(seal.read_text())
+        change(actual)
+        seal.write_text(json.dumps(actual))
+        return seal, actual
+
+    def test_tool_version_difference_alone_is_reported_not_failed(self):
+        expected = self.inventory()
+
+        def older_python(receipt):
+            receipt["tool_versions"]["python"] = "0.0.1"
+
+        seal, sealed = self.sealed_with(expected, older_python)
+        notices = []
+        self.assertEqual(
+            sealed, media_seal.verify(seal, expected, notice=notices.append))
+        self.assertEqual(1, len(notices))
+        self.assertIn("tool versions differ", notices[0])
+        self.assertIn(
+            f"python: sealed 0.0.1, now {expected['tool_versions']['python']}",
+            notices[0],
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            media_seal.verify(seal, expected)
+        self.assertIn("python: sealed 0.0.1", stderr.getvalue())
+
+    def test_matching_tool_versions_emit_no_notice(self):
+        expected = self.inventory()
+        seal, _ = self.sealed_with(expected, lambda receipt: None)
+        notices = []
+        media_seal.verify(seal, expected, notice=notices.append)
+        self.assertEqual([], notices)
+
+    def test_content_or_provenance_difference_fails_despite_tool_versions(self):
+        def content(receipt):
+            receipt["content"][0]["sha256"] = "0" * 64
+
+        def provenance(receipt):
+            receipt["provenance"]["records"][0]["sha256"] = "0" * 64
+
+        def assertion(receipt):
+            receipt["provenance"]["assertions"]["wimboot_version"] = "other"
+
+        def equivalence(receipt):
+            receipt["environment_equivalence"]["validators"].pop()
+
+        def missing_tool_versions(receipt):
+            del receipt["tool_versions"]
+
+        expected = self.inventory()
+        for change in (
+            content, provenance, assertion, equivalence, missing_tool_versions,
+        ):
+            for tools_also_differ in (False, True):
+                with self.subTest(change=change.__name__, tools=tools_also_differ):
+                    def mutate(receipt):
+                        change(receipt)
+                        if tools_also_differ and "tool_versions" in receipt:
+                            receipt["tool_versions"]["python"] = "0.0.1"
+
+                    seal, _ = self.sealed_with(expected, mutate)
+                    notices = []
+                    with self.assertRaisesRegex(media_seal.SealError, "differs"):
+                        media_seal.verify(seal, expected, notice=notices.append)
+                    self.assertEqual([], notices)
+
+        def malformed_tool_versions(receipt):
+            receipt["tool_versions"] = "python 0.0.1"
+
+        seal, _ = self.sealed_with(expected, malformed_tool_versions)
+        with self.assertRaisesRegex(media_seal.SealError, "JSON object"):
+            media_seal.verify(seal, expected, notice=self.fail)
 
     def test_changed_hash_snapshot_is_rejected(self):
         stable = (1, 2, self.arch.stat().st_size, 3, 4)

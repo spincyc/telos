@@ -225,8 +225,9 @@ def build(
 ) -> Path:
     """Build and optionally select one complete release set.
 
-    ``verified_seal`` must be the freshly inventoried value already compared
-    with ``seal_path`` by ``media_seal.verify``.
+    ``verified_seal`` must be the receipt ``media_seal.verify`` returned after
+    comparing ``seal_path`` with a fresh inventory; it may differ from that
+    inventory in tool versions only.
     """
     if not VERSION.fullmatch(version):
         raise ReleaseSetError("version must have form YYYYMMDD.NNN")

@@ -7,12 +7,16 @@ import json
 import os
 import platform
 import stat
+import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import windows_install_source
 
 CONTRACT_VERSION = 1
+TOOL_VERSIONS = "tool_versions"
+_ABSENT = object()
 
 
 class SealError(RuntimeError):
@@ -204,7 +208,7 @@ def inventory(
     return {
         "schema": 1,
         "content": content,
-        "tool_versions": {
+        TOOL_VERSIONS: {
             "python": platform.python_version(),
             "media_seal_contract": CONTRACT_VERSION,
             "windows_install_source_receipt_schema":
@@ -258,8 +262,51 @@ def write(path: Path, receipt: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def verify(path: Path, expected: dict) -> dict:
+def _identity(receipt: dict) -> dict:
+    """Return everything that decides seal equivalence: all but tool versions."""
+    return {key: value for key, value in receipt.items() if key != TOOL_VERSIONS}
+
+
+def tool_version_changes(sealed: dict, current: dict) -> list[str]:
+    """Describe each tool version that differs between two seal receipts."""
+    before = sealed.get(TOOL_VERSIONS)
+    after = current.get(TOOL_VERSIONS)
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise SealError("media seal tool versions must be a JSON object")
+    return [
+        f"{name}: sealed {before.get(name, '<absent>')}, "
+        f"now {after.get(name, '<absent>')}"
+        for name in sorted(set(before) | set(after))
+        if before.get(name, _ABSENT) != after.get(name, _ABSENT)
+    ]
+
+
+def _stderr_notice(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def verify(
+    path: Path,
+    expected: dict,
+    *,
+    notice: Callable[[str], None] = _stderr_notice,
+) -> dict:
+    """Verify the sealed receipt at ``path`` against a fresh inventory.
+
+    Content, provenance, and every other recorded field must match exactly.
+    Tool versions describe the sealing host, not the sealed media (see
+    ``environment_equivalence``), so a tool-version difference alone is passed
+    to ``notice`` (standard error by default) and does not fail. The returned
+    value is the receipt as sealed on disk.
+    """
     actual = _json(path, "media seal")
-    if actual != expected:
+    if TOOL_VERSIONS not in actual or _identity(actual) != _identity(expected):
         raise SealError("media seal differs from the verified cache inventory")
+    changes = tool_version_changes(actual, expected)
+    if changes:
+        notice(
+            "notice: media seal content and provenance verify, but tool "
+            "versions differ from the sealing host (recorded, not content "
+            "identity): " + "; ".join(changes)
+        )
     return actual
