@@ -1,6 +1,7 @@
 import configparser
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -756,6 +757,266 @@ exit 0
             self.assertEqual(2, completed.returncode)
             self.assertIn("no usable MAC address", completed.stderr)
             self.assertFalse(paths["unit"].exists())
+
+
+PXE_UNITS = ("telos-factory-tftp.service", "telos-factory-http.service")
+
+#: Every stage marker the payload announces, in order. Live gates and the
+#: identity-run diagnostic allowlist (windows_identity_run.py) key on these, so
+#: making PXE durable must not add, drop or reorder one.
+FROZEN_MARKERS = [
+    "network", "time-sync", "time-sync-response", "time-sync-clock",
+    "payload-stage", "package-preflight", "package-missing-$package",
+    "ansible", "services", "auth-audit", "auth-audit-preflight",
+    "auth-audit-sink-create", "auth-audit-config-write",
+    "auth-audit-config-verify", "auth-audit-restart",
+    "auth-audit-sink-verify", "verify", "$1", "administrator-disable",
+    "administrator-disabled-proof",
+]
+
+
+class DurablePxeServiceTests(unittest.TestCase):
+    """PXE (TFTP + HTTP boot) must come back after a Controller reboots.
+
+    The payload used to install the TFTP unit and only ``systemctl restart`` it,
+    and to start nginx ad hoc with ``nginx -c``. The seed image masks every
+    packaged TFTP and nginx unit, so a persistent instance (``rehearsal``, later
+    the keeper) served PXE until its first reboot and then never again, while
+    every in-run check still passed. Unit-tested only: reboot survival itself
+    needs a live boot of a persistent instance.
+    """
+
+    def spec(self):
+        return controller_factory.FactorySpec()
+
+    def script(self):
+        return controller_factory._script(self.spec())
+
+    def units(self):
+        return {
+            "telos-factory-tftp.service":
+                controller_factory.tftp_unit(self.spec()),
+            "telos-factory-http.service": controller_factory.http_unit(),
+        }
+
+    @staticmethod
+    def parse(text):
+        parser = configparser.RawConfigParser(strict=True)
+        parser.optionxform = str
+        parser.read_string(text)
+        return parser
+
+    def test_both_units_install_into_the_boot_and_wait_for_the_address(self):
+        # WantedBy= is what `systemctl enable` turns into a boot-time start.
+        # Both daemons bind the Controller's own address, which exists only
+        # once networkd has configured the link, so each unit pulls in AND
+        # orders after network-online.target; After= alone orders against it
+        # only if some other unit happens to pull it in.
+        for name, text in self.units().items():
+            with self.subTest(unit=name):
+                unit = self.parse(text)
+                self.assertEqual(
+                    ["Unit", "Service", "Install"], unit.sections())
+                self.assertEqual(
+                    "multi-user.target", unit.get("Install", "WantedBy"))
+                self.assertEqual(
+                    "network-online.target", unit.get("Unit", "Wants"))
+                self.assertEqual(
+                    "network-online.target", unit.get("Unit", "After"))
+                self.assertEqual(
+                    "on-failure", unit.get("Service", "Restart"))
+
+    def test_nginx_runs_under_its_unit_on_the_factory_configuration(self):
+        unit = self.parse(controller_factory.http_unit())
+        self.assertEqual("telos-factory-http.service",
+                         controller_factory.HTTP_UNIT_NAME)
+        self.assertEqual(
+            "/usr/bin/nginx -c /etc/homelab/factory-nginx.conf",
+            unit.get("Service", "ExecStart"))
+        # Forking is what keeps the ad hoc start's fail-closed property: nginx
+        # binds before it daemonizes, so a listener it cannot open fails the
+        # restart itself. It needs the pid file the configuration declares.
+        self.assertEqual("forking", unit.get("Service", "Type"))
+        pid = unit.get("Service", "PIDFile")
+        self.assertIn(
+            f"pid {pid};\n",
+            controller_factory.nginx_config(self.spec()))
+        self.assertNotIn("daemon off", controller_factory.http_unit())
+
+    def test_no_pxe_unit_implements_or_listens_for_dhcp(self):
+        # ADR 0066: the gateway is the sole DHCP authority, so nothing enabled
+        # here may answer DHCP or ProxyDHCP (UDP 67 / 4011).
+        for name, text in self.units().items():
+            with self.subTest(unit=name):
+                self.assertNotIn("dhcp", text.lower())
+                self.assertNotIn("dnsmasq", text)
+                self.assertNotIn(":67", text)
+                self.assertNotIn("4011", text)
+        self.assertIn(
+            f"--address {self.spec().address}:69 ",
+            controller_factory.tftp_unit(self.spec()))
+        self.assertIn(
+            f"listen {self.spec().address}:80;",
+            controller_factory.nginx_config(self.spec()))
+
+    def test_the_bundle_stages_both_units_the_payload_installs(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            bundle = controller_factory.FactoryBundle(
+                ROOT.parent, root / "factory.iso",
+                authorization_nonce=NONCE)
+            stage = bundle.stage(root / "stage")
+            for unit, text in self.units().items():
+                with self.subTest(unit=unit):
+                    self.assertEqual(text, (stage / unit).read_text())
+        script = self.script()
+        for unit in PXE_UNITS:
+            self.assertIn(
+                f'install -m 0644 "$root/{unit}" /etc/systemd/system/{unit}\n',
+                script)
+            self.assertLess(
+                script.index(f"/etc/systemd/system/{unit}"),
+                script.index("systemctl daemon-reload"))
+
+    def test_the_payload_enables_both_pxe_units(self):
+        script = self.script()
+        enable = ("systemctl enable telos-factory-tftp.service "
+                  "telos-factory-http.service\n")
+        restart = ("systemctl restart telos-factory-tftp.service "
+                   "telos-factory-http.service\n")
+        self.assertIn(enable, script)
+        self.assertIn(restart, script)
+        services = script.index("echo 'TELOS FACTORY STEP services'")
+        audit = script.index("echo 'TELOS FACTORY STEP auth-audit'\n")
+        self.assertLess(services, script.index("systemctl daemon-reload"))
+        self.assertLess(script.index("systemctl daemon-reload"),
+                        script.index(enable))
+        self.assertLess(script.index(enable), script.index(restart))
+        self.assertLess(script.index(restart), audit)
+        # Enablement is proved on the guest, not trusted from the command.
+        self.assertIn(
+            '[[ $(systemctl is-enabled "$unit") == enabled ]]', script)
+
+    def test_nginx_is_never_started_ad_hoc(self):
+        # The only direct nginx invocation left is the configuration test in
+        # the verifier; anything else would be a second nginx outside systemd.
+        executable = [
+            line.strip() for line in self.script().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        direct = [line for line in executable
+                  if re.match(r"(?:\S*/)?nginx\s", line)]
+        self.assertEqual([], direct)
+        self.assertNotIn("nginx -c /etc/homelab/factory-nginx.conf\n",
+                         self.script())
+        self.assertIn(
+            'check verify-05 "nginx -t -c /etc/homelab/factory-nginx.conf"',
+            self.script())
+
+    def test_no_marker_or_verify_label_changed(self):
+        script = self.script()
+        self.assertEqual(
+            FROZEN_MARKERS,
+            re.findall(r"TELOS FACTORY STEP ([a-z0-9$-]+)", script))
+        self.assertEqual(1, script.count("TELOS FACTORY CONTROLLER PASS"))
+        # windows_identity_run.py allowlists exactly verify-01..verify-10.
+        self.assertEqual(
+            10, len(controller_factory.verification_commands(self.spec())))
+        self.assertIn("check verify-10 ", script)
+        self.assertNotIn("check verify-11 ", script)
+
+
+class PxeServiceStepExecutionTests(unittest.TestCase):
+    """Run the payload's services step offline against a stub systemctl.
+
+    Proves the shell logic -- that both units are enabled and restarted, that
+    nginx is never invoked directly, and that a unit left disabled or stopped
+    fails the step closed -- rather than only the generated text.
+    """
+
+    SYSTEMCTL = """#!/usr/bin/bash
+printf '%s\\n' "systemctl $*" >>"$TELOS_LOG"
+case "$1" in
+  is-enabled)
+    if [ "$2" = "${TELOS_NOT_ENABLED:-}" ]; then echo disabled; exit 1; fi
+    echo enabled ;;
+  is-active)
+    if [ "$3" = "${TELOS_NOT_ACTIVE:-}" ]; then exit 3; fi ;;
+esac
+exit 0
+"""
+    NGINX = """#!/usr/bin/bash
+printf '%s\\n' "nginx $*" >>"$TELOS_LOG"
+exit 0
+"""
+
+    def run_step(self, **extra):
+        script = controller_factory._script(controller_factory.FactorySpec())
+        start = script.index("echo 'TELOS FACTORY STEP services'")
+        end = script.index("echo 'TELOS FACTORY STEP auth-audit'\n")
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            stubs = root / "bin"
+            stubs.mkdir()
+            for tool, body in (("systemctl", self.SYSTEMCTL),
+                               ("nginx", self.NGINX)):
+                (stubs / tool).write_text(body)
+                (stubs / tool).chmod(0o755)
+            runner = root / "services-step"
+            runner.write_text("#!/usr/bin/bash\nset -euo pipefail\n"
+                              + script[start:end])
+            log = root / "log"
+            log.write_text("")
+            environment = dict(os.environ)
+            environment.update({
+                "PATH": f"{stubs}:{environment['PATH']}",
+                "TELOS_LOG": str(log),
+            })
+            environment.update(extra)
+            completed = subprocess.run(
+                [shutil.which("bash"), str(runner)],
+                env=environment, capture_output=True, text=True)
+            return completed, log.read_text()
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_the_step_enables_and_starts_both_units_under_systemd(self):
+        completed, log = self.run_step()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("TELOS FACTORY STEP services", completed.stdout)
+        self.assertIn(
+            "systemctl enable telos-factory-tftp.service "
+            "telos-factory-http.service\n", log)
+        self.assertIn(
+            "systemctl restart telos-factory-tftp.service "
+            "telos-factory-http.service\n", log)
+        for unit in PXE_UNITS:
+            self.assertIn(f"systemctl is-enabled {unit}\n", log)
+            self.assertIn(f"systemctl is-active --quiet {unit}\n", log)
+        self.assertIn("systemctl restart samba.service ntpd.service\n", log)
+        self.assertNotIn("nginx ", log)
+        # Nothing DHCP-shaped is enabled or started.
+        self.assertNotIn("dnsmasq", log)
+        self.assertNotIn("dhcp", log.lower())
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_a_unit_left_disabled_fails_the_step_closed(self):
+        for unit in PXE_UNITS:
+            with self.subTest(unit=unit):
+                completed, _ = self.run_step(TELOS_NOT_ENABLED=unit)
+                self.assertEqual(2, completed.returncode)
+                self.assertIn(
+                    f"{unit} is not enabled, so PXE would not survive a "
+                    "reboot", completed.stderr)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_a_unit_that_is_not_running_fails_the_step_closed(self):
+        for unit in PXE_UNITS:
+            with self.subTest(unit=unit):
+                completed, log = self.run_step(TELOS_NOT_ACTIVE=unit)
+                self.assertEqual(2, completed.returncode)
+                self.assertIn(f"{unit} is not running", completed.stderr)
+                self.assertIn(
+                    f"systemctl --no-pager --full status {unit}\n", log)
 
 
 if __name__ == "__main__":

@@ -46,14 +46,60 @@ class FactorySpec:
 
 
 def tftp_unit(spec: FactorySpec) -> str:
-    """Dedicated TFTP service; it has no DHCP or DNS implementation."""
+    """Dedicated TFTP service; it has no DHCP or DNS implementation.
+
+    ``Wants=`` as well as ``After=network-online.target``: in.tftpd binds the
+    Controller's own address, and on a boot of a persistent instance that
+    address exists only once systemd-networkd has configured the link. An
+    ``After=`` alone orders against the target only if something else happens
+    to pull it into the boot transaction.
+    """
     return f"""[Unit]
 Description=Disposable factory TFTP
+Wants=network-online.target
 After=network-online.target
 
 [Service]
 ExecStart=/usr/bin/in.tftpd --foreground --address {spec.address}:69 --secure /srv/tftp
 Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+#: The unit that serves the PXE HTTP boot chain. The name is the one the
+#: published PXE image already uses for the same job (``factory_publication.py``)
+#: and the one ``package-contract.json`` declares for the controller-factory
+#: layer, so a Controller that carries both never has two units bound to :80.
+HTTP_UNIT_NAME = "telos-factory-http.service"
+NGINX_CONFIG_PATH = "/etc/homelab/factory-nginx.conf"
+NGINX_PID_FILE = "/run/factory-nginx.pid"
+
+
+def http_unit() -> str:
+    """nginx on the factory configuration, owned by systemd across reboots.
+
+    ``Type=forking`` with the configuration's own pid file is how the packaged
+    ``nginx.service`` runs nginx, and it keeps the property the ad hoc
+    ``nginx -c`` start had: nginx binds before it daemonizes, so a listener it
+    cannot open fails ``systemctl restart`` synchronously rather than leaving a
+    unit that merely looked started. It has no DHCP implementation.
+    """
+    return f"""[Unit]
+Description=Telos factory PXE HTTP
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=forking
+PIDFile={NGINX_PID_FILE}
+ExecStart=/usr/bin/nginx -c {NGINX_CONFIG_PATH}
+ExecReload=/usr/bin/nginx -s reload -c {NGINX_CONFIG_PATH}
+Restart=on-failure
+KillMode=mixed
+KillSignal=SIGQUIT
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -313,14 +359,36 @@ if ! ANSIBLE_CONFIG="$root/factory-ansible.cfg" \
 fi
 install -d -m 0755 /etc/homelab /srv/tftp /srv/http/homelab/boot
 install -m 0644 "$root/telos-factory-tftp.service" /etc/systemd/system/telos-factory-tftp.service
-install -m 0644 "$root/factory-nginx.conf" /etc/homelab/factory-nginx.conf
+install -m 0644 "$root/{HTTP_UNIT_NAME}" /etc/systemd/system/{HTTP_UNIT_NAME}
+install -m 0644 "$root/factory-nginx.conf" {NGINX_CONFIG_PATH}
 install -m 0644 "$root/boot.ipxe" /srv/http/homelab/boot/boot.ipxe
 install -m 0644 /usr/share/ipxe/x86_64/ipxe.efi /srv/tftp/ipxe.efi
 echo 'TELOS FACTORY STEP services'
 systemctl daemon-reload
+# samba and ntpd are only restarted here because the domain_controller role
+# already enabled both during the play above.
 systemctl restart samba.service ntpd.service
-systemctl restart telos-factory-tftp.service
-nginx -c /etc/homelab/factory-nginx.conf
+# PXE -- TFTP and the HTTP boot chain -- is ENABLED, not only started. The seed
+# image masks every packaged TFTP and nginx unit, so on a persistent Controller
+# (a rehearsal instance, later the keeper) a start that is not also an enable
+# serves PXE until the first reboot and then silently never again. nginx runs
+# under its own unit on the factory configuration rather than ad hoc, so systemd
+# owns it on every later boot and a reconvergence restarts it instead of
+# colliding with a copy already bound to :80. `restart`, not `enable --now`, so a
+# reconvergence also applies a changed unit or configuration. Neither unit
+# answers DHCP or ProxyDHCP: the gateway is the sole DHCP authority (ADR 0066).
+systemctl enable telos-factory-tftp.service {HTTP_UNIT_NAME}
+systemctl restart telos-factory-tftp.service {HTTP_UNIT_NAME}
+for unit in telos-factory-tftp.service {HTTP_UNIT_NAME}; do
+  [[ $(systemctl is-enabled "$unit") == enabled ]] || {{
+    echo "$unit is not enabled, so PXE would not survive a reboot" >&2; exit 2;
+  }}
+  systemctl is-active --quiet "$unit" || {{
+    echo "$unit is not running" >&2
+    systemctl --no-pager --full status "$unit" || true
+    exit 2
+  }}
+done
 echo 'TELOS FACTORY STEP auth-audit'
 echo 'TELOS FACTORY STEP auth-audit-preflight'
 smbd -b | awk '
@@ -420,7 +488,7 @@ echo 'TELOS FACTORY CONTROLLER PASS'
 
 
 def nginx_config(spec: FactorySpec) -> str:
-    return f"""pid /run/factory-nginx.pid;
+    return f"""pid {NGINX_PID_FILE};
 error_log stderr notice;
 events {{}}
 http {{
@@ -534,6 +602,8 @@ class FactoryBundle:
             encoding="utf-8")
         (destination / "telos-factory-tftp.service").write_text(
             tftp_unit(self.spec), encoding="utf-8")
+        (destination / HTTP_UNIT_NAME).write_text(
+            http_unit(), encoding="utf-8")
         (destination / "factory-nginx.conf").write_text(
             nginx_config(self.spec), encoding="utf-8")
         (destination / "boot.ipxe").write_text(
