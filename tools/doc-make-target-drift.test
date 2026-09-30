@@ -104,6 +104,20 @@ assert names == ["homelab-escaped"], d
 PY
 rm docs/proposed.md
 
+# A wildcard family is its stem: judged against the targets it covers.
+cat > docs/wildcard.md <<'MD'
+# Wildcard
+
+Every `homelab-family-*` target is dry-run by default; `homelab-gone-*` is not.
+MD
+if "$tool" --json --makefile Makefile --docs docs > out.json; then exit 1; else test $? = 1; fi
+python3 - <<'PY'
+import json
+d = json.load(open("out.json"))
+assert [f["target"] for f in d["stale"]] == ["homelab-gone"], d
+PY
+rm docs/wildcard.md
+
 # An installed helper under a path is not a Make target.
 cat > docs/helper.md <<'MD'
 # Helper

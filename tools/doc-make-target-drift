@@ -100,7 +100,9 @@ def _cited(text: str) -> dict[str, list[int]]:
                     found.setdefault(stem + leaf, []).append(number)
         remainder = EXPANSION.sub("", remainder)
         for name in CITATION.findall(remainder):
-            found.setdefault(name, []).append(number)
+            # A trailing hyphen is a wildcard family, ``homelab-thing-*``:
+            # judge it as the stem ``homelab-thing``.
+            found.setdefault(name.rstrip("-"), []).append(number)
     return found
 
 
