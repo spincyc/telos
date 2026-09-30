@@ -356,8 +356,32 @@ including Ansible resolving `group_vars` relative to the inventory source, so an
 overlay holding `group_vars` one level above its inventory was read by nothing.
 That made the Ansible path host-side and only host-side, with the in-guest
 alternative inside the convergence bundle declared dead rather than
-half-wired. None of it has been exercised against a live directory: treat
-durable accounts as designed and repaired, never as working.
+half-wired. Corrected 2026-09-30: this paragraph said none of it had been
+exercised against a live directory. The serial-console path
+(`homelab-factory-persistent-accounts`) staged four durable accounts into the
+throwaway instance `rehearsal` on 2026-09-25; the host-side Ansible path has
+still never run.
+
+### Kept workstations (TASK-28)
+
+A kept workstation is minted against a persistent instance by the flow in
+[DURABLE-WORKSTATION-FLOW.md](DURABLE-WORKSTATION-FLOW.md). Its state lives
+under `DURABLE_WORKSTATION_ROOT` (default `build/homelab/vm/workstations`), one
+directory per `WORKSTATION=<name>`: a standalone disk, a private marker bound to
+one `PERSISTENT_DC`, an exclusive lock and an append-only stage ledger. None of
+these targets boots a guest, and none has run against a real gate-5 bundle.
+
+| Target | Opt-in | Effect |
+|---|---|---|
+| `homelab-durable-workstation-plan` | none | Read-only: what adopting `WINDOWS_RUN` into `WORKSTATION` bound to `PERSISTENT_DC` would do. |
+| `homelab-durable-workstation-status` | none | Read-only: stages done, disk present, publication custody, bound instance; never the realm or SID. |
+| `homelab-durable-workstation-adopt` | `APPLY=1` | Converts the gate-5 `windows.qcow2` into a standalone disk and moves the bundle's one-use `publication.iso` into the workstation's custody. Refuses an instance that has not converged. |
+| `homelab-durable-workstation-destroy` | `APPLY=1`, `CONFIRM='DESTROY <name>'` | Shreds the publication first, then the rest, and lists the machine accounts the workstation left in the directory. |
+
+`make clean` removes everything under `build/` except `build/homelab/vm`
+(since 2026-09-30): the canonical Controller image, persistent instances and
+kept workstations are durable state, and each leaves only through its own
+confirmed destroy target.
 
 ## Required common inputs
 

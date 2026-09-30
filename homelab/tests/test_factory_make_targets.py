@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -543,6 +544,72 @@ class FactoryMakeTargetTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn("require PERSISTENT_DC=<instance name>", result.stderr)
+
+    def test_clean_keeps_durable_vm_state(self):
+        # build/homelab/vm holds the canonical Controller image, persistent
+        # directory instances and kept workstations; a domain cannot be
+        # rebuilt, so the reflexive `make clean` must never reach it.
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        with tempfile.TemporaryDirectory() as temporary:
+            build = Path(temporary) / "build"
+            kept = build / "homelab" / "vm" / "persistent-dc" / "marker.json"
+            removed = (
+                build / "site" / "index.html",
+                build / "homelab" / "decisions.pdf",
+                build / "homelab" / "manual" / "guide.pdf",
+            )
+            for path in (kept, *removed):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("synthetic\n", encoding="utf-8")
+            result = subprocess.run(
+                ["make", "-s", "clean", f"BUILD_ROOT={build}"],
+                cwd=ROOT, check=True, capture_output=True, text=True)
+            self.assertTrue(kept.is_file())
+            for path in removed:
+                self.assertFalse(path.exists(), path)
+            self.assertEqual([p.name for p in build.iterdir()], ["homelab"])
+            self.assertEqual(
+                [p.name for p in (build / "homelab").iterdir()], ["vm"])
+            self.assertIn("kept", result.stdout)
+
+    def test_durable_workstation_recipes_parse(self):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import workstation_instance
+        cases = (
+            ("homelab-durable-workstation-plan", {
+                "WORKSTATION": "w1", "WINDOWS_RUN": "/runs/gate5",
+                "PERSISTENT_DC": "synthetic-dc"}),
+            ("homelab-durable-workstation-status", {"WORKSTATION": "w1"}),
+            ("homelab-durable-workstation-adopt", {
+                "WORKSTATION": "w1", "WINDOWS_RUN": "/runs/gate5",
+                "PERSISTENT_DC": "synthetic-dc", "APPLY": "1"}),
+            ("homelab-durable-workstation-destroy", {
+                "WORKSTATION": "w1", "APPLY": "1", "CONFIRM": "DESTROY w1"}),
+        )
+        for target, variables in cases:
+            with self.subTest(target=target):
+                argvs = emitted_by(
+                    target, "homelab-durable-workstation", **variables)
+                self.assertEqual(len(argvs), 1)
+                workstation_instance.parser().parse_args(argvs[0])
+        adopt = emitted_by(
+            "homelab-durable-workstation-adopt", "homelab-durable-workstation",
+            WORKSTATION="w1", WINDOWS_RUN="/runs/gate5",
+            PERSISTENT_DC="synthetic-dc")[0]
+        self.assertNotIn("--apply", adopt)
+
+    def test_durable_workstation_targets_require_a_name(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for target in ("homelab-durable-workstation-status",
+                       "homelab-durable-workstation-adopt"):
+            with self.subTest(target=target):
+                result = subprocess.run(
+                    ["make", target, "WORKSTATION="],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("require WORKSTATION=<name>", result.stderr)
 
     def test_release_set_build_consumes_the_verified_seal(self):
         text = recipe("homelab-pxe-release-set")

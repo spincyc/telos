@@ -94,6 +94,12 @@ REPEAT_RECEIPT ?=
 # persistence must be asked for by name, never inferred.
 PERSISTENT_DC_ROOT ?= build/homelab/vm/persistent-dc
 PERSISTENT_DC ?=
+# A kept (durable) workstation, TASK-28: named by WORKSTATION, never inferred,
+# and bound to one persistent instance. Its disk, marker and stage ledger live
+# under DURABLE_WORKSTATION_ROOT, beside persistent-dc and outside the
+# bulk-cleaned homelab/var/factory.
+DURABLE_WORKSTATION_ROOT ?= build/homelab/vm/workstations
+WORKSTATION ?=
 # Lifecycle recovery (gate 11). All three were used by the recipes below long
 # before they were declared here, which made a reader guess at their shape.
 # RECOVERY_RUN names a fresh run-bundle directory and has no default: a
@@ -204,6 +210,8 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-accounts-plan \
 	homelab-factory-persistent-accounts \
 	homelab-factory-persistent-probe \
+	homelab-durable-workstation-plan homelab-durable-workstation-status \
+	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1075,6 +1083,32 @@ homelab-factory-persistent-destroy:
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
 		--confirm '$(CONFIRM)'
 
+DURABLE_WS_REQUIRE = @if [ -z '$(WORKSTATION)' ]; then echo 'require WORKSTATION=<name>' >&2; exit 2; fi
+DURABLE_WS = $(PYTHON) homelab/bin/homelab-durable-workstation --root '$(DURABLE_WORKSTATION_ROOT)'
+DURABLE_WS_BIND = $(if $(WINDOWS_RUN),--windows-run '$(WINDOWS_RUN)') $(if $(PERSISTENT_DC),--persistent-dc '$(PERSISTENT_DC)') --persistent-root '$(PERSISTENT_DC_ROOT)'
+
+# Read-only: what adopting WINDOWS_RUN into WORKSTATION would do.
+homelab-durable-workstation-plan:
+	$(DURABLE_WS_REQUIRE)
+	@$(DURABLE_WS) plan --workstation '$(WORKSTATION)' $(DURABLE_WS_BIND)
+
+homelab-durable-workstation-status:
+	$(DURABLE_WS_REQUIRE)
+	@$(DURABLE_WS) status --workstation '$(WORKSTATION)'
+
+# Moves the gate-5 disk and its one-use publication into the kept workstation's
+# custody; a dry run without APPLY=1.
+homelab-durable-workstation-adopt:
+	$(DURABLE_WS_REQUIRE)
+	@if [ -z '$(WINDOWS_RUN)' ] || [ -z '$(PERSISTENT_DC)' ]; then echo 'require WINDOWS_RUN=<gate-5 bundle> PERSISTENT_DC=<instance>' >&2; exit 2; fi
+	@$(DURABLE_WS) adopt --workstation '$(WORKSTATION)' $(DURABLE_WS_BIND) $(if $(filter 1,$(APPLY)),--apply)
+
+# Shreds the publication first, then the disk; needs APPLY=1 and
+# CONFIRM='DESTROY <name>', and lists the machine accounts left in the directory.
+homelab-durable-workstation-destroy:
+	$(DURABLE_WS_REQUIRE)
+	@$(DURABLE_WS) destroy --workstation '$(WORKSTATION)' $(if $(filter 1,$(APPLY)),--apply --confirm '$(CONFIRM)')
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1524,9 +1558,14 @@ help:
 		'                         Stage the durable roster over the serial console' \
 		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
+		'make homelab-durable-workstation-plan WORKSTATION=<name> [WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>]' \
+		'make homelab-durable-workstation-adopt APPLY=1 WORKSTATION=<name> WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>' \
+		'                         Take custody of a gate-5 disk as a kept workstation' \
+		'make homelab-durable-workstation-status WORKSTATION=<name>' \
+		"make homelab-durable-workstation-destroy APPLY=1 WORKSTATION=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
-		'make clean      Remove build/' \
+		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \
 		'' \
 		'Isolated agent runs (Worktree Marshal):' \
 		'make codex                 Start an isolated run' \
@@ -1587,8 +1626,20 @@ check-tools:
 	@command -v $(PYTHON) >/dev/null || { echo "Missing $(PYTHON)"; exit 1; }
 	@command -v $(INSTALL) >/dev/null || { echo "Missing $(INSTALL)"; exit 1; }
 
+# $(BUILD_ROOT)/homelab/vm is durable VM state, not build output: the canonical
+# Controller image, persistent directory instances (whose domain cannot be
+# rebuilt) and kept workstations. Each has its own CONFIRM-gated destroy target,
+# so clean removes everything else and never that tree.
 clean:
-	rm -rf $(BUILD_ROOT)
+	@if [ -d '$(BUILD_ROOT)' ]; then \
+		find '$(BUILD_ROOT)' -mindepth 1 -maxdepth 1 ! -name homelab -exec rm -rf {} +; \
+		if [ -d '$(BUILD_ROOT)/homelab' ]; then \
+			find '$(BUILD_ROOT)/homelab' -mindepth 1 -maxdepth 1 ! -name vm -exec rm -rf {} +; \
+		fi; \
+	fi
+	@if [ -d '$(BUILD_ROOT)/homelab/vm' ]; then \
+		echo 'kept $(BUILD_ROOT)/homelab/vm: durable VM state goes only through its own destroy targets'; \
+	fi
 
 distclean: clean
 
