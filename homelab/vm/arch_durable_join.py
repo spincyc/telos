@@ -1218,12 +1218,9 @@ def open_workstation(root: Path, name: str) -> WorkstationInstance:
 def require_arch_join_next(workstation: WorkstationInstance) -> dict:
     marker = workstation.read_marker()
     name = marker["workstation"]
-    pending = marker.get("pending_fold")
-    if pending is not None:
-        raise ArchDurableJoinError(
-            f"kept workstation {name} records an interrupted fold of stage "
-            f"{pending['stage']}; inspect it with "
-            f"homelab-durable-workstation-status before joining")
+    refusal = workstation.pending_fold_refusal(marker)
+    if refusal is not None:
+        raise ArchDurableJoinError(refusal)
     following = workstation.next_stage(marker)
     if following != STAGE:
         raise ArchDurableJoinError(

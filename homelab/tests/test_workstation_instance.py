@@ -25,6 +25,8 @@ import workstation_instance as wi  # noqa: E402
 from homelab.tests.identity_overlay_pin import (  # noqa: E402
     pinned_acceptance_state,
 )
+from homelab.vm import arch_durable_install_run  # noqa: E402
+from homelab.vm import arch_durable_join  # noqa: E402
 
 
 def setUpModule():
@@ -403,6 +405,323 @@ class FoldTests(WorkstationTestCase):
                          ["adopt", "arch-install"])
         self.assertNotIn("pending_fold", marker)
         self.assertFalse((self.w.state / wi.DISK_STAGING_NAME).exists())
+
+
+class Killed(BaseException):
+    """A SIGKILL stand-in: the fold stops dead and runs none of its cleanup."""
+
+
+BOTH_STAGED = [wi.DISK_STAGING_NAME, wi.VARS_STAGING_NAME]
+#: Every point a fold can die at, in the order it passes them, and what each
+#: leaves: (a fold recorded pending, what the live disk and variables hold,
+#: leftover staging files, the reconcile decision). The disk rename is the
+#: commit point: before it the head is intact, after it the fold is.
+INTERRUPTIONS = (
+    ("staged-disk", False, "head", "head", [wi.DISK_STAGING_NAME],
+     wi.RECOVERY_NONE),
+    ("staged-vars", False, "head", "head", BOTH_STAGED, wi.RECOVERY_NONE),
+    ("pending-recorded", True, "head", "head", BOTH_STAGED,
+     wi.RECOVERY_ROLL_BACK),
+    ("disk-renamed", True, "fold", "head", [wi.VARS_STAGING_NAME],
+     wi.RECOVERY_COMPLETE),
+    ("vars-renamed", True, "fold", "fold", [], wi.RECOVERY_COMPLETE),
+    ("ledger-append", True, "fold", "fold", [], wi.RECOVERY_COMPLETE),
+)
+NEW_VARS = b"vars with an Arch boot entry"
+
+
+class InterruptedFoldTests(WorkstationTestCase):
+    """Which of the two readings of an interrupted fold holds, point by point.
+
+    ``fold``'s own ``_reconcile`` could finish or roll back an interruption,
+    but every stage runner refuses a pending fold before it boots, so before
+    ``reconcile`` existed nothing could ever reach that code: a pending fold
+    stranded ``W``. These tests kill a fold at each point and prove that the
+    runners keep refusing, naming the reconcile command, and that
+    ``reconcile`` resolves every point from hashes alone.
+    """
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(wi, "canonical_disk_users", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def fresh(self, name: str) -> wi.WorkstationInstance:
+        target = self.target(name)
+        target.adopt(self.make_bundle(self.tmp / f"run-{name}"), BINDING)
+        return target
+
+    @contextlib.contextmanager
+    def killed_at(self, w: wi.WorkstationInstance, point: str):
+        """Kill ``w``'s fold right after ``point``, like a SIGKILL would."""
+        real_convert, real_copy = wi._convert_standalone, wi._copy_private
+        real_replace = os.replace
+        real_write = wi.WorkstationInstance._write_marker
+
+        def convert(source, target):
+            real_convert(source, target)
+            if point == "staged-disk":
+                raise Killed(point)
+
+        def copy(source, target):
+            real_copy(source, target)
+            if point == "staged-vars":
+                raise Killed(point)
+
+        def write_marker(instance, marker):
+            if point == "ledger-append" and "pending_fold" not in marker:
+                # Died mid-write: the staged marker exists, the rename did not.
+                (instance.state / wi.MARKER_STAGING_NAME).write_text(
+                    json.dumps(marker))
+                raise Killed(point)
+            real_write(instance, marker)
+            if point == "pending-recorded" and "pending_fold" in marker:
+                raise Killed(point)
+
+        def replace(source, target):
+            real_replace(source, target)
+            if (point, Path(target)) in (("disk-renamed", w.disk),
+                                         ("vars-renamed", w.vars)):
+                raise Killed(point)
+
+        with mock.patch.object(wi, "_convert_standalone", new=convert), \
+                mock.patch.object(wi, "_copy_private", new=copy), \
+                mock.patch.object(wi.os, "replace", new=replace), \
+                mock.patch.object(wi.WorkstationInstance, "_write_marker",
+                                  new=write_marker), \
+                mock.patch.object(wi.WorkstationInstance, "_discard_staging",
+                                  new=lambda instance: None), \
+                self.assertRaises(Killed):
+            yield
+
+    def interrupt(self, w: wi.WorkstationInstance, point: str) -> Path:
+        """Kill a fold of arch-install with new variables; return the
+        standalone copy an uninterrupted fold would have made."""
+        overlay = self.overlay(w, f"{w.state.name}-arch-install")
+        expected = self.tmp / f"{w.state.name}-expected.qcow2"
+        _qemu_img("convert", "-f", "qcow2", "-O", "qcow2",
+                  str(overlay), str(expected))
+        firmware = self.tmp / f"{w.state.name}-vars.fd"
+        firmware.write_bytes(NEW_VARS)
+        with self.killed_at(w, point):
+            w.fold(overlay, "arch-install", firmware_vars=firmware,
+                   source="run-synthetic-2")
+        return expected
+
+    def cli(self, *argv: str) -> tuple[int, str, str]:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), \
+                contextlib.redirect_stderr(stderr):
+            code = wi.main(["--root", str(self.root), *argv])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def assert_runners_refuse(self, w: wi.WorkstationInstance) -> None:
+        for runner, error in (
+            (arch_durable_install_run.require_arch_install_next,
+             arch_durable_install_run.DurableInstallError),
+            (arch_durable_join.require_arch_join_next,
+             arch_durable_join.ArchDurableJoinError),
+        ):
+            with self.subTest(runner=runner.__module__), \
+                    self.assertRaisesRegex(error, "interrupted fold") as caught:
+                runner(w)
+            self.assertIn(wi.reconcile_command(w.state.name), str(caught.exception))
+            self.assertIn("APPLY=1", str(caught.exception))
+
+    def test_every_interruption_point_is_refused_then_reconciled(self):
+        for point, recorded, disk, firmware, leftovers, action in INTERRUPTIONS:
+            with self.subTest(point=point):
+                w = self.fresh(point)
+                head = w.read_marker()["ledger"][-1]
+                expected = self.interrupt(w, point)
+                marker = w.read_marker()
+                pending = marker.get("pending_fold")
+                self.assertEqual(pending is not None, recorded)
+                source = {"head": head, "fold": pending}
+                self.assertEqual(_digest(w.disk),
+                                 source[disk]["disk_sha256"])
+                self.assertEqual(_digest(w.vars),
+                                 source[firmware]["vars_sha256"])
+                self.assertEqual(sorted(w._leftovers()), sorted(leftovers))
+
+                # Status says so first; every stage runner refuses by name.
+                code, output, _ = self.cli("status", "--workstation", point)
+                self.assertEqual(code, 0)
+                if recorded:
+                    self.assertTrue(output.splitlines()[1].startswith(
+                        "INTERRUPTED FOLD: stage arch-install"), output)
+                    self.assertIn(wi.reconcile_command(point), output)
+                    self.assert_runners_refuse(w)
+                else:
+                    self.assertNotIn("INTERRUPTED", output)
+                    arch_durable_install_run.require_arch_install_next(w)
+
+                # The dry run decides and changes nothing.
+                before = self.snapshot(w.state)
+                decision = w.reconcile()
+                self.assertEqual(decision["action"], action)
+                self.assertFalse(decision["applied"])
+                code, output, _ = self.cli("reconcile", "--workstation", point)
+                self.assertEqual(code, 0)
+                self.assertIn(f"decision: {action}", output)
+                self.assertIn("dry run: repeat with --apply", output)
+                self.assertEqual(self.snapshot(w.state), before)
+
+                code, output, error = self.cli(
+                    "reconcile", "--workstation", point, "--apply")
+                self.assertEqual(code, 0, error)
+                self.assertIn(f"reconciled {point}", output)
+                marker = w.read_marker()
+                self.assertNotIn("pending_fold", marker)
+                self.assertEqual(w._leftovers(), [])
+                self.assertFalse(
+                    (w.state / wi.MARKER_STAGING_NAME).exists())
+                now = marker["ledger"][-1]
+                self.assertEqual(
+                    (_digest(w.disk), _digest(w.vars)),
+                    (now["disk_sha256"], now["vars_sha256"]))
+                if action == wi.RECOVERY_COMPLETE:
+                    self.assertEqual(marker["ledger"][1:], [pending])
+                    self.assertTrue(_identical(w.disk, expected))
+                    self.assertEqual(w.vars.read_bytes(), NEW_VARS)
+                    arch_durable_join.require_arch_join_next(w)
+                else:
+                    self.assertEqual(marker["ledger"], [head])
+                    arch_durable_install_run.require_arch_install_next(w)
+
+                # Idempotent: a second apply has nothing left to do.
+                settled = self.snapshot(w.state)
+                self.assertEqual(w.reconcile(apply=True)["action"],
+                                 wi.RECOVERY_NONE)
+                self.assertEqual(self.snapshot(w.state), settled)
+
+    def test_fold_resolves_every_point_the_same_way(self):
+        """``fold``'s own reconcile shares the decision table."""
+        for point, _recorded, _disk, _firmware, _left, action in INTERRUPTIONS:
+            with self.subTest(point=point):
+                w = self.fresh(f"f-{point}")
+                self.interrupt(w, point)
+                stage = ("arch-join" if action == wi.RECOVERY_COMPLETE
+                         else "arch-install")
+                w.fold(self.overlay(w, f"f-{point}-{stage}", 0x44), stage)
+                marker = w.read_marker()
+                self.assertEqual([entry["stage"] for entry in marker["ledger"]],
+                                 ["adopt", "arch-install"] + (
+                                     ["arch-join"] if stage == "arch-join"
+                                     else []))
+                self.assertNotIn("pending_fold", marker)
+                self.assertEqual(w._leftovers(), [])
+
+    def test_lost_variables_after_the_commit_point_are_refused(self):
+        w = self.fresh("w1")
+        self.interrupt(w, "disk-renamed")
+        (w.state / wi.VARS_STAGING_NAME).unlink()
+        before = self.snapshot(w.state)
+        decision = w.reconcile()
+        self.assertEqual(decision["action"], wi.RECOVERY_REFUSE)
+        self.assertIn("neither finishing nor rolling back", decision["reason"])
+        code, output, _ = self.cli("reconcile", "--workstation", "w1")
+        self.assertEqual(code, 1)
+        self.assertIn("decision: refuse", output)
+        code, _, error = self.cli("reconcile", "--workstation", "w1", "--apply")
+        self.assertEqual(code, 2)
+        self.assertIn("Nothing was changed", error)
+        with self.assertRaisesRegex(wi.WorkstationInvalid, "inspect"):
+            w.reconcile(apply=True)
+        self.assertEqual(self.snapshot(w.state), before)
+        self.assert_runners_refuse(w)
+
+    def test_files_changed_while_a_fold_is_pending_are_refused(self):
+        changes = {
+            "disk": lambda w: _write(w.disk, 0x11, "3M"),
+            "vars": lambda w: w.vars.write_bytes(b"edited out of band"),
+        }
+        for label, change in changes.items():
+            with self.subTest(changed=label):
+                w = self.fresh(f"changed-{label}")
+                self.interrupt(w, "pending-recorded")
+                change(w)
+                before = self.snapshot(w.state)
+                with self.assertRaisesRegex(wi.WorkstationInvalid,
+                                            "changed outside the ledger"):
+                    w.reconcile(apply=True)
+                self.assertEqual(self.snapshot(w.state), before)
+
+    def test_a_disk_changed_with_no_fold_pending_is_refused(self):
+        w = self.fresh("w1")
+        _write(w.disk, 0x11, "3M")
+        before = self.snapshot(w.state)
+        self.assertEqual(w.reconcile()["action"], wi.RECOVERY_REFUSE)
+        with self.assertRaisesRegex(wi.WorkstationInvalid, "outside a fold"):
+            w.reconcile(apply=True)
+        self.assertEqual(self.snapshot(w.state), before)
+
+    def test_an_unchanged_disk_with_lost_variables_rolls_back(self):
+        """The disk hashing to both head and fold is no proof of the fold."""
+        w = self.fresh("w1")
+        marker = w.read_marker()
+        head = marker["ledger"][-1]
+        marker["pending_fold"] = dict(
+            head, stage="arch-install", vars_sha256="ab" * 32,
+            source="synthetic")
+        w._write_marker(marker)
+        decision = w.reconcile(apply=True)
+        self.assertEqual(decision["action"], wi.RECOVERY_ROLL_BACK)
+        self.assertEqual(w.read_marker()["ledger"], [head])
+
+    def test_an_interrupted_reconcile_reaches_the_same_end(self):
+        w = self.fresh("w1")
+        self.interrupt(w, "disk-renamed")
+        pending = w.read_marker()["pending_fold"]
+        with mock.patch.object(wi.WorkstationInstance, "_write_marker",
+                               side_effect=Killed("after the vars rename")), \
+                self.assertRaises(Killed):
+            w.reconcile(apply=True)
+        self.assertEqual(_digest(w.vars), pending["vars_sha256"])
+        decision = w.reconcile(apply=True)
+        self.assertEqual(decision["action"], wi.RECOVERY_COMPLETE)
+        self.assertFalse(decision["rename_vars"])
+        self.assertEqual(w.read_marker()["ledger"][-1], pending)
+
+    def test_reconcile_holds_the_lock(self):
+        w = self.fresh("w1")
+        self.interrupt(w, "pending-recorded")
+        before = self.snapshot(w.state)
+        with self.target():
+            for apply in (False, True):
+                with self.subTest(apply=apply), self.assertRaisesRegex(
+                        wi.WorkstationInUse, "locked"):
+                    w.reconcile(apply=apply)
+        self.assertEqual(self.snapshot(w.state), before)
+        seen = []
+        real = wi.WorkstationInstance.recovery
+
+        def recovery(instance, marker=None):
+            seen.append(self.target().locked())
+            return real(instance, marker)
+
+        with mock.patch.object(wi.WorkstationInstance, "recovery", new=recovery):
+            w.reconcile(apply=True)
+        self.assertEqual(seen, [True])
+        self.assertFalse(self.target().locked())
+
+    def test_reconcile_refuses_while_a_process_holds_the_disk(self):
+        w = self.fresh("w1")
+        self.interrupt(w, "disk-renamed")
+        before = self.snapshot(w.state)
+        holders = lambda path, **_: HOLDER if path == w.disk else []  # noqa: E731
+        with mock.patch.object(wi, "canonical_disk_users", side_effect=holders):
+            with self.assertRaisesRegex(wi.WorkstationInUse, "open by"):
+                w.reconcile(apply=True)
+        self.assertEqual(self.snapshot(w.state), before)
+
+    def test_a_workstation_with_nothing_to_reconcile_says_so(self):
+        self.fresh("w1")
+        code, output, _ = self.cli("reconcile", "--workstation", "w1")
+        self.assertEqual(code, 0)
+        self.assertIn("no fold pending", output)
+        self.assertNotIn("dry run", output)
 
 
 class LedgerTests(WorkstationTestCase):

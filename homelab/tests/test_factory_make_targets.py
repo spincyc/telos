@@ -581,6 +581,9 @@ class FactoryMakeTargetTests(unittest.TestCase):
                 "WORKSTATION": "w1", "WINDOWS_RUN": "/runs/gate5",
                 "PERSISTENT_DC": "synthetic-dc"}),
             ("homelab-durable-workstation-status", {"WORKSTATION": "w1"}),
+            ("homelab-durable-workstation-reconcile", {"WORKSTATION": "w1"}),
+            ("homelab-durable-workstation-reconcile", {
+                "WORKSTATION": "w1", "APPLY": "1"}),
             ("homelab-durable-workstation-adopt", {
                 "WORKSTATION": "w1", "WINDOWS_RUN": "/runs/gate5",
                 "PERSISTENT_DC": "synthetic-dc", "APPLY": "1"}),
@@ -598,11 +601,16 @@ class FactoryMakeTargetTests(unittest.TestCase):
             WORKSTATION="w1", WINDOWS_RUN="/runs/gate5",
             PERSISTENT_DC="synthetic-dc")[0]
         self.assertNotIn("--apply", adopt)
+        reconcile = emitted_by(
+            "homelab-durable-workstation-reconcile",
+            "homelab-durable-workstation", WORKSTATION="w1")[0]
+        self.assertNotIn("--apply", reconcile)
 
     def test_durable_workstation_targets_require_a_name(self):
         if not shutil.which("make"):
             self.skipTest("make is not installed")
         for target in ("homelab-durable-workstation-status",
+                       "homelab-durable-workstation-reconcile",
                        "homelab-durable-workstation-adopt"):
             with self.subTest(target=target):
                 result = subprocess.run(

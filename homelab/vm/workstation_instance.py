@@ -34,10 +34,27 @@ What ``W`` holds:
     rewrite stages into one fixed name, fsyncs and renames, and refuses to
     change history.
 
-A fold is a two-phase commit: the new ledger entry is first recorded as
-``pending_fold``, then the files are renamed into place, then the entry moves
-onto the ledger. An interrupted fold is reconciled by the next one from the
-disk's own hash, so a crash between the two renames cannot strand ``W``.
+A fold is a two-phase commit: once the staged disk (and variables) are fsynced
+and hashed, the new ledger entry is recorded as ``pending_fold``; then the disk
+is renamed into place, then the variables, then the entry moves onto the
+ledger. The disk rename is the commit point. No stage runner boots ``W`` while
+a fold is pending (``pending_fold_refusal``); ``reconcile``
+(``make homelab-durable-workstation-reconcile``, a dry run without
+``APPLY=1``) resolves it from the files' own hashes under the lock, and never
+guesses (``recovery``):
+
+=====================================  ============  ======================
+live disk / firmware variables         action        how
+=====================================  ============  ======================
+fold's disk; fold's vars in place      complete      append the entry
+fold's disk; fold's vars still staged  complete      rename them, append
+ledger head's disk and vars intact     roll back     drop the entry
+anything else                          refuse        change nothing
+=====================================  ============  ======================
+
+Every applied action ends by discarding leftover staging files, which also
+clears a staging copy that was interrupted before any fold was recorded.
+``fold`` applies the same decision before it folds.
 """
 
 from __future__ import annotations
@@ -114,6 +131,13 @@ FLOW_STAGES = ("adopt", "arch-install", "arch-join", "windows-join")
 PUBLICATION_NEEDED_UNTIL = "windows-join"
 #: Head room kept free beyond qemu-img's own estimate of a standalone copy.
 SPACE_MARGIN_BYTES = 256 * 1024 * 1024
+#: The Make target an operator runs to resolve an interrupted fold.
+RECONCILE_TARGET = "homelab-durable-workstation-reconcile"
+#: ``recovery`` actions.
+RECOVERY_NONE = "none"
+RECOVERY_COMPLETE = "complete"
+RECOVERY_ROLL_BACK = "roll-back"
+RECOVERY_REFUSE = "refuse"
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REALM = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
@@ -349,6 +373,22 @@ def workstation_state(root: Path, name: str) -> Path:
             "workstation name must be 1-32 lowercase letters, digits, or "
             "hyphens and must not start or end with a hyphen")
     return Path(root) / name
+
+
+def reconcile_command(name: str, *, apply: bool = False) -> str:
+    """The operator command that resolves ``name``'s interrupted fold."""
+    return (f"make {RECONCILE_TARGET} WORKSTATION={name}"
+            + (" APPLY=1" if apply else ""))
+
+
+def _matches(value: str | None, head: str | None, fold: str | None) -> str:
+    if value == head == fold:
+        return "both the ledger head and the interrupted fold"
+    if value == head:
+        return "the ledger head"
+    if value == fold:
+        return "the interrupted fold"
+    return "neither the ledger head nor the interrupted fold"
 
 
 class WorkstationInstance:
@@ -713,43 +753,168 @@ class WorkstationInstance:
         return (sha256(self.disk),
                 sha256(self.vars) if _regular_file(self.vars) else None)
 
-    def _discard_staging(self) -> None:
-        for name in (DISK_STAGING_NAME, VARS_STAGING_NAME):
-            path = self.state / name
-            if path.is_symlink() or path.exists():
-                path.unlink()
+    def _leftovers(self) -> list[str]:
+        return [name for name in (DISK_STAGING_NAME, VARS_STAGING_NAME)
+                if (self.state / name).is_symlink()
+                or (self.state / name).exists()]
 
-    def _reconcile(self) -> tuple[str, str | None]:
-        """Finish or drop an interrupted fold; return the current hashes."""
-        marker = self.read_marker()
-        disk_hash, vars_hash = self._hashes()
+    def _discard_staging(self) -> None:
+        for name in self._leftovers():
+            (self.state / name).unlink()
+
+    @staticmethod
+    def pending_fold_refusal(marker: dict) -> str | None:
+        """Why no stage may boot ``W`` while ``marker`` records a pending fold.
+
+        Every stage runner raises this before anything boots, rather than
+        spending a stage on a disk whose ledger is unresolved; ``None`` when
+        no fold is pending.
+        """
         pending = marker.get("pending_fold")
         if pending is None:
-            return disk_hash, vars_hash
+            return None
+        name = marker["workstation"]
+        return (
+            f"kept workstation {name} records an interrupted fold of stage "
+            f"{pending['stage']}; no stage runs until it is reconciled. "
+            f"`{reconcile_command(name)}` reports whether it can be finished "
+            f"or rolled back, and `{reconcile_command(name, apply=True)}` "
+            "does it")
+
+    def recovery(self, marker: dict | None = None) -> dict:
+        """Decide how an interrupted fold is resolved; change nothing.
+
+        The disk rename is the fold's commit point. Once the fold's disk is in
+        place it is finished, provided its firmware variables are in place or
+        still staged with the recorded hash; while the ledger head's disk and
+        variables are both intact it is rolled back; anything else is refused
+        (``fold`` renames the disk before the variables, so it leaves no
+        other state). With no fold pending, the files must match the ledger
+        head. Only hashes decide; nothing is guessed.
+        """
+        marker = self.read_marker() if marker is None else marker
         head = marker["ledger"][-1]
-        if disk_hash == pending["disk_sha256"]:
-            staged_vars = self.state / VARS_STAGING_NAME
-            if vars_hash != pending["vars_sha256"]:
-                if not (_regular_file(staged_vars)
-                        and sha256(staged_vars) == pending["vars_sha256"]):
-                    raise WorkstationInvalid(
-                        "an interrupted fold replaced the disk but its "
-                        "firmware variables are lost; inspect "
-                        f"{self.state} by hand")
-                os.replace(staged_vars, self.vars)
-                _fsync_directory(self.state)
-                vars_hash = pending["vars_sha256"]
-            marker["ledger"].append(marker.pop("pending_fold"))
-        elif (disk_hash, vars_hash) == (head["disk_sha256"],
-                                        head.get("vars_sha256")):
-            del marker["pending_fold"]
+        pending = marker.get("pending_fold")
+        disk_hash, vars_hash = self._hashes()
+        old = (head["disk_sha256"], head.get("vars_sha256"))
+        decision = {
+            "workstation": marker["workstation"],
+            "head": head["stage"],
+            "pending_fold": None if pending is None else pending["stage"],
+            "leftovers": self._leftovers(),
+            "rename_vars": False,
+            "hashes": (disk_hash, vars_hash),
+        }
+        if pending is None:
+            if (disk_hash, vars_hash) == old:
+                decision.update(
+                    action=RECOVERY_NONE,
+                    reason="no fold is pending and the disk and firmware "
+                           "variables match the ledger head")
+            else:
+                decision.update(
+                    action=RECOVERY_REFUSE,
+                    reason="no fold is pending, but the disk or firmware "
+                           "variables no longer match the ledger head; they "
+                           "changed outside a fold, which reconcile cannot "
+                           "undo")
+            return decision
+        new = (pending["disk_sha256"], pending.get("vars_sha256"))
+        decision["disk"] = _matches(disk_hash, old[0], new[0])
+        decision["vars"] = _matches(vars_hash, old[1], new[1])
+        staged_vars = self.state / VARS_STAGING_NAME
+        if disk_hash == new[0]:
+            if vars_hash == new[1]:
+                decision.update(
+                    action=RECOVERY_COMPLETE, hashes=new,
+                    reason="the fold's disk and firmware variables are both "
+                           "in place")
+                return decision
+            if _regular_file(staged_vars) and sha256(staged_vars) == new[1]:
+                decision.update(
+                    action=RECOVERY_COMPLETE, hashes=new, rename_vars=True,
+                    reason="the fold's disk is in place and its staged "
+                           "firmware variables still hash to the fold's")
+                decision["vars"] += "; the staged copy matches the fold"
+                return decision
+        if (disk_hash, vars_hash) == old:
+            decision.update(
+                action=RECOVERY_ROLL_BACK,
+                reason="the fold never committed its disk, and the ledger "
+                       "head's disk and firmware variables are intact")
+        elif disk_hash == new[0]:
+            decision.update(
+                action=RECOVERY_REFUSE,
+                reason="the fold's disk is in place but its firmware "
+                       "variables are neither in place nor staged, and the "
+                       "ledger head's disk is gone, so neither finishing nor "
+                       "rolling back can be proven")
         else:
+            decision.update(
+                action=RECOVERY_REFUSE,
+                reason="the disk and firmware variables match neither the "
+                       "ledger head nor the interrupted fold; they changed "
+                       "outside the ledger")
+        return decision
+
+    def _apply_recovery(self, decision: dict) -> tuple[str, str | None]:
+        """Carry out a ``recovery`` decision; the caller holds the lock.
+
+        Returns the disk and variables hashes the ledger head now records.
+        Each step is idempotent: interrupted anywhere, the next ``recovery``
+        reaches the same end.
+        """
+        if decision["action"] == RECOVERY_REFUSE:
+            detail = "".join(
+                f"; the {label} matches {decision[key]}"
+                for key, label in (("disk", "disk"),
+                                   ("vars", "firmware variables"))
+                if key in decision)
             raise WorkstationInvalid(
-                "workstation disk matches neither the ledger head nor the "
-                "interrupted fold; it changed outside the ledger")
-        self._write_marker(marker)
+                f"refusing to reconcile kept workstation "
+                f"{decision['workstation']}: {decision['reason']}{detail}. "
+                f"Nothing was changed; inspect {self.state} by hand")
+        marker = self.read_marker()
+        if decision["action"] == RECOVERY_COMPLETE:
+            if decision["rename_vars"]:
+                os.replace(self.state / VARS_STAGING_NAME, self.vars)
+                _fsync_directory(self.state)
+            marker["ledger"].append(marker.pop("pending_fold"))
+            self._write_marker(marker)
+        elif decision["action"] == RECOVERY_ROLL_BACK:
+            del marker["pending_fold"]
+            self._write_marker(marker)
         self._discard_staging()
-        return disk_hash, vars_hash
+        return decision["hashes"]
+
+    def reconcile(self, *, apply: bool = False) -> dict:
+        """Resolve an interrupted fold under the lock; a dry run by default.
+
+        Returns the ``recovery`` decision. With ``apply`` it is carried out
+        (a refusal raises ``WorkstationInvalid`` and changes nothing), and any
+        leftover staging file is discarded.
+        """
+        with self._held():
+            decision = self.recovery()
+            if apply:
+                self._assert_not_open(*[
+                    path for path in (
+                        self.disk, self.vars,
+                        *(self.state / name for name in decision["leftovers"]))
+                    if _regular_file(path)])
+                self._apply_recovery(decision)
+            decision["applied"] = apply
+            return decision
+
+    def _reconcile(self) -> tuple[str, str | None]:
+        """Finish or roll back an interrupted fold; return the current hashes."""
+        marker = self.read_marker()
+        if marker.get("pending_fold") is None:
+            # Unreferenced: a staging copy interrupted before any fold was
+            # recorded. The head check that follows is ``fold``'s own.
+            self._discard_staging()
+            return self._hashes()
+        return self._apply_recovery(self.recovery(marker))
 
     def next_stage(self, marker: dict | None = None) -> str | None:
         ledger = (marker or self.read_marker())["ledger"]
@@ -834,8 +999,9 @@ class WorkstationInstance:
             except BaseException:
                 self._discard_staging()
                 raise
-            # From here the pending record is the authority: an interruption
-            # is finished or rolled back by the next fold's reconcile.
+            # From here the pending record is the authority: every stage runner
+            # refuses to boot until ``reconcile`` finishes or rolls it back.
+            # The disk rename below is the commit point (``recovery``).
             os.replace(staged_disk, self.disk)
             if firmware_vars is not None:
                 os.replace(staged_vars, self.vars)
@@ -907,6 +1073,8 @@ class WorkstationInstance:
             result["next_stage"] = self.next_stage(marker)
             pending = marker.get("pending_fold")
             result["pending_fold"] = None if pending is None else pending["stage"]
+            if pending is not None:
+                result["reconcile"] = reconcile_command(marker["workstation"])
             result["machine_accounts"] = list(marker["machine_accounts"])
             retired = marker["publication"].get("retired_utc")
         else:
@@ -914,6 +1082,7 @@ class WorkstationInstance:
         result["disk_bytes"] = (
             self.disk.stat().st_size if _regular_file(self.disk) else None)
         result["firmware_vars"] = _regular_file(self.vars)
+        result["staging_leftovers"] = self._leftovers()
         if self.publication.is_symlink():
             result["publication"] = "UNSAFE: a symlink"
         elif _regular_file(self.publication):
@@ -1030,6 +1199,13 @@ def _print_plan(plan: dict, binding: Binding) -> None:
 def _print_summary(summary: dict) -> None:
     print(f"kept workstation {summary['workstation']}: "
           f"{'present' if summary.get('present') else 'absent'}")
+    pending = summary.get("pending_fold")
+    if pending:
+        # Right under the name, so it cannot scroll past: every stage runner
+        # refuses W until it is resolved.
+        print(f"INTERRUPTED FOLD: stage {pending} is pending; no stage runs "
+              f"until `{summary['reconcile']}` finishes or rolls it back "
+              "(a dry run without APPLY=1)")
     print(f"state: {summary['state']}")
     if "error" in summary:
         print(f"error: {summary['error']}")
@@ -1045,14 +1221,16 @@ def _print_summary(summary: dict) -> None:
               f"disk {entry['disk_sha256']}")
     if "next_stage" in summary:
         print("next stage: "
-              + (summary["next_stage"] or "none; every stage folded"))
-    if summary.get("pending_fold"):
-        print(f"interrupted fold: {summary['pending_fold']}; the next fold "
-              "reconciles it")
+              + (summary["next_stage"] or "none; every stage folded")
+              + (" (blocked by the interrupted fold)" if pending else ""))
     size = summary["disk_bytes"]
     print("disk: " + ("absent" if size is None else f"present, {size} bytes"))
     print("firmware variables: "
           + ("present" if summary["firmware_vars"] else "absent"))
+    if summary.get("staging_leftovers"):
+        print("staging leftovers: " + ", ".join(summary["staging_leftovers"])
+              + " (left by a fold that is running or was interrupted; "
+              f"{RECONCILE_TARGET} resolves them)")
     print(f"publication custody: {summary['publication']}")
     if "machine_accounts" in summary:
         accounts = summary["machine_accounts"]
@@ -1095,6 +1273,48 @@ def cli_status(root: Path, name: str) -> int:
     return 0 if summary.get("marker") == "valid" else 1
 
 
+def _print_recovery(decision: dict) -> None:
+    name = decision["workstation"]
+    pending = decision["pending_fold"]
+    print(f"kept workstation {name}: "
+          + (f"interrupted fold of stage {pending}" if pending
+             else "no fold pending")
+          + f" (ledger head: {decision['head']})")
+    if "disk" in decision:
+        print(f"disk: matches {decision['disk']}")
+        print(f"firmware variables: match {decision['vars']}")
+    if decision["leftovers"]:
+        print("staging leftovers: " + ", ".join(decision["leftovers"])
+              + " (an apply that is not refused uses or discards them)")
+    action = decision["action"]
+    print(f"decision: {action}: {decision['reason']}")
+    if action == RECOVERY_REFUSE:
+        print("nothing is changed by this command; inspect the workstation "
+              "by hand")
+
+
+def cli_reconcile(root: Path, name: str, apply: bool) -> int:
+    """Finish or roll back an interrupted fold; a dry run without ``apply``."""
+    target = WorkstationInstance(workstation_state(root, name), name=name)
+    decision = target.reconcile(apply=apply)
+    _print_recovery(decision)
+    action = decision["action"]
+    if action == RECOVERY_REFUSE:
+        return 1
+    if not apply:
+        if action != RECOVERY_NONE or decision["leftovers"]:
+            print("dry run: repeat with --apply")
+        return 0
+    done = {RECOVERY_COMPLETE: f"completed the fold of {decision['pending_fold']}",
+            RECOVERY_ROLL_BACK: f"rolled back the fold of "
+                                f"{decision['pending_fold']}",
+            RECOVERY_NONE: "nothing pending"}[action]
+    head = target.read_marker()["ledger"][-1]
+    print(f"reconciled {name}: {done}; ledger head {head['stage']} disk "
+          f"{head['disk_sha256']}")
+    return 0
+
+
 def cli_destroy(root: Path, name: str, confirm: str | None, apply: bool) -> int:
     target = WorkstationInstance(workstation_state(root, name), name=name)
     target.assert_safe()
@@ -1133,7 +1353,7 @@ def parser() -> argparse.ArgumentParser:
         "--root", type=Path, default=DEFAULT_ROOT,
         help="root holding kept workstations; never homelab/var/factory")
     commands = result.add_subparsers(dest="command", required=True)
-    for name in ("plan", "status", "adopt", "destroy"):
+    for name in ("plan", "status", "adopt", "reconcile", "destroy"):
         sub = commands.add_parser(name)
         sub.add_argument("--workstation", required=True,
                          help="stable workstation name")
@@ -1144,7 +1364,7 @@ def parser() -> argparse.ArgumentParser:
                              help="the persistent Controller instance to bind")
             sub.add_argument("--persistent-root", type=Path, default=None,
                              help="root holding persistent instances")
-        if name in ("adopt", "destroy"):
+        if name in ("adopt", "reconcile", "destroy"):
             sub.add_argument("--apply", action="store_true")
         if name == "destroy":
             sub.add_argument("--confirm",
@@ -1158,6 +1378,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "status":
             return cli_status(args.root, args.workstation)
+        if args.command == "reconcile":
+            return cli_reconcile(args.root, args.workstation, args.apply)
         if args.command == "destroy":
             return cli_destroy(
                 args.root, args.workstation, args.confirm, args.apply)

@@ -482,13 +482,9 @@ def require_arch_install_next(workstation: WorkstationInstance) -> dict:
     """``W``'s validated marker, when ``arch-install`` is its next fold."""
     marker = workstation.read_marker()
     name = marker["workstation"]
-    pending = marker.get("pending_fold")
-    if pending is not None:
-        raise DurableInstallError(
-            f"kept workstation {name} records an interrupted fold of stage "
-            f"{pending['stage']}; only the next fold reconciles it, and this "
-            f"runner will not spend an install on finding out which way. "
-            f"Inspect it with homelab-durable-workstation-status")
+    refusal = workstation.pending_fold_refusal(marker)
+    if refusal is not None:
+        raise DurableInstallError(refusal)
     following = workstation.next_stage(marker)
     if following != STAGE:
         raise DurableInstallError(

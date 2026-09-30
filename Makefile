@@ -212,6 +212,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-probe \
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
+	homelab-durable-workstation-reconcile \
 	homelab-durable-arch-install-plan homelab-durable-arch-install \
 	homelab-durable-arch-join-plan homelab-durable-arch-join \
 	homelab-durable-windows-join-plan homelab-durable-windows-join \
@@ -1099,6 +1100,14 @@ homelab-durable-workstation-status:
 	$(DURABLE_WS_REQUIRE)
 	@$(DURABLE_WS) status --workstation '$(WORKSTATION)'
 
+# Under the lock, finishes an interrupted fold or rolls it back, decided from
+# the files' hashes alone; refuses, changing nothing, when neither is proven.
+# Every stage runner refuses the workstation until this has run. A dry run
+# without APPLY=1.
+homelab-durable-workstation-reconcile:
+	$(DURABLE_WS_REQUIRE)
+	@$(DURABLE_WS) reconcile --workstation '$(WORKSTATION)' $(if $(filter 1,$(APPLY)),--apply)
+
 # Moves the gate-5 disk and its one-use publication into the kept workstation's
 # custody; a dry run without APPLY=1.
 homelab-durable-workstation-adopt:
@@ -1621,6 +1630,8 @@ help:
 		'make homelab-durable-workstation-adopt APPLY=1 WORKSTATION=<name> WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>' \
 		'                         Take custody of a gate-5 disk as a kept workstation' \
 		'make homelab-durable-workstation-status WORKSTATION=<name>' \
+		'make homelab-durable-workstation-reconcile WORKSTATION=<name> [APPLY=1]' \
+		'                         Finish or roll back an interrupted fold' \
 		"make homelab-durable-workstation-destroy APPLY=1 WORKSTATION=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-durable-arch-install-plan WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name>' \
 		'make homelab-durable-arch-install APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> FACTORY_DURATION=1800' \

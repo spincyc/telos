@@ -375,6 +375,7 @@ these targets boots a guest, and none has run against a real gate-5 bundle.
 |---|---|---|
 | `homelab-durable-workstation-plan` | none | Read-only: what adopting `WINDOWS_RUN` into `WORKSTATION` bound to `PERSISTENT_DC` would do. |
 | `homelab-durable-workstation-status` | none | Read-only: stages done, disk present, publication custody, bound instance; never the realm or SID. |
+| `homelab-durable-workstation-reconcile` | `APPLY=1` | Under the lock, finishes an interrupted fold when its disk is in place and its variables are in place or staged, rolls it back when the ledger head's files are intact, and otherwise refuses without changing anything. Every stage runner refuses the workstation while a fold is pending. |
 | `homelab-durable-workstation-adopt` | `APPLY=1` | Converts the gate-5 `windows.qcow2` into a standalone disk and moves the bundle's one-use `publication.iso` into the workstation's custody. Refuses an instance that has not converged. |
 | `homelab-durable-workstation-destroy` | `APPLY=1`, `CONFIRM='DESTROY <name>'` | Shreds the publication first, then the rest, and lists the machine accounts the workstation left in the directory. |
 
