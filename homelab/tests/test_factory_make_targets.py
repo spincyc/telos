@@ -760,5 +760,66 @@ class DurableArchJoinTargetTests(unittest.TestCase):
                     "ARCH_HOSTNAME=<name>", result.stderr)
 
 
+class DurableWindowsJoinTargetTests(unittest.TestCase):
+    """TASK-28 step 8: the windows-join recipes, fed to the runner's parser."""
+
+    SCRIPT = "windows_durable_join.py"
+    TARGETS = ("homelab-durable-windows-join-plan",
+               "homelab-durable-windows-join")
+    NAMES = {"WORKSTATION": "w1", "PERSISTENT_DC": "synthetic-dc"}
+
+    def parse(self, target, **variables):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import windows_durable_join
+        argvs = emitted_by(target, self.SCRIPT, **variables)
+        self.assertEqual(len(argvs), 1)
+        return windows_durable_join.parser().parse_args(argvs[0])
+
+    def test_durable_windows_join_recipes_parse(self):
+        # The plan target never forwards --apply, and no recipe forwards a
+        # credential: every password is typed at the terminal.
+        for target, variables, applies in (
+                ("homelab-durable-windows-join-plan",
+                 {**self.NAMES, "APPLY": "1"}, False),
+                ("homelab-durable-windows-join", self.NAMES, False),
+                ("homelab-durable-windows-join",
+                 {**self.NAMES, "APPLY": "1"}, True)):
+            with self.subTest(target=target, variables=variables):
+                args = self.parse(target, **variables)
+                self.assertIs(args.apply, applies)
+                self.assertEqual((args.workstation, args.persistent_dc),
+                                 ("w1", "synthetic-dc"))
+        args = self.parse(
+            "homelab-durable-windows-join", **self.NAMES, APPLY="1",
+            FACTORY_CONTROLLER_STATE="/state/canonical",
+            DIRECTORY_IDENTITY="/identity/directory.json",
+            DURABLE_WORKSTATION_ROOT="/kept",
+            PERSISTENT_DC_ROOT="/persistent")
+        self.assertEqual(args.controller_state, Path("/state/canonical"))
+        self.assertEqual(args.directory_identity,
+                         Path("/identity/directory.json"))
+        self.assertEqual(args.root, Path("/kept"))
+        self.assertEqual(args.persistent_root, Path("/persistent"))
+        self.assertNotIn("PASSWORD", commands("homelab-durable-windows-join"))
+
+    def test_durable_windows_join_targets_are_phony_and_require_names(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        for target in self.TARGETS:
+            self.assertIn(target, phony.group("body").split())
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for target in self.TARGETS:
+            with self.subTest(target=target):
+                result = subprocess.run(
+                    ["make", target, "WORKSTATION=", "PERSISTENT_DC="],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(
+                    "require WORKSTATION=<name> PERSISTENT_DC=<instance>",
+                    result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

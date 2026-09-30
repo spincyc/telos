@@ -416,6 +416,23 @@ A failure after the first-logon change landed says so; the retry is
 `FIRST_LOGON_DONE=1`, typing the new password as the current one. Verdict:
 **NOT RUN.**
 
+#### Stage `windows-join` (step 8)
+
+Both targets require `WORKSTATION` and `PERSISTENT_DC`. Windows keeps gate 5's
+computer name `TELOS-WIN-01`, recorded in the workstation's marker before the
+join so `destroy` lists it. Implemented by `homelab/vm/windows_durable_join.py`
+and `homelab/vm/windows_durable_prepare.py`, which compose gate 6 without
+editing it.
+
+| Target | Opt-in | Effect |
+|---|---|---|
+| `homelab-durable-windows-join-plan` | none | Read-only: binds the instance, checks the workstation's next stage is `windows-join`, that gate 6's roster and the durable roster name the same accounts and that the realm is the DNS domain upper-cased, builds the audited persistent argv, and prints the plan, the prompts in order and a free-space estimate. Names the bound instance only, never the realm, SID or an account name. With `windows-join` already folded and the publication still held, it plans only retiring the publication. |
+| `homelab-durable-windows-join` | `APPLY=1` | Under the workstation's lock, after proving the kept disk and firmware variables are still the ledger head, asks at the terminal, before any guest starts: the Controller's `local-rescue` console password; a new Windows local-administrator (`telosadmin`) password, twice (typeable US-ASCII, the directory's default policy, distinct from the other two); the daily administrator's CURRENT domain password (changed at first logon in `arch-join`). It prepares gate 6's attempt over an overlay of the kept disk (Windows boots by systemd-boot's five-second Windows default) with the control probe and the operator sign-in reference rendered for the bound realm in the private attempt only, records the machine account, boots `PERSISTENT_DC` in place on the per-run switch (no pause, no fault, gate 6's Controller-side authentication diagnostic disabled, clean console poweroff), runs gate 6's Ctrl+Alt+Del rotation to the typed password and gate 6's join unchanged with one `tj-` principal destroyed with proof (no other principal is staged), signs the daily administrator in after the join reboot, proves membership, the secure channel and its local Administrators right, and shuts Windows down from inside. On success the overlay and firmware variables are folded as `windows-join`, and only then is the custody `publication.iso` shredded; on failure the workstation and its publication are unchanged. Evidence stays under `homelab/var/factory/durable-windows-joins/`. |
+
+A retry after a join that reached the directory reuses `TELOS-WIN-01`'s machine
+account. A fold whose publication retirement failed is finished by repeating
+the target with `APPLY=1`. Verdict: **NOT RUN.**
+
 ## Required common inputs
 
 The runner should accept one run identifier and one release identifier rather

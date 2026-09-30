@@ -214,6 +214,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-durable-arch-install-plan homelab-durable-arch-install \
 	homelab-durable-arch-join-plan homelab-durable-arch-join \
+	homelab-durable-windows-join-plan homelab-durable-windows-join \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1148,6 +1149,25 @@ homelab-durable-arch-join:
 	$(DURABLE_ARCH_REQUIRE)
 	@$(DURABLE_ARCH_JOIN) $(if $(filter 1,$(APPLY)),--apply)
 
+# Stage windows-join of a kept workstation (TASK-28 step 8): PERSISTENT_DC booted
+# in place on the per-run switch, gate 6's Ctrl+Alt+Del rotation of the Windows
+# local administrator to a password typed at this terminal, then gate 6's join
+# with one tj- principal destroyed with proof and the daily administrator's
+# domain sign-in with its CURRENT password. A success is folded into WORKSTATION
+# and only then is its custody publication shredded; a failure leaves both, so
+# the stage can be retried. Every password is typed before anything starts.
+# The plan target never mutates; the other is a dry run without APPLY=1.
+DURABLE_WINDOWS_REQUIRE = @if [ -z '$(WORKSTATION)' ] || [ -z '$(PERSISTENT_DC)' ]; then echo 'require WORKSTATION=<name> PERSISTENT_DC=<instance>' >&2; exit 2; fi
+DURABLE_WINDOWS_JOIN = $(PYTHON) homelab/vm/windows_durable_join.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
+
+homelab-durable-windows-join-plan:
+	$(DURABLE_WINDOWS_REQUIRE)
+	@$(DURABLE_WINDOWS_JOIN)
+
+homelab-durable-windows-join:
+	$(DURABLE_WINDOWS_REQUIRE)
+	@$(DURABLE_WINDOWS_JOIN) $(if $(filter 1,$(APPLY)),--apply)
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1608,6 +1628,9 @@ help:
 		'make homelab-durable-arch-join-plan WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name>' \
 		'make homelab-durable-arch-join APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> [FIRST_LOGON_DONE=1]' \
 		'                         Join its Arch to the persistent Controller; asks for passwords' \
+		'make homelab-durable-windows-join-plan WORKSTATION=<name> PERSISTENT_DC=<name>' \
+		'make homelab-durable-windows-join APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name>' \
+		'                         Join its Windows, fold it, then retire the publication' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \
