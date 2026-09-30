@@ -1,8 +1,7 @@
 # Durable workstation flow (TASK-28)
 
-Status: approved design; steps 1-8 implemented and unit-tested 2026-09-30,
-step 9 in progress. Nothing here has run live; each step says when it first
-needs a live run.
+Status: approved design; all nine steps implemented and unit-tested
+2026-09-30. Live: step 3's probe passed; the other live runs are pending.
 
 Every workstation runner today wraps the Controller in `DisposableBootDisk`,
 and every run provisions a brand-new domain, so a minted workstation dies with
@@ -68,7 +67,7 @@ such a value in `rehearsal`'s marker); it is repaired only on request.
 | 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 | `752879e`, NOT RUN |
 | 7 | Durable Arch join: expired-password exchange, pinned-UID proof, join sealed | #3, owner | `9e69258`, NOT RUN |
 | 8 | Durable Windows join: owner-typed local-administrator rotation, gate 6's join, fold before destroying the publication | #4, owner | `c149566`, NOT RUN |
-| 9 | `homelab-durable-workstation-verify`: both systems across a Controller relaunch | #5, owner | in progress |
+| 9 | `homelab-durable-workstation-verify`: both systems across a Controller relaunch | #5, owner | `5f5b322`, NOT RUN |
 
 The disposable gates 5-8 must not change: `windows_install_run.py`,
 `windows_identity_run.py` and `arch_identity_run.py` are subclassed in new
