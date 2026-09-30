@@ -401,7 +401,10 @@ without editing it.
 | `homelab-durable-arch-install` | `APPLY=1`, `FACTORY_DURATION` of at least 600 (use 1800) | Under the workstation's lock: prepares gate 7's bundle with `--durable-identity` over an overlay of the kept disk, boots the disposable canonical Controller for PXE and the signed workstation repository only (no directory, no join account, no join media, no persistent Controller), and drives gate 7's installer, which prints `TELOS ARCH JOIN DEFERRED` where the join stood; a transcript carrying either install-time join marker is refused. On success the overlay and the installer-authored firmware variables are folded into the workstation as `arch-install`; on failure the overlay is removed and the workstation is unchanged. Evidence stays under `homelab/var/factory/durable-arch-installs/`. |
 
 The installed disk's sealed join unit waits about 120 seconds for join media
-at every boot until stage `arch-join` joins it. Verdict: **NOT RUN.**
+at every boot until stage `arch-join` joins it. Verdict: **PASS 2026-09-30** on `rehearsal-ws1`
+(`durable-arch-installs/run-20260930T175938Z-ec176009c2f0`): Windows preserved,
+join deferred, one PXE boot, folded; adopt had run first on the gate-5 bundle
+`run-20260930T164848Z-d51d2c1e14cd`.
 
 #### Stage `arch-join` (step 7)
 

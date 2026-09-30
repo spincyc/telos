@@ -1,7 +1,8 @@
 # Durable workstation flow (TASK-28)
 
 Status: approved design; all nine steps implemented and unit-tested
-2026-09-30. Live: step 3's probe passed; the other live runs are pending.
+2026-09-30. Live: step 3's probe, step 4's adopt and step 6's install passed;
+the owner-run joins (#3, #4) and keep-verify (#5) are pending.
 
 Every workstation runner today wraps the Controller in `DisposableBootDisk`,
 and every run provisions a brand-new domain, so a minted workstation dies with
@@ -64,7 +65,7 @@ such a value in `rehearsal`'s marker); it is repaired only on request.
 | 3 | `make homelab-factory-persistent-probe PERSISTENT_DC=<name>`: log in, prove AD, read realm and SID, resolve SRV records, stage and destroy a join principal, clean poweroff | #1, owner, about 10 min; retires the biggest risk | `a4739c8`; **PASS 2026-09-30** (run `20260930T174246Z-3085400-ef46502e`, 20 checks) |
 | 4 | `homelab/vm/workstation_instance.py` and `homelab-durable-workstation-{plan,status,adopt,destroy,reconcile}` | none | `a46eaee`, `6103ec9`, `a54e7c9` |
 | 5 | Durable Arch render: skip the install-time join; the one-use join unit seals itself after `testjoin`; synthetic output stays byte-identical | none | `195ad20` |
-| 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 | `752879e`, NOT RUN |
+| 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 | `752879e`; **PASS 2026-09-30**: #0 gate-5 `run-20260930T164848Z-d51d2c1e14cd` (69 min, observed), adopted as `rehearsal-ws1`; #2 `durable-arch-installs/run-20260930T175938Z-ec176009c2f0` (2.5 min: Windows preserved, join deferred, one PXE boot, folded) |
 | 7 | Durable Arch join: expired-password exchange, pinned-UID proof, join sealed | #3, owner | `9e69258`, NOT RUN |
 | 8 | Durable Windows join: owner-typed local-administrator rotation, gate 6's join, fold before destroying the publication | #4, owner | `c149566`, NOT RUN |
 | 9 | `homelab-durable-workstation-verify`: both systems across a Controller relaunch | #5, owner | `5f5b322`, NOT RUN |
