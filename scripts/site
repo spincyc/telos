@@ -222,6 +222,12 @@ INSTANCE_SCANNED_SUFFIXES = {".md", ".tex", ".json"}
 # tree.
 INSTANCE_CODE_GLOBS = (
     "homelab/*.md",
+    # The factory guides are tracked and world-readable though not wired into
+    # the site, so they get the rules the sibling homelab/*.md narratives get:
+    # the synthetic lab address they document is sanctioned, anything else is
+    # a leak. Wiring them into the site would put them under the prose pass,
+    # which forbids every address; that is the owner decision still open.
+    "homelab/docs/**/*",
     "homelab/ansible/**/*",
     "homelab/archiso/**/*",
     "homelab/bin/**/*",
@@ -243,8 +249,6 @@ INSTANCE_CODE_GLOBS = (
 #     "10.1.0.0/16" prompt example are address literals the CIDR rule would
 #     flag, and widening the sanction to /16 to permit a comment would undo
 #     the prefix-length check that caught a real leak.
-#   homelab/docs/** -- awaiting an owner decision on what those guides may
-#     carry, since they are tracked but not wired into the site.
 INSTANCE_CODE_SUFFIXES = {".j2", ".json", ".md", ".ps1", ".py", ".yaml", ".yml"}
 INSTANCE_CODE_PATTERNS = RFC1918_PATTERNS + (
     (re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b"), "MAC address"),
