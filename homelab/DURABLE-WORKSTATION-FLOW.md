@@ -126,3 +126,16 @@ checks, break-glass included, judge by it). A relaxed policy applies to every
 account in that domain, so the keeper's policy is a separate decision.
 Still open with the owner: backups for the keeper directory and kept disks,
 and join-principal privilege for the keeper.
+
+## Live record
+
+2026-09-30, unattended under agent custody (TASK-40) on throwaway instance
+`rehearsal-auto` and kept workstation `rehearsal-auto-ws1`: create (generated
+console credential), converge, accounts, probe, adopt (gate-5
+`run-20260930T192147Z-d12679ce1b5e`), durable Arch install, durable Arch join
+(`run-20260930T203553Z-4184392-be2f79e8`: first-logon change landed, sealed,
+online, pinned uids) and durable Windows join
+(`attempt-20260930T203917Z-c67065dfe5be`: folded, publication retired) all
+PASSED. Keep-verify (step 9) was not yet run. The owner-custody `rehearsal`
+path stopped at arch-join on a mistyped temporary password; its workstation
+`rehearsal-ws1` remains at stage arch-install.
