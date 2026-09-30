@@ -1,6 +1,6 @@
 # Offline local factory lifecycle
 
-Document version: `20260727.001`
+Document version: `20260930.001`
 
 Status: implementation contract  
 Recorded: 2026-07-27
@@ -139,7 +139,15 @@ Pass:
 - no forbidden listener, forwarding flag, route, or DHCP response exists; and
 - stopping storage or the simulated gateway does not damage AD.
 
-### Gate 3 — replacement Controller mint
+### Gate 3 — replacement Controller mint (dropped)
+
+**Dropped 2026-09-30 by
+[ADR 0079](decisions/0079-drop-the-controller-pxe-mint.md).** No run grades
+or requires this gate. The first Controller is installed from ISO with
+`make homelab-bootstrap-vm-install` and converged by Gate 2; same-realm
+recovery remains Gate 7. The number 3 stays reserved so later gates keep
+theirs. Superseded 2026-09-30, kept so it is not re-derived: the rest of this
+section is the original gate text, which was never implemented.
 
 PXE-boot a blank candidate Controller from the bootstrap Controller and install
 it to a serial-authorized disposable disk using only local artifacts. Do not
@@ -318,7 +326,7 @@ commands.
 | `homelab-factory-media-verify` | Writes the immutable-input receipt |
 | `homelab-factory-releases` | Builds and verifies all local PXE releases |
 | `homelab-factory-plan` | Prints topology, disks, releases, gates, and QEMU commands |
-| `homelab-factory-controller` | Runs Gates 2 and 3 |
+| `homelab-factory-controller` | Runs Gate 2 (Gate 3 dropped by ADR 0079) |
 | `homelab-factory-windows` | Runs Windows-first Gate 4 |
 | `homelab-factory-arch` | Runs Arch-second Gate 5 on the same disk |
 | `homelab-factory-mobility` | Runs dependency-failure Gate 6 |
@@ -384,7 +392,9 @@ text evidence is insufficient, partition and UEFI state, AD/identity results,
 update-policy results, failure-injection results, and cleanup hashes.
 
 One command must summarize every gate as `PASS`, `FAIL`, or `NOT RUN`. A run is
-promotable only when all seven gates pass. Local acceptance authorizes only the
+promotable only when Gates 1, 2, and 4 through 7 pass. Gate 3 was dropped on
+2026-09-30 by ADR 0079 and is neither graded nor required; until then this
+rule read "all seven gates". Local acceptance authorizes only the
 later read-only UniFi preflight; it does not authorize a physical attachment
 or UniFi mutation.
 
@@ -403,7 +413,8 @@ gaps remain before the contract can pass:
 3. make Controller convergence fully local and run it inside the disposable
    guest, including a local package repository;
 4. deploy and exercise actual PXE/HTTP/install-share services in that guest;
-5. automate blank candidate-Controller PXE install and cold-boot acceptance;
+5. ~~automate blank candidate-Controller PXE install and cold-boot
+   acceptance;~~ dropped 2026-09-30 with Gate 3 by ADR 0079, not a gap;
 6. extend Windows staging beyond WinPE: include the locally served install
    image without loading it through `wimboot`; customize WinPE image index 2;
    add the UEFI iPXE first stage, serial-gated disk/setup scripts, private
