@@ -67,6 +67,9 @@ from .bootstrap_dc import (  # noqa: E402
     _persistent_running, _typed_secret, ovmf_pair, persistent_switch_command)
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .credential_custody import (  # noqa: E402
+    AGENT, WINDOWS_LOCAL_ADMINISTRATOR, AgentCredentialSource, CustodyError,
+    credential_source, instance_custody)
 from .directory_password_policy import (  # noqa: E402
     SAMBA_DEFAULT, DirectoryPasswordPolicy)
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
@@ -153,23 +156,30 @@ class OwnerSecrets:
     """The three values the owner types, in memory only, never in ``repr``."""
 
     def __init__(self, console: bytes, local_administrator: str,
-                 daily_administrator: str) -> None:
+                 daily_administrator: str, *,
+                 extra: tuple[str, ...] = ()) -> None:
         self.console = console
         self.local_administrator = local_administrator
         self.daily_administrator = daily_administrator
+        #: Agent custody only (TASK-40): the stores' other values, scanned
+        #: for in the evidence too; empty for the owner.
+        self.extra = tuple(extra)
 
     def __repr__(self) -> str:
         return "OwnerSecrets(<private>)"
 
     def values(self) -> tuple[str, ...]:
-        return tuple(value for value in (
+        own = tuple(value for value in (
             self.console.decode("utf-8", errors="replace"),
             self.local_administrator, self.daily_administrator) if value)
+        return own + tuple(value for value in self.extra
+                           if value and value not in own)
 
     def clear(self) -> None:
         self.console = b""
         self.local_administrator = ""
         self.daily_administrator = ""
+        self.extra = ()
 
 
 def typeable_problem(value: str) -> str | None:
@@ -256,6 +266,36 @@ def collect_owner_secrets(
             "administrator's and the Controller console's (break-glass "
             "custody, owner decision 2026-09-30). Nothing was started")
     return OwnerSecrets(console, local, daily)
+
+
+def agent_secrets(
+    source: AgentCredentialSource, *,
+    policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
+) -> OwnerSecrets:
+    """The run's three values from custody (TASK-40); nothing is typed.
+
+    The daily administrator's CURRENT password must be proven in custody
+    (``arch-join`` promotes it); the new local-administrator password is
+    generated, judged by ``local_administrator_password_problem`` as a typed
+    one is, and stored as pending in the workstation's custody store before
+    any guest starts.  Current only once ``windows-join`` folds.
+    """
+    console = source.console()
+    try:
+        daily = source.live_current("daily_administrator").decode("utf-8")
+    except CustodyError as error:
+        raise DurableWindowsJoinError(str(error)) from error
+    problem = typeable_problem(daily)
+    if problem is not None:
+        raise DurableWindowsJoinError(
+            f"the daily administrator's password {problem}; gate 6 types it "
+            "at the Windows sign-in. Nothing was started")
+    local = source.begin_break_glass(
+        WINDOWS_LOCAL_ADMINISTRATOR,
+        checks=(lambda value: local_administrator_password_problem(
+            value, policy),),
+        avoid=(console, daily))
+    return OwnerSecrets(console, local, daily, extra=source.scan_values())
 
 
 # -- gate 6's credential owner, for a durable directory ------------------------------
@@ -1079,6 +1119,7 @@ def _discard_overlay(overlay: Path) -> bool:
 def print_plan(
     args: argparse.Namespace, workstation: WorkstationInstance, marker: dict,
     binding: DurableBinding, space: list[dict], preview: list[str],
+    *, agent: bool = False,
 ) -> None:
     stages = ", ".join(entry["stage"] for entry in marker["ledger"])
     print("Boundary: loopback-only switch; no host or UniFi changes")
@@ -1111,11 +1152,22 @@ def print_plan(
     print(f"On failure: the overlay is removed; {workstation.state.name} and "
           f"its publication are unchanged, so the stage can be retried "
           f"without a reinstall; evidence stays under {args.run_root}")
-    print(f"Prompts (--apply only, in this order, before any guest starts): "
-          f"1) the {CONSOLE_ACCOUNT} console password of {binding.instance}; "
-          f"2) a new Windows local-administrator password, twice (checked "
-          f"here first; never stored); 3) the daily administrator's current "
-          f"domain password")
+    if agent:
+        print(f"Credentials: agent custody (throwaway instance "
+              f"{binding.instance}); nothing is asked at a terminal. The "
+              f"{CONSOLE_ACCOUNT} console password and the daily "
+              "administrator's proven current password are read from the "
+              "instance's custody store; the new Windows local-administrator "
+              f"password is generated and stored as pending in "
+              f"{workstation.state.name}'s custody store before any guest "
+              "starts, and is current once this stage folds; every stored "
+              "value is scanned for in the evidence")
+    else:
+        print(f"Prompts (--apply only, in this order, before any guest "
+              f"starts): 1) the {CONSOLE_ACCOUNT} console password of "
+              f"{binding.instance}; 2) a new Windows local-administrator "
+              f"password, twice (checked here first; never stored); 3) the "
+              f"daily administrator's current domain password")
     policy = binding.password_policy
     print(f"Password policy: the new local-administrator password must be "
           f"typeable and meet {policy.source} ({policy.requirement()})")
@@ -1163,7 +1215,9 @@ def run(args: argparse.Namespace, *,
     target = persistent_target(binding)
     preview = preview_command(target, args.controller_state)
     space = space_needs(workstation, args.run_root)
-    print_plan(args, workstation, marker, binding, space, preview)
+    agent = instance_custody(target) == AGENT
+    print_plan(args, workstation, marker, binding, space, preview,
+               agent=agent)
     if not args.apply:
         print("dry run; repeat with --apply")
         return 0
@@ -1171,6 +1225,7 @@ def run(args: argparse.Namespace, *,
     if problems:
         raise DurableWindowsJoinError("; ".join(problems))
     secrets: OwnerSecrets | None = None
+    custody: AgentCredentialSource | None = None
     with SignalGuard(), workstation:
         try:
             # Re-read under the lock: another run may have folded meanwhile.
@@ -1181,9 +1236,17 @@ def run(args: argparse.Namespace, *,
             # Read-only refusals first, so a typed credential is never spent
             # on a disk that cannot be joined.
             source = inspect_workstation(workstation, marker)
-            secrets = collect_owner_secrets(
-                binding.instance, daily_name, prompt=prompt,
-                policy=binding.password_policy)
+            credentials = credential_source(
+                target, prompt=prompt,
+                workstation=(workstation.state, workstation.state.name))
+            custody = credentials if credentials.agent else None
+            if custody is not None:
+                secrets = agent_secrets(
+                    custody, policy=binding.password_policy)
+            else:
+                secrets = collect_owner_secrets(
+                    binding.instance, daily_name, prompt=credentials.ask,
+                    policy=binding.password_policy)
             attempt = prepare_attempt(
                 workstation, marker, binding,
                 controller_state=args.controller_state,
@@ -1212,6 +1275,16 @@ def run(args: argparse.Namespace, *,
         finally:
             if secrets is not None:
                 secrets.clear()
+        if custody is not None:
+            # Folded: the generated local-administrator password is the
+            # disk's now.
+            try:
+                custody.promote_break_glass(WINDOWS_LOCAL_ADMINISTRATOR)
+            except (CustodyError, OSError, ValueError) as error:
+                print(f"error: stage {STAGE} is folded but its custody store "
+                      f"could not record the new local-administrator "
+                      f"password as current ({type(error).__name__}); it is "
+                      "still held there as pending", file=sys.stderr)
         # Only now, with the join folded, is the one-use credential shredded.
         try:
             workstation.retire_publication()

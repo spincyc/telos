@@ -536,6 +536,60 @@ class FactoryMakeTargetTests(unittest.TestCase):
                     self.assertEqual(parsed.apply, applied)
                     self.assertEqual(parsed.repair_sid, repair == "1")
 
+    def test_credential_custody_is_chosen_only_where_an_instance_is_created(self):
+        """TASK-40: CUSTODY/THROWAWAY reach persistent-up (and its plan) only."""
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        from homelab.vm import bootstrap_dc
+
+        for name in ("CUSTODY", "THROWAWAY"):
+            self.assertRegex(MAKEFILE, rf"(?m)^{name} \?=\s*$")
+        variables = {"PERSISTENT_DC": "lab-dc1", "CUSTODY": "agent",
+                     "THROWAWAY": "1"}
+        for target in ("homelab-factory-persistent-plan",
+                       "homelab-factory-persistent-up"):
+            for apply in ("", "1"):
+                with self.subTest(target=target, APPLY=apply):
+                    argvs = emitted(target, APPLY=apply, **variables)
+                    self.assertTrue(argvs)
+                    for argv in argvs:
+                        parsed = bootstrap_dc.parser().parse_args(argv)
+                        self.assertEqual("agent", parsed.custody)
+                        self.assertIs(True, parsed.throwaway)
+                    plain = emitted(target, APPLY=apply,
+                                    PERSISTENT_DC="lab-dc1")
+                    for argv in plain:
+                        parsed = bootstrap_dc.parser().parse_args(argv)
+                        self.assertIsNone(parsed.custody)
+                        self.assertIs(False, parsed.throwaway)
+        # No other target takes them: every later stage reads custody from
+        # the instance marker, never from a Make variable.
+        for target in re.findall(r"(?m)^(homelab-[a-z0-9-]+):", MAKEFILE):
+            if target in ("homelab-factory-persistent-plan",
+                          "homelab-factory-persistent-up"):
+                continue
+            with self.subTest(target=target):
+                only = commands(target)
+                self.assertNotIn("$(CUSTODY)", only)
+                self.assertNotIn("$(THROWAWAY)", only)
+
+    def test_throwaway_is_one_or_unset(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        with tempfile.TemporaryDirectory() as temporary:
+            for target in ("homelab-factory-persistent-plan",
+                           "homelab-factory-persistent-up"):
+                with self.subTest(target=target):
+                    result = subprocess.run(
+                        ["make", target, "PERSISTENT_DC=lab-dc1",
+                         "CUSTODY=agent", "THROWAWAY=yes",
+                         f"PERSISTENT_DC_ROOT={temporary}/persistent",
+                         f"FACTORY_CONTROLLER_STATE={temporary}/canonical"],
+                        cwd=ROOT, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("THROWAWAY must be 1 or unset",
+                                  result.stderr)
+
     def test_persistent_probe_refuses_without_a_named_instance(self):
         if not shutil.which("make"):
             self.skipTest("make is not installed")

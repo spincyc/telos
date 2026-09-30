@@ -95,6 +95,9 @@ from .arch_identity_run import (  # noqa: E402
 from .bootstrap_dc import (  # noqa: E402
     CONSOLE_ACCOUNT, DEFAULT_PERSISTENT_ROOT, DEFAULT_STATE, SOCKET_MAC,
     _typed_secret, persistent_switch_command)
+from .credential_custody import (  # noqa: E402
+    AGENT, AgentCredentialSource, CustodyError, credential_source,
+    instance_custody)
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
 from .factory_runner import (  # noqa: E402
     GATEWAY_MAC, capture_switch_evidence_cursor, gateway_command,
@@ -371,15 +374,21 @@ def menu_default_entry(raw: bytes | str) -> str | None:
 class VerifySecrets:
     """The two values the owner types, in memory only, never in ``repr``."""
 
-    def __init__(self, console: bytes, daily: bytes) -> None:
+    def __init__(self, console: bytes, daily: bytes, *,
+                 extra: tuple[bytes, ...] = ()) -> None:
         self.console = console
         self.daily = daily
+        #: Agent custody only (TASK-40): the stores' other values, scanned
+        #: for in the evidence too; empty for the owner.
+        self.extra = tuple(extra)
 
     def __repr__(self) -> str:
         return "VerifySecrets(<withheld>)"
 
     def values(self) -> list[bytes]:
-        return [value for value in (self.console, self.daily) if value]
+        own = [value for value in (self.console, self.daily) if value]
+        return own + [value for value in self.extra
+                      if value and value not in own]
 
     def texts(self) -> tuple[str, ...]:
         return tuple(value.decode("utf-8", "replace")
@@ -393,6 +402,7 @@ class VerifySecrets:
         # object holds is dropped, which is the most it can do.
         self.console = b""
         self.daily = b""
+        self.extra = ()
 
 
 def collect_verify_secrets(
@@ -418,6 +428,25 @@ def collect_verify_secrets(
             "password must differ; the two you typed are identical. Nothing "
             "was started")
     return VerifySecrets(console, daily)
+
+
+def agent_verify_secrets(source: AgentCredentialSource) -> VerifySecrets:
+    """The two values from custody (TASK-40): console, proven current daily."""
+    console = source.console()
+    try:
+        daily = source.live_current("daily_administrator")
+    except CustodyError as error:
+        raise KeepVerifyError(str(error)) from error
+    try:
+        problem = typeable_problem(daily.decode("utf-8"))
+    except UnicodeDecodeError:
+        problem = "is not UTF-8"
+    if problem is not None:
+        raise KeepVerifyError(
+            f"the daily administrator's password {problem}; gate 6 types it "
+            f"at the Windows sign-in. Nothing was started")
+    return VerifySecrets(console, daily, extra=tuple(
+        value.encode("utf-8") for value in source.scan_values()))
 
 
 # -- the Arch phase -----------------------------------------------------------------
@@ -994,7 +1023,8 @@ class KeepVerify:
         boundary = self._arch_boundary_factory(
             bundle, binding=self.binding, target=self.target,
             credentials=OwnerCredentials(
-                self.secrets.console, self.secrets.daily, None, b""),
+                self.secrets.console, self.secrets.daily, None, b"",
+                extra=tuple(getattr(self.secrets, "extra", ()))),
             accounts=self.accounts, hostname=self.hostname, fabric=fabric,
             canonical_state=self.controller_state, duration=self.duration)
         self.arch_boundary = boundary
@@ -1275,7 +1305,7 @@ class KeepVerify:
 def print_plan(
     args: argparse.Namespace, workstation: WorkstationInstance, marker: dict,
     binding: DurableBinding, accounts: Sequence[Mapping], firmware: dict,
-    space: list[dict], preview: list[str],
+    space: list[dict], preview: list[str], *, agent: bool = False,
 ) -> None:
     name = workstation.state.name
     stages = ", ".join(entry["stage"] for entry in marker["ledger"])
@@ -1327,13 +1357,21 @@ def print_plan(
           + ("yes" if firmware.get("windows_present") else "no")
           + "; systemd-boot default override: "
           + (str(firmware.get("loader_entry_default") or "none")))
-    print("Prompts, in order, all at this terminal before any process "
-          "starts; none is ever written to a file, argv, the environment, "
-          "the evidence or a transcript:")
-    print(f"  1. the {CONSOLE_ACCOUNT} console password of persistent "
-          f"instance {binding.instance}")
-    print("  2. the daily administrator's CURRENT domain password (the one "
-          "stage arch-join's first logon set)")
+    if agent:
+        print(f"Credentials: agent custody (throwaway instance "
+              f"{binding.instance}); nothing is asked at a terminal. The "
+              f"{CONSOLE_ACCOUNT} console password and the daily "
+              "administrator's proven current password are read from the "
+              "instance's custody store, and every stored value is scanned "
+              "for in the evidence")
+    else:
+        print("Prompts, in order, all at this terminal before any process "
+              "starts; none is ever written to a file, argv, the environment, "
+              "the evidence or a transcript:")
+        print(f"  1. the {CONSOLE_ACCOUNT} console password of persistent "
+              f"instance {binding.instance}")
+        print("  2. the daily administrator's CURRENT domain password (the "
+              "one stage arch-join's first logon set)")
     print(f"Read-only toward {name}: its disk, firmware variables and marker "
           f"are hashed before and after and must be unchanged, and its lock "
           f"is held throughout. No ledger entry is recorded "
@@ -1383,8 +1421,9 @@ def run(
         target, 65535, canonical_state=args.controller_state)
     firmware = boot_order_facts(workstation.vars)
     space = space_needs(args.run_root)
+    agent = instance_custody(target) == AGENT
     print_plan(args, workstation, marker, binding, accounts, firmware, space,
-               preview)
+               preview, agent=agent)
     if not args.apply:
         print("dry run; repeat with --apply")
         return 0
@@ -1401,8 +1440,14 @@ def run(
             raise KeepVerifyError(
                 BOOT_ORDER_FAILURE.format(linux=NVRAM_LINUX_LABEL))
         source = inspect_kept_workstation(workstation, marker)
-        verify_secrets = collect_verify_secrets(
-            binding.instance, daily_name, prompt=prompt)
+        credentials = credential_source(
+            target, prompt=prompt,
+            workstation=(workstation.state, workstation.state.name))
+        if credentials.agent:
+            verify_secrets = agent_verify_secrets(credentials)
+        else:
+            verify_secrets = collect_verify_secrets(
+                binding.instance, daily_name, prompt=credentials.ask)
         try:
             root = Path(args.run_root).absolute()
             private_directory(root / workstation.state.name)

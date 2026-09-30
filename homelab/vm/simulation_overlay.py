@@ -29,13 +29,16 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 try:
+    from . import credential_custody as _custody
     from .controller_image import ControllerImageError
     from .controller_image import assert_installed as _assert_installed
     from .directory_password_policy import (
         DirectoryPasswordPolicyError, validated_record as _validated_policy)
 except ImportError:  # Direct execution from homelab/vm.
+    import credential_custody as _custody
     from controller_image import ControllerImageError
     from controller_image import assert_installed as _assert_installed
     from directory_password_policy import (
@@ -655,6 +658,15 @@ class PersistentControllerInstance:
     normal loader entry and is provisioned over the console credential the
     operator already holds. The convergence record below is what makes that
     provisioning legible host-side; see ``bootstrap_dc.persistent_converge``.
+
+    **The one exception: agent custody** (TASK-40, owner decision
+    2026-09-30). A THROWAWAY instance created with ``CUSTODY=agent`` has its
+    ``local-rescue`` password set by the harness, once, on the STAGED copy
+    before the instance exists under its own name: the disposable path's
+    one-run init-shell entry is selected on that copy's ESP, ``passwd`` runs,
+    the entry is removed and its absence proved (``agent_console_init``).
+    The value lives in the instance's custody store for its life and is
+    shredded by ``destroy``. An owner-custody instance never takes that path.
     """
 
     def __init__(
@@ -727,7 +739,21 @@ class PersistentControllerInstance:
             raise PersistentInstanceInvalid(
                 f"persistent instance marker names {name}, not "
                 f"{self.instance}: {self.marker}")
+        try:
+            _custody.validate_marker(raw)
+        except _custody.CustodyError as error:
+            raise PersistentInstanceInvalid(
+                f"{error}: {self.marker}") from error
         return raw
+
+    # -- credential custody (TASK-40) --------------------------------------
+    def credential_custody(self) -> str:
+        """``owner`` (the default, and every marker that predates custody) or
+        ``agent`` -- recorded once, at creation, and never changed."""
+        return _custody.marker_custody(self.read_marker())
+
+    def throwaway(self) -> bool:
+        return _custody.marker_throwaway(self.read_marker())
 
     def exists(self) -> bool:
         return all(
@@ -1035,7 +1061,11 @@ class PersistentControllerInstance:
             raise
 
     # -- creation --------------------------------------------------------
-    def create(self, canonical_disk: Path, canonical_vars: Path) -> dict:
+    def create(
+        self, canonical_disk: Path, canonical_vars: Path, *,
+        custody: str = _custody.OWNER, throwaway: bool = False,
+        initialize: Callable[..., dict] | None = None,
+    ) -> dict:
         """Seed a new instance from the canonical image without mutating it.
 
         The copy is taken through ``ControllerOverlay``, so creation runs under
@@ -1043,11 +1073,29 @@ class PersistentControllerInstance:
         descriptors, and re-hashed afterwards. Creation is the only moment a
         persistent instance touches the canonical at all, and it may not change
         it — the relaxed fence applies solely to the instance's own disk.
+
+        *custody* and *throwaway* (TASK-40) are recorded here and nowhere
+        else.  An owner-custody instance's marker is exactly what it always
+        was unless *throwaway* is given.  Agent custody needs *initialize*:
+        it is called with the STAGED copy (``disk``, ``vars``, ``staging``)
+        after the canonical's fence is released and before the instance
+        exists under its own name, sets the generated console credential on
+        that copy and returns the record the marker keeps.  A failure there
+        removes the staging directory, so no half-initialized instance and no
+        stray store can remain.
         """
         if not self.valid_instance_name(self.instance):
             raise PersistentInstanceInvalid(
                 "persistent instance name must be 1-32 lowercase letters, "
                 "digits, or hyphens and must not start or end with a hyphen")
+        try:
+            custody_fields = _custody.creation_fields(custody, throwaway)
+        except _custody.CustodyError as error:
+            raise PersistentInstanceInvalid(str(error)) from error
+        if (custody == _custody.AGENT) != (initialize is not None):
+            raise PersistentInstanceInvalid(
+                "agent credential custody is initialized at creation, and "
+                "only agent custody is")
         canonical_disk = Path(canonical_disk).absolute()
         canonical_vars = Path(canonical_vars).absolute()
         self.assert_separate(canonical_disk)
@@ -1121,6 +1169,15 @@ class PersistentControllerInstance:
                     "strict fence"
                 ),
             }
+            if custody != _custody.OWNER or throwaway:
+                marker.update(custody_fields)
+            if initialize is not None:
+                (staging / PERSISTENT_DISK_NAME).chmod(0o600)
+                (staging / PERSISTENT_VARS_NAME).chmod(0o600)
+                marker["custody_initialized"] = initialize(
+                    disk=staging / PERSISTENT_DISK_NAME,
+                    vars_file=staging / PERSISTENT_VARS_NAME,
+                    staging=staging)
             (staging / PERSISTENT_MARKER_NAME).write_text(
                 json.dumps(marker, indent=2) + "\n", encoding="utf-8")
             for name in (
@@ -1133,6 +1190,12 @@ class PersistentControllerInstance:
             # would treat as a directory server.
             staging.rename(self.state)
         except BaseException:
+            # A custody store written into the staging copy is shredded, not
+            # just unlinked with the rest.
+            with contextlib.suppress(Exception):
+                _custody.CustodyStore(
+                    staging, scope=_custody.SCOPE_INSTANCE,
+                    name=str(self.instance)).shred()
             shutil.rmtree(staging, ignore_errors=True)
             raise
         return marker
@@ -1246,7 +1309,7 @@ class PersistentControllerInstance:
             keep = {
                 PERSISTENT_DISK_NAME, PERSISTENT_VARS_NAME,
                 PERSISTENT_MARKER_NAME, PERSISTENT_MARKER_STAGING_NAME,
-                LOCK_NAME,
+                LOCK_NAME, _custody.CUSTODY_DIR_NAME,
             }
             unexpected = sorted(
                 entry.name for entry in self.state.iterdir()
@@ -1255,6 +1318,15 @@ class PersistentControllerInstance:
                 raise PersistentInstanceInvalid(
                     "refusing: persistent state holds unexpected files: "
                     + ", ".join(unexpected))
+            # The credential store goes first (TASK-40): an interruption at
+            # any later point leaves a disk without its credentials, never
+            # credentials without the instance's marker.
+            try:
+                _custody.CustodyStore(
+                    self.state, scope=_custody.SCOPE_INSTANCE,
+                    name=marker["instance"]).shred()
+            except _custody.CustodyError as error:
+                raise PersistentInstanceInvalid(str(error)) from error
             for name in (
                 PERSISTENT_DISK_NAME, PERSISTENT_VARS_NAME,
                 PERSISTENT_MARKER_NAME, PERSISTENT_MARKER_STAGING_NAME,

@@ -715,6 +715,92 @@ def _persistent_running(target: PersistentControllerInstance) -> bool | None:
     return False
 
 
+def _credential_custody():
+    """``credential_custody``, in both of this file's run modes."""
+    try:
+        from . import credential_custody
+    except ImportError:
+        import credential_custody
+    return credential_custody
+
+
+def _persistent_custody_choice(
+    target: PersistentControllerInstance, existing: bool,
+    custody: str | None, throwaway: bool,
+) -> tuple[str, bool]:
+    """The custody a bring-up asked for, held to what creation recorded."""
+    module = _credential_custody()
+    if not existing:
+        return module.requested_custody(custody, throwaway)
+    recorded = target.credential_custody()
+    recorded_throwaway = target.throwaway()
+    if custody and custody != recorded:
+        raise ValueError(
+            f"{target.instance} was created with {recorded} credential "
+            f"custody, and custody is fixed at creation: it is never changed "
+            f"to {custody}. Destroy and recreate the instance for another")
+    if throwaway and not recorded_throwaway:
+        raise ValueError(
+            f"{target.instance} was not created as a throwaway instance, and "
+            "that too is fixed at creation")
+    return recorded, recorded_throwaway
+
+
+def _custody_plan_line(
+    choice: tuple[str, bool], *, creating: bool, state: Path,
+) -> str:
+    module = _credential_custody()
+    custody, throwaway = choice
+    kind = "throwaway" if throwaway else "kept"
+    if custody == module.OWNER:
+        return (f"owner ({kind}); every credential is typed at the owner's "
+                "terminal and never stored")
+    when = "generated now" if creating else "generated at creation"
+    return (f"agent ({kind}; recorded at creation, never changed). The "
+            f"{CONSOLE_ACCOUNT} console password is {when} by the harness "
+            "and set once on the staged copy through a one-run init shell "
+            "that is removed and proved absent; it and every later "
+            f"credential live in {state / module.CUSTODY_DIR_NAME}/"
+            f"{module.STORE_NAME} (0600) until destroy shreds them. Nothing "
+            "is asked at a terminal")
+
+
+def _agent_console_init():
+    """``agent_console_init``, package-relative, in both run modes."""
+    try:
+        from . import agent_console_init
+    except ImportError:
+        if str(REPOSITORY) not in sys.path:
+            sys.path.insert(0, str(REPOSITORY))
+        from homelab.vm import agent_console_init
+    return agent_console_init
+
+
+def _create_agent_custody_instance(
+    target: PersistentControllerInstance, canonical: dict[str, Path],
+    instance: str,
+) -> int:
+    """Seed a throwaway instance and set its generated console credential."""
+    module = _credential_custody()
+    init = _agent_console_init()
+    try:
+        marker = target.create(
+            canonical["disk"], canonical["vars"], custody=module.AGENT,
+            throwaway=True, initialize=init.initializer(
+                instance, forbidden=(canonical["disk"], canonical["vars"])))
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {instance} was not created; nothing of it remains",
+              file=sys.stderr)
+        return 2
+    print(f"seeded {instance} from {marker['seeded_from']['disk_sha256']}")
+    print(f"{instance}: agent credential custody initialized; the console "
+          "credential is in its custody store and the instance is powered "
+          f"off. Next: make homelab-factory-persistent-converge "
+          f"PERSISTENT_DC={instance} APPLY=1")
+    return 0
+
+
 def persistent_up(
     root: Path,
     instance: str,
@@ -722,6 +808,8 @@ def persistent_up(
     *,
     canonical_state: Path = DEFAULT_STATE,
     seed_iso: Path | None = None,
+    custody: str | None = None,
+    throwaway: bool = False,
 ) -> int:
     """Create when absent, then boot one persistent controller instance.
 
@@ -729,6 +817,12 @@ def persistent_up(
     disposable acceptance path never reaches this function. The instance's own
     disk is booted in place and is not hash-fenced, which is exactly why the
     acceptance canonical is refused before anything is printed or created.
+
+    *custody* and *throwaway* (TASK-40) are creation-time choices recorded in
+    the marker and never changed: ``agent`` needs *throwaway*, and creates the
+    instance with a generated console credential in its custody store
+    (``agent_console_init``) instead of booting it; asking an existing
+    instance for another custody is refused.
     """
     try:
         state = _persistent_state(root, instance)
@@ -740,6 +834,16 @@ def persistent_up(
         return 2
     files = persistent_paths(state)
     existing = target.exists()
+    custody_choice = None
+    if custody or throwaway:
+        try:
+            custody_choice = _persistent_custody_choice(
+                target, existing, custody, throwaway)
+        except (ValueError, RuntimeError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+    agent_creation = (not existing and custody_choice is not None
+                      and custody_choice[0] == _credential_custody().AGENT)
     try:
         # A read-only convergence/seed CD is the only extra medium this mode
         # accepts: installer media would reinstall over the directory this mode
@@ -765,13 +869,23 @@ def persistent_up(
     print("directory: " + _persistent_directory_summary(target, existing))
     print(f"acceptance canonical: {canonical['state']} is read-only here and "
           "is never a persistent target")
-    print(" ".join(str(part) for part in command))
+    if custody_choice is not None:
+        print("credential custody: " + _custody_plan_line(
+            custody_choice, creating=not existing, state=state))
+    if agent_creation:
+        print("agent-custody creation: the instance is created and its "
+              "console credential set, then it is left powered off; it is "
+              "not booted interactively. Converge it next")
+    else:
+        print(" ".join(str(part) for part in command))
     if not apply:
         print("dry run; repeat with --apply")
         return 0
 
-    problems = [f"{tool} is not installed" for tool in
-                ("qemu-system-x86_64", "qemu-img") if not shutil.which(tool)]
+    tools = (("qemu-system-x86_64", "qemu-img") if not agent_creation
+             else _agent_console_init().REQUIRED_TOOLS)
+    problems = [f"{tool} is not installed" for tool in tools
+                if not shutil.which(tool)]
     if seed_iso is not None and not seed_iso.is_file():
         problems.append(f"{seed_iso} is missing")
     if not existing:
@@ -793,9 +907,16 @@ def persistent_up(
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)
         return 2
+    if agent_creation:
+        return _create_agent_custody_instance(target, canonical, instance)
     try:
         if not existing:
-            marker = target.create(canonical["disk"], canonical["vars"])
+            if custody_choice is None:
+                marker = target.create(canonical["disk"], canonical["vars"])
+            else:
+                marker = target.create(
+                    canonical["disk"], canonical["vars"],
+                    custody=custody_choice[0], throwaway=custody_choice[1])
             print(f"seeded {instance} from "
                   f"{marker['seeded_from']['disk_sha256']}")
         target.prepare()
@@ -1148,6 +1269,7 @@ def _drive_persistent_convergence(
     install_seed: bool,
     timeout: float,
     on_event: Callable[[str], None] | None = None,
+    agent_custody: bool = False,
 ) -> dict:
     """Log in normally, converge the durable disk, and prove what it now holds.
 
@@ -1204,6 +1326,14 @@ def _drive_persistent_convergence(
             "convergence neither changed it nor recorded it"),
         "esp": "unmodified; the instance boots its own loader default",
     }
+    if agent_custody:
+        record.update(
+            administrator=(
+                "enabled; its password was generated by the harness (agent "
+                "custody) and is kept in this instance's custody store"),
+            console_credential=(
+                f"{CONSOLE_ACCOUNT}, set at creation under agent custody; "
+                "this convergence neither changed it nor recorded it"))
     _console_poweroff(console, password, "persistent-poweroff")
     return record
 
@@ -1300,6 +1430,12 @@ def persistent_converge(
     # confirm, and silently discard a credential that cannot take effect.
     prompts_for_administrator = recorded is None and attempted is None
     try:
+        agent_custody = existing and (
+            target.credential_custody() == _credential_custody().AGENT)
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    try:
         command = qemu_command(
             state, None, None, files=files,
             socket_port=PERSISTENT_SOCKET_PORT,
@@ -1325,10 +1461,19 @@ def persistent_converge(
           f"domain is provisioned and neither can be renamed afterwards")
     print(f"permanent controller: {identity.permanent_dc_fqdn} (declared now "
           f"so clients discover it through AD DNS, not this guest's name)")
-    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
-          "password the offline installer told you to type; it is held in "
-          "memory only and is neither changed nor recorded")
-    if prompts_for_administrator:
+    if agent_custody:
+        print(f"console: agent custody; the {CONSOLE_ACCOUNT} password is "
+              "read from this instance's custody store and nothing is asked "
+              "at a terminal")
+    else:
+        print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+              "password the offline installer told you to type; it is held in "
+              "memory only and is neither changed nor recorded")
+    if prompts_for_administrator and agent_custody:
+        print("domain Administrator: provisioned with a password the harness "
+              "generates and stores in the custody store BEFORE provisioning "
+              "can take it, then left enabled")
+    elif prompts_for_administrator:
         print("domain Administrator: provisioned with a password you type "
               "here, then left enabled so the directory stays administrable")
     elif recorded is not None:
@@ -1406,13 +1551,20 @@ def persistent_converge(
     console_password = b""
     administrator = None
     try:
-        console_password = _typed_secret(
+        credentials = _credential_custody().credential_source(
+            target, prompt=_typed_secret)
+        console_password = credentials.console(
             f"{CONSOLE_ACCOUNT} console password: ")
-        if prompts_for_administrator:
-            administrator = _typed_secret(
+        if prompts_for_administrator and credentials.agent:
+            principals = _controller_principals()
+            administrator = credentials.issue_administrator(checks=(
+                lambda value: principals.directory_password_problem(
+                    value, "Administrator"),)).encode("utf-8")
+        elif prompts_for_administrator:
+            administrator = credentials.ask(
                 "new domain Administrator password: ",
                 confirm="retype domain Administrator password: ")
-    except (ValueError, EOFError, KeyboardInterrupt) as error:
+    except (ValueError, RuntimeError, EOFError, KeyboardInterrupt) as error:
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 2
 
@@ -1459,7 +1611,8 @@ def persistent_converge(
         record = _drive_persistent_convergence(
             guest, console_password, nonce, spec,
             install_seed=seed_iso is not None, timeout=timeout,
-            on_event=_provisioning_recorder(target))
+            on_event=_provisioning_recorder(target),
+            agent_custody=agent_custody)
     except BaseException as error:
         failure = error
     finally:
@@ -1743,6 +1896,12 @@ def persistent_accounts(
               f"recorded directory, so there is nothing to stage accounts "
               f"into. Run persistent-converge first", file=sys.stderr)
         return 2
+    try:
+        agent_custody = (
+            target.credential_custody() == _credential_custody().AGENT)
+    except (ValueError, RuntimeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     # Resolved before ANYTHING is printed, and fail-closed on both the dry run
     # and the applied one: an operator must learn that their private overlay is
     # missing from a plan, not from a refusal after they have typed four
@@ -1815,11 +1974,21 @@ def persistent_accounts(
     else:
         print(f"passwords: permanent; each must meet {policy.source} "
               f"({policy.requirement()}), checked before anything boots")
-    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
-          "password the offline installer told you to type, then one password "
-          "per account above. All are held in memory only, echo-suppressed on "
-          "the wire, and never written to a file, argv, an environment "
-          "variable, a Make variable, the instance marker, or this transcript")
+    if agent_custody:
+        print(f"console: agent custody; the {CONSOLE_ACCOUNT} password is "
+              "read from this instance's custody store, and one password per "
+              "account above is generated and stored there, by contract "
+              "role, BEFORE staging can use it. Nothing is asked at a "
+              "terminal; the values are echo-suppressed on the wire and "
+              "never written to argv, an environment variable, a Make "
+              "variable, the instance marker, or this transcript")
+    else:
+        print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+              "password the offline installer told you to type, then one "
+              "password per account above. All are held in memory only, "
+              "echo-suppressed on the wire, and never written to a file, "
+              "argv, an environment variable, a Make variable, the instance "
+              "marker, or this transcript")
     print("fabric: a simulated gateway peer on "
           f"127.0.0.1:{PERSISTENT_SOCKET_PORT}. This instance has no NAT and "
           "no route to the host LAN, which is why the roster is staged over "
@@ -1870,11 +2039,26 @@ def persistent_accounts(
     console_password = b""
     values: dict[str, str] = {}
     try:
-        console_password = _typed_secret(
+        credentials = _credential_custody().credential_source(
+            target, prompt=_typed_secret)
+        console_password = credentials.console(
             f"{CONSOLE_ACCOUNT} console password: ")
         for entry in plan:
+            if credentials.agent:
+                # Generated, judged by the same policy check as a typed one,
+                # and stored by contract role BEFORE staging can use it.
+                name = entry["name"]
+                values[name] = credentials.staging_value(
+                    entry["contract_role"], temporary=first_logon,
+                    checks=() if first_logon else (
+                        lambda value, name=name:
+                        principals.directory_password_problem(
+                            value, name, policy),),
+                    avoid=(console_password.decode("utf-8"),
+                           *values.values()))
+                continue
             kind = "temporary" if first_logon else "new directory"
-            typed = _typed_secret(
+            typed = credentials.ask(
                 f"{kind} password for {entry['contract_role']} "
                 f"({entry['name']}): ",
                 confirm=f"retype password for {entry['contract_role']}: ")
@@ -1895,7 +2079,7 @@ def persistent_accounts(
                 raise ValueError(
                     f"the password for {entry['contract_role']} {problem}; "
                     f"{policy.source} would refuse it. Nothing was booted")
-    except (ValueError, EOFError, KeyboardInterrupt) as error:
+    except (ValueError, RuntimeError, EOFError, KeyboardInterrupt) as error:
         values.clear()
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 2
@@ -1990,6 +2174,12 @@ def persistent_accounts(
             "to a file, argv, an environment variable, this marker, or a "
             "transcript"),
     }
+    if agent_custody:
+        record["credentials"] = (
+            "one per account, generated by the harness (agent custody) and "
+            "kept in this instance's custody store by contract role; "
+            "echo-suppressed on the wire, and never written to argv, an "
+            "environment variable, this marker, or a transcript")
     try:
         target.record_directory_accounts(record)
     except (RuntimeError, OSError) as error:
@@ -2023,6 +2213,13 @@ def persistent_status(root: Path, instance: str) -> int:
         print(f"created: {marker['created_utc']}")
         print(f"seeded from: {marker['seeded_from']['disk']} "
               f"({marker['seeded_from']['disk_sha256']})")
+        module = _credential_custody()
+        if (module.marker_custody(marker) != module.OWNER
+                or module.marker_throwaway(marker)):
+            print("credential custody: " + _custody_plan_line(
+                (module.marker_custody(marker),
+                 module.marker_throwaway(marker)),
+                creating=False, state=state))
     print("directory: " + _persistent_directory_summary(
         target, marker is not None))
     print("directory accounts: " + _persistent_accounts_summary(
@@ -2055,11 +2252,14 @@ def persistent_destroy(root: Path, instance: str, confirm: str | None) -> int:
     if not state.exists():
         print(f"persistent controller instance {instance}: already absent")
         return 0
+    held_store = (state / _credential_custody().CUSTODY_DIR_NAME).exists()
     try:
         removed = target.destroy(confirm)
     except (RuntimeError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    if held_store:
+        print(f"shredded the credential custody store of {instance} first")
     print(f"destroyed persistent controller instance {instance} at {removed}")
     return 0
 
@@ -2115,6 +2315,16 @@ def parser() -> argparse.ArgumentParser:
             persistent_parser.add_argument(
                 "--seed-iso", type=Path,
                 help="read-only convergence/seed CD for a first bring-up")
+        if name == "persistent-up":
+            persistent_parser.add_argument(
+                "--custody", choices=("owner", "agent"), default=None,
+                help="credential custody, recorded at creation and never "
+                     "changed: owner (the default) or agent, which needs "
+                     "--throwaway (TASK-40)")
+            persistent_parser.add_argument(
+                "--throwaway", action="store_true",
+                help="record the instance as a throwaway rehearsal instance "
+                     "at creation")
         if name == "persistent-converge":
             persistent_parser.add_argument(
                 "--reconverge", action="store_true",
@@ -2172,7 +2382,8 @@ def main(argv: list[str] | None = None) -> int:
     if command == "persistent-up":
         return persistent_up(
             args.persistent_root, args.instance, args.apply,
-            canonical_state=args.state_dir, seed_iso=args.seed_iso)
+            canonical_state=args.state_dir, seed_iso=args.seed_iso,
+            custody=args.custody, throwaway=args.throwaway)
     if command == "persistent-converge":
         return persistent_converge(
             args.persistent_root, args.instance, args.apply,

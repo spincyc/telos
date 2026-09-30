@@ -65,12 +65,16 @@ from .bootstrap_dc import (  # noqa: E402
 )
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .credential_custody import (  # noqa: E402
+    AGENT, PENDING_RESET, AgentCredentialSource, credential_source,
+    generate_password, instance_custody)
 from .directory_password_policy import (  # noqa: E402
     DirectoryPasswordPolicy, instance_policy)
 from .durable_workstation import (  # noqa: E402
     DurableBinding, DurableBindingError, durable_binding)
 from .factory_runner import wait_for_switch_port  # noqa: E402
 from .persistent_controller_session import (  # noqa: E402
+    CUSTODY_CONSOLE_LINE,
     PersistentControllerSession,
     PersistentControllerSessionError,
     _finish_session,
@@ -183,6 +187,7 @@ def _run(
     policy: DirectoryPasswordPolicy,
     canonical_state: Path,
     evidence_root: Path,
+    custody: AgentCredentialSource | None = None,
 ) -> int:
     role = account["contract_role"]
     run_id = (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -274,6 +279,16 @@ def _run(
                 "the run did not prove: " + ", ".join(
                     key for key in REQUIRED_CHECKS
                     if checks.get(key) is not True))
+        if (custody is not None and checks["password_reset"] is True
+                and checks["read_back_matches"] is True):
+            # The directory proved the reset, so the stored pending value is
+            # now the account's, whether or not the run ended cleanly.
+            try:
+                custody.promote_pending(role)
+                result["custody_promoted"] = True
+            except (RuntimeError, OSError, ValueError) as error:
+                failure = failure or error
+                passed = False
         if passed:
             # The durable claim trails the durable fact: only a proven reset,
             # on a run that powered off cleanly, is appended.
@@ -322,6 +337,17 @@ def _run(
     print(f"{binding.instance}: account password "
           f"{'PASS' if passed else 'FAIL'}; evidence {evidence}")
     return 0 if passed else 2
+
+
+def generate_reset_value(
+    credentials: AgentCredentialSource, name: str,
+    policy: DirectoryPasswordPolicy, *, avoid: tuple[bytes, ...] = (),
+) -> str:
+    """A new value for an agent-custody reset, held to the directory's policy."""
+    return generate_password(
+        checks=(lambda value: principals.directory_password_problem(
+            value, name, policy),),
+        avoid=(*credentials.store.values(), *avoid))
 
 
 def _failure_text(error: BaseException) -> str:
@@ -383,7 +409,12 @@ def account_password(
              "(pwdLastSet=0)" if must_change else
              "permanent (pwdLastSet stamped now); give CHANGE_AT_FIRST_LOGON=1 "
              "for a temporary one"))
-    if (not must_change
+    try:
+        agent = instance_custody(target) == AGENT
+    except (RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if (not must_change and not agent
             and staged.get("password_change_at_first_logon") is True):
         print("note: the staged record asks for a first-logon change, which "
               "is what arch-join expects by default; after a permanent reset "
@@ -406,12 +437,19 @@ def account_password(
           "uidNumber; power off over the console; append the reset to the "
           "instance marker ONLY if the read-back proved it and the run ended "
           "cleanly")
-    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
-          "password, then the new password twice, before anything starts. "
-          "Both are held in memory only, the new one crosses the console "
-          "echo-suppressed on the guest shell's stdin exactly as staging's "
-          "do, and neither is written to a file, argv, the environment, the "
-          "marker or the evidence")
+    if agent:
+        print(CUSTODY_CONSOLE_LINE)
+        print("new password: agent custody; generated to meet the policy "
+              "above and stored as PENDING in the custody store before "
+              "anything boots, then made the account's own once the "
+              "directory proves the reset")
+    else:
+        print(f"console: this asks at your terminal for the "
+              f"{CONSOLE_ACCOUNT} password, then the new password twice, "
+              "before anything starts. Both are held in memory only, the new "
+              "one crosses the console echo-suppressed on the guest shell's "
+              "stdin exactly as staging's do, and neither is written to a "
+              "file, argv, the environment, the marker or the evidence")
     print(f"evidence: {Path(evidence_root) / instance}/<run id>/ "
           "(console-transcript.log, redacted; switch.jsonl; fabric.log; "
           "result.json of secret-free facts)")
@@ -443,16 +481,25 @@ def account_password(
         return 2
     password = b""
     value = ""
+    custody: AgentCredentialSource | None = None
     try:
-        password = _typed_secret(f"{CONSOLE_ACCOUNT} console password: ")
-        kind = "temporary" if must_change else "new"
-        typed = _typed_secret(
-            f"{kind} password for {role} ({account['name']}): ",
-            confirm=f"retype the {kind} password for {role}: ")
-        # The guest reads a JSON document, so the value becomes a ``str``
-        # here, once; every reference is dropped when the run ends.
-        value = typed.decode("utf-8")
-        typed = b""
+        credentials = credential_source(target, prompt=_typed_secret)
+        password = credentials.console(f"{CONSOLE_ACCOUNT} console password: ")
+        if credentials.agent:
+            custody = credentials
+            name = account["name"]
+            value = generate_reset_value(
+                credentials, name, policy, avoid=(password,))
+        else:
+            kind = "temporary" if must_change else "new"
+            typed = credentials.ask(
+                f"{kind} password for {role} ({account['name']}): ",
+                confirm=f"retype the {kind} password for {role}: ")
+            # The guest reads a JSON document, so the value becomes a
+            # ``str`` here, once; every reference is dropped when the run
+            # ends.
+            value = typed.decode("utf-8")
+            typed = b""
         # Judged here, before anything boots, by the policy the directory
         # really holds: the reset program does not lift it.
         problem = principals.directory_password_problem(
@@ -461,7 +508,11 @@ def account_password(
             raise ValueError(
                 f"the new password for {role} {problem}; {policy.source} "
                 "would refuse it. Nothing was booted")
-    except (ValueError, EOFError, KeyboardInterrupt) as error:
+        if custody is not None:
+            # Stored BEFORE the reset can set it.
+            custody.begin_pending(
+                role, value, kind=PENDING_RESET, must_change=must_change)
+    except (ValueError, RuntimeError, EOFError, KeyboardInterrupt) as error:
         password, value = b"", ""
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 2
@@ -470,7 +521,7 @@ def account_password(
             binding, target, password, account, value,
             must_change=must_change, roster=roster, source=source,
             policy=policy, canonical_state=canonical_state,
-            evidence_root=evidence_root)
+            evidence_root=evidence_root, custody=custody)
     except PersistentControllerSessionError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

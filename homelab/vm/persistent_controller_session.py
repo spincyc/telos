@@ -77,6 +77,9 @@ from .bootstrap_dc import (  # noqa: E402
 )
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .credential_custody import (  # noqa: E402
+    AGENT, CustodyError, credential_source, custody_scan_values,
+    instance_custody)
 from .durable_workstation import (  # noqa: E402
     FABRIC_CONTROLLER_ADDRESS,
     FABRIC_GATEWAY_ADDRESS,
@@ -134,6 +137,11 @@ REALM_COMMAND = (
     "|| echo NONE")
 REALM_VALUE = rb"[A-Z0-9](?:[A-Z0-9.-]{0,251}[A-Z0-9])?"
 COUNT_VALUE = rb"[0-9]{1,6}"
+#: The plan's console line for an agent-custody instance (TASK-40).
+CUSTODY_CONSOLE_LINE = (
+    f"console: agent custody; the {CONSOLE_ACCOUNT} password is read from "
+    "this throwaway instance's custody store, nothing is asked at a "
+    "terminal, and every stored value is scanned for in the evidence")
 #: Every boolean the probe must prove.  ``domain_sid`` is a state string and
 #: ``clock_skew_seconds`` an integer; neither carries a value from the
 #: directory.
@@ -374,6 +382,13 @@ class PersistentControllerSession:
         if self._password is None:
             return None if data else b""
         known.append(self._password)
+        # An agent-custody instance's whole store is scanned for too
+        # (TASK-40); a store that cannot be read withholds the transcript.
+        try:
+            known += [value.encode("utf-8")
+                      for value in custody_scan_values(self._target)]
+        except (CustodyError, RuntimeError, OSError, ValueError):
+            return None
         for value in sorted(known, key=len, reverse=True):
             data = data.replace(value, REDACTED)
         data = redact(data)
@@ -794,10 +809,18 @@ def probe(
              "a recorded SID that is a strict prefix of the live one fails "
              "the probe unless REPAIR_SID=1; any other difference is always "
              "refused"))
-    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
-          "password once, before anything starts; it is held in memory only "
-          "and never written to a file, argv, the environment or the "
-          "evidence")
+    try:
+        agent = instance_custody(target) == AGENT
+    except (RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if agent:
+        print(CUSTODY_CONSOLE_LINE)
+    else:
+        print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+              "password once, before anything starts; it is held in memory "
+              "only and never written to a file, argv, the environment or the "
+              "evidence")
     print(f"evidence: {Path(evidence_root) / instance}/<run id>/ "
           "(console-transcript.log, redacted; switch.jsonl; fabric.log; "
           "result.json of secret-free checks)")
@@ -828,8 +851,9 @@ def probe(
             print(f"error: {problem}", file=sys.stderr)
         return 2
     try:
-        password = _typed_secret(f"{CONSOLE_ACCOUNT} console password: ")
-    except (ValueError, EOFError, KeyboardInterrupt) as error:
+        password = credential_source(target, prompt=_typed_secret).console(
+            f"{CONSOLE_ACCOUNT} console password: ")
+    except (ValueError, RuntimeError, EOFError, KeyboardInterrupt) as error:
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 2
     try:

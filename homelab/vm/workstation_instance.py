@@ -76,6 +76,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 try:
+    from . import credential_custody as _custody
     from .simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         DOMAIN_SID,
@@ -86,6 +87,7 @@ try:
         sha256,
     )
 except ImportError:  # Direct execution from homelab/vm.
+    import credential_custody as _custody
     from simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         DOMAIN_SID,
@@ -1094,6 +1096,16 @@ class WorkstationInstance:
         result["locked"] = self.locked()
         return result
 
+    # -- credential custody (TASK-40) ----------------------------------------
+    def custody_store(self, marker: dict | None = None):
+        """This workstation's custody store (break-glass passwords).
+
+        It exists only for a workstation bound to an agent-custody instance,
+        whose custody it inherits; the runner creates it on first use.
+        """
+        name = (marker or {}).get("workstation") or self.name or self.state.name
+        return _custody.workstation_store(self.state, name)
+
     # -- teardown --------------------------------------------------------
     def destroy(self, confirm: str | None) -> dict:
         """Erase this workstation after the exact ``DESTROY <name>`` phrase."""
@@ -1115,14 +1127,22 @@ class WorkstationInstance:
             }
             unexpected = sorted(
                 entry.name for entry in self.state.iterdir()
-                if entry.name not in keep or entry.is_symlink()
-                or not (entry.is_file()))
+                if not (entry.name == _custody.CUSTODY_DIR_NAME
+                        and entry.is_dir() and not entry.is_symlink())
+                and (entry.name not in keep or entry.is_symlink()
+                     or not (entry.is_file())))
             if unexpected:
                 raise WorkstationInvalid(
                     "refusing: workstation state holds unexpected entries: "
                     + ", ".join(unexpected))
-            # The credential goes first, so an interruption at any later point
-            # leaves a disk without it, never it without the disk's marker.
+            # The credentials go first, so an interruption at any later point
+            # leaves a disk without them, never them without the disk's
+            # marker: an agent-custody store of break-glass passwords
+            # (TASK-40), then the publication.
+            try:
+                self.custody_store(marker).shred()
+            except _custody.CustodyError as error:
+                raise WorkstationInvalid(str(error)) from error
             if self.publication.exists():
                 _shred(self.publication)
             for name in (
@@ -1326,6 +1346,9 @@ def cli_destroy(root: Path, name: str, confirm: str | None, apply: bool) -> int:
     accounts = marker["machine_accounts"]
     binding = marker["binding"]
     if not apply:
+        if target.custody_store(marker).exists():
+            print(f"dry run: would shred the credential custody store "
+                  f"({_custody.CUSTODY_DIR_NAME}/) first")
         print(f"dry run: would shred {PUBLICATION_NAME} first, then erase "
               f"{target.state}")
         print(f"repeat with --apply --confirm '{expected}'")

@@ -72,7 +72,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -102,6 +102,10 @@ from .bootstrap_dc import (  # noqa: E402
     _persistent_running, _typed_secret, ovmf_pair, persistent_switch_command)
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .credential_custody import (  # noqa: E402
+    AGENT, ARCH_LOCAL_RESCUE, PENDING_FIRST_LOGON, PENDING_RESET,
+    AgentCredentialSource, CustodyError, credential_source, generate_password,
+    instance_custody)
 from .directory_password_policy import (  # noqa: E402
     SAMBA_DEFAULT, DirectoryPasswordPolicy)
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
@@ -281,6 +285,9 @@ class OwnerCredentials:
     daily: bytes
     new_daily: bytes | None
     rescue: bytes
+    #: Agent custody only (TASK-40): every other value the custody stores
+    #: hold, scanned for in every retained transcript; empty for the owner.
+    extra: tuple[bytes, ...] = field(default=())
 
     def __repr__(self) -> str:
         return "OwnerCredentials(<withheld>)"
@@ -289,11 +296,17 @@ class OwnerCredentials:
         return [value for value in (
             self.console, self.daily, self.new_daily, self.rescue) if value]
 
+    def scan_values(self) -> list[bytes]:
+        """``values`` and, under agent custody, the stores' other values."""
+        return self.values() + [value for value in self.extra
+                                if value and value not in self.values()]
+
     def clear(self) -> None:
         # Python cannot wipe an immutable bytes object; every reference this
         # object holds is dropped, which is the most it can do.
         self.console = self.daily = self.rescue = b""
         self.new_daily = None
+        self.extra = ()
 
 
 def owner_credentials(
@@ -360,6 +373,164 @@ def _judge_credentials(
             "password, the daily administrator's passwords and the "
             "break-glass password; two you typed are identical. Nothing was "
             "booted")
+
+
+# -- agent custody (TASK-40) -------------------------------------------------------
+DAILY_ROLE = "daily_administrator"
+
+
+@dataclass(repr=False)
+class AgentLogonPlan:
+    """What an agent-custody join logs the daily administrator in with.
+
+    Chosen from the custody store, never from ``FIRST_LOGON_DONE``:
+
+    * a pending first-logon value not yet proven either way is tried as the
+      CURRENT password (a run that died after the change landed left it
+      live), ``trying_pending``;
+    * a pending value a login proved not live is the NEW password of a
+      first-logon change of the temporary one, ``new``;
+    * a proven current value logs straight in;
+    * a temporary value alone is changed at first logon to a value generated
+      and stored as pending before anything boots.
+    """
+
+    mode: str
+    login: str
+    new: str | None = None
+    trying_pending: bool = False
+
+    def __repr__(self) -> str:
+        return f"AgentLogonPlan(mode={self.mode!r})"
+
+    def describe(self) -> str:
+        if self.trying_pending:
+            return ("current: an earlier first-logon change may have landed, "
+                    "so its pending password is tried as the current one")
+        if self.mode == MODE_FIRST_LOGON:
+            return ("first logon: the temporary password is changed to "
+                    + ("the pending one an earlier run proved was never set"
+                       if self.new else
+                       "a generated one, stored as pending before anything "
+                       "boots"))
+        return "current: the proven current password logs straight in"
+
+
+def agent_logon_plan(source: AgentCredentialSource) -> AgentLogonPlan:
+    """The daily administrator's login under agent custody, or a refusal."""
+    entry = source.account(DAILY_ROLE)
+    if not entry:
+        raise ArchDurableJoinError(
+            f"agent custody holds no password for {DAILY_ROLE}; stage the "
+            "durable accounts under agent custody first")
+    pending = entry.get("pending")
+    if pending and entry.get("pending_kind") == PENDING_RESET:
+        raise ArchDurableJoinError(
+            f"agent custody holds an unproven password reset of {DAILY_ROLE}; "
+            "repeat homelab-factory-persistent-account-password first")
+    if pending and not entry.get("pending_not_live_utc"):
+        return AgentLogonPlan(MODE_CURRENT, pending, trying_pending=True)
+    if pending:
+        if not entry.get("temporary"):
+            raise ArchDurableJoinError(
+                f"agent custody holds a pending first-logon password for "
+                f"{DAILY_ROLE} but no temporary one to change")
+        return AgentLogonPlan(MODE_FIRST_LOGON, entry["temporary"], new=pending)
+    if entry.get("current"):
+        return AgentLogonPlan(MODE_CURRENT, entry["current"])
+    if entry.get("temporary"):
+        return AgentLogonPlan(MODE_FIRST_LOGON, entry["temporary"])
+    raise ArchDurableJoinError(
+        f"agent custody holds no usable password for {DAILY_ROLE}")
+
+
+def agent_credentials(
+    source: AgentCredentialSource, plan: AgentLogonPlan, *, daily_name: str,
+    rescue_name: str, policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
+) -> OwnerCredentials:
+    """The run's credentials from custody; every new one stored FIRST.
+
+    The new daily password (first-logon mode) is written to the store as
+    pending, and the new Arch break-glass password to the workstation's
+    store as pending, before any process starts.  Both are generated to the
+    bound directory's policy and judged by ``_judge_credentials`` exactly as
+    typed ones are.
+    """
+    principals = _controller_principals()
+    console = source.console()
+    new: bytes | None = None
+    if plan.mode == MODE_FIRST_LOGON:
+        value = plan.new or generate_password(
+            checks=(lambda candidate: principals.directory_password_problem(
+                candidate, daily_name, policy),),
+            avoid=(*source.scan_values(), plan.login))
+        # (Re)armed before anything boots: a run that dies after the change
+        # landed leaves it here, and the next run tries it as the current.
+        source.begin_pending(DAILY_ROLE, value, kind=PENDING_FIRST_LOGON)
+        new = value.encode("utf-8")
+    rescue = source.begin_break_glass(
+        ARCH_LOCAL_RESCUE,
+        checks=(lambda candidate: principals.directory_password_problem(
+            candidate, rescue_name, policy),),
+        avoid=(console, plan.login, new or b""))
+    credentials = OwnerCredentials(
+        console, plan.login.encode("utf-8"), new, rescue.encode("utf-8"),
+        extra=tuple(value.encode("utf-8")
+                    for value in source.scan_values()))
+    try:
+        _judge_credentials(credentials, daily_name=daily_name,
+                           rescue_name=rescue_name, policy=policy)
+    except BaseException:
+        credentials.clear()
+        raise
+    return credentials
+
+
+class AgentArchCustody:
+    """Settle the custody stores from what one agent-custody join proved."""
+
+    def __init__(self, source: AgentCredentialSource,
+                 plan: AgentLogonPlan) -> None:
+        self.source = source
+        self.plan = plan
+
+    def __repr__(self) -> str:
+        return "AgentArchCustody(<withheld>)"
+
+    def settle(self, boundary, failure: BaseException | None,
+               entry: dict | None) -> dict:
+        login = ((getattr(boundary, "facts", {}) or {}).get("login") or {}
+                 if boundary is not None else {})
+        facts: dict[str, str] = {}
+        if self.plan.mode == MODE_FIRST_LOGON:
+            if login.get("password_change_landed") is True:
+                self.source.promote_pending(DAILY_ROLE)
+                facts[DAILY_ROLE] = "changed; the new password is current"
+            elif not login.get("new_password_writes"):
+                self.source.mark_pending_not_live(DAILY_ROLE)
+                facts[DAILY_ROLE] = (
+                    "unchanged; the pending password was never written")
+            else:
+                facts[DAILY_ROLE] = (
+                    "unproven; the next run tries the pending password as "
+                    "the current one")
+        elif self.plan.trying_pending:
+            if login.get("login_completed") is True:
+                self.source.promote_pending(DAILY_ROLE)
+                facts[DAILY_ROLE] = (
+                    "the pending password logged in; it is now current")
+            elif (isinstance(failure, ArchDurableJoinError)
+                  and str(failure) == LOGIN_REFUSED_FAILURE):
+                self.source.mark_pending_not_live(DAILY_ROLE)
+                facts[DAILY_ROLE] = (
+                    "the pending password was refused, so the change never "
+                    "landed; the next run changes the temporary one to it")
+            else:
+                facts[DAILY_ROLE] = "unproven; the pending password is kept"
+        if entry is not None:
+            self.source.promote_break_glass(ARCH_LOCAL_RESCUE)
+            facts[ARCH_LOCAL_RESCUE] = "folded; the new password is current"
+        return facts
 
 
 def _controller_principals():
@@ -869,7 +1040,7 @@ class DurableArchJoinBoundary(ArchIdentityBoundary):
             None, timeout=CONSOLE_READY_TIMEOUT)
 
     def typed_secrets(self) -> list[bytes]:
-        return self._credentials.values() + [
+        return self._credentials.scan_values() + [
             value.encode("utf-8") for value in self._join_credentials]
 
     # -- the fault hooks gate 8 drives are refused ---------------------------
@@ -1352,6 +1523,7 @@ def print_plan(
     args: argparse.Namespace, workstation: WorkstationInstance, marker: dict,
     binding: DurableBinding, accounts: Sequence[Mapping], mode: str,
     installed: str | None, space: list[dict],
+    agent_plan: AgentLogonPlan | None = None,
 ) -> None:
     name = workstation.state.name
     stages = ", ".join(entry["stage"] for entry in marker["ledger"])
@@ -1388,6 +1560,44 @@ def print_plan(
           "record; names are compared on the guest, never printed): "
           + ", ".join(f"{account['contract_role']} uid "
                       f"{account['uidNumber']}" for account in accounts))
+    policy = binding.password_policy
+    if agent_plan is not None:
+        print(f"Credentials: agent custody (throwaway instance "
+              f"{binding.instance}); nothing is asked at a terminal. The "
+              f"{CONSOLE_ACCOUNT} console password and the daily "
+              "administrator's are read from the instance's custody store; "
+              "every NEW value is generated, judged by the directory policy "
+              "and stored as pending BEFORE any process starts, and made "
+              "current only once proven; every stored value is scanned for "
+              "in the evidence")
+        print(f"Daily administrator: {agent_plan.describe()}")
+        print(f"Break-glass: a new Arch local-rescue password, generated and "
+              f"stored as pending in {workstation.state.name}'s custody "
+              "store, current once this stage folds")
+    else:
+        _print_owner_prompts(args, binding, mode)
+    print(f"Password policy: {policy.source} ({policy.describe()}) judges "
+          "every new password here before anything boots, the break-glass "
+          "one included"
+          + ("" if policy.recorded else
+             "; make homelab-factory-persistent-password-policy records "
+             "another"))
+    print(f"On success: the overlay and the firmware variables it booted "
+          f"with are folded into {name} as stage {STAGE}; the overlay is "
+          f"then removed")
+    print(f"On failure: the overlay is removed and {name}'s disk, firmware "
+          f"variables and ledger are unchanged; its marker keeps the machine "
+          f"account; evidence stays under {args.run_root}")
+    for entry in space:
+        verdict = "" if entry["free"] >= entry["needed"] else " (INSUFFICIENT)"
+        print(f"Free space: {entry['path']} needs about "
+              f"{_gib(entry['needed'])}, has {_gib(entry['free'])}{verdict}")
+    print(f"Maximum runtime: {args.duration:g} seconds")
+
+
+def _print_owner_prompts(
+    args: argparse.Namespace, binding: DurableBinding, mode: str,
+) -> None:
     print("Prompts, in order, all at this terminal before any process "
           "starts; none is ever written to a file, argv, the environment, "
           "the evidence or a transcript:")
@@ -1415,23 +1625,6 @@ def print_plan(
                  if args.first_logon_done else
                  "the durable account record does not ask for a change at "
                  "first logon"))
-    print(f"Password policy: {policy.source} ({policy.describe()}) judges "
-          "every new password here before anything boots, the break-glass "
-          "one included"
-          + ("" if policy.recorded else
-             "; make homelab-factory-persistent-password-policy records "
-             "another"))
-    print(f"On success: the overlay and the firmware variables it booted "
-          f"with are folded into {name} as stage {STAGE}; the overlay is "
-          f"then removed")
-    print(f"On failure: the overlay is removed and {name}'s disk, firmware "
-          f"variables and ledger are unchanged; its marker keeps the machine "
-          f"account; evidence stays under {args.run_root}")
-    for entry in space:
-        verdict = "" if entry["free"] >= entry["needed"] else " (INSUFFICIENT)"
-        print(f"Free space: {entry['path']} needs about "
-              f"{_gib(entry['needed'])}, has {_gib(entry['free'])}{verdict}")
-    print(f"Maximum runtime: {args.duration:g} seconds")
 
 
 def _run_id() -> str:
@@ -1444,6 +1637,7 @@ def execute(
     binding: DurableBinding, accounts: Sequence[Mapping], mode: str,
     credentials: OwnerCredentials, *,
     boundary_factory: Callable[..., DurableArchJoinBoundary] | None = None,
+    custody: AgentArchCustody | None = None,
 ) -> int:
     """One join under ``W``'s lock: overlay, join, proofs, fold or nothing."""
     root = Path(args.run_root).absolute()
@@ -1520,7 +1714,24 @@ def execute(
             result["failure"] = {
                 "step": step, "type": type(failure).__name__,
                 "check": getattr(failure, "check", None)}
+        if custody is not None:
+            try:
+                result["custody"] = custody.settle(boundary, failure, entry)
+            except (CustodyError, RuntimeError, OSError, ValueError) as error:
+                result["custody"] = {"settle_error": type(error).__name__}
+                print(f"error: the custody store could not be settled "
+                      f"({type(error).__name__}); a retry re-reads it",
+                      file=sys.stderr)
         _write_result(evidence, result)
+    if failure is not None and custody is not None:
+        print("error: agent custody recorded what this run proved about the "
+              "daily administrator's password; a retry picks it up "
+              "automatically", file=sys.stderr)
+        print(f"error: machine account {account} is recorded in "
+              f"{workstation.state.name}'s marker; destroy lists it",
+              file=sys.stderr)
+        print(f"Evidence: {evidence}", file=sys.stderr)
+        raise failure
     if failure is not None:
         landed = result.get("password_change_landed")
         if landed is True:
@@ -1573,9 +1784,22 @@ def run(
             f"{args.hostname!r}; the machine account recorded before the join "
             f"must be the one the disk will create")
     mode = _mode(args, record)
+    target = PersistentControllerInstance(
+        binding.state, instance=binding.instance)
+    agent_plan: AgentLogonPlan | None = None
+    if instance_custody(target) == AGENT:
+        if args.first_logon_done:
+            raise ArchDurableJoinError(
+                "FIRST_LOGON_DONE=1 is for owner custody; under agent custody "
+                "the daily administrator's state is read from the custody "
+                "store")
+        agent_plan = agent_logon_plan(credential_source(
+            target, prompt=_typed_secret,
+            workstation=(workstation.state, workstation.state.name)))
+        mode = agent_plan.mode
     space = space_needs(workstation, args.run_root)
     print_plan(args, workstation, marker, binding, accounts, mode, installed,
-               space)
+               space, agent_plan=agent_plan)
     if not args.apply:
         print("dry run; repeat with --apply")
         return 0
@@ -1594,14 +1818,29 @@ def run(
         marker = require_arch_join_next(workstation)
         require_workstation_binding(marker, binding)
         require_ledger_head(workstation, marker)
-        credentials = owner_credentials(
-            mode, daily_name=account_name(accounts, "daily_administrator"),
-            rescue_name=rescue_principal(), instance=binding.instance,
-            policy=binding.password_policy)
+        source = credential_source(
+            target, prompt=_typed_secret,
+            workstation=(workstation.state, workstation.state.name))
+        custody: AgentArchCustody | None = None
+        if source.agent:
+            # Re-read under the lock: the store is the authority.
+            agent_plan = agent_logon_plan(source)
+            mode = agent_plan.mode
+            credentials = agent_credentials(
+                source, agent_plan,
+                daily_name=account_name(accounts, "daily_administrator"),
+                rescue_name=rescue_principal(),
+                policy=binding.password_policy)
+            custody = AgentArchCustody(source, agent_plan)
+        else:
+            credentials = owner_credentials(
+                mode, daily_name=account_name(accounts, "daily_administrator"),
+                rescue_name=rescue_principal(), instance=binding.instance,
+                prompt=source.ask, policy=binding.password_policy)
         try:
             return execute(
                 args, workstation, binding, accounts, mode, credentials,
-                boundary_factory=boundary_factory)
+                boundary_factory=boundary_factory, custody=custody)
         finally:
             credentials.clear()
 

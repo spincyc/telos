@@ -63,6 +63,8 @@ from .bootstrap_dc import (  # noqa: E402
 )
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .credential_custody import (  # noqa: E402
+    AGENT, credential_source, instance_custody)
 from .directory_password_policy import (  # noqa: E402
     SHOW_COMMAND,
     SHOW_VALUE,
@@ -83,6 +85,7 @@ from .durable_workstation import (  # noqa: E402
 )
 from .factory_runner import wait_for_switch_port  # noqa: E402
 from .persistent_controller_session import (  # noqa: E402
+    CUSTODY_CONSOLE_LINE,
     REALM_COMMAND,
     REALM_VALUE,
     PersistentControllerSession,
@@ -378,10 +381,18 @@ def password_policy(
           "passwordsettings show; power off over the console; record it in "
           "the instance marker ONLY if the read-back matches and the run "
           "ended cleanly")
-    print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
-          "password once, before anything starts; it is held in memory only "
-          "and never written to a file, argv, the environment or the "
-          "evidence")
+    try:
+        agent = instance_custody(target) == AGENT
+    except (RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if agent:
+        print(CUSTODY_CONSOLE_LINE)
+    else:
+        print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
+              "password once, before anything starts; it is held in memory "
+              "only and never written to a file, argv, the environment or the "
+              "evidence")
     print(f"evidence: {Path(evidence_root) / instance}/<run id>/ "
           "(console-transcript.log, redacted; switch.jsonl; fabric.log; "
           "result.json of secret-free facts)")
@@ -412,8 +423,9 @@ def password_policy(
             print(f"error: {problem}", file=sys.stderr)
         return 2
     try:
-        password = _typed_secret(f"{CONSOLE_ACCOUNT} console password: ")
-    except (ValueError, EOFError, KeyboardInterrupt) as error:
+        password = credential_source(target, prompt=_typed_secret).console(
+            f"{CONSOLE_ACCOUNT} console password: ")
+    except (ValueError, RuntimeError, EOFError, KeyboardInterrupt) as error:
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 2
     try:

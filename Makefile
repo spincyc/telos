@@ -94,6 +94,13 @@ REPEAT_RECEIPT ?=
 # persistence must be asked for by name, never inferred.
 PERSISTENT_DC_ROOT ?= build/homelab/vm/persistent-dc
 PERSISTENT_DC ?=
+# Credential custody, TASK-40: read ONLY when -up creates an instance, recorded
+# in its marker and never changed. Unset is owner custody (every credential
+# typed at the terminal, never stored). CUSTODY=agent needs THROWAWAY=1: the
+# harness then generates and keeps a throwaway rehearsal instance's
+# credentials in <instance>/custody/ and every stage runs unattended.
+CUSTODY ?=
+THROWAWAY ?=
 # A kept (durable) workstation, TASK-28: named by WORKSTATION, never inferred,
 # and bound to one persistent instance. Its disk, marker and stage ledger live
 # under DURABLE_WORKSTATION_ROOT, beside persistent-dc and outside the
@@ -890,12 +897,18 @@ homelab-factory-persistent-plan:
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
 		exit 2; \
 	fi
+	@if [ -n '$(THROWAWAY)' ] && [ '$(THROWAWAY)' != 1 ]; then \
+		echo 'THROWAWAY must be 1 or unset' >&2; \
+		exit 2; \
+	fi
 	@$(PYTHON) homelab/vm/bootstrap_dc.py \
 		$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
 		persistent-up \
 		--instance '$(PERSISTENT_DC)' \
 		--persistent-root '$(PERSISTENT_DC_ROOT)' \
-		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)')
+		$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+		$(if $(CUSTODY),--custody '$(CUSTODY)') \
+		$(if $(filter 1,$(THROWAWAY)),--throwaway)
 
 homelab-factory-persistent-status:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
@@ -909,10 +922,17 @@ homelab-factory-persistent-status:
 # Creates the instance from the canonical image when absent (read-only against
 # the canonical, under the same strict fence the disposable path uses), then
 # boots it in place. Bringing it up again later reuses the same domain SID,
-# krbtgt, and accounts, which is the whole point of the mode.
+# krbtgt, and accounts, which is the whole point of the mode. CUSTODY=agent
+# THROWAWAY=1 (TASK-40) instead creates a throwaway instance whose generated
+# console credential is set on the staged copy and kept in its custody store,
+# and leaves it powered off; custody is fixed at creation.
 homelab-factory-persistent-up:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ -n '$(THROWAWAY)' ] && [ '$(THROWAWAY)' != 1 ]; then \
+		echo 'THROWAWAY must be 1 or unset' >&2; \
 		exit 2; \
 	fi
 	@if [ '$(APPLY)' != 1 ]; then \
@@ -922,7 +942,9 @@ homelab-factory-persistent-up:
 			persistent-up \
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
-			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)'); \
+			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			$(if $(CUSTODY),--custody '$(CUSTODY)') \
+			$(if $(filter 1,$(THROWAWAY)),--throwaway); \
 	else \
 		$(PYTHON) homelab/vm/bootstrap_dc.py \
 			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
@@ -930,6 +952,8 @@ homelab-factory-persistent-up:
 			--instance '$(PERSISTENT_DC)' \
 			--persistent-root '$(PERSISTENT_DC_ROOT)' \
 			$(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') \
+			$(if $(CUSTODY),--custody '$(CUSTODY)') \
+			$(if $(filter 1,$(THROWAWAY)),--throwaway) \
 			--apply; \
 	fi
 
@@ -1179,7 +1203,8 @@ homelab-factory-persistent-account-password:
 	fi
 
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
-# stable instance name, and the exact confirmation carrying that name.
+# stable instance name, and the exact confirmation carrying that name. An
+# agent-custody instance's credential store is shredded first (TASK-40).
 homelab-factory-persistent-destroy:
 	@if [ -z '$(PERSISTENT_DC)' ]; then \
 		echo 'require PERSISTENT_DC=<instance name>' >&2; \
@@ -1222,8 +1247,9 @@ homelab-durable-workstation-adopt:
 	@if [ -z '$(WINDOWS_RUN)' ] || [ -z '$(PERSISTENT_DC)' ]; then echo 'require WINDOWS_RUN=<gate-5 bundle> PERSISTENT_DC=<instance>' >&2; exit 2; fi
 	@$(DURABLE_WS) adopt --workstation '$(WORKSTATION)' $(DURABLE_WS_BIND) $(if $(filter 1,$(APPLY)),--apply)
 
-# Shreds the publication first, then the disk; needs APPLY=1 and
-# CONFIRM='DESTROY <name>', and lists the machine accounts left in the directory.
+# Shreds its custody store (agent custody, TASK-40) and the publication first,
+# then the disk; needs APPLY=1 and CONFIRM='DESTROY <name>', and lists the
+# machine accounts left in the directory.
 homelab-durable-workstation-destroy:
 	$(DURABLE_WS_REQUIRE)
 	@$(DURABLE_WS) destroy --workstation '$(WORKSTATION)' $(if $(filter 1,$(APPLY)),--apply --confirm '$(CONFIRM)')
@@ -1253,8 +1279,10 @@ homelab-durable-arch-install:
 # proofs; a success is folded into WORKSTATION. Every password is typed at this
 # terminal before anything starts. FIRST_LOGON_DONE=1 asks for the daily
 # administrator's CURRENT password instead of its temporary one, for a retry
-# after a change that landed. The plan target never mutates; the other is a
-# dry run without APPLY=1.
+# after a change that landed. Under agent custody (TASK-40; an instance created
+# with CUSTODY=agent THROWAWAY=1) nothing is typed: the custody store supplies
+# every value and decides the retry itself, and FIRST_LOGON_DONE is refused.
+# The plan target never mutates; the other is a dry run without APPLY=1.
 DURABLE_ARCH_JOIN = $(PYTHON) homelab/vm/arch_durable_join.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') $(if $(filter 1,$(FIRST_LOGON_DONE)),--first-logon-done)
 
 homelab-durable-arch-join-plan:
@@ -1271,7 +1299,8 @@ homelab-durable-arch-join:
 # with one tj- principal destroyed with proof and the daily administrator's
 # domain sign-in with its CURRENT password. A success is folded into WORKSTATION
 # and only then is its custody publication shredded; a failure leaves both, so
-# the stage can be retried. Every password is typed before anything starts.
+# the stage can be retried. Every password is typed before anything starts
+# (under agent custody, TASK-40, the custody store supplies them instead).
 # The plan target never mutates; the other is a dry run without APPLY=1.
 DURABLE_WINDOWS_REQUIRE = @if [ -z '$(WORKSTATION)' ] || [ -z '$(PERSISTENT_DC)' ]; then echo 'require WORKSTATION=<name> PERSISTENT_DC=<instance>' >&2; exit 2; fi
 DURABLE_WINDOWS_JOIN = $(PYTHON) homelab/vm/windows_durable_join.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
@@ -1292,7 +1321,8 @@ homelab-durable-windows-join:
 # poweroff and proved again, then Windows is re-proved (gate 6's domain sign-in
 # and read-only secure-channel probe). The firmware BootOrder must still start
 # with Linux. Both passwords are typed at this terminal before anything
-# starts. A dry run without APPLY=1.
+# starts (under agent custody, TASK-40, read from the custody store). A dry
+# run without APPLY=1.
 DURABLE_VERIFY = $(PYTHON) homelab/vm/durable_workstation_verify.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
 
 homelab-durable-workstation-verify:
