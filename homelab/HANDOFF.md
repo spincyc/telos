@@ -1,6 +1,6 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-09-30 (against `27091fa..b84bc86`; previous passes
+**Last updated:** 2026-09-30 (against `27091fa..4d35cbe`; previous passes
 2026-09-25, 2026-09-24 and 2026-08-17).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
@@ -16,19 +16,21 @@ accounts live in a persistent directory (aiq TASK-21), then the physical path
 | Canonical Controller image | **Installed** 2026-09-24 (first live run of `homelab-bootstrap-vm-install`) |
 | Gates 5–8 with the owner's real names | **PASS** 2026-09-24 (gate 6 judge 24 checks, gate 8 21) — §7 item 5 |
 | Private roster (`homelab/instance/identity/principals.json`, gitignored) | All three directory roles named and UID-pinned, plus one `additional_standard_users` entry. **Names are instance data: never write them into a tracked file or a commit message** (ADR 0046) |
-| Persistent directory, throwaway instance `rehearsal` | **Converged** under the permanent realm and holding the **four durable accounts** (temporary passwords, change at first logon) — 2026-09-25, owner-run |
-| Durable workstation flow (TASK-28) | **Approved 2026-09-30, being built** per `homelab/DURABLE-WORKSTATION-FLOW.md`: installs stay on the disposable Controller, the persistent one serves only joins and logins, and the owner types distinct break-glass passwords at join. Nothing of it has run live — §7 item 6 |
-| Keeper directory instance | Not created. After TASK-28 works against `rehearsal`: destroy it, converge the keeper, stage accounts with `CHANGE_AT_FIRST_LOGON=1` |
-| Committed 2026-09-30 | ADR 0079 (`0b9f102`, replacement-Controller PXE mint dropped); media seal tolerates tool-version drift and the cache is resealed to Arch 2026.08.01 (`110dfb5`; release sets `20260727.00N` stay bound to the old seal); hermetic seed tests (`9c3ca80`, TASK-30); PXE services enabled across reboot (`dfbcce7`, unit-tested only); ADR 0080 (`19c2c64`, gate 11 closes at `partial`, gate 12 waives `host_network_changes`); gate-14 readiness plan (`b719e7a`); drift-tool wildcard (`4d9f0ac`); the durable-flow design (`5f9a790`, `881c45a`); the gate-12 driver hands arch-install the Windows disk and scans retained evidence (`b84bc86`) |
-| Next owner actions | (a) live probe #1 (`DURABLE-WORKSTATION-FLOW.md` step 3) once its target lands; (b) re-converge `rehearsal` with `RECONVERGE=1` so the enabled PXE units can be checked across a reboot; (c) the read-only UniFi review items (TASK-37) — access or screenshots for the eleven stage-1 items in `homelab/EXTERNAL-INTEGRATION-READINESS.md` |
-| Gates 11/12 live runs (TASK-6) | Unblocked once TASK-34 is done; ADR 0080 sets what closes them — §7 item 8 |
+| Persistent directory, throwaway instance `rehearsal` | **Converged** under the permanent realm and holding the **four durable accounts** (temporary passwords, change at first logon) — 2026-09-25, owner-run; probe PASS and password policy recorded 2026-09-30. Its workstation `rehearsal-ws1` stays at stage `arch-install`: the owner-run arch-join stopped on a mistyped temporary password (reset: `homelab-factory-persistent-account-password`) |
+| Durable workstation flow (TASK-28) | **DONE; PASS live end to end 2026-09-30**, unattended under agent custody (TASK-40, `fa8ec58`/`14b925e`) on throwaway instance `rehearsal-auto` and kept workstation `rehearsal-auto-ws1`: create, converge, accounts, probe, adopt, durable Arch install and join, durable Windows join, keep-verify across a Controller cold relaunch. Run ids: `homelab/DURABLE-WORKSTATION-FLOW.md`, "Live record" — §7 item 6 |
+| Keeper directory instance (TASK-21) | Not created; **next on the critical path**. Owner custody, the owner's real passwords. Waits on owner decisions: its directory password policy, backups (none exist for persistent instances or kept disks), join-principal privilege — §7 item 7 |
+| Committed 2026-09-30 | ADR 0079 (`0b9f102`, replacement-Controller PXE mint dropped); media seal tolerates tool-version drift and the cache is resealed to Arch 2026.08.01 (`110dfb5`; release sets `20260727.00N` stay bound to the old seal); hermetic seed tests (`9c3ca80`, TASK-30); PXE services enabled across reboot (`dfbcce7`, unit-tested only); ADR 0080 (`19c2c64`, gate 11 closes at `partial`, gate 12 waives `host_network_changes`); gate-14 readiness plan (`b719e7a`); drift-tool wildcard (`4d9f0ac`); the durable-flow design (`5f9a790`, `881c45a`); the gate-12 driver hands arch-install the Windows disk and scans retained evidence (`b84bc86`); TASK-28 steps 1-9 (`715147f`..`5f5b322`, `a54e7c9`), recorded password policy (`d3f8567`), one-account password reset (`bcf8d16`), agent credential custody (`fa8ec58`, `14b925e`) |
+| Next owner actions | (a) the keeper's three decisions above (TASK-21); (b) re-converge `rehearsal` with `RECONVERGE=1` so the enabled PXE units can be checked across a reboot; (c) the read-only UniFi review items (TASK-37) — access or screenshots for the eleven stage-1 items in `homelab/EXTERNAL-INTEGRATION-READINESS.md` |
+| Gates 11/12 live runs (TASK-6) | **Ready, agent-runnable** (about 5 h; prerequisites `c383e3c`, `6f86808`, `dfd4264` landed, TASK-34 done); ADR 0080 sets what closes them. Only one disposable Controller simulation runs at a time, so plan live runs serially — §7 item 8 |
 
 **Owner-only steps** (they read passwords at the owner's terminal; hand over
 the exact command, never run them yourself): `homelab-bootstrap-vm-install`,
 `homelab-factory-persistent-converge APPLY=1`,
-`homelab-factory-persistent-accounts APPLY=1`, and the durable flow's owner-run
-live steps. Everything else in the loopback factory is agent-runnable under the
-standing directive in §1. Gate 14 is **not authorized**; only its read-only
+`homelab-factory-persistent-accounts APPLY=1`, and the durable flow's live
+steps, the last three under owner custody only (the keeper): an agent-custody
+throwaway instance (`CUSTODY=agent THROWAWAY=1`) runs them unattended.
+Everything else in the loopback factory is agent-runnable under the standing
+directive in §1. Gate 14 is **not authorized**; only its read-only
 UniFi review is.
 
 **Rules learned the hard way this pass** (details in §5):
@@ -111,7 +113,7 @@ install path. Gates 1–14 tracked in `WORKSTATION-FACTORY-STATE.md`.
 | 9 Optional storage failure | rides gates 6 and 8, no target of its own by design | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half in the passing 2026-08-14 gate-8 run, whose `arch-storage-{attached,denied,absent-login}` checks are gate 9's three (see state doc) |
 | 10 Dual-boot acceptance | 8 checks; Windows BOOT observed, login NOT driven | **PASS with two deferrals** (`homelab/var/factory/dualboot-acceptance/run-20260811T170510Z-a619bcb1f028`) — judge reports `deferred: ["windows-login-driven", "arch-authenticated-login"]` and `windows_login_proven: false` |
 | 11 Lifecycle recovery | 3 loopback-provable, 5 need a live guest boot | **PARTIAL** — judge verdict is `partial` by construction whenever any scenario defers; retained artifact `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (pass 3 / not_run 5 / fail 0). 2 of the 5 hooks now *implemented* (`2c3cd56`) but **NOT RUN**; 3 stay stubs for want of primitives (see §1 new-work list). ADR 0080 (owner, 2026-09-30): phase one closes at `partial` once the 3 loopback + 2 implemented scenarios run and pass; the 3 stubs are deferred |
-| 12 Repeatability (twice-through) | — | **NOT RUN** — no gate blocks it any more (6–10 all pass), and the aggregate `homelab-factory-repeat` driver now **exists** (`27d8af9`/`2aaa7fe`) with all 16 checks wired to a producer, and the canonical Controller image is installed again (2026-09-24). It needs only two live lifecycles. `host_network_changes` cannot render PASS without a run-window host egress ledger, and ADR 0080 (2026-09-30) waives it for the loopback factory — recorded as waived, never pass, lapsing at gate 14; the verdict code has no waiver state yet. `artifact_scan` scans each phase's retained evidence since `b84bc86` (it read "needs a scanned tree") |
+| 12 Repeatability (twice-through) | — | **NOT RUN** — no gate blocks it any more (6–10 all pass), and the aggregate `homelab-factory-repeat` driver now **exists** (`27d8af9`/`2aaa7fe`) with all 16 checks wired to a producer, and the canonical Controller image is installed again (2026-09-24). It needs only two live lifecycles. `host_network_changes` cannot render PASS without a run-window host egress ledger, and ADR 0080 (2026-09-30) waives it for the loopback factory — recorded as waived, never pass, lapsing at gate 14; since `c383e3c` check 9 renders `WAIVED` (this read "the verdict code has no waiver state yet"). `artifact_scan` scans each phase's retained evidence since `b84bc86` (it read "needs a scanned tree") |
 | 13 Documentation | — | guides added (`homelab/docs/`), **already public on `origin/main`**; "unpublished" = not wired into the generated site (they carry the lab address the site's prose leak pass rejects). Since 2026-09-30 `scripts/site check` leak-scans them under the code pass's sanctioned synthetic ranges |
 | 14 External integration | physical / UniFi / ThinkPad | **HARD-BLOCKED on explicit owner authorization** — do not attempt. Plan: `homelab/EXTERNAL-INTEGRATION-READINESS.md`. Only its read-only UniFi review is authorized (TASK-37, awaiting owner-supplied access) |
 
@@ -783,11 +785,10 @@ no headroom for a single spurious refusal.
    - Workstation-against-disposable-Controller is the **most proven** path in
      this repository — gate 6 at 24/24, gate 8 at 21/21, gate 10 passing. It
      does not need verifying.
-   - What is unproven is almost entirely **Controller-side**: persistent
-     convergence, durable account staging over the serial console, and a
-     durable workstation flow that **does not exist** (a durable bundle is
-     preparable but refused before any process starts — by the realm check in
-     `homelab/vm/arch_install_run.py`; see item 6).
+   - What was unproven (2026-08-18) was almost entirely **Controller-side**:
+     persistent convergence, durable account staging over the serial console,
+     and a durable workstation flow that did not exist yet. All three have
+     since run live (item 6).
    - A workstation minted against an ephemeral Controller is **never
      keepable**: each run provisions a brand-new domain, so its machine
      account and every user SID die with the run. It validates the process and
@@ -839,39 +840,36 @@ no headroom for a single spurious refusal.
    TASK-28 is developed against, so workstation faults never touch the keeper;
    create the instance you intend to keep only once a workstation can be
    minted against a persistent directory.
-6. **Build the durable workstation flow (TASK-28) before expecting a keepable
-   workstation.** No runner can install a workstation against a persistent
-   instance: every workstation runner wraps the Controller in
-   `DisposableBootDisk` (`factory_runner.py`, `windows_install_run.py`,
-   `windows_identity_run.py`, `arch_install_run.py`, `arch_identity_run.py`),
-   and `96f2d16` only turned the gap into an explicit refusal of a bundle
-   prepared against the permanent realm. This is finding 7 of the 2026-08-17
-   review of the persistent path, the one finding that was never fixed.
-   **Approved 2026-09-30 and in progress** (aiq TASK-28): the design, step
-   list and the live runs each step needs are in
-   `homelab/DURABLE-WORKSTATION-FLOW.md` — follow it rather than this summary.
-   Installs stay on the disposable Controller, and the owner types distinct
-   Windows local-administrator and Arch `local-rescue` passwords at join, which
-   the factory never stores. Its first live run is the owner-run probe
-   (step 3) once that target lands. The 2026-09-24 gap analysis sized it at
-   6–10 files and 1–3k lines plus live runs: console access to the persistent Controller over the owner-typed
-   `local-rescue` password and sudo (reuse `bootstrap_dc._console_root` and
-   the `sudo -k -p` path in `controller_join_material.py`); joining the
-   persistent instance to the workstation switch instead of its point-to-point
-   socket; skipping per-run domain provisioning and synthetic-principal
-   staging; PXE publication on the persistent Controller; a realm check
-   against the instance record; a Windows join-only runner; somewhere to keep
-   the workstation disk; and re-authentication after the directory relaunches.
-   Develop it against `rehearsal`. The durable accounts must change their
-   password at first logon, so any live login the flow drives as one of them
-   first has to perform that change.
-7. **Then the keeper:** `make homelab-factory-persistent-destroy APPLY=1
-   PERSISTENT_DC=rehearsal CONFIRM='DESTROY rehearsal'` (NOT RUN — destroy has
-   never run), then `homelab-factory-persistent-converge` and
+6. **The durable workstation flow (TASK-28) is DONE.** It closes finding 7 of
+   the 2026-08-17 review (every workstation runner wrapped the Controller in
+   `DisposableBootDisk`; `96f2d16` had only turned that gap into a refusal).
+   Follow `homelab/DURABLE-WORKSTATION-FLOW.md`: steps 1-9 (`715147f`..`5f5b322`,
+   `a54e7c9`, `d3f8567`, `bcf8d16`) passed live end to end 2026-09-30,
+   unattended under agent custody (TASK-40, `fa8ec58`/`14b925e`) on
+   `rehearsal-auto` / `rehearsal-auto-ws1`; the run ids are in its "Live
+   record". Installs stay on the disposable Controller; the persistent one
+   serves only joins and logins. Under owner custody `rehearsal-ws1` stays at
+   stage `arch-install`: its owner-run arch-join stopped at first login
+   (`Login incorrect` with no expired-password notice, so the typed temporary
+   password was not the staged one; directory unchanged). `RESTAGE=1` cannot
+   fix that (staging is create-only and refused with `account-exists`,
+   harmlessly); the reset is `homelab-factory-persistent-account-password`.
+   Gate-5 installs for the flow (#0, #0b) were each observed with one PXE boot
+   in 68-69 min.
+7. **Then the keeper (aiq TASK-21):** owner custody with the owner's real
+   passwords, after three owner decisions: its directory password policy (a
+   relaxed one applies to every account in that domain), backups (none exist
+   for persistent instances or kept disks) and join-principal privilege. Then
+   `homelab-factory-persistent-converge` and
    `homelab-factory-persistent-accounts CHANGE_AT_FIRST_LOGON=1` for the
-   instance to keep, both owner-run. The domain SID is born at that
-   convergence; nothing backs a persistent instance up yet.
-8. **Gates 11 and 12 (aiq TASK-6), unblocked once TASK-34 is done.** Per ADR
+   instance to keep, both owner-run, and steps 1-9 against it. The domain SID
+   is born at that convergence. The throwaway instances and their kept
+   workstations leave by `homelab-factory-persistent-destroy` and
+   `homelab-durable-workstation-destroy` (both NOT RUN).
+8. **Gates 11 and 12 (aiq TASK-6), agent-runnable now** (about 5 h live;
+   `c383e3c`, `6f86808` and `dfd4264` landed and TASK-34 is done). Only one
+   disposable Controller simulation runs at a time (the canonical image's
+   `.simulation.lock`), so run it and the keeper's gate-5 install serially. Per ADR
    0080 (owner, 2026-09-30) gate 11 closes phase one at `partial`: run the two
    implemented live-boot hooks with the three loopback scenarios; the three
    stubs are deferred. Gate 12 needs a live twice-through through
@@ -906,4 +904,8 @@ and names the durable workstation flow (TASK-28) as its own step. TASK-26 then
 landed the same day (`efcaf6d`), so item 4 records it as done and unrun.
 Superseded 2026-09-30: item 6 said TASK-28 awaited the owner's go-ahead (now
 approved, in progress), and item 8 listed the gate-11 closure and the gate-12
-egress decision as open (ADR 0080 decided both).
+egress decision as open (ADR 0080 decided both). Superseded later that day:
+item 6 read "build the durable workstation flow … in progress", with the
+2026-09-24 gap analysis (6-10 files, 1-3k lines); it is built and passed live
+end to end, so item 6 records it as done and item 7 is the keeper. Item 8
+waited on TASK-34, now done.

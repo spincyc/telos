@@ -23,9 +23,9 @@ In order, one run:
    boot, and an HTTP package service) — that is the acceptance mode; a second,
    opt-in **persistent** controller mode exists for a directory you can log back
    into, described under "The persistent directory instance" in the
-   [operator runbook](operator-runbook.md). Its directory setup and account
-   creation have run once, on a throwaway instance (2026-09-25); no
-   workstation can join it yet;
+   [operator runbook](operator-runbook.md). Its directory setup, account
+   creation and a kept workstation joined to it have all run live on
+   throwaway instances (2026-09-25, 2026-09-30);
 3. network-boots a throwaway **workstation** through that controller;
 4. installs **Windows 11 Pro first, then Arch Linux second** on one UEFI/GPT
    disk, preserving Windows and its recovery data;

@@ -488,10 +488,11 @@ Nothing is destroyed by the mistake, but the run is wasted.
 > (`05eec6e`; the instance converged before it keeps a truncated SID in its
 > marker), a refused password was an unexplained "stage returned 1"
 > (`efedf50`), and there was no way to start with temporary passwords
-> (`1b04fd3`). Still **NOT RUN**: `-up` on its own, `RECONVERGE=1`,
-> `-destroy`, the Ansible accounts path, and any workstation against a
-> persistent instance (TASK-28, designed in
-> [`DURABLE-WORKSTATION-FLOW.md`](../DURABLE-WORKSTATION-FLOW.md)). Since
+> (`1b04fd3`). Still **NOT RUN**: `-up` under owner custody, `RECONVERGE=1`,
+> `-destroy` and the Ansible accounts path. A kept workstation against a
+> persistent instance (TASK-28,
+> [`DURABLE-WORKSTATION-FLOW.md`](../DURABLE-WORKSTATION-FLOW.md)) **PASSED
+> live end to end 2026-09-30**, unattended under agent custody. Since
 > `dfbcce7` convergence enables the TFTP and HTTP PXE units and exits 2 unless
 > both are active (unit-tested only); an instance converged earlier needs
 > `RECONVERGE=1` before a reboot-survival check.
@@ -504,8 +505,8 @@ and 12 depend on — and it also means no account can survive relaunching the
 directory.
 
 A **persistent instance** exists alongside it for the case where you want a
-workstation you can log back into — although no workstation can be installed
-against one yet (below). It is opt-in by name, lives in its own state
+workstation you can log back into, minted by the durable workstation flow
+(below). It is opt-in by name, lives in its own state
 directory, boots its own qcow2 with no backing file, and is deliberately *not*
 hash-fenced, because that disk is the durable directory and is expected to
 change. The acceptance canonical keeps its strict fence, and is unreachable as a
@@ -522,15 +523,15 @@ make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
     CONFIRM='DESTROY <name>'
 ```
 
-> **No workstation can be installed against a persistent instance yet.** Every
-> workstation runner wraps the Controller in `DisposableBootDisk`
-> (`factory_runner.py`, `windows_install_run.py`, `windows_identity_run.py`,
-> `arch_install_run.py`, `arch_identity_run.py`), and a bundle prepared against
-> the permanent realm is refused in `homelab/vm/arch_install_run.py` before any
-> process starts. That durable workstation flow is unbuilt — finding 7 of the
-> 2026-08-17 review of this path, the one that was never fixed, tracked as local
-> work item TASK-28. Until it exists, an instance can hold a durable directory
-> and durable accounts, and nothing joins it.
+> **Kept workstations: PROVEN LIVE 2026-09-30.** The durable workstation flow
+> (TASK-28) mints Windows and Arch on one disk against a persistent instance;
+> every stage through keep-verify passed, unattended under agent custody, on a
+> throwaway instance. Targets and verdicts:
+> [`FACTORY-MAKE-TARGETS.md`](../FACTORY-MAKE-TARGETS.md), "Kept
+> workstations"; design and run record:
+> [`DURABLE-WORKSTATION-FLOW.md`](../DURABLE-WORKSTATION-FLOW.md). Corrected
+> 2026-09-30: this callout said no workstation could be installed against a
+> persistent instance because that flow was unbuilt.
 
 Bring-up creates the instance when it is absent and boots it in place; a second
 bring-up **reuses** the disk rather than re-seeding it, which is what makes the

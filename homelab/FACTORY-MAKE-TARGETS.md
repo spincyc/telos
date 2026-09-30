@@ -307,11 +307,14 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 
 `FACTORY_DURATION` is deliberately **not** reused on this path: its 120-second
 default would abort a Samba provisioning run. Verdict: `-converge` and
-`-accounts` are **PASS — one live run each, 2026-09-25**, on a throwaway
-instance (`-converge` seeds the instance itself, so `-up` has not run on its
-own); `-destroy`, `RECONVERGE=1` and `RESTAGE` over accounts that already exist
-are **NOT RUN**. See "The persistent directory instance" in
-[docs/operator-runbook.md](docs/operator-runbook.md).
+`-accounts` are **PASS**, owner custody on `rehearsal` 2026-09-25 and agent
+custody on `rehearsal-auto` 2026-09-30 (converge 44 s; four accounts, change
+at first logon); `-up` **PASS 2026-09-30** with `CUSTODY=agent THROWAWAY=1`
+only (under owner custody `-converge` seeds the instance itself). `RESTAGE=1`
+over existing accounts ran once on `rehearsal` and stopped with
+`account-exists` as documented, writing nothing. `-destroy`, `RECONVERGE=1` and
+`-up` under owner custody are **NOT RUN**. See "The persistent directory
+instance" in [docs/operator-runbook.md](docs/operator-runbook.md).
 
 ### Probing an instance on the per-run fabric (TASK-28)
 
@@ -330,7 +333,9 @@ directory and is refused before anything is written to it. Verdict:
 **PASS 2026-09-30**, owner-run against `rehearsal` with `REPAIR_SID=1` (run
 `20260930T174246Z-3085400-ef46502e`): all 20 checks, clock skew -2 s, the
 join principal's destruction proved, clean poweroff, and the truncated
-recorded SID completed in the marker.
+recorded SID completed in the marker; and unattended under agent custody
+against `rehearsal-auto` (run `20260930T203222Z-4179758-a6debb5b`, clock skew
+-1 s).
 
 ### Setting an instance's directory password policy (TASK-28)
 
@@ -356,7 +361,9 @@ daily administrator's new password and the Arch `local-rescue` break-glass
 password in `arch-join`, the Windows local-administrator break-glass password
 in `windows-join`, and permanent passwords in `-accounts` -- uses the recorded
 policy, falls back to Samba's default when none is recorded, and names the
-policy in its refusal. Verdict: **NOT RUN.**
+policy in its refusal. Verdict: **PASS 2026-09-30**, one owner run on
+`rehearsal` (minimum length 4, complexity off, minimum age 0, read back and
+recorded).
 
 ### Resetting one staged account's password (TASK-28)
 
@@ -374,18 +381,16 @@ the new value temporary; it is a dry run unless `APPLY=1`. Implemented by
 |---|---|---|
 | `homelab-factory-persistent-account-password` | `APPLY=1` | `ROLE` is a **contract role** (`daily_administrator`, `standard_user`, `domain_administrator`, `additional_standard_user_<uid>`) and must be one the instance's staged record lists; the account name comes from the private roster staging used and appears only in the password prompt at the terminal. The dry run binds the instance as `-probe` does and starts nothing. `APPLY=1` asks, before any process starts, for the `local-rescue` password and the new password twice, and refuses the new one there if the instance's recorded directory password policy (else Samba's default) would. It then boots the instance in place on a per-run switch and gateway with no workstation, proves its realm and domain SID, and runs the reset program over the staging channel (base64 JSON on the guest shell's stdin, echo off, stderr closed): it refuses an account that does not exist (`account-missing`; it never creates), requires the staged uidNumber, replaces `unicodePwd` as an administrator's reset and, with `CHANGE_AT_FIRST_LOGON=1`, sets `pwdLastSet=0`, in one transaction, then reads back `pwdLastSet` and proves the objectSid and uidNumber unchanged. The domain password policy is not touched; a value the directory refuses anyway fails as `password-policy`. After a clean console poweroff and only on that proof, `{role, utc, must_change, run_id}` is appended (atomically) to the marker's `directory_account_password_resets`; `-status` prints the latest reset per role. Evidence lands in `homelab/var/factory/persistent-account-password/<instance>/<run id>/`: a redacted console transcript, `switch.jsonl`, `fabric.log` and a `result.json` of secret-free facts. |
 
-Verdict: **NOT RUN.**
+Verdict: **NOT RUN.** `rehearsal`'s owner-custody arch-join retry needs it
+first (see "Stage `arch-join`" below).
 
-**No workstation can be installed against a persistent instance yet.** Every
-workstation runner wraps the Controller in `DisposableBootDisk`, and a bundle
-prepared against the permanent realm is refused by
-`homelab/vm/arch_install_run.py` before any process starts. That durable
-workstation flow is unbuilt — finding 7 of the 2026-08-17 review, tracked as
-local work item TASK-28 — so a persistent instance can hold a durable directory
-and durable accounts, and nothing yet joins it.
+Superseded 2026-09-30, kept so it is not re-derived: this paragraph said no
+workstation could be installed against a persistent instance because the
+durable workstation flow (finding 7 of the 2026-08-17 review, TASK-28) was
+unbuilt. It is built and passed live end to end; see "Kept workstations" below.
 
 The **durable directory accounts** that this path exists to carry have two
-routes, and **neither has run live**: for a *simulated* persistent instance,
+routes, and only the first has run live: for a *simulated* persistent instance,
 `homelab-factory-persistent-accounts-plan` then
 `homelab-factory-persistent-accounts APPLY=1` (above); for a Controller
 reachable over SSH — after network attachment — the host-side Ansible path
@@ -480,8 +485,12 @@ make homelab-durable-windows-join WORKSTATION=<w> PERSISTENT_DC=<name> APPLY=1
 make homelab-durable-workstation-verify WORKSTATION=<w> PERSISTENT_DC=<name> ARCH_HOSTNAME=<host> APPLY=1
 ```
 
-Verdict: **NOT RUN** live; unit-tested only (`homelab/tests/test_credential_custody.py`,
-`homelab/tests/test_agent_custody_runners.py`).
+Verdict: **PASS 2026-09-30**, the whole sequence above, unattended, on
+`rehearsal-auto` and `rehearsal-auto-ws1` (the creation's one-run init entry
+removed and proven absent); run ids are in
+[DURABLE-WORKSTATION-FLOW.md](DURABLE-WORKSTATION-FLOW.md), "Live record".
+Unit tests: `homelab/tests/test_credential_custody.py`,
+`homelab/tests/test_agent_custody_runners.py`.
 
 ### Kept workstations (TASK-28)
 
@@ -490,7 +499,9 @@ A kept workstation is minted against a persistent instance by the flow in
 under `DURABLE_WORKSTATION_ROOT` (default `build/homelab/vm/workstations`), one
 directory per `WORKSTATION=<name>`: a standalone disk, a private marker bound to
 one `PERSISTENT_DC`, an exclusive lock and an append-only stage ledger. None of
-these targets boots a guest, and none has run against a real gate-5 bundle.
+these targets boots a guest. `-adopt` **PASS 2026-09-30** on two real gate-5
+bundles (`rehearsal-ws1`, `rehearsal-auto-ws1`); `-reconcile` and `-destroy`
+are **NOT RUN**.
 
 | Target | Opt-in | Effect |
 |---|---|---|
@@ -522,7 +533,8 @@ The installed disk's sealed join unit waits about 120 seconds for join media
 at every boot until stage `arch-join` joins it. Verdict: **PASS 2026-09-30** on `rehearsal-ws1`
 (`durable-arch-installs/run-20260930T175938Z-ec176009c2f0`): Windows preserved,
 join deferred, one PXE boot, folded; adopt had run first on the gate-5 bundle
-`run-20260930T164848Z-d51d2c1e14cd`.
+`run-20260930T164848Z-d51d2c1e14cd`. Again under agent custody on
+`rehearsal-auto-ws1` (`durable-arch-installs/run-20260930T203312Z-f7163443624a`).
 
 #### Stage `arch-join` (step 7)
 
@@ -546,7 +558,14 @@ changes the temporary password to it; and a run that died after the change may
 have landed leaves it pending, so the next run logs in with it as the current
 one (and marks it not live if the login refuses it). The Arch break-glass
 password is stored as pending in the workstation's store and made current by
-the fold. Verdict: **NOT RUN.**
+the fold. Verdict: **PASS 2026-09-30** under agent custody on
+`rehearsal-auto-ws1` (`durable-arch-joins/run-20260930T203553Z-4184392-be2f79e8`:
+first-logon change landed, join sealed, SSSD online, every role at its pinned
+uid). Owner custody: **NOT RUN** to a pass; the one run on `rehearsal-ws1`
+stopped at first login (`Login incorrect`, no expired-password notice: the
+typed temporary password was not the staged one; directory unchanged). A
+retry needs a known password first: `homelab-factory-persistent-account-password
+ROLE=daily_administrator` (above).
 
 #### Stage `windows-join` (step 8)
 
@@ -567,7 +586,9 @@ the target with `APPLY=1`. Under agent custody the daily administrator's
 proven `current` password is read from the store (none is a refusal) and the
 new local-administrator password is generated, stored as pending in the
 workstation's store before any guest starts, and made current by the fold.
-Verdict: **NOT RUN.**
+Verdict: **PASS 2026-09-30** under agent custody on `rehearsal-auto-ws1`
+(`durable-windows-joins/rehearsal-auto-ws1/attempt-20260930T203917Z-c67065dfe5be`:
+folded, custody publication retired). Owner custody: **NOT RUN**.
 
 #### Keep-verify (step 9)
 
@@ -582,7 +603,11 @@ only record of a verify.
 |---|---|---|
 | `homelab-durable-workstation-verify` | `APPLY=1` | Read-only plan without `APPLY=1`: checks every stage (`adopt`, `arch-install`, `arch-join`, `windows-join`) is folded with no fold pending, both machine accounts are recorded, the binding and both rosters agree, and parses the workstation's firmware variables: `BootOrder` must still start with an active `Linux Boot Manager` (a regression is shown and refuses the run before any prompt). With `APPLY=1`, under the workstation's lock and after proving its disk and variables are the ledger head, asks at the terminal, before any process starts: the Controller's `local-rescue` console password; the daily administrator's CURRENT domain password. It boots `PERSISTENT_DC` in place on one per-run switch (no pause, no fault, clean console poweroff) and proves its realm and SID; boots an overlay of the kept disk to Arch through the systemd-boot menu (recording that the menu's default is Windows), logs the daily administrator in on ttyS0, proves the roster, elevates, runs `net ads testjoin` and proves `sssctl` online, every directory role at its recorded uidNumber, the sealed join unit and the host name, and powers Arch off; relaunches the Controller (clean console poweroff, then a cold boot in the same session, which logs in again with the password it holds) and proves AD, the realm, the SID and the clock again; boots a second overlay to Windows by the menu's default, signs the daily administrator in through gate 6's domain sign-in (Controller-side diagnostic disabled, no principal staged), runs gate 6's read-only identity probe (interactive operator, membership, secure channel, local Administrators right) and shuts Windows down from inside. Both overlays are removed; the workstation's disk, variables and marker are hashed again and must be unchanged. `result.json` holds secret-free booleans per check and a `pass`/`fail` verdict; an Arch failure is recorded and Windows is still verified. Evidence stays under `homelab/var/factory/durable-workstation-verifies/<name>/`. |
 
-Verdict: **NOT RUN.**
+Verdict: **PASS 2026-09-30** under agent custody on `rehearsal-auto-ws1`
+(`durable-workstation-verifies/rehearsal-auto-ws1/run-20260930T210156Z-8617-9bdffc4b`,
+40 of 40 checks, about 5 min), including the Controller's clean poweroff and
+cold relaunch with AD live and the clock within Kerberos skew, and
+`BootOrder` still Linux-first. Owner custody: **NOT RUN**.
 
 ## Required common inputs
 
