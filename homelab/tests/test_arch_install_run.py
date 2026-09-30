@@ -237,6 +237,23 @@ class ArchInstallRunTests(unittest.TestCase):
                     releases=Path("/pxe"), seed_iso=Path("/seed.iso"),
                     duration=5, apply=True)
 
+    def test_an_unusable_roster_refuses_before_the_bundle_is_read(self):
+        # The roster is no longer read at import, so run() asks for it first:
+        # a broken overlay must stop the run before any plan line or process.
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = self.bundle(Path(temporary) / "bundle")
+            with mock.patch.object(
+                    arch_install_run, "acceptance_roster",
+                    side_effect=RuntimeError("unusable identity overlay")), \
+                    mock.patch.object(arch_install_run, "_bundle") as read:
+                with self.assertRaisesRegex(RuntimeError, "identity overlay"):
+                    arch_install_run.run(
+                        bundle, controller_state=Path("/state"),
+                        releases=Path("/pxe"), seed_iso=Path("/seed.iso"),
+                        duration=60, apply=False)
+            read.assert_not_called()
+            self.assertFalse((bundle / "evidence").exists())
+
     def test_qmp_socket_path_is_recovered_from_the_authorized_argv(self):
         path = arch_install_run._qmp_socket_path([
             "qemu", "-qmp", "unix:/tmp/telos-arch-abc/arch.qmp,"

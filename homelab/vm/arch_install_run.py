@@ -50,6 +50,7 @@ try:
     from .controller_factory import FactoryBundle, FactorySpec
     from .controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
+    from .controller_principals import acceptance_roster
     from .factory_publication import stage as stage_publication
     from .factory_runner import (
         DEFAULT_SEED_ISO, GATEWAY_MAC, PUBLICATION_LABEL, _at_root_prompt,
@@ -71,6 +72,7 @@ except ImportError:  # Direct execution from homelab/vm.
     from homelab.vm.controller_factory import FactoryBundle, FactorySpec
     from homelab.vm.controller_join_material import (
         ControllerJoinSerial, OneUseDomainJoinMaterial)
+    from homelab.vm.controller_principals import acceptance_roster
     from factory_publication import stage as stage_publication
     from factory_runner import (
         DEFAULT_SEED_ISO, GATEWAY_MAC, PUBLICATION_LABEL, _at_root_prompt,
@@ -1280,6 +1282,11 @@ def run(
     if not 60 <= duration <= MAX_DURATION:
         raise RuntimeError(
             f"duration must be between 60 and {MAX_DURATION} seconds")
+    # The acceptance roster used to be read when controller_principals was
+    # imported; it is resolved on first use now, so ask for it before the plan
+    # prints or any process starts: an overlay that exists but cannot be
+    # understood refuses here, not after the Controller has booted.
+    acceptance_roster()
     authorization, workstation_command = _bundle(bundle)
     bundle = bundle.resolve()
     authorized = authorization["authorization"]
