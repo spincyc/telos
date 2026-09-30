@@ -10,7 +10,12 @@ import tempfile
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterable
+
+try:
+    from .factory_verify import EVIDENCE_LIMIT
+except ImportError:  # Direct execution from homelab/vm.
+    from factory_verify import EVIDENCE_LIMIT
 
 
 _SECRET = re.compile(
@@ -18,10 +23,103 @@ _SECRET = re.compile(
     rb"([ \t]*(?:=|:)[ \t]*)([^ \t\r\n][^\r\n]*)"
 )
 
+#: The one line an over-limit retained log carries where its middle was cut.
+#: ASCII and free of every credential keyword, so neither the redactor nor
+#: ``artifact_scan`` has anything to say about it.
+_ELISION = (
+    b"[telos evidence: %d bytes elided here to bound this retained log "
+    b"to %d bytes]\n")
+#: Room for the elision line with any byte count, plus the newline that ends
+#: a head which had to be cut mid-line.
+_ELISION_RESERVE = len(_ELISION % (10 ** 20, 10 ** 20)) + 1
+
 
 def redact(data: bytes) -> bytes:
     """Remove values that look like secrets while retaining useful prompts."""
     return _SECRET.sub(rb"\1\2[REDACTED]", data)
+
+
+def _is_continuation(data: bytes, index: int) -> bool:
+    return 0 <= index < len(data) and data[index] & 0xC0 == 0x80
+
+
+def _bound(data: bytes, limit: int) -> tuple[bytes, int]:
+    """Keep the first quarter and the rest of ``limit`` from the end.
+
+    Both cuts land on line boundaries, so no line is kept in part and no UTF-8
+    sequence is split (a newline byte never occurs inside one).  Only a line
+    longer than its whole budget is cut inside itself, and then at a character
+    boundary.  The tail absorbs whatever budget the head's cut leaves unused.
+    """
+    if len(data) <= limit:
+        return data, 0
+    if limit < 4 * _ELISION_RESERVE:
+        raise ValueError("log limit is too small to hold an elision line")
+    budget = limit // 4
+    cut = data.rfind(b"\n", 0, budget) + 1
+    if not cut:
+        cut = budget
+        for _ in range(3):
+            if not _is_continuation(data, cut):
+                break
+            cut -= 1
+    head = data[:cut]
+    start = len(data) - (limit - len(head) - _ELISION_RESERVE)
+    newline = data.find(b"\n", start - 1, len(data) - 1)
+    if newline >= 0:
+        start = newline + 1
+    else:
+        for _ in range(3):
+            if not _is_continuation(data, start):
+                break
+            start += 1
+    elided = start - cut
+    marker = _ELISION % (elided, limit)
+    if head and not head.endswith(b"\n"):
+        marker = b"\n" + marker
+    return head + marker + data[start:], elided
+
+
+def redact_and_bound(
+    data: bytes, *, limit: int = EVIDENCE_LIMIT,
+) -> tuple[bytes, dict[str, int]]:
+    """Redact a whole log, THEN bound it to the evidence limit.
+
+    The order is the point: redaction sees every line whole before any cut,
+    so no cut can leave a credential's value behind a truncated label.  A log
+    already within the limit comes back exactly as ``redact`` returns it.
+    Over the limit, whole lines from its start (a quarter of the limit) and
+    its end (the rest) are kept around one elision line (``_bound``): the
+    head says what booted, and the tail says where it stopped.  The sizes
+    record makes a truncation visible wherever the caller files it.
+    """
+    retained, elided = _bound(redact(data), limit)
+    return retained, {
+        "original_bytes": len(data),
+        "retained_bytes": len(retained),
+        "elided_bytes": elided,
+    }
+
+
+def retain_redacted_logs(
+    directory: Path, names: Iterable[str],
+) -> dict[str, dict[str, int]]:
+    """Replace each named log with its redacted, bounded form, privately.
+
+    Run only after every writer has stopped.  A log that does not exist is
+    skipped; the result maps each retained log's name to its sizes.
+    """
+    retained: dict[str, dict[str, int]] = {}
+    for name in names:
+        path = directory / name
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            continue
+        kept, sizes = redact_and_bound(data)
+        private_file(path, kept)
+        retained[name] = sizes
+    return retained
 
 
 def private_directory(path: Path) -> None:

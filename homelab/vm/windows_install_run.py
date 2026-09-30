@@ -20,7 +20,7 @@ try:
         measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from .signal_cleanup import SignalGuard, terminate_children
-    from .simulation_evidence import private_file, redact
+    from .simulation_evidence import redact, retain_redacted_logs
     from .simulated_topology import audit_live_process
     from .windows_gui import QmpClient, WindowsGuiError
     from .windows_install_contract import (
@@ -33,7 +33,7 @@ except ImportError:
         measurement_block, qemu_commands,
         switch_command, wait_for_switch_port)
     from signal_cleanup import SignalGuard, terminate_children
-    from simulation_evidence import private_file, redact
+    from simulation_evidence import redact, retain_redacted_logs
     from simulated_topology import audit_live_process
     from windows_gui import QmpClient, WindowsGuiError
     from windows_install_contract import audit_qemu_disk_boundary, inspect_qcow2
@@ -73,15 +73,6 @@ def _bundle(path: Path) -> tuple[dict, list[str]]:
     if any(item.is_symlink() or not item.is_file() for item in required):
         raise RuntimeError("Windows bundle is incomplete or unsafe")
     return authorization, command
-
-
-def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
-    """Retain a bounded, redacted tail after all writers have stopped."""
-    try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return
-    private_file(path, redact(data[-maximum:]))
 
 
 def _retain_private_publication(path: Path) -> str | None:
@@ -353,8 +344,10 @@ def run(
                 failures.append("QMP runtime root was not removed")
         if serial_thread is not None:
             serial_thread.join(timeout=2)
-        _sanitize_log(evidence / "controller-publication.log")
-        _sanitize_log(evidence / "workstation-serial.log")
+        # Redacted whole, THEN bounded to the evidence limit with both
+        # ends kept; the recorded sizes make any truncation visible.
+        result["retained_logs"] = retain_redacted_logs(
+            evidence, ("controller-publication.log", "workstation-serial.log"))
         publication_failure = _retain_private_publication(
             bundle / "publication.iso")
         if publication_failure:

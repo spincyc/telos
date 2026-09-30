@@ -863,14 +863,97 @@ class ArchInstallRunTests(unittest.TestCase):
             os.close(write_fd)
             os.close(read_fd)
 
-    def test_sanitize_log_redacts_and_bounds(self):
+    def test_retained_logs_are_redacted_then_bounded_and_sized(self):
+        # Check 15 fails any retained top-level file over the evidence limit.
+        # Whatever stage the run reaches, both retained logs are redacted
+        # whole and THEN bounded to it with both ends kept; a log already
+        # within it is exactly the redacted log; result.json records sizes.
+        from contextlib import nullcontext
+        from homelab.vm import artifact_scan
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+        from homelab.vm.simulation_evidence import redact
+        secret = "arch-install-straddle-secret-5e2c"
+        filler = b"".join(
+            b"publication line %07d\n" % index
+            for index in range(3 * EVIDENCE_LIMIT // 24))
+        # Overwritten where a byte cut the tail's length from the end splits
+        # the label: the old order (cut, then redact) would keep the value.
+        cut = len(filler) - EVIDENCE_LIMIT * 3 // 4
+        line = b"\nPassword: " + secret.encode() + b"\n"
+        big = filler[:cut - 4] + line + filler[cut - 4 + len(line):]
+        self.assertIn(secret.encode(), redact(big[cut:]))
+        small = b"archiso login: root\ntoken=" + secret.encode() + b"\n"
         with tempfile.TemporaryDirectory() as temporary:
-            log = Path(temporary) / "serial.log"
-            log.write_bytes(b"x" * 100 + b"\npassword: should-not-survive\n")
-            arch_install_run._sanitize_log(log, maximum=40)
-            self.assertLessEqual(log.stat().st_size, 40)
-            self.assertNotIn(b"should-not-survive", log.read_bytes())
-            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            bundle = self.bundle(Path(temporary) / "bundle")
+            backing = bundle / "windows-base.qcow2"
+            evidence = bundle / "evidence"
+
+            def refuse_overlay(*_args, **_kwargs):
+                (evidence / "controller-publication.log").write_bytes(big)
+                (evidence / "workstation-serial.log").write_bytes(small)
+                raise RuntimeError("controller overlay refused")
+
+            with mock.patch.object(
+                    arch_install_run, "inspect_overlay",
+                    return_value=self._overlay(backing)), \
+                    mock.patch.object(
+                        arch_install_run, "sha256", return_value=CONST), \
+                    mock.patch.object(
+                        arch_install_run, "audit_arch_boot_boundary"), \
+                    mock.patch.object(
+                        arch_install_run, "_qmp_socket_path",
+                        return_value=bundle / "arch.qmp"), \
+                    mock.patch.object(
+                        arch_install_run, "paths",
+                        return_value={"disk": Path("/state/disk"),
+                                      "vars": Path("/state/vars")}), \
+                    mock.patch.object(arch_install_run, "socket"), \
+                    mock.patch.object(
+                        arch_install_run, "SignalGuard", nullcontext), \
+                    mock.patch.object(
+                        arch_install_run, "DisposableBootDisk",
+                        side_effect=refuse_overlay):
+                with self.assertRaisesRegex(RuntimeError, "overlay refused"):
+                    arch_install_run.run(
+                        bundle, controller_state=Path("/state"),
+                        releases=Path("/pxe"), seed_iso=Path("/seed.iso"),
+                        duration=600, apply=True)
+            publication = (evidence / "controller-publication.log").read_bytes()
+            serial = (evidence / "workstation-serial.log").read_bytes()
+            self.assertLessEqual(len(publication), EVIDENCE_LIMIT)
+            self.assertTrue(
+                publication.startswith(b"publication line 0000000\n"))
+            self.assertTrue(big.endswith(publication[-4096:]))
+            self.assertEqual(publication.count(b"[telos evidence: "), 1)
+            publication.decode("utf-8")
+            self.assertNotIn(secret.encode(), publication)
+            self.assertEqual(serial, redact(small))
+            for name in ("controller-publication.log",
+                         "workstation-serial.log"):
+                self.assertEqual(
+                    (evidence / name).stat().st_mode & 0o777, 0o600)
+            result = json.loads((evidence / "result.json").read_text())
+            self.assertEqual("fail", result["status"])
+            recorded = result["retained_logs"]
+            self.assertEqual(
+                recorded["controller-publication.log"]["original_bytes"],
+                len(big))
+            self.assertEqual(
+                recorded["controller-publication.log"]["retained_bytes"],
+                len(publication))
+            self.assertGreater(
+                recorded["controller-publication.log"]["elided_bytes"],
+                EVIDENCE_LIMIT)
+            self.assertEqual(recorded["workstation-serial.log"], {
+                "original_bytes": len(small), "retained_bytes": len(serial),
+                "elided_bytes": 0})
+            scan = artifact_scan.scan_paths(
+                evidence,
+                ["controller-publication.log", "workstation-serial.log"],
+                known_secrets=[secret])
+            self.assertEqual(
+                scan.counters, dict.fromkeys(artifact_scan.CATEGORIES, 0),
+                scan.findings)
 
     def test_acceptance_measurements_emit_only_what_this_gate_observed(self):
         block = arch_install_run.acceptance_measurements(

@@ -1528,13 +1528,73 @@ class RunTests(unittest.TestCase):
                      "external_connections_after_offline_gate"},
                     set(block))
 
-    def test_sanitize_log_redacts_and_bounds(self):
+    def test_boot_logs_are_redacted_then_bounded_and_their_sizes_recorded(self):
+        # Check 15 fails any retained top-level file over the evidence limit,
+        # so each boot's serial log is redacted whole and THEN bounded to it,
+        # keeping both ends; a log already within it is exactly the redacted
+        # log.  The result records every retained log's sizes.
+        from homelab.vm import artifact_scan
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+        from homelab.vm.simulation_evidence import redact
+        secret = "dualboot-straddle-secret-0f3a"
+        filler = b"".join(
+            b"firmware line %07d\n" % index
+            for index in range(3 * EVIDENCE_LIMIT // 21))
+        # The secret line overwrites filler where a byte cut the tail's
+        # length from the end splits its label: the old order (cut, then
+        # redact) would keep ``sword: <secret>``.
+        cut = len(filler) - EVIDENCE_LIMIT * 3 // 4
+        line = b"\nPassword: " + secret.encode() + b"\n"
+        big = filler[:cut - 4] + line + filler[cut - 4 + len(line):]
+        self.assertIn(secret.encode(), redact(big[cut:]))
+        small = b"BdsDxe: loading Boot0001\ntoken=" + secret.encode() + b"\n"
         with tempfile.TemporaryDirectory() as temporary:
-            log = Path(temporary) / "serial.log"
-            log.write_bytes(b"x" * 100 + b"\npassword: should-not-survive\n")
-            da._sanitize_log(log, maximum=40)
-            self.assertLessEqual(log.stat().st_size, 40)
-            self.assertNotIn(b"should-not-survive", log.read_bytes())
+            bundle = self.bundle(Path(temporary) / "bundle")
+
+            def fake_boot(command, *, processes, label, evidence,
+                          qmp_socket, mode, timeout, progress=None):
+                (evidence / f"{label}-serial.log").write_bytes(
+                    big if label == "boot1" else small)
+                return (happy_boot1(), True) if label == "boot1" \
+                    else (happy_boot2(), True)
+
+            patches = self._mocks(
+                bundle,
+                _boot_once={"side_effect": fake_boot},
+                read_gpt_region={"return_value": make_gpt(SIZES)})
+            with patches[0], patches[1], patches[2], patches[3]:
+                self.assertEqual(0, da.run(bundle, duration=240, apply=True))
+            evidence = bundle / "evidence"
+            boot1 = (evidence / "boot1-serial.log").read_bytes()
+            boot2 = (evidence / "boot2-serial.log").read_bytes()
+            self.assertLessEqual(len(boot1), EVIDENCE_LIMIT)
+            self.assertTrue(boot1.startswith(b"firmware line 0000000\n"))
+            self.assertTrue(big.endswith(boot1[-4096:]))
+            self.assertEqual(boot1.count(b"[telos evidence: "), 1)
+            boot1.decode("utf-8")
+            self.assertNotIn(secret.encode(), boot1)
+            self.assertEqual(boot2, redact(small))
+            for log in ("boot1-serial.log", "boot2-serial.log"):
+                self.assertEqual(
+                    (evidence / log).stat().st_mode & 0o777, 0o600)
+            result = json.loads((evidence / "result.json").read_text())
+            self.assertEqual("observed", result["status"])
+            recorded = result["retained_logs"]
+            self.assertEqual(recorded["boot1-serial.log"]["original_bytes"],
+                             len(big))
+            self.assertEqual(recorded["boot1-serial.log"]["retained_bytes"],
+                             len(boot1))
+            self.assertGreater(
+                recorded["boot1-serial.log"]["elided_bytes"], EVIDENCE_LIMIT)
+            self.assertEqual(recorded["boot2-serial.log"], {
+                "original_bytes": len(small), "retained_bytes": len(boot2),
+                "elided_bytes": 0})
+            scan = artifact_scan.scan_paths(
+                evidence, ["boot1-serial.log", "boot2-serial.log"],
+                known_secrets=[secret])
+            self.assertEqual(
+                scan.counters, dict.fromkeys(artifact_scan.CATEGORIES, 0),
+                scan.findings)
 
 
 if __name__ == "__main__":

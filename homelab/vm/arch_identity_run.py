@@ -422,10 +422,10 @@ RESCUE_PASSWD_EXITED_FAILURE = (
     "passwd exited without setting the local-rescue password; its own exit "
     "code is retained as rescue_returncode in the workstation boot facts")
 
-#: Retained workstation console evidence (bounded + redacted, no secrets).
+#: Retained workstation console evidence (redacted, then bounded to the
+#: evidence limit by ``simulation_evidence.redact_and_bound``; no secrets).
 WORKSTATION_LOG_FILENAME = "workstation-serial.log"
 BOOT_FACTS_FILENAME = "workstation-boot.json"
-TRANSCRIPT_RETENTION_BYTES = 4 * 1024 * 1024
 
 # --------------------------------------------------------------------------
 # Boot-stall evidence.  Two of eight gate-8 runs on 2026-08-14 produced
@@ -724,6 +724,9 @@ def new_boot_facts() -> dict[str, object]:
         # when the retained log is a tail.
         "firmware_debug_log_bytes": None,
         "firmware_debug_log_retained_bytes": None,
+        # The retained console transcript's original, retained and elided
+        # byte counts: nonzero elided bytes say the log is a head and a tail.
+        "workstation_serial_log": None,
     }
 
 
@@ -3246,19 +3249,21 @@ class ArchIdentityBoundary:
     def _retain_workstation_evidence(self, transcript: bytes) -> None:
         """Keep a bounded, redacted transcript and secret-free boot facts.
 
-        Mirrors ``arch_install_run._sanitize_log``: only a bounded tail is
-        kept, secret-shaped values are redacted, and the files are private.
-        The facts record the menu/login lifecycle (menu-seen, entry-selected,
+        The transcript is treated like every runner's retained serial log
+        (``simulation_evidence.redact_and_bound``): secret-shaped values are
+        redacted over the whole transcript, then it is bounded to the evidence
+        limit keeping its head and tail, and the files are private.  The facts
+        record the menu/login lifecycle (menu-seen, entry-selected,
         getty-seen, login-completed, retries, elevation), the boot-stall
-        diagnosis, the console timeline and the firmware-variable digests, and
-        nothing else.
+        diagnosis, the console timeline, the firmware-variable digests and the
+        transcript's sizes, and nothing else.
         """
-        from .simulation_evidence import private_file, redact
+        from .simulation_evidence import private_file, redact_and_bound
 
         evidence = self.bundle.evidence_path.parent
-        private_file(
-            evidence / WORKSTATION_LOG_FILENAME,
-            redact(transcript[-TRANSCRIPT_RETENTION_BYTES:]))
+        retained, sizes = redact_and_bound(transcript)
+        private_file(evidence / WORKSTATION_LOG_FILENAME, retained)
+        self._boot_facts["workstation_serial_log"] = sizes
         # Timing and firmware state, both of which had to be reconstructed by
         # hand after the 2026-08-14 stalls: the bounded timestamped console
         # timeline, and the post-boot variable-store digest to compare against

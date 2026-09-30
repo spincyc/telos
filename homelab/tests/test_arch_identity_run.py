@@ -3271,12 +3271,16 @@ class EvidenceRetentionTests(unittest.TestCase):
             self.password = None
 
     def test_transcript_is_bounded_redacted_and_private(self):
-        from homelab.vm.arch_identity_run import TRANSCRIPT_RETENTION_BYTES
+        from homelab.vm import artifact_scan
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
         with tempfile.TemporaryDirectory() as name:
             bundle = make_bundle(Path(name))
             boundary = ArchIdentityBoundary(bundle)
+            filler = b"".join(
+                b"console line %07d\n" % index
+                for index in range(2 * EVIDENCE_LIMIT // 20))
             transcript = (
-                b"A" * (TRANSCRIPT_RETENTION_BYTES + 64)
+                b"HEAD\n" + filler
                 + b"telos-ws1 login: operator\n"
                 b"Password: hunter2secret\n"
                 b"token=deadbeefcafe\nTAIL")
@@ -3288,8 +3292,12 @@ class EvidenceRetentionTests(unittest.TestCase):
             evidence = bundle.evidence_path.parent
             log_path = evidence / WORKSTATION_LOG_FILENAME
             log = log_path.read_bytes()
-            self.assertLessEqual(len(log), TRANSCRIPT_RETENTION_BYTES)
+            # Bounded to the evidence limit check 15 applies, both ends kept
+            # around one elision line.
+            self.assertLessEqual(len(log), EVIDENCE_LIMIT)
+            self.assertTrue(log.startswith(b"HEAD\n"))
             self.assertTrue(log.endswith(b"TAIL"))
+            self.assertEqual(log.count(b"[telos evidence: "), 1)
             self.assertIn(b"Password: [REDACTED]", log)
             self.assertNotIn(b"hunter2secret", log)
             self.assertNotIn(b"deadbeefcafe", log)
@@ -3299,12 +3307,43 @@ class EvidenceRetentionTests(unittest.TestCase):
             self.assertEqual(facts_path.stat().st_mode & 0o777, 0o600)
             self.assertTrue(recorded["menu_seen"])
             self.assertEqual(recorded["entry_selected"], "1")
+            sizes = recorded["workstation_serial_log"]
+            self.assertEqual(sizes["original_bytes"], len(transcript))
+            self.assertEqual(sizes["retained_bytes"], len(log))
+            self.assertGreater(sizes["elided_bytes"], EVIDENCE_LIMIT // 2)
+            result = artifact_scan.scan_paths(
+                evidence, [log_path.name],
+                known_secrets=["hunter2secret", "deadbeefcafe"])
+            self.assertEqual(
+                result.counters, dict.fromkeys(artifact_scan.CATEGORIES, 0),
+                result.findings)
             # Only the declared secret-free facts (plus the schema) exist.
             self.assertEqual(
                 sorted(recorded),
                 sorted({"schema", *new_boot_facts()}))
             # The workstation credential was released during teardown.
             self.assertEqual(boundary._principals, {})
+
+    def test_a_transcript_within_the_limit_is_retained_as_redacted(self):
+        # Byte-identical to what the old tail bound produced for every
+        # transcript it never cut: ``redact`` of the whole thing.
+        from homelab.vm.simulation_evidence import redact
+        with tempfile.TemporaryDirectory() as name:
+            bundle = make_bundle(Path(name))
+            boundary = ArchIdentityBoundary(bundle)
+            transcript = (
+                b"telos-ws1 login: operator\nPassword: hunter2secret\n"
+                b"\xe2\x82\xac ok\n")
+            boundary._workstation_console = self._Console(transcript)
+            self.assertEqual(boundary.stop(), [])
+            evidence = bundle.evidence_path.parent
+            log = (evidence / WORKSTATION_LOG_FILENAME).read_bytes()
+            self.assertEqual(log, redact(transcript))
+            recorded = json.loads(
+                (evidence / BOOT_FACTS_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(recorded["workstation_serial_log"], {
+                "original_bytes": len(transcript),
+                "retained_bytes": len(log), "elided_bytes": 0})
 
     def test_stall_evidence_is_bounded(self):
         from homelab.vm.arch_identity_run import (

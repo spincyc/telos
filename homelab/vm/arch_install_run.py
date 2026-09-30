@@ -57,7 +57,8 @@ try:
         switch_command, wait_for_switch_port)
     from .serial_automation import SerialAutomation, SerialAutomationError
     from .signal_cleanup import SignalGuard, terminate_children
-    from .simulation_evidence import private_file, redact
+    from .simulation_evidence import (
+        private_file, redact, retain_redacted_logs)
     from .simulated_topology import audit_live_process
     from .windows_gui import QmpClient, WindowsGuiError
     from .windows_install_contract import sha256
@@ -78,7 +79,8 @@ except ImportError:  # Direct execution from homelab/vm.
     from homelab.vm.serial_automation import (
         SerialAutomation, SerialAutomationError)
     from signal_cleanup import SignalGuard, terminate_children
-    from simulation_evidence import private_file, redact
+    from simulation_evidence import (
+        private_file, redact, retain_redacted_logs)
     from simulated_topology import audit_live_process
     from windows_gui import QmpClient, WindowsGuiError
     from windows_install_contract import sha256
@@ -852,15 +854,6 @@ def _destroy_leftover_join_iso(path: Path) -> str | None:
     return None
 
 
-def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
-    """Retain a bounded, redacted tail after all writers have stopped."""
-    try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return
-    private_file(path, redact(data[-maximum:]))
-
-
 def _destroy_runtime_publication(path: Path) -> str | None:
     """Remove the runtime-built Arch publication ISO."""
     try:
@@ -1540,8 +1533,10 @@ def run(
                     console.transcript)
             except (OSError, RuntimeError):
                 failures.append("controller console transcript not retained")
-        _sanitize_log(evidence / "controller-publication.log")
-        _sanitize_log(evidence / "workstation-serial.log")
+        # Redacted whole, THEN bounded to the evidence limit with both
+        # ends kept; the recorded sizes make any truncation visible.
+        result["retained_logs"] = retain_redacted_logs(
+            evidence, ("controller-publication.log", "workstation-serial.log"))
         publication_failure = _destroy_runtime_publication(publication_iso)
         if publication_failure:
             failures.append(publication_failure)

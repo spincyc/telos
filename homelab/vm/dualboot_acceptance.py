@@ -65,7 +65,8 @@ try:
         prepare_socket_directory)
     from .guest_progress_credentials import mint_credential
     from .signal_cleanup import SignalGuard, terminate_children
-    from .simulation_evidence import private_file, redact
+    from .simulation_evidence import (
+        private_file, redact, retain_redacted_logs)
     from .simulated_topology import _base
     from .windows_gui import QmpClient, WindowsGuiError
     from .windows_install_contract import SAFE_SERIAL, sha256
@@ -80,7 +81,8 @@ except ImportError:  # Direct execution from homelab/vm.
         prepare_socket_directory)
     from guest_progress_credentials import mint_credential
     from signal_cleanup import SignalGuard, terminate_children
-    from simulation_evidence import private_file, redact
+    from simulation_evidence import (
+        private_file, redact, retain_redacted_logs)
     from simulated_topology import _base
     from windows_gui import QmpClient, WindowsGuiError
     from windows_install_contract import SAFE_SERIAL, sha256
@@ -962,14 +964,6 @@ def _connect_qmp(
         "dual-boot QMP socket did not become ready") from last_error
 
 
-def _sanitize_log(path: Path, *, maximum: int = 4 * 1024 * 1024) -> None:
-    try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return
-    private_file(path, redact(data[-maximum:]))
-
-
 def _boot_once(
     command: list[str], *, processes: dict, label: str, evidence: Path,
     qmp_socket: Path, mode: str, timeout: float, progress=None,
@@ -1341,8 +1335,10 @@ def run(bundle: Path, *, duration: float, apply: bool) -> int:
                 owned_qmp_root.rmdir()
             except OSError:
                 failures.append("QMP runtime root was not removed")
-        _sanitize_log(evidence / "boot1-serial.log")
-        _sanitize_log(evidence / "boot2-serial.log")
+        # Redacted whole, THEN bounded to the evidence limit with both
+        # ends kept; the recorded sizes make any truncation visible.
+        result["retained_logs"] = retain_redacted_logs(
+            evidence, ("boot1-serial.log", "boot2-serial.log"))
         if failures:
             result["cleanup_failures"] = failures
         output = evidence / "result.json"
