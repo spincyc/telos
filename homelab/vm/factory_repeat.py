@@ -71,11 +71,11 @@ real :func:`factory_verify.verify_run`.  What has NEVER run is:
   not, and the ``PHASES`` argv table has never been confirmed against a live
   lifecycle.
 * Consequently, gate 12 itself.  Two live lifecycles are the only thing that
-  can prove repeatability, and they cannot run today: the canonical Controller
-  image ``build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2`` is an empty,
-  never-installed disk.  ``--apply`` refuses on that precondition
-  (:func:`controller_image_problem`), which is a real check against the file
-  rather than a comment.
+  can prove repeatability, and none has run.  The canonical Controller image
+  ``build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2`` was installed on
+  2026-09-24, so ``--apply`` no longer refuses on it; the precondition
+  (:func:`controller_image_problem`) still reads the real file every time and
+  refuses a blank or uninspectable image, rather than trusting a comment.
 
 The seam is arranged so the untested layer is as thin as it can be:
 :meth:`LifecycleDriver.run_phase` returns a bundle path and
@@ -187,9 +187,15 @@ PRODUCER_ENTRY_POINTS: dict[str, tuple[str, str]] = {
     "login": ("factory_measurements", "login_measurement"),
     "optional_storage_absence_nonblocking":
         ("factory_measurements", "optional_storage_measurement"),
-    "artifact_scan": ("artifact_scan", "scan_artifacts"),
+    "artifact_scan": ("artifact_scan", "scan_paths"),
 }
 PRODUCED_KEYS = tuple(PRODUCER_ENTRY_POINTS)
+
+#: The persistent disk inside a Windows install bundle
+#: (``windows_install_prepare``; ``windows_identity_prepare.DISK_NAME``).
+#: ``homelab-arch-install-prepare`` forwards ``WINDOWS_RUN`` as
+#: ``--windows-disk``, which must name this regular file, not the bundle.
+WINDOWS_INSTALL_DISK = "windows.qcow2"
 
 #: Where each identity phase leaves the judged acceptance stream the login
 #: measurements are derived from.  The Windows name is the documented gate-6
@@ -275,7 +281,8 @@ PHASES: tuple[Phase, ...] = (
           prepare_target="homelab-arch-install-prepare",
           run_target="homelab-arch-install-run",
           variable="ARCH_RUN",
-          sources=(SourceRef("WINDOWS_RUN", "windows-install"),)),
+          sources=(SourceRef("WINDOWS_RUN", "windows-install",
+                             WINDOWS_INSTALL_DISK),)),
     Phase(name="arch-identity",
           prepare_target="homelab-arch-identity-prepare",
           run_target="homelab-arch-identity-run",
@@ -419,9 +426,43 @@ def _producer(key: str, call: Callable[[Callable], object], *,
     return produce
 
 
+def scan_retained_evidence(scan_paths: Callable,
+                           evidence_dirs: Sequence[Path]) -> dict | None:
+    """The ``artifact_scan`` counters over the evidence an iteration retains.
+
+    Check 15's tree is the run's retained evidence, which is what
+    ``artifact_scan`` is calibrated for: its size limit is the evidence limit
+    and its credential rule was tuned on retained evidence.  So each finished
+    phase's evidence directory is scanned file by file, exactly as
+    :func:`enumerate_bundle` lists it.  The working subdirectories beside
+    those files hold disks and frame captures and are named in the aggregate
+    but never copied, so they are not scanned; nor are the phase bundle roots
+    or the checkout.  The aggregate directory and the repeat receipt are
+    written after this measurement and only from these files, so scanning
+    them would be circular.
+
+    ``None`` -- the field omitted, check 15 NOT-RUN -- when no evidence
+    directory exists or any one is missing or unreadable: an unscanned tree
+    is never clean.
+    """
+    if not evidence_dirs:
+        return None
+    listed = []
+    for evidence in evidence_dirs:
+        try:
+            listed.append((Path(evidence), enumerate_bundle(evidence)[0]))
+        except (RepeatError, OSError):
+            return None
+    totals: dict = {}
+    for evidence, files in listed:
+        for category, count in scan_paths(evidence, files).counters.items():
+            totals[category] = totals.get(category, 0) + count
+    return totals
+
+
 def bind_producers(*, windows_evidence: Path | None = None,
                    arch_evidence: Path | None = None,
-                   repository: Path = REPOSITORY,
+                   evidence_dirs: Sequence[Path] = (),
                    network_before=None, network_after=None) -> Producers:
     """Bind the four sibling-owned measurements, tolerating absent siblings.
 
@@ -452,13 +493,14 @@ def bind_producers(*, windows_evidence: Path | None = None,
             lambda f: f(windows_evidence, arch_evidence)) if identity else None,
         artifact_scan=_producer(
             "artifact_scan",
-            lambda f: f(repository)),
+            lambda f: scan_retained_evidence(f, evidence_dirs)),
     )
 
 
 def default_producer_binding(bundles: dict[str, Path], *,
-                             network_before=None, network_after=None,
-                             repository: Path = REPOSITORY) -> Producers:
+                             phases: Sequence[Phase] = PHASES,
+                             network_before=None,
+                             network_after=None) -> Producers:
     """Bind the producers to one finished iteration's phase bundles."""
     windows = bundles.get("windows-identity")
     arch = bundles.get("arch-identity")
@@ -468,7 +510,9 @@ def default_producer_binding(bundles: dict[str, Path], *,
             else Path(windows) / WINDOWS_IDENTITY_EVIDENCE),
         arch_evidence=(
             None if arch is None else Path(arch) / ARCH_IDENTITY_EVIDENCE),
-        repository=repository,
+        evidence_dirs=[
+            phase_evidence(phase, bundles[phase.name]) for phase in phases
+            if phase.name in bundles and phase.evidence is not None],
         network_before=network_before, network_after=network_after)
 
 
@@ -973,9 +1017,10 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     phase order, the measurement assembly, the aggregate status and the
     re-retention all happen here, and only the driver itself is live.
 
-    ``bind`` receives the finished bundles and the two host-network captures
-    and returns the :class:`Producers` for THIS iteration, because the identity
-    evidence a login measurement reads only exists once the phases have run.
+    ``bind`` receives the finished bundles, the phase table and the two
+    host-network captures and returns the :class:`Producers` for THIS
+    iteration, because the identity evidence a login measurement reads and
+    the evidence the artifact scan reads only exist once the phases have run.
     """
     bind = default_producer_binding if bind is None else bind
     before = driver.capture_host_network()
@@ -1000,7 +1045,7 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
                 blocks.append((phase.name, measurements))
             evidence_pairs.append((phase.name, evidence))
         observations.append(observation)
-    producers = bind(bundles, network_before=before,
+    producers = bind(bundles, phases=phases, network_before=before,
                      network_after=driver.capture_host_network())
     measurements = assemble_measurements(blocks, producers=producers)
     result = aggregate_result(

@@ -10,9 +10,12 @@ What they cannot cover is stated in ``factory_repeat``'s module docstring: the
 gate 12 itself needs two live lifecycles no test can substitute for.
 """
 
+import ast
+import dataclasses
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -438,6 +441,91 @@ class ProducerSeamTests(unittest.TestCase):
         self.assertIsNone(producer())
 
 
+def sparse_disk(path: Path) -> Path:
+    """A qcow2-headed image over the evidence size limit, sparse on disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"QFI\xfb")
+    with path.open("r+b") as stream:
+        stream.truncate(2 * factory_verify.EVIDENCE_LIMIT)
+    return path
+
+
+class RetainedEvidenceScanTests(TemporaryRootTests):
+    """Check 15 scans the evidence a run retains, never what sits beside it."""
+
+    def evidence(self, name="phase", files=None):
+        """A phase bundle holding a disk beside its clean evidence directory."""
+        bundle = self.root / name
+        evidence = bundle / "evidence"
+        evidence.mkdir(parents=True)
+        for filename, content in (files or {
+                "result.json": b'{"schema": 1, "status": "observed"}\n',
+                "workstation-serial.log": b"install complete\npassword=[REDACTED]\n",
+        }).items():
+            (evidence / filename).write_bytes(content)
+        # Where a real phase keeps its disks: the bundle root, and a working
+        # subdirectory the aggregate names but never copies.
+        sparse_disk(bundle / "windows.qcow2")
+        sparse_disk(evidence / "controller" / "bootstrap-dc.qcow2")
+        return evidence
+
+    def check(self, evidence_dirs):
+        produce = factory_repeat.bind_producers(
+            evidence_dirs=evidence_dirs).artifact_scan
+        if produce is None:
+            self.skipTest("artifact_scan is not present in this checkout")
+        measurements = factory_repeat.assemble_measurements(
+            [], producers=factory_repeat.Producers(artifact_scan=produce))
+        return (measurements.get("artifact_scan"),
+                factory_verify._check_artifact_scan(measurements)["status"])
+
+    def test_disks_beside_the_evidence_are_not_scanned(self):
+        counters, status = self.check(
+            [self.evidence("a"), self.evidence("b")])
+        self.assertEqual({"media": 0, "credentials": 0, "private": 0,
+                          "oversized": 0}, counters)
+        self.assertEqual("PASS", status)
+
+    def test_a_leaked_labelled_credential_fails_the_check(self):
+        leaked = self.evidence("b", files={
+            "workstation-serial.log": b"join ok\npassword: hunter2\n"})
+        counters, status = self.check([self.evidence("a"), leaked])
+        self.assertGreater(counters["credentials"], 0)
+        self.assertEqual("FAIL", status)
+
+    def test_a_disk_inside_the_evidence_fails_the_check(self):
+        evidence = self.evidence()
+        sparse_disk(evidence / "switch.jsonl")
+        counters, status = self.check([evidence])
+        self.assertGreater(counters["media"], 0)
+        self.assertGreater(counters["oversized"], 0)
+        self.assertEqual("FAIL", status)
+
+    def test_a_missing_evidence_directory_never_renders_pass(self):
+        counters, status = self.check(
+            [self.evidence(), self.root / "gone" / "evidence"])
+        self.assertIsNone(counters)
+        self.assertEqual("NOT-RUN", status)
+
+    def test_no_evidence_at_all_never_renders_pass(self):
+        counters, status = self.check([])
+        self.assertIsNone(counters)
+        self.assertEqual("NOT-RUN", status)
+
+    def test_the_default_binding_scans_each_phase_evidence_directory(self):
+        bundles = {"windows-identity": self.root / "attempt",
+                   "lifecycle-recovery": self.root / "recovery",
+                   "arch-install": self.root / "arch"}
+        captured = {}
+        with mock.patch.object(factory_repeat, "bind_producers",
+                               side_effect=lambda **kwargs: captured.update(kwargs)):
+            factory_repeat.default_producer_binding(bundles)
+        # The identity attempt retains no evidence directory; the recovery
+        # bundle root IS one; every other phase keeps it under evidence/.
+        self.assertEqual([self.root / "arch" / "evidence", self.root / "recovery"],
+                         captured["evidence_dirs"])
+
+
 # --------------------------------------------------------------------------
 # Evidence re-retention
 # --------------------------------------------------------------------------
@@ -840,10 +928,14 @@ class ApplyRefusalTests(TemporaryRootTests):
         self.assertFalse((self.root / "evidence").exists())
 
     def test_the_default_cli_run_is_a_dry_run_that_touches_nothing(self):
+        # Even a dry run probes the Controller disk it is handed, so hand it
+        # one this test created; the default is the operator's real image.
+        disk = fresh_canonical_disk(self.root) or self.root / "absent.qcow2"
         stream = io.StringIO()
         status = factory_repeat.repeat(
             evidence_root=self.root / "evidence", work_root=self.root / "work",
-            releases=None, driver=FakeLifecycle(), stream=stream)
+            releases=None, controller_disk=disk, driver=FakeLifecycle(),
+            stream=stream)
         self.assertEqual(0, status)
         self.assertIn("dry run", stream.getvalue())
         self.assertFalse((self.root / "evidence").exists())
@@ -888,6 +980,16 @@ class ApplyRefusalTests(TemporaryRootTests):
 # --------------------------------------------------------------------------
 
 
+def make_recipe(target: str) -> str:
+    """One Makefile target's recipe lines (read, never executed)."""
+    makefile = (REPOSITORY / "Makefile").read_text(encoding="utf-8")
+    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)*)",
+                      makefile, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"missing Make target: {target}")
+    return match.group(1)
+
+
 class PhaseCommandTests(unittest.TestCase):
     def phase(self, name):
         return next(p for p in factory_repeat.PHASES if p.name == name)
@@ -900,8 +1002,45 @@ class PhaseCommandTests(unittest.TestCase):
 
     def test_a_later_phase_consumes_an_earlier_bundle(self):
         command = factory_repeat.prepare_command(
-            self.phase("arch-install"), {"windows-install": Path("/w/run-1")})
+            self.phase("windows-identity"), {"windows-install": Path("/w/run-1")})
         self.assertIn("WINDOWS_RUN=/w/run-1", command)
+
+    def test_arch_install_is_handed_the_windows_disk_not_its_bundle(self):
+        # homelab-arch-install-prepare forwards WINDOWS_RUN as --windows-disk,
+        # and inspect_base_windows_disk refuses anything but a regular file.
+        command = factory_repeat.prepare_command(
+            self.phase("arch-install"), {"windows-install": Path("/w/run-1")})
+        self.assertIn("WINDOWS_RUN=/w/run-1/windows.qcow2", command)
+        # Parsed, not imported: importing it reads the private overlay.
+        source = ast.parse((ROOT / "vm" / "windows_identity_prepare.py")
+                           .read_text(encoding="utf-8"))
+        disk_names = [
+            node.value.value for node in source.body
+            if isinstance(node, ast.Assign)
+            and [getattr(target, "id", None) for target in node.targets]
+            == ["DISK_NAME"]]
+        self.assertEqual([factory_repeat.WINDOWS_INSTALL_DISK], disk_names)
+
+    def test_every_source_matches_the_flag_its_recipe_forwards(self):
+        # Read off each runner's own inspection: a bundle flag requires the
+        # earlier phase's directory, a file flag a regular file inside it.
+        bundle_flags = {"--bundle", "--install-bundle", "--gate7-bundle"}
+        file_flags = {"--windows-disk", "--windows-evidence"}
+        checked = 0
+        for phase in factory_repeat.PHASES:
+            for reference in phase.sources:
+                with self.subTest(phase=phase.name, variable=reference.variable):
+                    flags = set(re.findall(
+                        rf"(--[a-z0-9-]+) '\$\({reference.variable}\)'",
+                        make_recipe(phase.prepare_target)))
+                    if flags and flags <= file_flags:
+                        self.assertTrue(reference.suffix)
+                    elif flags and flags <= bundle_flags:
+                        self.assertEqual("", reference.suffix)
+                    else:
+                        self.fail(f"unclassified forwarding: {sorted(flags)}")
+                    checked += 1
+        self.assertEqual(5, checked)
 
     def test_a_source_suffix_names_a_file_inside_the_earlier_bundle(self):
         command = factory_repeat.prepare_command(
@@ -1013,7 +1152,7 @@ class IterationTests(TemporaryRootTests):
 
 class RepeatEndToEndTests(TemporaryRootTests):
     def repeat(self, *, driver=None, receipt=None, iterations=2,
-               producers=None):
+               producers=None, bind=None):
         stream = io.StringIO()
         errors = io.StringIO()
         real_stderr, sys.stderr = sys.stderr, errors
@@ -1026,8 +1165,8 @@ class RepeatEndToEndTests(TemporaryRootTests):
                 releases=self.release_set(),
                 receipt=receipt,
                 driver=FakeLifecycle() if driver is None else driver,
-                bind=lambda bundles, **kwargs: (
-                    wired_producers() if producers is None else producers),
+                bind=bind or (lambda bundles, **kwargs: (
+                    wired_producers() if producers is None else producers)),
                 stream=stream)
         finally:
             sys.stderr = real_stderr
@@ -1044,6 +1183,34 @@ class RepeatEndToEndTests(TemporaryRootTests):
             self.assertEqual("PASS", run["verdict"])
             self.assertEqual(16, run["summary"]["pass"])
         self.assertIn("PASS: factory-repeat", errors)
+
+    def test_the_real_artifact_scan_passes_clean_evidence_in_both_iterations(self):
+        class WithDisks(FakeLifecycle):
+            """Leaves disks where real phases do: beside the evidence."""
+
+            def run_phase(self, phase, *, workdir, bundles, duration):
+                bundle = super().run_phase(
+                    phase, workdir=workdir, bundles=bundles, duration=duration)
+                sparse_disk(bundle / "scratch-disk" / "windows.qcow2")
+                evidence = factory_repeat.phase_evidence(phase, bundle)
+                if evidence is not None:
+                    sparse_disk(evidence / "controller" / "overlay.qcow2")
+                return bundle
+
+        def bind(bundles, **kwargs):
+            real = factory_repeat.default_producer_binding(bundles, **kwargs)
+            if real.artifact_scan is None:
+                self.skipTest("artifact_scan is not present in this checkout")
+            return dataclasses.replace(
+                wired_producers(), artifact_scan=real.artifact_scan)
+
+        status, printed, _ = self.repeat(driver=WithDisks(), bind=bind)
+        document = json.loads(printed)
+        for run in document["runs"]:
+            self.assertEqual(
+                "PASS", run["checks"]["no_forbidden_artifact_content"]["status"])
+        self.assertEqual("PASS", document["verdict"])
+        self.assertEqual(0, status)
 
     def test_the_only_difference_between_iterations_is_content_equivalent(self):
         _, printed, _ = self.repeat()
