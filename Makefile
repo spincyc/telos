@@ -212,6 +212,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-probe \
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
+	homelab-durable-arch-install-plan homelab-durable-arch-install \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1109,6 +1110,24 @@ homelab-durable-workstation-destroy:
 	$(DURABLE_WS_REQUIRE)
 	@$(DURABLE_WS) destroy --workstation '$(WORKSTATION)' $(if $(filter 1,$(APPLY)),--apply --confirm '$(CONFIRM)')
 
+# Stage arch-install of a kept workstation (TASK-28 step 6): gate 7's install
+# into an overlay of WORKSTATION's disk, with the permanent realm of
+# PERSISTENT_DC baked in, the disposable Controller serving PXE only and the
+# install-time join deferred; a success is folded into WORKSTATION. ARCH_HOSTNAME
+# is the Arch host name (at most 15 characters). The plan target never
+# mutates; the other is a dry run without APPLY=1 and needs FACTORY_DURATION of
+# at least 600 (use 1800) to act.
+DURABLE_ARCH_REQUIRE = @if [ -z '$(WORKSTATION)' ] || [ -z '$(PERSISTENT_DC)' ] || [ -z '$(ARCH_HOSTNAME)' ]; then echo 'require WORKSTATION=<name> PERSISTENT_DC=<instance> ARCH_HOSTNAME=<name>' >&2; exit 2; fi
+DURABLE_ARCH_INSTALL = $(PYTHON) homelab/vm/arch_durable_install_run.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' --duration '$(FACTORY_DURATION)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') $(if $(SEED_ISO),--seed-iso '$(SEED_ISO)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
+
+homelab-durable-arch-install-plan:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(DURABLE_ARCH_INSTALL)
+
+homelab-durable-arch-install:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(DURABLE_ARCH_INSTALL) $(if $(filter 1,$(APPLY)),--apply)
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1563,6 +1582,9 @@ help:
 		'                         Take custody of a gate-5 disk as a kept workstation' \
 		'make homelab-durable-workstation-status WORKSTATION=<name>' \
 		"make homelab-durable-workstation-destroy APPLY=1 WORKSTATION=<name> CONFIRM='DESTROY <name>'" \
+		'make homelab-durable-arch-install-plan WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name>' \
+		'make homelab-durable-arch-install APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> FACTORY_DURATION=1800' \
+		'                         Install Arch onto a kept workstation, join deferred' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \

@@ -623,6 +623,72 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("stage_from_install_source", release_set_tool)
         self.assertNotIn("windows_stage.stage(argparse.Namespace", release_set_tool)
 
+    def test_durable_arch_install_recipes_parse(self):
+        # TASK-28 step 6. Each argv the recipes really emit is fed to the
+        # runner's own parser; the plan target never forwards --apply.
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import arch_durable_install_run
+        script = "arch_durable_install_run.py"
+        names = {"WORKSTATION": "w1", "PERSISTENT_DC": "synthetic-dc",
+                 "ARCH_HOSTNAME": "kept-ws1"}
+        optional = {
+            "FACTORY_CONTROLLER_STATE": "/state/canonical",
+            "FACTORY_RELEASES": "/releases",
+            "SEED_ISO": "/media/seed.iso",
+            "DIRECTORY_IDENTITY": "/identity/directory.json",
+            "DURABLE_WORKSTATION_ROOT": "/kept",
+            "PERSISTENT_DC_ROOT": "/persistent",
+        }
+        cases = (
+            ("homelab-durable-arch-install-plan",
+             {**names, "APPLY": "1"}, False),
+            ("homelab-durable-arch-install", names, False),
+            ("homelab-durable-arch-install",
+             {**names, **optional, "APPLY": "1", "FACTORY_DURATION": "1800"},
+             True),
+        )
+        for target, variables, applies in cases:
+            with self.subTest(target=target, applies=applies):
+                argvs = emitted_by(target, script, **variables)
+                self.assertEqual(len(argvs), 1)
+                args = arch_durable_install_run.parser().parse_args(argvs[0])
+                self.assertIs(args.apply, applies)
+                self.assertEqual(
+                    (args.workstation, args.persistent_dc, args.hostname),
+                    ("w1", "synthetic-dc", "kept-ws1"))
+        args = arch_durable_install_run.parser().parse_args(emitted_by(
+            "homelab-durable-arch-install", script,
+            **names, **optional, APPLY="1", FACTORY_DURATION="1800")[0])
+        self.assertEqual(args.duration, 1800)
+        self.assertEqual(args.controller_state, Path("/state/canonical"))
+        self.assertEqual(args.releases, Path("/releases"))
+        self.assertEqual(args.seed_iso, Path("/media/seed.iso"))
+        self.assertEqual(args.directory_identity,
+                         Path("/identity/directory.json"))
+        self.assertEqual(args.root, Path("/kept"))
+        self.assertEqual(args.persistent_root, Path("/persistent"))
+
+    def test_durable_arch_install_targets_are_phony_and_require_names(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        for target in ("homelab-durable-arch-install-plan",
+                       "homelab-durable-arch-install"):
+            self.assertIn(target, phony.group("body").split())
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for target in ("homelab-durable-arch-install-plan",
+                       "homelab-durable-arch-install"):
+            with self.subTest(target=target):
+                result = subprocess.run(
+                    ["make", target, "WORKSTATION=", "PERSISTENT_DC=",
+                     "ARCH_HOSTNAME="],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(
+                    "require WORKSTATION=<name> PERSISTENT_DC=<instance> "
+                    "ARCH_HOSTNAME=<name>", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

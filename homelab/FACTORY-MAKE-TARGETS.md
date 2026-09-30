@@ -383,6 +383,22 @@ these targets boots a guest, and none has run against a real gate-5 bundle.
 kept workstations are durable state, and each leaves only through its own
 confirmed destroy target.
 
+#### Stage `arch-install` (step 6)
+
+Both targets require `WORKSTATION`, `PERSISTENT_DC` (the instance the
+workstation was adopted against) and `ARCH_HOSTNAME` (the Arch host name, at
+most 15 characters; stage `arch-join` derives the machine account from it).
+Implemented by `homelab/vm/arch_durable_install_run.py`, which composes gate 7
+without editing it.
+
+| Target | Opt-in | Effect |
+|---|---|---|
+| `homelab-durable-arch-install-plan` | none | Read-only: binds the instance, resolves the permanent realm from `homelab/instance/identity/directory.json` (or `DIRECTORY_IDENTITY`), checks the workstation's next stage is `arch-install`, and prints the plan and a free-space estimate. Names the bound instance only, never the realm or SID. |
+| `homelab-durable-arch-install` | `APPLY=1`, `FACTORY_DURATION` of at least 600 (use 1800) | Under the workstation's lock: prepares gate 7's bundle with `--durable-identity` over an overlay of the kept disk, boots the disposable canonical Controller for PXE and the signed workstation repository only (no directory, no join account, no join media, no persistent Controller), and drives gate 7's installer, which prints `TELOS ARCH JOIN DEFERRED` where the join stood; a transcript carrying either install-time join marker is refused. On success the overlay and the installer-authored firmware variables are folded into the workstation as `arch-install`; on failure the overlay is removed and the workstation is unchanged. Evidence stays under `homelab/var/factory/durable-arch-installs/`. |
+
+The installed disk's sealed join unit waits about 120 seconds for join media
+at every boot until stage `arch-join` joins it. Verdict: **NOT RUN.**
+
 ## Required common inputs
 
 The runner should accept one run identifier and one release identifier rather
