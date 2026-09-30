@@ -876,8 +876,10 @@ no headroom for a single spurious refusal.
    implemented live-boot hooks with the three loopback scenarios; the three
    stubs are deferred. Gate 12 needs a live twice-through through
    `make homelab-factory-repeat` with `FACTORY_DURATION` raised per phase, and
-   `host_network_changes` is waived for the loopback factory — the verdict code
-   still needs a waiver state distinct from pass and NOT RUN. Use runs made
+   `host_network_changes` is waived for the loopback factory — since `c383e3c`
+   check 9 renders `WAIVED` and a run `PASS-WITH-WAIVER`, never plain PASS, and
+   since `6f86808` forwarding is proven by privilege when the nft ruleset is
+   unreadable (the repeat driver sets no_new_privs under `--apply`). Use runs made
    under one media seal (the cache was resealed 2026-09-30). **Before any
    persistent reboot check:** `rehearsal` was converged before `dfbcce7`
    enabled the PXE units, so it needs an owner-run

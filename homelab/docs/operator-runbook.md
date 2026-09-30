@@ -852,13 +852,21 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   counter renders FAIL. Neither can render PASS. ADR
   [0080](../decisions/0080-phase-one-closure-of-recovery-and-egress-checks.md)
   (owner, 2026-09-30) waives this check for the loopback factory: it is
-  recorded as waived, never as PASS, and the waiver lapses at gate 14. As of
-  `b84bc86` the verdict code has no waiver state yet.
+  recorded as waived, never as PASS, and the waiver lapses at gate 14. Check 9
+  renders `WAIVED` naming ADR 0080 and a run or repeat `PASS-WITH-WAIVER`
+  (`c383e3c`). An unprivileged run cannot read the nft ruleset, so the
+  `forwarding` counter is proven by privilege instead: under `--apply` the
+  repeat driver sets no_new_privs, and each capture records that the run holds
+  no network-admin capability and that the forwarding sysctls did not change
+  (`6f86808`). That proves the run changed nothing, not that nothing changed;
+  the measurement records its basis.
 - `artifact_scan` (check 15) scans each finished phase's retained top-level
   evidence files — not the checkout, bundle roots or disks — and stays NOT RUN
   when any evidence directory is missing (`b84bc86`; this read "requires a
-  scanned tree"). A ~3 MB `workstation-stall-N.ppm` frame retained after an
-  arch-identity firmware stall is over the 1 MiB evidence limit and fails it.
+  scanned tree"). Every retained file must be within the 1 MiB evidence limit:
+  stall frames are PNG and the firmware log a tail within it (`6f86808`), and
+  serial and publication logs keep a line-aligned head and tail around an
+  elision line (`dfd4264`).
 
 Nothing blocks the live twice-through any more except running it: two live
 lifecycles made under one media seal, with the limits above. The canonical Controller image was
