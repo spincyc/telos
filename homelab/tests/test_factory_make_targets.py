@@ -886,5 +886,80 @@ class DurableWorkstationVerifyTargetTests(unittest.TestCase):
             "ARCH_HOSTNAME=<name>", result.stderr)
 
 
+class PersistentPasswordPolicyTargetTests(unittest.TestCase):
+    """The directory password policy target, fed to its runner's parser."""
+
+    SCRIPT = "persistent_password_policy.py"
+    TARGET = "homelab-factory-persistent-password-policy"
+    NAMES = {"PERSISTENT_DC": "lab-dc1", "MIN_PASSWORD_LENGTH": "4",
+             "PASSWORD_COMPLEXITY": "off"}
+
+    def parse(self, **variables):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import persistent_password_policy
+        return [persistent_password_policy.parser().parse_args(argv)
+                for argv in emitted_by(self.TARGET, self.SCRIPT, **variables)]
+
+    def test_the_recipe_is_dry_run_first_and_parses(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        variables = {
+            **self.NAMES,
+            "FACTORY_CONTROLLER_STATE": "/state/canonical",
+            "DIRECTORY_IDENTITY": "identity.json",
+            "IDENTITY_OVERLAY": "roster.json",
+            "PERSISTENT_DC_ROOT": "/persistent",
+        }
+        # ``make -n`` prints both sides of the shell's APPLY gate: the dry
+        # run first, then the applied run.
+        parsed = self.parse(**variables)
+        self.assertEqual(len(parsed), 2)
+        for args, applied in zip(parsed, (False, True)):
+            self.assertEqual(args.apply, applied)
+            self.assertEqual(
+                (args.instance, args.min_length, args.complexity),
+                ("lab-dc1", "4", "off"))
+            self.assertEqual(args.state_dir, Path("/state/canonical"))
+            self.assertEqual(args.persistent_root, Path("/persistent"))
+            self.assertEqual(args.directory_identity, Path("identity.json"))
+            self.assertEqual(args.identity_overlay, Path("roster.json"))
+        only = commands(self.TARGET)
+        self.assertEqual(1, only.count("--apply"))
+        self.assertIn("dry run", only)
+        # The console password is typed at the terminal: no variable, file
+        # or medium carries a credential into a durable directory.
+        for forbidden in ("CREDENTIAL", "SECRET", "--password", "--iso",
+                          "--seed-iso"):
+            self.assertNotIn(forbidden, only)
+        for name in ("MIN_PASSWORD_LENGTH", "PASSWORD_COMPLEXITY"):
+            self.assertRegex(MAKEFILE, rf"(?m)^{name} \?=\s*$")
+
+    def test_the_target_is_phony_listed_and_requires_every_value(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        self.assertIn(self.TARGET, phony.group("body").split())
+        self.assertIn(f"make {self.TARGET} ", MAKEFILE)
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for variables, message in (
+                ({**self.NAMES, "PERSISTENT_DC": ""},
+                 "require PERSISTENT_DC=<instance name>"),
+                ({**self.NAMES, "MIN_PASSWORD_LENGTH": ""},
+                 "require MIN_PASSWORD_LENGTH=<1-14> "
+                 "PASSWORD_COMPLEXITY=off|on"),
+                ({**self.NAMES, "PASSWORD_COMPLEXITY": ""},
+                 "require MIN_PASSWORD_LENGTH=<1-14> "
+                 "PASSWORD_COMPLEXITY=off|on")):
+            with self.subTest(variables=variables):
+                result = subprocess.run(
+                    ["make", self.TARGET, *(
+                        f"{name}={value}"
+                        for name, value in variables.items())],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

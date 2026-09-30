@@ -43,6 +43,11 @@ from .directory_identity import (
     directory_identity_source,
     durable_directory_identity,
 )
+from .directory_password_policy import (
+    SAMBA_DEFAULT,
+    DirectoryPasswordPolicy,
+    policy_from_record,
+)
 from .simulated_gateway import CONTROLLER_IP, GATEWAY_IP, NETMASK
 from .simulation_overlay import DOMAIN_SID, PersistentControllerInstance
 
@@ -67,8 +72,11 @@ class DurableBinding:
     """One persistent instance, proven to agree with its declarations.
 
     ``domain_sid`` is the value the marker RECORDS, which may be the truncated
-    one ``check_live_directory`` knows how to repair.  ``repr`` names only the
-    instance so a binding that reaches a log cannot carry the realm with it.
+    one ``check_live_directory`` knows how to repair.  ``password_policy`` is
+    the instance's recorded directory password policy, or Samba's default when
+    it records none; every host-side check of a typed password uses it.
+    ``repr`` names only the instance so a binding that reaches a log cannot
+    carry the realm with it.
     """
 
     instance: str
@@ -81,6 +89,7 @@ class DurableBinding:
     domain_sid: str
     roster_fingerprint: str
     identity_source: str
+    password_policy: DirectoryPasswordPolicy = SAMBA_DEFAULT
 
     def __repr__(self) -> str:
         return f"DurableBinding(instance={self.instance!r})"
@@ -152,6 +161,8 @@ def durable_binding(
                 f"{target.state}")
         recorded = target.convergence()
         staged = target.directory_accounts()
+        password_policy = policy_from_record(
+            target.directory_password_policy(), instance)
     except DurableBindingError:
         raise
     except (RuntimeError, ValueError, OSError) as error:
@@ -204,6 +215,7 @@ def durable_binding(
         domain_sid=recorded["domain_sid"],
         roster_fingerprint=current,
         identity_source=source,
+        password_policy=password_policy,
     )
 
 

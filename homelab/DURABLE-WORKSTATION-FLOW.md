@@ -98,5 +98,10 @@ the proven temporary Domain Admin join principal is kept for `rehearsal`.
 Owner decision 2026-09-30, break-glass custody: during the durable join runs
 the owner types a distinct Windows local-administrator password and a
 distinct Arch `local-rescue` password; the factory never stores either.
+Owner decision 2026-09-30, password length: short passwords, changed later,
+are allowed on `rehearsal` by an explicit recorded directory policy
+(`make homelab-factory-persistent-password-policy`, minimum age 0; the host
+checks, break-glass included, judge by it). A relaxed policy applies to every
+account in that domain, so the keeper's policy is a separate decision.
 Still open with the owner: backups for the keeper directory and kept disks,
 and join-principal privilege for the keeper.

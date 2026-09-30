@@ -28,6 +28,7 @@ from homelab.tests.test_windows_durable_prepare import (
     DOMAIN, INSTANCE, PRIVATE_VALUES, REALM, binding, canonical_state,
     fake_control_iso, snapshot, write_kept_workstation)
 from homelab.vm import controller_principals
+from homelab.vm.directory_password_policy import DirectoryPasswordPolicy
 from homelab.vm import windows_durable_join as join
 from homelab.vm import windows_durable_prepare as prepare
 from homelab.vm import windows_identity_adapter
@@ -110,6 +111,32 @@ class CredentialPolicyTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.assertIn(
                     reason, join.local_administrator_password_problem(value))
+
+    def test_a_recorded_relaxed_policy_takes_a_short_break_glass_value(self):
+        """Owner decision 2026-09-30: short passwords on ``rehearsal``."""
+        relaxed = DirectoryPasswordPolicy(
+            min_length=4, complexity=False, min_age_days=0,
+            source=f"{INSTANCE}'s recorded directory policy")
+        problem = join.local_administrator_password_problem
+        self.assertIsNone(problem("k9wv", relaxed))
+        self.assertIsNone(problem("telosadmin", relaxed))
+        self.assertEqual(
+            problem("k9w", relaxed),
+            f"is shorter than 4 characters under {INSTANCE}'s recorded "
+            "directory policy")
+        # Typeability is unchanged by any policy.
+        self.assertIn("cannot type", problem("k9wä", relaxed))
+        # Without a record, today's reason, word for word.
+        self.assertEqual(problem("k9wv"), "is shorter than 7 characters")
+        prompter = Prompter(locals_=("k9w", "k9wv"))
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            secrets = join.collect_owner_secrets(
+                INSTANCE, "person-a", prompt=prompter, policy=relaxed)
+        self.assertEqual(secrets.local_administrator, "k9wv")
+        self.assertIn(f"under {INSTANCE}'s recorded directory policy",
+                      error.getvalue())
+        self.assertNotIn("k9w", error.getvalue())
 
     def test_prompts_are_asked_in_order_and_the_new_one_twice(self):
         prompter = Prompter()
@@ -937,6 +964,27 @@ class RunTests(RunFixture, unittest.TestCase):
             self.assertIn(needle, plan)
         for value in PRIVATE_VALUES + tuple(NAMES.values()):
             self.assertNotIn(value, plan)
+
+    def test_the_bound_instances_recorded_policy_judges_the_new_password(self):
+        relaxed = DirectoryPasswordPolicy(
+            min_length=4, complexity=False, min_age_days=0,
+            source=f"{INSTANCE}'s recorded directory policy")
+        self.prompter.locals = ["k9wv"]
+        with mock.patch.object(join, "durable_binding",
+                               lambda *a, **k: binding(
+                                   password_policy=relaxed)), \
+                mock.patch.object(wi.WorkstationInstance, "fold",
+                                  autospec=True, return_value={
+                                      "stage": "windows-join",
+                                      "disk_sha256": "cd" * 32}), \
+                mock.patch.object(wi.WorkstationInstance,
+                                  "retire_publication", autospec=True):
+            plan = self.run_quietly()
+            self.assertIn(f"meet {INSTANCE}'s recorded directory policy "
+                          "(at least 4 characters; complexity off)", plan)
+            self.run_quietly("--apply")
+        self.assertEqual(self.status, 0)
+        self.assertEqual(self.events.count("prompt-local"), 1)
 
     def test_apply_prompts_first_then_records_executes_folds_and_retires(self):
         entry = {"stage": "windows-join", "utc": "2026-09-30T02:00:00+00:00",

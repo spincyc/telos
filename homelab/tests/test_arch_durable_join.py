@@ -34,6 +34,7 @@ from homelab.vm import arch_install_run
 from homelab.vm import workstation_instance as wi
 from homelab.vm.arch_identity_run import (
     ArchIdentityBundle, ArchIdentityError, roster_fingerprint)
+from homelab.vm.directory_password_policy import DirectoryPasswordPolicy
 from homelab.vm.durable_workstation import DurableBinding
 from homelab.vm.persistent_controller_session import FORBIDDEN_FAULT_HOOKS
 from homelab.vm.secret_scan import count_secret_occurrences, secret_needles
@@ -620,6 +621,49 @@ class CredentialTests(unittest.TestCase):
                 for value in values[2:]:
                     self.assertNotIn(value.decode(), str(caught.exception))
                 self.assertIn("Nothing was booted", str(caught.exception))
+
+    def test_a_recorded_relaxed_policy_takes_short_new_passwords(self):
+        """Owner decision 2026-09-30: short passwords on ``rehearsal``."""
+        relaxed = DirectoryPasswordPolicy(
+            min_length=4, complexity=False, min_age_days=0,
+            source=f"{INSTANCE}'s recorded directory policy")
+
+        def ask(*values):
+            return join.owner_credentials(
+                join.MODE_FIRST_LOGON, daily_name="zqx-daily",
+                rescue_name="zqx-rescue", instance=INSTANCE,
+                prompt=Prompter(*values), policy=relaxed)
+
+        result = ask(CONSOLE, TEMPORARY, b"q7xz", b"k9wv")
+        self.assertEqual(result.values(), [CONSOLE, TEMPORARY, b"q7xz",
+                                           b"k9wv"])
+        for values, label in (((CONSOLE, TEMPORARY, b"q7x", b"k9wv"),
+                               "new daily_administrator"),
+                              ((CONSOLE, TEMPORARY, b"q7xz", b"k9w"),
+                               "break-glass")):
+            with self.subTest(label=label):
+                with self.assertRaises(join.ArchDurableJoinError) as caught:
+                    ask(*values)
+                message = str(caught.exception)
+                self.assertIn(f"the {label} password is shorter than 4 "
+                              f"characters; {INSTANCE}'s recorded directory "
+                              "policy would refuse it. Nothing was booted",
+                              message)
+                for value in values[2:]:
+                    self.assertNotIn(value.decode(), message)
+        # Distinctness still holds under any policy.
+        with self.assertRaisesRegex(join.ArchDurableJoinError, "distinct"):
+            ask(CONSOLE, TEMPORARY, b"q7xz", b"q7xz")
+
+    def test_without_a_record_the_refusal_names_the_default_as_before(self):
+        with self.assertRaises(join.ArchDurableJoinError) as caught:
+            self.ask(join.MODE_FIRST_LOGON, CONSOLE, TEMPORARY, b"Sh1!",
+                     RESCUE)
+        self.assertEqual(
+            str(caught.exception),
+            "the new daily_administrator password is shorter than 7 "
+            "characters; the directory's default policy would refuse it. "
+            "Nothing was booted")
 
     def test_every_credential_must_be_distinct(self):
         for values in ((CONSOLE, TEMPORARY, NEW, NEW),
@@ -1283,6 +1327,28 @@ class RunTests(RunFixture, unittest.TestCase):
         self.assertEqual(secret_hits(
             [text.encode(), output.encode()],
             [CONSOLE, TEMPORARY, NEW, RESCUE]), 0)
+
+    def test_the_bound_instances_recorded_policy_judges_the_prompts(self):
+        relaxed = DirectoryPasswordPolicy(
+            min_length=4, complexity=False, min_age_days=0,
+            source=f"{INSTANCE}'s recorded directory policy")
+        with mock.patch.object(join, "durable_binding",
+                               lambda *a, **k: binding(
+                                   password_policy=relaxed)):
+            plan_text = self.run_quietly()
+            self.assertIn(f"{INSTANCE}'s recorded directory policy applies: "
+                          "at least 4 characters; complexity off", plan_text)
+            self.prompter.values = [CONSOLE, TEMPORARY, b"q7xz", b"k9wv"]
+            with mock.patch.object(wi.WorkstationInstance, "fold",
+                                   autospec=True, return_value={
+                                       "stage": "arch-join",
+                                       "disk_sha256": "cd" * 32}) as fold:
+                output = self.run_quietly("--apply")
+        # Four-character values passed the host check and the join ran.
+        self.assertEqual(len(self.prompter.asked), 4)
+        self.assertEqual(len(self.boundaries), 1)
+        fold.assert_called_once()
+        self.assertIn("Folded stage arch-join", output)
 
     def test_a_failure_leaves_the_ledger_and_keeps_the_machine_account(self):
         self.start_error = join.ArchDurableJoinError("synthetic join fault")

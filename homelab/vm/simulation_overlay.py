@@ -33,9 +33,13 @@ from pathlib import Path
 try:
     from .controller_image import ControllerImageError
     from .controller_image import assert_installed as _assert_installed
+    from .directory_password_policy import (
+        DirectoryPasswordPolicyError, validated_record as _validated_policy)
 except ImportError:  # Direct execution from homelab/vm.
     from controller_image import ControllerImageError
     from controller_image import assert_installed as _assert_installed
+    from directory_password_policy import (
+        DirectoryPasswordPolicyError, validated_record as _validated_policy)
 
 #: Exclusivity lock beside a controller state directory's disk. One name for
 #: both models: a disposable run locks the canonical state directory and a
@@ -96,6 +100,12 @@ PERSISTENT_ACCOUNTS_KEY = "directory_accounts"
 #: run a rollback, and an operator must be told to look rather than be asked
 #: for fresh credentials the directory would refuse as duplicate accounts.
 PERSISTENT_ACCOUNTS_ATTEMPT_KEY = "directory_accounts_attempted"
+#: The marker key recording the directory password policy an owner set on
+#: this instance (``make homelab-factory-persistent-password-policy``). Written
+#: only after the guest READ BACK the policy it was asked to set. Its absence
+#: means Samba's default, which provisioning leaves and nothing else changes;
+#: the durable stages judge typed passwords against whichever applies.
+PERSISTENT_PASSWORD_POLICY_KEY = "directory_password_policy"
 
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
@@ -894,6 +904,32 @@ class PersistentControllerInstance:
                 "attempt; list them with `samba-tool user list` on the "
                 "instance before staging again"),
         }
+        self._write_marker(marker)
+        return marker
+
+    # -- directory password policy ----------------------------------------
+    def directory_password_policy(self) -> dict | None:
+        """The recorded password policy, or ``None`` for Samba's default."""
+        record = self.read_marker().get(PERSISTENT_PASSWORD_POLICY_KEY)
+        if record is None:
+            return None
+        try:
+            return _validated_policy(record)
+        except DirectoryPasswordPolicyError as error:
+            raise PersistentInstanceInvalid(
+                f"persistent directory password policy record is unusable: "
+                f"{error}") from error
+
+    def record_directory_password_policy(self, record: dict) -> dict:
+        """Add a read-back-proven password policy to the marker, atomically."""
+        try:
+            record = _validated_policy(record)
+        except DirectoryPasswordPolicyError as error:
+            raise PersistentInstanceInvalid(
+                f"persistent directory password policy record is unusable: "
+                f"{error}") from error
+        marker = self.read_marker()
+        marker[PERSISTENT_PASSWORD_POLICY_KEY] = record
         self._write_marker(marker)
         return marker
 

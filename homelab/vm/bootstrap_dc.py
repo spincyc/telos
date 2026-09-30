@@ -32,6 +32,7 @@ try:
         directory_identity_source,
         durable_directory_identity,
     )
+    from .directory_password_policy import instance_policy
     from .network import DEFAULT_PORT, socket_network_args
     from .preflight_receipt import verify as verify_preflight_receipt
     from .serial_automation import SerialAutomation, SerialAutomationError
@@ -54,6 +55,7 @@ except ImportError:  # Direct execution from homelab/.
         directory_identity_source,
         durable_directory_identity,
     )
+    from directory_password_policy import instance_policy
     from network import DEFAULT_PORT, socket_network_args
     from preflight_receipt import verify as verify_preflight_receipt
     from serial_automation import SerialAutomation, SerialAutomationError
@@ -1625,6 +1627,23 @@ def _persistent_accounts_summary(
             "durable roster into this directory")
 
 
+def _persistent_policy_summary(
+    target: PersistentControllerInstance, existing: bool,
+) -> str:
+    """One honest line about the password policy this instance records."""
+    if not existing:
+        return "none; this instance has not been created"
+    try:
+        record = target.directory_password_policy()
+        policy = instance_policy(target)
+    except (ValueError, RuntimeError) as error:
+        return f"unknown; the record is unreadable ({error})"
+    if record is None:
+        return (f"none recorded, so Samba's default applies "
+                f"({policy.describe()})")
+    return f"recorded {record['recorded_utc']}: {policy.describe()}"
+
+
 def persistent_accounts(
     root: Path,
     instance: str,
@@ -1689,6 +1708,10 @@ def persistent_accounts(
         recorded = target.convergence()
         staged = target.directory_accounts()
         attempted = target.directory_accounts_attempted()
+        # Samba's default unless an owner recorded another for this instance
+        # (``persistent_password_policy``); every typed permanent password is
+        # judged against it before anything boots.
+        policy = instance_policy(target)
     except (ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
@@ -1762,12 +1785,13 @@ def persistent_accounts(
               "acceptance gate")
     if first_logon:
         print("passwords: TEMPORARY. Each account must change its password at "
-              "its first logon, and the new one must meet the directory's "
-              f"default policy (at least "
-              f"{principals.DIRECTORY_MIN_PASSWORD_LENGTH} characters from "
-              f"{principals.DIRECTORY_PASSWORD_CLASSES} character classes). "
+              f"its first logon, and the new one must meet {policy.source} "
+              f"({policy.requirement()}). "
               "That policy is lifted only while these accounts are created, "
               "then restored and proven before staging reports success")
+    else:
+        print(f"passwords: permanent; each must meet {policy.source} "
+              f"({policy.requirement()}), checked before anything boots")
     print(f"console: this asks at your terminal for the {CONSOLE_ACCOUNT} "
           "password the offline installer told you to type, then one password "
           "per account above. All are held in memory only, echo-suppressed on "
@@ -1841,12 +1865,11 @@ def persistent_accounts(
             # changed at first logon, so only a permanent one is judged here.
             problem = None if first_logon else (
                 principals.directory_password_problem(
-                    values[entry["name"]], entry["name"]))
+                    values[entry["name"]], entry["name"], policy))
             if problem is not None:
                 raise ValueError(
                     f"the password for {entry['contract_role']} {problem}; "
-                    "the directory's default policy would refuse it. Nothing "
-                    "was booted")
+                    f"{policy.source} would refuse it. Nothing was booted")
     except (ValueError, EOFError, KeyboardInterrupt) as error:
         values.clear()
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
@@ -1978,6 +2001,8 @@ def persistent_status(root: Path, instance: str) -> int:
     print("directory: " + _persistent_directory_summary(
         target, marker is not None))
     print("directory accounts: " + _persistent_accounts_summary(
+        target, marker is not None))
+    print("directory password policy: " + _persistent_policy_summary(
         target, marker is not None))
     print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
     print("hash fence: none by design; the disk is the durable directory state")

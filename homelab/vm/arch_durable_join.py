@@ -102,6 +102,8 @@ from .bootstrap_dc import (  # noqa: E402
     _persistent_running, _typed_secret, ovmf_pair, persistent_switch_command)
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .directory_password_policy import (  # noqa: E402
+    SAMBA_DEFAULT, DirectoryPasswordPolicy)
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
 from .factory_runner import (  # noqa: E402
     GATEWAY_MAC, gateway_command, wait_for_switch_port)
@@ -297,12 +299,15 @@ class OwnerCredentials:
 def owner_credentials(
     mode: str, *, daily_name: str, rescue_name: str, instance: str,
     prompt: Callable[..., bytes] | None = None,
+    policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
 ) -> OwnerCredentials:
     """Ask for every credential, in order, then judge them all.
 
-    All of it happens before any process starts: a value the directory's
-    default policy would refuse, or one typed twice, is refused here rather
-    than after a boot.  The Controller password and the TEMPORARY/current
+    All of it happens before any process starts: a value the bound
+    instance's directory policy (*policy*: its recorded one, or Samba's
+    default) would refuse, or one typed twice, is refused here rather than
+    after a boot.  The break-glass password is held to the same policy (owner
+    decision 2026-09-30).  The Controller password and the TEMPORARY/current
     password are not judged: they already exist and are whatever they are.
     """
     ask = prompt or _typed_secret
@@ -324,7 +329,7 @@ def owner_credentials(
     credentials = OwnerCredentials(console, daily, new_daily, rescue)
     try:
         _judge_credentials(credentials, daily_name=daily_name,
-                           rescue_name=rescue_name)
+                           rescue_name=rescue_name, policy=policy)
     except BaseException:
         credentials.clear()
         raise
@@ -333,6 +338,7 @@ def owner_credentials(
 
 def _judge_credentials(
     credentials: OwnerCredentials, *, daily_name: str, rescue_name: str,
+    policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
 ) -> None:
     principals = _controller_principals()
     judged = [("the new daily_administrator password", credentials.new_daily,
@@ -342,11 +348,11 @@ def _judge_credentials(
         if value is None:
             continue
         problem = principals.directory_password_problem(
-            value.decode("utf-8"), account)
+            value.decode("utf-8"), account, policy)
         if problem is not None:
             raise ArchDurableJoinError(
-                f"{label} {problem}; the directory's default policy would "
-                f"refuse it. Nothing was booted")
+                f"{label} {problem}; {policy.source} would refuse it. "
+                f"Nothing was booted")
     values = credentials.values()
     if len(set(values)) != len(values):
         raise ArchDurableJoinError(
@@ -1387,15 +1393,12 @@ def print_plan(
           "the evidence or a transcript:")
     print(f"  1. the {CONSOLE_ACCOUNT} console password of persistent "
           f"instance {binding.instance}")
+    policy = binding.password_policy
     if mode == MODE_FIRST_LOGON:
-        principals = _controller_principals()
         print("  2. the daily administrator's TEMPORARY password (the one "
               "its account was staged with)")
-        print(f"  3. the daily administrator's NEW password, twice; the "
-              f"directory's default policy applies: at least "
-              f"{principals.DIRECTORY_MIN_PASSWORD_LENGTH} characters from "
-              f"{principals.DIRECTORY_PASSWORD_CLASSES} classes, not "
-              f"containing the account name")
+        print(f"  3. the daily administrator's NEW password, twice; "
+              f"{policy.source} applies: {policy.requirement()}")
         print("  4. a NEW break-glass password for the Arch local-rescue "
               "account, twice: distinct from every other, never stored")
         print("First logon: pam_sss asks the daily administrator to change "
@@ -1412,6 +1415,12 @@ def print_plan(
                  if args.first_logon_done else
                  "the durable account record does not ask for a change at "
                  "first logon"))
+    print(f"Password policy: {policy.source} ({policy.describe()}) judges "
+          "every new password here before anything boots, the break-glass "
+          "one included"
+          + ("" if policy.recorded else
+             "; make homelab-factory-persistent-password-policy records "
+             "another"))
     print(f"On success: the overlay and the firmware variables it booted "
           f"with are folded into {name} as stage {STAGE}; the overlay is "
           f"then removed")
@@ -1587,7 +1596,8 @@ def run(
         require_ledger_head(workstation, marker)
         credentials = owner_credentials(
             mode, daily_name=account_name(accounts, "daily_administrator"),
-            rescue_name=rescue_principal(), instance=binding.instance)
+            rescue_name=rescue_principal(), instance=binding.instance,
+            policy=binding.password_policy)
         try:
             return execute(
                 args, workstation, binding, accounts, mode, credentials,

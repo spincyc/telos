@@ -132,6 +132,12 @@ PERSISTENT_ACCOUNTS_TIMEOUT ?=
 # prefix of the live one (the split-read truncation fixed in 05eec6e). Any other
 # difference is still refused, and nothing is written unless the probe passes.
 REPAIR_SID ?=
+# A persistent instance's DIRECTORY password policy, for the password-policy
+# target only. Both have no default: a policy is set only when asked for by
+# value. MIN_PASSWORD_LENGTH is 1-14; PASSWORD_COMPLEXITY is on or off. They
+# carry settings, never a credential.
+MIN_PASSWORD_LENGTH ?=
+PASSWORD_COMPLEXITY ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -210,6 +216,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-accounts-plan \
 	homelab-factory-persistent-accounts \
 	homelab-factory-persistent-probe \
+	homelab-factory-persistent-password-policy \
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-durable-workstation-reconcile \
@@ -1072,6 +1079,48 @@ homelab-factory-persistent-probe:
 			--apply; \
 	fi
 
+# Set one persistent instance's DIRECTORY password policy, prove it by reading
+# it back, and record it in the instance marker (TASK-28; owner decision
+# 2026-09-30 for the throwaway rehearsal). The dry run binds the instance like
+# the probe, prints the recorded policy (Samba's default when none) and the
+# change, and starts nothing. APPLY=1 asks at this terminal for the local-rescue
+# password once, boots the instance in place on the per-run fabric with no
+# workstation, proves its realm and SID, runs samba-tool domain passwordsettings
+# set, reads it back, powers off over the console, and records the policy only
+# if the read-back matched. A policy weaker than Samba's default also sets the
+# minimum password age to 0 days. It applies to EVERY account in the domain.
+# Evidence lands in the gitignored homelab/var/factory/persistent-password-policy/.
+homelab-factory-persistent-password-policy:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ -z '$(MIN_PASSWORD_LENGTH)' ] || [ -z '$(PASSWORD_COMPLEXITY)' ]; then \
+		echo 'require MIN_PASSWORD_LENGTH=<1-14> PASSWORD_COMPLEXITY=off|on' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to set the policy on the instance; it will ask at this terminal for the local-rescue password'; \
+		$(PYTHON) homelab/vm/persistent_password_policy.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--min-length '$(MIN_PASSWORD_LENGTH)' \
+			--complexity '$(PASSWORD_COMPLEXITY)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)'); \
+	else \
+		$(PYTHON) homelab/vm/persistent_password_policy.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--min-length '$(MIN_PASSWORD_LENGTH)' \
+			--complexity '$(PASSWORD_COMPLEXITY)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			--apply; \
+	fi
+
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
 # stable instance name, and the exact confirmation carrying that name.
 homelab-factory-persistent-destroy:
@@ -1641,6 +1690,8 @@ help:
 		'make homelab-factory-persistent-accounts APPLY=1 PERSISTENT_DC=<name>' \
 		'                         Stage the durable roster over the serial console' \
 		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
+		'make homelab-factory-persistent-password-policy PERSISTENT_DC=<name> MIN_PASSWORD_LENGTH=<1-14> PASSWORD_COMPLEXITY=off|on [APPLY=1]' \
+		'                         Set, read back and record its directory password policy' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-durable-workstation-plan WORKSTATION=<name> [WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>]' \
 		'make homelab-durable-workstation-adopt APPLY=1 WORKSTATION=<name> WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>' \

@@ -2112,6 +2112,51 @@ class PersistentAccountsCliTests(unittest.TestCase):
                 self.assertNotIn(weak, err)
                 self.assertEqual([], self.launched)
 
+    def test_a_recorded_policy_judges_the_typed_passwords_instead(self):
+        # Owner decision 2026-09-30: a relaxed policy recorded for the
+        # instance (``persistent_password_policy``) replaces Samba's default
+        # in the host pre-check, and the refusal names it.
+        from homelab.vm import directory_password_policy as policies
+        target = self.seed()
+        target.record_directory_password_policy(policies.policy_record(
+            policies.requested_policy("4", "off", instance="lab-dc1"),
+            run_id="synthetic"))
+        out, _ = self.accounts()
+        self.assertIn("lab-dc1's recorded directory policy (at least 4 "
+                      "characters; complexity off)", out)
+        for short, expect in (("k9w", 2), ("k9wv", 0)):
+            with self.subTest(length=len(short)), self.harness():
+                values = iter(f"{short[:-1]}{index}{short[-1]}"
+                              if expect == 0 else short
+                              for index in range(len(self.plan)))
+                with mock.patch.object(
+                        bootstrap_dc.getpass, "getpass",
+                        side_effect=lambda prompt: (
+                            self.CONSOLE if "console password" in prompt
+                            else self._repeat(prompt, values))):
+                    _, err = self.call(
+                        "--state-dir", str(self.canonical),
+                        "persistent-accounts",
+                        "--instance", "lab-dc1",
+                        "--persistent-root", str(self.persistent_root),
+                        "--identity-overlay", str(self.overlay),
+                        "--apply", expect=expect)
+                if expect:
+                    self.assertIn("is shorter than 4 characters; lab-dc1's "
+                                  "recorded directory policy would refuse it",
+                                  err)
+                    self.assertNotIn(short, err)
+                    self.assertEqual([], self.launched)
+                else:
+                    self.assertEqual(len(self.staged_calls), 1)
+
+    def _repeat(self, prompt, values):
+        # A confirmation prompt repeats the value its prompt just returned.
+        if prompt.startswith("retype"):
+            return self._last
+        self._last = next(values)
+        return self._last
+
     def test_no_credential_reaches_argv_the_marker_or_the_report(self):
         self.seed()
         out, _ = self.accounts("--apply")

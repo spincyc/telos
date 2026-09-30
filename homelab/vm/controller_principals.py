@@ -13,6 +13,8 @@ import sys
 from typing import BinaryIO, Callable, Mapping, Sequence
 import uuid
 
+from .directory_password_policy import (
+    COMPLEXITY_CLASSES, SAMBA_DEFAULT, DirectoryPasswordPolicy)
 from .serial_automation import SerialAutomation, SerialAutomationError
 
 # The gate-7 installer renderer under workstations/ owns the ONE roster loader:
@@ -628,26 +630,35 @@ def directory_group_allocation() -> dict[str, int]:
     return dict(_validated_posix_allocation(_posix_allocation())["groups"])
 
 
-#: Samba AD's default password policy, which nothing in this repository
-#: changes (no ``samba-tool domain passwordsettings`` anywhere): at least
-#: seven characters, drawn from at least three character classes.
-DIRECTORY_MIN_PASSWORD_LENGTH = 7
-DIRECTORY_PASSWORD_CLASSES = 3
+#: Samba AD's default password policy: at least seven characters, drawn from
+#: at least three character classes.  An instance keeps it unless
+#: ``make homelab-factory-persistent-password-policy`` recorded another
+#: (``directory_password_policy``).
+DIRECTORY_MIN_PASSWORD_LENGTH = SAMBA_DEFAULT.min_length
+DIRECTORY_PASSWORD_CLASSES = COMPLEXITY_CLASSES
 
 
-def directory_password_problem(password: str, account: str) -> str | None:
+def directory_password_problem(
+    password: str, account: str,
+    policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
+) -> str | None:
     """Why the directory would refuse *password* for *account*, or ``None``.
 
     A durable account's password is typed by the operator, and the directory
     judges it only inside the Controller, where the stage program's stderr is
     deliberately closed so no traceback can carry a credential. A refused
     password therefore used to surface as a bare "Controller stage returned 1"
-    after a full boot (2026-09-25). This applies the same default rules on the
-    host, before anything boots. The reason names the rule, never the value.
+    after a full boot (2026-09-25). This applies the same rules on the host,
+    before anything boots: *policy*, which is Samba's default unless the
+    caller read another from the instance marker.  With complexity off only
+    the length is judged.  The reason names the rule, never the value.
     """
-    if len(password) < DIRECTORY_MIN_PASSWORD_LENGTH:
-        return (f"is shorter than {DIRECTORY_MIN_PASSWORD_LENGTH} "
-                "characters")
+    minimum = max(1, int(policy.min_length))
+    if len(password) < minimum:
+        return (f"is shorter than {minimum} "
+                + ("character" if minimum == 1 else "characters"))
+    if not policy.complexity:
+        return None
     classes = sum((
         any(character.isupper() for character in password),
         any(character.islower() for character in password),

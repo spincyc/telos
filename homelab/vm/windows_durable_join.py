@@ -67,6 +67,8 @@ from .bootstrap_dc import (  # noqa: E402
     _persistent_running, _typed_secret, ovmf_pair, persistent_switch_command)
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
+from .directory_password_policy import (  # noqa: E402
+    SAMBA_DEFAULT, DirectoryPasswordPolicy)
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
 from .factory_runner import (  # noqa: E402
     GATEWAY_MAC, gateway_command, wait_for_switch_port)
@@ -190,20 +192,30 @@ def typeable_problem(value: str) -> str | None:
     return None
 
 
-def local_administrator_password_problem(password: str) -> str | None:
-    """The host-side policy for the replacement break-glass password."""
+def local_administrator_password_problem(
+    password: str, policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
+) -> str | None:
+    """The host-side policy for the replacement break-glass password.
+
+    Typeability, then the bound directory's password policy (*policy*: the
+    instance's recorded one, or Samba's default), which a domain member's
+    password policy may later apply to local accounts too.  A recorded
+    policy's refusal names it; the default's reads as it always has.
+    """
     problem = typeable_problem(password)
     if problem is not None:
         return problem
-    # The directory's own default rules, which a domain member's password
-    # policy may later apply to local accounts too.
-    return controller_principals.directory_password_problem(
-        password, LOCAL_ADMINISTRATOR)
+    problem = controller_principals.directory_password_problem(
+        password, LOCAL_ADMINISTRATOR, policy)
+    if problem is not None and policy.recorded:
+        return f"{problem} under {policy.source}"
+    return problem
 
 
 def collect_owner_secrets(
     instance: str, daily_name: str, *,
     prompt: Callable[..., bytes] = _typed_secret, attempts: int = 3,
+    policy: DirectoryPasswordPolicy = SAMBA_DEFAULT,
 ) -> OwnerSecrets:
     """Ask, in order, for every value the run needs; nothing has started yet."""
     console = prompt(
@@ -220,7 +232,7 @@ def collect_owner_secrets(
         except ValueError as error:
             print(f"error: {error}; try again", file=sys.stderr)
             continue
-        problem = local_administrator_password_problem(local)
+        problem = local_administrator_password_problem(local, policy)
         if problem is None:
             break
         print(f"error: the new local-administrator password {problem}; try "
@@ -1104,6 +1116,9 @@ def print_plan(
           f"2) a new Windows local-administrator password, twice (checked "
           f"here first; never stored); 3) the daily administrator's current "
           f"domain password")
+    policy = binding.password_policy
+    print(f"Password policy: the new local-administrator password must be "
+          f"typeable and meet {policy.source} ({policy.requirement()})")
     for entry in space:
         verdict = "" if entry["free"] >= entry["needed"] else " (INSUFFICIENT)"
         print(f"Free space: {entry['path']} needs about "
@@ -1167,7 +1182,8 @@ def run(args: argparse.Namespace, *,
             # on a disk that cannot be joined.
             source = inspect_workstation(workstation, marker)
             secrets = collect_owner_secrets(
-                binding.instance, daily_name, prompt=prompt)
+                binding.instance, daily_name, prompt=prompt,
+                policy=binding.password_policy)
             attempt = prepare_attempt(
                 workstation, marker, binding,
                 controller_state=args.controller_state,
