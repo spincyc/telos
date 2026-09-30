@@ -11,10 +11,11 @@ import uuid
 from homelab.workstations.windows_identity_acceptance import FIELD_SETS
 
 from .controller_principals import (
-    DAILY_ADMINISTRATOR,
-    DIRECTORY_PRINCIPALS,
-    DOMAIN_ADMINISTRATOR,
-    STANDARD_USER,
+    daily_administrator,
+    directory_principals,
+    domain_administrator,
+    lazy_roster_attributes,
+    standard_user,
 )
 from .controller_join_material import (
     ControllerJoinMaterialError,
@@ -309,30 +310,61 @@ def _local_reauthentication_coordinate(
 # owner's private overlay renamed a principal.  "local" is not a directory
 # principal at all -- it is the guest's local break-glass account, resolved
 # from callbacks.local_principal below -- so it stays a literal sentinel.
+#
+# Derived on use, not at import, so importing this module reads no roster
+# (controller_principals says why).  A live run resolves it before anything
+# boots: windows_identity_cli.run calls resolve_identity_roster first.
 _LOCAL_PRINCIPAL_SENTINEL = "local"
-if _LOCAL_PRINCIPAL_SENTINEL in DIRECTORY_PRINCIPALS:
-    # Nothing stops an overlay naming a directory principal "local"; if one
-    # did, _credential_contexts would resolve that check against the guest's
-    # break-glass account instead.  Refuse at import, not at the console.
-    raise ValueError(
-        "a directory principal may not be named "
-        f"{_LOCAL_PRINCIPAL_SENTINEL!r}: it is the local break-glass "
-        "sentinel this module's credential map reserves")
-_CREDENTIAL_ROLES = {
-    "windows-standard-online": (STANDARD_USER,),
-    "windows-daily-admin": (DAILY_ADMINISTRATOR,),
-    "windows-cached-login": (STANDARD_USER,),
-    "windows-cached-admin-login": (DAILY_ADMINISTRATOR,),
-    "windows-uncached-denied": (DOMAIN_ADMINISTRATOR,),
-    "windows-local-rescue": (_LOCAL_PRINCIPAL_SENTINEL,),
-    "gateway-offline": (STANDARD_USER,),
-    "update-source-offline": (STANDARD_USER,),
-    "optional-storage-offline": (STANDARD_USER,),
-    "optional-storage-access-denied": (STANDARD_USER,),
-    "ad-dns-offline": (STANDARD_USER,),
-    "combined-dependencies-offline": (
-        STANDARD_USER, _LOCAL_PRINCIPAL_SENTINEL),
-}
+
+
+def _credential_roles() -> dict[str, tuple[str, ...]]:
+    if _LOCAL_PRINCIPAL_SENTINEL in directory_principals():
+        # Nothing stops an overlay naming a directory principal "local"; if
+        # one did, _credential_contexts would resolve that check against the
+        # guest's break-glass account instead.  Refuse with the roster, before
+        # any guest boots, not at the console.
+        raise ValueError(
+            "a directory principal may not be named "
+            f"{_LOCAL_PRINCIPAL_SENTINEL!r}: it is the local break-glass "
+            "sentinel this module's credential map reserves")
+    standard = standard_user()
+    daily = daily_administrator()
+    return {
+        "windows-standard-online": (standard,),
+        "windows-daily-admin": (daily,),
+        "windows-cached-login": (standard,),
+        "windows-cached-admin-login": (daily,),
+        "windows-uncached-denied": (domain_administrator(),),
+        "windows-local-rescue": (_LOCAL_PRINCIPAL_SENTINEL,),
+        "gateway-offline": (standard,),
+        "update-source-offline": (standard,),
+        "optional-storage-offline": (standard,),
+        "optional-storage-access-denied": (standard,),
+        "ad-dns-offline": (standard,),
+        "combined-dependencies-offline": (
+            standard, _LOCAL_PRINCIPAL_SENTINEL),
+    }
+
+
+def resolve_identity_roster() -> None:
+    """Resolve and judge this lane's roster once, before anything boots.
+
+    Everything importing this module used to resolve: the Controller roster
+    (``controller_principals.acceptance_roster``) and the credential map's
+    refusal of a directory principal named like the local sentinel.  A roster
+    that cannot be resolved or used stops the run here, never after a
+    Controller has booted.
+    """
+    _credential_roles()
+
+
+# The former import-time constants, still readable as attributes but resolved
+# on access (PEP 562).
+__getattr__ = lazy_roster_attributes(
+    __name__,
+    ("DAILY_ADMINISTRATOR", "DIRECTORY_PRINCIPALS", "DOMAIN_ADMINISTRATOR",
+     "STANDARD_USER"),
+    _CREDENTIAL_ROLES=_credential_roles)
 
 
 def _call_static_probe(
@@ -394,7 +426,7 @@ def _credential_contexts(
     local_credential: str,
     principals: Mapping[str, str],
 ) -> Mapping[str, Mapping[str, object]] | None:
-    roles = _CREDENTIAL_ROLES.get(check)
+    roles = _credential_roles().get(check)
     if roles is None:
         return None
     results: dict[str, Mapping[str, object]] = {}
@@ -719,7 +751,7 @@ def _execute_join(
                     f"{material['principal']}@{realm.upper()}"
                 ),
                 "password": material["credential"],
-                "operator": f"{DAILY_ADMINISTRATOR}@{realm.upper()}",
+                "operator": f"{daily_administrator()}@{realm.upper()}",
             })
             channel = JoinMediaChannel(callbacks.qmp(), iso, nonce)
         except BaseException as primary:
@@ -764,7 +796,7 @@ def _execute_join(
             reauthentication_attempted = True
             try:
                 callbacks.reauthenticate_domain_operator(
-                    f"{DAILY_ADMINISTRATOR}@{realm.upper()}",
+                    f"{daily_administrator()}@{realm.upper()}",
                     operator_credential,
                     nonce,
                 )
@@ -775,7 +807,7 @@ def _execute_join(
                 ) from None
             try:
                 return _post_reboot_proof(
-                    callbacks, f"{DAILY_ADMINISTRATOR}@{realm.upper()}")
+                    callbacks, f"{daily_administrator()}@{realm.upper()}")
             except BaseException as error:
                 diagnostic = (
                     error.diagnostic
@@ -941,7 +973,7 @@ def _run_acceptance_checks(
     join_proof, join_destroyed = _execute_join(
         realm=realm,
         private_root=private_root,
-        operator_credential=principals[DAILY_ADMINISTRATOR],
+        operator_credential=principals[daily_administrator()],
         callbacks=callbacks,
         stage_join_principal=stage_join_principal,
         destroy_join_principal=destroy_join_principal,
@@ -1025,8 +1057,8 @@ def _run_acceptance_checks(
         callbacks.reboot_guest()
         try:
             callbacks.reestablish_operator_session(
-                f"{DAILY_ADMINISTRATOR}@{realm.upper()}",
-                principals[DAILY_ADMINISTRATOR],
+                f"{daily_administrator()}@{realm.upper()}",
+                principals[daily_administrator()],
             )
         except (KeyboardInterrupt, SystemExit):
             raise

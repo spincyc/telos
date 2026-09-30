@@ -14,6 +14,15 @@ from unittest import mock
 
 from homelab.vm import durable_workstation, simulated_gateway
 from homelab.vm.simulation_overlay import PersistentControllerInstance
+from homelab.tests.identity_overlay_pin import pinned_acceptance_state
+
+
+def setUpModule():
+    # HANDOFF section 5: no test stats the operator's build/ tree.  Every
+    # persistent-instance separation check resolves the reserved acceptance
+    # state, which defaults to the real build/homelab/vm/bootstrap-dc, so
+    # every test here reserves private spellings of it instead.
+    unittest.enterModuleContext(pinned_acceptance_state())
 
 DOMAIN = "ad.example.home.arpa"
 REALM = DOMAIN.upper()

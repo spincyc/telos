@@ -10,6 +10,15 @@ from homelab.vm.windows_identity_run import IdentityFailureDiagnostic
 from homelab.tests.windows_identity_fixture import (
     write_prepared_authorization,
 )
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 
 class WindowsIdentityCliTests(unittest.TestCase):

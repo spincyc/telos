@@ -24,7 +24,6 @@ from homelab.vm.windows_join_iso import (
     execute_join_channel,
     launch_join_command,
 )
-from homelab.vm.controller_principals import DAILY_ADMINISTRATOR
 from homelab.vm.windows_guest_principals import (
     GUEST_NAME,
     GUEST_NAME_POWERSHELL,
@@ -34,6 +33,22 @@ from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticSession,
 )
 from homelab.vm.windows_public_command import MAX_PUBLIC_COMMAND_CHARS
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+from homelab.vm import controller_principals
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# The roster names these tests drive, read under the same pin, so importing
+# this module reads no overlay either.
+with pinned_identity_overlay():
+    DAILY_ADMINISTRATOR = controller_principals.daily_administrator()
 
 
 NONCE = "ab" * 16

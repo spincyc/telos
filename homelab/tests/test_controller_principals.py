@@ -29,14 +29,26 @@ from homelab.vm.serial_automation import (
     SerialAutomationError,
 )
 from homelab.vm.controller_factory import FactoryBundle
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # acceptance roster resolves on first use from the DEFAULT overlay path,
+    # so every test here runs with that path pinned to a private one that does
+    # not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 
 # The three directory principals this module stages, taken from the resolved
-# roster rather than written out, so the suite proves the same thing whether or
-# not the owner has a private overlay under homelab/instance/identity/.  The
-# pinned synthetic names are asserted separately, against the contract read with
-# the overlay explicitly out of the way (CONTRACT_ROSTER below).
-ROLES = controller_principals._ROLES
+# roster rather than written out, so the suite proves the same thing whatever
+# overlay the pin resolves (none here; a renamed one in the overlay-regression
+# child).  Read under the same pin, so importing this module reads no overlay
+# either.  The pinned synthetic names are asserted separately, against the
+# contract read with the overlay explicitly out of the way (CONTRACT_ROSTER
+# below).
+with pinned_identity_overlay():
+    ROLES = controller_principals._ROLES
 VALUES = {
     name: f"Secret-{index}-47!" for index, name in enumerate(ROLES)
 }
@@ -1006,10 +1018,10 @@ class WindowsLaneDerivesItsRosterTests(unittest.TestCase):
         # The reviewer's reproduction, run against the REAL modules in a child
         # interpreter: a private overlay naming real accounts used to produce
         # "STAGE REFUSED: ValueError Controller principal roster is invalid".
-        # A child process because the roster resolves at import and this suite
-        # must not disturb the parent's already-imported modules -- nor read or
-        # write the owner's real overlay, which is why the overlay is written
-        # to a temporary directory and injected by name.
+        # A child process because the roster resolves once per process and
+        # this suite must not disturb the parent's already-imported modules --
+        # nor read or write the owner's real overlay, which is why the overlay
+        # is written to a temporary directory and injected by name.
         root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as temporary:
             overlay = Path(temporary) / "principals.json"
@@ -1292,10 +1304,10 @@ class UidPinAndAdditionalUserTests(unittest.TestCase):
                 "groups": {"Domain Users": 10513}}, accounts=1)
 
     def test_the_acceptance_lanes_apply_pins_and_never_stage_extra_users(self):
-        # The disposable lanes resolve the overlay at IMPORT, so this runs in a
-        # child interpreter with the loader pointed at a temporary overlay --
-        # never the owner's real one, and never disturbing this process's
-        # already-imported modules.
+        # The disposable lanes resolve the overlay once per process, so this
+        # runs in a child interpreter with the loader pointed at a temporary
+        # overlay -- never the owner's real one, and never disturbing this
+        # process's already-imported modules.
         root = Path(__file__).resolve().parents[2]
         program = f"""
 import io, json, sys

@@ -23,7 +23,7 @@ from pathlib import Path
 from .automated_controller import DisposableBootDisk
 from .bootstrap_dc import paths
 from .controller_factory import FactoryBundle
-from .controller_principals import DIRECTORY_PRINCIPALS
+from .controller_principals import directory_principals, lazy_roster_attributes
 from .factory_runner import (
     DEFAULT_SEED_ISO,
     GATEWAY_MAC,
@@ -56,6 +56,11 @@ from .controller_auth_diagnostic import (
     ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
+
+# The directory principals are read from the roster at use, never bound at
+# import: importing this module reads no file (controller_principals says why).
+# The old attribute stays readable, resolved on access (PEP 562).
+__getattr__ = lazy_roster_attributes(__name__, ("DIRECTORY_PRINCIPALS",))
 
 IDENTITY_CONTROLLER_MAC = bytes.fromhex(MACS["controller"].replace(":", ""))
 WINDOWS_OS_READINESS_TIMEOUT = 300.0
@@ -2567,7 +2572,7 @@ class PrivateIdentityMaterial:
         # controller_principals.POSIX_ALLOCATION["users"]); with no overlay
         # present this is byte-identical to the old literal.
         self._principals = {
-            name: self._credential() for name in DIRECTORY_PRINCIPALS
+            name: self._credential() for name in directory_principals()
         }
         try:
             self.stage_guest_principals(self._principals)

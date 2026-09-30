@@ -13,8 +13,13 @@ from typing import BinaryIO, Callable, Mapping, TypeVar
 import textwrap
 import uuid
 
-from .controller_principals import DAILY_ADMINISTRATOR
+from .controller_principals import daily_administrator, lazy_roster_attributes
 from .serial_automation import SerialAutomation, SerialAutomationError
+
+# The daily administrator is read from the roster at use, never bound at
+# import: importing this module reads no file (controller_principals says why).
+# The old attribute stays readable, resolved on access (PEP 562).
+__getattr__ = lazy_roster_attributes(__name__, ("DAILY_ADMINISTRATOR",))
 
 
 @dataclass(frozen=True)
@@ -473,7 +478,7 @@ class OneUseDomainJoinMaterial:
                     "realm": self.realm,
                     "principal": staged.principal,
                     "credential": self._credential_value,
-                    "operator": f"{DAILY_ADMINISTRATOR}@{self.realm}",
+                    "operator": f"{daily_administrator()}@{self.realm}",
                 })
                 value = consumer(material)
             except BaseException as error:

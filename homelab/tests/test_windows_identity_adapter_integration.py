@@ -12,10 +12,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 from homelab.vm import windows_identity_adapter as subject
-from homelab.vm.controller_principals import (
-    DAILY_ADMINISTRATOR,
-    STANDARD_USER,
-)
 from homelab.vm.windows_gui import Image
 from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
@@ -30,6 +26,23 @@ from homelab.vm.controller_auth_diagnostic import (
     ControllerAuthReceiveObservation,
     ControllerAuthResult,
 )
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+from homelab.vm import controller_principals
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# The roster names these tests drive, read under the same pin, so importing
+# this module reads no overlay either.
+with pinned_identity_overlay():
+    DAILY_ADMINISTRATOR = controller_principals.daily_administrator()
+    STANDARD_USER = controller_principals.standard_user()
 
 
 # The principals these fixtures drive the adapter with, resolved by the one
@@ -305,7 +318,8 @@ class WindowsIdentityAdapterIntegrationTests(unittest.TestCase):
                 sign_in.state = state
                 with (
                     mock.patch.object(
-                        subject, "DAILY_ADMINISTRATOR", "renamed-daily"),
+                        subject, "daily_administrator",
+                        return_value="renamed-daily"),
                     mock.patch.object(
                         subject, "_load_references",
                         return_value=(

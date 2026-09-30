@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fake_image_tools  # noqa: E402
 import simulation_overlay  # noqa: E402
+from homelab.tests.identity_overlay_pin import (  # noqa: E402
+    pinned_acceptance_state,
+)
 
 
 class TestControllerOverlay(unittest.TestCase):
@@ -395,6 +398,29 @@ class TestControllerOverlay(unittest.TestCase):
         self.assertFalse(overlay.vars.exists())
 
 
+class TestAcceptanceStateCandidates(unittest.TestCase):
+    """The reserved spellings, as pure path arithmetic.
+
+    HANDOFF section 5: nothing here stats ``build/``.  The refusals themselves
+    are proven in TestPersistentControllerInstance against private spellings
+    of the same shape (``pinned_acceptance_state``); this proves the real
+    spellings are the ones worth refusing.
+    """
+
+    def test_both_readings_of_the_default_state_are_reserved(self):
+        import bootstrap_dc
+
+        # The runners' relative default IS the reserved acceptance state.
+        self.assertEqual(simulation_overlay.ACCEPTANCE_STATE_RELATIVE,
+                         bootstrap_dc.DEFAULT_STATE)
+        reserved = simulation_overlay.acceptance_state_candidates()
+        for root in (simulation_overlay.REPOSITORY, Path.cwd()):
+            with self.subTest(root=root):
+                self.assertIn(
+                    (root / bootstrap_dc.DEFAULT_STATE).absolute(), reserved)
+        self.assertEqual(len(set(reserved)), len(reserved))
+
+
 class TestPersistentControllerInstance(unittest.TestCase):
     """A controller whose directory survives shutdown, without weakening the
     disposable acceptance fence."""
@@ -403,6 +429,10 @@ class TestPersistentControllerInstance(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # HANDOFF section 5: the separation checks resolve and stat every
+        # reserved acceptance state, whose default is the operator's real
+        # build/homelab/vm/bootstrap-dc; reserve private spellings instead.
+        self.enterContext(pinned_acceptance_state(self.root / "reserved"))
         self.canonical = self.root / "canonical"
         self.canonical.mkdir()
         self.disk = self.canonical / simulation_overlay.ACCEPTANCE_DISK_NAME

@@ -22,6 +22,17 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 
 import workstation_instance as wi  # noqa: E402
+from homelab.tests.identity_overlay_pin import (  # noqa: E402
+    pinned_acceptance_state,
+)
+
+
+def setUpModule():
+    # HANDOFF section 5: no test stats the operator's build/ tree.  Every
+    # persistent-instance separation check resolves the reserved acceptance
+    # state, which defaults to the real build/homelab/vm/bootstrap-dc, so
+    # every test here reserves private spellings of it instead.
+    unittest.enterModuleContext(pinned_acceptance_state())
 
 
 SECRET = b"SYNTHETIC-LOCAL-ADMIN-SECRET-7f3a"

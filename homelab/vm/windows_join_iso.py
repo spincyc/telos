@@ -29,7 +29,7 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCode,
     PostSubmitDiagnosticCollection,
 )
-from .controller_principals import DAILY_ADMINISTRATOR
+from .controller_principals import daily_administrator, lazy_roster_attributes
 from .windows_guest_principals import (
     WindowsGuestPrincipalError,
     audit_guest_script,
@@ -279,11 +279,20 @@ REALM = re.compile(
 # the owner's private overlay renamed the principal.  SAFE_PRINCIPAL/_SAFE_NAME
 # already admit only ``[a-z][a-z0-9-]*``, so the name needs no escaping, but
 # re.escape is applied anyway because this is a regex and the gate lives
-# elsewhere.
-OPERATOR = re.compile(
-    re.escape(DAILY_ADMINISTRATOR)
-    + r"@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
-)
+# elsewhere.  Built at use, not at import, so importing this module reads no
+# roster (controller_principals says why); ``re`` caches the compiled pattern.
+def operator_pattern() -> re.Pattern[str]:
+    return re.compile(
+        re.escape(daily_administrator())
+        + r"@(?=.{1,253}\Z)(?![-.])(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
+    )
+
+
+# The former import-time constants, still readable as attributes but resolved
+# on access (PEP 562).
+__getattr__ = lazy_roster_attributes(
+    __name__, ("DAILY_ADMINISTRATOR",), OPERATOR=operator_pattern)
+
 JOIN_USERNAME = re.compile(
     r"tj-[a-f0-9]{16}@(?=.{1,253}\Z)(?![-.])"
     r"(?:[A-Z0-9-]+\.)*[A-Z0-9-]+"
@@ -421,9 +430,9 @@ def _validate_material(material: Mapping[str, str]) -> dict[str, str]:
     if (not REALM.fullmatch(values["realm"])
             or values["realm"] != values["domain"].upper()):
         raise WindowsJoinIsoError("join realm is invalid")
-    if (not OPERATOR.fullmatch(values["operator"])
+    if (not operator_pattern().fullmatch(values["operator"])
             or values["operator"]
-            != f"{DAILY_ADMINISTRATOR}@{values['realm']}"):
+            != f"{daily_administrator()}@{values['realm']}"):
         raise WindowsJoinIsoError("join operator is invalid")
     if (
         not isinstance(values["username"], str)
@@ -833,7 +842,7 @@ class JoinMediaChannel:
             # equality failed attempt 34 (20260811T123220Z) at the first
             # live evaluation this proof ever reached.
             "domain": expected_domain.casefold(),
-            "operator": f"{DAILY_ADMINISTRATOR}@{expected_domain.upper()}",
+            "operator": f"{daily_administrator()}@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }
         observed = dict(result)
@@ -865,7 +874,7 @@ class JoinMediaChannel:
             "join_media_destroyed": True,
             "joined_after_reboot": True,
             "domain": expected_domain,
-            "operator": f"{DAILY_ADMINISTRATOR}@{expected_domain.upper()}",
+            "operator": f"{daily_administrator()}@{expected_domain.upper()}",
             "operator_local_administrator": True,
         }
 

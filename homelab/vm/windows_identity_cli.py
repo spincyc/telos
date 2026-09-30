@@ -16,6 +16,7 @@ from .windows_identity_orchestrator import (
     AcceptanceCallbacks,
     WindowsIdentityOrchestratorError,
     execute_windows_identity_acceptance,
+    resolve_identity_roster,
 )
 from .windows_identity_progressive import ProgressiveRotationPlan
 from .windows_identity_run import (
@@ -75,6 +76,10 @@ def run(
     acceptance_factory: AcceptanceFactory | None = None,
 ) -> int:
     """Validate the boundary, then enter strict production acceptance."""
+    # The roster first, exactly where importing this module used to resolve
+    # it: a dry run and a live run both refuse an unusable overlay up front,
+    # never after a guest has booted or a one-use credential has rotated.
+    resolve_identity_roster()
     boundary = NativeProcessBoundary(attempt, controller_state)
     boundary._validate()
     from .windows_identity_factory import (

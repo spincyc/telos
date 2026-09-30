@@ -15,10 +15,23 @@ from homelab.vm.windows_identity_run import (
     PrivateIdentityMaterial,
     WindowsIdentityRunError,
 )
-from homelab.vm.controller_principals import (
-    DIRECTORY_PRINCIPALS,
-    STANDARD_USER,
-)
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+from homelab.vm import controller_principals
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# The roster names these tests drive, read under the same pin, so importing
+# this module reads no overlay either.
+with pinned_identity_overlay():
+    DIRECTORY_PRINCIPALS = controller_principals.directory_principals()
+    STANDARD_USER = controller_principals.standard_user()
 
 
 class WindowsIdentityOperationsTests(unittest.TestCase):

@@ -21,6 +21,18 @@ try:
 except ImportError:  # pragma: no cover - depends on the host
     yaml = None
 
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # acceptance roster controller_principals plans from resolves on first use
+    # from the DEFAULT overlay path, so every test here runs with that path
+    # pinned to a private one that does not exist -- the synthetic acceptance
+    # roster.  The resolver runs in child processes and takes its overlay by
+    # --identity-overlay; this pin is for the in-process derivations.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
 
 @unittest.skipUnless(yaml, "PyYAML is not installed on this host")
 class TestDomainControllerRole(unittest.TestCase):

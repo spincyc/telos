@@ -28,7 +28,8 @@ from .controller_auth_diagnostic import (
 from .controller_principals import (
     ControllerPrincipalResult,
     ControllerPrincipalSerial,
-    DAILY_ADMINISTRATOR,
+    daily_administrator,
+    lazy_roster_attributes,
 )
 from .serial_automation import SerialAutomation
 from .simulated_gateway import LEASE_IP
@@ -90,6 +91,11 @@ from .windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticError,
 )
 from .windows_guest_principals import contract_principals
+
+# The daily administrator is read from the roster at use, never bound at
+# import: importing this module reads no file (controller_principals says why).
+# The old attribute stays readable, resolved on access (PEP 562).
+__getattr__ = lazy_roster_attributes(__name__, ("DAILY_ADMINISTRATOR",))
 
 CONTROLLER_AUTH_TIMEOUT_SECONDS = 60.0
 # The armed window must cover everything between arming the Controller
@@ -855,7 +861,7 @@ class NativeWindowsAcceptanceAdapter:
         self, principal: str, credential: str, diagnostic_nonce: str,
     ) -> None:
         """Re-establish the exact staged domain-operator session."""
-        if principal != f"{DAILY_ADMINISTRATOR}@{self.realm}":
+        if principal != f"{daily_administrator()}@{self.realm}":
             raise WindowsLocalReauthenticationError(
                 "prove-password-target")
         self._reauthenticate(
@@ -869,7 +875,7 @@ class NativeWindowsAcceptanceAdapter:
         self, principal: str, credential: str,
     ) -> None:
         """Re-log the operator in after a reboot, without the auth proofs."""
-        if principal != f"{DAILY_ADMINISTRATOR}@{self.realm}":
+        if principal != f"{daily_administrator()}@{self.realm}":
             raise WindowsLocalReauthenticationError("prove-password-target")
         self._reauthenticate(
             principal,
@@ -1419,7 +1425,7 @@ class NativeWindowsAcceptanceAdapter:
                 controller_auth = ControllerAuthDiagnosticSession(
                     self._shared_controller_console(),
                     ControllerAuthExpectation(
-                        DAILY_ADMINISTRATOR, FactorySpec().netbios,
+                        daily_administrator(), FactorySpec().netbios,
                         str(LEASE_IP), realm=self.realm),
                     # Controller pre-arm work is a distinct diagnostic
                     # lifecycle.  Give it one immutable budget rather than

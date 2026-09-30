@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, replace
+import functools
 import json
 from pathlib import Path
 import re
 import sys
-from typing import BinaryIO, Mapping, Sequence
+from typing import BinaryIO, Callable, Mapping, Sequence
 import uuid
 
 from .serial_automation import SerialAutomation, SerialAutomationError
@@ -54,54 +55,192 @@ class ControllerPrincipalResult:
     events: tuple[str, ...]
 
 
-# The three DIRECTORY principals, resolved by the one roster loader that also
-# bakes the names onto the installed workstation disk
-# (workstations/arch_second.identity_roster: the tracked identity-lifecycle
-# contract, optionally patched by the owner's gitignored private overlay).
-# Reading them here instead of pinning a second hardcoded tuple is what stops
-# the two historical sources of principal names from drifting apart; with no
-# overlay present these are exactly ("student", "operator", "directory-admin").
-_DECLARATION = identity_declaration()
-_ROSTER = dict(_DECLARATION.roster)
-# What every DISPOSABLE lane stages: the overlay's names AND its uid_number
-# pins -- so a rehearsal exercises the numbers production will hold, and gate
-# 8's storage check compares against them -- but never its additional standard
-# users.  Those exist only in the owner's durable directory; an acceptance run
-# neither creates nor checks them.
-_ACCEPTANCE = replace(_DECLARATION, additional_standard_users=())
-_ROLES = tuple(_ROSTER[role] for role in DIRECTORY_ROLES)
-_DOMAIN_ADMIN = _ROSTER["domain_administrator"]
-# Where _ROSTER came from, for every refusal below.  A rejected roster used to
-# be reported as a bare "Controller principal roster is invalid", which named
-# neither the contract nor the owner's private overlay -- and the Windows lane
-# hit it from inside stage_controller_principals, where a transcript is all the
-# reader has.
-ROSTER_SOURCE = identity_roster_source()
-# The SINGLE public name for each directory principal, and the tuple of all
-# three in DIRECTORY_ROLES order.  The Windows lane (windows_identity_run,
-# windows_identity_orchestrator, windows_identity_adapter, windows_join_iso,
-# controller_join_material) reads these instead of restating
-# ("student", "operator", "directory-admin") -- the hardcoded literals that
-# made an overlay-renamed roster fail at stage_controller_principals with
-# "Controller principal roster is invalid".  Same derivation the Arch lane
-# already used through POSIX_ALLOCATION["users"]; these constants just spell
-# one role's name where the whole allocation is not wanted.
-DIRECTORY_PRINCIPALS = _ROLES
-STANDARD_USER = _ROSTER["standard_user"]
-DAILY_ADMINISTRATOR = _ROSTER["daily_administrator"]
-DOMAIN_ADMINISTRATOR = _ROSTER["domain_administrator"]
-# The second gate on the same names.  arch_second's SAFE_PRINCIPAL already
+# The second gate on the roster's names.  arch_second's SAFE_PRINCIPAL already
 # refused anything that would need quoting; this one is deliberately kept as
 # well, because these names are substituted into a Python program that runs
 # inside the Controller and into JSON that travels as one shell word.
 _SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
-if any(not _SAFE_NAME.fullmatch(name) for name in _ROLES) \
-        or len(set(_ROLES)) != len(_ROLES):
-    # Import-time and unconditional: a roster this module could not safely bake
-    # into a guest program must stop the process here, not at the serial console
-    # inside a disposable VM.
-    raise ValueError(
-        f"Controller principal roster is invalid; source: {ROSTER_SOURCE}")
+
+
+@dataclass(frozen=True)
+class AcceptanceRoster:
+    """Everything this module derives from the disposable acceptance roster.
+
+    One resolution of the one roster loader, and every value this module used
+    to compute from it at import, in the order it computed them.
+    """
+
+    declaration: object
+    roster: dict[str, str]
+    acceptance: object
+    roles: tuple[str, ...]
+    domain_admin: str
+    source: str
+    posix_allocation: dict
+    roster_json: str
+    stage_program: str
+    destroy_program: str
+    program_roles: tuple[str, ...]
+
+
+# The roster is resolved on first use, not at import, so importing this
+# module -- or any Windows-lane module that reads it -- reads no file: a unit
+# test pins the overlay first (homelab/tests/identity_overlay_pin.py) instead
+# of silently inheriting whichever overlay its host happens to hold.  A live
+# run still resolves it exactly once per process, through the same loader and
+# the same default path, before it boots anything -- a live entry point asks
+# for it first (windows_identity_cli.run, and the domain_controller role's
+# resolve-directory-accounts.py) -- so an overlay that exists but cannot be
+# examined or understood still stops the run before any guest exists.  Every
+# later use sees that one resolution.
+@functools.cache
+def acceptance_roster() -> AcceptanceRoster:
+    """The disposable acceptance roster for this process, resolved once."""
+    # The three DIRECTORY principals, resolved by the one roster loader that
+    # also bakes the names onto the installed workstation disk
+    # (workstations/arch_second.identity_roster: the tracked identity-lifecycle
+    # contract, optionally patched by the owner's gitignored private overlay).
+    # Reading them here instead of pinning a second hardcoded tuple is what
+    # stops the two historical sources of principal names from drifting apart;
+    # with no overlay present these are exactly
+    # ("student", "operator", "directory-admin").
+    declaration = identity_declaration()
+    roster = dict(declaration.roster)
+    # What every DISPOSABLE lane stages: the overlay's names AND its uid_number
+    # pins -- so a rehearsal exercises the numbers production will hold, and
+    # gate 8's storage check compares against them -- but never its additional
+    # standard users.  Those exist only in the owner's durable directory; an
+    # acceptance run neither creates nor checks them.
+    acceptance = replace(declaration, additional_standard_users=())
+    roles = tuple(roster[role] for role in DIRECTORY_ROLES)
+    domain_admin = roster["domain_administrator"]
+    # Where the roster came from, for every refusal below.  A rejected roster
+    # used to be reported as a bare "Controller principal roster is invalid",
+    # which named neither the contract nor the owner's private overlay -- and
+    # the Windows lane hit it from inside stage_controller_principals, where a
+    # transcript is all the reader has.
+    source = identity_roster_source()
+    if any(not _SAFE_NAME.fullmatch(name) for name in roles) \
+            or len(set(roles)) != len(roles):
+        # Unconditional, and resolved before any guest exists: a roster this
+        # module could not safely bake into a guest program must stop the
+        # process here, not at the serial console inside a disposable VM.
+        raise ValueError(
+            f"Controller principal roster is invalid; source: {source}")
+    allocation = _validated_posix_allocation(_posix_allocation(acceptance))
+    roster_json = _roster_json(roles, domain_admin)
+    stage_program, destroy_program, program_roles = _programs(acceptance)
+    if program_roles != roles:
+        # Structural, and unconditional like the roster gate above: the
+        # programs baked here and the names this module publishes must be one
+        # derivation of one roster, or a caller would validate against names
+        # the guest program does not create.
+        raise ValueError(
+            f"Controller principal programs disagree with the resolved "
+            f"roster; source: {source}")
+    return AcceptanceRoster(
+        declaration=declaration, roster=roster, acceptance=acceptance,
+        roles=roles, domain_admin=domain_admin, source=source,
+        posix_allocation=allocation, roster_json=roster_json,
+        stage_program=stage_program, destroy_program=destroy_program,
+        program_roles=program_roles)
+
+
+# The SINGLE public name for each directory principal, and the tuple of all
+# three in DIRECTORY_ROLES order.  The Windows lane (windows_identity_run,
+# windows_identity_orchestrator, windows_identity_adapter, windows_join_iso,
+# controller_join_material) calls these at use instead of restating
+# ("student", "operator", "directory-admin") -- the hardcoded literals that
+# made an overlay-renamed roster fail at stage_controller_principals with
+# "Controller principal roster is invalid".  Same derivation the Arch lane
+# already used through POSIX_ALLOCATION["users"]; these just spell one role's
+# name where the whole allocation is not wanted.
+def directory_principals() -> tuple[str, ...]:
+    """The three directory principals, in ``DIRECTORY_ROLES`` order."""
+    return acceptance_roster().roles
+
+
+def standard_user() -> str:
+    return acceptance_roster().roster["standard_user"]
+
+
+def daily_administrator() -> str:
+    return acceptance_roster().roster["daily_administrator"]
+
+
+def domain_administrator() -> str:
+    return acceptance_roster().roster["domain_administrator"]
+
+
+def roster_source() -> str:
+    """Where the acceptance roster came from, as every refusal quotes it."""
+    return acceptance_roster().source
+
+
+def posix_allocation() -> dict:
+    """The acceptance roster's validated POSIX allocation."""
+    return acceptance_roster().posix_allocation
+
+
+# The former import-time constants, still readable as module attributes
+# (``controller_principals.DAILY_ADMINISTRATOR``) but resolved on access
+# (PEP 562).  ``from controller_principals import X`` resolves X at that
+# import, so a module that must not read the roster at load imports the
+# accessor functions above instead and calls them at use.
+_LAZY_ROSTER_ATTRIBUTES: dict[str, Callable[[AcceptanceRoster], object]] = {
+    "_DECLARATION": lambda resolved: resolved.declaration,
+    "_ROSTER": lambda resolved: resolved.roster,
+    "_ACCEPTANCE": lambda resolved: resolved.acceptance,
+    "_ROLES": lambda resolved: resolved.roles,
+    "_DOMAIN_ADMIN": lambda resolved: resolved.domain_admin,
+    "ROSTER_SOURCE": lambda resolved: resolved.source,
+    "DIRECTORY_PRINCIPALS": lambda resolved: resolved.roles,
+    "STANDARD_USER": lambda resolved: resolved.roster["standard_user"],
+    "DAILY_ADMINISTRATOR":
+        lambda resolved: resolved.roster["daily_administrator"],
+    "DOMAIN_ADMINISTRATOR":
+        lambda resolved: resolved.roster["domain_administrator"],
+    "POSIX_ALLOCATION": lambda resolved: resolved.posix_allocation,
+    "_ROSTER_JSON": lambda resolved: resolved.roster_json,
+    "_STAGE_PROGRAM": lambda resolved: resolved.stage_program,
+    "_DESTROY_PROGRAM": lambda resolved: resolved.destroy_program,
+    "_PROGRAM_ROLES": lambda resolved: resolved.program_roles,
+}
+
+
+def __getattr__(name: str) -> object:
+    try:
+        derive = _LAZY_ROSTER_ATTRIBUTES[name]
+    except KeyError:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}") from None
+    return derive(acceptance_roster())
+
+
+def lazy_roster_attributes(
+    module: str, names: Sequence[str] = (),
+    **derived: Callable[[], object],
+) -> Callable[[str], object]:
+    """A PEP 562 ``__getattr__`` for a module that once bound roster names.
+
+    *names* are this module's former constants the importer used to bind with
+    ``from .controller_principals import ...``; *derived* maps the importer's
+    own former constants to the function that now computes them.  Each is
+    resolved on access, so the old attribute stays readable without the
+    import reading the roster.
+    """
+    forwarded = frozenset(names)
+
+    def __getattr__(name: str) -> object:
+        if name in derived:
+            return derived[name]()
+        if name in forwarded:
+            return _LAZY_ROSTER_ATTRIBUTES[name](acceptance_roster())
+        raise AttributeError(
+            f"module {module!r} has no attribute {name!r}")
+
+    return __getattr__
+
 
 # ADR 0055: UID and GID come from the directory.  The Arch Workstation lane
 # runs SSSD with ``ldap_id_mapping = False`` (identity_client role), so a
@@ -230,19 +369,22 @@ def _validated_roster(roster: Mapping[str, str]) -> dict[str, str]:
     if missing:
         raise DirectoryPlanError(
             f"directory roster declares no name for {missing[0]!r}; "
-            f"roster source: {ROSTER_SOURCE}")
+            f"roster source: {roster_source()}")
     names = [roster[role] for role in DIRECTORY_ROLES]
     for role, name in zip(DIRECTORY_ROLES, names):
         if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
             raise DirectoryPlanError(
                 f"directory roster name for {role!r} is not safely "
-                f"representable; roster source: {ROSTER_SOURCE}")
+                f"representable; roster source: {roster_source()}")
     if len(set(names)) != len(names):
         raise DirectoryPlanError(
             "directory roster names are not distinct, so the POSIX allocation "
             f"would silently collapse two roles into one account; roster "
-            f"source: {ROSTER_SOURCE}")
+            f"source: {roster_source()}")
     return {role: roster[role] for role in DIRECTORY_ROLES}
+
+
+_NO_SOURCE = object()
 
 
 def _declared(
@@ -252,9 +394,9 @@ def _declared(
 
     Every public entry point below takes one *roster*, in one of three shapes:
 
-    * ``None`` -- the disposable acceptance declaration resolved at import:
-      the overlay's names and ``uid_number`` pins, never its additional
-      standard users.
+    * ``None`` -- the disposable acceptance declaration
+      (``acceptance_roster()``): the overlay's names and ``uid_number`` pins,
+      never its additional standard users.
     * a DECLARATION -- ``durable_directory_roster()``'s result, or anything
       else carrying ``roster``, ``uid_numbers`` and
       ``additional_standard_users`` attributes.  Its pins and its additional
@@ -272,26 +414,55 @@ def _declared(
     public argument and the loader may never have seen it.
     """
     if roster is None:
-        roster = _ACCEPTANCE
+        roster = acceptance_roster().acceptance
     uid_numbers = getattr(roster, "uid_numbers", None)
     if uid_numbers is None:
         names: Mapping[str, str] = roster  # type: ignore[assignment]
         uid_numbers = directory_uid_numbers()
         additional: tuple = ()
-        source = ROSTER_SOURCE
+        # A bare mapping names no source of its own; a refusal quotes this
+        # module's (``roster_source()``).
+        source = _NO_SOURCE
     else:
         names = roster.roster  # type: ignore[attr-defined]
         additional = tuple(
             roster.additional_standard_users)  # type: ignore[attr-defined]
-        source = getattr(roster, "source", ROSTER_SOURCE)
+        source = getattr(roster, "source", _NO_SOURCE)
     validated = _validated_roster(names)
     try:
-        validate_directory_identifiers(
+        _validate_identifiers(
             {role: names[role] for role in CONTRACT_ROLES if role in names},
-            dict(uid_numbers), additional, source=source)
+            dict(uid_numbers), additional, source)
     except IdentityRosterError as error:
         raise DirectoryPlanError(str(error)) from error
     return validated, dict(uid_numbers), additional
+
+
+def _validate_identifiers(
+    names: Mapping[str, str],
+    uid_numbers: Mapping[str, int],
+    additional: tuple,
+    source: object,
+) -> None:
+    """``validate_directory_identifiers``, naming *source* in any refusal.
+
+    ``_NO_SOURCE`` means this module's own ``roster_source()``, which is
+    resolved only once a refusal needs it: judging a hand-built roster or a
+    durable declaration never resolves the acceptance roster just to label a
+    message that is not raised.  The rule is deterministic, so judging again
+    with the real source raises the loader's own message.
+    """
+    if source is not _NO_SOURCE:
+        validate_directory_identifiers(
+            names, uid_numbers, additional, source=source)
+        return
+    try:
+        validate_directory_identifiers(
+            names, uid_numbers, additional, source="")
+    except IdentityRosterError:
+        validate_directory_identifiers(
+            names, uid_numbers, additional, source=roster_source())
+        raise
 
 
 def _allocation(
@@ -320,7 +491,7 @@ def _posix_allocation(roster: object = None) -> dict[str, dict]:
 
     *roster* is any shape ``_declared`` accepts.  It is a parameter so a test
     can prove the allocation for a renamed or pinned roster without reloading
-    this module; the acceptance lanes always use the one resolved at import.
+    this module; the acceptance lanes always use ``acceptance_roster()``'s.
     """
     return _allocation(*_declared(roster))
 
@@ -358,9 +529,6 @@ def _validated_posix_allocation(
             raise ValueError(
                 "Controller POSIX primary group is not a staged group")
     return {"users": dict(users), "groups": dict(groups)}
-
-
-POSIX_ALLOCATION = _validated_posix_allocation(_posix_allocation())
 
 
 def directory_role(contract_role: str) -> str:
@@ -511,8 +679,8 @@ def durable_directory_roster(
     positional numbers and no additional users, which is the acceptance
     answer and never the durable one.
 
-    The module roster resolved at import (``_ROSTER``) is deliberately NOT
-    reused: it is allowed to fall back to the tracked contract's synthetic
+    The module's acceptance roster (``acceptance_roster()``) is deliberately
+    NOT reused: it is allowed to fall back to the tracked contract's synthetic
     acceptance names, which is right for the disposable Controller every gate
     throws away and catastrophic for a persistent instance, where the resulting
     SIDs are permanent.  An operator who has not seeded the private overlay — or who
@@ -556,8 +724,9 @@ def _programs(
 ) -> tuple[str, str, tuple[str, ...]]:
     """Bake one resolved roster into the two guest programs, plus its order.
 
-    The single place a roster becomes a guest program.  The module constants
-    below are this function applied to the import-time acceptance declaration;
+    The single place a roster becomes a guest program.  The acceptance
+    programs (``acceptance_roster()``) are this function applied to the
+    disposable acceptance declaration;
     a durable path applies it to the overlay-required declaration instead, so
     the two can differ in NAMES -- and a durable one by its additional standard
     users -- without ever differing in RULE: same POSIX allocation, same
@@ -917,18 +1086,6 @@ def _substituted(
     ).replace("@SHARE_ROOT@", json.dumps(SHARE_ROOT))
 
 
-_ROSTER_JSON = _roster_json(_ROLES, _DOMAIN_ADMIN)
-_STAGE_PROGRAM, _DESTROY_PROGRAM, _PROGRAM_ROLES = _programs(_ACCEPTANCE)
-if _PROGRAM_ROLES != _ROLES:
-    # Structural, and unconditional like the roster gate above: the programs
-    # baked at import and the names this module publishes must be one
-    # derivation of one roster, or a caller would validate against names the
-    # guest program does not create.
-    raise ValueError(
-        f"Controller principal programs disagree with the resolved roster; "
-        f"source: {ROSTER_SOURCE}")
-
-
 def _encoded_program(source: str) -> bytes:
     return base64.b64encode(source.encode("utf-8"))
 
@@ -957,9 +1114,9 @@ class ControllerPrincipalSerial:
         caller supplies it and the protocol answers sudo's own private prompt
         instead.
 
-        *roster* is how a durable caller says "these names, not the ones this
-        module resolved at import".  ``None`` keeps every existing caller on
-        the module constants, byte for byte.  A supplied roster is baked into
+        *roster* is how a durable caller says "these names, not the
+        acceptance roster this module resolves".  ``None`` keeps every
+        existing caller on ``acceptance_roster()``, byte for byte.  A supplied roster is baked into
         this instance's own guest programs by ``_programs``, so the names this
         object validates are exactly the names its programs create.  A durable
         DECLARATION (``durable_directory_roster()``) brings its uid_number pins
@@ -980,16 +1137,18 @@ class ControllerPrincipalSerial:
             reader, writer, password, timeout=timeout)
         self.first_logon = bool(first_logon)
         if roster is None:
-            self.roles = _ROLES
-            self.roster_source = ROSTER_SOURCE
-            self._stage_program = _STAGE_PROGRAM
-            self._destroy_program = _DESTROY_PROGRAM
+            resolved = acceptance_roster()
+            self.roles = resolved.roles
+            self.roster_source = resolved.source
+            self._stage_program = resolved.stage_program
+            self._destroy_program = resolved.destroy_program
         else:
             stage, destroy, roles = _programs(
                 roster, first_logon=first_logon)
             self.roles = roles
             self.roster_source = (
-                ROSTER_SOURCE if roster_source is None else roster_source)
+                acceptance_roster().source if roster_source is None
+                else roster_source)
             self._stage_program = stage
             self._destroy_program = destroy
 

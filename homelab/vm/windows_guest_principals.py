@@ -58,7 +58,7 @@ import re
 import sys
 from typing import Mapping
 
-from .controller_principals import DIRECTORY_PRINCIPALS
+from .controller_principals import directory_principals, lazy_roster_attributes
 
 # The contract that holds the synthetic acceptance names is read through the
 # one roster module, imported by path for the reason controller_principals
@@ -71,6 +71,11 @@ from arch_second import (  # noqa: E402
     DIRECTORY_ROLES,
     identity_contract_path,
 )
+
+# The directory principals are read from the roster at use, never bound at
+# import: importing this module reads no file (controller_principals says why).
+# The old attribute stays readable, resolved on access (PEP 562).
+__getattr__ = lazy_roster_attributes(__name__, ("DIRECTORY_PRINCIPALS",))
 
 
 class WindowsGuestPrincipalError(RuntimeError):
@@ -127,7 +132,7 @@ def contract_principals() -> dict[str, str]:
 
 def guest_roster() -> dict[str, str]:
     """The host-derived ``{role: name}`` the guest scripts must follow."""
-    return dict(zip(GUEST_ROLES, DIRECTORY_PRINCIPALS))
+    return dict(zip(GUEST_ROLES, directory_principals()))
 
 
 def guarded_names() -> dict[str, str]:

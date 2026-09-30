@@ -29,19 +29,37 @@ from homelab.vm.windows_postsubmit_diagnostic import (
     PostSubmitDiagnosticCollection,
 )
 
-from homelab.vm.controller_principals import (
-    DAILY_ADMINISTRATOR,
-    DIRECTORY_PRINCIPALS,
-    DOMAIN_ADMINISTRATOR,
-    STANDARD_USER,
-)
+from homelab.vm import controller_principals
 from homelab.workstations.arch_second import (
     CONTRACT_ROLES,
     DIRECTORY_ROLES,
     identity_roster,
 )
 
+from homelab.tests.identity_overlay_pin import (
+    OVERLAY_CHECKOUT_MARKER,
+    pinned_identity_overlay,
+)
 from homelab.tests.test_windows_identity_acceptance import details
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.  In the
+    # overlay-regression child the pin leaves the copy's own synthetic overlay
+    # in force instead (identity_overlay_pin says why).
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# The roster names these tests drive, read under the same pin, so importing
+# this module reads no overlay either.
+with pinned_identity_overlay():
+    DAILY_ADMINISTRATOR = controller_principals.daily_administrator()
+    DIRECTORY_PRINCIPALS = controller_principals.directory_principals()
+    DOMAIN_ADMINISTRATOR = controller_principals.domain_administrator()
+    STANDARD_USER = controller_principals.standard_user()
 
 # The contract roster with the private overlay explicitly out of the way: the
 # synthetic acceptance names, whether or not this machine has an overlay.
@@ -69,7 +87,9 @@ OPERATOR_UPN = f"{DAILY_ADMINISTRATOR}@FACTORY.TEST"
 #     guard fails CLOSED: the only way to run is to be the original working
 #     tree.  A source export with no ``.git`` therefore skips, which is the
 #     safe direction.
-OVERLAY_CHECKOUT_MARKER = "TELOS_TEST_IDENTITY_OVERLAY_CHECKOUT"
+#
+# The marker's name (OVERLAY_CHECKOUT_MARKER) lives in identity_overlay_pin,
+# which reads the same marker to leave the child's synthetic overlay in force.
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 

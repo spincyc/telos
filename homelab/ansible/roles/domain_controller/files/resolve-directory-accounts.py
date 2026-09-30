@@ -86,6 +86,11 @@ def _principals():
         sys.path.insert(0, str(_REPOSITORY))
     try:
         from homelab.vm import controller_principals
+        # Resolved here, where importing the module once resolved it, so an
+        # unusable roster is still reported as this refusal.  The module now
+        # resolves it on first use; the acceptance allocation read below
+        # (directory_group_allocation) is one such use.
+        controller_principals.acceptance_roster()
     except Exception as error:  # noqa: BLE001 - reported, never swallowed
         raise ResolverError(
             f"the identity roster could not be resolved: "

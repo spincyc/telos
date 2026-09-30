@@ -25,6 +25,15 @@ from homelab.vm.windows_identity_reference import (
     ValidatedIdentityReference,
 )
 from homelab.vm.windows_gui import Image
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
 
 
 GUEST = GuestProvenance("release", "en-US", "x64", "a" * 64, "b" * 64)

@@ -7,11 +7,6 @@ import tempfile
 import unittest
 
 from homelab.vm.controller_factory import FactorySpec
-from homelab.vm.controller_principals import (
-    DAILY_ADMINISTRATOR,
-    DOMAIN_ADMINISTRATOR,
-    STANDARD_USER,
-)
 from homelab.vm.windows_control_iso import (
     ASSET_ROOT,
     MAX_PROBE_LAUNCH_CHARS,
@@ -27,6 +22,24 @@ from homelab.vm.windows_guest_principals import (
     guarded_names,
     principal_pins,
 )
+from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+from homelab.vm import controller_principals
+
+
+def setUpModule():
+    # HANDOFF section 5: no test reads the owner's private overlay.  The
+    # roster the code under test reads resolves on first use from the DEFAULT
+    # overlay path, so every test here runs with that path pinned to a private
+    # one that does not exist -- the synthetic acceptance roster.
+    unittest.enterModuleContext(pinned_identity_overlay())
+
+
+# The roster names these tests drive, read under the same pin, so importing
+# this module reads no overlay either.
+with pinned_identity_overlay():
+    DAILY_ADMINISTRATOR = controller_principals.daily_administrator()
+    DOMAIN_ADMINISTRATOR = controller_principals.domain_administrator()
+    STANDARD_USER = controller_principals.standard_user()
 
 
 # Built here rather than written down: ADR 0046 keeps real account names out

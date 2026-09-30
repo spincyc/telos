@@ -18,6 +18,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_image_tools
 
 from vm import bootstrap_dc, directory_identity, simulation_overlay
+from homelab.tests.identity_overlay_pin import pinned_acceptance_state
+
+
+def setUpModule():
+    # HANDOFF section 5: no test stats the operator's build/ tree.  Every
+    # persistent-instance separation check resolves the reserved acceptance
+    # state, which defaults to the real build/homelab/vm/bootstrap-dc, so
+    # every test here reserves private spellings of it instead, and names the
+    # reserved state by one of them wherever it once named DEFAULT_STATE.
+    global RESERVED_ACCEPTANCE_STATE
+    RESERVED_ACCEPTANCE_STATE, _ = unittest.enterModuleContext(
+        pinned_acceptance_state())
 
 # One well-formed PERMANENT directory identity (ADR 0065), used by every
 # durable-path test here. Deliberately synthetic and deliberately NOT the
@@ -864,10 +876,10 @@ class PersistentControllerCliTests(unittest.TestCase):
                 "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
             _, err = self.call(
-                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "--state-dir", str(RESERVED_ACCEPTANCE_STATE),
                 "persistent-up", "--instance", "bootstrap-dc",
                 "--persistent-root",
-                str(bootstrap_dc.DEFAULT_STATE.parent), "--apply", expect=2)
+                str(RESERVED_ACCEPTANCE_STATE.parent), "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
         run.assert_not_called()
         self.assertEqual(
@@ -1399,9 +1411,9 @@ class PersistentConvergenceTests(unittest.TestCase):
                 "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
             _, err = self.call(
-                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "--state-dir", str(RESERVED_ACCEPTANCE_STATE),
                 "persistent-converge", "--instance", "bootstrap-dc",
-                "--persistent-root", str(bootstrap_dc.DEFAULT_STATE.parent),
+                "--persistent-root", str(RESERVED_ACCEPTANCE_STATE.parent),
                 "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
         run.assert_not_called()
@@ -1961,9 +1973,9 @@ class PersistentAccountsCliTests(unittest.TestCase):
                 "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
             _, err = self.call(
-                "--state-dir", str(bootstrap_dc.DEFAULT_STATE),
+                "--state-dir", str(RESERVED_ACCEPTANCE_STATE),
                 "persistent-accounts", "--instance", "bootstrap-dc",
-                "--persistent-root", str(bootstrap_dc.DEFAULT_STATE.parent),
+                "--persistent-root", str(RESERVED_ACCEPTANCE_STATE.parent),
                 "--apply", expect=2)
             self.assertIn("refusing a persistent controller instance", err)
         run.assert_not_called()
