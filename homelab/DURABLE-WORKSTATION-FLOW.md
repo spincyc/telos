@@ -62,7 +62,7 @@ such a value in `rehearsal`'s marker); it is repaired only on request.
 |---|---|---|---|
 | 1 | `homelab/vm/durable_workstation.py`: the binding and realm/SID checks | none | `715147f` |
 | 2 | `homelab/vm/persistent_controller_session.py` plus additive helpers | none | `7cd9d7b` |
-| 3 | `make homelab-factory-persistent-probe PERSISTENT_DC=<name>`: log in, prove AD, read realm and SID, resolve SRV records, stage and destroy a join principal, clean poweroff | #1, owner, about 10 min; retires the biggest risk | `a4739c8`, NOT RUN |
+| 3 | `make homelab-factory-persistent-probe PERSISTENT_DC=<name>`: log in, prove AD, read realm and SID, resolve SRV records, stage and destroy a join principal, clean poweroff | #1, owner, about 10 min; retires the biggest risk | `a4739c8`; **PASS 2026-09-30** (run `20260930T174246Z-3085400-ef46502e`, 20 checks) |
 | 4 | `homelab/vm/workstation_instance.py` and `homelab-durable-workstation-{plan,status,adopt,destroy,reconcile}` | none | `a46eaee`, `6103ec9`, `a54e7c9` |
 | 5 | Durable Arch render: skip the install-time join; the one-use join unit seals itself after `testjoin`; synthetic output stays byte-identical | none | `195ad20` |
 | 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 | `752879e`, NOT RUN |
@@ -82,7 +82,7 @@ After step 9 passes against `rehearsal`, destroy `W` together with `rehearsal`
 
 | Risk | Mitigation |
 |---|---|
-| The persistent Controller on the per-run fabric: MAC-matched network unit, the gateway's source-address validation, Kerberos time after a cold relaunch, the truncated recorded SID | Live run #1 first; it needs no workstation. |
+| The persistent Controller on the per-run fabric: MAC-matched network unit, the gateway's source-address validation, Kerberos time after a cold relaunch, the truncated recorded SID | **Retired 2026-09-30 by live run #1**: owner-run probe PASS in 20 s of guest time -- console login, Samba live, realm agrees, interface address and gateway reachable, A and both SRV records, clock skew -2 s, one join principal staged and its destruction proved, clean poweroff, and `rehearsal`'s truncated SID repaired (`REPAIR_SID=1`). |
 | Gate-6 machinery driving Windows behind the dual-boot menu | The publication is destroyed only after the fold. |
 | First-logon prompt shapes and password change across the fabric | A change that lands before a failure leaves the new password live; the retry path asks for the current password. |
 | Side effects on the durable directory: leaked join principals, orphaned machine accounts from retries, gate 6's controller-side diagnostic | Destruction proofs; `destroy` lists machine accounts left behind; the diagnostic is read-only or disabled on the durable path. |

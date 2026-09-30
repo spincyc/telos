@@ -325,7 +325,10 @@ With `REPAIR_SID=1`, a recorded domain SID that is a strict prefix of the
 live one (the split-read truncation fixed in `05eec6e`) is completed in the
 marker, and only after a passing probe. Any other difference is a different
 directory and is refused before anything is written to it. Verdict:
-**NOT RUN.**
+**PASS 2026-09-30**, owner-run against `rehearsal` with `REPAIR_SID=1` (run
+`20260930T174246Z-3085400-ef46502e`): all 20 checks, clock skew -2 s, the
+join principal's destruction proved, clean poweroff, and the truncated
+recorded SID completed in the marker.
 
 **No workstation can be installed against a persistent instance yet.** Every
 workstation runner wraps the Controller in `DisposableBootDisk`, and a bundle
