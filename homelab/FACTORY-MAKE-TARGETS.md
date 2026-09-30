@@ -399,6 +399,23 @@ without editing it.
 The installed disk's sealed join unit waits about 120 seconds for join media
 at every boot until stage `arch-join` joins it. Verdict: **NOT RUN.**
 
+#### Stage `arch-join` (step 7)
+
+Both targets require `WORKSTATION`, `PERSISTENT_DC` and `ARCH_HOSTNAME` (the
+host name stage `arch-install` baked; its machine account is recorded in the
+workstation's marker before the join, so `destroy` lists it). Implemented by
+`homelab/vm/arch_durable_join.py`, which subclasses gate 8's boundary without
+editing it.
+
+| Target | Opt-in | Effect |
+|---|---|---|
+| `homelab-durable-arch-join-plan` | none | Read-only: binds the instance, checks the workstation's next stage is `arch-join`, that the durable account record and the private roster agree on every directory role's uidNumber, and that the host roster is the one the instance staged, then prints the plan, the prompts in order and a free-space estimate. Names the bound instance and contract roles only, never the realm, SID or an account name. |
+| `homelab-durable-arch-join` | `APPLY=1`; `FIRST_LOGON_DONE=1` for a retry | Under the workstation's lock, after proving the kept disk and firmware variables are still the ledger head, asks at the terminal, before any process starts: the Controller's `local-rescue` console password; the daily administrator's temporary password (its current one with `FIRST_LOGON_DONE=1`, or when the account record asks for no change); its new password, twice; a new Arch `local-rescue` break-glass password, twice. New values are held to the directory's default policy and must all be distinct. It then boots `PERSISTENT_DC` in place on the per-run switch (no pause, clean console poweroff), proves its realm and SID, stages one `tj-` principal, boots an overlay of the kept disk, attaches the one-use join media after the kernel handoff and destroys them when the guest has consumed them, waits for `TELOS ARCH JOIN VERIFIED` (the seal is written first), destroys the principal with proof, answers pam_sss's expired-password exchange on ttyS0 (proving no typed value is echoed), elevates, sets the break-glass password, proves `sssctl` online, every directory role at its recorded uidNumber, the sealed join unit and the host name, and powers both guests off. On success the overlay and its firmware variables are folded as `arch-join`; on failure the workstation's disk, variables and ledger are unchanged. Evidence stays under `homelab/var/factory/durable-arch-joins/`. |
+
+A failure after the first-logon change landed says so; the retry is
+`FIRST_LOGON_DONE=1`, typing the new password as the current one. Verdict:
+**NOT RUN.**
+
 ## Required common inputs
 
 The runner should accept one run identifier and one release identifier rather

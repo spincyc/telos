@@ -213,6 +213,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-durable-arch-install-plan homelab-durable-arch-install \
+	homelab-durable-arch-join-plan homelab-durable-arch-join \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1128,6 +1129,25 @@ homelab-durable-arch-install:
 	$(DURABLE_ARCH_REQUIRE)
 	@$(DURABLE_ARCH_INSTALL) $(if $(filter 1,$(APPLY)),--apply)
 
+# Stage arch-join of a kept workstation (TASK-28 step 7): PERSISTENT_DC booted
+# in place on the per-run switch, one tj- join principal and one-use join
+# media for the disk's sealed boot-time join, then the daily administrator's
+# first logon, the owner-typed Arch local-rescue password and the pinned-UID
+# proofs; a success is folded into WORKSTATION. Every password is typed at this
+# terminal before anything starts. FIRST_LOGON_DONE=1 asks for the daily
+# administrator's CURRENT password instead of its temporary one, for a retry
+# after a change that landed. The plan target never mutates; the other is a
+# dry run without APPLY=1.
+DURABLE_ARCH_JOIN = $(PYTHON) homelab/vm/arch_durable_join.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') $(if $(filter 1,$(FIRST_LOGON_DONE)),--first-logon-done)
+
+homelab-durable-arch-join-plan:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(DURABLE_ARCH_JOIN)
+
+homelab-durable-arch-join:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(DURABLE_ARCH_JOIN) $(if $(filter 1,$(APPLY)),--apply)
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1585,6 +1605,9 @@ help:
 		'make homelab-durable-arch-install-plan WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name>' \
 		'make homelab-durable-arch-install APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> FACTORY_DURATION=1800' \
 		'                         Install Arch onto a kept workstation, join deferred' \
+		'make homelab-durable-arch-join-plan WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name>' \
+		'make homelab-durable-arch-join APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> [FIRST_LOGON_DONE=1]' \
+		'                         Join its Arch to the persistent Controller; asks for passwords' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \
