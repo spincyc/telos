@@ -69,9 +69,23 @@ class NativeProcessBoundaryTests(unittest.TestCase):
         write_prepared_authorization(attempt, controller)
         return NativeProcessBoundary(attempt, controller)
 
+    def synthetic_seed(self, root):
+        """Point start_controller at a private seed, never homelab/var.
+
+        The runner joins the source root with DEFAULT_SEED_ISO; an absolute
+        replacement wins that join, so the test needs no operator seed.
+        """
+        seed = root / "synthetic-controller-seed.iso"
+        self.assertTrue(seed.is_absolute())
+        seed.write_bytes(b"synthetic controller seed")
+        seed.chmod(0o600)
+        return seed, mock.patch.object(
+            windows_identity_run, "DEFAULT_SEED_ISO", seed)
+
     def test_native_processes_start_in_isolated_dependency_order(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            _seed, seed_patch = self.synthetic_seed(Path(name))
             events = []
             processes = iter((_Process(101), _Process(102), _Process(103),
                               _Process(104)))
@@ -94,6 +108,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             factory.close.side_effect = lambda: factory.output.unlink(
                 missing_ok=True)
             with (
+                seed_patch,
                 mock.patch.object(
                     windows_identity_run.socket, "socket",
                     side_effect=lambda: _Socket(events)),
@@ -238,6 +253,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_controller_rejects_unsafe_opened_seed_descriptor(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            _seed, seed_patch = self.synthetic_seed(Path(name))
             boundary._validate()
             boundary.port = 43119
             boundary.runtime.mkdir(mode=0o700)
@@ -254,6 +270,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             factory.output = boundary.runtime / "controller-convergence.iso"
 
             with (
+                seed_patch,
                 mock.patch.object(
                     windows_identity_run, "DisposableBootDisk",
                     return_value=disposable),
@@ -302,6 +319,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
     def test_controller_rejects_seed_inode_mismatch_before_device_add(self):
         with tempfile.TemporaryDirectory() as name:
             boundary = self.make_boundary(Path(name))
+            seed, seed_patch = self.synthetic_seed(Path(name))
             boundary._validate()
             boundary.port = 43119
             boundary.runtime.mkdir(mode=0o700)
@@ -318,6 +336,7 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             factory.output = boundary.runtime / "controller-convergence.iso"
 
             with (
+                seed_patch,
                 mock.patch.object(
                     windows_identity_run, "DisposableBootDisk",
                     return_value=disposable),
@@ -354,6 +373,10 @@ class NativeProcessBoundaryTests(unittest.TestCase):
             ]
             self.assertEqual(["blockdev-add", "blockdev-add"], commands)
             self.assertNotIn("device_add", commands)
+            self.assertEqual(
+                str(seed),
+                qmp_connect.return_value.execute.call_args_list[0]
+                .args[1]["filename"])
             automation.return_value.install_offline_controller_dependencies\
                 .assert_not_called()
             boundary.processes.clear()

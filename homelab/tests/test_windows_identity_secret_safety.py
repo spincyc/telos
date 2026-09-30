@@ -147,7 +147,16 @@ class WindowsIdentitySecretSafetyTests(unittest.TestCase):
                 b"private factory media")
             factory.close.side_effect = lambda: factory.output.unlink(
                 missing_ok=True)
+            # A private synthetic seed: the runner's source-tree default
+            # names operator state (homelab/var), which unit tests never read.
+            # An absolute replacement wins the runner's root join.
+            seed = root / "synthetic-controller-seed.iso"
+            self.assertTrue(seed.is_absolute())
+            seed.write_bytes(b"synthetic controller seed")
+            seed.chmod(0o600)
             with mock.patch(
+                    "homelab.vm.windows_identity_run.DEFAULT_SEED_ISO",
+                    seed), mock.patch(
                     "homelab.vm.windows_identity_run.subprocess.Popen",
                     side_effect=popen), mock.patch(
                     "homelab.vm.windows_identity_run.wait_for_switch_port"), \
