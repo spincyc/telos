@@ -979,6 +979,34 @@ def _console_poweroff(
         label + "-observed")
 
 
+def persistent_console_login(console: SerialAutomation, label: str) -> None:
+    """Log in to a persistent instance's own console as ``CONSOLE_ACCOUNT``.
+
+    The same four waits the convergence and account verbs make inline, as one
+    helper for ``persistent_controller_session``, plus one thing they lack: a
+    refused password fails in seconds with a named error instead of spending
+    the whole console bound waiting for a shell prompt that cannot come. On a
+    durable directory that matters twice over, because a session that never
+    logged in cannot power the guest off cleanly.
+    """
+    if console.password is None:
+        raise SerialAutomationError(
+            f"persistent controller credential is unavailable: {label}")
+    console._wait(
+        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        label + "-login-prompt")
+    console._send(CONSOLE_ACCOUNT.encode("ascii"), label + "-username-sent")
+    console._wait(rb"(?:^|\n)Password:\s*$", label + "-login-password-prompt")
+    console._send(console.password, label + "-login-password-sent")
+    outcome = console._wait(
+        rb"(?:^|\n)(?:(Login incorrect)|[^\n]*\$\s*$)",
+        label + "-login-outcome")
+    if outcome.group(1) is not None:
+        raise SerialAutomationError(
+            f"the persistent controller refused the {CONSOLE_ACCOUNT} "
+            f"password: {label}")
+
+
 def _extra_read_only_medium(
     medium: Path, *, drive_id: str, bootindex: int,
 ) -> list[str]:
@@ -1035,6 +1063,50 @@ def _attach_simulated_gateway(
     raise RuntimeError(
         "the simulated gateway peer could not attach to the persistent "
         f"instance's loopback segment on 127.0.0.1:{port}")
+
+
+def persistent_switch_command(
+    listener_fd: int,
+    evidence: Path,
+    *,
+    controller_mac: str = SOCKET_MAC,
+    workstation_mac: str | None = None,
+    accept_timeout: float = 120.0,
+    idle_timeout: float = 3600.0,
+    identity_mode: bool = True,
+) -> list[str]:
+    """The per-run loopback switch with a persistent instance on it.
+
+    ``factory_runner.switch_command`` pins the controller port to the
+    disposable Controller's MAC and always declares a workstation port. Neither
+    fits here. A persistent instance keeps ``SOCKET_MAC``: its convergence
+    wrote a systemd-networkd unit matching the MAC it was converged with
+    (``controller_factory.network_unit``), so any other MAC would boot a
+    directory server with no address at all. And the workstation port is
+    optional, because the switch waits for every declared port before its
+    accept bound expires and a probe has no workstation.
+    """
+    try:
+        from .simulated_gateway import GATEWAY_MAC
+    except ImportError:  # Direct execution from homelab/vm.
+        from simulated_gateway import GATEWAY_MAC
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("simulated_switch.py")),
+        "--listener-fd", str(listener_fd),
+        "--port", f"gateway={GATEWAY_MAC.hex(':')}",
+        "--port", f"controller={controller_mac.lower()}",
+    ]
+    if workstation_mac is not None:
+        command += ["--port", f"workstation={workstation_mac.lower()}"]
+    command += [
+        "--evidence", str(evidence),
+        "--accept-timeout", f"{accept_timeout:g}",
+        "--idle-timeout", f"{idle_timeout:g}",
+    ]
+    if identity_mode:
+        command.append("--identity-mode")
+    return command
 
 
 #: The payload announces this stage immediately before the play that creates

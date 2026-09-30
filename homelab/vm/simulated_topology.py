@@ -327,6 +327,139 @@ def assert_isolated(plans: dict[str, list[str]]) -> None:
         audit_qemu_argv(role, argv)
 
 
+#: Every option a persistent Controller's argv may carry, with its arity.
+#: Closed on purpose: the disk is a durable directory, so an option this list
+#: does not name -- ``-qmp``, ``-monitor``, ``-S``, ``-snapshot``, ``-loadvm``,
+#: ``-incoming``, ``-kernel``/``-append`` (a way round the durable loader),
+#: ``-cdrom`` or any other medium -- is refused rather than judged.
+_PERSISTENT_OPTIONS = {
+    "-name": 1, "-machine": 1, "-cpu": 1, "-smp": 1, "-m": 1,
+    "-display": 1, "-serial": 1, "-boot": 1, "-drive": 1, "-device": 1,
+    "-nodefaults": 0, "-netdev": 1,
+}
+_PERSISTENT_SINGLE = (
+    "-name", "-machine", "-cpu", "-smp", "-m", "-display", "-serial",
+    "-boot", "-nodefaults", "-netdev",
+)
+
+
+def _drive_fields(value: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for field in value.split(","):
+        key, separator, content = field.partition("=")
+        fields[key] = content if separator else ""
+    return fields
+
+
+def audit_persistent_controller(
+    argv: list[str], *, disk: Path, vars_file: Path, port: int, mac: str,
+    forbidden_paths: tuple[Path, ...] = (),
+) -> None:
+    """Fail closed unless argv boots one persistent instance, in place.
+
+    The disposable audits prove a throwaway disk; this one proves the opposite
+    shape: the instance's OWN qcow2 and variables, writable and never a
+    snapshot, one socket NIC that *connects* to the per-run switch with the
+    instance's own MAC, the console on stdio, and nothing else -- no QMP, no
+    medium, no paused start. ``forbidden_paths`` (the acceptance canonical)
+    may not appear anywhere in the command.
+    """
+    audit_qemu_argv("controller", argv)
+    if Path(argv[0]).name not in {"qemu-system-x86_64", "qemu-kvm"}:
+        raise ValueError("persistent controller: unapproved QEMU executable")
+    values: dict[str, list[str]] = {}
+    index = 1
+    while index < len(argv):
+        option = argv[index]
+        arity = _PERSISTENT_OPTIONS.get(option)
+        if arity is None:
+            raise ValueError(
+                f"persistent controller: option {option!r} is not allowed")
+        if arity and index + 1 >= len(argv):
+            raise ValueError(f"persistent controller: {option} has no value")
+        values.setdefault(option, []).append(
+            argv[index + 1] if arity else "")
+        index += 1 + arity
+    for option in _PERSISTENT_SINGLE:
+        if len(values.get(option, [])) != 1:
+            raise ValueError(
+                f"persistent controller: expected {option} exactly once")
+    if values["-serial"] != ["mon:stdio"] or values["-display"] != ["none"]:
+        raise ValueError(
+            "persistent controller: the console must be stdio and headless")
+    if values["-boot"] != ["strict=on,menu=off"]:
+        raise ValueError("persistent controller: boot order is not its disk")
+
+    netdev = re.fullmatch(
+        r"socket,id=([A-Za-z0-9_.-]+),connect=127\.0\.0\.1:([0-9]{1,5})",
+        values["-netdev"][0])
+    if netdev is None or int(netdev.group(2)) != port:
+        raise ValueError(
+            "persistent controller: the NIC must connect to the per-run "
+            "switch port")
+    devices = values.get("-device", [])
+    nics = [
+        value for value in devices
+        if _drive_fields(value).get("virtio-net-pci") == ""
+    ]
+    disks = [
+        value for value in devices
+        if _drive_fields(value).get("virtio-blk-pci") == ""
+    ]
+    if len(devices) != 2 or len(nics) != 1 or len(disks) != 1:
+        raise ValueError(
+            "persistent controller: expected exactly one NIC and one disk")
+    nic = _drive_fields(nics[0])
+    if (nic.get("netdev") != netdev.group(1)
+            or nic.get("mac", "").lower() != mac.lower()):
+        raise ValueError(
+            "persistent controller: the NIC must keep the instance's own MAC")
+
+    exact_disk = Path(disk).resolve()
+    exact_vars = Path(vars_file).resolve()
+    forbidden = {Path(path).resolve() for path in forbidden_paths}
+    if exact_disk in forbidden or exact_vars in forbidden:
+        raise ValueError(
+            "persistent controller: refusing the acceptance canonical")
+    for item in argv:
+        for path in forbidden:
+            if str(path) in item:
+                raise ValueError(
+                    "persistent controller: the acceptance canonical "
+                    "appears in the command")
+    drives = [_drive_fields(value) for value in values.get("-drive", [])]
+    code = [
+        drive for drive in drives
+        if drive.get("if") == "pflash" and drive.get("readonly") == "on"
+    ]
+    variables = [
+        drive for drive in drives
+        if drive.get("if") == "pflash" and "readonly" not in drive
+    ]
+    block = [drive for drive in drives if drive.get("if") == "none"]
+    if len(drives) != 3 or len(code) != 1 or len(variables) != 1 \
+            or len(block) != 1:
+        raise ValueError(
+            "persistent controller: expected firmware code, the instance's "
+            "variables and the instance's disk, and nothing else")
+    if Path(variables[0].get("file", "")).resolve() != exact_vars:
+        raise ValueError(
+            "persistent controller: the variables are not the instance's")
+    if Path(code[0].get("file", "")).resolve() in {exact_disk, exact_vars}:
+        raise ValueError("persistent controller: firmware code is misplaced")
+    osdisk = block[0]
+    if (Path(osdisk.get("file", "")).resolve() != exact_disk
+            or osdisk.get("format") != "qcow2"
+            or any(key in osdisk for key in (
+                "snapshot", "backing", "readonly", "media"))):
+        raise ValueError(
+            "persistent controller: the disk must be the instance's own "
+            "qcow2, writable, in place")
+    if _drive_fields(disks[0]).get("drive") != osdisk.get("id"):
+        raise ValueError(
+            "persistent controller: the disk device is not the instance disk")
+
+
 def audit_live_process(
     pid: int, role: str, proc_root: Path = Path("/proc"),
     *,
