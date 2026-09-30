@@ -1,7 +1,8 @@
 # Durable workstation flow (TASK-28)
 
-Status: approved design, implementation in progress. Written 2026-09-30.
-Nothing here has run live; each step says when it first needs a live run.
+Status: approved design; steps 1-8 implemented and unit-tested 2026-09-30,
+step 9 in progress. Nothing here has run live; each step says when it first
+needs a live run.
 
 Every workstation runner today wraps the Controller in `DisposableBootDisk`,
 and every run provisions a brand-new domain, so a minted workstation dies with
@@ -57,17 +58,17 @@ such a value in `rehearsal`'s marker); it is repaired only on request.
 ## Steps
 
 <!-- doc-make-target-drift: proposed -->
-| # | Change | First live run |
-|---|---|---|
-| 1 | `homelab/vm/durable_workstation.py`: the binding and realm/SID checks | none |
-| 2 | `homelab/vm/persistent_controller_session.py` plus additive helpers | none |
-| 3 | `make homelab-factory-persistent-probe PERSISTENT_DC=<name>`: log in, prove AD, read realm and SID, resolve SRV records, stage and destroy a join principal, clean poweroff | #1, owner, about 10 min; retires the biggest risk |
-| 4 | `homelab/vm/workstation_instance.py` and `homelab-durable-workstation-{plan,status,adopt,destroy}` | none |
-| 5 | Durable Arch render: skip the install-time join; the one-use join unit seals itself after `testjoin`; synthetic output stays byte-identical | none |
-| 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 |
-| 7 | Durable Arch join: expired-password exchange, pinned-UID proof, join sealed | #3, owner |
-| 8 | Durable Windows join: owner-typed local-administrator rotation, gate 6's join, fold before destroying the publication | #4, owner |
-| 9 | `homelab-durable-workstation-verify`: both systems across a Controller relaunch | #5, owner |
+| # | Change | First live run | Code |
+|---|---|---|---|
+| 1 | `homelab/vm/durable_workstation.py`: the binding and realm/SID checks | none | `715147f` |
+| 2 | `homelab/vm/persistent_controller_session.py` plus additive helpers | none | `7cd9d7b` |
+| 3 | `make homelab-factory-persistent-probe PERSISTENT_DC=<name>`: log in, prove AD, read realm and SID, resolve SRV records, stage and destroy a join principal, clean poweroff | #1, owner, about 10 min; retires the biggest risk | `a4739c8`, NOT RUN |
+| 4 | `homelab/vm/workstation_instance.py` and `homelab-durable-workstation-{plan,status,adopt,destroy,reconcile}` | none | `a46eaee`, `6103ec9`, `a54e7c9` |
+| 5 | Durable Arch render: skip the install-time join; the one-use join unit seals itself after `testjoin`; synthetic output stays byte-identical | none | `195ad20` |
+| 6 | Durable Arch install runner and target | #0 fresh gate-5 install (about 70 min, agent), then #2 | `752879e`, NOT RUN |
+| 7 | Durable Arch join: expired-password exchange, pinned-UID proof, join sealed | #3, owner | `9e69258`, NOT RUN |
+| 8 | Durable Windows join: owner-typed local-administrator rotation, gate 6's join, fold before destroying the publication | #4, owner | `c149566`, NOT RUN |
+| 9 | `homelab-durable-workstation-verify`: both systems across a Controller relaunch | #5, owner | in progress |
 
 The disposable gates 5-8 must not change: `windows_install_run.py`,
 `windows_identity_run.py` and `arch_identity_run.py` are subclassed in new
