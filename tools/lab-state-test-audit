@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""Report homelab unit tests that touch build/, homelab/var/ or homelab/instance/.
+
+homelab/HANDOFF.md section 5: no unit test may read ``build/``,
+``homelab/var/`` or ``homelab/instance/`` -- the owner's lab state and private
+overlay. A test that does passes on a clean checkout and behaves differently
+(or reaches a real installed machine) on the owner's. The rule has been broken
+repeatedly and the same audit re-derived by hand twice; this is that audit.
+
+It runs the unit tests in this process -- by default ``unittest discover -s
+homelab/tests -t .`` from the repository root, exactly as the Makefile does,
+or the dotted MODULEs given -- under ``sys.addaudithook`` plus wrappers around
+``os.stat``/``lstat``/``access``/``readlink``/``statvfs``, and records every
+``(test id, event, repo-relative path)`` whose path lies in one of the three
+trees.
+
+Touches (counted; any one makes the exit status 1):
+
+* audit events that name a path: ``open`` (also ``os.open``), ``os.listdir``,
+  ``os.scandir``, ``os.walk``/``fwalk``, ``glob.glob/2``, ``pathlib.Path.glob``,
+  ``os.chdir``, the ``os`` and ``shutil`` mutations and copies, and
+  ``sqlite3.connect``;
+* the wrapped ``os`` metadata calls -- a stat of lab state is existence-
+  dependent behaviour, which is precisely what the rule forbids;
+* a child process whose working directory or executable is in lab state
+  (``subprocess.cwd``/``subprocess.exec``): the kernel resolves both.
+
+Mentions (advisory, reported but never counted): a lab-state path spelled in
+a child process's argv (``subprocess.argv``). The audit sees this process
+only, so what a child really accesses is unobservable here; a mention is
+neither necessary for a child touch (a child can default to lab state without
+naming it) nor sufficient for one -- ``make -n VAR=build/x`` prints a recipe
+and never opens ``build/x``, and asserting on such a dry run is the safe way
+to test a lab-state command. Counting mentions would fail exactly the tests
+the rule wants. Only the path token is reported, never the rest of the argv.
+
+Attribution: the running test's id from ``startTest`` to ``stopTest``
+(covering ``setUp``, the test, ``tearDown`` and cleanups); outside a test, the
+nearest enclosing ``setUpClass``/``tearDownClass``/``setUpModule``/
+``tearDownModule`` or ``<import MODULE>`` for module top-level code; otherwise
+``<unattributed>``.
+
+It never opens, lists or stats anything in the three trees itself: paths are
+classified lexically (normalised against the working directory at the moment
+of the call). A path relative to a directory descriptor (``dir_fd``, as
+``shutil.rmtree`` walks a sandbox) is not resolvable against the working
+directory and is skipped rather than guessed. It reports paths, events and
+test ids only -- never file contents, tracebacks or test output, which go to
+/dev/null.
+
+Exit 0 when tests ran and nothing touched lab state, 1 when anything did
+(a check-style tool), 70 with the cli-v1 error contract on stderr when the
+audit cannot run: repository missing, no tests found, a test module that
+fails to import (its touches would go unaudited), or a fault in the audit
+hook itself. Test failures are reported (``failed``) but do not change the
+exit status; a test that dies early may skip the code that would touch.
+
+Usage: tools/lab-state-test-audit [--json] [--repo PATH] [MODULE ...]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil  # imported before the os wrappers exist: see _install_wrappers
+import sys
+import threading
+import unittest
+
+PROTOCOL_VERSION = 1
+
+#: The trees no unit test may touch, relative to the repository root.
+LAB_STATE = ("build", "homelab/var", "homelab/instance")
+#: What ``make homelab-test`` discovers, relative to the repository root.
+DEFAULT_START = "homelab/tests"
+
+#: Audit event -> ((path argument index, dir_fd argument index or None), ...).
+#: A path relative to a non-None dir_fd is skipped: it is not relative to the
+#: working directory, and resolving it against the working directory invents
+#: findings (``os.rmdir("build", dir_fd=...)`` inside a temporary directory).
+PATH_EVENTS: dict[str, tuple[tuple[int, int | None], ...]] = {
+    "open": ((0, None),),
+    "os.chdir": ((0, None),),
+    "os.chmod": ((0, 2),),
+    "os.chown": ((0, 3),),
+    "os.fwalk": ((0, 4),),
+    "os.link": ((0, 2), (1, 3)),
+    "os.listdir": ((0, None),),
+    "os.mkdir": ((0, 2),),
+    "os.remove": ((0, 1),),
+    "os.rename": ((0, 2), (1, 3)),
+    "os.rmdir": ((0, 1),),
+    "os.scandir": ((0, None),),
+    # Argument 0 is the link's text, not an access; the link itself is.
+    "os.symlink": ((1, 2),),
+    "os.truncate": ((0, None),),
+    "os.utime": ((0, 3),),
+    "os.walk": ((0, None),),
+    "pathlib.Path.glob": ((0, None),),
+    "pathlib.Path.rglob": ((0, None),),
+    "shutil.chown": ((0, None),),
+    "shutil.copyfile": ((0, None), (1, None)),
+    "shutil.copymode": ((0, None), (1, None)),
+    "shutil.copystat": ((0, None), (1, None)),
+    "shutil.copytree": ((0, None), (1, None)),
+    "shutil.move": ((0, None), (1, None)),
+    "shutil.rmtree": ((0, 1),),
+    "shutil.unpack_archive": ((0, None), (1, None)),
+    "sqlite3.connect": ((0, None),),
+}
+#: Child-process events; handled by _spawned.
+SPAWN_EVENTS = frozenset(
+    {"os.exec", "os.posix_spawn", "os.system", "subprocess.Popen"})
+#: Metadata calls with no audit event. ``open`` is wrapped only to recognise
+#: a dir_fd-relative open, which its audit event cannot show.
+WRAPPED = ("access", "lstat", "open", "readlink", "stat", "statvfs")
+#: Class and module fixtures run outside startTest/stopTest.
+FIXTURES = frozenset(
+    {"setUpClass", "tearDownClass", "setUpModule", "tearDownModule"})
+#: Separators inside one argv element: ``--state=build/x``, ``file=a,b``,
+#: and the words of a ``sh -c`` string.
+ARGV_SPLIT = re.compile(r"[\s=,;:'\"()<>|&`]+")
+
+
+class AuditError(Exception):
+    """The audit cannot produce a trustworthy result."""
+
+
+class _State:
+    active = False
+    current: str | None = None
+    roots: tuple[tuple[str, str], ...] = ()
+    touches: set[tuple[str, str, str]] = set()
+    mentions: set[tuple[str, str, str]] = set()
+    faults: list[str] = []
+
+
+_GUARD = threading.local()
+_OWN_GLOBALS = globals()
+_getcwd = os.getcwd
+
+
+def _text(path: object) -> str | None:
+    if path is None or isinstance(path, (bool, int)):
+        return None
+    try:
+        text = os.fsdecode(path)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    return text if text and "\0" not in text else None
+
+
+def _resolve(text: str, base: str | None = None) -> str | None:
+    """``text`` made absolute against ``base`` (default: the working
+    directory) and normalised lexically; None when that cannot be known."""
+    if not os.path.isabs(text):
+        if base is None:
+            try:
+                base = _getcwd()
+            except OSError:  # the working directory was removed
+                return None
+        text = os.path.join(base, text)
+    return os.path.normpath(text)
+
+
+def _lab_path(path: object, base: str | None = None) -> str | None:
+    """The repo-relative lab-state path ``path`` names, or None. Lexical only."""
+    text = _text(path)
+    absolute = None if text is None else _resolve(text, base)
+    if absolute is None:
+        return None
+    for root, label in _State.roots:
+        if absolute == root or absolute.startswith(root + os.sep):
+            return label + absolute[len(root):]
+    return None
+
+
+def _relative_to_fd(path: object, dir_fd: object) -> bool:
+    text = _text(path)
+    return dir_fd is not None and not (text and os.path.isabs(text))
+
+
+def _attribution() -> str:
+    if _State.current is not None:
+        return _State.current
+    frame = sys._getframe(1)
+    while frame is not None:
+        if frame.f_globals is not _OWN_GLOBALS:
+            name = frame.f_code.co_name
+            if name in FIXTURES:
+                owner = frame.f_locals.get("cls")
+                scope = (f"{owner.__module__}.{owner.__qualname__}"
+                         if isinstance(owner, type)
+                         else frame.f_globals.get("__name__", "?"))
+                return f"{scope}.{name}"
+            if name == "<module>":
+                return f"<import {frame.f_globals.get('__name__', '?')}>"
+        frame = frame.f_back
+    return "<unattributed>"
+
+
+def _touch(event: str, path: object, base: str | None = None) -> None:
+    hit = _lab_path(path, base)
+    if hit is not None:
+        _State.touches.add((_attribution(), event, hit))
+
+
+def _spawned(event: str, args: tuple) -> None:
+    if event == "subprocess.Popen":
+        executable, argv, cwd = args[0], args[1], args[2]
+    elif event == "os.system":
+        executable, argv, cwd = None, None, None
+    else:  # os.exec, os.posix_spawn: path, argv, env
+        executable, argv, cwd = args[0], args[1], None
+    # Relative argv words and executables resolve against the child's cwd.
+    child = _resolve(".")
+    if cwd is not None:
+        _touch("subprocess.cwd", cwd)
+        text = _text(cwd)
+        child = None if text is None else _resolve(text)
+    if isinstance(argv, (list, tuple)):
+        words = list(argv)
+    elif argv is not None:
+        words = [argv]
+    else:
+        words = []
+    program = executable if executable is not None else (
+        words[0] if words else None)
+    program_text = _text(program)
+    if program_text is not None and os.sep in program_text:
+        _touch("subprocess.exec", program_text, child)
+    if event == "os.system":
+        spelled = [args[0]]
+    else:
+        spelled = words[1:]
+    for word in spelled:
+        text = _text(word)
+        if text is None:
+            continue
+        for token in ARGV_SPLIT.split(text):
+            if os.sep not in token or (child is None and not os.path.isabs(token)):
+                continue
+            hit = _lab_path(token, child)
+            if hit is not None:
+                _State.mentions.add((_attribution(), "subprocess.argv", hit))
+
+
+def _guarded(action, *args) -> None:
+    """Run one observation, never re-entrantly and never raising into the
+    audited call; a fault is kept, and fails the audit closed at the end."""
+    if not _State.active or getattr(_GUARD, "busy", False):
+        return
+    _GUARD.busy = True
+    try:
+        action(*args)
+    except Exception as error:  # noqa: BLE001 -- must not break the test
+        _State.faults.append(type(error).__name__)
+    finally:
+        _GUARD.busy = False
+
+
+def _observe_event(event: str, args: tuple) -> None:
+    if event == "glob.glob/2":
+        # The pattern is relative to root_dir, and root_dir (or, without
+        # one, the pattern) to dir_fd.
+        pathname, _recursive, root_dir, dir_fd = args[:4]
+        if _relative_to_fd(pathname if root_dir is None else root_dir, dir_fd):
+            return
+        text = _text(root_dir)
+        base = None if text is None else _resolve(text)
+        if root_dir is None or base is not None:
+            _touch(event, pathname, base)
+        return
+    if event in SPAWN_EVENTS:
+        _spawned(event, args)
+        return
+    for index, fd_index in PATH_EVENTS[event]:
+        if index >= len(args):
+            continue
+        dir_fd = args[fd_index] if fd_index is not None and fd_index < len(
+            args) else None
+        if not _relative_to_fd(args[index], dir_fd):
+            _touch(event, args[index])
+
+
+def _hook(event: str, args: tuple) -> None:
+    if event in PATH_EVENTS or event in SPAWN_EVENTS or event == "glob.glob/2":
+        _guarded(_observe_event, event, args)
+
+
+def _install_wrappers() -> dict[str, object]:
+    """Wrap the metadata calls; return the originals for restoration.
+
+    Each wrapper joins every ``os.supports_*`` set its original is in, so
+    capability checks (``os.stat in os.supports_dir_fd``) answer as before.
+    """
+    originals: dict[str, object] = {}
+    capability_sets = [
+        value for name, value in vars(os).items()
+        if name.startswith("supports_") and isinstance(value, set)]
+    for name in WRAPPED:
+        original = getattr(os, name)
+        originals[name] = original
+        wrapper = _wrapper(name, original)
+        for capability in capability_sets:
+            if original in capability:
+                capability.add(wrapper)
+        setattr(os, name, wrapper)
+    return originals
+
+
+def _wrapper(name: str, original):
+    event = "os." + name
+
+    def wrapper(*args, **kwargs):
+        path = args[0] if args else kwargs.get("path")
+        if _relative_to_fd(path, kwargs.get("dir_fd")):
+            previous = getattr(_GUARD, "busy", False)
+            _GUARD.busy = True  # silences the "open" audit event too
+            try:
+                return original(*args, **kwargs)
+            finally:
+                _GUARD.busy = previous
+        if name != "open":  # an absolute or cwd-relative open is audited
+            _guarded(_touch, event, path)
+        return original(*args, **kwargs)
+
+    wrapper.__name__ = name
+    wrapper.__qualname__ = name
+    wrapper.__doc__ = original.__doc__
+    return wrapper
+
+
+class _Result(unittest.TextTestResult):
+    def startTest(self, test):  # noqa: N802 -- unittest's name
+        _State.current = test.id()
+        super().startTest(test)
+
+    def stopTest(self, test):  # noqa: N802 -- unittest's name
+        super().stopTest(test)
+        _State.current = None
+
+
+def _flatten(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _flatten(item)
+        else:
+            yield item
+
+
+def _load(loader: unittest.TestLoader, modules: list[str]):
+    """The suite, and the test modules or names that failed to load."""
+    if not modules:
+        suite = loader.discover(
+            start_dir=DEFAULT_START, pattern="test*.py", top_level_dir=".")
+        return suite, [
+            getattr(test, "_testMethodName", "?") for test in _flatten(suite)
+            if type(test).__name__ == "_FailedTest"]
+    suite, failed = loader.suiteClass(), []
+    for name in modules:
+        before = len(loader.errors)
+        suite.addTest(loader.loadTestsFromName(name))
+        if len(loader.errors) > before:
+            failed.append(name)
+    return suite, failed
+
+
+def run(repo: str, modules: list[str]) -> dict[str, object]:
+    root = os.path.abspath(repo)
+    if not os.path.isdir(root):
+        raise AuditError(f"{repo} is not a directory")
+    if not modules and not os.path.isdir(os.path.join(root, DEFAULT_START)):
+        raise AuditError(f"{os.path.join(repo, DEFAULT_START)} is not a directory")
+    bases = sorted({root, os.path.realpath(root)})
+    _State.roots = tuple(
+        (os.path.join(base, label), label)
+        for base in bases for label in LAB_STATE)
+    _State.touches, _State.mentions, _State.faults = set(), set(), []
+
+    saved_cwd = os.getcwd()
+    saved_argv, saved_path = sys.argv[:], sys.path[:]
+    saved_streams = (sys.stdout, sys.stderr)
+    for stream in saved_streams:
+        stream.flush()
+    saved_fds = (os.dup(1), os.dup(2))
+    sink = open(os.devnull, "w", encoding="utf-8")
+    originals: dict[str, object] = {}
+    try:
+        os.chdir(root)
+        sys.argv = [sys.argv[0]]
+        sys.path.insert(0, root)
+        os.dup2(sink.fileno(), 1)
+        os.dup2(sink.fileno(), 2)
+        originals = _install_wrappers()
+        _State.active = True
+        loader = unittest.TestLoader()
+        suite, unloaded = _load(loader, modules)
+        if loader.errors:
+            # Names only: a traceback can quote whatever the import read.
+            raise AuditError("could not load " + (
+                ", ".join(sorted(unloaded))
+                or f"{len(loader.errors)} test modules"))
+        if suite.countTestCases() == 0:
+            raise AuditError("no tests found")
+        runner = unittest.TextTestRunner(
+            stream=sink, verbosity=0, resultclass=_Result)
+        result = runner.run(suite)
+    finally:
+        _State.active = False
+        _State.current = None
+        for name, original in originals.items():
+            setattr(os, name, original)
+        for stream in (sys.stdout, sys.stderr, *saved_streams):
+            try:
+                stream.flush()
+            except (OSError, ValueError):
+                pass
+        sys.stdout, sys.stderr = saved_streams
+        os.dup2(saved_fds[0], 1)
+        os.dup2(saved_fds[1], 2)
+        for descriptor in saved_fds:
+            os.close(descriptor)
+        sink.close()
+        sys.argv, sys.path[:] = saved_argv, saved_path
+        os.chdir(saved_cwd)
+    if _State.faults:
+        raise AuditError(
+            f"the audit hook faulted {len(_State.faults)} times "
+            f"({', '.join(sorted(set(_State.faults)))}); touches may be missed")
+    if result.testsRun == 0:
+        raise AuditError("no tests ran")
+    failed = sorted({test.id() for test, _ in result.failures + result.errors}
+                    | {test.id() for test in result.unexpectedSuccesses})
+
+    def records(found: set[tuple[str, str, str]]) -> list[dict[str, str]]:
+        return [{"event": event, "path": path, "test": test}
+                for test, event, path in sorted(found)]
+
+    return {
+        "failed": failed,
+        "mentions": records(_State.mentions),
+        "status": "touched" if _State.touches else "ok",
+        "tests": {
+            "errors": len(result.errors),
+            "failures": len(result.failures),
+            "ran": result.testsRun,
+            "skipped": len(result.skipped),
+        },
+        "touches": records(_State.touches),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="lab-state-test-audit",
+        description=(
+            "Run the homelab unit tests under an audit hook and report every "
+            "touch of build/, homelab/var/ or homelab/instance/, attributed "
+            "to the test that made it. Exit 0 clean, 1 touched, 70 cannot "
+            "audit."),
+        epilog=(
+            "A lab-state path spelled in a child process's argv is reported "
+            "as an advisory mention and never counted: the audit cannot see "
+            "a child's accesses, and a dry run such as `make -n VAR=build/x` "
+            "names a path without touching it."),
+    )
+    parser.add_argument(
+        "--repo", default=".",
+        help="repository root to audit (default: the working directory)")
+    parser.add_argument(
+        "modules", nargs="*", metavar="MODULE",
+        help="dotted test names to run instead of discovering homelab/tests")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one compact key-sorted JSON object (cli-v1)",
+    )
+    arguments = parser.parse_args(argv)
+    sys.addaudithook(_hook)
+    try:
+        payload = run(arguments.repo, list(arguments.modules))
+    except Exception as error:
+        # cli-v1 error contract: exactly one compact key-sorted JSON object
+        # on stderr, nothing on stdout, stable code plus exit category.
+        message = str(error) or error.__class__.__name__
+        if arguments.json:
+            print(
+                json.dumps(
+                    {
+                        "code": "internal",
+                        "error": message,
+                        "status": "error",
+                        "v": PROTOCOL_VERSION,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(f"lab-state-test-audit: {message}", file=sys.stderr)
+        return 70
+    if arguments.json:
+        print(
+            json.dumps(
+                {**payload, "v": PROTOCOL_VERSION},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        for kind, key in (("touch", "touches"), ("mention", "mentions")):
+            for record in payload[key]:
+                print(f"{kind}\t{record['test']}\t{record['event']}\t"
+                      f"{record['path']}")
+        for test in payload["failed"]:
+            print(f"failed\t{test}")
+        for key, value in payload["tests"].items():
+            print(f"{key}\t{value}")
+        print(f"touches\t{len(payload['touches'])}\n"
+              f"mentions\t{len(payload['mentions'])}")
+    return 0 if not payload["touches"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -21,6 +21,17 @@
       "requires": [],
       "stage": "stable",
       "usage": "tools/factory-bundle-firmware-provenance [--json] BUNDLE [BUNDLE ...]"
+    },
+    "lab-state-test-audit": {
+      "idempotent": true,
+      "json": true,
+      "lang": "python",
+      "mutates": false,
+      "origin": "local",
+      "purpose": "Report homelab unit tests that touch build/, homelab/var/ or homelab/instance/.",
+      "requires": [],
+      "stage": "stable",
+      "usage": "tools/lab-state-test-audit [--json] [--repo PATH] [MODULE ...]"
     }
   },
   "v": 1
