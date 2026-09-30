@@ -106,6 +106,14 @@ PERSISTENT_ACCOUNTS_ATTEMPT_KEY = "directory_accounts_attempted"
 #: means Samba's default, which provisioning leaves and nothing else changes;
 #: the durable stages judge typed passwords against whichever applies.
 PERSISTENT_PASSWORD_POLICY_KEY = "directory_password_policy"
+#: The marker key listing every password reset of a staged durable account
+#: (``make homelab-factory-persistent-account-password``), oldest first and
+#: append-only. Each entry names the account by its CONTRACT ROLE only -- never
+#: a name, never a value -- and is written only after the guest read back the
+#: reset and the run ended cleanly. The staged record itself is never changed.
+PERSISTENT_PASSWORD_RESETS_KEY = "directory_account_password_resets"
+#: The only fields a reset entry may carry.
+PASSWORD_RESET_FIELDS = frozenset({"role", "utc", "must_change", "run_id"})
 
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
@@ -930,6 +938,80 @@ class PersistentControllerInstance:
                 f"{error}") from error
         marker = self.read_marker()
         marker[PERSISTENT_PASSWORD_POLICY_KEY] = record
+        self._write_marker(marker)
+        return marker
+
+    # -- durable account password resets -----------------------------------
+    @staticmethod
+    def _validated_resets(entries: object, staged_roles: set[str]) -> list:
+        """Fail closed unless *entries* is a usable list of reset entries.
+
+        A closed set of fields (``PASSWORD_RESET_FIELDS``), so no name and no
+        value can ride along, and every ``role`` must be one the staged
+        roster record lists: a role is how an account is named here, and a
+        string that is not one could be a real name.
+        """
+        if not isinstance(entries, list):
+            raise PersistentInstanceInvalid(
+                "persistent password-reset record is not a list")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry is not an object")
+            unknown = set(entry) - PASSWORD_RESET_FIELDS
+            if unknown:
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry carries an unexpected "
+                    "field; an entry names a contract role and never an "
+                    "account name or a credential")
+            role = entry.get("role")
+            if not isinstance(role, str) or role not in staged_roles:
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry names no staged "
+                    "contract role")
+            when = entry.get("utc")
+            if not isinstance(when, str) or not when:
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry has no utc time")
+            if not isinstance(entry.get("must_change"), bool):
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry has no must_change")
+            run_id = entry.get("run_id")
+            if run_id is not None and (
+                    not isinstance(run_id, str) or not run_id):
+                raise PersistentInstanceInvalid(
+                    "persistent password-reset entry has an unusable run_id")
+        return entries
+
+    def _staged_roles(self, marker: dict) -> set[str]:
+        staged = marker.get(PERSISTENT_ACCOUNTS_KEY)
+        if staged is None:
+            return set()
+        return {
+            account["contract_role"]
+            for account in self._validated_accounts(staged)["accounts"]}
+
+    def directory_account_password_resets(self) -> list[dict]:
+        """Every recorded password reset, oldest first; empty for none."""
+        marker = self.read_marker()
+        entries = marker.get(PERSISTENT_PASSWORD_RESETS_KEY)
+        if entries is None:
+            return []
+        return [dict(entry) for entry in self._validated_resets(
+            entries, self._staged_roles(marker))]
+
+    def record_directory_account_password_reset(self, entry: dict) -> dict:
+        """Append one proven password reset to the marker, atomically.
+
+        Append-only: earlier entries are re-validated and kept as they are,
+        and the staged roster record is not touched.
+        """
+        marker = self.read_marker()
+        roles = self._staged_roles(marker)
+        existing = self._validated_resets(
+            marker.get(PERSISTENT_PASSWORD_RESETS_KEY, []), roles)
+        self._validated_resets([entry], roles)
+        marker[PERSISTENT_PASSWORD_RESETS_KEY] = [*existing, dict(entry)]
         self._write_marker(marker)
         return marker
 

@@ -1644,6 +1644,29 @@ def _persistent_policy_summary(
     return f"recorded {record['recorded_utc']}: {policy.describe()}"
 
 
+def _persistent_password_resets_summary(
+    target: PersistentControllerInstance, existing: bool,
+) -> str:
+    """The latest recorded password reset of each staged account, by role."""
+    if not existing:
+        return "none; this instance has not been created"
+    try:
+        entries = target.directory_account_password_resets()
+    except (ValueError, RuntimeError) as error:
+        return f"unknown; the record is unreadable ({error})"
+    if not entries:
+        return ("none recorded; reset one staged account's password with "
+                "homelab-factory-persistent-account-password")
+    latest: dict[str, dict] = {}
+    for entry in entries:
+        latest[entry["role"]] = entry
+    return "; ".join(
+        f"{role} {entry['utc']} ("
+        + ("temporary: must change at next logon" if entry["must_change"]
+           else "permanent") + ")"
+        for role, entry in latest.items())
+
+
 def persistent_accounts(
     root: Path,
     instance: str,
@@ -1816,7 +1839,9 @@ def persistent_accounts(
             f"({staged['staged_utc']}). Staging CREATES accounts and stops on "
             "the first one the directory already has, so this refuses rather "
             "than asking you for credentials it would discard. Pass --restage "
-            "only to add a roster this directory does not have yet")
+            "only to add a roster this directory does not have yet. To give "
+            "an account it already holds a new password, use make "
+            "homelab-factory-persistent-account-password ROLE=<contract role>")
     if staged is None and attempted is not None and not restage:
         problems.append(
             f"{instance} has an unfinished staging run that already reached "
@@ -2004,6 +2029,8 @@ def persistent_status(root: Path, instance: str) -> int:
         target, marker is not None))
     print("directory password policy: " + _persistent_policy_summary(
         target, marker is not None))
+    print("directory account password resets: "
+          + _persistent_password_resets_summary(target, marker is not None))
     print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
     print("hash fence: none by design; the disk is the durable directory state")
     return 0 if marker else 1

@@ -125,8 +125,13 @@ IDENTITY_OVERLAY ?=
 # where it belongs. The durable path REFUSES to inherit the acceptance realm.
 DIRECTORY_IDENTITY ?=
 # Stage the durable roster again after an unfinished or a completed run. It
-# does NOT reset the password of an account the directory already holds.
+# does NOT reset the password of an account the directory already holds:
+# staging creates, and stops on the first account that exists. The reset is
+# homelab-factory-persistent-account-password.
 RESTAGE ?=
+# Staged passwords are temporary (must change at first logon) for -accounts
+# when set; for -account-password only the value 1 does that.
+CHANGE_AT_FIRST_LOGON ?=
 PERSISTENT_ACCOUNTS_TIMEOUT ?=
 # Complete a persistent instance's recorded domain SID when it is a strict
 # prefix of the live one (the split-read truncation fixed in 05eec6e). Any other
@@ -138,6 +143,10 @@ REPAIR_SID ?=
 # carry settings, never a credential.
 MIN_PASSWORD_LENGTH ?=
 PASSWORD_COMPLEXITY ?=
+# The staged durable account whose password -account-password resets, named by
+# its CONTRACT ROLE (daily_administrator, standard_user, domain_administrator,
+# additional_standard_user_<uid>), never by an account name. No default.
+ROLE ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -217,6 +226,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-accounts \
 	homelab-factory-persistent-probe \
 	homelab-factory-persistent-password-policy \
+	homelab-factory-persistent-account-password \
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-durable-workstation-reconcile \
@@ -1121,6 +1131,53 @@ homelab-factory-persistent-password-policy:
 			--apply; \
 	fi
 
+# Reset ONE staged durable account's password, prove it, and record it
+# (TASK-28; 2026-09-30, the owner no longer held the daily administrator's
+# temporary password). RESTAGE cannot do this: staging creates accounts and
+# stops on the first one the directory already holds. ROLE names the account by
+# its contract role and must be one the instance staged; the name comes from
+# the private roster and appears only in the password prompt. The dry run binds
+# the instance like the probe and starts nothing. APPLY=1 asks at this terminal
+# for the local-rescue password and the new password twice -- refused there if
+# the instance's recorded directory password policy would refuse it -- then
+# boots the instance in place on the per-run fabric with no workstation, proves
+# its realm and SID, resets the password over the staging channel (never
+# creating an account; the domain policy untouched), reads back pwdLastSet,
+# objectSid and uidNumber, powers off over the console, and appends the reset
+# to the marker only if proven. CHANGE_AT_FIRST_LOGON=1 makes the value
+# temporary (pwdLastSet=0). Evidence lands in the gitignored
+# homelab/var/factory/persistent-account-password/.
+homelab-factory-persistent-account-password:
+	@if [ -z '$(PERSISTENT_DC)' ] || [ -z '$(ROLE)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name> ROLE=<contract role>' >&2; \
+		exit 2; \
+	fi
+	@if [ -n '$(CHANGE_AT_FIRST_LOGON)' ] && [ '$(CHANGE_AT_FIRST_LOGON)' != 1 ]; then \
+		echo 'CHANGE_AT_FIRST_LOGON must be 1 or unset' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to reset the password; it will ask at this terminal for the local-rescue password and the new password twice'; \
+		$(PYTHON) homelab/vm/persistent_account_password.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--role '$(ROLE)' \
+			$(if $(filter 1,$(CHANGE_AT_FIRST_LOGON)),--change-at-first-logon) \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)'); \
+	else \
+		$(PYTHON) homelab/vm/persistent_account_password.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--role '$(ROLE)' \
+			$(if $(filter 1,$(CHANGE_AT_FIRST_LOGON)),--change-at-first-logon) \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			--apply; \
+	fi
+
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
 # stable instance name, and the exact confirmation carrying that name.
 homelab-factory-persistent-destroy:
@@ -1692,6 +1749,8 @@ help:
 		'make homelab-factory-persistent-status PERSISTENT_DC=<name>' \
 		'make homelab-factory-persistent-password-policy PERSISTENT_DC=<name> MIN_PASSWORD_LENGTH=<1-14> PASSWORD_COMPLEXITY=off|on [APPLY=1]' \
 		'                         Set, read back and record its directory password policy' \
+		'make homelab-factory-persistent-account-password PERSISTENT_DC=<name> ROLE=<contract role> [CHANGE_AT_FIRST_LOGON=1] [APPLY=1]' \
+		'                         Reset one staged account password; RESTAGE only creates' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-durable-workstation-plan WORKSTATION=<name> [WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>]' \
 		'make homelab-durable-workstation-adopt APPLY=1 WORKSTATION=<name> WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>' \

@@ -961,5 +961,83 @@ class PersistentPasswordPolicyTargetTests(unittest.TestCase):
                 self.assertIn(message, result.stderr)
 
 
+class PersistentAccountPasswordTargetTests(unittest.TestCase):
+    """The one-account password reset target, fed to its runner's parser."""
+
+    SCRIPT = "persistent_account_password.py"
+    TARGET = "homelab-factory-persistent-account-password"
+    NAMES = {"PERSISTENT_DC": "lab-dc1", "ROLE": "daily_administrator"}
+
+    def parse(self, **variables):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import persistent_account_password
+        return [persistent_account_password.parser().parse_args(argv)
+                for argv in emitted_by(self.TARGET, self.SCRIPT, **variables)]
+
+    def test_the_recipe_is_dry_run_first_and_parses(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        variables = {
+            **self.NAMES,
+            "FACTORY_CONTROLLER_STATE": "/state/canonical",
+            "DIRECTORY_IDENTITY": "identity.json",
+            "IDENTITY_OVERLAY": "roster.json",
+            "PERSISTENT_DC_ROOT": "/persistent",
+        }
+        for change, temporary in (("", False), ("1", True)):
+            with self.subTest(CHANGE_AT_FIRST_LOGON=change):
+                # ``make -n`` prints both sides of the shell's APPLY gate:
+                # the dry run first, then the applied run.
+                parsed = self.parse(
+                    **variables, CHANGE_AT_FIRST_LOGON=change)
+                self.assertEqual(len(parsed), 2)
+                for args, applied in zip(parsed, (False, True)):
+                    self.assertEqual(args.apply, applied)
+                    self.assertEqual(
+                        (args.instance, args.role),
+                        ("lab-dc1", "daily_administrator"))
+                    self.assertIs(args.change_at_first_logon, temporary)
+                    self.assertEqual(args.state_dir, Path("/state/canonical"))
+                    self.assertEqual(args.persistent_root, Path("/persistent"))
+                    self.assertEqual(args.directory_identity,
+                                     Path("identity.json"))
+                    self.assertEqual(args.identity_overlay,
+                                     Path("roster.json"))
+        only = commands(self.TARGET)
+        self.assertEqual(1, only.count("--apply"))
+        self.assertIn("dry run", only)
+        # Both passwords are typed at the terminal: no variable, file or
+        # medium carries a credential, and RESTAGE never reaches a reset.
+        for forbidden in ("CREDENTIAL", "SECRET", "PASSWORD)", "--password",
+                          "--iso", "--seed-iso", "RESTAGE", "--restage"):
+            self.assertNotIn(forbidden, only)
+        for name in ("ROLE", "CHANGE_AT_FIRST_LOGON"):
+            self.assertRegex(MAKEFILE, rf"(?m)^{name} \?=\s*$")
+
+    def test_the_target_is_phony_listed_and_refuses_what_it_cannot_run(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        self.assertIn(self.TARGET, phony.group("body").split())
+        self.assertIn(f"make {self.TARGET} ", MAKEFILE)
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for variables, message in (
+                ({**self.NAMES, "PERSISTENT_DC": ""},
+                 "require PERSISTENT_DC=<instance name> ROLE=<contract role>"),
+                ({**self.NAMES, "ROLE": ""},
+                 "require PERSISTENT_DC=<instance name> ROLE=<contract role>"),
+                ({**self.NAMES, "CHANGE_AT_FIRST_LOGON": "yes"},
+                 "CHANGE_AT_FIRST_LOGON must be 1 or unset")):
+            with self.subTest(variables=variables):
+                result = subprocess.run(
+                    ["make", self.TARGET, *(
+                        f"{name}={value}"
+                        for name, value in variables.items())],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

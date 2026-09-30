@@ -119,14 +119,17 @@ def _say(message: str) -> None:
 
 def _prove_bound_directory(
     console, binding: DurableBinding, checks: dict[str, object],
+    *, label: str = "policy",
 ) -> None:
     """The realm and the SID, before anything is written into the directory.
 
     Unlike the probe, a SID that only needs repair is refused too: this run
     records into the same marker, and the repair has its own target.
+    ``persistent_account_password`` proves its directory the same way, under
+    its own *label*.
     """
     realm = _console_root(
-        console, REALM_COMMAND, "policy-realm", value=REALM_VALUE)
+        console, REALM_COMMAND, f"{label}-realm", value=REALM_VALUE)
     checks["realm_matches"] = (
         realm is not None
         and realm.decode("ascii").upper() == binding.kerberos_realm)
@@ -135,7 +138,7 @@ def _prove_bound_directory(
             "the live directory does not serve the bound realm; nothing was "
             "written to it")
     raw_sid = _console_root(
-        console, DOMAIN_SID_COMMAND, "policy-domain-sid",
+        console, DOMAIN_SID_COMMAND, f"{label}-domain-sid",
         value=DOMAIN_SID_VALUE)
     live = "" if raw_sid is None else raw_sid.decode("ascii")
     if check_live_directory(binding.domain_sid, live) != SID_MATCH:

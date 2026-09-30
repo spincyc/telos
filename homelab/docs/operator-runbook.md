@@ -623,7 +623,17 @@ user are staged as standard directory accounts and never join Domain Admins
 run a second one is refused unless you pass `RESTAGE=1`, which does not reset
 the password of an account the directory already holds — and staging stops on
 the first account the directory already holds, so it cannot add one person to a
-directory that has the others.
+directory that has the others. To give one staged account a new password (for
+example a lost temporary one), reset it instead:
+
+```sh
+make homelab-factory-persistent-account-password PERSISTENT_DC=<name> \
+    ROLE=<contract role> [CHANGE_AT_FIRST_LOGON=1] [APPLY=1]
+```
+
+It resets only an account that exists (never creates one), judges the new value
+against the instance's recorded password policy before anything boots, and
+appends the reset, by role, to the instance marker.
 
 **Both durable paths refuse an incomplete roster** (`0e588db`, 2026-09-24). They
 run only if `homelab/instance/identity/principals.json` exists **and** itself

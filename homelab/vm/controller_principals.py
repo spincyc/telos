@@ -57,6 +57,23 @@ class ControllerPrincipalResult:
     events: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ControllerPasswordReset:
+    """Secret-free facts from one durable account's password reset.
+
+    ``proof`` is what the guest program read back after the reset and printed
+    as one word (``password_reset_proof``); ``principals`` holds the one name,
+    as ``ControllerPrincipalResult`` does, and a caller that retains evidence
+    records neither it nor any value.
+    """
+
+    operation: str
+    principals: tuple[str, ...]
+    events: tuple[str, ...]
+    must_change: bool
+    proof: str
+
+
 # The second gate on the roster's names.  arch_second's SAFE_PRINCIPAL already
 # refused anything that would need quoting; this one is deliberately kept as
 # well, because these names are substituted into a Python program that runs
@@ -715,18 +732,28 @@ def durable_directory_roster(
 
 
 PRINCIPAL_FAILURE_MARKER = b"__TELOS_PRINCIPAL_FAILURE="
+#: What a program that proves its own result prints on success, before it
+#: exits 0: the facts it read back, as one category-shaped word, never a value.
+PRINCIPAL_PROOF_MARKER = b"__TELOS_PRINCIPAL_PROOF="
 
 
-def _principal_result_pattern(result: bytes) -> bytes:
+def _principal_result_pattern(result: bytes, *, proof: bool = False) -> bytes:
     """The program's return code, and the failure category printed before it.
 
     Both are anchored on a real line ending (a serial read can stop mid-line;
     see ``arch_identity_run.measured_probe_pattern``). The category is
-    diagnostic only: the return code alone decides success.
+    diagnostic only: the return code alone decides success.  With *proof*,
+    the success line a proving program prints (``PRINCIPAL_PROOF_MARKER``) is
+    captured the same way; a program prints one or the other, never both.
     """
+    proven = (
+        rb"(?:(?:^|\n)" + re.escape(PRINCIPAL_PROOF_MARKER)
+        + rb"(?P<proof>[a-z0-9+-]{1,96})(?=[\r\n])[\s\S]*?)?"
+        if proof else b"")
     return (
         rb"(?:(?:^|\n)" + re.escape(PRINCIPAL_FAILURE_MARKER)
         + rb"(?P<reason>[a-z0-9+-]{1,96})(?=[\r\n])[\s\S]*?)?"
+        + proven
         + rb"(?:^|\n)" + re.escape(result) + rb"(?P<rc>[0-9]+)(?=[\r\n])")
 
 
@@ -1064,6 +1091,166 @@ if failures:
     raise RuntimeError("principal destruction failed: " + ",".join(failures))
 """
 
+# One EXISTING durable account's password, reset the way a directory
+# administrator resets one: a ``unicodePwd`` replace under the system session,
+# with no old password presented.  It never creates an account.  Staging
+# (``_STAGE_PROGRAM_TEMPLATE``) creates, and stops with ``account-exists`` on
+# the first account the directory already holds, so ``RESTAGE`` cannot give an
+# owner who lost a temporary password a new one; this program can, and only
+# that.  The domain password policy is NOT touched: the host judged the value
+# against the instance's recorded policy before anything booted, and a value
+# the directory refuses anyway is reported as ``password-policy``.
+#
+# ``@FAILURE_REASON@`` is the stage program's own ``failure_reason``, cut from
+# that template (``_stage_failure_reason``), so the two report one vocabulary.
+# The one credential travels exactly as staging's do: base64 JSON on the
+# guest shell's stdin, with echo off and stderr closed (``_exchange``).
+_PASSWORD_RESET_PROGRAM_TEMPLATE = r"""
+import json
+import sys
+
+from ldb import FLAG_MOD_REPLACE, Message, MessageElement
+from samba.auth import system_session
+from samba.param import LoadParm
+from samba.samdb import SamDB
+
+account = json.loads('@ACCOUNT_JSON@')
+name = account["name"]
+must_change = account["must_change"] is True
+values = json.load(sys.stdin)
+if set(values) != {name} or len(values) != 1:
+    raise ValueError("unexpected principal roster")
+lp = LoadParm()
+lp.load_default()
+samdb = SamDB(session_info=system_session(), lp=lp)
+attributes = [
+    "sAMAccountName",
+    "objectSid",
+    "uidNumber",
+    "pwdLastSet",
+    "msDS-User-Account-Control-Computed",
+]
+
+def integers(record, attribute):
+    return [int(str(value)) for value in record.get(attribute, [])]
+
+@FAILURE_REASON@
+
+def existing_account():
+    # Looked up, never created: a missing account is refused before any write.
+    results = samdb.search(
+        expression="(&(objectClass=user)(sAMAccountName=" + name + "))",
+        attrs=attributes)
+    if len(results) == 0:
+        raise RuntimeError("account missing")
+    if len(results) != 1:
+        raise RuntimeError("account is not stored exactly once")
+    if [str(value) for value in results[0].get("sAMAccountName", [])] != [name]:
+        raise RuntimeError("account name is invalid")
+    return results[0]
+
+def identity(record):
+    sid_values = [bytes(value) for value in record.get("objectSid", [])]
+    if len(sid_values) != 1 or not sid_values[0]:
+        raise RuntimeError("account SID is invalid")
+    return sid_values[0], integers(record, "uidNumber")
+
+try:
+    before = existing_account()
+    sid_before, uid_before = identity(before)
+    if uid_before != [account["uidNumber"]]:
+        raise RuntimeError("account uidNumber is not the staged one")
+    # Both writes in one transaction, exactly as Samba's own
+    # SamDB.setpassword(force_change_at_next_login=True) makes them, but
+    # without its enable_account side effect: nothing but the password and
+    # its must-change state is written.
+    samdb.transaction_start()
+    try:
+        update = Message()
+        update.dn = before.dn
+        update["unicodePwd"] = MessageElement(
+            ('"' + values[name] + '"').encode("utf-16-le"),
+            FLAG_MOD_REPLACE, "unicodePwd")
+        samdb.modify(update)
+        if must_change:
+            update = Message()
+            update.dn = before.dn
+            update["pwdLastSet"] = MessageElement(
+                "0", FLAG_MOD_REPLACE, "pwdLastSet")
+            samdb.modify(update)
+    except BaseException:
+        samdb.transaction_cancel()
+        raise
+    samdb.transaction_commit()
+    update = None
+    values.clear()
+    after = existing_account()
+    sid_after, uid_after = identity(after)
+    if sid_after != sid_before:
+        raise RuntimeError("account SID changed")
+    if uid_after != uid_before:
+        raise RuntimeError("account uidNumber changed")
+    password_set = integers(after, "pwdLastSet")
+    if must_change:
+        if password_set != [0]:
+            raise RuntimeError("account is not due to change its password")
+    elif len(password_set) != 1 or password_set[0] <= 0:
+        raise RuntimeError("account password state is invalid")
+    # UF_PASSWORD_EXPIRED is computed from pwdLastSet: set exactly when the
+    # account must change its password, as staging proves it.
+    computed = integers(after, "msDS-User-Account-Control-Computed")
+    expired = 0x800000 if must_change else 0
+    if len(computed) != 1 or computed[0] & 0x800000 != expired:
+        raise RuntimeError("account password expiry is invalid")
+    print("\n__TELOS_PRINCIPAL_PROOF="
+          + ("must-change" if must_change else "permanent")
+          + "+sid-unchanged+uid-unchanged", flush=True)
+except BaseException as error:
+    print("\n__TELOS_PRINCIPAL_FAILURE=" + failure_reason(error), flush=True)
+    raise
+"""
+
+
+def _stage_failure_reason() -> str:
+    """The stage program's ``failure_reason``, verbatim, for the reset program."""
+    start = _STAGE_PROGRAM_TEMPLATE.index("def failure_reason(error):")
+    end = _STAGE_PROGRAM_TEMPLATE.index("\ntry:\n", start)
+    return _STAGE_PROGRAM_TEMPLATE[start:end].rstrip("\n")
+
+
+def password_reset_proof(must_change: bool) -> str:
+    """What the reset program prints once its read-back proved the reset."""
+    return (("must-change" if must_change else "permanent")
+            + "+sid-unchanged+uid-unchanged")
+
+
+def password_reset_program(
+    name: str, uid_number: int, *, must_change: bool,
+) -> str:
+    """The guest program that resets *name*'s password, and nothing else.
+
+    *uid_number* is the account's planned (and staged) uidNumber: the program
+    refuses an account that does not carry it, and proves it and the
+    account's objectSid unchanged after the reset.  Validated here like the
+    stage program's roster, so the substitution stays one safe literal.
+    """
+    if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
+        raise ValueError("Controller principal name is invalid")
+    if (isinstance(uid_number, bool) or not isinstance(uid_number, int)
+            or not _POSIX_BASE <= uid_number <= _POSIX_UID_MAX):
+        raise ValueError("Controller POSIX uidNumber is out of range")
+    if not isinstance(must_change, bool):
+        raise ValueError("must_change is not a boolean")
+    document = json.dumps(
+        {"must_change": must_change, "name": name, "uidNumber": uid_number},
+        sort_keys=True, separators=(",", ":"))
+    if "'" in document or "\\" in document:
+        raise ValueError(
+            "Controller principal account is not one safe string literal")
+    return (_PASSWORD_RESET_PROGRAM_TEMPLATE
+            .replace("@FAILURE_REASON@", _stage_failure_reason())
+            .replace("@ACCOUNT_JSON@", document))
+
 
 # The roster is validated host-side (safely representable, distinct) and the
 # allocation is validated host-side (collision-free) before either is baked
@@ -1147,6 +1334,8 @@ class ControllerPrincipalSerial:
         self.console = SerialAutomation(
             reader, writer, password, timeout=timeout)
         self.first_logon = bool(first_logon)
+        # A password reset is for a durable roster only, like first_logon.
+        self.durable = roster is not None
         if roster is None:
             resolved = acceptance_roster()
             self.roles = resolved.roles
@@ -1202,6 +1391,26 @@ class ControllerPrincipalSerial:
         program: str,
         names: tuple[str, ...],
     ) -> ControllerPrincipalResult:
+        self._exchange(operation, payload, program)
+        return ControllerPrincipalResult(
+            operation, names, tuple(self.console.events))
+
+    def _exchange(
+        self,
+        operation: str,
+        payload: object,
+        program: str,
+        *,
+        proof: bool = False,
+    ) -> re.Match[bytes]:
+        """Run *program* as root with *payload* on its stdin; fail closed.
+
+        The one credential channel every operation here uses: the payload is
+        base64 JSON typed after the guest proved ``stty -echo``, read by the
+        shell into one variable and piped into the program, whose stderr is
+        closed before it runs.  Returns the result match (``proof`` captures
+        a proving program's success line too).
+        """
         console = self.console
         token = uuid.uuid4().hex.encode("ascii")
         ready = b"__TELOS_PRINCIPAL_READY_" + token + b"__"
@@ -1247,7 +1456,7 @@ class ControllerPrincipalSerial:
                 console._send(
                     console.password, operation + "-sudo-password-sent")
             match = console._wait(
-                _principal_result_pattern(result),
+                _principal_result_pattern(result, proof=proof),
                 operation + "-return-code-observed")
         except SerialAutomationError as error:
             raise ControllerPrincipalError(
@@ -1258,8 +1467,42 @@ class ControllerPrincipalSerial:
             raise ControllerPrincipalError(
                 f"Controller {operation} returned {returncode}"
                 + (f": {reason.decode('ascii')}" if reason else ""))
-        return ControllerPrincipalResult(
-            operation, names, tuple(console.events))
+        return match
+
+    def reset_password(
+        self, name: str, value: str, *, uid_number: int, must_change: bool,
+    ) -> ControllerPasswordReset:
+        """Reset one EXISTING durable account's password; never create one.
+
+        *name* must be one of this console's durable roster; *uid_number* is
+        its planned uidNumber, which the guest requires the account to carry.
+        The value crosses exactly as ``stage``'s do.  Success needs the
+        return code 0 AND the program's read-back proof for *must_change*
+        (``password_reset_proof``); anything else fails closed.
+        """
+        if not self.durable:
+            raise ValueError(
+                "a password reset is for a durable roster only")
+        if name not in self.roles or not _SAFE_NAME.fullmatch(name):
+            # The name is not echoed: this refusal may reach a log.
+            raise ValueError(
+                "Controller principal is not in this console's roster; "
+                f"roster source: {self.roster_source}")
+        if (not isinstance(value, str) or not value or "\n" in value
+                or "\r" in value or "\x00" in value):
+            raise ValueError("Controller principal credential is invalid")
+        program = password_reset_program(
+            name, uid_number, must_change=must_change)
+        match = self._exchange(
+            "password-reset", {name: value}, program, proof=True)
+        proof = (match.group("proof") or b"").decode("ascii")
+        if proof != password_reset_proof(must_change):
+            raise ControllerPrincipalError(
+                "Controller password-reset returned 0 without its read-back "
+                f"proof (observed {proof or 'none'})")
+        return ControllerPasswordReset(
+            "password-reset", (name,), tuple(self.console.events),
+            must_change, proof)
 
     def stage(
         self, values: Mapping[str, str],

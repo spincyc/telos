@@ -271,7 +271,7 @@ persistence must be asked for by name and is never inferred. Corrected
 | Target | Mutates | Contract |
 |---|---|---|
 | `homelab-factory-persistent-plan` | no | Read-only. Prints what a bring-up would do for `PERSISTENT_DC`. |
-| `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists, whether its directory is provisioned, and the directory password policy it records (Samba's default when none). |
+| `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists, whether its directory is provisioned, the directory password policy it records (Samba's default when none), and the latest recorded password reset of each staged account, by contract role. |
 | `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. Since `7b29624` it **refuses an uninstalled canonical image** instead of silently seeding an instance from a blank disk. |
 | `homelab-factory-persistent-converge-plan` | no | Read-only plan for the provisioning step. |
 | `homelab-factory-persistent-converge` | `APPLY=1` | Provisions Active Directory into the instance in place, over the `local-rescue` console password typed at the operator's terminal. Long-running; prompts for credentials interactively and writes none of them to a file, a Make variable, an environment variable, or argv. Since `7b29624` it **checks the canonical image before it prompts**, so an uninstalled source no longer costs you the unrecoverable console password first, and a retried convergence only asks for a new Administrator password when provisioning was actually attempted. |
@@ -296,7 +296,7 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 | `PERSISTENT_CONVERGE_TIMEOUT` | unset | Overrides the convergence's own long in-guest bound, in seconds. |
 | `DIRECTORY_IDENTITY` | unset | Optional permanent directory identity document for the converge targets; unset, it resolves `homelab/instance/identity/directory.json`. The durable path refuses to inherit the acceptance realm. |
 | `IDENTITY_OVERLAY` | unset | Optional private roster for the account targets; unset, it resolves `homelab/instance/identity/principals.json`. It carries names, never a credential. |
-| `RESTAGE` | unset | Required to stage accounts again after a completed or an unfinished staging run. It does not reset the password of an account the directory already holds. |
+| `RESTAGE` | unset | Required to stage accounts again after a completed or an unfinished staging run. Staging is create-only: it stops with `account-exists` on the first account the directory already holds, so it never resets a password. `homelab-factory-persistent-account-password` is the reset. |
 | `PERSISTENT_ACCOUNTS_TIMEOUT` | unset | Overrides the in-guest bound on the account staging program, in seconds (600 by default). |
 | `CHANGE_AT_FIRST_LOGON` | unset | `1` makes the typed passwords TEMPORARY: each account must change its password at its first logon, the host skips its policy pre-check, and the in-guest program lifts the domain password policy only while creating the accounts, then restores and proves it. Without it every typed password must already meet the instance's directory password policy -- the one `-password-policy` recorded, else Samba's default (7 characters, 3 classes) -- checked before anything boots. |
 | `SEED_ISO` | unset | Optional seed ISO for bring-up and convergence. |
@@ -355,6 +355,24 @@ password in `arch-join`, the Windows local-administrator break-glass password
 in `windows-join`, and permanent passwords in `-accounts` -- uses the recorded
 policy, falls back to Samba's default when none is recorded, and names the
 policy in its refusal. Verdict: **NOT RUN.**
+
+### Resetting one staged account's password (TASK-28)
+
+An eleventh target, added 2026-09-30 because the owner no longer held the daily
+administrator's temporary password on `rehearsal`, and `RESTAGE=1` cannot give
+it a new one: staging is **create-only** and stops with `account-exists` on the
+first account the directory already holds (it did, harmlessly: no write, the
+policy restored). This is the reset. It requires `PERSISTENT_DC` and `ROLE`,
+neither of which has a default; `CHANGE_AT_FIRST_LOGON=1` (and only `1`) makes
+the new value temporary; it is a dry run unless `APPLY=1`. Implemented by
+`homelab/vm/persistent_account_password.py`; the guest program is
+`controller_principals.password_reset_program`.
+
+| Target | Mutates | Contract |
+|---|---|---|
+| `homelab-factory-persistent-account-password` | `APPLY=1` | `ROLE` is a **contract role** (`daily_administrator`, `standard_user`, `domain_administrator`, `additional_standard_user_<uid>`) and must be one the instance's staged record lists; the account name comes from the private roster staging used and appears only in the password prompt at the terminal. The dry run binds the instance as `-probe` does and starts nothing. `APPLY=1` asks, before any process starts, for the `local-rescue` password and the new password twice, and refuses the new one there if the instance's recorded directory password policy (else Samba's default) would. It then boots the instance in place on a per-run switch and gateway with no workstation, proves its realm and domain SID, and runs the reset program over the staging channel (base64 JSON on the guest shell's stdin, echo off, stderr closed): it refuses an account that does not exist (`account-missing`; it never creates), requires the staged uidNumber, replaces `unicodePwd` as an administrator's reset and, with `CHANGE_AT_FIRST_LOGON=1`, sets `pwdLastSet=0`, in one transaction, then reads back `pwdLastSet` and proves the objectSid and uidNumber unchanged. The domain password policy is not touched; a value the directory refuses anyway fails as `password-policy`. After a clean console poweroff and only on that proof, `{role, utc, must_change, run_id}` is appended (atomically) to the marker's `directory_account_password_resets`; `-status` prints the latest reset per role. Evidence lands in `homelab/var/factory/persistent-account-password/<instance>/<run id>/`: a redacted console transcript, `switch.jsonl`, `fabric.log` and a `result.json` of secret-free facts. |
+
+Verdict: **NOT RUN.**
 
 **No workstation can be installed against a persistent instance yet.** Every
 workstation runner wraps the Controller in `DisposableBootDisk`, and a bundle
