@@ -10,7 +10,12 @@ its run. This flow mints a workstation you keep: Windows and Arch on one disk,
 joined to a **persistent** Controller instance (see
 [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "Persistent controller
 instance"). It is developed against the throwaway instance `rehearsal`; the
-keeper instance is created only after it works.
+keeper instance is created only after it works. Since the owner's decision of
+2026-09-30 (TASK-40) rehearsals run under **agent credential custody**: a new
+throwaway instance created with `CUSTODY=agent THROWAWAY=1` carries its own
+generated credentials and every step below runs unattended. `rehearsal`
+predates custody and stays owner custody (custody is fixed at creation), so
+the next rehearsal is a new instance; the keeper stays owner custody.
 
 ## Shape
 
@@ -33,6 +38,10 @@ For one workstation `W` bound to one persistent instance:
 | 5. Durable Windows join | Local-administrator password rotated to one the owner types, then gate 6's join unchanged. The publication is destroyed only after the fold, so a failed attempt needs no reinstall. | Controller console password; see open questions |
 | 6. Keep-verify | Relaunch the persistent Controller, boot both systems, re-prove both joins (the re-authentication path). | Controller console password |
 
+Under agent custody the owner types nothing at any step: the "Owner types"
+column describes owner custody only, and the custody store supplies each value
+(see [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "Credential custody").
+
 Each step works on an overlay; on success it is folded into `W` (standalone
 copy, fsync, rename) and appended to a ledger in `W`'s marker with the disk's
 SHA-256. Kept workstations live in `build/homelab/vm/workstations/<name>/`,
@@ -48,7 +57,8 @@ stops only by a clean console poweroff: killing its QEMU is a power cut on the
 directory. It has no pause or SIGSTOP method at all, so gate 6's
 controller-outage faults can never reach the durable directory. The owner's
 console password is typed once per run, before any process starts, held in
-memory for re-login after a relaunch, and dropped when the run ends.
+memory for re-login after a relaunch, and dropped when the run ends; under
+agent custody it is read from the instance's custody store instead.
 
 The binding refuses an instance whose realm, SID or declared address disagree
 with the fabric. The one tolerated SID difference is a recorded value that is a
@@ -97,7 +107,18 @@ the Arch hostname is owner-chosen and Windows keeps gate 5's generated name;
 the proven temporary Domain Admin join principal is kept for `rehearsal`.
 Owner decision 2026-09-30, break-glass custody: during the durable join runs
 the owner types a distinct Windows local-administrator password and a
-distinct Arch `local-rescue` password; the factory never stores either.
+distinct Arch `local-rescue` password; the factory never stores either. That
+still governs owner-custody instances (the keeper); for throwaway rehearsal
+instances it is superseded by the next decision.
+Owner decision 2026-09-30, credential custody (TASK-40; the owner asked why
+the rehearsal needed them at the terminal at all): rehearsals run under agent
+custody end to end. The harness generates every credential of a throwaway
+instance -- its `local-rescue` console password, set once on the staged copy
+at creation, the domain Administrator, the staged accounts, the daily
+administrator's first-logon change and both break-glass passwords -- keeps
+them in 0600 custody stores for the instance's life and shreds them on
+destroy, the same trade-off as the one-use `publication.iso`. The keeper stays
+owner custody.
 Owner decision 2026-09-30, password length: short passwords, changed later,
 are allowed on `rehearsal` by an explicit recorded directory policy
 (`make homelab-factory-persistent-password-policy`, minimum age 0; the host

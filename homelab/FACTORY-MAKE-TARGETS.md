@@ -271,13 +271,13 @@ persistence must be asked for by name and is never inferred. Corrected
 | Target | Mutates | Contract |
 |---|---|---|
 | `homelab-factory-persistent-plan` | no | Read-only. Prints what a bring-up would do for `PERSISTENT_DC`. |
-| `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists, whether its directory is provisioned, the directory password policy it records (Samba's default when none), and the latest recorded password reset of each staged account, by contract role. |
-| `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. Since `7b29624` it **refuses an uninstalled canonical image** instead of silently seeding an instance from a blank disk. |
+| `homelab-factory-persistent-status` | no | Read-only. Reports whether the instance exists, whether its directory is provisioned, the directory password policy it records (Samba's default when none), and the latest recorded password reset of each staged account, by contract role; for an agent-custody or throwaway instance, also its credential custody (never a value). |
+| `homelab-factory-persistent-up` | `APPLY=1` | Creates the instance from the canonical image when absent (read-only against the canonical, under the same strict fence the disposable path uses), then boots it **in place**. A second bring-up reuses the disk rather than re-seeding it, which is what makes the directory durable. Since `7b29624` it **refuses an uninstalled canonical image** instead of silently seeding an instance from a blank disk. With `CUSTODY=agent THROWAWAY=1` (TASK-40) it instead creates a throwaway instance under agent credential custody and leaves it powered off; see "Credential custody" below. |
 | `homelab-factory-persistent-converge-plan` | no | Read-only plan for the provisioning step. |
 | `homelab-factory-persistent-converge` | `APPLY=1` | Provisions Active Directory into the instance in place, over the `local-rescue` console password typed at the operator's terminal. Long-running; prompts for credentials interactively and writes none of them to a file, a Make variable, an environment variable, or argv. Since `7b29624` it **checks the canonical image before it prompts**, so an uninstalled source no longer costs you the unrecoverable console password first, and a retried convergence only asks for a new Administrator password when provisioning was actually attempted. |
 | `homelab-factory-persistent-accounts-plan` | no | Read-only plan for staging the owner's durable account roster (`73dbd2b`): roster source and fingerprint, each contract role with its `uidNumber`/`gidNumber` (never the real names), and the privilege separation. It refuses before printing anything if the private roster — `homelab/instance/identity/principals.json`, or `IDENTITY_OVERLAY` — is missing, unreadable, or does not itself name all three directory roles, and it refuses an instance that does not exist or holds no converged directory. |
 | `homelab-factory-persistent-accounts` | `APPLY=1` | Stages that roster into the converged instance **over the serial console**, the only channel that reaches a simulated persistent instance: its only NIC is a QEMU socket netdev to the userspace gateway, with no route to the host LAN, so host-side Ansible cannot reach it. Prompts at the terminal for the `local-rescue` password and one password per directory role; none reaches a file, argv, an environment or Make variable, the instance marker, or a transcript. The daily administrator never joins Domain Admins. After a completed or an unfinished staging run it refuses unless `RESTAGE` is set. |
-| `homelab-factory-persistent-destroy` | `APPLY=1` + `CONFIRM='DESTROY <name>'` | Disk-erasing: deletes a real directory server, so it needs the stable instance name and the exact confirmation carrying that name. |
+| `homelab-factory-persistent-destroy` | `APPLY=1` + `CONFIRM='DESTROY <name>'` | Disk-erasing: deletes a real directory server, so it needs the stable instance name and the exact confirmation carrying that name. An agent-custody instance's credential store is shredded first. |
 
 **Every one of the eight requires `PERSISTENT_DC=<instance name>`** and exits 2
 without it. `PERSISTENT_DC` has no default.
@@ -302,6 +302,8 @@ recipe, on both sides of its `APPLY` gate, through the real parser.
 | `SEED_ISO` | unset | Optional seed ISO for bring-up and convergence. |
 | `CONFIRM` | unset | `DESTROY <instance name>`, required by `-destroy`. |
 | `REPAIR_SID` | unset | `1` lets `-probe` complete a recorded domain SID that is a strict prefix of the live one, after a passing probe. Any other difference is refused. |
+| `CUSTODY` | unset (owner) | Read only by `-up` (and `-plan`) when it **creates** an instance: `owner` or `agent`. Recorded in the marker and never changed; asking an existing instance for another custody is refused. `agent` requires `THROWAWAY=1`. |
+| `THROWAWAY` | unset | `1` (and only `1`; anything else exits 2) records the new instance as a throwaway rehearsal instance. |
 
 `FACTORY_DURATION` is deliberately **not** reused on this path: its 120-second
 default would abort a Samba provisioning run. Verdict: `-converge` and
@@ -409,6 +411,78 @@ exercised against a live directory. The serial-console path
 throwaway instance `rehearsal` on 2026-09-25; the host-side Ansible path has
 still never run.
 
+### Credential custody (TASK-40)
+
+Owner decision 2026-09-30: rehearsal instances are run by the harness end to
+end, with its own credentials; the keeper stays owner custody. Custody is a
+property of the instance, fixed when `-up` creates it, and recorded in its
+marker as `credential_custody` (`owner`, the default and what every older
+marker means, or `agent`) with `throwaway`. Agent custody requires
+`throwaway: true`. A kept workstation inherits its bound instance's custody.
+Implemented by `homelab/vm/credential_custody.py` (store, generation, the
+owner and agent sources) and `homelab/vm/agent_console_init.py` (creation).
+
+| Custody | Credentials | Store |
+|---|---|---|
+| owner | Typed at the controlling terminal by every runner, exactly as documented above and below (prompts unchanged, byte for byte); held in memory; never stored. | None; a `custody/` directory beside an owner-custody instance or its kept workstation is refused. |
+| agent | Generated with `secrets` (24 letters and digits, three character classes: typeable by gate 6 and inside Samba's default policy) and judged by the same host-side checks a typed value meets; nothing is asked at a terminal and every stage runs unattended. | `<instance>/custody/credentials.json` (directory 0700, file 0600, atomic replacement with the replaced copy shredded): the console, the domain Administrator and each staged account by contract role (`temporary`, `current`, `pending`). Each kept workstation keeps its own `<workstation>/custody/` for its Arch `local-rescue` and Windows local-administrator break-glass passwords. |
+
+Creation under agent custody (`make homelab-factory-persistent-up
+PERSISTENT_DC=<name> APPLY=1 CUSTODY=agent THROWAWAY=1`) seeds the staged copy
+from the canonical image as always, then, **before the instance exists under
+its own name**, generates a console password and stores it, converts the
+staged copy to a sparse raw image, selects the disposable path's one-run
+`init=/bin/bash` entry on **that copy's** ESP (`DisposableBootDisk`'s own edit,
+reused), boots it with no network device (`-nic none`), remounts root rw,
+runs `passwd local-rescue`, `exec`s systemd, logs in as `local-rescue` with the
+new value and powers off through `sudo -k -S` (proving the value opens the
+console and sudo), then writes the original `loader.conf` back, deletes the
+one-run entry and proves both before converting the copy back and renaming
+the staging directory into place. Any failure shreds the staged store and
+removes the staging directory: no instance and no stray credential remain.
+Nothing of this touches the canonical image, an owner-custody instance or an
+existing instance, and the instance is left powered off (it is not booted
+interactively). Converge next.
+
+Every later runner chooses its source from the marker; there is no other Make
+variable. Under agent custody: convergence reads the console password and
+stores a generated Administrator password **before** provisioning can take
+it; `-accounts` generates each role's value (temporary with
+`CHANGE_AT_FIRST_LOGON=1`) and stores it before staging; `-account-password`
+stores the new value as `pending` before the reset and makes it the role's own
+once the directory proves the reset; `arch-join` decides its first-logon mode
+from the store (below); `windows-join` and keep-verify read the daily
+administrator's proven `current` password and refuse without one. Every
+retained transcript and evidence scan adds every stored value to its needles.
+`-destroy` and `homelab-durable-workstation-destroy` shred the stores before
+anything else.
+
+The trade-off, plainly: a throwaway instance's credentials sit in a 0600 file
+in an ignored directory for the instance's whole life, like the one-use
+`publication.iso` a kept workstation holds, and are shredded on destroy. That
+is acceptable for a rehearsal directory that is destroyed after use and is
+never offered to the keeper. The init-shell step is the disposable path's own
+mechanism applied once to a copy nobody has booted; its risk is a failed
+creation (retried by creating again), never a changed canonical image.
+
+A full unattended rehearsal on a new instance `<name>` and workstation `<w>`
+(`<bundle>` is a finished gate-5 Windows install):
+
+```sh
+make homelab-factory-persistent-up PERSISTENT_DC=<name> APPLY=1 CUSTODY=agent THROWAWAY=1
+make homelab-factory-persistent-converge PERSISTENT_DC=<name> APPLY=1
+make homelab-factory-persistent-accounts PERSISTENT_DC=<name> APPLY=1 CHANGE_AT_FIRST_LOGON=1
+make homelab-factory-persistent-probe PERSISTENT_DC=<name> APPLY=1
+make homelab-durable-workstation-adopt WORKSTATION=<w> PERSISTENT_DC=<name> WINDOWS_RUN=<bundle> APPLY=1
+make homelab-durable-arch-install WORKSTATION=<w> PERSISTENT_DC=<name> ARCH_HOSTNAME=<host> FACTORY_DURATION=1800 APPLY=1
+make homelab-durable-arch-join WORKSTATION=<w> PERSISTENT_DC=<name> ARCH_HOSTNAME=<host> APPLY=1
+make homelab-durable-windows-join WORKSTATION=<w> PERSISTENT_DC=<name> APPLY=1
+make homelab-durable-workstation-verify WORKSTATION=<w> PERSISTENT_DC=<name> ARCH_HOSTNAME=<host> APPLY=1
+```
+
+Verdict: **NOT RUN** live; unit-tested only (`homelab/tests/test_credential_custody.py`,
+`homelab/tests/test_agent_custody_runners.py`).
+
 ### Kept workstations (TASK-28)
 
 A kept workstation is minted against a persistent instance by the flow in
@@ -424,7 +498,7 @@ these targets boots a guest, and none has run against a real gate-5 bundle.
 | `homelab-durable-workstation-status` | none | Read-only: stages done, disk present, publication custody, bound instance; never the realm or SID. |
 | `homelab-durable-workstation-reconcile` | `APPLY=1` | Under the lock, finishes an interrupted fold when its disk is in place and its variables are in place or staged, rolls it back when the ledger head's files are intact, and otherwise refuses without changing anything. Every stage runner refuses the workstation while a fold is pending. |
 | `homelab-durable-workstation-adopt` | `APPLY=1` | Converts the gate-5 `windows.qcow2` into a standalone disk and moves the bundle's one-use `publication.iso` into the workstation's custody. Refuses an instance that has not converged. |
-| `homelab-durable-workstation-destroy` | `APPLY=1`, `CONFIRM='DESTROY <name>'` | Shreds the publication first, then the rest, and lists the machine accounts the workstation left in the directory. |
+| `homelab-durable-workstation-destroy` | `APPLY=1`, `CONFIRM='DESTROY <name>'` | Shreds its custody store (agent custody) and the publication first, then the rest, and lists the machine accounts the workstation left in the directory. |
 
 `make clean` removes everything under `build/` except `build/homelab/vm`
 (since 2026-09-30): the canonical Controller image, persistent instances and
@@ -464,8 +538,15 @@ editing it.
 | `homelab-durable-arch-join` | `APPLY=1`; `FIRST_LOGON_DONE=1` for a retry | Under the workstation's lock, after proving the kept disk and firmware variables are still the ledger head, asks at the terminal, before any process starts: the Controller's `local-rescue` console password; the daily administrator's temporary password (its current one with `FIRST_LOGON_DONE=1`, or when the account record asks for no change); its new password, twice; a new Arch `local-rescue` break-glass password, twice. New values are held to the bound instance's directory password policy (the one `homelab-factory-persistent-password-policy` recorded, else Samba's default) and must all be distinct. It then boots `PERSISTENT_DC` in place on the per-run switch (no pause, clean console poweroff), proves its realm and SID, stages one `tj-` principal, boots an overlay of the kept disk, attaches the one-use join media after the kernel handoff and destroys them when the guest has consumed them, waits for `TELOS ARCH JOIN VERIFIED` (the seal is written first), destroys the principal with proof, answers pam_sss's expired-password exchange on ttyS0 (proving no typed value is echoed), elevates, sets the break-glass password, proves `sssctl` online, every directory role at its recorded uidNumber, the sealed join unit and the host name, and powers both guests off. On success the overlay and its firmware variables are folded as `arch-join`; on failure the workstation's disk, variables and ledger are unchanged. Evidence stays under `homelab/var/factory/durable-arch-joins/`. |
 
 A failure after the first-logon change landed says so; the retry is
-`FIRST_LOGON_DONE=1`, typing the new password as the current one. Verdict:
-**NOT RUN.**
+`FIRST_LOGON_DONE=1`, typing the new password as the current one. Under agent
+custody nothing is typed and `FIRST_LOGON_DONE` is refused: the new password is
+generated and stored as `pending` before anything boots; a proven change makes
+it `current`; a run that never wrote it marks it not live, so the next run
+changes the temporary password to it; and a run that died after the change may
+have landed leaves it pending, so the next run logs in with it as the current
+one (and marks it not live if the login refuses it). The Arch break-glass
+password is stored as pending in the workstation's store and made current by
+the fold. Verdict: **NOT RUN.**
 
 #### Stage `windows-join` (step 8)
 
@@ -482,7 +563,11 @@ editing it.
 
 A retry after a join that reached the directory reuses `TELOS-WIN-01`'s machine
 account. A fold whose publication retirement failed is finished by repeating
-the target with `APPLY=1`. Verdict: **NOT RUN.**
+the target with `APPLY=1`. Under agent custody the daily administrator's
+proven `current` password is read from the store (none is a refusal) and the
+new local-administrator password is generated, stored as pending in the
+workstation's store before any guest starts, and made current by the fold.
+Verdict: **NOT RUN.**
 
 #### Keep-verify (step 9)
 

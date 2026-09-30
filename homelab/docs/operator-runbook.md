@@ -517,6 +517,7 @@ rather than the canonical.
 make homelab-factory-persistent-plan   PERSISTENT_DC=<name>   # read-only
 make homelab-factory-persistent-status PERSISTENT_DC=<name>   # read-only
 make homelab-factory-persistent-up     APPLY=1 PERSISTENT_DC=<name> [SEED_ISO=<iso>]
+make homelab-factory-persistent-up     APPLY=1 PERSISTENT_DC=<name> CUSTODY=agent THROWAWAY=1  # throwaway rehearsal: harness-held credentials, every stage unattended (TASK-40)
 make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> \
     CONFIRM='DESTROY <name>'
 ```
