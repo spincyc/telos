@@ -1191,5 +1191,17 @@ class CompositionTests(unittest.TestCase):
                 join.parser().parse_args(argv)
 
 
+class PendingFoldTests(unittest.TestCase):
+    def test_an_interrupted_fold_is_refused_naming_reconcile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = write_kept_workstation(Path(temporary) / "workstations")
+            workstation = wi.WorkstationInstance(state, name="w1")
+            marker = workstation.read_marker()
+            marker["pending_fold"] = {"stage": "arch-join"}
+            with self.assertRaisesRegex(
+                    join.DurableWindowsJoinError, "reconcile"):
+                join.join_mode(workstation, marker)
+
+
 if __name__ == "__main__":
     unittest.main()

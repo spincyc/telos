@@ -228,6 +228,9 @@ def inspect_workstation(
     image_info: Callable[[Path], dict] = _image_info,
 ) -> dict:
     """``W``'s disk, variables and publication, proven at the ledger head."""
+    refusal = workstation.pending_fold_refusal(marker)
+    if refusal is not None:
+        raise DurableWindowsPrepareError(refusal)
     head = marker["ledger"][-1]
     _regular_private(workstation.disk, "the kept workstation's disk")
     _regular_private(

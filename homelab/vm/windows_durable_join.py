@@ -944,12 +944,9 @@ def join_mode(workstation: WorkstationInstance, marker: dict) -> str:
     """``join`` when windows-join is next; ``retire`` when only the
     publication is left after a windows-join fold; otherwise a refusal."""
     name = marker["workstation"]
-    pending = marker.get("pending_fold")
-    if pending is not None:
-        raise DurableWindowsJoinError(
-            f"kept workstation {name} records an interrupted fold of stage "
-            f"{pending['stage']}; only the next fold reconciles it. Inspect it "
-            f"with homelab-durable-workstation-status")
+    refusal = workstation.pending_fold_refusal(marker)
+    if refusal is not None:
+        raise DurableWindowsJoinError(refusal)
     following = workstation.next_stage(marker)
     if following == STAGE:
         return "join"

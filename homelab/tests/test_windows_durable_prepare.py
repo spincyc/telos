@@ -290,6 +290,17 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(_digest(reference),
                          durable["operator_sign_in_reference"]["sha256"])
 
+    def test_an_interrupted_fold_is_refused_naming_reconcile(self):
+        marker = self.workstation.read_marker()
+        marker["pending_fold"] = {"stage": "arch-join"}
+        with self.assertRaisesRegex(
+                prepare.DurableWindowsPrepareError, "reconcile"):
+            prepare.prepare(
+                self.workstation, marker, binding(),
+                controller_state=self.canonical, run_root=self.runs,
+                control_iso_builder=fake_control_iso)
+        self.assertFalse(self.runs.exists())
+
     def test_a_disk_that_left_the_ledger_is_refused_and_nothing_remains(self):
         (self.state / wi.DISK_NAME).write_bytes(b"edited out of band")
         with self.assertRaisesRegex(
