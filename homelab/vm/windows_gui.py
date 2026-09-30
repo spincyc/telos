@@ -36,6 +36,9 @@ PLAIN = {
     "'": "apostrophe", ",": "comma", ".": "dot", "/": "slash",
     "`": "grave_accent",
 }
+#: QEMU's QMP ``ImageFormat`` values for ``screendump``.  ``png`` exists
+#: since QEMU 7.1 and only in a build linked against libpng.
+SCREENDUMP_FORMATS = frozenset({"ppm", "png"})
 
 
 @dataclass(frozen=True)
@@ -334,8 +337,23 @@ class QmpClient:
         finally:
             self.connection.settimeout(previous_timeout)
 
-    def screenshot(self, path: Path) -> None:
-        self.execute("screendump", {"filename": str(path)})
+    def screenshot(
+            self, path: Path, *, format: str | None = None,
+            timeout: float | None = None) -> None:
+        """QMP ``screendump`` to *path*, in QEMU's default PPM unless *format*.
+
+        Omitting *format* sends exactly the historic command, because every
+        existing caller reads the frame back with ``read_ppm``.  A QEMU that
+        cannot write the requested format (``png`` before 7.1, or without
+        libpng) refuses the command, which surfaces as ``WindowsGuiError``
+        like any other failed command.
+        """
+        arguments: dict[str, object] = {"filename": str(path)}
+        if format is not None:
+            if format not in SCREENDUMP_FORMATS:
+                raise WindowsGuiError("unsupported screendump format")
+            arguments["format"] = format
+        self.execute("screendump", arguments, timeout=timeout)
 
     def key(self, name: str, *, timeout: float | None = None) -> None:
         if name not in SAFE_KEYS:

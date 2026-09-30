@@ -89,6 +89,17 @@ HOST_NETWORK_WAIVER = {
         "egress ledger; waived for the loopback factory until gate 14"),
 }
 
+#: How a ``host_network_changes`` producer may state a counter was proven
+#: (``host_network_evidence.BASIS_SNAPSHOT``/``BASIS_PRIVILEGE``; a test pins
+#: the equality).  ``snapshot`` compares observations of host state and proves
+#: "nothing changed"; ``privilege`` proves only "the run could not change it",
+#: and the owner accepted it on 2026-09-30 for ``forwarding`` alone, for a run
+#: whose nft ruleset is unreadable.  A measurement without ``basis`` is read as
+#: a snapshot proof, which is all any producer emitted before.  Any other
+#: basis fails the check rather than being ignored.
+HOST_NETWORK_BASES = {"forwarding": ("snapshot", "privilege")}
+PRIVILEGE_BASIS = "privilege"
+
 RESULT = "result.json"
 # The read-only gate-4 audit receipt (homelab/vm/pxe_authority_audit.py) is a
 # permitted finalization artifact when a run embeds it beside its evidence.
@@ -279,16 +290,31 @@ def _check_host_network(m: dict) -> dict:
     non-zero or malformed ``unifi`` value, or any change or unproven slot in a
     provable counter, still fails; an absent measurement stays NOT-RUN,
     because a waiver never stands in for a measurement that was not taken.
+    An optional ``basis`` must be one :data:`HOST_NETWORK_BASES` allows; a
+    privilege basis for ``forwarding`` is named in the PASS or WAIVED detail.
     """
     changes = m.get("host_network_changes")
     if "host_network_changes" not in m:
         return _record(NOT_RUN, "host network change inventory not recorded")
     if not isinstance(changes, dict) or not set(HOST_NETWORK_CATEGORIES).issubset(changes):
         return _record(FAIL, "host network change inventory is incomplete")
+    basis = changes.get("basis", {})
+    if not isinstance(basis, dict) or any(
+            basis[name] not in HOST_NETWORK_BASES.get(name, ()) for name in basis):
+        return _record(
+            FAIL, "host network change inventory states an unrecognised proof basis")
+    # A privilege basis proves only that the run could not change forwarding,
+    # so the detail says so instead of claiming no forwarding change occurred.
+    by_privilege = basis.get("forwarding") == PRIVILEGE_BASIS
+    forwarding = ("; forwarding proven by privilege (the run could not change "
+                  "it), not by a ruleset snapshot" if by_privilege else "")
+    surfaces = "TAP/bridge/route/VLAN/" + ("" if by_privilege else "forwarding/")
+    unchanged = f"no {surfaces}listener change{forwarding}"
+    unchanged_all = f"no {surfaces}listener/UniFi change{forwarding}"
     offenders = sorted(
         name for name in HOST_NETWORK_CATEGORIES if not _is_zero_count(changes[name]))
     if not offenders:
-        return _record(PASS, "no TAP/bridge/route/VLAN/forwarding/listener/UniFi change")
+        return _record(PASS, unchanged_all)
     covered = HOST_NETWORK_WAIVER["covers"]
     provable = [name for name in offenders if name not in covered]
     unproven = [name for name in covered if changes[name] == UNPROVEN_COUNTER]
@@ -300,8 +326,8 @@ def _check_host_network(m: dict) -> dict:
             FAIL, f"host network change recorded or unproven: {', '.join(provable)}{note}")
     if unproven == offenders:
         return _waived(
-            "no TAP/bridge/route/VLAN/forwarding/listener change; the unprovable "
-            f"{', '.join(unproven)} counter is waived under {HOST_NETWORK_WAIVER['adr']}",
+            f"{unchanged}; the unprovable {', '.join(unproven)} counter is "
+            f"waived under {HOST_NETWORK_WAIVER['adr']}",
             HOST_NETWORK_WAIVER)
     return _record(
         FAIL, f"host network change recorded: {', '.join(offenders)} "

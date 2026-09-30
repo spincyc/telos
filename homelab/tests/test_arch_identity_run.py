@@ -322,6 +322,21 @@ class FakeSession:
         return list(self._stop_failures)
 
 
+def tiny_png() -> bytes:
+    """A real, minimal 1x1 RGB PNG: what QEMU's ``png`` screendump writes."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+            + chunk(b"IEND", b""))
+
+
 def make_bundle(root: Path, *, with_disk: bool = True,
                 authorization: dict | None = None,
                 with_windows: bool = True) -> ArchIdentityBundle:
@@ -1043,22 +1058,31 @@ class _FakeQmp:
     #: in ``_events`` and this lane never drained them, so a stalled boot's
     #: BLOCK_IO_ERROR or STOP was discarded.
     status = {"status": "paused", "running": False}
+    #: The bytes a ``png`` screendump writes (``None``: a real tiny PNG).  A
+    #: test swaps in an over-limit body to model an unexpectedly large frame.
+    png_body: bytes | None = None
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
         self.held: set[tuple[int, int]] = set()
         self.closed = False
         self.frames: list[Path] = []
+        self.screendumps: list[dict[str, object]] = []
         self._events = [{
             "event": "STOP",
             "timestamp": {"seconds": 1755100000, "microseconds": 1234},
             "data": {},
         }]
 
-    def screenshot(self, path):
+    def screenshot(self, path, *, format=None, timeout=None):
         self.calls.append(("screendump", str(path)))
+        self.screendumps.append({"format": format, "timeout": timeout})
         self.frames.append(Path(path))
-        Path(path).write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+        # QEMU's default is PPM; ``png`` is what the stall path asks for.
+        body = (
+            (type(self).png_body or tiny_png()) if format == "png"
+            else b"P6\n1 1\n255\n\x00\x00\x00")
+        Path(path).write_bytes(body)
 
     def execute(self, command, arguments=None, **_kw):
         self.calls.append((command, arguments))
@@ -1396,6 +1420,7 @@ class BoundaryWiringTests(unittest.TestCase):
         _FakeSerial.menu_stall_message = (
             "timed out waiting for arch-menu-rendered")
         _FakeQmp.status = {"status": "paused", "running": False}
+        _FakeQmp.png_body = None
         _FakeDisposableDisk.instances = []
         self._patches = [
             mock.patch(
@@ -1850,12 +1875,29 @@ class BoundaryWiringTests(unittest.TestCase):
                 self.assertEqual(
                     [item["event"] for item in record["qmp_events"]], ["STOP"])
                 # A frame: -device VGA was added for exactly this and
-                # screendump had never been called from this module.
-                frame = (
-                    boundary.bundle.evidence_path.parent / record["frame"])
+                # screendump had never been called from this module.  It is
+                # asked for as PNG, bounded like every screendump here: a PPM
+                # of this display is over the evidence limit by itself.
+                self.assertEqual(
+                    boundary.qmp.screendumps,
+                    [{"format": "png",
+                      "timeout": arch_identity_run.STALL_QMP_TIMEOUT}])
+                self.assertEqual(record["frame"], "workstation-stall-1.png")
+                self.assertNotIn("frame_error", record)
+                evidence = boundary.bundle.evidence_path.parent
+                frame = evidence / record["frame"]
                 self.assertTrue(frame.is_file())
                 self.assertEqual(frame.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(record["frame_bytes"], frame.stat().st_size)
+                self.assertTrue(frame.read_bytes().startswith(b"\x89PNG"))
+                # The retained frame is exactly what gate 12's check 15 scans
+                # (a top-level evidence file), and it passes that scan.
+                from homelab.vm import artifact_scan
+                result = artifact_scan.scan_paths(evidence, [record["frame"]])
+                self.assertEqual(
+                    result.counters,
+                    dict.fromkeys(artifact_scan.CATEGORIES, 0),
+                    result.findings)
             finally:
                 failures = boundary.stop()
             self.assertEqual(failures, [])
@@ -1898,6 +1940,79 @@ class BoundaryWiringTests(unittest.TestCase):
                 self.assertTrue(
                     (boundary.bundle.evidence_path.parent
                      / item["frame"]).is_file())
+
+    def test_a_stall_frame_over_the_evidence_limit_is_not_retained(self):
+        # Gate 12's check 15 fails a run whose retained top-level evidence
+        # holds any file over the evidence limit, and a failed check 15 costs
+        # a whole twice-through run.  An unexpectedly large frame is deleted
+        # and named, never kept -- and never moved somewhere the scan skips.
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+        self.assertEqual(
+            arch_identity_run.STALL_FRAME_MAX_BYTES, EVIDENCE_LIMIT)
+        _FakeQmp.png_body = b"\x89PNG\r\n\x1a\n" + b"\x00" * EVIDENCE_LIMIT
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            _FakeSerial.menu_stalls = 1
+            boundary.start()
+            try:
+                record = boundary._boot_facts["boot_stall_evidence"][0]
+                self.assertIsNone(record["frame"])
+                self.assertNotIn("frame_bytes", record)
+                self.assertEqual(
+                    record["frame_error"], "frame exceeded its size bound")
+                evidence = boundary.bundle.evidence_path.parent
+                self.assertEqual(
+                    [path.name for path in evidence.rglob("*stall*")], [])
+                # The rest of the diagnosis is still kept.
+                self.assertEqual(record["status"], "paused")
+                self.assertEqual(boundary._boot_facts["boot_stalls"], 1)
+            finally:
+                failures = boundary.stop()
+            self.assertEqual(failures, [])
+
+    def test_firmware_log_is_bounded_to_the_evidence_limit_as_a_tail(self):
+        # A debug-DebugLib OVMF can write megabytes; the retained log is
+        # top-level evidence, so it is bounded to the limit check 15 applies.
+        # The tail is kept (a stall is where the log stops) and line-aligned,
+        # and the original size is recorded so the truncation is visible.
+        from homelab.vm import artifact_scan
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+        self.assertEqual(
+            arch_identity_run.FIRMWARE_LOG_RETENTION_BYTES, EVIDENCE_LIMIT)
+        tail = b"".join(
+            b"DXE driver %04d dispatched\n" % index for index in range(64)
+        ) + b"BdsDxe: loading Boot0007\n"
+        wide = "é" * 600_000  # one line of two-byte UTF-8 characters
+        for pad in ("", "x"):
+            body = (b"SecCoreStartupWithStack\n"
+                    + (wide + pad).encode("utf-8") + b"\n" + tail)
+            if 0x80 <= body[len(body) - EVIDENCE_LIMIT] <= 0xBF:
+                break
+        # Precondition: a naive byte tail starts mid-character and does not
+        # decode, which ``artifact_scan`` counts as an uninspectable binary.
+        with self.assertRaises(UnicodeDecodeError):
+            body[-EVIDENCE_LIMIT:].decode("utf-8")
+        with tempfile.TemporaryDirectory() as name:
+            boundary = self._boundary(Path(name))
+            boundary.start()
+            evidence = boundary.bundle.evidence_path.parent
+            log = evidence / "workstation-firmware.log"
+            log.write_bytes(body)
+            failures = boundary.stop()
+            self.assertEqual(failures, [])
+            retained = log.read_bytes()
+            self.assertEqual(retained, tail)
+            self.assertLessEqual(len(retained), EVIDENCE_LIMIT)
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            recorded = json.loads(
+                (evidence / BOOT_FACTS_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(recorded["firmware_debug_log_bytes"], len(body))
+            self.assertEqual(
+                recorded["firmware_debug_log_retained_bytes"], len(tail))
+            result = artifact_scan.scan_paths(evidence, [log.name])
+            self.assertEqual(
+                result.counters, dict.fromkeys(artifact_scan.CATEGORIES, 0),
+                result.findings)
 
     def test_boot_facts_carry_timing_digests_and_the_switch_log(self):
         # Every timing in the 2026-08-14 investigation was reconstructed from
@@ -1942,6 +2057,7 @@ class BoundaryWiringTests(unittest.TestCase):
             self.assertTrue(log.is_file())
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
             self.assertEqual(recorded["firmware_debug_log_bytes"], 0)
+            self.assertEqual(recorded["firmware_debug_log_retained_bytes"], 0)
             # The fabric switch log survived the tempdir.
             switch = evidence / "workstation-switch.jsonl"
             self.assertEqual(
@@ -1982,6 +2098,119 @@ OPERATOR_SHELL = (
     b"[operator@telos-ws1 ~]$ ")
 LOGIN_INCORRECT = b"\nLogin incorrect\n"
 TEST_CREDENTIAL = b"T7a" + b"c0ffee" * 5 + b"aa"
+
+
+class StallFrameCaptureTests(unittest.TestCase):
+    """A stall frame is a bounded PNG or nothing: never a file check 15 fails.
+
+    Gate 12's check 15 scans every retained top-level evidence file for size
+    (the evidence limit) and benign type, so anything written but not
+    retained must be gone when the capture returns.
+    """
+
+    class _Qmp:
+        def __init__(self, body=None, error=None):
+            self.body = body
+            self.error = error
+            self.requests: list[tuple[object, object]] = []
+
+        def screenshot(self, path, *, format=None, timeout=None):
+            self.requests.append((format, timeout))
+            if self.body is not None:
+                Path(path).write_bytes(self.body)
+            if self.error is not None:
+                raise self.error
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.evidence = Path(scratch.name)
+        self.frame = self.evidence / "workstation-stall-1.png"
+
+    def capture(self, qmp):
+        return ArchIdentityBoundary._capture_stall_frame(qmp, self.frame)
+
+    def left(self):
+        return sorted(path.name for path in self.evidence.iterdir())
+
+    def test_a_png_within_the_limit_is_retained_private_and_scans_clean(self):
+        from homelab.vm import artifact_scan
+
+        qmp = self._Qmp(tiny_png())
+        fields = self.capture(qmp)
+        self.assertEqual(
+            qmp.requests, [("png", arch_identity_run.STALL_QMP_TIMEOUT)])
+        self.assertEqual(
+            fields, {"frame": self.frame.name,
+                     "frame_bytes": len(tiny_png())})
+        self.assertEqual(self.frame.stat().st_mode & 0o777, 0o600)
+        result = artifact_scan.scan_paths(self.evidence, [self.frame.name])
+        self.assertEqual(
+            result.counters, dict.fromkeys(artifact_scan.CATEGORIES, 0),
+            result.findings)
+
+    def test_an_over_limit_png_is_removed_and_named(self):
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+
+        fields = self.capture(self._Qmp(
+            b"\x89PNG\r\n\x1a\n" + b"\x00" * EVIDENCE_LIMIT))
+        self.assertEqual(
+            fields, {"frame_error": "frame exceeded its size bound"})
+        self.assertEqual(self.left(), [])
+
+    def test_a_png_exactly_at_the_limit_is_retained(self):
+        from homelab.vm.factory_verify import EVIDENCE_LIMIT
+
+        body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (EVIDENCE_LIMIT - 8)
+        fields = self.capture(self._Qmp(body))
+        self.assertEqual(fields["frame_bytes"], EVIDENCE_LIMIT)
+        self.assertEqual(self.left(), [self.frame.name])
+
+    def test_a_qemu_that_refuses_png_retains_nothing(self):
+        from homelab.vm.windows_gui import WindowsGuiError
+
+        # QEMU before 7.1 rejects the argument; 7.1+ without libpng rejects
+        # the value.  Both surface through QmpClient.execute as one message.
+        for desc in ("Parameter 'format' is unexpected",
+                     "Enable PNG support with libpng for screendump"):
+            with self.subTest(desc=desc):
+                error = WindowsGuiError(
+                    "QMP screendump failed: "
+                    f"{{'class': 'GenericError', 'desc': {desc!r}}}")
+                fields = self.capture(self._Qmp(b"\x89PNG", error))
+                self.assertEqual(fields, {"frame_error": "png unsupported"})
+                self.assertEqual(self.left(), [])
+
+    def test_a_ppm_written_despite_the_png_request_is_not_retained(self):
+        # A 1024x768 PPM is ~2.3 MB, over the limit by itself; either way it
+        # is not what was asked for, and it is diagnosed as such.
+        for body in (b"P6\n1 1\n255\n\x00\x00\x00",
+                     b"P6\n1024 768\n255\n" + b"\x00" * (1024 * 768 * 3)):
+            with self.subTest(size=len(body)):
+                fields = self.capture(self._Qmp(body))
+                self.assertEqual(fields, {"frame_error": "png unsupported"})
+                self.assertEqual(self.left(), [])
+
+    def test_other_capture_failures_are_named_and_leave_nothing(self):
+        from homelab.vm.windows_gui import WindowsGuiError
+
+        fields = self.capture(self._Qmp(
+            b"\x89PNG", WindowsGuiError("QMP command timed out")))
+        self.assertEqual(fields, {"frame_error": "WindowsGuiError"})
+        self.assertEqual(self.left(), [])
+        fields = self.capture(self._Qmp())
+        self.assertEqual(fields, {"frame_error": "no frame written"})
+        self.assertEqual(self.left(), [])
+
+    def test_a_planted_symlink_is_never_what_is_retained(self):
+        with tempfile.TemporaryDirectory() as other:
+            target = Path(other) / "elsewhere.png"
+            target.write_bytes(tiny_png())
+            self.frame.symlink_to(target)
+            fields = self.capture(self._Qmp())
+            self.assertEqual(fields, {"frame_error": "OSError"})
+            self.assertEqual(self.left(), [])
+            self.assertEqual(target.read_bytes(), tiny_png())
 
 
 class SerialTranscriptCase(unittest.TestCase):

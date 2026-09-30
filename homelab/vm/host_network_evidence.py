@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 try:
     from .secure_artifacts import atomic_write_text
@@ -66,11 +67,132 @@ def _run(command: Sequence[str]) -> Observation:
         return Observation(tuple(command), 127, "", str(error))
 
 
-def capture() -> dict[str, object]:
-    """Return complete, machine-readable evidence without changing the host."""
+# ---------------------------------------------------------------------------
+# The forwarding counter's privilege basis (owner decision 2026-09-30)
+# ---------------------------------------------------------------------------
+#
+# ``nft -j --stateless list ruleset`` needs CAP_NET_ADMIN.  The factory runs
+# unprivileged, so it exits 1 "Operation not permitted" and no snapshot pair
+# can prove the ``forwarding`` counter.  When the ruleset cannot be read the
+# counter may instead be proven by PRIVILEGE: not "the host's forwarding state
+# did not change" -- an unreadable ruleset cannot show that -- but "this run
+# could not have changed it".  Three facts, read into every snapshot (so at
+# run start and again at run end), carry that proof:
+#
+# 1. ``NoNewPrivs: 1`` in ``/proc/self/status``.  The repeat driver sets
+#    PR_SET_NO_NEW_PRIVS on itself before it spawns anything; the flag is
+#    inherited across fork and execve and can never be cleared.  With it set,
+#    execve honours neither setuid/setgid bits nor file capabilities -- sudo
+#    runs as the invoking user and refuses -- so no descendant can gain a
+#    privilege the driver lacks.
+# 2. CAP_NET_ADMIN (bit 12) and CAP_SYS_ADMIN (bit 21) absent from CapEff,
+#    CapPrm and CapAmb, and no uid 0.  Changing the host's ruleset or a
+#    forwarding sysctl needs CAP_NET_ADMIN in the host network namespace's
+#    owning (initial) user namespace, or for a sysctl euid 0 (below);
+#    CAP_SYS_ADMIN, the catch-all administrative capability, is
+#    refused as well so no indirect route is left open.  Effective and ambient
+#    are always subsets of permitted, and under NoNewPrivs the kernel clamps
+#    any post-execve permitted set to the pre-execve one, so neither bit can
+#    reappear anywhere in the process tree.  The bounding set (CapBnd,
+#    typically full) is therefore irrelevant: it only limits what an execve
+#    may ADD from file capabilities or the inheritable set, and NoNewPrivs
+#    already forbids every addition.  CapInh is irrelevant for the same
+#    reason.  No ``Uid`` value (real, effective, saved, filesystem) may be 0
+#    either: the kernel lets euid 0 write a root-owned sysctl through its
+#    owner permission bits with no capability at all, and an unprivileged
+#    process may switch its euid to its real or saved uid, so all four are
+#    required non-zero.
+# 3. The world-readable forwarding sysctls (:data:`FORWARDING_SYSCTLS`) are
+#    equal at start and end -- the direct effect of a forwarding change,
+#    observed rather than assumed.  A differing value is counted as a
+#    forwarding change whatever the privilege facts say.
+#
+# A user namespace does not escape this.  An unprivileged descendant may create
+# one (and a network namespace inside it) and hold every capability there, but
+# those capabilities reach only namespaces that user namespace owns.  The
+# host's network namespace -- its ruleset and its forwarding sysctls -- is
+# owned by the initial user namespace, where the process tree holds neither
+# bit; a private netns it builds is not the host's and dies with it.
+#
+# What the privilege basis does NOT cover, so no receipt overclaims: a
+# privileged service asked over IPC (NetworkManager, firewalld, libvirt via
+# polkit) acts with its own privilege, not the run's.  The sysctl comparison
+# still catches the forwarding switch such a service would flip, but a
+# ruleset-only change made that way is outside this proof.  That is why the
+# measurement always states its basis: ``snapshot`` proves "nothing changed",
+# ``privilege`` proves only "the run changed nothing".
+
+PROC_STATUS = "/proc/self/status"
+FORWARDING_SYSCTLS: tuple[str, ...] = (
+    "/proc/sys/net/ipv4/ip_forward",
+    "/proc/sys/net/ipv6/conf/all/forwarding",
+    "/proc/sys/net/ipv6/conf/default/forwarding",
+)
+#: ``linux/capability.h`` bit numbers the privilege basis requires absent.
+FORBIDDEN_CAPABILITIES: dict[str, int] = {
+    "CAP_NET_ADMIN": 12, "CAP_SYS_ADMIN": 21}
+#: The capability sets that must lack them; CapBnd and CapInh are deliberately
+#: not among them (see the block comment above).
+CAPABILITY_SETS: tuple[str, ...] = ("CapEff", "CapPrm", "CapAmb")
+PRIVILEGE_FIELDS: tuple[str, ...] = ("NoNewPrivs", "Uid", *CAPABILITY_SETS)
+PRIVILEGE_SCHEMA = 1
+
+#: How the ``forwarding`` counter was proven; ``factory_verify`` mirrors these.
+BASIS_SNAPSHOT = "snapshot"
+BASIS_PRIVILEGE = "privilege"
+
+_CAPABILITY_MASK = re.compile(r"\A[0-9a-fA-F]{1,16}\Z")
+_SYSCTL_VALUE = re.compile(r"\A-?[0-9]+\Z")
+_UID = re.compile(r"\A[0-9]+\Z")
+
+
+def _read_text(path: str) -> str | None:
+    """A file's text, or ``None`` when it cannot be read."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def privilege_facts(
+    read: Callable[[str], str | None] = _read_text,
+) -> dict[str, object]:
+    """Record -- never judge -- what the forwarding privilege basis reads.
+
+    ``read`` maps a path to its text or ``None``.  The default reads this
+    process's own ``/proc/self/status`` in-process, so "self" is the process
+    whose privilege is in question rather than a helper it spawned.  Values are
+    kept as the kernel printed them, stripped; :func:`classify` judges them.  A
+    field that is absent, unreadable or listed twice is recorded as ``None``.
+    """
+    status = read(PROC_STATUS)
+    fields: dict[str, str | None] = {name: None for name in PRIVILEGE_FIELDS}
+    counts: dict[str, int] = {}
+    for line in (status or "").splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name in fields:
+            counts[name] = counts.get(name, 0) + 1
+            fields[name] = value.strip() if counts[name] == 1 else None
+    sysctls: dict[str, str | None] = {}
+    for path in FORWARDING_SYSCTLS:
+        text = read(path)
+        sysctls[path] = None if text is None else text.strip()
+    return {"schema": PRIVILEGE_SCHEMA, "status": fields, "sysctls": sysctls}
+
+
+def capture(
+    *, read: Callable[[str], str | None] = _read_text,
+) -> dict[str, object]:
+    """Return complete, machine-readable evidence without changing the host.
+
+    ``privilege`` records the facts the ``forwarding`` counter's privilege
+    basis reads; ``read`` is injectable so a test never reads the host.
+    """
     return {
         "schema": 1,
         "captured_at": datetime.now(timezone.utc).isoformat(),
+        "privilege": privilege_facts(read),
         "observations": [asdict(_run(command)) for command in COMMANDS],
     }
 
@@ -305,7 +427,10 @@ def compare_cycle(
 #   PASS     all seven are present and are the integer zero
 #
 # So a category this module cannot prove must never reach that mapping as a
-# zero.  Two honest renderings exist and both are supported here:
+# zero.  The mapping also carries ``basis``, which says how ``forwarding`` was
+# proven (``snapshot`` or ``privilege``, see above); check 9 names a privilege
+# basis in its detail so a receipt cannot read it as "nothing changed".  Two
+# honest renderings exist and both are supported here:
 #
 #   * :func:`change_counters` raises :class:`UnprovenCategory` rather than
 #     return a fabricated zero.  A producer that catches it and omits the
@@ -644,6 +769,112 @@ def _unifi_counter(observation: object) -> tuple[int | None, str | None]:
     return contacts, None
 
 
+def _command_of(item: object) -> tuple[str, ...] | None:
+    raw = item.get("command") if isinstance(item, dict) else None
+    if not isinstance(raw, (list, tuple)) or \
+            not all(isinstance(part, str) for part in raw):
+        return None
+    return tuple(raw)
+
+
+def _ruleset_unreadable(evidence: object) -> bool:
+    """The snapshot ran ``nft`` exactly once, well formed, and it failed.
+
+    Only this -- the ruleset could not be READ -- opens the privilege basis.
+    A snapshot that is malformed, or never ran ``nft``, or ran it twice, is not
+    an unreadable ruleset; it is unusable evidence and stays unproven.
+    """
+    if not isinstance(evidence, dict) or evidence.get("schema") != 1:
+        return False
+    items = evidence.get("observations")
+    if not isinstance(items, list):
+        return False
+    matches = [item for item in items if _command_of(item) == NFT_COMMAND]
+    if len(matches) != 1:
+        return False
+    item = matches[0]
+    returncode = item.get("returncode")
+    return (_is_count(returncode, minimum=1)
+            and isinstance(item.get("stdout"), str)
+            and isinstance(item.get("stderr"), str))
+
+
+def _privilege_record(evidence: object) -> dict | None:
+    facts = evidence.get("privilege") if isinstance(evidence, dict) else None
+    if not isinstance(facts, dict) or facts.get("schema") != PRIVILEGE_SCHEMA:
+        return None
+    return facts
+
+
+def _privilege_problem(evidence: object) -> str | None:
+    """Why one snapshot does not show an unprivileged, NoNewPrivs process."""
+    facts = _privilege_record(evidence)
+    status = facts.get("status") if facts is not None else None
+    if not isinstance(status, dict):
+        return "no privilege facts were recorded"
+    if status.get("NoNewPrivs") != "1":
+        return "NoNewPrivs was not recorded as 1"
+    uids = status.get("Uid")
+    uids = uids.split() if isinstance(uids, str) else []
+    if len(uids) != 4 or not all(_UID.match(uid) for uid in uids):
+        return "Uid was not recorded"
+    if any(int(uid) == 0 for uid in uids):
+        return "Uid holds 0, which may write the forwarding sysctls"
+    for name in CAPABILITY_SETS:
+        mask = status.get(name)
+        if not isinstance(mask, str) or not _CAPABILITY_MASK.match(mask):
+            return f"{name} was not recorded"
+        held = sorted(
+            capability
+            for capability, bit in FORBIDDEN_CAPABILITIES.items()
+            if int(mask, 16) >> bit & 1)
+        if held:
+            return f"{name} holds {', '.join(held)}"
+    return None
+
+
+def _sysctl_changes(snapshots: Sequence[object]) -> int | None:
+    """How many forwarding sysctls differ across the cycle, or ``None``.
+
+    ``None`` unless every snapshot recorded every sysctl as an integer.
+    """
+    values = []
+    for evidence in snapshots:
+        facts = _privilege_record(evidence)
+        sysctls = facts.get("sysctls") if facts is not None else None
+        if not isinstance(sysctls, dict):
+            return None
+        recorded = {path: sysctls.get(path) for path in FORWARDING_SYSCTLS}
+        if not all(isinstance(value, str) and _SYSCTL_VALUE.match(value)
+                   for value in recorded.values()):
+            return None
+        values.append(recorded)
+    return sum(1 for path in FORWARDING_SYSCTLS
+               if len({recorded[path] for recorded in values}) > 1)
+
+
+def _forwarding_privilege_reason(
+    snapshots: Sequence[object], labels: Sequence[str],
+    sysctl_changes: int | None,
+) -> str | None:
+    """Why the privilege basis cannot prove ``forwarding``, or ``None``.
+
+    A counted sysctl change needs no privilege proof: it is a positive
+    observation of a forwarding change, and is counted as one.
+    """
+    if sysctl_changes is None:
+        return ("the nft ruleset was unreadable and the forwarding sysctls "
+                "were not recorded in every snapshot")
+    if sysctl_changes:
+        return None
+    for label, evidence in zip(labels, snapshots):
+        problem = _privilege_problem(evidence)
+        if problem is not None:
+            return (f"the nft ruleset was unreadable and the {label} snapshot "
+                    f"does not prove the run unprivileged: {problem}")
+    return None
+
+
 def classify(
     before: dict[str, object],
     after: dict[str, object],
@@ -683,10 +914,28 @@ def classify(
     ``proven`` is True only when every counter is an integer.  Nothing in the
     report identifies a host: counts, category names, and the observation
     command names only.
+
+    FORWARDING BASIS.  ``basis["forwarding"]`` says how that counter was
+    proven.  ``snapshot`` -- the ruleset was readable in every snapshot, and
+    its differences are counted as above.  ``privilege`` -- ``nft`` ran and
+    failed in at least one snapshot, so the counter is proven only if every
+    snapshot records NoNewPrivs 1, no uid 0, and no CAP_NET_ADMIN or
+    CAP_SYS_ADMIN in CapEff, CapPrm or CapAmb, and the forwarding sysctls are
+    equal throughout (see the privilege-basis comment above).  Any fact
+    missing, unreadable or wrong leaves it UNPROVEN.  Under either basis a forwarding sysctl recorded
+    in every snapshot that differs is counted as a forwarding change, and the
+    ``ip netns list`` observation must still be usable and stable.
     """
     snapshots = [before] if during is None else [before, during]
     snapshots.append(after)
+    labels = ["before"] if during is None else ["before", "during"]
+    labels.append("after")
     maps = [_observation_map(snapshot) for snapshot in snapshots]
+    # The privilege basis replaces the ruleset comparison only when the
+    # ruleset could not be read; a readable ruleset is always compared.
+    by_privilege = any(entry[NFT_COMMAND] is None for entry in maps) and all(
+        entry[NFT_COMMAND] is not None or _ruleset_unreadable(snapshot)
+        for entry, snapshot in zip(maps, snapshots))
 
     counters: dict[str, object] = {name: 0 for name in CATEGORIES}
     reasons: dict[str, str] = {}
@@ -698,6 +947,9 @@ def classify(
     parsed: dict[tuple[str, ...], list[dict] | None] = {}
     for command in COMMANDS:
         if command == SOCKET_COMMAND:
+            continue
+        if command == NFT_COMMAND and by_privilege:
+            parsed[command] = None
             continue
         sources = _CATEGORY_SOURCES[command]
         if any(entry[command] is None for entry in maps):
@@ -735,6 +987,15 @@ def classify(
                 continue
             counters[category] = counters[category] + 1
 
+    sysctl_changes = _sysctl_changes(snapshots)
+    if by_privilege:
+        reason = _forwarding_privilege_reason(
+            snapshots, labels, sysctl_changes)
+        if reason is not None:
+            unprove(("forwarding",), reason)
+    if sysctl_changes:
+        counters["forwarding"] = counters["forwarding"] + sysctl_changes
+
     if any(entry[SOCKET_COMMAND] is None for entry in maps):
         unprove(("listener",),
                 "no usable observation from: " + " ".join(SOCKET_COMMAND))
@@ -764,6 +1025,8 @@ def classify(
         "reasons": dict(sorted(reasons.items())),
         "proven": not reasons,
         "snapshots": len(maps),
+        "basis": {
+            "forwarding": BASIS_PRIVILEGE if by_privilege else BASIS_SNAPSHOT},
     }
 
 
@@ -774,22 +1037,25 @@ def change_counters(
     during: dict[str, object] | None = None,
     allowed_ports: frozenset[int] = frozenset(),
     unifi: dict[str, object] | None = None,
-) -> dict[str, int]:
+) -> dict[str, object]:
     """The gate-12 ``host_network_changes`` measurement, or nothing at all.
 
     Same arguments and same attribution rule as :func:`classify`, of which
-    this is the fail-closed form: it returns the seven counters as integers
-    only when every one of them is proven, and raises
-    :class:`UnprovenCategory` otherwise.  It never returns a zero it cannot
-    support, so a producer may put the result straight into
-    ``measurements["host_network_changes"]``.  Catching the exception and
-    omitting that key leaves gate-12 check 9 at NOT-RUN; emitting
-    ``classify(...)["counters"]`` instead renders it FAIL, or WAIVED under
-    ADR 0080 when ``unifi`` is the only unproven counter.  Neither can
-    render PASS.
+    this is the fail-closed form: it returns the seven counters as integers,
+    plus the ``basis`` mapping that says how ``forwarding`` was proven, only
+    when every counter is proven, and raises :class:`UnprovenCategory`
+    otherwise.  It never returns a zero it cannot support, so a producer may
+    put the result straight into ``measurements["host_network_changes"]``.
+    Catching the exception and omitting that key leaves gate-12 check 9 at
+    NOT-RUN; emitting ``classify(...)["counters"]`` (with its ``basis``)
+    instead renders it FAIL, or WAIVED under ADR 0080 when ``unifi`` is the
+    only unproven counter.  Neither can render PASS.
     """
     report = classify(
         before, after, during=during, allowed_ports=allowed_ports, unifi=unifi)
     if not report["proven"]:
         raise UnprovenCategory(report["reasons"])
-    return {name: int(value) for name, value in report["counters"].items()}
+    measurement: dict[str, object] = {
+        name: int(value) for name, value in report["counters"].items()}
+    measurement["basis"] = dict(report["basis"])
+    return measurement

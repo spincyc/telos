@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -301,6 +302,11 @@ def links(*extra) -> str:
     return json.dumps(BASE_LINKS + list(extra))
 
 
+#: What ``change_counters`` returns for an unchanged host proven by snapshots.
+ZERO = dict({name: 0 for name in evidence.CATEGORIES},
+            basis={"forwarding": evidence.BASIS_SNAPSHOT})
+
+
 class ChangeCounterTests(unittest.TestCase):
     def counters(self, before, after, **kwargs):
         kwargs.setdefault("unifi", UNIFI)
@@ -308,12 +314,11 @@ class ChangeCounterTests(unittest.TestCase):
 
     def test_identical_snapshots_yield_all_zero_counters(self):
         counters = self.counters(snapshot(), snapshot())
-        self.assertEqual(
-            counters, {name: 0 for name in evidence.CATEGORIES})
+        self.assertEqual(counters, ZERO)
         self.assertEqual(
             sorted(counters),
             sorted(["tap", "bridge", "route", "vlan", "forwarding",
-                    "listener", "unifi"]))
+                    "listener", "unifi", "basis"]))
 
     def test_a_created_tap_is_counted(self):
         counters = self.counters(snapshot(), snapshot(link=links(TAP)))
@@ -393,7 +398,7 @@ class AttributionRuleTests(unittest.TestCase):
         counters = evidence.change_counters(
             snapshot(**busy), snapshot(**busy),
             during=snapshot(**busy), unifi=UNIFI)
-        self.assertEqual(counters, {name: 0 for name in evidence.CATEGORIES})
+        self.assertEqual(counters, ZERO)
 
     def test_an_object_created_and_torn_down_inside_the_run_is_counted(self):
         counters = evidence.change_counters(
@@ -447,7 +452,7 @@ class AttributionRuleTests(unittest.TestCase):
                            "preferred_life_time": 41}]}])
         counters = evidence.change_counters(
             snapshot(), snapshot(address=renewed), unifi=UNIFI)
-        self.assertEqual(counters, {name: 0 for name in evidence.CATEGORIES})
+        self.assertEqual(counters, ZERO)
 
 
 class FailClosedTests(unittest.TestCase):
@@ -616,6 +621,341 @@ class UnifiObservationTests(unittest.TestCase):
                     evidence.unifi_no_contact(**arguments)
 
 
+# ---------------------------------------------------------------------------
+# The forwarding counter's privilege basis
+# ---------------------------------------------------------------------------
+#
+# Every fact below comes from an injected reader.  Nothing reads this host's
+# /proc: a test that did would pass or fail with the shell it ran in.
+
+#: ``/proc/self/status`` of an unprivileged, NoNewPrivs process, as the
+#: kernel prints it.  CapBnd is full and CapInh is set on purpose: neither is
+#: part of the proof, and a test pins that they are ignored.
+STATUS_FIELDS = {
+    "Name": "fixture-driver",
+    "Uid": "1000\t1000\t1000\t1000",
+    "Gid": "1000\t1000\t1000\t1000",
+    "CapInh": "0000000000000000",
+    "CapPrm": "0000000000000000",
+    "CapEff": "0000000000000000",
+    "CapBnd": "000001ffffffffff",
+    "CapAmb": "0000000000000000",
+    "NoNewPrivs": "1",
+    "Seccomp": "0",
+}
+SYSCTLS = {path: "0" for path in evidence.FORWARDING_SYSCTLS}
+IP_FORWARD = evidence.FORWARDING_SYSCTLS[0]
+
+#: What an unprivileged ``nft -j --stateless list ruleset`` prints.
+UNREADABLE_RULESET = {
+    "returncode": 1, "stdout": "",
+    "stderr": "netlink: Error: cache initialization failed: Operation not "
+              "permitted\nError: Operation not permitted (perhaps you must "
+              "be root?)"}
+
+NET_ADMIN = f"{1 << 12:016x}"
+SYS_ADMIN = f"{1 << 21:016x}"
+FULL = "000001ffffffffff"
+
+
+def host_files(status=None, sysctls=None, *, unreadable=()):
+    """A fake reader over a fabricated /proc; ``None`` drops a status line."""
+    fields = dict(STATUS_FIELDS, **(status or {}))
+    files = {evidence.PROC_STATUS: "".join(
+        f"{name}:\t{value}\n" for name, value in fields.items()
+        if value is not None)}
+    for path, value in dict(SYSCTLS, **(sysctls or {})).items():
+        files[path] = value + "\n"
+    for path in unreadable:
+        files.pop(path, None)
+    return files.get
+
+
+def unprivileged(status=None, sysctls=None, *, unreadable=(),
+                 nft=UNREADABLE_RULESET, **overrides):
+    """A capture by the unprivileged, NoNewPrivs factory: nft unreadable."""
+    captured = snapshot(nft=nft, **overrides)
+    captured["privilege"] = evidence.privilege_facts(
+        host_files(status, sysctls, unreadable=unreadable))
+    return captured
+
+
+class PrivilegeFactsTests(unittest.TestCase):
+    """What ``capture`` records: raw kernel text, judged only later."""
+
+    def test_the_facts_are_read_through_the_injected_reader(self):
+        facts = evidence.privilege_facts(host_files())
+        self.assertEqual(evidence.PRIVILEGE_SCHEMA, facts["schema"])
+        self.assertEqual(
+            {"NoNewPrivs": "1", "Uid": "1000\t1000\t1000\t1000",
+             "CapEff": "0" * 16, "CapPrm": "0" * 16, "CapAmb": "0" * 16},
+            facts["status"])
+        self.assertEqual(SYSCTLS, facts["sysctls"])
+        # The sets the proof deliberately ignores are not even recorded.
+        self.assertNotIn("CapBnd", facts["status"])
+        self.assertNotIn("CapInh", facts["status"])
+
+    def test_the_default_reader_is_this_processs_own_status(self):
+        self.assertEqual("/proc/self/status", evidence.PROC_STATUS)
+        self.assertEqual(
+            ("/proc/sys/net/ipv4/ip_forward",
+             "/proc/sys/net/ipv6/conf/all/forwarding",
+             "/proc/sys/net/ipv6/conf/default/forwarding"),
+            evidence.FORWARDING_SYSCTLS)
+        self.assertEqual({"CAP_NET_ADMIN": 12, "CAP_SYS_ADMIN": 21},
+                         evidence.FORBIDDEN_CAPABILITIES)
+
+    def test_an_unreadable_status_records_no_fact(self):
+        facts = evidence.privilege_facts(
+            host_files(unreadable=(evidence.PROC_STATUS,)))
+        self.assertEqual(
+            {name: None for name in evidence.PRIVILEGE_FIELDS},
+            facts["status"])
+        self.assertEqual(SYSCTLS, facts["sysctls"])
+
+    def test_an_unreadable_sysctl_is_recorded_as_none(self):
+        facts = evidence.privilege_facts(host_files(unreadable=(IP_FORWARD,)))
+        self.assertIsNone(facts["sysctls"][IP_FORWARD])
+
+    def test_a_repeated_status_field_is_not_trusted(self):
+        text = host_files()(evidence.PROC_STATUS) + "NoNewPrivs:\t1\n"
+        facts = evidence.privilege_facts(
+            lambda path: text if path == evidence.PROC_STATUS else "0\n")
+        self.assertIsNone(facts["status"]["NoNewPrivs"])
+
+    def test_the_default_reader_returns_none_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertIsNone(
+                evidence._read_text(str(Path(temporary) / "absent")))
+
+    def test_capture_records_the_facts_beside_the_observations(self):
+        def run(command):
+            return evidence.Observation(tuple(command), 0, "", "")
+
+        with mock.patch.object(evidence, "_run", side_effect=run):
+            captured = evidence.capture(read=host_files())
+            again = evidence.capture(read=host_files())
+        self.assertEqual(evidence.privilege_facts(host_files()),
+                         captured["privilege"])
+        self.assertEqual(len(evidence.COMMANDS),
+                         len(captured["observations"]))
+        # The extra key is invisible to the simulation's own comparison.
+        self.assertEqual([], evidence.compare(captured, again))
+
+
+class ForwardingPrivilegeBasisTests(unittest.TestCase):
+    """An unreadable ruleset proves forwarding only by privilege, or not."""
+
+    def classify(self, before, after, **kwargs):
+        return evidence.classify(before, after, **kwargs)
+
+    def assertForwardingUnproven(self, before, after, *fragments,
+                                 only=True, **kwargs):
+        report = self.classify(before, after, **kwargs)
+        self.assertEqual(evidence.UNPROVEN, report["counters"]["forwarding"],
+                         report)
+        self.assertIn("forwarding", report["unproven"])
+        if only:
+            self.assertEqual(["forwarding", "unifi"], report["unproven"])
+        for fragment in fragments:
+            self.assertIn(fragment, report["reasons"]["forwarding"])
+        with self.assertRaises(evidence.UnprovenCategory) as raised:
+            evidence.change_counters(before, after, unifi=UNIFI, **kwargs)
+        self.assertIn("forwarding", raised.exception.reasons)
+        return report
+
+    def test_privilege_proves_forwarding_zero_with_an_unreadable_ruleset(self):
+        report = self.classify(unprivileged(), unprivileged())
+        self.assertEqual(0, report["counters"]["forwarding"])
+        self.assertEqual({"forwarding": evidence.BASIS_PRIVILEGE},
+                         report["basis"])
+        # Six proven zeros; only the counter ADR 0080 waives is unproven.
+        self.assertEqual(["unifi"], report["unproven"])
+        for name in ("tap", "bridge", "route", "vlan", "listener"):
+            self.assertEqual(0, report["counters"][name])
+
+    def test_change_counters_states_the_privilege_basis(self):
+        counters = evidence.change_counters(
+            unprivileged(), unprivileged(), unifi=UNIFI)
+        self.assertEqual(
+            dict(ZERO, basis={"forwarding": evidence.BASIS_PRIVILEGE}),
+            counters)
+
+    def test_net_admin_or_sys_admin_in_any_judged_set_is_unproven(self):
+        for name in evidence.CAPABILITY_SETS:
+            for mask, capability in ((NET_ADMIN, "CAP_NET_ADMIN"),
+                                     (SYS_ADMIN, "CAP_SYS_ADMIN"),
+                                     (FULL, "CAP_NET_ADMIN, CAP_SYS_ADMIN")):
+                with self.subTest(set=name, capability=capability):
+                    self.assertForwardingUnproven(
+                        unprivileged(), unprivileged(status={name: mask}),
+                        "after snapshot", f"{name} holds {capability}")
+
+    def test_an_unrelated_capability_does_not_unprove(self):
+        # CAP_NET_RAW (13) is neither of the two bits the proof refuses.
+        report = self.classify(
+            unprivileged(status={"CapEff": f"{1 << 13:016x}",
+                                 "CapPrm": f"{1 << 13:016x}"}),
+            unprivileged())
+        self.assertEqual(0, report["counters"]["forwarding"])
+
+    def test_no_new_privs_zero_is_unproven(self):
+        self.assertForwardingUnproven(
+            unprivileged(status={"NoNewPrivs": "0"}), unprivileged(),
+            "before snapshot", "NoNewPrivs")
+
+    def test_the_live_snapshot_is_judged_too(self):
+        self.assertForwardingUnproven(
+            unprivileged(), unprivileged(),
+            "during snapshot", "CapEff holds CAP_NET_ADMIN",
+            during=unprivileged(status={"CapEff": NET_ADMIN}))
+
+    def test_a_uid_of_zero_is_unproven(self):
+        # euid 0 writes a root-owned sysctl through its owner bits with no
+        # capability, and a real or saved 0 can become the euid.
+        for uids in ("0\t0\t0\t0", "1000\t0\t1000\t1000",
+                     "0\t1000\t1000\t1000", "1000\t1000\t0\t1000"):
+            with self.subTest(uids=uids):
+                self.assertForwardingUnproven(
+                    unprivileged(), unprivileged(status={"Uid": uids}),
+                    "Uid holds 0")
+
+    def test_a_missing_or_malformed_fact_is_unproven(self):
+        cases = {
+            "NoNewPrivs absent": dict(status={"NoNewPrivs": None}),
+            "NoNewPrivs malformed": dict(status={"NoNewPrivs": "yes"}),
+            "CapEff absent": dict(status={"CapEff": None}),
+            "CapPrm malformed": dict(status={"CapPrm": "not-a-mask"}),
+            "CapAmb absent": dict(status={"CapAmb": None}),
+            "Uid absent": dict(status={"Uid": None}),
+            "Uid short": dict(status={"Uid": "1000\t1000"}),
+            "status unreadable": dict(unreadable=(evidence.PROC_STATUS,)),
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(label):
+                self.assertForwardingUnproven(
+                    unprivileged(), unprivileged(**kwargs))
+
+    def test_a_snapshot_without_privilege_facts_is_unproven(self):
+        for facts in (None, {"schema": 2}, "facts", {"schema": 1}):
+            with self.subTest(facts=facts):
+                after = unprivileged()
+                if facts is None:
+                    del after["privilege"]
+                else:
+                    after["privilege"] = facts
+                self.assertForwardingUnproven(unprivileged(), after)
+
+    def test_the_bounding_and_inheritable_sets_are_not_judged(self):
+        report = self.classify(
+            unprivileged(status={"CapBnd": FULL, "CapInh": FULL}),
+            unprivileged(status={"CapBnd": FULL, "CapInh": NET_ADMIN}))
+        self.assertEqual(0, report["counters"]["forwarding"])
+
+    def test_a_changed_sysctl_is_a_forwarding_change(self):
+        report = self.classify(
+            unprivileged(), unprivileged(sysctls={IP_FORWARD: "1"}))
+        self.assertEqual(1, report["counters"]["forwarding"])
+        self.assertEqual(["unifi"], report["unproven"])
+        self.assertEqual(evidence.BASIS_PRIVILEGE,
+                         report["basis"]["forwarding"])
+
+    def test_a_changed_sysctl_counts_even_without_the_privilege_facts(self):
+        report = self.classify(
+            unprivileged(status={"NoNewPrivs": "0"}),
+            unprivileged(sysctls={path: "1" for path in SYSCTLS}))
+        self.assertEqual(3, report["counters"]["forwarding"])
+
+    def test_a_sysctl_flipped_and_restored_inside_the_run_is_counted(self):
+        report = self.classify(
+            unprivileged(), unprivileged(),
+            during=unprivileged(sysctls={IP_FORWARD: "1"}))
+        self.assertEqual(1, report["counters"]["forwarding"])
+
+    def test_an_unrecorded_sysctl_is_unproven(self):
+        self.assertForwardingUnproven(
+            unprivileged(unreadable=(IP_FORWARD,)), unprivileged(),
+            "forwarding sysctls were not recorded")
+        self.assertForwardingUnproven(
+            unprivileged(), unprivileged(sysctls={IP_FORWARD: "on"}))
+
+    def test_a_readable_ruleset_keeps_the_snapshot_basis(self):
+        # Root: the ruleset is compared exactly as before, and the privilege
+        # facts -- here a full capability set -- are not consulted.
+        root = {"CapEff": FULL, "CapPrm": FULL, "NoNewPrivs": "0",
+                "Uid": "0\t0\t0\t0"}
+        readable = {"nft": {"returncode": 0,
+                            "stdout": json.dumps(BASE_RULESET)}}
+        report = self.classify(unprivileged(root, **readable),
+                               unprivileged(root, **readable))
+        self.assertEqual(0, report["counters"]["forwarding"])
+        self.assertEqual({"forwarding": evidence.BASIS_SNAPSHOT},
+                         report["basis"])
+        changed = {"nft": {"returncode": 0, "stdout": json.dumps(
+            {"nftables": BASE_RULESET["nftables"] + [{"table": {}}]})}}
+        report = self.classify(unprivileged(root, **readable),
+                               unprivileged(root, **changed))
+        self.assertEqual(1, report["counters"]["forwarding"])
+        self.assertEqual(evidence.BASIS_SNAPSHOT,
+                         report["basis"]["forwarding"])
+
+    def test_a_readable_ruleset_counts_a_recorded_sysctl_change_too(self):
+        readable = {"nft": {"returncode": 0,
+                            "stdout": json.dumps(BASE_RULESET)}}
+        report = self.classify(
+            unprivileged(**readable),
+            unprivileged(sysctls={IP_FORWARD: "1"}, **readable))
+        self.assertEqual(1, report["counters"]["forwarding"])
+        # Snapshots that never recorded the sysctls still prove as before.
+        self.assertEqual(0, self.classify(
+            snapshot(), snapshot())["counters"]["forwarding"])
+
+    def test_one_unreadable_side_is_enough_to_need_privilege(self):
+        readable = {"nft": {"returncode": 0,
+                            "stdout": json.dumps(BASE_RULESET)}}
+        report = self.classify(unprivileged(**readable), unprivileged())
+        self.assertEqual(evidence.BASIS_PRIVILEGE,
+                         report["basis"]["forwarding"])
+        self.assertEqual(0, report["counters"]["forwarding"])
+
+    def test_malformed_nft_evidence_is_not_an_unreadable_ruleset(self):
+        # Only a present, well-formed, failed nft run opens the privilege
+        # basis; a missing or corrupt observation stays unproven.
+        missing = unprivileged()
+        missing["observations"] = [
+            item for item in missing["observations"]
+            if tuple(item["command"]) != evidence.NFT_COMMAND]
+        duplicated = unprivileged()
+        duplicated["observations"].append(copy.deepcopy(next(
+            item for item in duplicated["observations"]
+            if tuple(item["command"]) == evidence.NFT_COMMAND)))
+        cases = {
+            "missing": missing,
+            "duplicated": duplicated,
+            "boolean exit": unprivileged(nft=dict(UNREADABLE_RULESET,
+                                                  returncode=True)),
+            "no stderr": unprivileged(nft=dict(UNREADABLE_RULESET,
+                                               stderr=None)),
+        }
+        for label, after in cases.items():
+            with self.subTest(label):
+                report = self.assertForwardingUnproven(unprivileged(), after)
+                self.assertEqual(evidence.BASIS_SNAPSHOT,
+                                 report["basis"]["forwarding"])
+
+    def test_a_namespace_change_still_unproves_forwarding(self):
+        self.assertForwardingUnproven(
+            unprivileged(), unprivileged(netns="fixture-namespace (id: 0)"),
+            only=False)
+
+    def test_privilege_reasons_carry_no_identifier(self):
+        report = self.classify(
+            unprivileged(), unprivileged(status={"CapEff": NET_ADMIN}))
+        text = json.dumps(report)
+        for identifier in ("fixture-driver", "1000", IP_FORWARD):
+            self.assertNotIn(identifier, text)
+
+
 class NoIdentifierLeakTests(unittest.TestCase):
     """Counters and category names only: no host identity may escape."""
 
@@ -669,7 +1009,7 @@ class GateTwelveCheckNineTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.serial = 0
 
-    def status(self, measurements):
+    def check(self, measurements):
         self.serial += 1
         directory = self.root / f"run-{self.serial}"
         directory.mkdir()
@@ -677,7 +1017,10 @@ class GateTwelveCheckNineTests(unittest.TestCase):
             "schema": 1, "status": "pass", "retained": [],
             "measurements": measurements}))
         receipt = factory_verify.verify_run(directory)
-        return receipt["checks"][self.CHECK]["status"]
+        return receipt["checks"][self.CHECK]
+
+    def status(self, measurements):
+        return self.check(measurements)["status"]
 
     def test_proven_zero_counters_render_check_nine_pass(self):
         counters = evidence.change_counters(
@@ -716,6 +1059,69 @@ class GateTwelveCheckNineTests(unittest.TestCase):
         with self.assertRaises(evidence.UnprovenCategory):
             evidence.change_counters(snapshot(), snapshot())
         self.assertEqual(self.status({}), "NOT-RUN")
+
+    @staticmethod
+    def measurement(report):
+        """The classify() rendering a producer emits: counters plus basis."""
+        return dict(report["counters"], basis=report["basis"])
+
+    def test_the_basis_vocabulary_mirrors_the_verifier(self):
+        self.assertEqual(
+            (evidence.BASIS_SNAPSHOT, evidence.BASIS_PRIVILEGE),
+            factory_verify.HOST_NETWORK_BASES["forwarding"])
+        self.assertEqual(evidence.BASIS_PRIVILEGE,
+                         factory_verify.PRIVILEGE_BASIS)
+
+    def test_a_privilege_proof_beside_unproven_unifi_is_waived_and_says_so(self):
+        # The unprivileged factory: ruleset unreadable, privilege proven,
+        # sysctls equal, no UniFi observation.  Six proven zeros and the one
+        # waived slot -- and the receipt names the weaker forwarding proof.
+        report = evidence.classify(unprivileged(), unprivileged())
+        check = self.check({"host_network_changes": self.measurement(report)})
+        self.assertEqual("WAIVED", check["status"])
+        self.assertEqual("ADR 0080", check["waiver"]["adr"])
+        self.assertIn("forwarding proven by privilege (the run could not "
+                      "change it), not by a ruleset snapshot", check["detail"])
+        self.assertNotIn("VLAN/forwarding", check["detail"])
+
+    def test_a_privilege_proof_alone_passes_and_says_so(self):
+        counters = evidence.change_counters(
+            unprivileged(), unprivileged(), unifi=UNIFI)
+        check = self.check({"host_network_changes": counters})
+        self.assertEqual("PASS", check["status"])
+        self.assertIn("forwarding proven by privilege", check["detail"])
+
+    def test_a_snapshot_proof_keeps_the_plain_detail(self):
+        check = self.check({"host_network_changes": self.measurement(
+            evidence.classify(snapshot(), snapshot()))})
+        self.assertEqual("WAIVED", check["status"])
+        self.assertIn("no TAP/bridge/route/VLAN/forwarding/listener change",
+                      check["detail"])
+        self.assertNotIn("privilege", check["detail"])
+
+    def test_a_changed_forwarding_sysctl_fails_check_nine(self):
+        report = evidence.classify(
+            unprivileged(), unprivileged(sysctls={IP_FORWARD: "1"}))
+        self.assertEqual(
+            self.status({"host_network_changes": self.measurement(report)}),
+            "FAIL")
+
+    def test_an_unprivileged_proof_that_fails_is_never_waived(self):
+        report = evidence.classify(
+            unprivileged(), unprivileged(status={"CapEff": NET_ADMIN}))
+        self.assertEqual(
+            self.status({"host_network_changes": self.measurement(report)}),
+            "FAIL")
+
+    def test_an_unrecognised_basis_fails_rather_than_being_ignored(self):
+        zeros = {name: 0 for name in evidence.CATEGORIES}
+        for basis in ({"forwarding": "assumed"}, {"tap": "privilege"},
+                      {"unifi": "snapshot"}, "privilege", ["privilege"]):
+            with self.subTest(basis=basis):
+                check = self.check(
+                    {"host_network_changes": dict(zeros, basis=basis)})
+                self.assertEqual("FAIL", check["status"])
+                self.assertIn("proof basis", check["detail"])
 
 
 if __name__ == "__main__":

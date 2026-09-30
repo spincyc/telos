@@ -237,6 +237,46 @@ class WindowsGuiTests(unittest.TestCase):
         self.assertNotIn("secret", str(failure.exception))
         self.assertEqual(8, len(requests))
 
+    def test_qmp_screenshot_sends_a_format_only_when_asked(self):
+        # The default call is the historic one every read_ppm caller relies
+        # on; ``png`` is sent on the wire exactly as QEMU's ImageFormat names
+        # it, and the refusal of a QEMU without it propagates unchanged.
+        client, peer = self.qmp_pair()
+        self.send_qmp(
+            peer,
+            {"return": {}, "id": "windows-gui-1"},
+            {"return": {}, "id": "windows-gui-2"},
+            {"error": {"class": "GenericError",
+                       "desc": "Parameter 'format' is unexpected"},
+             "id": "windows-gui-3"},
+        )
+        client.screenshot(Path("frame.ppm"))
+        client.screenshot(Path("frame.png"), format="png", timeout=2.0)
+        with self.assertRaisesRegex(
+                WindowsGuiError, "^QMP screendump failed: .*'format'"):
+            client.screenshot(Path("frame.png"), format="png")
+        requests = [
+            json.loads(line) for line in peer.recv(4096).splitlines()]
+        self.assertEqual(
+            [{"filename": "frame.ppm"},
+             {"filename": "frame.png", "format": "png"},
+             {"filename": "frame.png", "format": "png"}],
+            [request["arguments"] for request in requests])
+        self.assertEqual(
+            {"screendump"}, {request["execute"] for request in requests})
+
+    def test_qmp_screenshot_refuses_an_unknown_format_before_sending(self):
+        client = object.__new__(windows_gui.QmpClient)
+        client.execute = mock.Mock()
+        with self.assertRaisesRegex(
+                WindowsGuiError, "unsupported screendump format"):
+            client.screenshot(Path("frame.jpg"), format="jpeg")
+        client.execute.assert_not_called()
+        client.screenshot(Path("frame.png"), format="png", timeout=2.0)
+        client.execute.assert_called_once_with(
+            "screendump", {"filename": "frame.png", "format": "png"},
+            timeout=2.0)
+
     def test_qmp_key_allows_backspace_and_rejects_unlisted_keys(self):
         client = object.__new__(windows_gui.QmpClient)
         client.execute = mock.Mock()

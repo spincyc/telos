@@ -65,8 +65,10 @@ planning, aggregation, verification and comparison -- is exercised by
 real :func:`factory_verify.verify_run`.  What has NEVER run is:
 
 * :class:`SubprocessLifecycle` -- the eleven ``subprocess.run`` calls that
-  actually drive the Make targets, and the ``rmtree`` that destroys disposable
-  state between iterations.  Its argv construction is pure and tested
+  actually drive the Make targets, the ``rmtree`` that destroys disposable
+  state between iterations, and the live ``prctl(PR_SET_NO_NEW_PRIVS)`` its
+  :meth:`~SubprocessLifecycle.confine` makes before any of them (tested only
+  against a fake libc).  Its argv construction is pure and tested
   (:func:`prepare_command`, :func:`run_command`); only the process spawning is
   not, and the ``PHASES`` argv table has never been confirmed against a live
   lifecycle.
@@ -87,6 +89,7 @@ a fake.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -166,7 +169,7 @@ PHASE_LOCAL_EVIDENCE = frozenset({
 #: an arbitrary suffix through.
 PHASE_LOCAL_PATTERNS = (
     re.compile(r"\Aboot\d+-serial\.log\Z"),
-    re.compile(r"\Aworkstation-stall-\d+\.ppm\Z"),
+    re.compile(r"\Aworkstation-stall-\d+\.png\Z"),
     re.compile(r"\A\d{8}T\d{6}Z-controller\.json\Z"),
     re.compile(r"\A\d{8}T\d{6}Z-serial-redacted\.log\Z"),
 )
@@ -217,6 +220,42 @@ FAIL_STATUS = factory_verify.RUN_FAIL_STATUS              # "fail"
 
 class RepeatError(RuntimeError):
     """The lifecycle, its evidence, or its preconditions are not repeatable."""
+
+
+# --------------------------------------------------------------------------
+# No new privileges
+# --------------------------------------------------------------------------
+
+#: ``linux/prctl.h``.
+PR_SET_NO_NEW_PRIVS = 38
+PR_GET_NO_NEW_PRIVS = 39
+
+
+def set_no_new_privileges() -> None:
+    """Irreversibly forbid this process and every descendant any new privilege.
+
+    Sets ``PR_SET_NO_NEW_PRIVS`` on the calling process through libc's
+    ``prctl``.  The flag survives fork and execve and can never be cleared, so
+    from here on no descendant gains privilege through a setuid/setgid binary
+    (``sudo`` refuses) or file capabilities.  That is the first fact of the
+    ``forwarding`` counter's privilege basis
+    (``host_network_evidence.classify``): with an unreadable nft ruleset, the
+    counter is proven only when every snapshot of the run records
+    ``NoNewPrivs: 1`` and no CAP_NET_ADMIN/CAP_SYS_ADMIN, so a run that skips
+    this can only lose that proof, never fake it.  The read-back is checked so
+    a silently ignored call fails here rather than hours later.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.restype = ctypes.c_int
+    prctl.argtypes = (ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                      ctypes.c_ulong, ctypes.c_ulong)
+    if prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        raise RepeatError(
+            "prctl(PR_SET_NO_NEW_PRIVS) failed: "
+            f"{os.strerror(ctypes.get_errno())}")
+    if prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 1:
+        raise RepeatError("prctl(PR_SET_NO_NEW_PRIVS) did not take effect")
 
 
 # --------------------------------------------------------------------------
@@ -429,11 +468,11 @@ def _producer(key: str, call: Callable[[Callable], object], *,
 def host_network_measurement(module, before, after) -> dict | None:
     """The ``host_network_changes`` field, honouring ADR 0080's waiver.
 
-    ``change_counters`` returns seven proven integers or raises
-    ``UnprovenCategory``.  When the ONLY unproven counter is one
-    ``factory_verify.HOST_NETWORK_WAIVER`` covers (``unifi``, which no
-    snapshot pair can prove), the other six were proven, so the field is
-    emitted from ``classify`` with that slot holding the unproven sentinel:
+    ``change_counters`` returns seven proven integers and the ``basis`` of the
+    forwarding proof, or raises ``UnprovenCategory``.  When the ONLY unproven
+    counter is one ``factory_verify.HOST_NETWORK_WAIVER`` covers (``unifi``,
+    which no snapshot pair can prove), the other six were proven, so the field
+    is emitted from ``classify`` with that slot holding the unproven sentinel:
     ``factory_verify`` then grades the six and renders check 9 ``WAIVED`` --
     or ``FAIL`` if any of them counted a change.  Any other unproven counter
     omits the field, which keeps the check NOT-RUN exactly as before: the
@@ -443,6 +482,7 @@ def host_network_measurement(module, before, after) -> dict | None:
     change_counters = getattr(module, "change_counters", None)
     if change_counters is None:
         return None
+    classify = getattr(module, "classify", None)
     unproven_error = getattr(module, "UnprovenCategory", None)
     tolerated: tuple = (
         (unproven_error,) if isinstance(unproven_error, type)
@@ -453,7 +493,6 @@ def host_network_measurement(module, before, after) -> dict | None:
     except tolerated as error:
         if set(getattr(error, "reasons", {}) or {}) != waivable:
             return None
-    classify = getattr(module, "classify", None)
     if classify is None:
         return None
     report = classify(before, after)
@@ -463,7 +502,13 @@ def host_network_measurement(module, before, after) -> dict | None:
             or any(counters.get(name) != factory_verify.UNPROVEN_COUNTER
                    for name in waivable)):
         return None
-    return dict(counters)
+    measurement = dict(counters)
+    # The basis travels with the counters, so the receipt can say whether
+    # forwarding was proven by a ruleset snapshot or only by privilege.
+    basis = report.get("basis")
+    if isinstance(basis, dict):
+        measurement["basis"] = dict(basis)
+    return measurement
 
 
 def _host_network_producer(before, after) -> Callable[[], object] | None:
@@ -1026,6 +1071,17 @@ class LifecycleDriver:
         """
         return None
 
+    def confine(self) -> None:
+        """Drop the ability to gain privilege before anything is spawned.
+
+        :func:`repeat` calls this once, under ``--apply`` only, after the
+        preconditions pass and before the first capture or phase.  The base
+        does nothing, so a test driver never changes the test process; the
+        real driver sets ``PR_SET_NO_NEW_PRIVS``.  A driver that does not
+        confine leaves ``NoNewPrivs: 0`` in every host-network snapshot, which
+        keeps the forwarding counter unproven rather than faking it.
+        """
+
 
 class SubprocessLifecycle(LifecycleDriver):
     """HAS NEVER RUN.  Drives the real Make targets in a real repository.
@@ -1039,7 +1095,11 @@ class SubprocessLifecycle(LifecycleDriver):
 
     The ``PHASES`` table it walks has been read off the Makefile but never
     confirmed against a live lifecycle; when the first real repeat runs, that
-    table and this class are where the corrections land.
+    table and this class are where the corrections land.  No phase target or
+    runner invokes a host privilege helper (read 2026-09-30: no host ``sudo``,
+    ``pkexec``, ``fusermount`` or bridge helper; the ``sudo`` strings in the
+    runners are typed into guests), so :meth:`confine` should cost the
+    lifecycle nothing -- the first live repeat is what confirms it.
     """
 
     def __init__(self, *, repository: Path = REPOSITORY,
@@ -1083,6 +1143,9 @@ class SubprocessLifecycle(LifecycleDriver):
         module = _optional_module("host_network_evidence")
         capture = getattr(module, "capture", None)
         return None if capture is None else capture()
+
+    def confine(self) -> None:
+        set_no_new_privileges()
 
 
 def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
@@ -1155,6 +1218,10 @@ def _plan(stream, *, iterations: int, evidence_root: Path, work_root: Path,
             module, attribute = PRODUCER_ENTRY_POINTS[name]
             print(f"  ! {name} has no producer ({module}.{attribute}); "
                   "it will stay NOT-RUN", file=stream)
+    print("Privilege: --apply sets no_new_privs before the first capture or "
+          "phase; with an unreadable nft ruleset, forwarding is proven only by "
+          "privilege (the run could not change it), never as 'nothing changed'",
+          file=stream)
     waiver = factory_verify.HOST_NETWORK_WAIVER
     print(f"Waiver: {waiver['adr']} covers only the host_network_changes "
           f"{', '.join(waiver['covers'])} counter; every other counter must be "
@@ -1200,12 +1267,16 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
             print(f"refusing to run the lifecycle: {problem}", file=sys.stderr)
         return 2
 
+    if driver is None:
+        driver = SubprocessLifecycle(stream=stream)
+    # Before anything is spawned -- the first host-network capture shells out
+    # too -- so every process of the run inherits it and the forwarding
+    # proof's start-of-run facts are read after it holds.
+    driver.confine()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = evidence_root / f"{stamp}-{os.getpid()}-repeat"
     simulation_evidence.private_directory(run_root)
     receipts = []
-    if driver is None:
-        driver = SubprocessLifecycle(stream=stream)
     for index in range(1, iterations + 1):
         destination = run_iteration(
             index, driver=driver, workdir=work_root / f"iteration-{index}",

@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
+from .factory_verify import EVIDENCE_LIMIT
 from .signal_cleanup import RunInterrupted, SignalGuard
 
 # The judge lives under workstations/ and is imported by path so the producer
@@ -458,11 +459,27 @@ SWITCH_LOG_FILENAME = "workstation-switch.jsonl"
 #: QMP ``screendump`` would work and nothing in this module ever called it; a
 #: frame separates "firmware still on a blank screen" from "systemd-boot
 #: rendered to VGA but not to ttyS0" at a glance.
-STALL_FRAME_TEMPLATE = "workstation-stall-{index}.ppm"
-FIRMWARE_LOG_RETENTION_BYTES = 4 * 1024 * 1024
+#:
+#: The frame is requested as PNG, never QEMU's default PPM.  Every retained
+#: top-level evidence file is bounded by the evidence contract's one per-file
+#: limit (ADR 0077; gate 12's check 15 scans each one through
+#: ``artifact_scan``), and a 1024x768 PPM is ~2.3 MB -- over it by itself --
+#: while a PNG of a firmware or boot-menu screen is tens of kilobytes and a
+#: benign binary type the scan accepts.  QEMU writes PNG since 7.1 when built
+#: with libpng; a QEMU that cannot is recorded as ``png unsupported`` and
+#: retains no frame, because an over-limit frame is never kept.
+STALL_FRAME_TEMPLATE = "workstation-stall-{index}.png"
+STALL_FRAME_FORMAT = "png"
+STALL_FRAME_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+STALL_FRAME_PNG_UNSUPPORTED = "png unsupported"
+STALL_FRAME_OVERSIZED = "frame exceeded its size bound"
+STALL_FRAME_MISSING = "no frame written"
+#: Both bounds ARE the evidence limit, imported from ``factory_verify`` rather
+#: than restated, so a retained stall frame or firmware log can never be a
+#: file check 15 rejects for its size.
+STALL_FRAME_MAX_BYTES = EVIDENCE_LIMIT
+FIRMWARE_LOG_RETENTION_BYTES = EVIDENCE_LIMIT
 SWITCH_LOG_RETENTION_BYTES = 1024 * 1024
-#: A 1024x768 PPM is ~2.3MB; anything past this is not a framebuffer dump.
-STALL_FRAME_MAX_BYTES = 16 * 1024 * 1024
 #: Bounds on the retained diagnosis: stall records, drained QMP events per
 #: record, and timestamped serial labels.
 BOOT_STALL_RETENTION_LIMIT = 8
@@ -700,10 +717,13 @@ def new_boot_facts() -> dict[str, object]:
         # firmware write the varstore at all this boot" on its own.
         "firmware_vars_sha256_before": None,
         "firmware_vars_sha256_after": None,
-        # Size of the retained firmware debug console: nonzero proves this
-        # OVMF build uses the I/O-port DebugLib and the whole firmware log is
-        # in the bundle; zero proves it uses the serial one.
+        # Size QEMU wrote to the firmware debug console, before bounding:
+        # nonzero proves this OVMF build uses the I/O-port DebugLib; zero
+        # proves it uses the serial one.  The retained size beside it makes a
+        # truncation to the evidence limit visible: the two differ exactly
+        # when the retained log is a tail.
         "firmware_debug_log_bytes": None,
+        "firmware_debug_log_retained_bytes": None,
     }
 
 
@@ -1547,6 +1567,33 @@ def stall_reason(error: BaseException) -> str:
     """
     return (STALL_SERIAL_CLOSED if str(error).startswith("serial closed")
             else STALL_TIMED_OUT)
+
+
+def _admit_stall_frame(frame: Path) -> dict[str, object]:
+    """Judge a written stall frame: retain it private, or name why not.
+
+    The signature is checked before the size so a QEMU that silently wrote
+    its default PPM is diagnosed as ``png unsupported`` rather than merely
+    too big.  Read without following a symlink, so a planted link can never
+    be what is retained.
+    """
+    import os
+    import stat as stat_module
+
+    try:
+        descriptor = os.open(frame, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return {"frame_error": STALL_FRAME_MISSING}
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat_module.S_ISREG(info.st_mode):
+            return {"frame_error": STALL_FRAME_MISSING}
+        if handle.read(len(STALL_FRAME_SIGNATURE)) != STALL_FRAME_SIGNATURE:
+            return {"frame_error": STALL_FRAME_PNG_UNSUPPORTED}
+        if info.st_size > STALL_FRAME_MAX_BYTES:
+            return {"frame_error": STALL_FRAME_OVERSIZED}
+        os.fchmod(handle.fileno(), 0o600)
+    return {"frame": frame.name, "frame_bytes": info.st_size}
 
 
 def _bounded_qmp_events(queued) -> list[dict[str, object]]:
@@ -3040,8 +3087,9 @@ class ArchIdentityBoundary:
         * the stall reason, EOF versus a quiet guest, which ``_wait`` and this
           function both used to collapse into one message.
 
-        Everything retained is bounded (record count, frame size, event count)
-        and secret-free: this runs strictly before the in-run join and the
+        Everything retained is bounded (record count, event count, and a PNG
+        frame within the evidence limit; see ``STALL_FRAME_TEMPLATE``) and
+        secret-free: this runs strictly before the in-run join and the
         operator login, so no credential has reached the console or the
         framebuffer yet.  Capture failures are recorded in the record itself
         and never raised -- diagnosis must not change the run's outcome.
@@ -3077,20 +3125,8 @@ class ArchIdentityBoundary:
         if qmp is None:
             record["qmp"] = "unavailable"
             return
-        frame = evidence / STALL_FRAME_TEMPLATE.format(index=len(records))
-        try:
-            qmp.screenshot(frame)
-            if frame.is_file():
-                size = frame.stat().st_size
-                if size > STALL_FRAME_MAX_BYTES:
-                    frame.unlink()
-                    record["frame_error"] = "frame exceeded its size bound"
-                else:
-                    frame.chmod(0o600)
-                    record["frame"] = frame.name
-                    record["frame_bytes"] = size
-        except Exception as error:  # noqa: BLE001 - diagnosis never raises
-            record["frame_error"] = type(error).__name__
+        record.update(self._capture_stall_frame(
+            qmp, evidence / STALL_FRAME_TEMPLATE.format(index=len(records))))
         try:
             status = qmp.execute("query-status", timeout=STALL_QMP_TIMEOUT)
         except Exception as error:  # noqa: BLE001 - diagnosis never raises
@@ -3103,6 +3139,44 @@ class ArchIdentityBoundary:
         # queues every event it passes over on the way to its response.
         record["qmp_events"] = _bounded_qmp_events(
             getattr(qmp, "_events", ()))
+
+    @staticmethod
+    def _capture_stall_frame(qmp, frame: Path) -> dict[str, object]:
+        """One PNG stall frame at *frame* within the evidence limit, or none.
+
+        Returns the record fields: ``frame`` and ``frame_bytes`` for a
+        retained frame, otherwise ``frame_error`` naming why none was kept.
+        Anything written but not retained is removed before returning, so a
+        non-PNG or over-limit file never outlives this call -- keeping one
+        would fail check 15 and cost the whole twice-through run.  Never
+        raises: diagnosis must not change the run's outcome.
+        """
+        fields: dict[str, object] = {}
+        try:
+            qmp.screenshot(
+                frame, format=STALL_FRAME_FORMAT, timeout=STALL_QMP_TIMEOUT)
+        except Exception as error:  # noqa: BLE001 - diagnosis never raises
+            # QEMU refuses the format itself before 7.1 ("Parameter 'format'
+            # is unexpected") and without libpng ("Enable PNG support with
+            # libpng ..."); only the fixed label is kept, never the text.
+            text = str(error).lower()
+            refused = text.startswith("qmp screendump failed") and (
+                "png" in text or "format" in text)
+            fields["frame_error"] = (
+                STALL_FRAME_PNG_UNSUPPORTED if refused
+                else type(error).__name__)
+        else:
+            try:
+                fields.update(_admit_stall_frame(frame))
+            except OSError as error:
+                fields["frame_error"] = type(error).__name__
+        if "frame" not in fields:
+            try:
+                if frame.is_symlink() or frame.exists():
+                    frame.unlink()
+            except OSError as error:
+                fields["frame_discard_error"] = type(error).__name__
+        return fields
 
     def _retain_switch_log(self) -> None:
         """Copy the fabric switch log out of the tempdir that deletes it.
@@ -3132,11 +3206,20 @@ class ArchIdentityBoundary:
     def _retain_firmware_log(self) -> None:
         """Bound the firmware debug console QEMU wrote for itself.
 
-        A debug-DebugLib OVMF can emit megabytes over a long boot, so the
-        retained size is capped the same way the transcript is and the
-        observed size is recorded: nonzero means this build carries the
-        I/O-port DebugLib and the whole firmware log is in the bundle, zero
-        means it carries the serial one and the empty file is the answer.
+        A debug-DebugLib OVMF can emit megabytes over a long boot, and the
+        file is retained top-level evidence, so it is bounded to the evidence
+        limit check 15 applies to every such file.  The observed size is
+        recorded (nonzero means this build carries the I/O-port DebugLib,
+        zero means the serial one and the empty file is the answer) beside
+        the retained size, so a truncation is visible in the facts.
+
+        The TAIL is kept, as it always was: a boot stall is where this log
+        stops, so its last lines name the driver or phase the firmware was in
+        when it wedged, while the head is SEC/PEI initialisation that is the
+        same every boot.  The tail is line-aligned like the switch log's: a
+        byte cut can split a UTF-8 sequence, and ``artifact_scan`` treats a
+        file that does not decode as an uninspectable binary, which check 15
+        counts against the run.  Only the tail is read, never the whole file.
         """
         from .simulation_evidence import private_file
 
@@ -3148,10 +3231,17 @@ class ArchIdentityBoundary:
         size = path.stat().st_size
         self._boot_facts["firmware_debug_log_bytes"] = size
         if size > FIRMWARE_LOG_RETENTION_BYTES:
-            private_file(
-                path, path.read_bytes()[-FIRMWARE_LOG_RETENTION_BYTES:])
+            with path.open("rb") as handle:
+                handle.seek(size - FIRMWARE_LOG_RETENTION_BYTES)
+                data = handle.read(FIRMWARE_LOG_RETENTION_BYTES)
+            if b"\n" in data:
+                data = data.split(b"\n", 1)[1]
+            private_file(path, data)
+            retained = len(data)
         else:
             path.chmod(0o600)
+            retained = size
+        self._boot_facts["firmware_debug_log_retained_bytes"] = retained
 
     def _retain_workstation_evidence(self, transcript: bytes) -> None:
         """Keep a bounded, redacted transcript and secret-free boot facts.
@@ -3191,6 +3281,7 @@ class ArchIdentityBoundary:
             # Bounding QEMU's own log must never cost the facts file, which is
             # the artifact that says how far the boot actually got.
             self._boot_facts["firmware_debug_log_bytes"] = None
+            self._boot_facts["firmware_debug_log_retained_bytes"] = None
         payload = {"schema": 1, **self._boot_facts}
         private_file(
             evidence / BOOT_FACTS_FILENAME,

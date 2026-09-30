@@ -11,7 +11,9 @@ gate 12 itself needs two live lifecycles no test can substitute for.
 """
 
 import ast
+import ctypes
 import dataclasses
+import errno
 import io
 import json
 import os
@@ -134,7 +136,7 @@ PHASE_FIXTURES = {
             "workstation-firmware.log": b"",
             "workstation-serial.log": b"arch identity complete\n",
             "workstation-switch.jsonl": SWITCH.encode(),
-            "workstation-stall-1.ppm": b"P6\n",
+            "workstation-stall-1.png": b"\x89PNG\r\n\x1a\n",
         },
     },
     "dualboot-acceptance": {
@@ -444,6 +446,47 @@ class ProducerSeamTests(unittest.TestCase):
 #: What ``host_network_evidence.classify`` reports with no UniFi observation.
 UNPROVEN_UNIFI = dict(PRODUCED["host_network_changes"], unifi="unproven")
 
+#: ``/proc/self/status`` of the confined, unprivileged repeat driver.
+CONFINED_STATUS = {
+    "Uid": "1000\t1000\t1000\t1000",
+    "CapInh": "0000000000000000", "CapPrm": "0000000000000000",
+    "CapEff": "0000000000000000", "CapBnd": "000001ffffffffff",
+    "CapAmb": "0000000000000000", "NoNewPrivs": "1",
+}
+
+
+def real_network_snapshot(evidence, *, ruleset_readable=True, status=None,
+                          sysctls=None):
+    """A capture of an empty host in the real module's shape, read from a
+    fabricated /proc -- never this host's."""
+    stdout = {evidence.NETNS_COMMAND: "", evidence.SOCKET_COMMAND: "",
+              evidence.NFT_COMMAND: json.dumps({"nftables": []})}
+    observations = [
+        {"command": list(command), "returncode": 0,
+         "stdout": stdout.get(command, "[]"), "stderr": ""}
+        for command in evidence.COMMANDS]
+    if not ruleset_readable:
+        for item in observations:
+            if tuple(item["command"]) == evidence.NFT_COMMAND:
+                item.update(returncode=1, stdout="",
+                            stderr="Error: Operation not permitted")
+    fields = dict(CONFINED_STATUS, **(status or {}))
+    files = {evidence.PROC_STATUS: "".join(
+        f"{name}:\t{value}\n" for name, value in fields.items())}
+    files.update({path: "0\n" for path in evidence.FORWARDING_SYSCTLS})
+    files.update({path: value + "\n"
+                  for path, value in (sysctls or {}).items()})
+    return {"schema": 1, "captured_at": "fixture",
+            "privilege": evidence.privilege_facts(files.get),
+            "observations": observations}
+
+
+def real_host_network_evidence(test):
+    evidence = factory_repeat._optional_module("host_network_evidence")
+    if evidence is None or not hasattr(evidence, "privilege_facts"):
+        test.skipTest("host_network_evidence is not present")
+    return evidence
+
 
 class HostNetworkWaiverProducerTests(unittest.TestCase):
     """ADR 0080 at the producer seam: only the unifi gap reaches the receipt."""
@@ -504,46 +547,84 @@ class HostNetworkWaiverProducerTests(unittest.TestCase):
         self.assertIsNone(
             factory_repeat.host_network_measurement(module, "b", "a"))
 
+    def test_the_classify_basis_travels_with_the_counters(self):
+        module = self.module(unproven=("unifi",))
+        classify = module.classify
+
+        def with_basis(before, after):
+            return dict(classify(before, after),
+                        basis={"forwarding": "privilege"})
+
+        module.classify = with_basis
+        self.assertEqual(
+            dict(UNPROVEN_UNIFI, basis={"forwarding": "privilege"}),
+            factory_repeat.host_network_measurement(module, "b", "a"))
+
     def test_a_classify_report_disagreeing_with_the_exception_omits_it(self):
         module = self.module(unproven=("unifi",), counters=dict(
             PRODUCED["host_network_changes"]))
         self.assertIsNone(
             factory_repeat.host_network_measurement(module, "b", "a"))
 
-    def real_snapshot(self, evidence):
-        """A well-formed, fully successful capture of an empty host."""
-        stdout = {evidence.NETNS_COMMAND: "", evidence.SOCKET_COMMAND: "",
-                  evidence.NFT_COMMAND: json.dumps({"nftables": []})}
-        return {"schema": 1, "captured_at": "fixture", "observations": [
-            {"command": list(command), "returncode": 0,
-             "stdout": stdout.get(command, "[]"), "stderr": ""}
-            for command in evidence.COMMANDS]}
+    def measure(self, before, after):
+        return factory_repeat.bind_producers(
+            network_before=before, network_after=after).host_network_changes()
 
     def test_the_real_sibling_yields_a_waived_check_nine(self):
-        evidence = factory_repeat._optional_module("host_network_evidence")
-        if evidence is None or not hasattr(evidence, "classify"):
-            self.skipTest("host_network_evidence is not present")
-        before, after = self.real_snapshot(evidence), self.real_snapshot(evidence)
-        producers = factory_repeat.bind_producers(
-            network_before=before, network_after=after)
-        measured = producers.host_network_changes()
-        self.assertEqual(UNPROVEN_UNIFI, measured)
+        evidence = real_host_network_evidence(self)
+        measured = self.measure(real_network_snapshot(evidence),
+                                real_network_snapshot(evidence))
+        self.assertEqual(
+            dict(UNPROVEN_UNIFI, basis={"forwarding": "snapshot"}), measured)
         check = factory_verify._check_host_network(
             {"host_network_changes": measured})
         self.assertEqual("WAIVED", check["status"])
         self.assertEqual("ADR 0080", check["waiver"]["adr"])
 
+    def test_the_real_sibling_proves_forwarding_by_privilege(self):
+        # The unprivileged factory: nft cannot read the ruleset, the driver
+        # is confined, the sysctls held.  Six zeros, unifi waived, and the
+        # basis says forwarding was proven by privilege.
+        evidence = real_host_network_evidence(self)
+        measured = self.measure(
+            real_network_snapshot(evidence, ruleset_readable=False),
+            real_network_snapshot(evidence, ruleset_readable=False))
+        self.assertEqual(
+            dict(UNPROVEN_UNIFI, basis={"forwarding": "privilege"}), measured)
+        check = factory_verify._check_host_network(
+            {"host_network_changes": measured})
+        self.assertEqual("WAIVED", check["status"])
+        self.assertIn("forwarding proven by privilege", check["detail"])
+
+    def test_an_unconfined_unreadable_run_stays_not_run(self):
+        evidence = real_host_network_evidence(self)
+        for status in ({"NoNewPrivs": "0"}, {"CapEff": f"{1 << 12:016x}"}):
+            with self.subTest(status=status):
+                self.assertIsNone(self.measure(
+                    real_network_snapshot(evidence, ruleset_readable=False),
+                    real_network_snapshot(evidence, ruleset_readable=False,
+                                          status=status)))
+
+    def test_an_unreadable_run_with_a_changed_sysctl_fails_check_nine(self):
+        evidence = real_host_network_evidence(self)
+        measured = self.measure(
+            real_network_snapshot(evidence, ruleset_readable=False),
+            real_network_snapshot(
+                evidence, ruleset_readable=False,
+                sysctls={evidence.FORWARDING_SYSCTLS[0]: "1"}))
+        self.assertEqual(1, measured["forwarding"])
+        self.assertEqual("FAIL", factory_verify._check_host_network(
+            {"host_network_changes": measured})["status"])
+
     def test_the_real_sibling_with_an_unreadable_ruleset_stays_not_run(self):
-        evidence = factory_repeat._optional_module("host_network_evidence")
-        if evidence is None or not hasattr(evidence, "classify"):
-            self.skipTest("host_network_evidence is not present")
-        before, after = self.real_snapshot(evidence), self.real_snapshot(evidence)
-        for item in after["observations"]:
-            if tuple(item["command"]) == evidence.NFT_COMMAND:
-                item.update(returncode=1, stdout="", stderr="denied")
-        producers = factory_repeat.bind_producers(
-            network_before=before, network_after=after)
-        self.assertIsNone(producers.host_network_changes())
+        # A capture that recorded no privilege facts cannot use the
+        # privilege basis, so the unreadable ruleset keeps forwarding
+        # unproven and the field absent.
+        evidence = real_host_network_evidence(self)
+        before = real_network_snapshot(evidence)
+        after = real_network_snapshot(evidence, ruleset_readable=False)
+        del before["privilege"], after["privilege"]
+        self.assertIsNone(self.measure(before, after))
 
 
 def sparse_disk(path: Path) -> Path:
@@ -659,7 +740,7 @@ class EvidenceDispositionTests(unittest.TestCase):
         for name in ("result.json", "dualboot-events.jsonl",
                      "recovery-evidence.jsonl", "boot1-serial.log",
                      "boot2-serial.log", "identity-lifecycle.jsonl",
-                     "workstation-stall-1.ppm",
+                     "workstation-stall-1.png",
                      "20260727T201057Z-controller.json",
                      "20260727T201057Z-serial-redacted.log"):
             self.assertEqual(factory_repeat.RETAIN,
@@ -667,7 +748,8 @@ class EvidenceDispositionTests(unittest.TestCase):
 
     def test_an_unrecognised_artifact_is_refused(self):
         for name in ("secret.bin", "windows.qcow2", "boot1-serial.log.gz",
-                     "workstation-stall-1.ppm.bak", "control.iso"):
+                     "workstation-stall-1.png.bak",
+                     "workstation-stall-1.ppm", "control.iso"):
             with self.subTest(name=name):
                 with self.assertRaises(factory_repeat.RepeatError):
                     factory_repeat.evidence_disposition(name)
@@ -1151,6 +1233,164 @@ def make_recipe(target: str) -> str:
     return match.group(1)
 
 
+# --------------------------------------------------------------------------
+# No new privileges: set under --apply only, before anything is spawned
+# --------------------------------------------------------------------------
+
+
+def fake_ctypes(events, *, set_result=0, get_result=1):
+    """A stand-in ``ctypes`` whose libc records every prctl and changes nothing.
+
+    Patched over ``factory_repeat.ctypes`` only, so no test can set
+    NoNewPrivs on the test process itself.
+    """
+    def prctl(option, *arguments):
+        events.append(("prctl", option, *arguments))
+        return (set_result if option == factory_repeat.PR_SET_NO_NEW_PRIVS
+                else get_result)
+
+    libc = type(sys)("fake_libc")
+    libc.prctl = prctl
+
+    def cdll(name, use_errno=False):
+        events.append(("CDLL", name, use_errno))
+        return libc
+
+    return mock.Mock(CDLL=cdll, c_int=ctypes.c_int, c_ulong=ctypes.c_ulong,
+                     get_errno=lambda: errno.EPERM, libc=libc)
+
+
+def forbidden_ctypes():
+    """A ``ctypes`` that fails the test if anything reaches for libc."""
+    def cdll(*arguments, **keywords):
+        raise AssertionError("prctl was reached")
+    return mock.Mock(CDLL=cdll)
+
+
+SET = ("prctl", factory_repeat.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+GET = ("prctl", factory_repeat.PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0)
+
+
+class NoNewPrivilegesTests(unittest.TestCase):
+    def confine(self, **results):
+        events = []
+        fake = fake_ctypes(events, **results)
+        with mock.patch.object(factory_repeat, "ctypes", fake):
+            factory_repeat.set_no_new_privileges()
+        return events, fake
+
+    def test_it_sets_the_flag_then_reads_it_back(self):
+        events, fake = self.confine()
+        self.assertEqual([("CDLL", None, True), SET, GET], events)
+        self.assertEqual(38, factory_repeat.PR_SET_NO_NEW_PRIVS)
+        self.assertIs(ctypes.c_int, fake.libc.prctl.restype)
+        self.assertEqual(5, len(fake.libc.prctl.argtypes))
+
+    def test_a_refused_prctl_raises_with_the_errno(self):
+        with self.assertRaisesRegex(factory_repeat.RepeatError,
+                                    os.strerror(errno.EPERM)):
+            self.confine(set_result=-1)
+
+    def test_a_flag_that_did_not_stick_raises(self):
+        with self.assertRaisesRegex(factory_repeat.RepeatError,
+                                    "did not take effect"):
+            self.confine(get_result=0)
+
+    def test_the_real_driver_confines_through_prctl(self):
+        events = []
+        with mock.patch.object(factory_repeat, "ctypes", fake_ctypes(events)):
+            factory_repeat.SubprocessLifecycle(stream=io.StringIO()).confine()
+        self.assertEqual([("CDLL", None, True), SET, GET], events)
+
+    def test_a_test_driver_never_touches_the_process(self):
+        with mock.patch.object(factory_repeat, "ctypes", forbidden_ctypes()):
+            factory_repeat.LifecycleDriver().confine()
+            FakeLifecycle().confine()
+
+
+class Spawning(factory_repeat.SubprocessLifecycle):
+    """The REAL driver's confine with its spawns recorded, then stopped.
+
+    ``_run`` is the one place ``SubprocessLifecycle`` spawns a process, so
+    stopping there proves the order without starting anything.
+    """
+
+    def __init__(self, events):
+        super().__init__(stream=io.StringIO())
+        self.events = events
+
+    def capture_host_network(self):
+        self.events.append(("capture",))
+        return None
+
+    def destroy(self, workdir):
+        self.events.append(("destroy",))
+
+    def _run(self, command):
+        self.events.append(("spawn", command[2]))
+        raise factory_repeat.RepeatError("stopped before spawning")
+
+
+class ConfinementOrderTests(TemporaryRootTests):
+    def repeat(self, driver, *, apply, controller_disk=None):
+        real_stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            return factory_repeat.repeat(
+                apply=apply, driver=driver,
+                controller_disk=(self.installed_controller_disk()
+                                 if controller_disk is None
+                                 else controller_disk),
+                evidence_root=self.root / "evidence",
+                work_root=self.root / "work", releases=self.release_set(),
+                bind=lambda bundles, **kwargs: wired_producers(),
+                stream=io.StringIO())
+        finally:
+            sys.stderr = real_stderr
+
+    def test_apply_sets_no_new_privs_before_the_first_capture_or_spawn(self):
+        events = []
+        with mock.patch.object(factory_repeat, "ctypes", fake_ctypes(events)):
+            with self.assertRaisesRegex(factory_repeat.RepeatError,
+                                        "stopped before spawning"):
+                self.repeat(Spawning(events), apply=True)
+        self.assertEqual(
+            [("CDLL", None, True), SET, GET, ("capture",), ("destroy",),
+             ("spawn", "homelab-windows-install-prepare")], events)
+        self.assertEqual(1, events.count(SET))
+
+    def test_a_dry_run_never_sets_no_new_privs(self):
+        events = []
+        with mock.patch.object(factory_repeat, "ctypes", forbidden_ctypes()):
+            self.assertEqual(0, self.repeat(Spawning(events), apply=False))
+        self.assertEqual([], events)
+
+    def test_the_default_cli_dry_run_never_sets_no_new_privs(self):
+        disk = fresh_canonical_disk(self.root) or self.root / "absent.qcow2"
+        real_stdout, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            with mock.patch.object(factory_repeat, "ctypes",
+                                   forbidden_ctypes()):
+                # Every path is the test's own: the defaults are the
+                # operator's lab state, which no unit test may read.
+                status = factory_repeat.main([
+                    "--controller-disk", str(disk),
+                    "--evidence-root", str(self.root / "evidence"),
+                    "--work-root", str(self.root / "work"),
+                    "--releases", str(self.root / "releases")])
+        finally:
+            sys.stdout = real_stdout
+        self.assertEqual(0, status)
+
+    def test_a_refused_apply_never_sets_no_new_privs(self):
+        empty = self.root / "empty.qcow2"
+        empty.write_bytes(b"x" * 197_888)
+        events = []
+        with mock.patch.object(factory_repeat, "ctypes", forbidden_ctypes()):
+            self.assertEqual(2, self.repeat(
+                Spawning(events), apply=True, controller_disk=empty))
+        self.assertEqual([], events)
+
+
 class PhaseCommandTests(unittest.TestCase):
     def phase(self, name):
         return next(p for p in factory_repeat.PHASES if p.name == name)
@@ -1449,6 +1689,59 @@ class RepeatEndToEndTests(TemporaryRootTests):
         self.assertIn("PASS-WITH-WAIVER: factory-repeat", errors)
         self.assertIn("no_host_network_change (ADR 0080)", errors)
         self.assertNotIn("\nPASS: factory-repeat", "\n" + errors)
+
+    def test_a_confined_unprivileged_repeat_passes_with_waiver(self):
+        # The run the factory actually makes: confined before anything is
+        # spawned, the nft ruleset unreadable in every capture, the sysctls
+        # unchanged.  Forwarding is proven by privilege, unifi is waived,
+        # and the repeat is PASS-WITH-WAIVER -- with the weaker forwarding
+        # proof named in every run's check 9.
+        evidence = real_host_network_evidence(self)
+
+        class Unprivileged(FakeLifecycle):
+            def __init__(self):
+                super().__init__()
+                self.events = []
+
+            def confine(self):
+                self.events.append("confine")
+
+            def capture_host_network(self):
+                self.events.append("capture")
+                return real_network_snapshot(evidence, ruleset_readable=False)
+
+            def run_phase(self, phase, **kwargs):
+                self.events.append(phase.name)
+                return super().run_phase(phase, **kwargs)
+
+        def bind(bundles, **kwargs):
+            real = factory_repeat.default_producer_binding(bundles, **kwargs)
+            return dataclasses.replace(
+                wired_producers(),
+                host_network_changes=real.host_network_changes)
+
+        driver = Unprivileged()
+        status, printed, errors = self.repeat(driver=driver, bind=bind)
+        self.assertEqual(0, status)
+        self.assertEqual(["confine", "capture"], driver.events[:2])
+        self.assertEqual(1, driver.events.count("confine"))
+        document = json.loads(printed)
+        self.assertEqual("PASS-WITH-WAIVER", document["verdict"])
+        self.assertTrue(document["equivalent"])
+        for run in document["runs"]:
+            check = run["checks"]["no_host_network_change"]
+            self.assertEqual("WAIVED", check["status"])
+            self.assertIn("forwarding proven by privilege (the run could not "
+                          "change it)", check["detail"])
+        results = sorted((self.root / "evidence").glob(
+            "*-repeat/iteration-*/result.json"))
+        self.assertEqual(2, len(results))
+        for result in results:
+            measured = json.loads(result.read_text(encoding="utf-8"))[
+                "measurements"]["host_network_changes"]
+            self.assertEqual({"forwarding": "privilege"}, measured["basis"])
+            self.assertEqual(0, measured["forwarding"])
+            self.assertEqual("unproven", measured["unifi"])
 
     def test_a_waived_iteration_and_a_not_run_iteration_disagree(self):
         bound = []
