@@ -216,6 +216,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-durable-arch-install-plan homelab-durable-arch-install \
 	homelab-durable-arch-join-plan homelab-durable-arch-join \
 	homelab-durable-windows-join-plan homelab-durable-windows-join \
+	homelab-durable-workstation-verify \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1177,6 +1178,21 @@ homelab-durable-windows-join:
 	$(DURABLE_WINDOWS_REQUIRE)
 	@$(DURABLE_WINDOWS_JOIN) $(if $(filter 1,$(APPLY)),--apply)
 
+# Keep-verify a kept workstation (TASK-28 step 9), read-only toward it: every
+# stage folded, overlays only, its lock held, its disk, variables and marker
+# hashed before and after, nothing folded and no ledger entry. PERSISTENT_DC is
+# booted in place; Arch is re-proved (current-password login, net ads testjoin,
+# sssctl, pinned uids), the Controller is relaunched by a clean console
+# poweroff and proved again, then Windows is re-proved (gate 6's domain sign-in
+# and read-only secure-channel probe). The firmware BootOrder must still start
+# with Linux. Both passwords are typed at this terminal before anything
+# starts. A dry run without APPLY=1.
+DURABLE_VERIFY = $(PYTHON) homelab/vm/durable_workstation_verify.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
+
+homelab-durable-workstation-verify:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(DURABLE_VERIFY) $(if $(filter 1,$(APPLY)),--apply)
+
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
 		$(PYTHON) homelab/bin/homelab-windows-install-prepare; \
@@ -1642,6 +1658,8 @@ help:
 		'make homelab-durable-windows-join-plan WORKSTATION=<name> PERSISTENT_DC=<name>' \
 		'make homelab-durable-windows-join APPLY=1 WORKSTATION=<name> PERSISTENT_DC=<name>' \
 		'                         Join its Windows, fold it, then retire the publication' \
+		'make homelab-durable-workstation-verify WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> [APPLY=1]' \
+		'                         Re-prove both joins across a Controller relaunch; folds nothing' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \

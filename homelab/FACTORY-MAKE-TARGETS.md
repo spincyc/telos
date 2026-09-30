@@ -437,6 +437,21 @@ A retry after a join that reached the directory reuses `TELOS-WIN-01`'s machine
 account. A fold whose publication retirement failed is finished by repeating
 the target with `APPLY=1`. Verdict: **NOT RUN.**
 
+#### Keep-verify (step 9)
+
+Requires `WORKSTATION`, `PERSISTENT_DC` and `ARCH_HOSTNAME` (the host name stage
+`arch-join` joined). Implemented by `homelab/vm/durable_workstation_verify.py`,
+which composes steps 7 and 8 (and through them gates 8 and 6) without editing
+them. It is read-only toward the workstation and folds nothing; the workstation
+module offers no non-stage ledger annotation, so the evidence directory is the
+only record of a verify.
+
+| Target | Opt-in | Effect |
+|---|---|---|
+| `homelab-durable-workstation-verify` | `APPLY=1` | Read-only plan without `APPLY=1`: checks every stage (`adopt`, `arch-install`, `arch-join`, `windows-join`) is folded with no fold pending, both machine accounts are recorded, the binding and both rosters agree, and parses the workstation's firmware variables: `BootOrder` must still start with an active `Linux Boot Manager` (a regression is shown and refuses the run before any prompt). With `APPLY=1`, under the workstation's lock and after proving its disk and variables are the ledger head, asks at the terminal, before any process starts: the Controller's `local-rescue` console password; the daily administrator's CURRENT domain password. It boots `PERSISTENT_DC` in place on one per-run switch (no pause, no fault, clean console poweroff) and proves its realm and SID; boots an overlay of the kept disk to Arch through the systemd-boot menu (recording that the menu's default is Windows), logs the daily administrator in on ttyS0, proves the roster, elevates, runs `net ads testjoin` and proves `sssctl` online, every directory role at its recorded uidNumber, the sealed join unit and the host name, and powers Arch off; relaunches the Controller (clean console poweroff, then a cold boot in the same session, which logs in again with the password it holds) and proves AD, the realm, the SID and the clock again; boots a second overlay to Windows by the menu's default, signs the daily administrator in through gate 6's domain sign-in (Controller-side diagnostic disabled, no principal staged), runs gate 6's read-only identity probe (interactive operator, membership, secure channel, local Administrators right) and shuts Windows down from inside. Both overlays are removed; the workstation's disk, variables and marker are hashed again and must be unchanged. `result.json` holds secret-free booleans per check and a `pass`/`fail` verdict; an Arch failure is recorded and Windows is still verified. Evidence stays under `homelab/var/factory/durable-workstation-verifies/<name>/`. |
+
+Verdict: **NOT RUN.**
+
 ## Required common inputs
 
 The runner should accept one run identifier and one release identifier rather

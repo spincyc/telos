@@ -829,5 +829,62 @@ class DurableWindowsJoinTargetTests(unittest.TestCase):
                     result.stderr)
 
 
+class DurableWorkstationVerifyTargetTests(unittest.TestCase):
+    """TASK-28 step 9: the keep-verify recipe, fed to the runner's parser."""
+
+    SCRIPT = "durable_workstation_verify.py"
+    TARGET = "homelab-durable-workstation-verify"
+    NAMES = {"WORKSTATION": "w1", "PERSISTENT_DC": "synthetic-dc",
+             "ARCH_HOSTNAME": "kept-ws1"}
+
+    def parse(self, **variables):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import durable_workstation_verify
+        argvs = emitted_by(self.TARGET, self.SCRIPT, **variables)
+        self.assertEqual(len(argvs), 1)
+        return durable_workstation_verify.parser().parse_args(argvs[0])
+
+    def test_durable_workstation_verify_recipe_parses(self):
+        # APPLY=1 is the only way to act; no recipe forwards a credential.
+        for variables, applies in ((self.NAMES, False),
+                                   ({**self.NAMES, "APPLY": "yes"}, False),
+                                   ({**self.NAMES, "APPLY": "1"}, True)):
+            with self.subTest(variables=variables):
+                args = self.parse(**variables)
+                self.assertIs(args.apply, applies)
+                self.assertEqual(
+                    (args.workstation, args.persistent_dc, args.hostname),
+                    ("w1", "synthetic-dc", "kept-ws1"))
+        args = self.parse(
+            **self.NAMES, APPLY="1",
+            FACTORY_CONTROLLER_STATE="/state/canonical",
+            DIRECTORY_IDENTITY="/identity/directory.json",
+            DURABLE_WORKSTATION_ROOT="/kept",
+            PERSISTENT_DC_ROOT="/persistent")
+        self.assertEqual(args.controller_state, Path("/state/canonical"))
+        self.assertEqual(args.directory_identity,
+                         Path("/identity/directory.json"))
+        self.assertEqual(args.root, Path("/kept"))
+        self.assertEqual(args.persistent_root, Path("/persistent"))
+        self.assertNotIn("PASSWORD", commands(self.TARGET))
+
+    def test_durable_workstation_verify_is_phony_and_requires_names(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        self.assertIn(self.TARGET, phony.group("body").split())
+        self.assertIn(f"make {self.TARGET} ", MAKEFILE)
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        result = subprocess.run(
+            ["make", self.TARGET, "WORKSTATION=", "PERSISTENT_DC=",
+             "ARCH_HOSTNAME="],
+            cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "require WORKSTATION=<name> PERSISTENT_DC=<instance> "
+            "ARCH_HOSTNAME=<name>", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
