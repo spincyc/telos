@@ -1370,6 +1370,8 @@ class StepOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "work" / "windows-identity-run.log"
             driver = factory_repeat.SubprocessLifecycle(stream=io.StringIO())
+            driver.simulation_lock = Path(temporary) / ".simulation.lock"
+            driver.qemu_running = lambda: False
             command = [sys.executable, "-c",
                        "import sys; print('phase said: refused at sign-in'); "
                        "print('password=hunter2'); sys.exit(2)"]
@@ -1381,6 +1383,42 @@ class StepOutputTests(unittest.TestCase):
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
             self.assertIn(str(log), str(caught.exception))
             self.assertIn("refused at sign-in", str(caught.exception))
+
+
+class QuiescenceTests(unittest.TestCase):
+    def test_a_step_waits_for_guests_and_the_lock_then_proceeds(self):
+        # 2026-10-01: a step started seconds after the previous phase and
+        # failed; the same step passed on an idle lab.
+        import fcntl
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = factory_repeat.SubprocessLifecycle(stream=io.StringIO())
+            lock = Path(temporary) / ".simulation.lock"
+            driver.simulation_lock = lock
+            answers = iter([True, False, False])
+            driver.qemu_running = lambda: next(answers)
+            holder = lock.open("a+b")
+            fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+            sleeps = []
+
+            def fake_sleep(seconds):
+                sleeps.append(seconds)
+                if len(sleeps) == 2:
+                    fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+
+            with mock.patch.object(factory_repeat.time, "sleep", fake_sleep):
+                driver._await_quiescent()
+            holder.close()
+            self.assertEqual(len(sleeps), 2)
+            self.assertNotIn("did not quiesce", driver.stream.getvalue())
+
+    def test_a_lab_that_never_quiesces_warns_and_proceeds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = factory_repeat.SubprocessLifecycle(stream=io.StringIO())
+            driver.simulation_lock = Path(temporary) / ".simulation.lock"
+            driver.qemu_running = lambda: True
+            driver.QUIESCE_SECONDS = 0.0
+            driver._await_quiescent()
+            self.assertIn("did not quiesce", driver.stream.getvalue())
 
 
 class SubprocessFailureTests(unittest.TestCase):

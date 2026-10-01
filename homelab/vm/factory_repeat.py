@@ -97,6 +97,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1153,6 +1154,14 @@ class SubprocessLifecycle(LifecycleDriver):
                  stream=sys.stdout) -> None:
         self.repository = Path(repository)
         self.stream = stream
+        # Injectable so unit tests never read the lab's lock or see a live
+        # guest on the host.
+        self.simulation_lock = (
+            self.repository / CANONICAL_CONTROLLER_DISK.parent
+            / ".simulation.lock")
+        self.qemu_running = lambda: subprocess.run(
+            ["pgrep", "-u", str(os.geteuid()), "-f", "^qemu-system-"],
+            capture_output=True).returncode == 0
 
     def destroy(self, workdir: Path) -> None:
         workdir = Path(workdir)
@@ -1161,7 +1170,41 @@ class SubprocessLifecycle(LifecycleDriver):
         shutil.rmtree(workdir, ignore_errors=True)
         simulation_evidence.private_directory(workdir)
 
+    #: How long a step waits for the previous step's guests and Controller
+    #: lock to be released before it starts anyway (and fails honestly).
+    QUIESCE_SECONDS = 120.0
+
+    def _await_quiescent(self) -> None:
+        """Wait until no QEMU guest runs and the simulation lock is free.
+
+        Consecutive phases start within seconds of each other; on 2026-10-01
+        an arch-install step failed 20 s after the identity phase ended, and
+        the same step passed when rerun on an idle lab. Bounded: after
+        ``QUIESCE_SECONDS`` the step runs and reports its own refusal.
+        """
+        import fcntl
+
+        lock = Path(self.simulation_lock)
+        deadline = time.monotonic() + self.QUIESCE_SECONDS
+        while time.monotonic() < deadline:
+            busy = self.qemu_running()
+            free = True
+            if lock.exists():
+                with lock.open("a+b") as stream:
+                    try:
+                        fcntl.flock(stream.fileno(),
+                                    fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    except BlockingIOError:
+                        free = False
+            if not busy and free:
+                return
+            time.sleep(2.0)
+        print("warning: the lab did not quiesce before the next step",
+              file=self.stream)
+
     def _run(self, command: list[str], log: Path | None = None) -> str:
+        self._await_quiescent()
         print(f"$ {' '.join(command)}", file=self.stream)
         completed = subprocess.run(
             command, cwd=self.repository, capture_output=True, text=True)
