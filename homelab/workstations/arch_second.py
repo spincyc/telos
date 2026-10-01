@@ -1573,8 +1573,15 @@ def _directory_identity():
     return directory_identity
 
 
+#: The one-label DC host name a persistent instance records as its
+#: convergence record's ``dc_hostname`` (``vm/simulation_overlay.DC_HOSTNAME``;
+#: a test holds the two equal).  Short enough to be a NetBIOS computer name.
+RECORDED_DC_LABEL = re.compile(r"^[a-z](?:[a-z0-9-]{0,13}[a-z0-9])?$")
+
+
 def durable_installer_realm(
     identity_path: Path | None = None, *, controller_fqdn: str | None = None,
+    recorded_dc_fqdn: str | None = None,
 ) -> InstallerRealm:
     """The PERMANENT realm, from ADR 0065's one declaration, or a refusal.
 
@@ -1596,6 +1603,17 @@ def durable_installer_realm(
     ``ansible/files/resolve-directory-identity.py`` reconciles the client's
     pinned controller against the two frozen names without deriving it.  So it
     is checked against the declaration rather than invented from it.
+
+    *recorded_dc_fqdn* is the one exception (TASK-42): the recorded DC of the
+    persistent instance the workstation is bound to -- its convergence
+    record's ``dc_hostname`` under the realm's DNS domain -- which after
+    ADR 0081's restore is a name ADR 0065 never froze.  A durable render asks
+    DNS SRV first and names this controller only as its fallback, so a
+    workstation minted after a disaster recovery names the DC that actually
+    exists.  Only the caller that bound the instance may pass it
+    (``vm/arch_durable_install_run``); prepare's command line cannot.  It is
+    accepted only when it IS *controller_fqdn* and is one DC host-name label
+    under the realm's DNS domain; anything else is refused.
     """
     module = _directory_identity()
     try:
@@ -1614,11 +1632,21 @@ def durable_installer_realm(
             f"one controller, so which of the two a permanent disk pins is a "
             f"decision this loader may not make for you")
     if controller_fqdn not in frozen:
-        raise InstallerRealmError(
-            f"domain controller {controller_fqdn!r} is not one of the two "
-            f"controllers {source} freezes ({frozen[0]}, {frozen[1]}); a "
-            f"workstation may not be built against a controller ADR 0065 "
-            f"never froze")
+        suffix = "." + identity.dns_domain
+        recorded = (
+            isinstance(recorded_dc_fqdn, str)
+            and recorded_dc_fqdn == controller_fqdn
+            and recorded_dc_fqdn.endswith(suffix)
+            and bool(RECORDED_DC_LABEL.fullmatch(
+                recorded_dc_fqdn[:-len(suffix)])))
+        if not recorded:
+            raise InstallerRealmError(
+                f"domain controller {controller_fqdn!r} is not one of the two "
+                f"controllers {source} freezes ({frozen[0]}, {frozen[1]}), and "
+                f"it is not the recorded DC of the persistent instance this "
+                f"workstation is bound to (its convergence record's "
+                f"dc_hostname under the realm's DNS domain, TASK-42); a "
+                f"workstation may not be built against any other controller")
     return InstallerRealm(
         dns_domain=identity.dns_domain,
         kerberos_realm=identity.kerberos_realm,
@@ -1631,7 +1659,7 @@ def durable_installer_realm(
 
 def installer_realm(
     *, durable: bool = False, identity_path: Path | None = None,
-    controller_fqdn: str | None = None,
+    controller_fqdn: str | None = None, recorded_dc_fqdn: str | None = None,
 ) -> InstallerRealm:
     """Resolve the one realm a disk is built against, from one switch.
 
@@ -1644,8 +1672,10 @@ def installer_realm(
     """
     if durable:
         return durable_installer_realm(
-            identity_path, controller_fqdn=controller_fqdn)
-    if identity_path is not None or controller_fqdn is not None:
+            identity_path, controller_fqdn=controller_fqdn,
+            recorded_dc_fqdn=recorded_dc_fqdn)
+    if (identity_path is not None or controller_fqdn is not None
+            or recorded_dc_fqdn is not None):
         raise InstallerRealmError(
             "a synthetic acceptance realm takes no identity document and no "
             "domain controller; pass durable=True to build against ADR 0065's "

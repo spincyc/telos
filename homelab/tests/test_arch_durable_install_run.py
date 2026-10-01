@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from homelab.vm import arch_durable_install_run as durable
@@ -571,7 +572,7 @@ class RunFixture:
         for name, value in (
                 ("open_workstation", self.open_workstation),
                 ("durable_binding", lambda *a, **k: self.bound),
-                ("resolve_bundle_realm", lambda args: self.realm),
+                ("resolve_bundle_realm", lambda args, bound: self.realm),
                 ("prepare_bundle", self.prepare),
                 ("DurableArchInstall", self.install_factory),
                 ("ARCH_GROWTH_BYTES", 0)):
@@ -863,6 +864,22 @@ class RealFoldTests(RunFixture, unittest.TestCase):
         self.assertNotIn("backing-filename", info)
         self.assertFalse(
             (self.run_root / "run-synthetic" / "arch.qcow2").exists())
+
+
+class RecordedDcRealmTests(unittest.TestCase):
+    def test_the_bound_instances_recorded_dc_is_vouched_for(self):
+        """TASK-42: after a restore the bundle may name the restored DC."""
+        restored = binding(controller_fqdn=f"dr-2609302105.{DOMAIN}",
+                           dc_hostname="dr-2609302105")
+        prepare_args = SimpleNamespace(controller_fqdn=restored.controller_fqdn)
+        expected = durable_realm(controller_fqdn=restored.controller_fqdn)
+        with mock.patch.object(
+                durable.arch_install_prepare, "resolve_realm",
+                return_value=expected) as resolve:
+            realm = durable.resolve_bundle_realm(prepare_args, restored)
+        self.assertIs(realm, expected)
+        resolve.assert_called_once_with(
+            prepare_args, recorded_dc_fqdn=f"dr-2609302105.{DOMAIN}")
 
 
 if __name__ == "__main__":

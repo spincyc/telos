@@ -603,9 +603,9 @@ def prepare_arguments(
     """Gate 7's prepare, asked for a durable bundle over ``W``'s own disk.
 
     Parsed by prepare's own parser so every option this runner does not set
-    keeps gate 7's default.  The pinned controller is the binding's bootstrap
-    FQDN (``require_durable_realm_agreement`` accepts no other); it is parsed
-    in-process and never reaches a process argv.
+    keeps gate 7's default.  The controller is the binding's: the instance's
+    recorded DC (TASK-42), which ``sssd.conf`` names as the fallback after
+    SRV discovery; it is parsed in-process and never reaches a process argv.
     """
     argv = [
         "--windows-disk", str(workstation.disk),
@@ -620,9 +620,20 @@ def prepare_arguments(
     return arch_install_prepare.parser().parse_args(argv)
 
 
-def resolve_bundle_realm(prepare_args: argparse.Namespace) -> InstallerRealm:
+def resolve_bundle_realm(
+    prepare_args: argparse.Namespace, binding: DurableBinding,
+) -> InstallerRealm:
+    """The bundle's permanent realm, its controller the bound instance's DC.
+
+    The recorded DC is vouched for here and only here: the binding read it
+    from the instance's own convergence record (``dc_hostname``), so a
+    workstation minted after ADR 0081's restore may name the restored DC,
+    which ADR 0065 never froze.  Nothing else widens what prepare accepts.
+    """
     try:
-        return arch_install_prepare.resolve_realm(prepare_args)
+        return arch_install_prepare.resolve_realm(
+            prepare_args,
+            recorded_dc_fqdn=f"{binding.dc_hostname}.{binding.dns_domain}")
     except InstallContractError as error:
         raise DurableInstallError(
             f"the permanent realm could not be resolved from the directory "
@@ -705,7 +716,7 @@ def run(args: argparse.Namespace) -> int:
         identity_path=args.directory_identity)
     require_workstation_binding(marker, binding)
     prepare_args = prepare_arguments(args, workstation, binding)
-    realm = resolve_bundle_realm(prepare_args)
+    realm = resolve_bundle_realm(prepare_args, binding)
     # Checked before the plan's first line, like gate 7's realm agreement, so
     # the dry run reports a refusal too.
     require_durable_realm_agreement(realm, binding)

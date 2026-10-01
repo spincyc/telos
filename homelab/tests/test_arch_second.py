@@ -2539,6 +2539,62 @@ class InstallerRealmTests(unittest.TestCase):
                 self.assertNotIn(
                     f"resolved {SYNTHETIC_DOMAIN}", str(caught.exception))
 
+    def test_a_restored_instances_recorded_dc_may_be_named(self):
+        """TASK-42: a workstation minted after a DR names the restored DC.
+
+        Only when the binding vouches for it as the instance's recorded DC,
+        and only as one DC host-name label under the realm's DNS domain.
+        """
+        domain = DURABLE_DOCUMENT["identity"]["dns_domain"]
+        restored = f"dr-2609302105.{domain}"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self.document(Path(temporary))
+            realm = durable_installer_realm(
+                path, controller_fqdn=restored, recorded_dc_fqdn=restored)
+            self.assertEqual(realm.controller_fqdn, restored)
+            self.assertTrue(realm.durable)
+            self.assertEqual(
+                installer_realm(durable=True, identity_path=path,
+                                controller_fqdn=restored,
+                                recorded_dc_fqdn=restored).controller_fqdn,
+                restored)
+            self.assertEqual(arch_second.ad_server_value(realm),
+                             f"_srv_, {restored}")
+            refused = (
+                # Not vouched for at all: the frozen rule alone applies.
+                (restored, None),
+                # A different name than the one the instance records.
+                (f"dr-other.{domain}", restored),
+                (restored, f"dr-other.{domain}"),
+                # The record, but outside the realm, or not one DC label.
+                (f"dr-2609302105.other.home.arpa",
+                 "dr-2609302105.other.home.arpa"),
+                (f"a.b.{domain}", f"a.b.{domain}"),
+                (f"dr-name-longer-than-15.{domain}",
+                 f"dr-name-longer-than-15.{domain}"),
+            )
+            for controller, recorded in refused:
+                with self.subTest(controller=controller, recorded=recorded):
+                    with self.assertRaises(InstallerRealmError) as caught:
+                        durable_installer_realm(
+                            path, controller_fqdn=controller,
+                            recorded_dc_fqdn=recorded)
+                    self.assertIn("recorded DC of the persistent instance",
+                                  str(caught.exception))
+                    self.assertIn("dc_hostname", str(caught.exception))
+            # The frozen names still need no record.
+            for fqdn in DURABLE_DOCUMENT["services"].values():
+                self.assertEqual(durable_installer_realm(
+                    path, controller_fqdn=fqdn,
+                    recorded_dc_fqdn=restored).controller_fqdn, fqdn)
+        # The synthetic realm takes no recorded name and stays as frozen.
+        with self.assertRaises(InstallerRealmError):
+            installer_realm(recorded_dc_fqdn=restored)
+        self.assertEqual(installer_realm(), synthetic_installer_realm())
+        from homelab.vm import simulation_overlay
+        self.assertEqual(arch_second.RECORDED_DC_LABEL.pattern,
+                         simulation_overlay.DC_HOSTNAME.pattern)
+
     def test_a_durable_realm_must_name_a_frozen_controller(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

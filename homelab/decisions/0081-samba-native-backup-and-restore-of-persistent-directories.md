@@ -103,7 +103,10 @@ and `python/samba/netcmd/domain/backup.py`):
    `/etc/hostname`, `/etc/hosts` and the role's SPN aliases all use the
    recorded name. Kept Arch workstations find the DC by DNS SRV first:
    a durable render writes `ad_server = _srv_, <recorded DC FQDN>`, so the
-   named controller is only the fallback. A kept workstation whose Arch side
+   named controller is only the fallback. A workstation minted after a
+   restore names the restored DC there: beyond the two FQDNs ADR 0065
+   froze, a durable bundle may name only the recorded DC of the instance it
+   is bound to. A kept workstation whose Arch side
    asks SRV first is accepted under any DC name in its realm; one installed
    before this decision names its controller alone and is refused, with that
    reason, once the instance's DC is no longer that name. Windows needs

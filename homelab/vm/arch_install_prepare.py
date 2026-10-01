@@ -385,7 +385,9 @@ def qemu_arch_install_command(
     return command
 
 
-def resolve_realm(args: argparse.Namespace) -> arch_second.InstallerRealm:
+def resolve_realm(
+    args: argparse.Namespace, *, recorded_dc_fqdn: str | None = None,
+) -> arch_second.InstallerRealm:
     """The one realm this bundle's installer bakes onto the target disk.
 
     Resolved from exactly one switch.  With ``--durable-identity`` absent this
@@ -405,10 +407,13 @@ def resolve_realm(args: argparse.Namespace) -> arch_second.InstallerRealm:
     ``require_realm_agreement`` there for what a real-workstation flow has to
     supply before this stops being a refusal.
     """
+    # *recorded_dc_fqdn* is never a command-line option: only a runner that
+    # bound a persistent instance can vouch for its recorded DC (TASK-42).
     return arch_second.installer_realm(
         durable=args.durable_identity,
         identity_path=args.identity_document,
-        controller_fqdn=args.controller_fqdn)
+        controller_fqdn=args.controller_fqdn,
+        recorded_dc_fqdn=recorded_dc_fqdn)
 
 
 def prepare(
