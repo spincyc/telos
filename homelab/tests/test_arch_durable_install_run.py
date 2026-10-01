@@ -80,10 +80,12 @@ def synthetic_record() -> dict:
 
 
 def installer_script(*, controller: str = BOOTSTRAP, deferred: bool = True,
-                     fingerprint: str = FINGERPRINT) -> str:
+                     fingerprint: str = FINGERPRINT,
+                     srv_first: bool = True) -> str:
+    discovery = f"_srv_, {controller}" if srv_first else controller
     lines = [
         "#!/bin/bash", "set -euo pipefail", "[domain/synthetic]",
-        f"ad_server = {controller}", f"ROSTER_FINGERPRINT='{fingerprint}'"]
+        f"ad_server = {discovery}", f"ROSTER_FINGERPRINT='{fingerprint}'"]
     if deferred:
         lines.append(f'echo "{JOIN_DEFERRED_MARKER}"')
     return "\n".join(lines) + "\n"
@@ -195,13 +197,15 @@ class DurableRealmTests(unittest.TestCase):
 
     def test_the_permanent_dc_pin_is_refused(self):
         permanent = f"dc1.{DOMAIN}"
-        with self.assertRaisesRegex(DurableBindingError, "bootstrap FQDN"):
+        with self.assertRaisesRegex(DurableBindingError, "predates SRV-first"):
             self.check(record=realm_record(controller_fqdn=permanent),
                        script=installer_script(controller=permanent))
 
     def test_the_installer_bytes_are_held_to_the_record(self):
         cases = (
             (installer_script(controller=f"dc1.{DOMAIN}"), "domain controller"),
+            # Rendered before TASK-42: the controller alone, no SRV first.
+            (installer_script(srv_first=False), "predates SRV-first"),
             (installer_script(deferred=False), "defer the install-time join"),
             (installer_script(fingerprint="fedcba9876543210"), "roster"),
         )
@@ -681,6 +685,12 @@ class RunTests(RunFixture, unittest.TestCase):
         self.assertEqual(recorded["fold"]["disk_sha256"], "cd" * 32)
         self.assertIs(recorded["overlay_discarded"], True)
         self.assertIn("Folded stage arch-install", output)
+        # TASK-42: the kept disk records that its Arch side asks SRV first,
+        # with the controller it was installed against as the fallback.
+        discovery = self.marker()["arch_dc_discovery"]
+        self.assertEqual(
+            (discovery["mode"], discovery["fallback_fqdn"]),
+            ("srv-first", self.realm.controller_fqdn))
 
     def test_prepare_is_asked_for_a_durable_bundle_over_the_kept_disk(self):
         with mock.patch.object(wi.WorkstationInstance, "fold",

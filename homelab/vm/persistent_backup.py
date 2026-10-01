@@ -33,9 +33,13 @@ through a disk image:
 Samba restores a DC only under a name the domain never held: its restore adds
 the new DC's objects while the backed-up DC's still exist, so the backed-up
 DC's own name fails.  A restored instance therefore runs a DC with a new name
-(``RESTORE_DC_NAME``, default ``dr-<UTC minute>``), and the durable binding
-refuses it: every durable stage expects the bootstrap Controller's name, and
-regaining that name is not built (ADR 0081).
+(``RESTORE_DC_NAME``, default ``dr-<UTC minute>``).  The restore renames the
+guest to it and records it as the convergence record's ``dc_hostname``, and
+every durable stage follows the recorded name (owner decision 2026-09-30,
+aiq TASK-42): the console prompt, the binding's controller FQDN, the probe's
+DNS checks, the role's SPN aliases on reconvergence.  Kept workstations whose
+Arch side asks DNS SRV first find the new DC; one that names its controller
+alone is refused with the reason (ADR 0081).
 """
 
 from __future__ import annotations
@@ -853,6 +857,19 @@ def _restore_dc_name(requested: str | None, backup_set: BackupSet) -> str:
             "restore adds the new DC's objects while the backed-up DC's "
             "still exist, and that name fails with 'already exists' "
             "(ADR 0081)")
+    # Every persistent directory began with the canonical image's DC, and a
+    # restored one also replaced the DC its own backup named: Samba's
+    # documentation asks for a name that never existed in the domain.
+    held = {NAME.upper()}
+    restored = backup_set.marker.get("restored")
+    if isinstance(restored, dict) and isinstance(
+            restored.get("replaced_dc_server_name"), str):
+        held.add(restored["replaced_dc_server_name"].upper())
+    if name.upper() in held:
+        raise PersistentBackupError(
+            f"RESTORE_DC_NAME {name} is a DC name this domain has already "
+            "held; Samba documents that a restored DC must take a name that "
+            "never existed in the domain (ADR 0081)")
     return name
 
 
@@ -892,9 +909,18 @@ def _carry_custody(target: PersistentControllerInstance,
     instance_store(target).update(carry)
 
 
-def _carried_records(backup_set: BackupSet) -> dict:
-    return {key: backup_set.marker[key] for key in CARRIED_RECORDS
-            if backup_set.marker.get(key) is not None}
+def _carried_records(backup_set: BackupSet, dc_name: str) -> dict:
+    """The backed-up marker's directory records, under the restored DC name.
+
+    The convergence record keeps its realm, NetBIOS name, DNS domain and
+    domain SID, and records the DC the directory now runs as
+    ``dc_hostname`` (TASK-42).
+    """
+    records = {key: json.loads(json.dumps(backup_set.marker[key]))
+               for key in CARRIED_RECORDS
+               if backup_set.marker.get(key) is not None}
+    records[PERSISTENT_CONVERGENCE_KEY]["dc_hostname"] = dc_name
+    return records
 
 
 def _run_restore(
@@ -1022,7 +1048,8 @@ def _run_restore(
                         "marker_recorded")]):
                 try:
                     step = "marker"
-                    target.record_restoration(_carried_records(backup_set), {
+                    target.record_restoration(
+                        _carried_records(backup_set, dc_name), {
                         "utc": _now(), "run_id": run_id,
                         "backup_path": str(backup_set.path),
                         "backup_sha256":
@@ -1067,9 +1094,13 @@ def _run_restore(
     else:
         print(f"{instance}: restored {backup_set.instance}'s directory from "
               f"{backup_set.path} as DC {dc_name}; realm, domain SID and "
-              "principals are the backup's")
-        print(f"{instance}: the durable stages refuse this instance until its "
-              f"DC regains the name {NAME} (ADR 0081)")
+              "principals are the backup's, and the guest is now named "
+              f"{dc_name}")
+        print(f"{instance}: it has no network yet. Next: make "
+              f"homelab-factory-persistent-converge PERSISTENT_DC={instance} "
+              f"APPLY=1 RECONVERGE=1 (convergence lays down the network and "
+              f"the DC's name; provisioning is skipped because a directory "
+              f"exists), then homelab-factory-persistent-probe")
     print(f"{instance}: restore {'PASS' if passed else 'FAIL'}; evidence "
           f"{evidence}")
     return 0 if passed else 2
@@ -1145,20 +1176,22 @@ def restore(
         + f", as the backup records; the {CONSOLE_ACCOUNT} password is the "
         "canonical image's, typed at this terminal once before anything "
         "is created; the directory's own passwords come back with it"))
-    print(f"DC name: {name.upper()}. Samba restores a DC only under a name "
-          f"the domain never held, so it is not the backed-up "
-          f"{directory['dc_server_name']}; every durable stage refuses this "
-          f"instance until its DC regains the name {NAME}, which is not built "
-          "(ADR 0081)")
+    print(f"DC name: {name}. Samba restores a DC only under a name the domain "
+          f"never held, so it is not the backed-up "
+          f"{directory['dc_server_name']}; the guest is renamed to it and the "
+          "marker records it, and every durable stage follows the recorded "
+          "name (TASK-42). Kept workstations whose Arch side asks SRV first "
+          "find it; one that names its controller alone is refused")
     print("steps: create the instance; boot it in place with NO network "
           "device and the backup disk read-only; verify the disk's header "
           "and SHA-256 in the guest; move the package's empty /var/lib/samba "
           "aside; samba-tool domain backup restore --newservername="
           f"{name} --targetdir=/var/lib/samba; install its smb.conf as "
-          "/etc/samba/smb.conf; enable and start samba; prove the realm, "
-          "the domain SID and the principal digest are the backup's; power "
-          "off over the console; record the backup's directory records and "
-          "the restore in the new marker")
+          f"/etc/samba/smb.conf; name the guest {name}; enable and start "
+          "samba; prove the realm, the domain SID and the principal digest "
+          "are the backup's; power off over the console; record the backup's "
+          "directory records under the new DC name and the restore in the "
+          "new marker. Then reconverge (RECONVERGE=1) for the network")
     print(f"evidence: {Path(evidence_root) / instance}/<run id>/ "
           "(console-transcript.log, redacted; result.json of secret-free "
           "facts)")

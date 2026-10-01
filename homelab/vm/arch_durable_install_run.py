@@ -68,8 +68,9 @@ from .automated_controller import DisposableBootDisk  # noqa: E402
 from .bootstrap_dc import (  # noqa: E402
     DEFAULT_PERSISTENT_ROOT, DEFAULT_STATE, paths)
 from .durable_workstation import (  # noqa: E402
-    SID_MATCH, SID_REPAIR, DurableBinding, DurableBindingError,
-    check_live_directory, durable_binding, require_durable_realm_agreement)
+    SID_MATCH, SID_REPAIR, SRV_FIRST, DurableBinding, DurableBindingError,
+    check_live_directory, durable_binding, require_durable_realm_agreement,
+    require_workstation_dc_agreement)
 from .factory_publication import stage as stage_publication  # noqa: E402
 from .factory_runner import (  # noqa: E402
     DEFAULT_SEED_ISO, GATEWAY_MAC, PUBLICATION_LABEL, activate_publication,
@@ -85,7 +86,8 @@ from .workstation_instance import (  # noqa: E402
 
 from homelab.workstations.arch_second import (  # noqa: E402
     JOIN_DEFERRED_MARKER, JOIN_MEDIA_CONSUMED_MARKER, JOIN_VERIFIED_MARKER,
-    SAFE_HOSTNAME, InstallContractError, InstallerRealm, InstallerRealmError)
+    SAFE_HOSTNAME, InstallContractError, InstallerRealm, InstallerRealmError,
+    ad_server_value)
 
 
 #: The ledger stage this runner folds (``workstation_instance.FLOW_STAGES``).
@@ -152,17 +154,21 @@ def require_durable_bundle_realm(
 
     ``durable_workstation.require_durable_realm_agreement`` replaces gate 7's
     outright durable refusal: the recorded realm must be permanent and be the
-    bound instance's, pinned to its bootstrap Controller.  The installer's own
-    bytes are then held to the record the way gate 7 holds them -- the
-    ``ad_server`` pin -- and to two facts only a durable build has: the
-    deferred install-time join, and the roster fingerprint the persistent
-    instance staged its accounts under.
+    bound instance's, its fallback controller the instance's recorded DC.
+    The installer's own bytes are then held to the record the way gate 7
+    holds them -- the ``ad_server`` line, which for a durable render asks
+    SRV first and names that controller as its fallback (TASK-42) -- and to
+    two facts only a durable build has: the deferred install-time join, and
+    the roster fingerprint the persistent instance staged its accounts under.
+    A bundle prepared before SRV-first discovery is refused here: its
+    ``ad_server`` names the controller alone.
     """
     realm = authorized_realm(authorized)
     require_durable_realm_agreement(realm, binding)
     required = (
-        (f"\nad_server = {realm.controller_fqdn}\n",
-         "does not pin the authorized domain controller in sssd.conf; its "
+        (f"\nad_server = {ad_server_value(realm)}\n",
+         "does not ask SRV first with the authorized domain controller as "
+         "its fallback in sssd.conf; it predates SRV-first discovery or its "
          "authorization and its rendered bytes describe different realms"),
         (f'\necho "{JOIN_DEFERRED_MARKER}"\n',
          "does not defer the install-time join; a durable disk may not be "
@@ -493,13 +499,20 @@ def require_arch_install_next(workstation: WorkstationInstance) -> dict:
     return marker
 
 
-def require_workstation_binding(marker: dict, binding: DurableBinding) -> None:
+def require_workstation_binding(
+    marker: dict, binding: DurableBinding,
+) -> str | None:
     """Refuse a binding that is not the instance ``W`` was adopted against.
 
     Compared, never printed.  ``W`` recorded the instance's SID when it was
     adopted; a record the instance later completed (``REPAIR_SID``) still
     names the same directory, so ``check_live_directory``'s repair case is
     accepted as well as an exact match.
+
+    Then ``W``'s Arch side, once installed, must be able to reach the
+    instance's recorded DC (TASK-42): a disk that asks SRV first is accepted
+    under any DC name and the returned note says so; a disk that names its
+    controller alone is refused when that is no longer the instance's DC.
     """
     recorded = marker["binding"]
     name = marker["workstation"]
@@ -521,6 +534,10 @@ def require_workstation_binding(marker: dict, binding: DurableBinding) -> None:
             f"not printed") from error
     if verdict not in (SID_MATCH, SID_REPAIR):
         raise DurableInstallError("unexpected domain SID verdict")
+    try:
+        return require_workstation_dc_agreement(marker, binding)
+    except DurableBindingError as error:
+        raise DurableInstallError(str(error)) from error
 
 
 def require_ledger_head(
@@ -724,6 +741,10 @@ def run(args: argparse.Namespace) -> int:
                 releases=args.releases, seed_iso=args.seed_iso,
                 duration=args.duration,
             ).execute(bundle)
+            # Recorded before the fold: a fold that then fails leaves the
+            # stage unfolded, and the record only counts once it is.
+            workstation.record_arch_dc_discovery(
+                SRV_FIRST, realm.controller_fqdn)
             entry = workstation.fold(
                 overlay, STAGE, firmware_vars=bundle / VARS_NAME,
                 source=str(bundle))

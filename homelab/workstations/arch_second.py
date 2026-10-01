@@ -1692,10 +1692,78 @@ def _render_smb(realm: str, workgroup: str) -> str:
 SSSD_SERVICES = ("nss", "pam", "ifp")
 
 
+#: SSSD's own spelling of "use DNS service discovery" inside ``ad_server``
+#: (sssd-ad(5), and sssd-failover(7)'s "_srv_" keyword).
+SSSD_SERVICE_DISCOVERY = "_srv_"
+
+
+def ad_server_value(realm: "InstallerRealm") -> str:
+    """What a render's ``ad_server`` says for *realm*.
+
+    The disposable acceptance realm names its one controller and nothing
+    else.  A DURABLE realm asks DNS service discovery first and names the
+    controller it was installed against only as the fallback: see
+    ``_sssd_discovery`` for why the two differ.  Both the renderer and the
+    runners that hold a bundle's bytes to its authorization call this, so the
+    line they look for is the line that was written.
+    """
+    if realm.durable:
+        return f"{SSSD_SERVICE_DISCOVERY}, {realm.controller_fqdn}"
+    return realm.controller_fqdn
+
+
+def _sssd_discovery(controller_fqdn: str, *, durable: bool) -> str:
+    """The ``ad_server`` block: pinned for acceptance, SRV first when durable.
+
+    The pinned text is the synthetic render's, byte for byte; the golden
+    digests hold it there.
+    """
+    if not durable:
+        return f"""# Discovery, pinned rather than discovered.  SSSD's AD provider locates a
+# domain controller ONLY by DNS SRV lookup (_ldap._tcp.<ad_domain>, plus the
+# site-specific variants it derives from a CLDAP netlogon ping); with no
+# ad_server it logs "No AD server set, will use service discovery!" and has no
+# other way to find one.  Samba's `net ads` does not share that constraint --
+# it falls back to a NetBIOS <1C> broadcast for the workgroup, which this flat
+# simulated segment floods -- so `net ads info` and `net ads join` can succeed
+# on a fabric where SSSD's discovery does not, and the 2026-08-14 gate-8 run
+# showed exactly that asymmetry: the join verified in eight seconds and SSSD
+# then sat Offline for two minutes with "AD Domain Controller: not connected".
+# This fabric has exactly one domain controller and the factory already knows
+# its name, so naming it removes SRV discovery, CLDAP site discovery and the
+# whole failover-plugin path from the login gate's critical section.  The name
+# and not the address: libsss_ad warns "ad_server [%s] is detected as IP
+# address, this can cause GSSAPI/GSS-SPNEGO problems", because the SASL bind
+# needs a principal to ask the KDC for.
+ad_server = {controller_fqdn}"""
+    return f"""# Discovery: DNS service discovery first, then the controller this disk was
+# installed against, by name.  A durable client outlives that controller.
+# ADR 0081 restores a lost directory only under a NEW domain controller name,
+# because Samba never restores a DC under a name the domain still holds;
+# ADR 0055 requires a second controller before the directory is production;
+# and ADR 0068 moves the directory to its permanent controller without
+# rejoining any workstation.  So "{SSSD_SERVICE_DISCOVERY}" comes first -- SSSD's service
+# discovery, _ldap._tcp.<ad_domain> -- and the named controller is the
+# fallback SSSD tries when discovery finds nothing (sssd-ad(5): a
+# comma-separated list in order of preference).  The disposable acceptance
+# render stays pinned to the name alone: on its simulated segment the
+# 2026-08-14 gate-8 run had SSSD Offline with "Discovered AD Domain
+# Controllers: None so far" while `net ads` joined over a NetBIOS broadcast
+# (8906d83), and that fabric only ever has the one controller.  Convergence
+# has proved since then that the controller's SRV records answer on the
+# address a client asks, and the persistent probe checks the same records.
+# The fallback is a name and not an address: libsss_ad warns "ad_server [%s]
+# is detected as IP address, this can cause GSSAPI/GSS-SPNEGO problems",
+# because the SASL bind needs a principal to ask the KDC for.
+ad_server = {SSSD_SERVICE_DISCOVERY}, {controller_fqdn}"""
+
+
 def _render_sssd(
     domain: str, realm: str, *, controller_fqdn: str, client_fqdn: str,
+    durable: bool = False,
 ) -> str:
     """Mirror ansible/roles/identity_client/templates/sssd.conf.j2."""
+    discovery = _sssd_discovery(controller_fqdn, durable=durable)
     return f"""# Managed by Telos gate 7 (workstations/arch_second.py).
 [sssd]
 domains = {domain}
@@ -1718,23 +1786,7 @@ offline_credentials_expiration = 0
 [domain/{domain}]
 id_provider = ad
 access_provider = ad
-# Discovery, pinned rather than discovered.  SSSD's AD provider locates a
-# domain controller ONLY by DNS SRV lookup (_ldap._tcp.<ad_domain>, plus the
-# site-specific variants it derives from a CLDAP netlogon ping); with no
-# ad_server it logs "No AD server set, will use service discovery!" and has no
-# other way to find one.  Samba's `net ads` does not share that constraint --
-# it falls back to a NetBIOS <1C> broadcast for the workgroup, which this flat
-# simulated segment floods -- so `net ads info` and `net ads join` can succeed
-# on a fabric where SSSD's discovery does not, and the 2026-08-14 gate-8 run
-# showed exactly that asymmetry: the join verified in eight seconds and SSSD
-# then sat Offline for two minutes with "AD Domain Controller: not connected".
-# This fabric has exactly one domain controller and the factory already knows
-# its name, so naming it removes SRV discovery, CLDAP site discovery and the
-# whole failover-plugin path from the login gate's critical section.  The name
-# and not the address: libsss_ad warns "ad_server [%s] is detected as IP
-# address, this can cause GSSAPI/GSS-SPNEGO problems", because the SASL bind
-# needs a principal to ask the KDC for.
-ad_server = {controller_fqdn}
+{discovery}
 # The client's own fully qualified name, for the same reason.  /etc/hostname
 # carries the short name, so without this SSSD calls gethostname(), gets
 # "telos-ws1", and has to expand it by resolving it back -- "The hostname [%s]
@@ -2591,7 +2643,7 @@ WantedBy=multi-user.target
 
 def _render_domain_online_script(
     *, realm_dns_domain: str, realm: str, login_principal: str,
-    controller_fqdn: str, client_fqdn: str,
+    controller_fqdn: str, client_fqdn: str, durable: bool = False,
 ) -> str:
     """Emit the boot-time SSSD domain-online gate the one-shot unit runs.
 
@@ -2621,6 +2673,12 @@ def _render_domain_online_script(
         f" {DIAGNOSTIC_CHILD_LOG_LINES}"
         for name in SSSD_CHILD_LOG_NAMES)
     machine_principal = _machine_principal(client_fqdn, realm)
+    # A durable sssd.conf asks SRV first and names the controller only as its
+    # fallback; the synthetic script's bytes stay as they were.
+    fallback_note = (
+        "\n# Durable render: ad_server lists _srv_ first, so AD_SERVER is its named\n"
+        "# fallback, the controller this disk was installed against."
+        if durable else "")
     return f"""#!/usr/bin/env bash
 # Managed by Telos gate 7 (workstations/arch_second.py).  Boot-time SSSD
 # domain-online gate.  See DOMAIN_ONLINE_UNIT_NAME in that module for why the
@@ -2648,7 +2706,7 @@ TGT_CACHE='{DIAGNOSTIC_TGT_CACHE_PATH}'
 # reports on exactly the names SSSD was configured with, so a diagnostic can
 # never disagree with the configuration it is diagnosing.
 AD_SERVER='{controller_fqdn}'
-AD_HOSTNAME='{client_fqdn}'
+AD_HOSTNAME='{client_fqdn}'{fallback_note}
 
 # One diagnostic field: a bounded command, its output flattened to a single
 # length-capped console line, prefixed with the diagnostic marker so a human or
@@ -3097,7 +3155,8 @@ def render_installer(
     smb_conf = _render_smb(kerberos_realm, realm_workgroup)
     sssd_conf = _render_sssd(
         realm_dns_domain, kerberos_realm,
-        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
+        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn,
+        durable=realm.durable)
     probe = _render_probe(
         domain=realm_dns_domain, principals=principals,
         roster_fingerprint=roster_fingerprint,
@@ -3143,7 +3202,8 @@ def render_installer(
     domain_online_script = _render_domain_online_script(
         realm_dns_domain=realm_dns_domain, realm=kerberos_realm,
         login_principal=principals["daily_admin"],
-        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn)
+        controller_fqdn=controller_fqdn, client_fqdn=client_fqdn,
+        durable=realm.durable)
     domain_online_unit = _render_domain_online_unit()
     domain_online_script_path = DOMAIN_ONLINE_SCRIPT_PATH
     domain_online_unit_path = DOMAIN_ONLINE_UNIT_PATH

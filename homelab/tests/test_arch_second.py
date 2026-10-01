@@ -2463,7 +2463,7 @@ class InstallerRealmTests(unittest.TestCase):
             f"    workgroup = {identity['netbios_name']}",
             f"domains = {identity['dns_domain']}",
             f"[domain/{identity['dns_domain']}]",
-            f"ad_server = {realm.controller_fqdn}",
+            f"ad_server = _srv_, {realm.controller_fqdn}",
             f"ad_hostname = telos-ws1.{identity['dns_domain']}",
             f"REALM='{identity['kerberos_realm']}'",
             f"MACHINE_PRINCIPAL='TELOS-WS1$@{identity['kerberos_realm']}'",
@@ -2879,11 +2879,53 @@ class DurableRenderTests(_PinnedRosterRender):
             with self.subTest(file=terminator):
                 self.assertIn(realm.kerberos_realm,
                               _heredoc_body(script, terminator).upper())
-        self.assertIn(f"\nad_server = {realm.controller_fqdn}\n", script)
+        self.assertIn(f"\nad_server = _srv_, {realm.controller_fqdn}\n",
+                      script)
         for unit in (JOIN_ONCE_UNIT_NAME, DOMAIN_ONLINE_UNIT_NAME):
             with self.subTest(unit=unit):
                 self.assertIn(
                     f"arch-chroot /mnt systemctl enable {unit}", script)
+
+    def test_a_durable_client_asks_srv_first_and_names_its_fallback(self):
+        """ADR 0081's owner decision: SRV first, the recorded name second.
+
+        A restored directory runs a controller with a new name, ADR 0055's
+        second controller and ADR 0068's permanent one are other names, and
+        none of them may cost a durable workstation its logins.
+        """
+        realm = self.durable_realm()
+        script = self.render(realm)
+        sssd_conf = _heredoc_body(script, "TELOS_SSSD_EOF")
+        lines = [line for line in sssd_conf.splitlines()
+                 if line.startswith("ad_server")]
+        self.assertEqual(lines, [f"ad_server = _srv_, {realm.controller_fqdn}"])
+        self.assertEqual(arch_second.ad_server_value(realm),
+                         f"_srv_, {realm.controller_fqdn}")
+        for reason in ("ADR 0081", "ADR 0055", "ADR 0068", "8906d83",
+                       "sssd-ad(5)"):
+            self.assertIn(reason, sssd_conf)
+        # The synthetic render keeps its one pinned name.
+        synthetic = _heredoc_body(self.render(), "TELOS_SSSD_EOF")
+        self.assertIn(f"\nad_server = {CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}\n",
+                      synthetic)
+        self.assertNotIn("_srv_", synthetic)
+        self.assertEqual(
+            arch_second.ad_server_value(synthetic_installer_realm()),
+            f"{CONTROLLER_HOSTNAME}.{SYNTHETIC_DOMAIN}")
+        # Kerberos already finds its KDC by SRV in both renders: no static
+        # kdc line exists to pin anything.
+        krb5 = _heredoc_body(script, "TELOS_KRB5_EOF")
+        self.assertIn("dns_lookup_kdc = true", krb5)
+        self.assertNotRegex(krb5, r"(?m)^\s*(?:kdc|admin_server)\s*=")
+        self.assertNotIn("[realms]", krb5)
+        self.assertNotIn(realm.controller_fqdn, krb5)
+        # The boot gate's diagnostic still resolves the named fallback, and
+        # says that is what it is.
+        gate = _heredoc_body(script, "TELOS_DOMAIN_ONLINE_EOF")
+        self.assertIn(f"AD_SERVER='{realm.controller_fqdn}'", gate)
+        self.assertIn("ad_server lists _srv_ first", gate)
+        self.assertNotIn("ad_server lists _srv_ first",
+                         _heredoc_body(self.render(), "TELOS_DOMAIN_ONLINE_EOF"))
 
     def test_the_durable_join_unit_carries_the_seal(self):
         unit = _heredoc_body(

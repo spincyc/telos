@@ -126,8 +126,9 @@ class BackupFixture(SessionFixture):
             return child
         return REAL_POPEN(argv, **kwargs)
 
-    def login(self, console, label):
+    def login(self, console, label, *, hostname=None):
         self.calls.append("login")
+        self.login_hostnames.append(hostname)
         self.assertEqual(console.password, self.console_password)
         console.reader.read1(1 << 20)
 
@@ -275,9 +276,12 @@ class BackupFixture(SessionFixture):
             code, out, err = self.run_backup()
         self.assertEqual(code, 0, err)
         [backup_set] = [path for path in (self.backups / INSTANCE).iterdir()]
+        # The backup session logged in at the instance's recorded name.
+        self.assertEqual(self.login_hostnames, ["bootstrap-dc"])
         self.guests.clear()
         self.calls.clear()
         self.commands.clear()
+        self.login_hostnames.clear()
         return backup_set
 
     def result(self, root: Path, instance: str = INSTANCE):
@@ -577,7 +581,8 @@ class RestoreRunTests(BackupFixture):
             code, out, err = self.run_restore(backup_set, apply=False)
         self.assertEqual(code, 0, err)
         self.assertIn("restore drill into a separate instance", out)
-        self.assertIn("DC name: DR-", out)
+        self.assertIn("DC name: dr-", out)
+        self.assertIn("follows the recorded name", out)
         self.assertIn("never from a disk image", out)
         self.assertIn(f"dry run; repeat with APPLY=1 CONFIRM='RESTORE {DRILL}'",
                       out)
@@ -703,7 +708,10 @@ class RestoreRunTests(BackupFixture):
         restored = PersistentControllerInstance(
             self.state.parent / DRILL, instance=DRILL)
         source = PersistentControllerInstance(self.state, instance=INSTANCE)
-        self.assertEqual(restored.convergence(), source.convergence())
+        carried = dict(restored.convergence())
+        # The one field a restore changes: the DC the directory now runs.
+        self.assertRegex(carried.pop("dc_hostname"), r"^dr-[0-9]{10}$")
+        self.assertEqual(carried, source.convergence())
         self.assertEqual(restored.directory_accounts(),
                          source.directory_accounts())
         self.assertEqual(restored.directory_password_policy(),
@@ -727,12 +735,22 @@ class RestoreRunTests(BackupFixture):
             self.assertNotIn(value, out)
         # The source instance was not touched.
         self.assertIsNone(source.restored())
-        # Samba's restore gave the DC a new name: no durable stage binds it.
-        with self.assertRaisesRegex(durable_workstation.DurableBindingError,
-                                    "restored from a Samba backup"):
-            durable_workstation.durable_binding(
-                self.state.parent, DRILL, canonical_state=self.canonical,
-                identity_path=self.identity)
+        # Samba's restore gave the DC a new name; the guest was renamed to
+        # it and every durable stage follows the recorded name (TASK-42).
+        self.assertIn(f"> /etc/hostname", command)
+        self.assertEqual(restored.dc_hostname(), record["dc_server_name"])
+        self.assertEqual(restored.convergence()["dc_hostname"],
+                         record["dc_server_name"])
+        binding = durable_workstation.durable_binding(
+            self.state.parent, DRILL, canonical_state=self.canonical,
+            identity_path=self.identity)
+        self.assertEqual(binding.dc_hostname, record["dc_server_name"])
+        self.assertEqual(binding.controller_fqdn,
+                         f"{record['dc_server_name']}.{DOMAIN}")
+        self.assertEqual(binding.domain_sid, SID)
+        # The restore session logged into the fresh canonical image's prompt.
+        self.assertEqual(self.login_hostnames, ["bootstrap-dc"])
+        self.assertIn("RECONVERGE=1", out)
         self.assertFalse(self.lock_held())
 
     def test_disaster_recovery_into_the_lost_instances_own_name(self):
@@ -746,9 +764,22 @@ class RestoreRunTests(BackupFixture):
         self.assertEqual(code, 0, err)
         self.assertIn("disaster recovery into the lost instance's own name",
                       out)
-        record = PersistentControllerInstance(
-            self.state, instance=INSTANCE).restored()
-        self.assertEqual(record["dc_server_name"], "dr-recovery")
+        target = PersistentControllerInstance(self.state, instance=INSTANCE)
+        self.assertEqual(target.restored()["dc_server_name"], "dr-recovery")
+        self.assertEqual(target.dc_hostname(), "dr-recovery")
+        # The recovered instance binds under its new DC name, and a session
+        # on it logs in at that name's prompt.
+        binding = durable_workstation.durable_binding(
+            self.state.parent, INSTANCE, canonical_state=self.canonical,
+            identity_path=self.identity)
+        self.assertEqual(binding.controller_fqdn, f"dr-recovery.{DOMAIN}")
+        self.assertEqual(self.session().dc_hostname, "dr-recovery")
+        # A later restore may not reuse either name this domain has held.
+        loaded = runner.load_backup_set(backup_set)
+        for name in ("bootstrap-dc", "BOOTSTRAP-DC"):
+            with self.assertRaisesRegex(runner.PersistentBackupError,
+                                        "RESTORE_DC_NAME"):
+                runner._restore_dc_name(name, loaded)
 
     def test_a_different_live_directory_records_nothing(self):
         backup_set = self.take_backup()

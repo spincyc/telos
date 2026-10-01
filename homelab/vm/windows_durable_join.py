@@ -1207,7 +1207,10 @@ def run(args: argparse.Namespace, *,
         args.persistent_root, args.persistent_dc,
         canonical_state=args.controller_state,
         identity_path=args.directory_identity)
-    require_workstation_binding(marker, binding)
+    discovery = require_workstation_binding(marker, binding)
+    if discovery:
+        # TASK-42: an SRV-first Arch side reaches a DC under another name.
+        print(f"Directory discovery: {discovery}")
     if mode == "retire":
         return _retire(workstation, binding, args.apply)
     require_join_realm(binding)

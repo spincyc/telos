@@ -125,6 +125,7 @@ class SessionFixture(unittest.TestCase):
         self.calls = []
         self.guest_output = b""
         self.live_argv = None
+        self.login_hostnames = []
         patch = mock.patch.object(
             bootstrap_dc, "ovmf_pair",
             return_value=(Path("/code/OVMF_CODE.fd"), Path("/code/VARS.fd")))
@@ -151,8 +152,9 @@ class SessionFixture(unittest.TestCase):
         return session_module.PersistentControllerSession(
             self.target, **values)
 
-    def login(self, console, label):
+    def login(self, console, label, *, hostname=None):
         self.calls.append("login")
+        self.login_hostnames.append(hostname)
         self.assertEqual(console.password, PASSWORD)
         # Pull the whole fake console through the retained tee.
         console.reader.read1(1 << 20)
@@ -311,7 +313,7 @@ class SessionLifecycleTests(SessionFixture):
         self.assertFalse(self.lock_held())
 
     def test_a_refused_login_never_types_the_password_into_a_poweroff(self):
-        def refused(console, label):
+        def refused(console, label, **_kwargs):
             self.calls.append("login")
             raise SerialAutomationError("refused the local-rescue password")
 
@@ -553,6 +555,23 @@ class ProbeTests(SessionFixture):
         self.assertIn("already running", err)
         self.assertEqual(self.prompts, [])
         self.assertEqual(self.calls, [])
+
+    def test_a_restored_instance_is_probed_under_its_recorded_dc_name(self):
+        """TASK-42: the console, the A and the SRV checks follow the record."""
+        instance = PersistentControllerInstance(self.state, instance=INSTANCE)
+        record = instance.convergence()
+        record["dc_hostname"] = "dr-2609302105"
+        instance.record_convergence(record)
+        with self.applied():
+            code, _, err = self.run_probe()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.login_hostnames, ["dr-2609302105"])
+        commands = dict(self.commands)
+        fqdn = f"dr-2609302105.{DOMAIN}"
+        self.assertIn(fqdn, commands["probe-a-record"])
+        for label in ("probe-srv-ldap", "probe-srv-kerberos"):
+            self.assertIn(f" {fqdn}.", commands[label])
+        self.assertNotIn(BOOTSTRAP, " ".join(commands.values()))
 
     def test_a_passing_probe_repairs_a_truncated_sid_and_keeps_no_secret(self):
         instance = PersistentControllerInstance(self.state, instance=INSTANCE)

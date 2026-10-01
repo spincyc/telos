@@ -134,6 +134,16 @@ RESTORED_FIELDS = frozenset({
 #: A NetBIOS computer name as ``samba-tool`` accepts one for a DC.
 DC_SERVER_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$")
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+#: The domain controller's host name a convergence record carries as
+#: ``dc_hostname`` (owner decision 2026-09-30, aiq TASK-42).  Convergence
+#: records the name it converged under; a restore records the new name Samba
+#: restored the DC under (ADR 0081).  A record without one -- every instance
+#: converged before the field existed -- means this name, the canonical
+#: image's own host name and ``bootstrap_dc.NAME`` (a test holds them equal).
+DEFAULT_DC_HOSTNAME = "bootstrap-dc"
+#: A DC host name: one lower-case DNS label short enough to be its NetBIOS
+#: computer name as well.
+DC_HOSTNAME = re.compile(r"^[a-z](?:[a-z0-9-]{0,13}[a-z0-9])?$")
 
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
@@ -794,6 +804,12 @@ class PersistentControllerInstance:
             raise PersistentInstanceInvalid(
                 "persistent convergence record has no canonical domain SID: "
                 f"{sid!r}")
+        if "dc_hostname" in record and not (
+                isinstance(record["dc_hostname"], str)
+                and DC_HOSTNAME.fullmatch(record["dc_hostname"])):
+            raise PersistentInstanceInvalid(
+                "persistent convergence record's dc_hostname is not a DC host "
+                f"name: {record['dc_hostname']!r}")
         return record
 
     def convergence(self) -> dict | None:
@@ -807,6 +823,21 @@ class PersistentControllerInstance:
         if record is None:
             return None
         return self._validated_convergence(record)
+
+    def dc_hostname(self) -> str:
+        """The host name of the domain controller this instance runs.
+
+        The convergence record's ``dc_hostname``, else ``DEFAULT_DC_HOSTNAME``:
+        an instance with no record, or one converged before the field
+        existed, runs the canonical image's own name.  The console prompt,
+        the binding's controller FQDN and the probe's DNS checks all follow
+        it, so a directory restored under a new DC name is reached by that
+        name.
+        """
+        record = self.convergence() if self.exists() else None
+        if record is None:
+            return DEFAULT_DC_HOSTNAME
+        return record.get("dc_hostname") or DEFAULT_DC_HOSTNAME
 
     def record_convergence(self, record: dict) -> dict:
         """Add a proven convergence record to the marker, atomically.
@@ -1157,6 +1188,11 @@ class PersistentControllerInstance:
         if candidate[PERSISTENT_CONVERGENCE_KEY].get("domain_sid") is None:
             raise PersistentInstanceInvalid(
                 "the backed-up convergence record has no domain SID")
+        if candidate[PERSISTENT_CONVERGENCE_KEY].get("dc_hostname") != \
+                restored["dc_server_name"].lower():
+            raise PersistentInstanceInvalid(
+                "a restore's convergence record must carry the DC name the "
+                "directory was restored under as its dc_hostname")
         provisioning = records.get(PERSISTENT_PROVISIONING_KEY)
         if provisioning is not None:
             if not isinstance(provisioning, dict) or not isinstance(

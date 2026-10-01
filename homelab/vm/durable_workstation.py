@@ -61,6 +61,15 @@ FABRIC_PREFIX = ipaddress.IPv4Network(f"0.0.0.0/{NETMASK}").prefixlen
 #: ``check_live_directory`` outcomes.
 SID_MATCH = "match"
 SID_REPAIR = "repair"
+#: How a kept workstation's Arch side finds its domain controller (owner
+#: decision 2026-09-30, aiq TASK-42): SSSD's ``ad_server`` lists ``_srv_``
+#: first and the controller it was installed against as the fallback, or --
+#: every disk installed before that decision -- names that controller alone.
+SRV_FIRST = "srv-first"
+PINNED = "pinned"
+DC_DISCOVERY_MODES = (SRV_FIRST, PINNED)
+#: The ledger stage that bakes the Arch side's sssd.conf.
+ARCH_INSTALL_STAGE = "arch-install"
 
 
 class DurableBindingError(RuntimeError):
@@ -75,6 +84,9 @@ class DurableBinding:
     one ``check_live_directory`` knows how to repair.  ``password_policy`` is
     the instance's recorded directory password policy, or Samba's default when
     it records none; every host-side check of a typed password uses it.
+    ``dc_hostname`` is the instance's recorded DC name (TASK-42) and
+    ``controller_fqdn`` that name in the realm: the bootstrap Controller's own
+    until ADR 0081's restore brings the directory back under a new name.
     ``repr`` names only the instance so a binding that reaches a log cannot
     carry the realm with it.
     """
@@ -90,6 +102,7 @@ class DurableBinding:
     roster_fingerprint: str
     identity_source: str
     password_policy: DirectoryPasswordPolicy = SAMBA_DEFAULT
+    dc_hostname: str = NAME
 
     def __repr__(self) -> str:
         return f"DurableBinding(instance={self.instance!r})"
@@ -163,7 +176,7 @@ def durable_binding(
         staged = target.directory_accounts()
         password_policy = policy_from_record(
             target.directory_password_policy(), instance)
-        restored = target.restored()
+        dc_hostname = target.dc_hostname()
     except DurableBindingError:
         raise
     except (RuntimeError, ValueError, OSError) as error:
@@ -172,18 +185,6 @@ def durable_binding(
         raise DurableBindingError(
             f"{instance} records no converged directory with a domain SID; "
             f"converge it with homelab-factory-persistent-converge first")
-    if restored is not None and restored["dc_server_name"].lower() != NAME:
-        # ADR 0081: Samba restores a DC only under a name the domain never
-        # held, and every durable stage -- the console protocol, the role's
-        # SPN aliases, Arch's pinned ad_server, the probe's A and SRV checks
-        # -- expects the bootstrap Controller's own name.
-        raise DurableBindingError(
-            f"{instance} holds a directory restored from a Samba backup "
-            f"under the DC name {restored['dc_server_name']}, because Samba "
-            f"never restores a DC under a name the domain already holds "
-            f"(ADR 0081). Every durable stage expects the DC named {NAME}, "
-            f"and regaining that name is not built; this instance proves the "
-            f"backup, it cannot serve a workstation")
     if staged is None:
         raise DurableBindingError(
             f"{instance} records no staged durable account roster; stage it "
@@ -223,42 +224,112 @@ def durable_binding(
         dns_domain=identity.dns_domain,
         kerberos_realm=identity.kerberos_realm,
         netbios_name=identity.netbios_name,
-        controller_fqdn=identity.bootstrap_dc_fqdn,
+        # The RECORDED DC (TASK-42), not the overlay's frozen bootstrap
+        # name: they agree until a restore brings the directory back under a
+        # new DC name (ADR 0081), and then only the recorded one answers.
+        controller_fqdn=f"{dc_hostname}.{identity.dns_domain}",
         permanent_dc_fqdn=identity.permanent_dc_fqdn,
         domain_sid=recorded["domain_sid"],
         roster_fingerprint=current,
         identity_source=source,
         password_policy=password_policy,
+        dc_hostname=dc_hostname,
     )
 
 
 def require_durable_realm_agreement(
-    bundle_realm: object, binding: DurableBinding,
-) -> None:
+    bundle_realm: object, binding: DurableBinding, *, srv_first: bool = False,
+    subject: str = "the bundle",
+) -> str | None:
     """Refuse a bundle realm that is not this binding's permanent realm.
 
     *bundle_realm* is ``workstations/arch_second.InstallerRealm`` or anything
-    with its fields.  Its ``controller_fqdn`` must be the bootstrap FQDN: the
-    persistent instance this flow boots is the bootstrap Controller, and a
-    bundle pinning the permanent FQDN would pin a Controller that does not
-    exist yet.
+    with its fields.  The DNS domain, Kerberos realm and NetBIOS name must be
+    the binding's.  Its ``controller_fqdn`` is judged by
+    ``require_dc_name_agreement``: the instance's recorded DC, or -- for a
+    render that finds the DC by SRV first (*srv_first*) -- any other name in
+    the realm, which is only its fallback.  Returns that function's note, for
+    the plan output.
     """
     if getattr(bundle_realm, "durable", None) is not True:
         raise DurableBindingError(
-            "the bundle was not built against the permanent realm")
+            f"{subject} was not built against the permanent realm")
     mismatched = [
         label for label, field, expected in (
             ("DNS domain", "dns_domain", binding.dns_domain),
             ("Kerberos realm", "kerberos_realm", binding.kerberos_realm),
             ("NetBIOS name", "workgroup", binding.netbios_name),
-            ("domain controller (must be the bootstrap FQDN)",
-             "controller_fqdn", binding.controller_fqdn),
         ) if getattr(bundle_realm, field, None) != expected
     ]
     if mismatched:
         raise DurableBindingError(
-            f"the bundle's realm disagrees with persistent instance "
+            f"{subject}'s realm disagrees with persistent instance "
             f"{binding.instance} on {', '.join(mismatched)}")
+    return require_dc_name_agreement(
+        getattr(bundle_realm, "controller_fqdn", None), binding,
+        srv_first=srv_first, subject=subject)
+
+
+def require_dc_name_agreement(
+    baked_fqdn: object, binding: DurableBinding, *, srv_first: bool,
+    subject: str,
+) -> str | None:
+    """Accept a client's controller name, or say why it cannot reach the DC.
+
+    ``None`` when *baked_fqdn* is the instance's recorded DC.  Otherwise
+    (owner decision 2026-09-30, TASK-42): a client that asks DNS SRV first is
+    accepted, because the name it carries is only its fallback, and the note
+    returned says so; a client that names its controller ALONE is refused --
+    it predates SRV-first discovery and would look for a DC that is gone.
+    Neither message prints an FQDN; the DC's short name is a harness name.
+    """
+    if baked_fqdn == binding.controller_fqdn:
+        return None
+    if not (isinstance(baked_fqdn, str)
+            and baked_fqdn.endswith("." + binding.dns_domain)):
+        raise DurableBindingError(
+            f"{subject} names a domain controller outside "
+            f"{binding.instance}'s realm; values are not printed")
+    if srv_first:
+        return (f"{subject} finds the domain controller by DNS SRV first; "
+                f"its named fallback is not {binding.instance}'s current DC "
+                f"{binding.dc_hostname}, which SRV discovery reaches instead")
+    raise DurableBindingError(
+        f"{subject} names its domain controller alone, and that name is not "
+        f"{binding.instance}'s current DC {binding.dc_hostname}: it predates "
+        f"SRV-first discovery (TASK-42, ADR 0081), so it cannot find a "
+        f"directory restored or moved under another DC name. Install its "
+        f"Arch side again from a current bundle, which asks SRV first")
+
+
+def workstation_dc_discovery(marker: dict) -> tuple[str, str | None] | None:
+    """``(mode, fallback FQDN)`` of a kept workstation's baked Arch side.
+
+    ``None`` before stage arch-install has folded: there is no Arch side yet.
+    A disk installed before TASK-42 recorded nothing; it names the bootstrap
+    Controller alone (``PINNED``, fallback ``None`` meaning that name).
+    """
+    if ARCH_INSTALL_STAGE not in [
+            entry.get("stage") for entry in marker.get("ledger", [])]:
+        return None
+    record = marker.get("arch_dc_discovery")
+    if record is None:
+        return PINNED, None
+    return record["mode"], record["fallback_fqdn"]
+
+
+def require_workstation_dc_agreement(
+    marker: dict, binding: DurableBinding,
+) -> str | None:
+    """``require_dc_name_agreement`` for a kept workstation's Arch side."""
+    discovery = workstation_dc_discovery(marker)
+    if discovery is None:
+        return None
+    mode, fallback = discovery
+    return require_dc_name_agreement(
+        fallback or f"{NAME}.{binding.dns_domain}", binding,
+        srv_first=mode == SRV_FIRST,
+        subject=f"kept workstation {marker.get('workstation')}'s Arch side")
 
 
 def check_live_directory(recorded: str, live: str) -> str:

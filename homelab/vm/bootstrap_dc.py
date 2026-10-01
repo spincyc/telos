@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import fcntl
 import getpass
 import hashlib
@@ -1102,7 +1103,9 @@ def _console_poweroff(
         label + "-observed")
 
 
-def persistent_console_login(console: SerialAutomation, label: str) -> None:
+def persistent_console_login(
+    console: SerialAutomation, label: str, *, hostname: str = NAME,
+) -> None:
     """Log in to a persistent instance's own console as ``CONSOLE_ACCOUNT``.
 
     The same four waits the convergence and account verbs make inline, as one
@@ -1115,8 +1118,10 @@ def persistent_console_login(console: SerialAutomation, label: str) -> None:
     if console.password is None:
         raise SerialAutomationError(
             f"persistent controller credential is unavailable: {label}")
+    # *hostname* is the instance's recorded DC name (TASK-42), so a directory
+    # restored under a new name is logged into at its own prompt.
     console._wait(
-        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        rb"(?:^|\n)" + re.escape(hostname.encode("ascii")) + rb" login:\s*$",
         label + "-login-prompt")
     console._send(CONSOLE_ACCOUNT.encode("ascii"), label + "-username-sent")
     console._wait(rb"(?:^|\n)Password:\s*$", label + "-login-password-prompt")
@@ -1296,8 +1301,12 @@ def _drive_persistent_convergence(
         process.stdout, process.stdin, password,
         timeout=PERSISTENT_CONSOLE_TIMEOUT)
     console.events = _AnnouncedEvents(on_event)
+    # spec.hostname is the instance's recorded DC name (TASK-42): the
+    # canonical image's own for a first convergence, a restored directory's
+    # new one after ADR 0081's restore renamed the guest.
     console._wait(
-        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        rb"(?:^|\n)" + re.escape(spec.hostname.encode("ascii"))
+        + rb" login:\s*$",
         "persistent-login-prompt")
     console._send(CONSOLE_ACCOUNT.encode("ascii"), "persistent-username-sent")
     console._wait(rb"(?:^|\n)Password:\s*$", "persistent-login-password-prompt")
@@ -1317,6 +1326,7 @@ def _drive_persistent_convergence(
         "realm": spec.realm,
         "netbios": spec.netbios,
         "dns_domain": spec.domain,
+        "dc_hostname": spec.hostname,
         "domain_sid": None if sid is None else sid.decode("ascii"),
         "administrator": (
             "enabled; its password was typed by the operator and is not "
@@ -1419,9 +1429,17 @@ def persistent_converge(
         try:
             recorded = target.convergence()
             attempted = target.provisioning_attempted()
+            dc_hostname = target.dc_hostname()
         except (ValueError, RuntimeError) as error:
             print(f"error: {error}", file=sys.stderr)
             return 2
+        if dc_hostname != spec.hostname:
+            # A directory ADR 0081 restored under a new DC name keeps that
+            # name: convergence writes it into /etc/hostname and /etc/hosts,
+            # aims the role's SPN aliases at its account, and logs in at its
+            # prompt. The overlay's frozen bootstrap name is still the one a
+            # NEW instance is provisioned under.
+            spec = dataclasses.replace(spec, hostname=dc_hostname)
     # The domain Administrator password can only ever be *set* by the run that
     # provisions the directory; the role skips provisioning once ``sam.ldb``
     # exists. Prompting is therefore keyed on whether any run has reached the
@@ -1456,6 +1474,10 @@ def persistent_converge(
         print("bring-up: reuse the retained, not-yet-converged directory state")
     print(f"directory identity: {spec.realm} at {spec.address}/{spec.prefix}, "
           f"NetBIOS {spec.netbios}, {spec.fqdn}")
+    if spec.hostname != NAME:
+        print(f"domain controller: {spec.hostname}, the name this instance "
+              f"records (a restored directory's, ADR 0081), not the "
+              f"canonical {NAME}")
     print(f"identity source: {directory_identity_source(identity.source)}; "
           f"ADR 0065 freezes this realm and NetBIOS name before the first "
           f"domain is provisioned and neither can be renamed afterwards")
@@ -1651,6 +1673,7 @@ def persistent_converge(
         print(f"error: persistent convergence failed: "
               f"{failure or 'no convergence was proved'}", file=sys.stderr)
         return 2
+    record.setdefault("dc_hostname", spec.hostname)
     try:
         target.record_convergence(record)
     except (RuntimeError, OSError) as error:
@@ -1692,6 +1715,7 @@ def _drive_persistent_accounts(
     on_stage: Callable[[], None] | None = None,
     on_event: Callable[[str], None] | None = None,
     first_logon: bool = False,
+    hostname: str = NAME,
 ):
     """Log in normally, prove the directory is live, then stage the roster.
 
@@ -1718,7 +1742,7 @@ def _drive_persistent_accounts(
         timeout=PERSISTENT_CONSOLE_TIMEOUT)
     console.events = _AnnouncedEvents(on_event)
     console._wait(
-        rb"(?:^|\n)" + re.escape(NAME.encode("ascii")) + rb" login:\s*$",
+        rb"(?:^|\n)" + re.escape(hostname.encode("ascii")) + rb" login:\s*$",
         "persistent-accounts-login-prompt")
     console._send(
         CONSOLE_ACCOUNT.encode("ascii"), "persistent-accounts-username-sent")
@@ -2115,7 +2139,8 @@ def persistent_accounts(
         result = _drive_persistent_accounts(
             guest, console_password, values,
             roster=roster, roster_source=source, timeout=timeout,
-            on_stage=_accounts_recorder(target), first_logon=first_logon)
+            on_stage=_accounts_recorder(target), first_logon=first_logon,
+            hostname=target.dc_hostname())
     except BaseException as error:
         failure = error
     finally:
@@ -2213,8 +2238,8 @@ def _persistent_backup_summary(
         parts.append(
             f"restored {restored['utc']} from {restored['backup_path']} as DC "
             f"{restored['dc_server_name']} (was "
-            f"{restored['replaced_dc_server_name']}); durable stages refuse "
-            f"it until its DC is named {NAME} again")
+            f"{restored['replaced_dc_server_name']}); the durable stages "
+            f"follow the recorded DC name")
     return "; ".join(parts)
 
 
@@ -2244,6 +2269,11 @@ def persistent_status(root: Path, instance: str) -> int:
                 creating=False, state=state))
     print("directory: " + _persistent_directory_summary(
         target, marker is not None))
+    if marker:
+        try:
+            print(f"domain controller: {target.dc_hostname()}")
+        except (ValueError, RuntimeError) as error:
+            print(f"domain controller: unknown ({error})")
     print("directory accounts: " + _persistent_accounts_summary(
         target, marker is not None))
     print("directory password policy: " + _persistent_policy_summary(

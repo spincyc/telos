@@ -147,6 +147,28 @@ _REALM = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
 #: its ``sAMAccountName`` form with the trailing ``$``.
 _MACHINE_ACCOUNT = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,14})\$?")
 _IMMUTABLE_KEYS = ("schema", "kind", "workstation", "created_utc", "binding")
+#: How the Arch side's SSSD finds its domain controller, recorded by stage
+#: arch-install (owner decision 2026-09-30, aiq TASK-42): ``srv-first`` lists
+#: ``_srv_`` before the controller it was installed against; ``pinned`` names
+#: that controller alone.  A disk installed before the decision has no record
+#: and is pinned (``durable_workstation.workstation_dc_discovery``).
+ARCH_DC_DISCOVERY_KEY = "arch_dc_discovery"
+ARCH_DC_DISCOVERY_MODES = ("srv-first", "pinned")
+_DNS_NAME = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}"
+    r"[a-z0-9])?)+$")
+
+
+def _validated_dc_discovery(record: object) -> dict:
+    if (not isinstance(record, dict)
+            or set(record) != {"mode", "fallback_fqdn", "utc"}
+            or record.get("mode") not in ARCH_DC_DISCOVERY_MODES
+            or not isinstance(record.get("fallback_fqdn"), str)
+            or not _DNS_NAME.fullmatch(record["fallback_fqdn"])
+            or not isinstance(record.get("utc"), str) or not record["utc"]):
+        raise WorkstationInvalid(
+            "workstation marker's arch_dc_discovery record is malformed")
+    return record
 
 
 class WorkstationInvalid(RuntimeError):
@@ -476,6 +498,8 @@ class WorkstationInstance:
         if not isinstance(raw.get("publication"), dict):
             raise WorkstationInvalid(
                 "workstation marker has no publication custody record")
+        if raw.get(ARCH_DC_DISCOVERY_KEY) is not None:
+            _validated_dc_discovery(raw[ARCH_DC_DISCOVERY_KEY])
         return raw
 
     def read_marker(self) -> dict:
@@ -1014,6 +1038,22 @@ class WorkstationInstance:
             return entry
 
     # -- directory side effects and custody -------------------------------
+    def record_arch_dc_discovery(self, mode: str, fallback_fqdn: str) -> dict:
+        """Record how the Arch side about to be folded finds its controller.
+
+        Written by stage arch-install just before its fold, from the
+        bundle's verified render; a later install replaces it.  Stages that
+        boot the workstation against a persistent instance read it to decide
+        whether the disk can reach a DC under another name.
+        """
+        record = _validated_dc_discovery(
+            {"mode": mode, "fallback_fqdn": fallback_fqdn, "utc": _now()})
+        with self._held():
+            marker = self.read_marker()
+            marker[ARCH_DC_DISCOVERY_KEY] = record
+            self._write_marker(marker)
+            return marker
+
     def record_machine_account(self, account: str) -> dict:
         """Remember a computer account BEFORE the join that may create it."""
         if not valid_machine_account(account):

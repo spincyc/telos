@@ -280,6 +280,9 @@ class PersistentControllerSession:
             target, port, canonical_state=canonical_state, **self._backup)
         self._files = persistent_paths(target.state)
         self._canonical = paths(canonical_state)
+        # The recorded DC name (TASK-42): the canonical image's own until a
+        # restore renames the guest (ADR 0081).  Read once, before any boot.
+        self._dc_hostname = target.dc_hostname()
         self._password: bytes | None = password
         self._console_timeout = console_timeout
         self._spawn = spawn or _spawn_guest
@@ -309,6 +312,11 @@ class PersistentControllerSession:
     @property
     def command(self) -> list[str]:
         return list(self._argv)
+
+    @property
+    def dc_hostname(self) -> str:
+        """The host name this session logs in at (``<name> login:``)."""
+        return self._dc_hostname
 
     @property
     def console(self) -> SerialAutomation:
@@ -351,7 +359,8 @@ class PersistentControllerSession:
                 _TeeReader(process.stdout, self._transcript), process.stdin,
                 self._password, timeout=self._console_timeout)
             self._console = console
-            persistent_console_login(console, "persistent-session")
+            persistent_console_login(
+                console, "persistent-session", hostname=self._dc_hostname)
             self._logged_in = True
             self.facts["logins"] = int(self.facts["logins"]) + 1
             if require_ad:

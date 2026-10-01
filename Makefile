@@ -1258,11 +1258,13 @@ homelab-factory-persistent-backup:
 # instance from the canonical image under the custody the backup records,
 # boots it with no network device and the backup disk read-only, runs
 # samba-tool domain backup restore into /var/lib/samba under a NEW DC name
-# (Samba never restores a DC under a name the domain still holds), starts
-# samba, proves the realm, domain SID and principal digest are the backup's,
-# powers off over the console and records the restore. The durable stages
-# refuse a restored instance until its DC regains the bootstrap name, which is
-# not built. Evidence lands in homelab/var/factory/persistent-restore/.
+# (Samba never restores a DC under a name the domain still holds), renames the
+# guest to it, starts samba, proves the realm, domain SID and principal digest
+# are the backup's, powers off over the console and records the restore with
+# the new name as the instance's DC (TASK-42). Every durable stage follows the
+# recorded name; reconverge next (RECONVERGE=1) to give it its network. The
+# same instance name may be restored after a destroy: that is disaster
+# recovery. Evidence lands in homelab/var/factory/persistent-restore/.
 homelab-factory-persistent-restore:
 	@if [ -z '$(PERSISTENT_DC)' ] || [ -z '$(BACKUP)' ]; then \
 		echo 'require PERSISTENT_DC=<instance name> BACKUP=<backup set directory>' >&2; \

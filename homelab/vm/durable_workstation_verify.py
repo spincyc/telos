@@ -1406,7 +1406,10 @@ def run(
         args.persistent_root, args.persistent_dc,
         canonical_state=args.controller_state,
         identity_path=args.directory_identity)
-    require_workstation_binding(marker, binding)
+    discovery = require_workstation_binding(marker, binding)
+    if discovery:
+        # TASK-42: an SRV-first Arch side reaches a DC under another name.
+        print(f"Directory discovery: {discovery}")
     require_join_realm(binding)
     accounts = planned_accounts(directory_account_record(binding))
     require_arch_roster(binding, accounts)

@@ -29,6 +29,7 @@ from unittest import mock
 
 from homelab.tests.identity_overlay_pin import (
     overlay_document, pinned_identity_overlay)
+from homelab.vm import arch_durable_install_run as durable_install
 from homelab.vm import arch_durable_join as join
 from homelab.vm import arch_install_run
 from homelab.vm import workstation_instance as wi
@@ -1288,6 +1289,38 @@ class RunTests(RunFixture, unittest.TestCase):
         self.assertEqual(prompts, sorted(prompts))
         self.assertIn("TEMPORARY", plan_text)
         self.assertIn("NEW break-glass", plan_text)
+        for value in PRIVATE_VALUES:
+            self.assertNotIn(value, plan_text)
+
+    def renamed(self):
+        """The bound instance now runs a restored DC under a new name."""
+        restored = binding(controller_fqdn=f"dr-2609302105.{DOMAIN}",
+                           dc_hostname="dr-2609302105")
+        patcher = mock.patch.object(
+            join, "durable_binding", lambda *a, **k: restored)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_pinned_only_disk_is_refused_once_the_dc_is_renamed(self):
+        """TASK-42: a disk from before SRV-first discovery says why it stops."""
+        self.renamed()
+        with self.assertRaisesRegex(
+                durable_install.DurableInstallError,
+                "predates SRV-first discovery"):
+            self.run_quietly()
+        self.assertEqual(self.prompter.asked, [])
+        self.assertFalse(self.run_root.exists())
+
+    def test_an_srv_first_disk_is_accepted_and_the_plan_says_so(self):
+        wi.WorkstationInstance(self.state).record_arch_dc_discovery(
+            "srv-first", f"bootstrap-dc.{DOMAIN}")
+        self.renamed()
+        plan_text = self.run_quietly()
+        self.assertIn("dry run", plan_text)
+        self.assertIn("Directory discovery: kept workstation w1's Arch side "
+                      "finds the domain controller by DNS SRV first",
+                      plan_text)
+        self.assertIn("dr-2609302105", plan_text)
         for value in PRIVATE_VALUES:
             self.assertNotIn(value, plan_text)
 

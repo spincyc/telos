@@ -224,12 +224,130 @@ class RealmAgreementTests(BindingFixture):
                 ({"kerberos_realm": "OTHER.HOME.ARPA"}, "Kerberos realm"),
                 ({"dns_domain": "other.home.arpa"}, "DNS domain"),
                 ({"workgroup": "OTHER"}, "NetBIOS"),
-                ({"controller_fqdn": PERMANENT}, "bootstrap FQDN")):
+                ({"controller_fqdn": PERMANENT}, "predates SRV-first")):
             with self.subTest(fields=fields):
                 with self.assertRaisesRegex(
                         durable_workstation.DurableBindingError, pattern):
                     durable_workstation.require_durable_realm_agreement(
                         self.realm(**fields), binding)
+
+
+class RecordedDcNameTests(BindingFixture):
+    """Owner decision 2026-09-30, aiq TASK-42: the DC name is recorded."""
+
+    RESTORED = "dr-2609302105"
+    realm = RealmAgreementTests.realm
+
+    def restored(self):
+        self.write_marker(marker(dc_hostname=self.RESTORED))
+        return self.bind()
+
+    def workstation(self, *stages, discovery=None):
+        document = {
+            "workstation": "lab-ws1",
+            "ledger": [{"stage": stage} for stage in ("adopt", *stages)],
+        }
+        if discovery is not None:
+            document["arch_dc_discovery"] = discovery
+        return document
+
+    def test_an_instance_without_the_field_runs_the_canonical_name(self):
+        binding = self.bind()
+        self.assertEqual(binding.dc_hostname, "bootstrap-dc")
+        self.assertEqual(binding.controller_fqdn, BOOTSTRAP)
+        target = PersistentControllerInstance(self.state, instance=INSTANCE)
+        self.assertEqual(target.dc_hostname(), "bootstrap-dc")
+        from homelab.vm import bootstrap_dc, simulation_overlay
+        self.assertEqual(simulation_overlay.DEFAULT_DC_HOSTNAME,
+                         bootstrap_dc.NAME)
+
+    def test_a_restored_instance_binds_under_its_recorded_name(self):
+        binding = self.restored()
+        self.assertEqual(binding.dc_hostname, self.RESTORED)
+        self.assertEqual(binding.controller_fqdn, f"{self.RESTORED}.{DOMAIN}")
+        # The overlay's frozen names are unchanged; only the DC moved.
+        self.assertEqual(binding.permanent_dc_fqdn, PERMANENT)
+        self.write_marker(marker(dc_hostname="Not A Name"))
+        self.refused("dc_hostname")
+
+    def test_srv_first_accepts_another_dc_name_and_says_so(self):
+        binding = self.restored()
+        note = durable_workstation.require_durable_realm_agreement(
+            self.realm(), binding, srv_first=True)
+        self.assertIn("DNS SRV first", note)
+        self.assertIn(self.RESTORED, note)
+        self.assertNotIn(DOMAIN, note)
+        self.assertIsNone(durable_workstation.require_durable_realm_agreement(
+            self.realm(controller_fqdn=f"{self.RESTORED}.{DOMAIN}"), binding))
+        with self.assertRaisesRegex(durable_workstation.DurableBindingError,
+                                    "outside"):
+            durable_workstation.require_durable_realm_agreement(
+                self.realm(controller_fqdn="dc.other.home.arpa"), binding,
+                srv_first=True)
+
+    def test_a_pinned_only_workstation_is_refused_after_a_rename(self):
+        binding = self.restored()
+        # rehearsal-auto-ws1's shape: installed before TASK-42, no record.
+        legacy = self.workstation("arch-install", "arch-join", "windows-join")
+        with self.assertRaisesRegex(
+                durable_workstation.DurableBindingError,
+                "predates SRV-first discovery") as caught:
+            durable_workstation.require_workstation_dc_agreement(
+                legacy, binding)
+        self.assertIn("lab-ws1", str(caught.exception))
+        self.assertIn("Install its Arch side again", str(caught.exception))
+        self.assertNotIn(DOMAIN, str(caught.exception))
+        pinned = self.workstation(
+            "arch-install", discovery={"mode": "pinned",
+                                       "fallback_fqdn": BOOTSTRAP, "utc": "u"})
+        with self.assertRaises(durable_workstation.DurableBindingError):
+            durable_workstation.require_workstation_dc_agreement(
+                pinned, binding)
+        # Against the DC it was installed for, the same disk is fine.
+        self.assertIsNone(durable_workstation.require_workstation_dc_agreement(
+            legacy, self.bind_unrestored()))
+
+    def bind_unrestored(self):
+        self.write_marker(marker())
+        return self.bind()
+
+    def test_an_srv_first_workstation_is_accepted_after_a_rename(self):
+        binding = self.restored()
+        srv_first = self.workstation(
+            "arch-install", discovery={"mode": "srv-first",
+                                       "fallback_fqdn": BOOTSTRAP, "utc": "u"})
+        note = durable_workstation.require_workstation_dc_agreement(
+            srv_first, binding)
+        self.assertIn("kept workstation lab-ws1's Arch side finds the domain "
+                      "controller by DNS SRV first", note)
+
+    def test_windows_joins_by_domain_name_and_pins_no_dc(self):
+        """TASK-42 item 4: Windows' DC locator finds the DC by SRV itself."""
+        control = Path(durable_workstation.__file__).with_name(
+            "windows_join_control")
+        join = (control / "TelosJoin.ps1").read_text(encoding="utf-8")
+        self.assertIn("-MethodName JoinDomainOrWorkgroup", join)
+        self.assertIn("Name = $domain", join)
+        for script in sorted(control.glob("*.ps1")):
+            text = script.read_text(encoding="utf-8")
+            for pin in ("ControllerFqdn", "bootstrap-dc", " -Server "):
+                with self.subTest(script=script.name, pin=pin):
+                    self.assertNotIn(pin, text)
+
+    def test_the_workstation_record_is_a_closed_shape(self):
+        from homelab.vm import workstation_instance as wi
+        good = {"mode": "srv-first", "fallback_fqdn": BOOTSTRAP, "utc": "u"}
+        self.assertEqual(wi._validated_dc_discovery(dict(good)), good)
+        for bad in (dict(good, mode="dns"),
+                    dict(good, fallback_fqdn="Not A Name"),
+                    dict(good, extra="x"), {"mode": "pinned"}, "srv-first"):
+            with self.subTest(record=bad):
+                with self.assertRaises(wi.WorkstationInvalid):
+                    wi._validated_dc_discovery(bad)
+
+    def test_a_workstation_without_an_arch_side_has_nothing_to_judge(self):
+        self.assertIsNone(durable_workstation.require_workstation_dc_agreement(
+            self.workstation(), self.restored()))
 
 
 class LiveDirectoryTests(BindingFixture):

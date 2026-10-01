@@ -292,6 +292,7 @@ def restore_command(
     samba_tool: str = "/usr/bin/samba-tool",
     state_root: str = "/var/lib/samba", smb_conf: str = "/etc/samba/smb.conf",
     tmp_root: str = "/var/tmp", require_block_device: bool = True,
+    hostname_file: str = "/etc/hostname", hosts_file: str = "/etc/hosts",
 ) -> str:
     """One root shell line: read the disk, prove it, restore with Samba.
 
@@ -302,7 +303,11 @@ def restore_command(
     target; restoring into ``/var/lib/samba`` itself puts ``sam.ldb`` at
     ``/var/lib/samba/private/sam.ldb``, where convergence looks for it, and
     the rewritten ``smb.conf`` the restore leaves in ``etc/`` is installed
-    as ``/etc/samba/smb.conf``.  Prints ``RESTORED`` or ``FAIL:<step>``.
+    as ``/etc/samba/smb.conf``.  The guest is then renamed to the restored
+    DC's name (``/etc/hostname``, and the ``127.0.1.1`` line of
+    ``/etc/hosts``) so its console prompt is the name the marker records
+    from now on (TASK-42); convergence later writes both files again under
+    the same name.  Prints ``RESTORED`` or ``FAIL:<step>``.
     """
     if not NEW_SERVER_NAME.fullmatch(new_server_name or ""):
         raise BackupDiskError(
@@ -316,6 +321,11 @@ def restore_command(
     state = shlex.quote(state_root)
     aside = shlex.quote(state_root + ".pre-restore")
     conf = shlex.quote(smb_conf)
+    names = shlex.quote(hostname_file)
+    hosts = shlex.quote(hosts_file)
+    loopback = shlex.quote(r"^127\.0\.1\.1[[:space:]]")
+    rename = shlex.quote(
+        rf"s/^(127\.0\.1\.1[[:space:]]+).*$/\1{new_server_name}/")
     template = shlex.quote(f"{tmp_root}/telos-restore-XXXXXXXX")
     # The console takes one line only, so the expected header is rebuilt by
     # printf in the guest rather than quoted with its newlines.
@@ -347,6 +357,12 @@ def restore_command(
         '</dev/null >&2',
         "f=install", f"[ -f {state}/private/sam.ldb ]",
         f"/usr/bin/install -D -m 0644 {state}/etc/smb.conf {conf}",
+        "f=hostname",
+        f"/usr/bin/printf '%s\\n' {new_server_name} > {names}",
+        f"{{ if /usr/bin/grep -q {loopback} {hosts}; then "
+        f"/usr/bin/sed -i -E {rename} {hosts}; else "
+        f"/usr/bin/printf '127.0.1.1 %s\\n' {new_server_name} >> {hosts}; "
+        "fi; }",
         "/usr/bin/printf RESTORED",
     ]
     return " && ".join(steps) + " || /usr/bin/printf 'FAIL:%s' \"$f\""

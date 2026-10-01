@@ -580,7 +580,8 @@ class PreparedRealmTests(unittest.TestCase):
             "controller_fqdn": "dc2.ad.example.home.arpa",
             "durable": True,
         })
-        self.assertIn("\nad_server = dc2.ad.example.home.arpa\n", installer)
+        self.assertIn("\nad_server = _srv_, dc2.ad.example.home.arpa\n",
+                      installer)
         self.assertIn("    workgroup = EXAMPLEAD\n", installer)
         self.assertNotIn("ad.factory.test", installer)
         self.assertNotIn("FACTORY", installer)

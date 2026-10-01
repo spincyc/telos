@@ -26,7 +26,7 @@ GUEST_TOOLS = (
     "/usr/bin/bash", "/usr/bin/dd", "/usr/bin/truncate", "/usr/bin/sha256sum",
     "/usr/bin/shred", "/usr/bin/head", "/usr/bin/tr", "/usr/bin/mktemp",
     "/usr/bin/find", "/usr/bin/install", "/usr/bin/stat", "/usr/bin/printf",
-    "/usr/bin/mv", "/usr/bin/rm",
+    "/usr/bin/mv", "/usr/bin/rm", "/usr/bin/grep", "/usr/bin/sed",
 )
 #: A stand-in ``samba-tool``: ``domain backup offline`` writes $FAKE_PAYLOAD
 #: as the one tarball; ``domain backup restore`` lays out private/sam.ldb and
@@ -250,10 +250,19 @@ class GuestCommandTests(unittest.TestCase):
                 **env):
         self.state = self.root / "var-lib-samba"
         self.conf = self.root / "etc" / "samba" / "smb.conf"
+        self.hostname = self.root / "etc" / "hostname"
+        self.hosts = self.root / "etc" / "hosts"
+        if not self.hosts.exists():
+            # The canonical image's own files (homelab/seed/install-controller).
+            self.hosts.parent.mkdir(parents=True, exist_ok=True)
+            self.hostname.write_text("bootstrap-dc\n")
+            self.hosts.write_text(
+                "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 bootstrap-dc\n")
         command = disk.restore_command(
             str(image), header, name, samba_tool=str(self.tool),
             state_root=str(self.state), smb_conf=str(self.conf),
-            tmp_root=str(self.tmp), require_block_device=False)
+            tmp_root=str(self.tmp), require_block_device=False,
+            hostname_file=str(self.hostname), hosts_file=str(self.hosts))
         self.assertNotIn(PAYLOAD[:16].hex(), command)
         return self.guest(command, **env)
 
@@ -268,6 +277,11 @@ class GuestCommandTests(unittest.TestCase):
             (self.state / "private" / "sam.ldb").read_bytes(), PAYLOAD)
         self.assertIn("netbios name = dr-2609301200", self.conf.read_text())
         self.assertEqual(self.conf.stat().st_mode & 0o777, 0o644)
+        # The guest now answers to the restored DC's name (TASK-42).
+        self.assertEqual(self.hostname.read_text(), "dr-2609301200\n")
+        self.assertEqual(
+            self.hosts.read_text(),
+            "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 dr-2609301200\n")
         # The package's own (empty) tree was set aside, not merged into.
         self.assertTrue((self.root / "var-lib-samba.pre-restore"
                          / "private").is_dir())
@@ -316,6 +330,8 @@ class GuestCommandTests(unittest.TestCase):
                     disk.restore_command("/dev/x", header, name)
         command = disk.restore_command(
             disk.device_path("TELOS-BACKUP-IN"), header, "dr-2609301200")
+        self.assertIn("/usr/bin/printf '%s\\n' dr-2609301200 > /etc/hostname",
+                      command)
         self.assertIn(
             "/usr/bin/samba-tool domain backup restore "
             '--backup-file="$d/backup.tar.bz2" --newservername=dr-2609301200 '

@@ -1576,6 +1576,37 @@ class PersistentConvergenceTests(unittest.TestCase):
         self.assertEqual(len(self.typed), 1)
         self.assertIn("console", self.typed[0])
 
+    def test_a_reconvergence_keeps_the_recorded_dc_name(self):
+        """TASK-42: a restored directory reconverges under its own DC name."""
+        self._converged = lambda: json.loads(
+            (self.state / simulation_overlay.PERSISTENT_MARKER_NAME)
+            .read_text())["converged"]
+        self.converge("--apply")
+        record = self._converged()
+        self.assertEqual(record["dc_hostname"], bootstrap_dc.NAME)
+        target = simulation_overlay.PersistentControllerInstance(
+            self.state, instance="lab-dc1")
+        restored = dict(record, dc_hostname="dr-2609302105")
+        target.record_convergence(restored)
+        self._Bundle.built.clear()
+        driven = []
+
+        def drive(process, password, nonce, spec, **kwargs):
+            driven.append(spec)
+            return dict(self._record(), dc_hostname=spec.hostname)
+
+        out, _ = self.converge("--apply", "--reconverge", drive=drive)
+        # The payload, the role's SPN aliases and the console prompt all
+        # take the spec's host name; the realm stays the overlay's.
+        self.assertEqual(self._Bundle.built[0].spec.hostname, "dr-2609302105")
+        self.assertEqual(driven[0].hostname, "dr-2609302105")
+        self.assertEqual(driven[0].domain,
+                         DURABLE_IDENTITY["identity"]["dns_domain"])
+        self.assertIn("domain controller: dr-2609302105", out)
+        self.assertEqual(self._converged()["dc_hostname"],
+                         "dr-2609302105")
+        self.assertEqual(target.dc_hostname(), "dr-2609302105")
+
     # -- the source image, and what is asked for before it is checked ----
     def test_converge_refuses_a_blank_canonical_before_asking_for_anything(self):
         fake_image_tools.blank_image(
