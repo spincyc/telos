@@ -130,9 +130,12 @@ are allowed on `rehearsal` by an explicit recorded directory policy
 length 4, complexity off, minimum age 0; the host checks, break-glass
 included, judge by it). A relaxed policy applies to every account in that
 domain, so the keeper's policy is a separate decision.
-Still open with the owner, and blocking the keeper (TASK-21): its directory
-password policy and join-principal privilege. Backups of kept workstation
-disks do not exist.
+Owner decisions 2026-09-30 for the keeper (TASK-21), closing what was open
+here: its directory password policy is short like `rehearsal`'s (minimum 4,
+complexity off, minimum age 0, set with the policy target after converge),
+and its joins keep the proven temporary Domain Admin `tj-` principal, with
+delegated join rights revisited before physical laptops. Backups of kept
+workstation disks still do not exist.
 Owner decision 2026-09-30, backups (ADR 0081): the keeper is minted only
 after backup and restore of a persistent directory are built and proven.
 Both are built and **NOT RUN**: `homelab-factory-persistent-backup` takes a
