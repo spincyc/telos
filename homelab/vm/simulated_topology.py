@@ -246,8 +246,13 @@ def audit_qemu_argv(
     role: str, argv: list[str], *,
     allowed_nic_models: tuple[str, ...] = ("virtio-net-pci",),
     allowed_chardevs: tuple[str, ...] = (),
+    expected_nics: int | None = None,
 ) -> None:
-    """Fail closed unless argv describes the intended guest-only NICs."""
+    """Fail closed unless argv describes the intended guest-only NICs.
+
+    *expected_nics* overrides the role's NIC count; only a persistent restore
+    (ADR 0081) passes it, with 0: that guest has no network at all.
+    """
     if role not in NIC_COUNTS:
         raise ValueError(f"unknown simulation role: {role}")
     if "-nodefaults" not in argv:
@@ -288,7 +293,7 @@ def audit_qemu_argv(
             netdevs.append(argv[index + 1])
         else:
             devices.append(argv[index + 1])
-    expected = NIC_COUNTS[role]
+    expected = NIC_COUNTS[role] if expected_nics is None else expected_nics
     if len(netdevs) != expected:
         raise ValueError(f"{role}: expected exactly {expected} netdev(s)")
     ids = []
@@ -343,6 +348,45 @@ _PERSISTENT_SINGLE = (
 )
 
 
+#: The one extra device a backup or restore run may attach (ADR 0081): a raw
+#: data disk the run creates itself, carrying a Samba backup tarball behind a
+#: small self-describing header and nothing else.  Named here, beside the
+#: audit that admits it, so the shape and its audit cannot drift apart.
+BACKUP_DISK_DRIVE_ID = "backupdisk"
+#: ``mode -> (virtio-blk serial, read-only)``.  The serial is how the guest
+#: finds the disk (``/dev/disk/by-id/virtio-<serial>``); virtio-blk keeps at
+#: most 20 characters of it.  A backup writes to its disk; a restore only
+#: reads, so its disk is attached read-only.
+BACKUP_OUTPUT = "backup-output"
+BACKUP_INPUT = "backup-input"
+BACKUP_DISK_MODES = {
+    BACKUP_OUTPUT: ("TELOS-BACKUP-OUT", False),
+    BACKUP_INPUT: ("TELOS-BACKUP-IN", True),
+}
+
+
+def backup_disk_args(path: Path, mode: str) -> list[str]:
+    """The backup disk's ``-drive``/``-device`` pair: raw, never bootable.
+
+    No ``bootindex``: with ``-boot strict=on`` the firmware boots only devices
+    that name one, so the instance still boots its own disk and nothing else.
+    """
+    if mode not in BACKUP_DISK_MODES:
+        raise ValueError(f"unknown backup disk mode {mode!r}")
+    path = Path(path)
+    if "," in str(path) or not path.is_absolute():
+        raise ValueError(
+            "the backup disk path must be absolute and contain no comma")
+    serial, readonly = BACKUP_DISK_MODES[mode]
+    return [
+        "-drive",
+        f"if=none,id={BACKUP_DISK_DRIVE_ID},format=raw,cache=none"
+        f"{',readonly=on' if readonly else ''},file={path}",
+        "-device",
+        f"virtio-blk-pci,drive={BACKUP_DISK_DRIVE_ID},serial={serial}",
+    ]
+
+
 def _drive_fields(value: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for field in value.split(","):
@@ -351,9 +395,47 @@ def _drive_fields(value: str) -> dict[str, str]:
     return fields
 
 
+def _audit_backup_disk(
+    drives: list[dict[str, str]], disks: list[str], *, path: Path, mode: str,
+    exact_disk: Path, exact_vars: Path, forbidden: set[Path],
+) -> None:
+    """The backup disk is exactly ``backup_disk_args(path, mode)``, nothing else."""
+    serial, readonly = BACKUP_DISK_MODES[mode]
+    backup = [drive for drive in drives
+              if drive.get("id") == BACKUP_DISK_DRIVE_ID]
+    if len(backup) != 1:
+        raise ValueError(
+            "persistent controller: expected exactly one backup disk drive")
+    drive = backup[0]
+    expected_keys = {"if", "id", "format", "cache", "file"} | (
+        {"readonly"} if readonly else set())
+    exact_backup = Path(drive.get("file", "")).resolve()
+    if (set(drive) != expected_keys or drive.get("if") != "none"
+            or drive.get("format") != "raw" or drive.get("cache") != "none"
+            or (readonly and drive.get("readonly") != "on")
+            or exact_backup != Path(path).resolve()):
+        raise ValueError(
+            f"persistent controller: the {mode} disk must be the run's own "
+            "raw file" + (", read-only" if readonly else ", writable")
+            + ", and nothing else")
+    if exact_backup in {exact_disk, exact_vars} | forbidden:
+        raise ValueError(
+            "persistent controller: the backup disk cannot be the instance's "
+            "own disk or variables, or the acceptance canonical")
+    devices = [_drive_fields(value) for value in disks
+               if _drive_fields(value).get("drive") == BACKUP_DISK_DRIVE_ID]
+    if len(devices) != 1 or devices[0] != {
+            "virtio-blk-pci": "", "drive": BACKUP_DISK_DRIVE_ID,
+            "serial": serial}:
+        raise ValueError(
+            f"persistent controller: the {mode} disk device must be one "
+            f"virtio-blk disk with serial {serial} and no boot index")
+
+
 def audit_persistent_controller(
     argv: list[str], *, disk: Path, vars_file: Path, port: int, mac: str,
     forbidden_paths: tuple[Path, ...] = (),
+    backup_disk: Path | None = None, backup_mode: str | None = None,
 ) -> None:
     """Fail closed unless argv boots one persistent instance, in place.
 
@@ -363,8 +445,25 @@ def audit_persistent_controller(
     instance's own MAC, the console on stdio, and nothing else -- no QMP, no
     medium, no paused start. ``forbidden_paths`` (the acceptance canonical)
     may not appear anywhere in the command.
+
+    *backup_disk* with *backup_mode* (ADR 0081) admits exactly one more
+    device, and only for a backup or restore run: the raw disk
+    ``backup_disk_args`` describes, at that exact path.  Without them that
+    device is refused like any other.  A restore (``BACKUP_INPUT``) must also
+    carry no NIC at all, so *port* and *mac* are not consulted for it.
     """
-    audit_qemu_argv("controller", argv)
+    if (backup_disk is None) != (backup_mode is None):
+        raise ValueError(
+            "persistent controller: a backup disk needs both its path and "
+            "its mode")
+    if backup_mode is not None and backup_mode not in BACKUP_DISK_MODES:
+        raise ValueError(
+            f"persistent controller: unknown backup disk mode {backup_mode!r}")
+    with_backup = backup_disk is not None
+    # A restore boots with no network device at all: the directory it lays
+    # down sees no network until convergence gives it its fabric address.
+    networked = backup_mode != BACKUP_INPUT
+    audit_qemu_argv("controller", argv, expected_nics=1 if networked else 0)
     if Path(argv[0]).name not in {"qemu-system-x86_64", "qemu-kvm"}:
         raise ValueError("persistent controller: unapproved QEMU executable")
     values: dict[str, list[str]] = {}
@@ -381,22 +480,26 @@ def audit_persistent_controller(
             argv[index + 1] if arity else "")
         index += 1 + arity
     for option in _PERSISTENT_SINGLE:
-        if len(values.get(option, [])) != 1:
+        expected_count = 1 if networked or option != "-netdev" else 0
+        if len(values.get(option, [])) != expected_count:
             raise ValueError(
-                f"persistent controller: expected {option} exactly once")
+                f"persistent controller: expected {option} exactly "
+                + ("once" if expected_count else "never"))
     if values["-serial"] != ["mon:stdio"] or values["-display"] != ["none"]:
         raise ValueError(
             "persistent controller: the console must be stdio and headless")
     if values["-boot"] != ["strict=on,menu=off"]:
         raise ValueError("persistent controller: boot order is not its disk")
 
-    netdev = re.fullmatch(
-        r"socket,id=([A-Za-z0-9_.-]+),connect=127\.0\.0\.1:([0-9]{1,5})",
-        values["-netdev"][0])
-    if netdev is None or int(netdev.group(2)) != port:
-        raise ValueError(
-            "persistent controller: the NIC must connect to the per-run "
-            "switch port")
+    netdev = None
+    if networked:
+        netdev = re.fullmatch(
+            r"socket,id=([A-Za-z0-9_.-]+),connect=127\.0\.0\.1:([0-9]{1,5})",
+            values["-netdev"][0])
+        if netdev is None or int(netdev.group(2)) != port:
+            raise ValueError(
+                "persistent controller: the NIC must connect to the per-run "
+                "switch port")
     devices = values.get("-device", [])
     nics = [
         value for value in devices
@@ -406,14 +509,22 @@ def audit_persistent_controller(
         value for value in devices
         if _drive_fields(value).get("virtio-blk-pci") == ""
     ]
-    if len(devices) != 2 or len(nics) != 1 or len(disks) != 1:
+    expected_disks = 2 if with_backup else 1
+    expected_nics = 1 if networked else 0
+    if (len(devices) != expected_nics + expected_disks
+            or len(nics) != expected_nics or len(disks) != expected_disks):
         raise ValueError(
-            "persistent controller: expected exactly one NIC and one disk")
-    nic = _drive_fields(nics[0])
-    if (nic.get("netdev") != netdev.group(1)
-            or nic.get("mac", "").lower() != mac.lower()):
-        raise ValueError(
-            "persistent controller: the NIC must keep the instance's own MAC")
+            "persistent controller: expected exactly "
+            + ("one NIC" if networked else "no NIC") + " and "
+            + ("the instance disk and the backup disk" if with_backup
+               else "one disk"))
+    if netdev is not None:
+        nic = _drive_fields(nics[0])
+        if (nic.get("netdev") != netdev.group(1)
+                or nic.get("mac", "").lower() != mac.lower()):
+            raise ValueError(
+                "persistent controller: the NIC must keep the instance's own "
+                "MAC")
 
     exact_disk = Path(disk).resolve()
     exact_vars = Path(vars_file).resolve()
@@ -436,12 +547,22 @@ def audit_persistent_controller(
         drive for drive in drives
         if drive.get("if") == "pflash" and "readonly" not in drive
     ]
-    block = [drive for drive in drives if drive.get("if") == "none"]
-    if len(drives) != 3 or len(code) != 1 or len(variables) != 1 \
-            or len(block) != 1:
+    block = [drive for drive in drives if drive.get("if") == "none"
+             and not (with_backup
+                      and drive.get("id") == BACKUP_DISK_DRIVE_ID)]
+    if len(drives) != 3 + with_backup or len(code) != 1 \
+            or len(variables) != 1 or len(block) != 1:
         raise ValueError(
             "persistent controller: expected firmware code, the instance's "
-            "variables and the instance's disk, and nothing else")
+            "variables and the instance's disk"
+            + (", and the backup disk" if with_backup else "")
+            + ", and nothing else")
+    if with_backup:
+        _audit_backup_disk(
+            drives, disks, path=Path(backup_disk), mode=str(backup_mode),
+            exact_disk=exact_disk, exact_vars=exact_vars, forbidden=forbidden)
+        disks = [value for value in disks
+                 if _drive_fields(value).get("drive") != BACKUP_DISK_DRIVE_ID]
     if Path(variables[0].get("file", "")).resolve() != exact_vars:
         raise ValueError(
             "persistent controller: the variables are not the instance's")

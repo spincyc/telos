@@ -100,7 +100,8 @@ from .secure_artifacts import atomic_write, private_directory  # noqa: E402
 from .serial_automation import (  # noqa: E402
     SerialAutomation, SerialAutomationError)
 from .signal_cleanup import SignalGuard, terminate_children  # noqa: E402
-from .simulated_topology import audit_persistent_controller  # noqa: E402
+from .simulated_topology import (  # noqa: E402
+    BACKUP_INPUT, audit_persistent_controller, backup_disk_args)
 from .simulation_evidence import redact  # noqa: E402
 from .simulation_overlay import PersistentControllerInstance  # noqa: E402
 
@@ -189,12 +190,19 @@ def session_command(
     port: int,
     *,
     canonical_state: Path = DEFAULT_STATE,
+    backup_disk: Path | None = None,
+    backup_mode: str | None = None,
 ) -> list[str]:
     """The instance's own boot, attached to the per-run switch, audited.
 
     Exactly ``bootstrap_dc.qemu_command``'s persistent shape -- same machine,
     disk serial and firmware as every earlier boot of this directory -- with
     its listening socket NIC replaced by one that connects to the switch.
+
+    *backup_disk* and *backup_mode* (ADR 0081, ``persistent_backup``) add the
+    one raw backup disk ``simulated_topology.backup_disk_args`` describes,
+    before the NIC; the audit admits it only when both are given.  A restore
+    (``BACKUP_INPUT``) drops the NIC, so its guest has no network at all.
     """
     if not PersistentControllerInstance.valid_instance_name(target.instance):
         raise PersistentControllerSessionError(
@@ -215,11 +223,23 @@ def session_command(
         raise PersistentControllerSessionError(
             "the persistent command shape changed; refusing to guess where "
             "its NIC is")
-    argv = base[:-len(listen)] + socket_network_args(
-        role="connect", mac=SOCKET_MAC, port=port)
+    extra = ([] if backup_disk is None
+             else backup_disk_args(Path(backup_disk), str(backup_mode)))
+    nic = socket_network_args(role="connect", mac=SOCKET_MAC, port=port)
+    if backup_mode == BACKUP_INPUT:
+        # A restore boots with no network device at all (ADR 0081): nothing
+        # it lays down may reach a network before convergence gives it its
+        # own.  ``-nodefaults`` stays, or QEMU would add a default NIC.
+        if nic[0] != "-nodefaults" or "-nodefaults" in nic[1:]:
+            raise PersistentControllerSessionError(
+                "the persistent NIC shape changed; refusing to guess how to "
+                "drop it")
+        nic = nic[:1]
+    argv = base[:-len(listen)] + extra + nic
     audit_persistent_controller(
         argv, disk=files["disk"], vars_file=files["vars"], port=port,
-        mac=SOCKET_MAC, forbidden_paths=(canonical["disk"], canonical["vars"]))
+        mac=SOCKET_MAC, forbidden_paths=(canonical["disk"], canonical["vars"]),
+        backup_disk=backup_disk, backup_mode=backup_mode)
     return argv
 
 
@@ -245,16 +265,19 @@ class PersistentControllerSession:
         console_timeout: float = PERSISTENT_CONSOLE_TIMEOUT,
         spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
         proc_root: Path = Path("/proc"),
+        backup_disk: Path | None = None,
+        backup_mode: str | None = None,
     ) -> None:
         if (not isinstance(password, bytes) or not password
                 or b"\n" in password or b"\r" in password):
             raise ValueError("the console credential must be one non-empty line")
         self._target = target
         self._port = port
+        self._backup = {"backup_disk": backup_disk, "backup_mode": backup_mode}
         # Built, and so audited and checked against the canonical, before any
         # process can start.
         self._argv = session_command(
-            target, port, canonical_state=canonical_state)
+            target, port, canonical_state=canonical_state, **self._backup)
         self._files = persistent_paths(target.state)
         self._canonical = paths(canonical_state)
         self._password: bytes | None = password
@@ -296,8 +319,15 @@ class PersistentControllerSession:
 
     def start(
         self, *, attached: Callable[[], None] | None = None,
+        require_ad: bool = True,
     ) -> SerialAutomation:
-        """Take the lock, boot in place, log in, and prove AD live."""
+        """Take the lock, boot in place, log in, and prove AD live.
+
+        *require_ad* is ``False`` only for a restore (ADR 0081): a freshly
+        created instance holds an installed Controller with no directory
+        yet, so the restore proves samba live itself once it has put one
+        there.
+        """
         if self._password is None:
             raise PersistentControllerSessionError(
                 "this session is closed and its credential was dropped")
@@ -324,7 +354,8 @@ class PersistentControllerSession:
             persistent_console_login(console, "persistent-session")
             self._logged_in = True
             self.facts["logins"] = int(self.facts["logins"]) + 1
-            console._wait_controller_ad()
+            if require_ad:
+                console._wait_controller_ad()
         except BaseException:
             with contextlib.suppress(Exception):
                 self.stop()
@@ -413,7 +444,8 @@ class PersistentControllerSession:
         audit_persistent_controller(
             live, disk=self._files["disk"], vars_file=self._files["vars"],
             port=self._port, mac=SOCKET_MAC,
-            forbidden_paths=(self._canonical["disk"], self._canonical["vars"]))
+            forbidden_paths=(self._canonical["disk"], self._canonical["vars"]),
+            **self._backup)
         self.facts["live_argv_audited"] = True
 
     def _stop_process(
