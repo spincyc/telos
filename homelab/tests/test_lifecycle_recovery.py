@@ -928,7 +928,10 @@ class LiveHookTests(unittest.TestCase):
     # -- directory/DNS loss ----------------------------------------------
 
     def _directory_transcript(self, guest, *, cached="PASS", denied="PASS",
-                             restored="PASS"):
+                             restored="PASS", primed="PASS"):
+        # The online login that primes the SSSD cache comes first, as in gate 8.
+        guest.echo("arch-standard-online")
+        guest.marker("arch-standard-online", primed)
         guest.echo("arch-cached-login")
         guest.marker("arch-cached-login", cached)
         guest.echo("arch-uncached-denied")
@@ -952,6 +955,17 @@ class LiveHookTests(unittest.TestCase):
         self.assertEqual(session.calls, ["offline", "restore"])
         # And the judge grades that scenario a pass on this record alone.
         self.assertEqual(self._judged(record)["result"], "pass")
+
+    def test_directory_dns_loss_is_not_proven_without_a_primed_cache(self):
+        # 2026-10-01: the hook went straight to the outage, so no credential
+        # was ever cached and cached operation could not be observed.
+        guest = self._guest()
+        session = FakeIdentitySession()
+        self._directory_transcript(guest, primed="FAIL")
+        lab = ScriptedLab((session, guest.drive))
+        record = runner.record_from_observation(
+            "directory-dns-loss", lab.directory_dns_loss(self._context()))
+        self.assertEqual(record["result"], "not-run", record)
 
     def test_directory_dns_loss_hook_is_unreachable_without_boot(self):
         guest = self._guest()
@@ -992,6 +1006,8 @@ class LiveHookTests(unittest.TestCase):
         # matched loose text would call this a pass.
         guest = self._guest()
         session = FakeIdentitySession()
+        guest.echo("arch-standard-online")
+        guest.marker("arch-standard-online")
         guest.echo("arch-cached-login")
         guest.say("cached login for the primed operator: PASS\n")
         guest.say("arch-cached-login PASS\n")
@@ -1039,13 +1055,19 @@ class LiveHookTests(unittest.TestCase):
         record = runner.record_from_observation(
             "directory-dns-loss", lab.directory_dns_loss(self._context()))
         self.assertEqual(record["result"], "not-run")
-        self.assertIn("restore", session.calls)
+        # The budget expired at the priming login, before any outage: the
+        # directory is never taken offline when no proof could follow.
+        self.assertNotIn("offline", session.calls)
 
     def test_a_console_timeout_is_never_a_pass(self):
         # The guest stays connected and simply never prints the marker: the
         # bounded wait expires and the scenario defers rather than passing.
-        guest = self._guest(clock=stepping_clock([0.0, 10.0 ** 9]))
+        # A short real console timeout: the priming login answers, then the
+        # cached-login marker never arrives and its bounded wait expires.
+        guest = self._guest(timeout=0.2)
         session = FakeIdentitySession()
+        guest.echo("arch-standard-online")
+        guest.marker("arch-standard-online")
         guest.echo("arch-cached-login")
         lab = ScriptedLab((session, guest.drive))
         record = runner.record_from_observation(
@@ -1274,8 +1296,9 @@ class LiveBootRunTests(unittest.TestCase):
         self.addCleanup(guest.close)
         session = FakeIdentitySession()
         # Exactly the order ``assemble`` drives the two live hooks in.
-        for check in ("arch-cached-login", "arch-uncached-denied",
-                      "arch-identity-restored", "arch-joined"):
+        for check in ("arch-standard-online", "arch-cached-login",
+                      "arch-uncached-denied", "arch-identity-restored",
+                      "arch-joined"):
             guest.echo(check)
             guest.marker(check)
         guest.finish()

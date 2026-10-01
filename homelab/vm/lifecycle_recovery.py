@@ -822,6 +822,11 @@ class LiveRecoveryLab(RecoveryLab):
             return None
         session, drive = opened
         try:
+            # Prime the SSSD cache exactly as gate 8 does before its outage:
+            # one online login of the standard user. Without it there is no
+            # cached credential, so "cached operation continues" could never
+            # be observed (2026-10-01: cached=False on every live run).
+            primed = self._probe(drive, drive.prove_standard_online)
             session.take_controller_offline()
             try:
                 frozen = session.observe_controller_offline() is True
@@ -835,7 +840,14 @@ class LiveRecoveryLab(RecoveryLab):
             print(f"live directory/DNS loss not proven: "
                   f"{type(error).__name__}", file=sys.stderr)
             return None
-        if not (frozen and cached and denied and restored and resolved):
+        if not (primed and frozen and cached and denied and restored
+                and resolved):
+            observed = {"primed": primed, "frozen": frozen, "cached": cached,
+                        "denied": denied,
+                        "restored": restored, "resolved": resolved}
+            print("live directory/DNS loss not proven: "
+                  + ", ".join(f"{k}={v}" for k, v in observed.items()),
+                  file=sys.stderr)
             return None
         return {
             "controller_frozen": True,
