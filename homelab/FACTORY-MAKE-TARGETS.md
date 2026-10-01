@@ -1,6 +1,6 @@
 # Workstation factory Make contract
 
-Document version: `20260924.001`
+Document version: `20261001.001`
 
 Status: partly implemented. Targets marked **implemented** exist in the Makefile
 today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-17
@@ -56,9 +56,9 @@ explicitly, e.g. "PASS (Windows) / NOT RUN (Arch)".
 | Arch | `homelab-factory-arch` | **reserved** | PXE-boot and install Arch second while preserving Windows and recovery partitions; join the same domain. Really performed by the per-gate `homelab-arch-install-*` and `homelab-arch-identity-*` targets below. |
 | Dual boot | `homelab-factory-dualboot-check` | **reserved** | Cold-boot both systems and measure partition, EFI, boot-default, login, update, storage-failure, and recovery contracts. Really performed by `homelab-dualboot-acceptance-*` below. |
 | Acceptance | `homelab-factory-verify` | **implemented** | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
-| Recovery | `homelab-factory-recover` | **implemented** | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. Graded by **`homelab-factory-recover-judge RECOVERY_EVIDENCE=…`** (implemented). |
+| Recovery | `homelab-factory-recover` | **implemented** | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. Graded by **`homelab-factory-recover-judge RECOVERY_EVIDENCE=…`** (implemented). Ran live 2026-10-01: `partial`, five pass, the three ADR 0080 deferrals (see [Lifecycle recovery's live hooks](#lifecycle-recoverys-live-hooks)). |
 | Cleanup | `homelab-factory-clean` | **reserved** | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
-| Repeat | `homelab-factory-repeat` | **implemented** (`27d8af9`, `2aaa7fe`) | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. Aggregates every phase bundle into one receipt, because no single phase can carry gate 12. Dry run is read-only; see [The repeat driver](#the-repeat-driver). **NOT RUN** — it has never completed a live lifecycle. |
+| Repeat | `homelab-factory-repeat` | **implemented** (`27d8af9`, `2aaa7fe`) | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. Aggregates every phase bundle into one receipt, because no single phase can carry gate 12. Dry run is read-only; see [The repeat driver](#the-repeat-driver). **In progress** — no live iteration has completed all six phases yet. |
 | Fresh clone | `homelab-factory-fresh-clone` | **reserved** | Clone the public repository into a disposable directory, resolve and record the commit, acquire/import inputs, then invoke the same lifecycle. |
 
 Seven names in the table above do not exist in the Makefile:
@@ -83,7 +83,7 @@ present in the Makefile on 2026-08-17. Each mutating target needs `APPLY=1`.
 | 7 | `homelab-arch-install-prepare`, `homelab-arch-install-run` | `WINDOWS_RUN=<a Windows install bundle>/windows.qcow2` — the disk file; unlike gates 5–6, a bundle directory is refused at `APPLY=1` |
 | 8, 9 (Arch half) | `homelab-arch-identity-prepare`, `homelab-arch-identity-run`, `homelab-arch-identity-judge` | `ARCH_RUN=`, `WINDOWS_IDENTITY_EVIDENCE=` (consumed via `--windows-evidence`), `ARCH_IDENTITY_BUNDLE=`, `ARCH_IDENTITY_EVIDENCE=` |
 | 10 | `homelab-dualboot-acceptance-prepare`, `homelab-dualboot-acceptance-run`, `homelab-dualboot-acceptance-judge` | `DUALBOOT_EVIDENCE=` |
-| 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_EVIDENCE=` |
+| 11 | `homelab-factory-recover`, `homelab-factory-recover-judge` | `RECOVERY_RUN=`, `RECOVERY_BOOT=`, `IDENTITY_BUNDLE=`, `FACTORY_CONTROLLER_STATE=`, `RECOVERY_EVIDENCE=` (see [Lifecycle recovery's live hooks](#lifecycle-recoverys-live-hooks)) |
 | 3 (bundle) | `homelab-factory-controller-bundle` | — |
 | 12 | `homelab-factory-repeat`, `homelab-factory-verify` | `REPEAT_EVIDENCE_ROOT=`, `REPEAT_WORK_ROOT=`, `REPEAT_ITERATIONS=`, `REPEAT_RECEIPT=`, `FACTORY_DURATION=` (see [The repeat driver](#the-repeat-driver)); `homelab-factory-verify` remains the per-bundle comparator |
 
@@ -116,8 +116,24 @@ dualboot-acceptance-{prepare,run,judge}
                          v
 verify -> recover -> recover-judge -> [clean] -> repeat
                                        ^-- clean is reserved and absent;
-                                           repeat is implemented and NOT RUN
+                                           repeat is implemented, live run
+                                           in progress
 ```
+
+### Lifecycle recovery's live hooks
+
+Gate 11's two live hooks, `directory-dns-loss` and `controller-reconstruction`,
+run only with `RECOVERY_BOOT=1` and `IDENTITY_BUNDLE=` naming a gate-8 bundle
+that `homelab-arch-identity-prepare` made and nothing has executed; an executed
+bundle does not serve. The Controller state defaults to the canonical image
+`build/homelab/vm/bootstrap-dc`, as every other runner's does
+(`FACTORY_CONTROLLER_STATE=` overrides); the directory/DNS-loss hook primes the
+SSSD cache with one online standard-user login before freezing the Controller,
+as gate 8 does. Both passed live 2026-10-01 (ledger gate 11). Corrected
+2026-10-01 (`3fb969e`, `668b524`), kept so it is not re-derived: the default
+named `homelab/var/controller`, which never existed, so both hooks always
+deferred, and with no prior online login nothing was cached for the outage to
+test.
 
 ## The repeat driver
 
@@ -168,12 +184,16 @@ and is fail-closed, so a partially written disk over a size floor does not
 satisfy it. Since the canonical image was installed on 2026-09-24 the dry run no
 longer refuses.
 
-Verdict: **NOT RUN.** The driver is implemented and unit-tested; it has never
-completed a live lifecycle — its only live execution was an accidental,
-interrupted launch from inside the unit suite on 2026-09-24, fixed by `272d693`
-(see `HANDOFF.md` §5) — and every end-to-end test fabricates its bundles, so
-what is proven is that the aggregation is deterministic — not that two real
-lifecycles agree.
+Verdict: **in progress, no result yet.** The first live twice-through
+(`FACTORY_DURATION=7200`, started 2026-09-30T23:28Z) passed iteration 1's
+phases 1-4 and failed `dualboot-acceptance`: a gate-7 disk's join-once and
+domain-online units hold the Arch getty about 240 s, past the dual-boot
+runner's old fixed 120 s login wait, which `f8f0443` now derives from those
+bounds (420 s). The second started 2026-10-01T01:53Z. Until an iteration
+completes all six phases, what is proven is that the aggregation is
+deterministic, not that two real lifecycles agree. Corrected 2026-10-01: this
+read NOT RUN, its only live execution the accidental unit-suite launch of
+2026-09-24 (fixed by `272d693`; see `HANDOFF.md` §5).
 
 ## Installing the canonical Controller image
 

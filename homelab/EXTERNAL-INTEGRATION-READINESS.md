@@ -24,7 +24,7 @@ the gitignored `homelab/instance/` overlay (ADR 0046).
 | Phase-one laptops are unencrypted by owner decision, and that is not a blocker. The ledger's caution still applies: do not call these images suitable for mobile or college use until the encryption decision is revisited. | Ledger decisions table and cautions |
 | Physical installs are interactive. The destructive confirmation is the typed hardware disk serial. Unattended Windows automation is limited to disposable QEMU. | ADR 0058, ADR 0078 |
 | Anything a workstation keeps discovers services by stable name and SRV record, never by address. | ADR 0068 |
-| The complete local lifecycle, including the twice-through repeat, must pass before any UniFi change or physical attachment. ADR 0080 (owner, 2026-09-30) closes phase one with gate 11 at `partial` (five scenarios run and pass, three deferred) and gate 12 passing with only `host_network_changes` waived. Gate 12 is NOT RUN today, so stages 2-6 stay blocked until both gates reach that state. | ADR 0077, ADR 0080, ledger gates 11-12 |
+| The complete local lifecycle, including the twice-through repeat, must pass before any UniFi change or physical attachment. ADR 0080 (owner, 2026-09-30) closes phase one with gate 11 at `partial` (five scenarios run and pass, three deferred) and gate 12 passing with only `host_network_changes` waived. Gate 11 reached that state 2026-10-01; gate 12 has no result yet, so stages 2-6 stay blocked until it does. | ADR 0077, ADR 0080, ledger gates 11-12 |
 
 **Evidence convention.** Private evidence goes under
 `homelab/instance/evidence/gate14/<stage>/`, with files at mode 0600 inside
@@ -52,7 +52,7 @@ hosts belongs to the later stage and needs its authorization there.
 
 | ID | Gap and evidence | Done when |
 |---|---|---|
-| P0.1 | **Local lifecycle incomplete.** Gate 11's two implemented live-boot scenarios have never run and gate 12 is NOT RUN (ledger). ADR 0077, as narrowed by ADR 0080, blocks UniFi changes and attachment until both reach their phase-one state. | Gate 11 `partial` with exactly the three ADR 0080 deferrals; gate 12 passes twice-through with only `host_network_changes` waived. |
+| P0.1 | **Local lifecycle incomplete.** Gate 11 reached its phase-one state 2026-10-01; gate 12's second live twice-through is running, after the first failed at iteration 1's dual-boot phase (ledger). ADR 0077, as narrowed by ADR 0080, blocks UniFi changes and attachment until gate 12 reaches its phase-one state too. | Gate 11 `partial` with exactly the three ADR 0080 deferrals; gate 12 passes twice-through with only `host_network_changes` waived. |
 | P0.2 | **PXE services do not survive a reboot.** Convergence starts Samba, ntpd and TFTP with `systemctl restart` and starts nginx with a bare `nginx -c`. None of them is enabled (`homelab/vm/controller_factory.py` ~318-323). A fix lane is in progress (TASK-34 item 4). | A converged Controller, rebooted in the lab, serves DNS, time, TFTP and HTTP without reconverging. |
 | P0.3 | **iPXE chain loop under one boot filename.** The simulated gateway hands out the second-stage script URL only when a request carries option 175 or user class `iPXE` (option 77) (`homelab/vm/simulated_gateway.py` ~256-258). UniFi Network Boot gives every request the same filename. The Controller serves the stock `ipxe.efi`, which has no embedded script (`controller_factory.py` ~318). Stock iPXE would therefore run DHCP, get `ipxe.efi` again, and loop. | Either (a) a pinned iPXE build with an embedded script that chains the release entry point, or (b) UniFi class matching, if stage 1 row 5 shows it exists. `factory_publication._ipxe_binary` already accepts an explicit binary (~67-82). Under (a), the script must either resolve `services.boot_fqdn` at PXE time (stage 1 row 6 decides how) or chain through `${next-server}`. The simulated gateway gains a single-filename mode that reproduces UniFi, and a loopback PXE run reaches the installer through that mode. |
 | P0.4 | **Addresses where names belong.** The release `boot.ipxe` chains to an IPv4 literal (`homelab/vm/factory_publication.py` ~272-277). The WinPE startup pings a literal (`homelab/vm/windows_install_contract.py` ~281). The install-source share binds a literal (`factory_publication.py` ~311). ADR 0068 names `services.boot_fqdn`, but the overlay's `directory.json` schema does not carry that key yet (`homelab/tests/test_directory_identity.py` ~431). Separately, `make homelab-factory-offline-check` fails, which blocks building a new release (TASK-34 item 3). | Releases render names from the overlay, and a new release set builds and passes the offline check. |
@@ -330,7 +330,7 @@ replacement.
 
 | Decision | Needed by | Options |
 |---|---|---|
-| ADR 0077 completeness | Stage 2 | Decided 2026-09-30 by ADR 0080; what remains is running gates 11-12 to that state. |
+| ADR 0077 completeness | Stage 2 | Decided 2026-09-30 by ADR 0080; gate 11 reached that state 2026-10-01, and what remains is gate 12. |
 | AD DNS scope | U3 | A dedicated provisioning network, or AD-domain forwarding. Never household-wide. |
 | First-stage iPXE | P0.3 | An embedded script that chains by service name or by `${next-server}`, or UniFi class matching. |
 | Controller host and NIC | Stage 2 | Which machine hosts the VM, and which wired NIC it uses. |

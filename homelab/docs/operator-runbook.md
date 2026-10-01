@@ -68,7 +68,7 @@ with `grep` of the Makefile on 2026-08-17, and again on 2026-09-24):
 
 Corrected 2026-08-17: this list read *eight* and included
 `homelab-factory-repeat`, which is now implemented — see
-[5.3 Repeatability](#53-repeatability--not-run-gate-12).
+[5.3 Repeatability](#53-repeatability--in-progress-gate-12).
 
 ## Lifecycle map
 
@@ -88,7 +88,7 @@ deps -> media -> cache-seal -> offline-check
              dualboot-acceptance (gate 10)
                                     |
                                     v
-                verify -> recover -> (repeat, NOT RUN)
+      verify -> recover (gate 11) -> repeat (gate 12, in progress)
 ```
 
 ## Common variables and their defaults
@@ -463,17 +463,17 @@ gate does not require a clean Windows shutdown and did not observe one. Note
 `windows_login_proven: false` here — **live Windows login is proven by gate 6's
 identity stream, not this gate.**
 
-**Do not re-point gate 10 at a 2026-08-14 gate-7 bundle.** The three bundles
-from that date bake in `telos-arch-join-once.service` and
-`telos-arch-domain-online.service`, both ordered before
-`systemd-user-sessions.service`. Gate 10 attaches no media and no network, so
-the first spends 120 s waiting for `/dev/disk/by-label/TELOS_JOIN` and the
-second another 120 s waiting for a directory account, pushing the ttyS0 getty
-roughly 240 s past kernel handoff — past `observe_boot`'s 120 s login wait, so
-`arch-console-login-surface` records no login prompt and the gate FAILS. Use an
-08-11 bundle (`run-20260811T141601Z-6941005247e8` or
-`run-20260811T170109Z-7ceb936e2710`); neither installer contains those units.
-Nothing is destroyed by the mistake, but the run is wasted.
+**A gate-7 disk made since 2026-08-14 reaches its getty slowly.** It bakes in
+`telos-arch-join-once.service` and `telos-arch-domain-online.service`, both
+ordered before `systemd-user-sessions.service`. Gate 10 attaches no media and
+no network, so the first spends 120 s waiting for
+`/dev/disk/by-label/TELOS_JOIN` and the second another 120 s waiting for a
+directory account, pushing the ttyS0 getty roughly 240 s past kernel handoff.
+Since `f8f0443` (2026-10-01) `observe_boot`'s login wait is derived from those
+two bounds (420 s), so any gate-7 bundle serves. Corrected 2026-10-01, kept so
+it is not re-derived: the old fixed 120 s wait failed
+`arch-console-login-surface` on such a disk — the first gate-12 run's
+failure — and this paragraph said to use only an 08-11 bundle.
 
 ---
 
@@ -764,28 +764,33 @@ media/credentials/private values. **Evidence:** the emitted verdict for the run.
 ```sh
 make homelab-factory-recover RECOVERY_RUN=<fresh run bundle dir> APPLY=1
 #   optional FACTORY_RELEASES=<set> SEED_ISO=<seed> FACTORY_DURATION=<seconds>
+#   live hooks: RECOVERY_BOOT=1 IDENTITY_BUNDLE=<prepared, unexecuted gate-8 bundle>
 make homelab-factory-recover-judge RECOVERY_EVIDENCE=<produced recovery-evidence.jsonl>
 ```
 
 Exercises controller restart/loss, PXE release rollback, failed-install
 recovery, broken-boot repair, directory/DNS loss, update-failure handling,
 workstation remint, and controller reconstruction. **Evidence — gate 11
-PARTIAL:** three scenarios pass in the loopback lab with no guest boot —
+CLOSED FOR PHASE ONE at `partial`, 2026-10-01** (never relabelled pass), run
+`homelab/var/factory/recovery/run-20261001T015135Z-gate11live/`: 5 pass, 3 not
+run, 0 fail; the judge prints `{"checks": 8, "deferred": ["controller-restart",
+"failed-install-recovery", "broken-boot-repair"], "result": "partial"}`. Three
+scenarios pass in the loopback lab with no guest boot —
 `pxe-release-rollback`, `update-failure-rollback` (per ADR
 [0075](../decisions/0075-automatic-gated-arch-workstation-updates.md)), and
-`workstation-remint` — in the only retained run,
-`homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/` (3 pass, 5
-not run, judge `partial`). Corrected 2026-09-30: this read "proven live …
-(2026-08-12)"; no retained artifact backs that date. `pxe-release-rollback`
-flips the host-side selection pointer to the prior verified set and back;
-nothing is served or booted.
+`workstation-remint` — and `directory-dns-loss` and `controller-reconstruction`
+pass live. `pxe-release-rollback` flips the host-side selection pointer to the
+prior verified set and back; nothing is served or booted. Superseded
+2026-10-01: the evidence here was `run-20260814T120300Z-3b3169f9f15f/` (3
+pass, 5 not run), and an earlier "proven live … (2026-08-12)" had no retained
+artifact.
 
 **Phase-one closure (ADR
 [0080](../decisions/0080-phase-one-closure-of-recovery-and-egress-checks.md),
 owner, 2026-09-30):** this gate closes at `partial` once the three loopback
 scenarios and the two implemented live-boot hooks below run and pass;
 `controller-restart`, `failed-install-recovery` and `broken-boot-repair` are
-deferred past phase one.
+deferred past phase one. Reached 2026-10-01.
 
 **Changed 2026-08-17 (`2c3cd56`):** two of the five live-boot hooks are now
 *implemented* — `directory-dns-loss` and `controller-reconstruction` — driven
@@ -796,17 +801,22 @@ SIGSTOP flag). `2aaa7fe` also made this target forward the identity bundle and
 controller state those hooks need; without it they would have deferred even
 under `RECOVERY_BOOT=1`.
 
-**They have NOT RUN:** implementing a hook is not running it, and no live boot
-has been driven. The remaining three (`controller-restart`,
-`failed-install-recovery`, `broken-boot-repair`) stay stubs because the
-primitives they need do not exist — there is no way to power-cycle a live
-Controller and re-establish its console (the boundary exposes an outage, not a
-restart), nothing can break a guest's bootloader and repair it, and no
-fault-injection seam can make an install fail on purpose. The judge returns
-verdict `partial`, which is honest deferral, not a pass, and will keep doing so
-until all five exist **and** a live boot runs.
+**Both passed live 2026-10-01**, after two fixes: `3fb969e` (the runner's
+`--controller-state` default named `homelab/var/controller`, which never
+existed, so both hooks always deferred; it is now the canonical image
+`build/homelab/vm/bootstrap-dc`, overridden by `FACTORY_CONTROLLER_STATE`) and
+`668b524` (the directory/DNS-loss hook froze the Controller before any online
+login, so nothing was cached; it now primes SSSD with one online standard-user
+login, as gate 8 does). `IDENTITY_BUNDLE` must be a gate-8 bundle that
+`homelab-arch-identity-prepare` made and nothing has executed. The remaining
+three (`controller-restart`, `failed-install-recovery`, `broken-boot-repair`)
+stay stubs because the primitives they need do not exist — there is no way to
+power-cycle a live Controller and re-establish its console (the boundary
+exposes an outage, not a restart), nothing can break a guest's bootloader and
+repair it, and no fault-injection seam can make an install fail on purpose. The
+judge's `partial` is honest deferral, not a pass.
 
-### 5.3 Repeatability — **NOT RUN (gate 12)**
+### 5.3 Repeatability — **IN PROGRESS (gate 12)**
 
 ```sh
 make homelab-factory-repeat                        # read-only dry run; safe any time
@@ -880,20 +890,18 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   serial and publication logs keep a line-aligned head and tail around an
   elision line (`dfd4264`).
 
-Nothing blocks the live twice-through any more except running it: two live
-lifecycles made under one media seal, with the limits above. The canonical Controller image was
-installed on 2026-09-24 — see
-[Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed)
-— and the old blocker "pending gates 6–10" was satisfied 2026-08-14: gates 6, 7,
-8, 9 and 10 all pass. Corrected 2026-09-24: this paragraph named the absent
-canonical image as the one remaining blocker.
-
-**Verdict: NOT RUN.** The driver is implemented and unit-tested; it has never
-completed a live lifecycle — `SubprocessLifecycle`'s only execution was an
-accidental, interrupted launch from inside the unit suite on 2026-09-24, fixed
-by `272d693` — the phase table was read off the Makefile rather than confirmed
-against a live lifecycle, and every end-to-end test fabricates its bundles. What is proven is that the
-aggregation is deterministic, not that two real lifecycles agree.
+**Verdict: IN PROGRESS, no result yet.** The first live twice-through
+(`make homelab-factory-repeat APPLY=1 FACTORY_DURATION=7200`, started
+2026-09-30T23:28Z) passed iteration 1's phases 1–4 — Windows install, Windows
+identity, Arch install, Arch identity 21/21 — and failed phase 5:
+`arch-console-login-surface` found no getty within the fixed 120 s, the
+gate-7 boot gates described under [Stage 4](#stage-4--dual-boot-acceptance-gate-10),
+fixed in `f8f0443`. The second started 2026-10-01T01:53Z under one media seal
+and is running. Until an iteration completes all six phases, what is proven is
+that the aggregation is deterministic, not that two real lifecycles agree.
+Corrected 2026-10-01: this section read NOT RUN, with the driver's only
+execution the accidental unit-suite launch of 2026-09-24 (fixed by
+`272d693`).
 
 ### 5.4 Declared-service gate for a candidate image — **judge only**
 
@@ -920,7 +928,7 @@ the same split both identity gates already use.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20260930.001`)
+## Pass/fail gate summary (as of ledger `20261001.001`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
@@ -934,8 +942,8 @@ the same split both identity gates already use.
 | 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PASS**, 21/21, proven live 2026-08-14 (bundle `arch-identity/run-20260814T172142Z-495164bc7159`; judge prints `PASS: 21 checks, external_access=False`) |
 | 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
 | 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
-| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **PARTIAL** — 3 pass / 5 not-run, retained at `homelab/var/factory/recovery/run-20260814T120300Z-3b3169f9f15f/`. Two of the five live-boot hooks are now *implemented* (`directory-dns-loss`, `controller-reconstruction`, `2c3cd56`) but **NOT RUN**; three remain stubs for want of a Controller restart, a bootloader break-and-repair, and install fault injection. Verdict stays `partial` until all five exist and a live boot runs; ADR 0080 closes phase one at `partial` once the 3 loopback and 2 implemented scenarios run and pass. |
-| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **NOT RUN** — no longer blocked by any gate, and no longer blocked by a missing driver. All sixteen checks now have a wired producer (`aec5747`, `390e5cf`, `280c99d`), but `host_network_changes` cannot legitimately render PASS without a run-window host egress ledger that does not exist; ADR 0080 waives it for the loopback factory (waived, never PASS). `artifact_scan` scans each phase's retained evidence (`b84bc86`). The canonical Controller image is installed (2026-09-24); what remains is two live lifecycles. |
+| 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **CLOSED FOR PHASE ONE at `partial`** (ADR 0080, 2026-10-01; never pass) — 5 pass / 3 not-run, retained at `homelab/var/factory/recovery/run-20261001T015135Z-gate11live/`: the three loopback scenarios plus `directory-dns-loss` and `controller-reconstruction` live; deferred exactly `controller-restart`, `failed-install-recovery` and `broken-boot-repair`, for want of a Controller restart, a bootloader break-and-repair, and install fault injection. |
+| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **IN PROGRESS** — the first live twice-through failed in iteration 1 at dual-boot acceptance (fixed `f8f0443`); the second started 2026-10-01 and has no result yet. All sixteen checks have a wired producer; `host_network_changes` is waived by ADR 0080 (never PASS), so a passing run renders `PASS-WITH-WAIVER`. |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress; leak-scanned by `scripts/site check` since 2026-09-30, not yet in the site |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** — not authorized; only the read-only UniFi review in [`EXTERNAL-INTEGRATION-READINESS.md`](../EXTERNAL-INTEGRATION-READINESS.md) is |
 
@@ -1013,9 +1021,11 @@ transport.
   host-side pointer flip; nothing is served or booted. Corrected 2026-09-30:
   this read "proven live".
 - **Failed install / broken boot / directory loss / controller loss:** driven by
-  `homelab-factory-recover`; these five defer their live-boot proof today (gate
-  11 `partial`). Follow the observable contract the runner records and escalate
-  before assuming a scenario passed.
+  `homelab-factory-recover`; directory/DNS loss and controller reconstruction
+  pass live (2026-10-01), while controller restart, failed install and broken
+  boot defer their live-boot proof past phase one (gate 11 `partial`). Follow
+  the observable contract the runner records and escalate before assuming a
+  scenario passed.
 - **Rebuild a workstation image:** re-run Stages 0.3 → 5 from the sealed cache
   (no re-acquisition needed once `homelab-factory-offline-check` passes). Because
   install does only what cannot be done later, the normal fix for a damaged image
