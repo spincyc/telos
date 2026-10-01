@@ -105,7 +105,9 @@ leave together by their destroy targets (the domain dies with the instance).
 
 Decided defaults unless the owner says otherwise: first-logon changes are
 driven only for the daily administrator, on Arch, and other users change
-theirs at first physical logon; Arch's `ad_server` pins the bootstrap FQDN;
+theirs at first physical logon; Arch's `ad_server` asks DNS SRV first and
+names the instance's recorded DC as its fallback (owner decision 2026-09-30,
+TASK-42; disks installed earlier pin the bootstrap FQDN alone);
 the Arch hostname is owner-chosen and Windows keeps gate 5's generated name;
 the proven temporary Domain Admin join principal is kept for `rehearsal`.
 Owner decision 2026-09-30, break-glass custody: during the durable join runs
@@ -138,31 +140,28 @@ Both are built and **NOT RUN**: `homelab-factory-persistent-backup` takes a
 `homelab-factory-persistent-restore` restores it with `samba-tool domain
 backup restore` into a freshly created instance, never from a disk image (see
 [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "Backing up and restoring
-an instance's directory"). One gap needs the owner: Samba restores a DC only
-under a name the domain does not hold, so a restored instance runs DC
-`dr-<...>`, and every stage below expects `bootstrap-dc`; the durable binding
-refuses it until regaining the name (join a DC named `bootstrap-dc` to the
-restored domain, demote the temporary one) is built or another way is
-decided.
+an instance's directory").
+Owner decision 2026-09-30, DC names (ADR 0081 item 5, TASK-42): Samba restores
+a DC only under a name the domain does not hold, so a restored instance runs
+DC `dr-<...>`; the instance marker records that name as `dc_hostname`, and
+every step below uses the recorded name (absent means `bootstrap-dc`). Kept
+Arch workstations installed from now on find the DC by SRV first, with the
+recorded DC as the named fallback; a workstation installed before that names
+`bootstrap-dc` alone and is refused, with that reason, after a rename.
 
 ### The live proof plan for backups
 
-Against `rehearsal-auto` (agent custody, so it runs unattended):
-
-1. `make homelab-factory-persistent-backup PERSISTENT_DC=rehearsal-auto APPLY=1`
-   -- PASS means a set under `homelab/var/backups/rehearsal-auto/` and
-   `last_backup` in the marker.
-2. A restore **drill**, which destroys nothing:
-   `make homelab-factory-persistent-restore PERSISTENT_DC=rehearsal-auto-drill BACKUP=<set> APPLY=1 CONFIRM='RESTORE rehearsal-auto-drill'`
-   -- PASS means samba started on the restored database with the backup's
-   realm, domain SID and principal digest; then destroy `rehearsal-auto-drill`.
-3. Only once a restored domain can regain the name `bootstrap-dc`: back up
-   `rehearsal-auto`, destroy it, restore it into its own name, then
-   `make homelab-factory-persistent-probe PERSISTENT_DC=rehearsal-auto APPLY=1`
-   and `make homelab-durable-workstation-verify WORKSTATION=rehearsal-auto-ws1 PERSISTENT_DC=rehearsal-auto ARCH_HOSTNAME=<host> APPLY=1`
-   against the restored instance. Run today, step 3 would end at the
-   binding's refusal and leave `rehearsal-auto-ws1` bound to a directory no
-   stage accepts, so it is not the plan until the name gap closes.
+On `rehearsal-auto` (agent custody, so it runs unattended), with a NEW kept
+workstation whose Arch side is SRV-first (`rehearsal-auto-ws1` predates it
+and cannot survive the rename): a fresh gate-5 install -> adopt -> durable
+Arch install -> arch-join -> windows-join, all against `rehearsal-auto`; then
+backup -> destroy `rehearsal-auto` -> restore `rehearsal-auto` (new DC name)
+-> reconverge (`RECONVERGE=1`: the restored instance is a fresh canonical copy
+with no network unit, and convergence skips provisioning because a directory
+exists) -> probe -> keep-verify. The exact commands are in
+[FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "Backing up and restoring
+an instance's directory". PASS means the restored directory, under its new DC
+name, serves the kept workstation's Arch and Windows logins without a rejoin.
 
 ## Live record
 

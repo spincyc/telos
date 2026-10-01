@@ -88,20 +88,33 @@ and `python/samba/netcmd/domain/backup.py`):
    `/etc/samba/smb.conf`, starts samba, and proves the realm, the domain SID
    and the principal digest equal the backup's. Only then are the backup's
    convergence, account, password-policy and reset records written into the
-   new marker, with a `restored` record.
-5. **The restored DC's name.** Because Samba cannot restore a DC under a
-   name the domain still holds, the restored DC takes a new name
-   (`RESTORE_DC_NAME`, default `dr-<UTC minute>`), recorded in the marker.
-   Every durable stage expects the DC named `bootstrap-dc` -- the console
-   protocol, the domain-controller role's SPN aliases, Arch's pinned
-   `ad_server`, the probe's A and SRV checks -- so the durable binding
-   refuses a restored instance. **Not decided here: how a restored domain
-   regains the bootstrap DC's name.** Samba's documented route is to join a
-   DC named `bootstrap-dc` to the restored one and demote the temporary DC,
-   which needs two Controllers on one fabric and the DC join and demotion
-   ADR 0068's migration also needs; nothing of it is built. Until it is, a
-   restore proves the backup and the domain's identity but cannot serve a
-   kept workstation.
+   new marker, with a `restored` record. The same instance name may be
+   restored once it is destroyed: that is disaster recovery.
+5. **The restored DC keeps its new name, and everything follows the
+   recorded name** (owner decision 2026-09-30, aiq TASK-42). Because Samba
+   cannot restore a DC under a name the domain has held, the restored DC
+   takes a new name (`RESTORE_DC_NAME`, default `dr-<UTC minute>`; never the
+   backed-up DC's, never `bootstrap-dc`, which every persistent directory
+   began with). The restore renames the guest to it, and the instance marker
+   records it as the convergence record's `dc_hostname`; a record without
+   one means `bootstrap-dc`, which covers every instance converged earlier.
+   The console prompt, the binding's controller FQDN, the probe's A and SRV
+   checks, the Windows control disc's controller, and -- on reconvergence --
+   `/etc/hostname`, `/etc/hosts` and the role's SPN aliases all use the
+   recorded name. Kept Arch workstations find the DC by DNS SRV first:
+   a durable render writes `ad_server = _srv_, <recorded DC FQDN>`, so the
+   named controller is only the fallback. A kept workstation whose Arch side
+   asks SRV first is accepted under any DC name in its realm; one installed
+   before this decision names its controller alone and is refused, with that
+   reason, once the instance's DC is no longer that name. Windows needs
+   nothing: its join names the domain, and its DC locator uses SRV.
+   The disposable acceptance render stays pinned (8906d83): its simulated
+   segment showed SSSD's SRV discovery failing where Samba's NetBIOS
+   fallback joined, and it only ever has one controller.
+   Samba's own route back to an original DC name -- join a DC with that name
+   to the restored one, then demote the temporary DC -- is not needed and
+   not built. This item was amended before ADR 0081 left its branch; it
+   records the owner's answer rather than leaving the question open.
 6. **Retention and sensitivity.** Nothing is pruned automatically; deleting
    a set is the owner's act, and it should be shredded. Destroying a
    throwaway instance does not remove its sets; they are as disposable as
@@ -116,9 +129,14 @@ and `python/samba/netcmd/domain/backup.py`):
   `make homelab-factory-persistent-restore` exist (`homelab/vm/persistent_backup.py`,
   `homelab/vm/samba_backup_disk.py`); both are dry runs unless `APPLY=1`,
   and the restore also needs `CONFIRM='RESTORE <instance>'`.
-- A live proof can show that a backup restores with its realm, domain SID
-  and principals intact. It cannot yet show a restored directory serving the
-  kept workstations; that needs the name decision above.
+- The live proof is a disaster recovery: back up an instance with an
+  SRV-first kept workstation, destroy the instance, restore it into the same
+  name under a new DC name, reconverge it (`RECONVERGE=1`, which lays down
+  the network the canonical image lacks and skips provisioning because a
+  directory exists), then probe it and keep-verify the workstation.
+- Kept workstations installed before the decision (for example
+  `rehearsal-auto-ws1`) cannot survive a DC rename; they are refused with a
+  message naming that reason, and their Arch side must be installed again.
 - Restoring under a new DC name rotates `krbtgt` and removes the old DC's
   DNS records, as Samba documents; joined machines keep their accounts and
   secrets, which is the machine trust Gate 7 asks for.

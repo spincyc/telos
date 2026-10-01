@@ -396,30 +396,51 @@ and the guest commands are `homelab/vm/samba_backup_disk.py`.
 | Target | Mutates | Contract |
 |---|---|---|
 | `homelab-factory-persistent-backup` | `APPLY=1` | The dry run binds the instance as `-probe` does, prints the plan and the last recorded backup, and starts nothing. `APPLY=1` refuses a running instance, asks once for the `local-rescue` password before any process starts (agent custody reads its store), and boots the instance in place on a per-run switch and gateway with **one** extra audited device: a blank sparse raw disk the run creates (512 MiB, virtio-blk serial `TELOS-BACKUP-OUT`, no boot index). As root it proves the realm and domain SID are exactly the bound directory's, reads the DC's NetBIOS name, requires `samba-tool dbcheck --cross-ncs` clean, digests the SIDs of every non-DC security principal, runs `samba-tool domain backup offline` (samba keeps running, as Samba documents), writes the tarball onto the disk behind a 4 KiB header of its length, SHA-256 and the run's token, reads it back and prints the SHA-256, shreds its own copy, and powers off over the console. The host then reads the tarball off the disk and refuses it unless the header, token, length and SHA-256 agree with the guest's proof; writes `BACKUP_ROOT/<instance>/<run id>/` (0700) with `samba-backup.tar.bz2`, `manifest.json` and a copy of the instance marker, plus `custody-credentials.json` for a throwaway agent-custody instance only (all 0600); shreds the disk; and records `last_backup` `{utc, path, sha256, run_id}` in the marker. A failed run keeps nothing. Evidence lands in `homelab/var/factory/persistent-backup/<instance>/<run id>/`: a redacted console transcript, `switch.jsonl`, `fabric.log` and a secret-free `result.json`. |
-| `homelab-factory-persistent-restore` | `APPLY=1` + `CONFIRM='RESTORE <name>'` | Requires `BACKUP=<one backup set directory>`. Refuses, dry or applied, an instance that exists (destroy it first), a set that is missing, not 0700/0600, or whose tarball, marker copy or custody copy does not match the manifest, a manifest and marker copy that disagree on realm, DNS domain, NetBIOS name or domain SID, a realm the directory identity does not declare, an owner-custody set holding a custody store, and a `RESTORE_DC_NAME` equal to the backed-up DC's name. The dry run starts nothing. `APPLY=1` asks (owner custody only) for the canonical image's `local-rescue` password, creates the instance from the canonical image under the backup's custody (agent: a new console credential; the domain Administrator's and every staged account's passwords come back from the backup's store), boots it in place with **no network device** and the set on a read-only raw disk (serial `TELOS-BACKUP-IN`), verifies the header and SHA-256 in the guest, moves the package's `/var/lib/samba` aside, runs `samba-tool domain backup restore --newservername=<RESTORE_DC_NAME> --targetdir=/var/lib/samba`, installs its `smb.conf` as `/etc/samba/smb.conf`, enables and starts samba, proves the realm, domain SID and principal digest equal the backup's, and powers off over the console. Only then does it write the backup's convergence, account, password-policy and reset records and a `restored` record into the new marker. A failure leaves an instance with no directory records, which every durable stage refuses: destroy it. Evidence lands in `homelab/var/factory/persistent-restore/<instance>/<run id>/`. |
+| `homelab-factory-persistent-restore` | `APPLY=1` + `CONFIRM='RESTORE <name>'` | Requires `BACKUP=<one backup set directory>`. Refuses, dry or applied, an instance that exists (destroy it first), a set that is missing, not 0700/0600, or whose tarball, marker copy or custody copy does not match the manifest, a manifest and marker copy that disagree on realm, DNS domain, NetBIOS name or domain SID, a realm the directory identity does not declare, an owner-custody set holding a custody store, and a `RESTORE_DC_NAME` the domain has held (the backed-up DC's, the one it replaced, or `bootstrap-dc`). The dry run starts nothing. `APPLY=1` asks (owner custody only) for the canonical image's `local-rescue` password, creates the instance from the canonical image under the backup's custody (agent: a new console credential; the domain Administrator's and every staged account's passwords come back from the backup's store), boots it in place with **no network device** and the set on a read-only raw disk (serial `TELOS-BACKUP-IN`), verifies the header and SHA-256 in the guest, moves the package's `/var/lib/samba` aside, runs `samba-tool domain backup restore --newservername=<RESTORE_DC_NAME> --targetdir=/var/lib/samba`, installs its `smb.conf` as `/etc/samba/smb.conf`, renames the guest to `RESTORE_DC_NAME` (`/etc/hostname` and the `127.0.1.1` line of `/etc/hosts`), enables and starts samba, proves the realm, domain SID and principal digest equal the backup's, and powers off over the console. Only then does it write the backup's convergence (with `dc_hostname` set to `RESTORE_DC_NAME`), account, password-policy and reset records and a `restored` record into the new marker. The guest has no network yet: reconverge it next. A failure leaves an instance with no directory records, which every durable stage refuses: destroy it. Evidence lands in `homelab/var/factory/persistent-restore/<instance>/<run id>/`. |
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `BACKUP_ROOT` | `homelab/var/backups` | Parent of every backup set, one directory per instance. Gitignored. Every set holds every secret of its domain; nothing prunes them, and none may leave the host unencrypted. |
 | `BACKUP` | *(none; required by `-restore`)* | One backup set directory. |
-| `RESTORE_DC_NAME` | `dr-<UTC minute>` | The restored DC's name: 1-15 lowercase letters, digits or hyphens. Never the backed-up DC's. |
+| `RESTORE_DC_NAME` | `dr-<UTC minute>` | The restored DC's name: 1-15 lowercase letters, digits or hyphens. Never a name the domain has held. |
 
-**The restored DC has a new name, and no durable stage binds it yet.** Samba
+**The restored DC has a new name, and every stage follows the recorded
+name** (owner decision 2026-09-30, aiq TASK-42; ADR 0081 item 5). Samba
 restores a DC only under a name the domain does not hold: naming the backed-up
-DC fails with `Entry CN=<name>,OU=Domain Controllers,... already exists`. A
-restored instance therefore runs DC `dr-<...>` while every durable stage
-expects `bootstrap-dc`, and the durable binding refuses it. Regaining the name
-(Samba's route: join a DC named `bootstrap-dc` to the restored one, then
-demote the temporary DC) is not built; see ADR 0081. Until it is, a restore
-proves the backup and the domain's identity, and a **restore drill** into a
-separate instance name proves the same without destroying anything:
+DC fails with `Entry CN=<name>,OU=Domain Controllers,... already exists`. So
+the restore records its new name as the instance's `dc_hostname` (absent
+means `bootstrap-dc`, which covers every instance converged earlier), and the
+console prompt, the binding, `-probe`'s A and SRV checks, a reconvergence's
+host name and SPN aliases, and the Windows control disc all use it;
+`-status` prints it. A kept workstation follows by DNS: a durable Arch install
+now writes `ad_server = _srv_, <recorded DC FQDN>`. One installed before that
+(for example `rehearsal-auto-ws1`) names its controller alone and is refused,
+with that reason, once the instance's DC has another name.
+
+The live disaster-recovery proof, on `rehearsal-auto` (agent custody, so it
+runs unattended) with a NEW kept workstation `<w>` whose Arch side is
+SRV-first:
 
 ```sh
+# a fresh gate-5 Windows install first: make homelab-windows-install-run ... -> <bundle>
+make homelab-durable-workstation-adopt WORKSTATION=<w> PERSISTENT_DC=rehearsal-auto WINDOWS_RUN=<bundle> APPLY=1
+make homelab-durable-arch-install WORKSTATION=<w> PERSISTENT_DC=rehearsal-auto ARCH_HOSTNAME=<host> FACTORY_DURATION=1800 APPLY=1
+make homelab-durable-arch-join WORKSTATION=<w> PERSISTENT_DC=rehearsal-auto ARCH_HOSTNAME=<host> APPLY=1
+make homelab-durable-windows-join WORKSTATION=<w> PERSISTENT_DC=rehearsal-auto APPLY=1
 make homelab-factory-persistent-backup PERSISTENT_DC=rehearsal-auto APPLY=1
-make homelab-factory-persistent-restore PERSISTENT_DC=rehearsal-auto-drill BACKUP=homelab/var/backups/rehearsal-auto/<run id> APPLY=1 CONFIRM='RESTORE rehearsal-auto-drill'
-make homelab-factory-persistent-status PERSISTENT_DC=rehearsal-auto-drill
-make homelab-factory-persistent-destroy PERSISTENT_DC=rehearsal-auto-drill APPLY=1 CONFIRM='DESTROY rehearsal-auto-drill'
+make homelab-factory-persistent-destroy PERSISTENT_DC=rehearsal-auto APPLY=1 CONFIRM='DESTROY rehearsal-auto'
+make homelab-factory-persistent-restore PERSISTENT_DC=rehearsal-auto BACKUP=homelab/var/backups/rehearsal-auto/<run id> APPLY=1 CONFIRM='RESTORE rehearsal-auto'
+make homelab-factory-persistent-converge PERSISTENT_DC=rehearsal-auto RECONVERGE=1 APPLY=1
+make homelab-factory-persistent-probe PERSISTENT_DC=rehearsal-auto APPLY=1
+make homelab-durable-workstation-verify WORKSTATION=<w> PERSISTENT_DC=rehearsal-auto ARCH_HOSTNAME=<host> APPLY=1
 ```
+
+The reconvergence is not optional: the restored instance is a fresh copy of
+the canonical image, which has no network unit, and convergence is what lays
+one down (it skips provisioning because a directory exists, and needs no
+Administrator password). A restore drill into a separate instance name proves
+the backup alone and destroys nothing: restore with `PERSISTENT_DC=<drill>`,
+then destroy the drill.
 
 Verdict: both **NOT RUN**. Unit tests: `homelab/tests/test_persistent_backup.py`,
 `homelab/tests/test_samba_backup_disk.py`.
@@ -567,7 +588,7 @@ without editing it.
 | Target | Opt-in | Effect |
 |---|---|---|
 | `homelab-durable-arch-install-plan` | none | Read-only: binds the instance, resolves the permanent realm from `homelab/instance/identity/directory.json` (or `DIRECTORY_IDENTITY`), checks the workstation's next stage is `arch-install`, and prints the plan and a free-space estimate. Names the bound instance only, never the realm or SID. |
-| `homelab-durable-arch-install` | `APPLY=1`, `FACTORY_DURATION` of at least 600 (use 1800) | Under the workstation's lock: prepares gate 7's bundle with `--durable-identity` over an overlay of the kept disk, boots the disposable canonical Controller for PXE and the signed workstation repository only (no directory, no join account, no join media, no persistent Controller), and drives gate 7's installer, which prints `TELOS ARCH JOIN DEFERRED` where the join stood; a transcript carrying either install-time join marker is refused. On success the overlay and the installer-authored firmware variables are folded into the workstation as `arch-install`; on failure the overlay is removed and the workstation is unchanged. Evidence stays under `homelab/var/factory/durable-arch-installs/`. |
+| `homelab-durable-arch-install` | `APPLY=1`, `FACTORY_DURATION` of at least 600 (use 1800) | Under the workstation's lock: prepares gate 7's bundle with `--durable-identity` over an overlay of the kept disk (its `sssd.conf` asks DNS SRV first and names the instance's recorded DC as the fallback, `ad_server = _srv_, <DC FQDN>`, and the workstation marker records that as `arch_dc_discovery`; a bundle prepared before that is refused), boots the disposable canonical Controller for PXE and the signed workstation repository only (no directory, no join account, no join media, no persistent Controller), and drives gate 7's installer, which prints `TELOS ARCH JOIN DEFERRED` where the join stood; a transcript carrying either install-time join marker is refused. On success the overlay and the installer-authored firmware variables are folded into the workstation as `arch-install`; on failure the overlay is removed and the workstation is unchanged. Evidence stays under `homelab/var/factory/durable-arch-installs/`. |
 
 The installed disk's sealed join unit waits about 120 seconds for join media
 at every boot until stage `arch-join` joins it. Verdict: **PASS 2026-09-30** on `rehearsal-ws1`
