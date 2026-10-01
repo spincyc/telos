@@ -926,5 +926,14 @@ class CommandLineTests(unittest.TestCase):
         self.assertLessEqual(len(name), 15)
 
 
+class RestoreSambaStartTests(unittest.TestCase):
+    def test_the_restore_unmasks_samba_before_enabling_it(self):
+        # The seed masks samba.service; a restored instance never converged.
+        from homelab.vm import persistent_backup
+        command = persistent_backup.SAMBA_START_COMMAND
+        self.assertIn("systemctl unmask samba.service", command)
+        self.assertLess(command.index("unmask"), command.index("enable --now"))
+
+
 if __name__ == "__main__":
     unittest.main()

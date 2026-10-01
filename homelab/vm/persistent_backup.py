@@ -213,7 +213,12 @@ PRINCIPAL_DIGEST_COMMAND = (
     "hashlib.sha256(\"\\n\".join(sids).encode()).hexdigest()))' "
     "2>/dev/null || echo NONE")
 PRINCIPAL_VALUE = rb"NONE|[0-9]{1,7}:[0-9a-f]{64}"
-SAMBA_START_COMMAND = "/usr/bin/systemctl enable --now samba.service >&2"
+# The seed masks samba.service until convergence unmasks it, and a restored
+# instance is a fresh canonical copy that has never converged: the first live
+# drill (2026-10-01) failed "Unit /etc/systemd/system/samba.service is masked".
+SAMBA_START_COMMAND = (
+    "/usr/bin/systemctl unmask samba.service >&2 && "
+    "/usr/bin/systemctl enable --now samba.service >&2")
 #: Every boolean a backup must prove before its set is kept.
 BACKUP_CHECKS = (
     "fabric_started", "controller_attached", "live_argv_audited",
