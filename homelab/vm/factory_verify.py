@@ -530,10 +530,38 @@ def _release_set_identity(release_set: Path) -> dict | None:
     }
 
 
-def _check_release_set(release_set: Path | None) -> dict:
+def _resolve_release_set(release_set, releases) -> tuple[Path | None, str | None]:
+    """The release-set directory to verify, or why it could not be named.
+
+    ``release_set`` names a versioned set directly.  ``releases`` names a PXE
+    release root -- what ``factory_runner``, ``factory_repeat`` and every
+    phase's ``--releases`` mean -- whose selection descriptor
+    (``pxe_release_set.selected_release_set``) names the set the lifecycle
+    actually served.  Handing the root itself to ``pxe_release_set.verify`` is
+    the 2026-10-01 gate-12 defect: it can only fail, on the root's name and on
+    a manifest that a root never holds.
+    """
+    if release_set is not None and releases is not None:
+        raise ValueError("name either a release set or a release root, not both")
+    if releases is None:
+        return (None if release_set is None else Path(release_set)), None
+    try:
+        return pxe_release_set.selected_release_set(Path(releases)), None
+    except pxe_release_set.ReleaseSetError as exc:
+        return None, f"selected release set could not be resolved: {exc}"
+
+
+def _check_release_set(release_set: Path | None, *,
+                       unresolved: str | None = None) -> dict:
+    if unresolved is not None:
+        return _record(FAIL, unresolved)
     if release_set is None:
         return _record(NOT_RUN, "no release set supplied for aggregate integrity")
     try:
+        # The set is verified against the media seal its own aggregate manifest
+        # records (no ``expected_media_seal_sha256``): a set stays bound to the
+        # seal it was built from, and the receipt's ``release_set`` identity
+        # carries that digest so ``compare_runs`` sees any change of seal.
         problems = pxe_release_set.verify(Path(release_set))
     except pxe_release_set.ReleaseSetError as exc:
         return _record(FAIL, f"release set could not be verified: {exc}")
@@ -622,14 +650,20 @@ def _fail_receipt(evidence_dir: Path, detail: str) -> dict:
     }
 
 
-def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
+def verify_run(evidence_dir, *, release_set=None, releases=None,
+               audit_out=None) -> dict:
     """Validate one retained run's evidence; never mutates, never installs.
+
+    Check 16 verifies ``release_set`` (a versioned set directory) or, given
+    ``releases`` (a PXE release root) instead, the set its selection
+    descriptor names; naming both is a caller error.
 
     ``audit_out`` optionally names a file (outside the retained evidence) to
     receive the full gate-4 PXE authority audit JSON.  Its verdict is always
     embedded in the receipt regardless; passing ``audit_out`` only additionally
     persists the standalone artifact.
     """
+    release_set, unresolved = _resolve_release_set(release_set, releases)
     evidence_dir = Path(evidence_dir)
     try:
         entries, subdirectories = _list_evidence(evidence_dir)
@@ -708,7 +742,8 @@ def verify_run(evidence_dir, *, release_set=None, audit_out=None) -> dict:
     checks["optional_storage_absence_nonblocking"] = _check_optional_storage(
         measurements)
     checks["no_forbidden_artifact_content"] = _check_artifact_scan(measurements)
-    checks["release_set_integrity"] = _check_release_set(release_set)
+    checks["release_set_integrity"] = _check_release_set(
+        release_set, unresolved=unresolved)
 
     receipt = {
         "schema": SCHEMA,
@@ -907,9 +942,15 @@ def _summary_line(receipt: dict) -> str:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("evidence", type=Path, help="retained run evidence directory")
-    result.add_argument(
+    releases = result.add_mutually_exclusive_group()
+    releases.add_argument(
         "--release-set", type=Path, default=None,
-        help="release-set root to validate with pxe_release_set.verify")
+        help="versioned release-set directory (release-sets/YYYYMMDD.NNN) "
+        "to validate with pxe_release_set.verify")
+    releases.add_argument(
+        "--releases", type=Path, default=None,
+        help="PXE release root (e.g. homelab/var/pxe): validate the release "
+        "set its selected-release-set.json names")
     result.add_argument(
         "--compare-with", type=Path, default=None,
         help="a second retained run to compare receipts against")
@@ -936,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"evidence: {args.evidence}")
         if args.release_set is not None:
             print(f"release set: {args.release_set}")
+        if args.releases is not None:
+            print(f"release root: {args.releases} (verifies its selected set)")
         if args.compare_with is not None:
             # The repeat gate's second run: name it in the plan so an operator
             # can confirm the comparison is wired before spending a live run.
@@ -950,9 +993,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     receipt = verify_run(
-        args.evidence, release_set=args.release_set, audit_out=args.audit_json)
+        args.evidence, release_set=args.release_set, releases=args.releases,
+        audit_out=args.audit_json)
     if args.compare_with is not None:
-        other = verify_run(args.compare_with, release_set=args.release_set)
+        other = verify_run(args.compare_with, release_set=args.release_set,
+                           releases=args.releases)
         comparison = compare_runs(receipt, other)
         output = {"run_a": receipt, "run_b": other, "comparison": comparison}
     else:

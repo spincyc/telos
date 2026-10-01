@@ -216,8 +216,11 @@ class FactoryMakeTargetTests(unittest.TestCase):
         self.assertIn("dry run", text)
         self.assertIn("--plan", text)
         # Invokes the real verifier CLI and can validate the release set.
+        # FACTORY_RELEASES is the PXE release ROOT in every target, so it is
+        # forwarded as --releases (the selected set), never as --release-set.
         self.assertIn("factory_verify.py", text)
-        self.assertIn("--release-set", text)
+        self.assertIn("--releases '$(FACTORY_RELEASES)'", text)
+        self.assertNotIn("--release-set", text)
         # Read-only acceptance gate: it must never install or run a guest.
         self.assertNotIn("--apply", text)
         for forbidden in ("qemu", "fetch-", "curl", "wget"):

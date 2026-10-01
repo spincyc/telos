@@ -1080,6 +1080,16 @@ def preflight(*, iterations: int = DEFAULT_ITERATIONS,
         problems.append(problem)
     if releases is not None and not Path(releases).is_dir():
         problems.append(f"release set root is missing: {releases}")
+    elif releases is not None:
+        # Cheap (one descriptor, one manifest digest) and decided before hours
+        # of lifecycle: a root whose selection names no set can only FAIL
+        # check 16.  The full leaf verification runs into every receipt.
+        try:
+            factory_verify.pxe_release_set.selected_release_set(Path(releases))
+        except factory_verify.pxe_release_set.ReleaseSetError as error:
+            problems.append(
+                f"release root {releases} selects no verifiable release set: "
+                f"{error}")
     return problems
 
 
@@ -1360,7 +1370,8 @@ def _plan(stream, *, iterations: int, evidence_root: Path, work_root: Path,
     print(f"Aggregate evidence root: {evidence_root}", file=stream)
     print(f"Disposable work root (destroyed before each iteration): {work_root}",
           file=stream)
-    print(f"Release set: {releases}", file=stream)
+    print(f"Release root: {releases} (each receipt verifies the set its "
+          "selected-release-set.json names)", file=stream)
     if receipt is not None:
         print(f"Receipt: {receipt} (mode 0600)", file=stream)
     print("Lifecycle phases, in order:", file=stream)
@@ -1442,8 +1453,11 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
         # Read back from the retained evidence, so the receipt discloses
         # exactly the retries the iteration's own result.json records.
         retries.extend(read_phase_result(destination).get("retries") or ())
+        # ``releases`` is the PXE release ROOT, so the verifier resolves the
+        # set its selection descriptor names; handing the root over as the set
+        # failed check 16 in both iterations of the 2026-10-01 live repeat.
         receipts.append(factory_verify.verify_run(
-            destination, release_set=releases))
+            destination, releases=releases))
     comparisons = compare_iterations(receipts)
     document = repeat_receipt(receipts, comparisons, retries=retries)
     print(factory_verify.render_receipt(document), end="", file=stream)
@@ -1471,7 +1485,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT,
                         help="disposable state, destroyed before each iteration")
     result.add_argument("--releases", type=Path, default=DEFAULT_RELEASES,
-                        help="release-set root verified into every receipt")
+                        help="PXE release root; the set its "
+                             "selected-release-set.json names is verified "
+                             "into every receipt")
     result.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS,
                         help=f"lifecycles to run (at least {MINIMUM_ITERATIONS})")
     result.add_argument("--duration", type=float, default=DEFAULT_DURATION,

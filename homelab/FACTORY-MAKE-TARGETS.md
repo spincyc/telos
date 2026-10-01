@@ -155,7 +155,7 @@ make homelab-factory-repeat APPLY=1               # runs the lifecycle
 | `REPEAT_ITERATIONS` | `2` | Gate 12 requires at least 2. |
 | `REPEAT_RECEIPT` | unset | Optional path for the comparison receipt. |
 | `FACTORY_DURATION` | `120` | Forwarded to each phase as its **per-phase** budget, not a whole-run budget. |
-| `FACTORY_RELEASES` | unset | Optional release set; the dry run reports `homelab/var/pxe`. |
+| `FACTORY_RELEASES` | unset | Optional PXE release root (default `homelab/var/pxe`); every receipt verifies the set its `selected-release-set.json` names, and the apply refuses up front when that selection does not resolve. |
 
 **`FACTORY_DURATION`'s 120-second default is far too small for a real
 lifecycle.** A single Windows install alone has run 68 minutes. Whatever value

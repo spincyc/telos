@@ -191,6 +191,40 @@ def verify(
     return problems
 
 
+def selected_release_set(releases: Path) -> Path:
+    """The release set a PXE release root's selection descriptor names.
+
+    ``releases`` is the root holding ``SELECTED`` and ``release-sets/``, not a
+    set.  The descriptor is read strictly -- exactly its three fields, this
+    schema, a ``YYYYMMDD.NNN`` version -- and the named set's aggregate
+    manifest must hash to its ``manifest_sha256``, so the set returned is the
+    one actually selected, not merely one that exists.  Its leaves are not
+    verified here; :func:`verify` owns that.
+    """
+    releases = Path(releases)
+    selected = _json(releases / SELECTED)
+    if set(selected) != {"schema", "version", "manifest_sha256"}:
+        raise ReleaseSetError(
+            "selected release descriptor has missing or unlisted fields")
+    if selected.get("schema") != SCHEMA:
+        raise ReleaseSetError(
+            f"selected release descriptor schema must be {SCHEMA}")
+    version = selected.get("version")
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
+        raise ReleaseSetError(
+            "selected release version must have form YYYYMMDD.NNN")
+    release_set = releases / "release-sets" / version
+    manifest = release_set / MANIFEST
+    try:
+        digest = _digest(manifest)
+    except OSError as exc:
+        raise ReleaseSetError(f"cannot read {manifest}: {exc}") from exc
+    if digest != selected.get("manifest_sha256"):
+        raise ReleaseSetError(
+            "selected release descriptor does not match the release-set manifest")
+    return release_set
+
+
 def _write_selected(releases: Path, version: str, manifest_digest: str) -> None:
     selected = releases / SELECTED
     temporary = selected.with_name(f".{selected.name}.{os.getpid()}")

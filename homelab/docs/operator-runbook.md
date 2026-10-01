@@ -746,7 +746,7 @@ the accounts, the domain SID and every machine's join live only on that disk.
 
 ```sh
 make homelab-factory-verify FACTORY_EVIDENCE=<retained run evidence dir> APPLY=1
-#   optional FACTORY_RELEASES=<release set>
+#   optional FACTORY_RELEASES=<PXE release root, e.g. homelab/var/pxe; its selected set is verified>
 ```
 
 Dry run prints the check plan; `APPLY=1` validates retained evidence and emits a

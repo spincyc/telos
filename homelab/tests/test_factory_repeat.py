@@ -234,6 +234,16 @@ class TemporaryRootTests(unittest.TestCase):
         return pxe_release_set.build(
             self.root / "releases", version, seal, seal_value, stage)
 
+    def release_root(self):
+        """The PXE release root that selects :meth:`release_set`.
+
+        What ``--releases`` / ``FACTORY_RELEASES`` name: the root holding
+        ``selected-release-set.json``, never the set.  Handing the repeat a
+        set here instead hid the 2026-10-01 live defect, where the default
+        root reached the set verifier unresolved and check 16 failed.
+        """
+        return self.release_set().parents[1]
+
     def installed_controller_disk(self) -> Path:
         """A stand-in the real installed-image probe accepts.
 
@@ -1155,6 +1165,40 @@ class PreconditionTests(TemporaryRootTests):
         self.assertEqual(1, len(problems))
         self.assertIn("release set root is missing", problems[0])
 
+    def test_a_release_root_that_selects_a_set_is_accepted(self):
+        self.assertEqual([], factory_repeat.preflight(
+            controller_disk=self.installed_controller_disk(),
+            releases=self.release_root()))
+
+    def test_a_release_root_selecting_no_verifiable_set_is_refused(self):
+        root = self.release_root()
+        selected = root / pxe_release_set.SELECTED
+        cases = {
+            "no descriptor": None,
+            "a missing set": {"schema": 1, "version": "20260810.999",
+                              "manifest_sha256": "0" * 64},
+            "another manifest": {"schema": 1, "version": "20260810.001",
+                                 "manifest_sha256": "0" * 64},
+        }
+        for case, descriptor in cases.items():
+            with self.subTest(case=case):
+                selected.unlink(missing_ok=True)
+                if descriptor is not None:
+                    selected.write_text(json.dumps(descriptor), encoding="utf-8")
+                problems = factory_repeat.preflight(
+                    controller_disk=self.installed_controller_disk(),
+                    releases=root)
+                self.assertEqual(1, len(problems), problems)
+                self.assertIn("selects no verifiable release set", problems[0])
+
+    def test_a_set_handed_over_as_the_root_is_refused_before_any_run(self):
+        # A set directory holds no selection descriptor of its own.
+        problems = factory_repeat.preflight(
+            controller_disk=self.installed_controller_disk(),
+            releases=self.release_set())
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("selects no verifiable release set", problems[0])
+
 
 class ApplyRefusalTests(TemporaryRootTests):
     def test_apply_refuses_while_the_canonical_image_is_empty(self):
@@ -1168,7 +1212,7 @@ class ApplyRefusalTests(TemporaryRootTests):
             status = factory_repeat.repeat(
                 apply=True, controller_disk=empty, driver=driver,
                 evidence_root=self.root / "evidence",
-                work_root=self.root / "work", releases=self.release_set(),
+                work_root=self.root / "work", releases=self.release_root(),
                 bind=lambda bundles, **kwargs: wired_producers(),
                 stream=stream)
         finally:
@@ -1227,7 +1271,7 @@ class ApplyRefusalTests(TemporaryRootTests):
                 "--controller-disk", str(disk),
                 "--evidence-root", str(self.root / "evidence"),
                 "--work-root", str(self.root / "work"),
-                "--releases", str(self.release_set()),
+                "--releases", str(self.release_root()),
             ])
         finally:
             sys.stdout, sys.stderr = real_stdout, real_stderr
@@ -1456,7 +1500,7 @@ class ConfinementOrderTests(TemporaryRootTests):
                                  if controller_disk is None
                                  else controller_disk),
                 evidence_root=self.root / "evidence",
-                work_root=self.root / "work", releases=self.release_set(),
+                work_root=self.root / "work", releases=self.release_root(),
                 bind=lambda bundles, **kwargs: wired_producers(),
                 stream=io.StringIO())
         finally:
@@ -1824,7 +1868,7 @@ class RepeatEndToEndTests(TemporaryRootTests):
                 controller_disk=self.installed_controller_disk(),
                 evidence_root=self.root / "evidence",
                 work_root=self.root / "work",
-                releases=self.release_set(),
+                releases=self.release_root(),
                 receipt=receipt,
                 driver=FakeLifecycle() if driver is None else driver,
                 bind=bind or (lambda bundles, **kwargs: (
@@ -1845,6 +1889,23 @@ class RepeatEndToEndTests(TemporaryRootTests):
             self.assertEqual("PASS", run["verdict"])
             self.assertEqual(16, run["summary"]["pass"])
         self.assertIn("PASS: factory-repeat", errors)
+
+    def test_every_receipt_verifies_the_set_the_release_root_selects(self):
+        # 2026-10-01: the live repeat handed the root itself to the set
+        # verifier, so check 16 failed in both iterations on the root's name
+        # and a manifest no root holds, and no release identity was recorded.
+        status, printed, _errors = self.repeat()
+        self.assertEqual(0, status)
+        document = json.loads(printed)
+        manifest = (self.root / "releases" / "release-sets" / "20260810.001"
+                    / pxe_release_set.MANIFEST)
+        for run in document["runs"]:
+            check = run["checks"]["release_set_integrity"]
+            self.assertEqual("PASS", check["status"], check["detail"])
+            self.assertEqual("20260810.001", run["release_set"]["version"])
+            self.assertEqual(
+                pxe_release_set._digest(manifest),
+                run["release_set"]["manifest_sha256"])
 
     def test_the_real_artifact_scan_passes_clean_evidence_in_both_iterations(self):
         class WithDisks(FakeLifecycle):
@@ -2079,7 +2140,7 @@ class RepeatEndToEndTests(TemporaryRootTests):
                 apply=True, iterations=1, driver=driver,
                 controller_disk=self.installed_controller_disk(),
                 evidence_root=self.root / "evidence",
-                work_root=self.root / "work", releases=self.release_set(),
+                work_root=self.root / "work", releases=self.release_root(),
                 bind=lambda bundles, **kwargs: wired_producers(),
                 stream=stream)
         finally:

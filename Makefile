@@ -523,6 +523,8 @@ homelab-factory-pxe: homelab-factory-offline-check
 # FACTORY_COMPARE_EVIDENCE names a second retained run: it renders the gate-12
 # repeat verdict, classifying every differing receipt byte as expected per-run
 # nondeterminism or a genuine divergence, and exits non-zero when any diverges.
+# FACTORY_RELEASES is the PXE release root here as in every other target; the
+# verifier checks the set its selected-release-set.json names.
 homelab-factory-verify:
 	@if [ -z '$(FACTORY_EVIDENCE)' ]; then \
 		echo 'require FACTORY_EVIDENCE=<retained run evidence directory>' >&2; \
@@ -531,12 +533,12 @@ homelab-factory-verify:
 	@if [ '$(APPLY)' != 1 ]; then \
 		echo 'dry run: repeat with APPLY=1 to validate retained evidence'; \
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
-			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(FACTORY_COMPARE_EVIDENCE),--compare-with '$(FACTORY_COMPARE_EVIDENCE)') \
 			--plan; \
 	else \
 		$(PYTHON) homelab/vm/factory_verify.py '$(FACTORY_EVIDENCE)' \
-			$(if $(FACTORY_RELEASES),--release-set '$(FACTORY_RELEASES)') \
+			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(FACTORY_COMPARE_EVIDENCE),--compare-with '$(FACTORY_COMPARE_EVIDENCE)'); \
 	fi
 

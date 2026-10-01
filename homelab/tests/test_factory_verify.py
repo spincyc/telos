@@ -195,6 +195,93 @@ class VerifyRunTests(unittest.TestCase):
             "FAIL", receipt["checks"]["release_set_integrity"]["status"])
         self.assertEqual("FAIL", receipt["verdict"])
 
+    # -- a release ROOT resolves its selected set -------------------------
+
+    def test_a_release_root_verifies_the_set_it_selects(self):
+        built = self.release_set()
+        receipt = factory_verify.verify_run(
+            self.evidence(), releases=built.parents[1])
+        check = receipt["checks"]["release_set_integrity"]
+        self.assertEqual("PASS", check["status"], check["detail"])
+        self.assertEqual("PASS", receipt["verdict"])
+        self.assertEqual("20260810.001", receipt["release_set"]["version"])
+        self.assertEqual(
+            pxe_release_set._digest(built / pxe_release_set.MANIFEST),
+            receipt["release_set"]["manifest_sha256"])
+
+    def test_a_root_handed_over_as_a_set_fails_as_the_live_repeat_did(self):
+        # The 2026-10-01 gate-12 defect, pinned: ``release_set`` still means a
+        # versioned set, so a root there fails rather than being guessed at.
+        root = self.release_set().parents[1]
+        receipt = factory_verify.verify_run(self.evidence(), release_set=root)
+        check = receipt["checks"]["release_set_integrity"]
+        self.assertEqual("FAIL", check["status"])
+        self.assertIn("YYYYMMDD.NNN", check["detail"])
+        self.assertNotIn("release_set", receipt)
+
+    def test_a_root_whose_selection_does_not_resolve_fails_closed(self):
+        root = self.release_set().parents[1]
+        selected = root / pxe_release_set.SELECTED
+        descriptor = json.loads(selected.read_text(encoding="utf-8"))
+        cases = {
+            "no descriptor": None,
+            "another manifest": dict(descriptor, manifest_sha256="0" * 64),
+            "a missing set": dict(descriptor, version="20260810.999"),
+            "an unlisted field": dict(descriptor, extra=True),
+        }
+        for index, (case, value) in enumerate(cases.items()):
+            with self.subTest(case=case):
+                selected.unlink(missing_ok=True)
+                if value is not None:
+                    selected.write_text(json.dumps(value), encoding="utf-8")
+                receipt = factory_verify.verify_run(
+                    self.evidence(name=f"run-{index}"), releases=root)
+                check = receipt["checks"]["release_set_integrity"]
+                self.assertEqual("FAIL", check["status"], case)
+                self.assertIn("could not be resolved", check["detail"])
+                self.assertEqual("FAIL", receipt["verdict"])
+                self.assertNotIn("release_set", receipt)
+
+    def test_a_tampered_selected_set_fails_through_the_root(self):
+        built = self.release_set(tamper=True)
+        receipt = factory_verify.verify_run(
+            self.evidence(), releases=built.parents[1])
+        self.assertEqual(
+            "FAIL", receipt["checks"]["release_set_integrity"]["status"])
+
+    def test_naming_both_a_set_and_a_root_is_refused(self):
+        built = self.release_set()
+        with self.assertRaises(ValueError):
+            factory_verify.verify_run(
+                self.evidence(), release_set=built, releases=built.parents[1])
+
+    def test_the_cli_verifies_the_set_a_release_root_selects(self):
+        built = self.release_set()
+        stdout = io.StringIO()
+        real_stdout, real_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = stdout, io.StringIO()
+        try:
+            status = factory_verify.main(
+                [str(self.evidence()), "--releases", str(built.parents[1])])
+        finally:
+            sys.stdout, sys.stderr = real_stdout, real_stderr
+        self.assertEqual(0, status)
+        receipt = json.loads(stdout.getvalue())
+        self.assertEqual(
+            "PASS", receipt["checks"]["release_set_integrity"]["status"])
+
+    def test_the_cli_refuses_a_set_and_a_root_together(self):
+        built = self.release_set()
+        real_stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                factory_verify.main(
+                    [str(self.evidence()), "--release-set", str(built),
+                     "--releases", str(built.parents[1])])
+        finally:
+            sys.stderr = real_stderr
+        self.assertEqual(2, raised.exception.code)
+
     def test_unreadable_evidence_is_fail(self):
         receipt = factory_verify.verify_run(self.root / "does-not-exist")
         self.assertEqual("FAIL", receipt["verdict"])

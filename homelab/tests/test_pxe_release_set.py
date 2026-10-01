@@ -175,6 +175,38 @@ class ReleaseSetTests(unittest.TestCase):
         with self.assertRaisesRegex(release_set.ReleaseSetError, "invalid"):
             release_set.select(self.releases, "20260727.001")
 
+    def test_the_selected_set_resolves_from_the_release_root(self):
+        built = self.build()
+        self.assertEqual(release_set.selected_release_set(self.releases), built)
+        release_set.build(
+            self.releases, "20260727.002", self.seal, self.seal_value,
+            self.builder(version="20260727.002"), select=False)
+        # Present is not selected: the descriptor still names the first set.
+        self.assertEqual(release_set.selected_release_set(self.releases), built)
+
+    def test_an_unresolvable_selection_is_refused(self):
+        self.build()
+        selected = self.releases / release_set.SELECTED
+        descriptor = json.loads(selected.read_text(encoding="utf-8"))
+        cases = {
+            "cannot read": None,
+            "unlisted fields": dict(descriptor, extra=1),
+            "schema": dict(descriptor, schema=2),
+            "YYYYMMDD.NNN": dict(descriptor, version="latest"),
+            "does not match": dict(descriptor, manifest_sha256="0" * 64),
+        }
+        for message, value in cases.items():
+            with self.subTest(message=message):
+                selected.unlink(missing_ok=True)
+                if value is not None:
+                    selected.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaisesRegex(release_set.ReleaseSetError, message):
+                    release_set.selected_release_set(self.releases)
+        # A set directory is not a release root: it holds no selection.
+        with self.assertRaisesRegex(release_set.ReleaseSetError, "cannot read"):
+            release_set.selected_release_set(
+                self.releases / "release-sets/20260727.001")
+
     def test_install_source_must_match_the_sealed_windows_iso(self):
         self.seal_value["content"][-1]["source_iso_sha256"] = "e" * 64
         self.seal.write_text(json.dumps(self.seal_value), encoding="utf-8")
