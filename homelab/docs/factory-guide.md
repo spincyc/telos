@@ -1,5 +1,7 @@
 # Workstation factory — human guide
 
+Version `20261001.002`
+
 A terse orientation for an owner or family member. It says what the factory is,
 what it makes, how it is used, where the hard safety line sits, and when to stop
 and ask. It contains no secrets and no real machine values. The exact commands
@@ -32,6 +34,14 @@ In order, one run:
 5. joins both operating systems to the same synthetic test domain;
 6. proves login, reboot, offline login, update policy, and recovery; and
 7. keeps machine-readable evidence for every gate.
+
+Choose the disposable mode to test the factory: its directory and test accounts
+end with the run. Choose the durable workflow when a virtual workstation must
+keep its identity and remain usable after a relaunch. That workflow binds each
+kept workstation to a named persistent directory, with separate backups and
+explicit retirement. Rehearsals can use generated credentials on throwaway
+instances; the owner's keeper uses passwords held by the owner. Neither mode
+attaches a physical laptop or changes the household network.
 
 ## What a minted workstation is
 
@@ -99,9 +109,9 @@ and owner-accepted:
 
 - **No encryption yet.** Phase-one images use unencrypted Windows NTFS and
   unencrypted Arch storage. BitLocker, LUKS, Secure Boot, and TPM enrollment are
-  deliberately deferred. Full-disk encryption is a later iteration. Do not
-  describe these images as safe for sensitive or mobile use until that decision
-  is revisited.
+  deliberately deferred. The owner accepted that limit for the phase-one
+  mobile pilot; it does not supply protection if someone obtains the disk.
+  Full-disk encryption remains a later iteration.
 - **Cached-login revocation is limited.** So a laptop keeps working away from
   home indefinitely, domain logons are cached locally and do not expire (Arch
   SSSD `offline_credentials_expiration = 0`; Windows non-expiring cached domain
@@ -115,8 +125,16 @@ and owner-accepted:
 
 Rebuild rather than repair: because installation does only what cannot be done
 later and everything else is converged from the repository, the normal fix for a
-damaged image is to re-run the factory from the sealed media. Recovery scenarios
-(release rollback, remint, controller reconstruction, update-failure rollback)
-have a dedicated target and are graded fail-closed; the runbook shows which
-pass today, in the loopback lab without booting a guest, and which still defer
-their proof to a future live guest.
+damaged disposable image is to re-run the factory from the sealed media. A kept
+directory is different: rebuilding its operating system alone does not restore
+its accounts and domain identity. Use the native directory backup/restore
+procedure in the runbook and prove clients still authenticate before returning
+it to use. A directory restore is not a backup of anyone's files or workstation
+disk.
+
+The recovery runner distinguishes host-side checks, live guest checks and
+deferred scenarios. The runbook records those limits; a successful check is
+never evidence that an unrun repair works. Before retiring a kept VM, preserve
+needed files and read the runbook's retirement sequence. For a lost laptop,
+report the loss immediately: disabling connected access cannot erase a disk or
+revoke a cached login on a disconnected machine.

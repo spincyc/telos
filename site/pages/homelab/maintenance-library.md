@@ -1,6 +1,6 @@
 # Maintenance library
 
-Version `20260810.001`
+Version `20261001.002`
 
 This is the "is action required?" guide for keeping the homelab healthy between
 failures. It answers what to check, how often, and when a routine check turns
@@ -32,7 +32,10 @@ that it did.
 | Each use | Machine boots, either OS starts, login works | daily habit |
 | Weekly | Windows updated and restarted; Arch update timer healthy | Windows / Arch below |
 | Before travel | Both systems updated, offline login proven, files reachable | Travel and offline use |
-| Occasionally | Network-boot media still verifies; no private data leaked | Controller and media |
+| Before a directory change | Native directory backup verified; recovery credentials available | Operator runbook, directory backup |
+| Monthly | Free space, failed update/service logs, current release/media checks and private backup inventory reviewed | Controller and media |
+| Quarterly, and after a recovery change | Restore a directory backup into an isolated drill instance; verify clients separately where required | Operator runbook, recovery |
+| Before publication | Commands/links/private-data checks pass; version and evidence references reviewed | Operator runbook, final verification |
 
 ## Windows automatic updates
 
@@ -55,7 +58,8 @@ one complete `pacman -Syu` transaction, and it runs only when every gate holds:
 It saves before/after package lists and verifies installed files, and it never
 interrupts a session to reboot. A missed run simply retries later. This is the
 deliberate trade recorded in the project's decisions: a gated, health-checked,
-rollback-aware policy instead of blind automation.
+update policy. Package lists are diagnostic evidence; they are not a filesystem
+snapshot or proof that automatic rollback works.
 
 To confirm the timer is healthy and see the next scheduled run:
 
@@ -75,6 +79,14 @@ rather than leaving a half-applied system. Never work around it by hand — do n
 run a partial `pacman -Sy`, delete the pacman lock, or force a package
 replacement. Arch requires full-system upgrades; a partial one is how a machine
 breaks.
+
+Before an administrator refreshes the image or plans a manual full upgrade,
+review [Arch News](https://archlinux.org/news/) for required interventions.
+The timer does not interpret those articles. Record an applicable notice and
+its reviewed intervention privately, then check the update unit and both boot
+paths afterward. If a required intervention has no reviewed procedure, stop
+the planned refresh and ask the administrator; do not improvise a partial
+upgrade.
 
 ## Travel and offline use
 
@@ -139,10 +151,21 @@ tasks, but they belong on the maintenance calendar:
   make homelab-private-check IDENTIFIERS=<private denylist file>
   ```
 
-Capacity, logs, key and certificate expiry, backup-and-restore drills, and
-network exports are also part of a full maintenance calendar; those depend on
-gates that are still being accepted and are tracked in the factory state ledger
-rather than promised here.
+For a kept local directory, native backup, isolated restore, capacity checks
+and the probe/keep-verify sequence are documented in the
+[operator runbook](../operator-runbook/index.md). Keep at least one verified,
+encrypted backup outside the build host. A Samba backup contains the directory's
+secrets; it does not back up workstation files, the private inventory or user
+storage. Test those private copies by restoring to a separate location and
+opening representative files. Confirm optional storage still permits login when
+unreachable or access is denied; never use the only copy of a file for a failure
+drill.
+
+After an update, review failed services and the update-unit journal, record the
+installed version and verify login. No automatic physical-controller upgrade or
+NAS backup policy has been accepted. Certificate/key expiry and UniFi exports
+belong on the calendar when those services are deployed; obtain a private
+configuration export before any separately authorized network change.
 
 ## When to ask for help
 

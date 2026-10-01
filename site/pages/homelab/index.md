@@ -11,20 +11,29 @@ leaks into a published source.
 
 ## Documents
 
+Start with the **Factory human guide** for the two local modes, then the
+**Factory operator runbook** for commands and their evidence. Use the owner,
+maintenance and recovery guides for an existing workstation. The network gate
+is a later, separately authorized transition. The PDFs below retain older
+designs; current phase-one instructions and accepted limits are in the HTML
+guides and the repository's factory state ledger.
+
 | Document | What it is | |
 |---|---|---|
+| **Factory human guide** | What the local factory makes, disposable and kept instances, limits and safe next actions | [HTML](factory-guide/index.md) |
+| **Factory operator runbook** | Current local commands, prerequisites, evidence, supported states, maintenance and retirement | [HTML](operator-runbook/index.md) |
 | **Controller Design** | What the Controller owns, what it deliberately does not, storage and network boundaries, the install-once/converge-continuously split | [PDF](../../doc/homelab/design/controller.pdf) |
 | **Network Design** | Right-sized private networks, UniFi configuration order, traffic policy, PXE and restricted managed Wi-Fi | [PDF](../../doc/homelab/design/network.pdf) |
 | **Controller Network Simulation** | Rehearse DHCP/DNS authority, traffic isolation, Controller loss, and rollback in a disposable loopback-only lab without changing UniFi | [HTML](controller-network-simulation/index.md) |
 | **Controller Network Gate** | Safely attach the proven bootstrap VM as an ordinary client on a restricted UniFi network, verify isolation, and roll back | [HTML](controller-network-gate/index.md) |
-| **Controller Rebuild** | Bare metal to serving DHCP, written on the assumption that the Controller is dead and nothing it hosted is available | [PDF](../../doc/homelab/manual/controller-rebuild.pdf) |
+| **Controller Rebuild** | Earlier bare-metal recovery design; current phase one keeps DHCP on the gateway and uses the operator runbook's local rebuild path | [PDF](../../doc/homelab/manual/controller-rebuild.pdf) |
 | **Workstation Factory** | Isolated bootstrap through a verified Windows/Arch workstation, with every gate and failure branch | [HTML](workstation-factory/index.md) · [PDF](../../doc/homelab/manual/workstation-factory.pdf) |
 | **Workstation Owner Guide** | Normal use, automatic updates, travel checks, recovery, and a secret-free help bundle for the person carrying the laptop | [HTML](workstation-owner-guide/index.md) · [PDF](../../doc/homelab/manual/workstation-owner-guide.pdf) |
-| **Recovery Library** | Symptom-led recovery for eight failure scenarios, each marked implemented today or pending live guests | [HTML](recovery-library/index.md) |
+| **Recovery Library** | Symptom-led recovery, evidence to collect and the exact limits of each implemented path | [HTML](recovery-library/index.md) |
 | **Maintenance Library** | Routine upkeep, gated Arch and Windows updates, and the travel and cached-login limits that keep a laptop usable away from home | [HTML](maintenance-library/index.md) |
 | **Provisioning Design** | Network boot, the authorization boundary, what cannot be offered, and how the whole thing is tested | [PDF](../../doc/homelab/design/provisioning.pdf) |
 | **Convergence Design** | Where install ends and day two begins, why the manifest is the authority, and getting back in when the directory is down | [PDF](../../doc/homelab/design/convergence.pdf) |
-| **Decision Record** | All 75 architecture decisions — accepted, superseded and deferred — generated from the Markdown sources so the printed copy cannot drift | [PDF](../../doc/homelab/decisions.pdf) |
+| **Decision Record** | Printable architecture history; the repository's numbered Markdown decisions remain the current source | [PDF](../../doc/homelab/decisions.pdf) |
 
 ## Active phase
 
@@ -55,8 +64,8 @@ The active phase is deliberately narrower than the older Controller design:
 
 ## Two things that make it different from the usual
 
-**Install is small; converge is continuous.** Installation does only what cannot
-be done later — partition, encrypt, boot artifacts, one interface, one account.
+**Install is small; converge is continuous.** Installation establishes the disk
+layout, boot artifacts, one interface and recovery access.
 Everything else is Ansible from the repository. A change is a commit and a
 converge run, not a reinstall.
 
@@ -69,9 +78,11 @@ because a harness that silently shrinks reports green while testing nothing.
 
 ## What runs today
 
-The installer exists and is driven end to end by an acceptance harness that
-answers its genuine prompts through a pseudo-terminal — there is no unattended
-code path for the harness to use, so there is nothing to abuse on real hardware.
+The isolated factory has live proofs for Windows-first installation,
+Arch-second installation, identity, optional-storage failure and dual boot.
+Its Windows automation is generated privately for an explicitly identified
+disposable QEMU disk; it is never a public release input or permission to erase
+physical hardware. The physical path remains interactive and unproven.
 
     make check            site, publication, privacy, and implementation checks
     make homelab-test     the suite, verbosely
@@ -86,12 +97,12 @@ iPXE script and artifact checksums, the Archiso profile, and the Ansible
 convergence layer including the generator bridge that keeps a machine's
 installed configuration byte-identical to what the generators produce.
 
-The installer is driven end to end against six hardware shapes — NVMe, SATA and
-eMMC partition naming, several eligible disks, absent serials, removable media,
-wireless-only — because the machines this runs on will not be the machine it was
-written on. Matrix stage 1 passes: a lab guest boots UEFI on its serial console,
-finds no boot disk, and attempts PXE over IPv4 on a segment with no route off
-it. The remaining stages wait on a built Archiso image.
+Installer tests cover NVMe, SATA and eMMC partition naming, several eligible
+disks, absent serials, removable media and wireless-only machines. Those tests
+are distinct from the live factory gates in the
+[operator runbook](operator-runbook/index.md). Its gate table records the
+recovery deferrals and whether the twice-through comparison is accepted; a
+passing unit test or one successful install cannot close those gates.
 
 The provisioning image is staged by a tool that assembles the tracked profile,
 the installer, and the administrator public key from the private overlay, then
@@ -101,8 +112,10 @@ does not contain — and sshd is enabled only when there is a key for it to
 accept, because a listening sshd with no authorized key is attack surface
 nothing can log in through.
 
-Not yet run: the build itself, which needs root; and a real installation, which
-needs a spare machine.
+The persistent-directory and kept-workstation sequence has also run in the
+isolated lab. Owner custody, disaster recovery with existing clients and any
+physical pilot have their own evidence and authorization boundaries; consult
+the runbook before treating a disposable rehearsal as a kept system.
 
 ## Status
 

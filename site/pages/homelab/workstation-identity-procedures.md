@@ -1,10 +1,17 @@
 # Workstation identity procedures
 
-Version `20260727.001`
+Version `20261001.002`
 
 Use this command-by-command companion at workstation-factory Stage 9. Keep
 site-specific names in the private inventory and substitute them only while
 performing the procedure.
+
+The local VM factory performs joins through the
+[operator runbook](../../operator-runbook/index.md), including the persistent
+directory path for a kept workstation. Use its prepared media and stage
+runners; do not manually rejoin an already accepted VM. The checklist below
+explains the measurements and the later physical path, which still needs its
+own authorization and live acceptance.
 
 ### Prove Windows 11 identity
 
@@ -70,29 +77,24 @@ host -t SRV _ldap._tcp.dc._msdcs.<identity-domain>
 all packages came from enabled official Arch repositories. Stop if any check
 fails.
 
-Generate `/etc/samba/smb.conf` from private values with `security = ads`, exact
-`workgroup = <netbios-name>`, `realm = <kerberos-realm>`, and
-`kerberos method = secrets and keytab`. Generate root-owned mode-0600
-`/etc/sssd/sssd.conf`:
+Use the profile-generated `/etc/samba/smb.conf` and root-owned mode-0600
+`/etc/sssd/sssd.conf`, not a second hand-maintained template. The Samba realm
+and workgroup must match the permanent private identity. Current SSSD contracts
+are implemented in `homelab/workstations/arch_second.py` and
+`homelab/ansible/roles/identity_client/templates/sssd.conf.j2`:
 
-```ini
-[sssd]
-services = nss, pam
-config_file_version = 2
-domains = <identity-domain>
+- directory-assigned `uidNumber`/`gidNumber`, with `ldap_id_mapping = False`;
+- `nss`, `pam` and `ifp` responders; no obsolete `config_file_version` key;
+- explicit indefinite offline credentials in the `[pam]` section;
+- bounded directory reconnection waits; and
+- the installed machine's hostname and keytab identity agreeing.
 
-[domain/<identity-domain>]
-id_provider = ad
-auth_provider = ad
-access_provider = ad
-ad_domain = <identity-domain>
-krb5_realm = <kerberos-realm>
-cache_credentials = true
-use_fully_qualified_names = true
-fallback_homedir = /home/%u
-default_shell = /bin/bash
-ldap_id_mapping = true
-```
+Kept-workstation installs additionally render SRV-first DC discovery with the
+instance's recorded DC name as fallback, so a native directory restore under a
+new DC name can be tested. Older disks pinning only the old name need the
+documented recovery path; a successful Samba join alone does not prove SSSD can
+discover the restored DC. Every account must already have its pinned numeric
+IDs in the directory before this client is joined.
 
 Review both rendered files, then join interactively with a one-use delegated
 credential:
@@ -102,6 +104,7 @@ sudo net ads join -U '<delegated-join-user>'
 sudo net ads testjoin
 sudo klist -k /etc/krb5.keytab
 sudo test "$(stat -c %a /etc/sssd/sssd.conf)" = 600
+sudo sssctl config-check
 sudo systemctl enable --now sssd
 ```
 
@@ -154,5 +157,6 @@ Record these measurements in the acceptance evidence:
 | Authorization | standard user cannot elevate; approved group can |
 | Failure mode | local rescue and local homes work with AD and storage off |
 
-NFS remains disabled until numeric-ID mapping is explicitly designed and
-tested. Phase 1 uses local homes plus fail-soft SMB.
+NFS remains disabled. Directory numeric IDs are now defined and checked, but
+that is not a NAS permissions, ownership or backup/restore proof. Phase one
+uses local homes plus optional SMB whose failure must not block login.

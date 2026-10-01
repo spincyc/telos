@@ -58,7 +58,7 @@ explicitly, e.g. "PASS (Windows) / NOT RUN (Arch)".
 | Acceptance | `homelab-factory-verify` | **implemented** | Validate all retained evidence and produce a machine-readable final receipt. Never performs installation. |
 | Recovery | `homelab-factory-recover` | **implemented** | Exercise release rollback, controller reconstruction, failed-install recovery, boot repair, and workstation remint. Graded by **`homelab-factory-recover-judge RECOVERY_EVIDENCE=…`** (implemented). Ran live 2026-10-01: `partial`, five pass, the three ADR 0080 deferrals (see [Lifecycle recovery's live hooks](#lifecycle-recoverys-live-hooks)). |
 | Cleanup | `homelab-factory-clean` | **reserved** | Remove only the named disposable run after exact confirmation; preserve sealed media unless separately requested. |
-| Repeat | `homelab-factory-repeat` | **implemented** (`27d8af9`, `2aaa7fe`) | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. Aggregates every phase bundle into one receipt, because no single phase can carry gate 12. Dry run is read-only; see [The repeat driver](#the-repeat-driver). **In progress** — no live iteration has completed all six phases yet. |
+| Repeat | `homelab-factory-repeat` | **implemented** (`27d8af9`, `2aaa7fe`) | Run the complete sealed-input lifecycle at least twice from destroyed disposable state and compare receipts. Aggregates every phase bundle into one receipt, because no single phase can carry gate 12. Dry run is read-only; see [The repeat driver](#the-repeat-driver). Two full live iterations completed 2026-10-01, but acceptance failed; a fresh repeat must prove the subsequent fixes. Every iteration also requires a passing gate-4 PXE authority audit. |
 | Fresh clone | `homelab-factory-fresh-clone` | **reserved** | Clone the public repository into a disposable directory, resolve and record the commit, acquire/import inputs, then invoke the same lifecycle. |
 
 Seven names in the table above do not exist in the Makefile:
@@ -145,7 +145,7 @@ and assembles one union receipt from their bundles.
 
 ```sh
 make homelab-factory-repeat                       # read-only dry run
-make homelab-factory-repeat APPLY=1               # runs the lifecycle
+make homelab-factory-repeat APPLY=1 FACTORY_DURATION=7200
 ```
 
 | Variable | Default | Meaning |
@@ -190,16 +190,23 @@ and is fail-closed, so a partially written disk over a size floor does not
 satisfy it. Since the canonical image was installed on 2026-09-24 the dry run no
 longer refuses.
 
-Verdict: **in progress, no result yet.** The first live twice-through
-(`FACTORY_DURATION=7200`, started 2026-09-30T23:28Z) passed iteration 1's
-phases 1-4 and failed `dualboot-acceptance`: a gate-7 disk's join-once and
-domain-online units hold the Arch getty about 240 s, past the dual-boot
-runner's old fixed 120 s login wait, which `f8f0443` now derives from those
-bounds (420 s). The second started 2026-10-01T01:53Z. Until an iteration
-completes all six phases, what is proven is that the aggregation is
-deterministic, not that two real lifecycles agree. Corrected 2026-10-01: this
-read NOT RUN, its only live execution the accidental unit-suite launch of
-2026-09-24 (fixed by `272d693`; see `HANDOFF.md` §5).
+Verdict: **acceptance failed; fixes await a fresh live repeat.** Run
+`20261001T153726Z-2517176-repeat` completed both six-phase lifecycles in
+4 hours 10 minutes on 2026-10-01. The receipts agreed with no retries, but
+the artifact scan misread an iPXE dotted netmask and release verification
+received the release root instead of the selected set. Those checker defects
+are fixed by `c07f701` and `41b6bc8`. Both retained packet logs also contain
+an unapproved Windows IKE flow; `68800da` suppresses it in newly prepared
+WinPE installations and needs live proof.
+
+Since `8eb5b6d`, each iteration must carry a passing gate-4 PXE authority
+audit as well as satisfy the sixteen verifier checks. An identical failed
+audit in both iterations still fails the repeat; an absent or incomplete
+audit leaves it `NOT-RUN`. The receipt lists these `prerequisites` and names
+any blocked gate in `needs_live_gate`. A successful phase-one repeat reads
+`PASS-WITH-WAIVER`, with only ADR 0080's host-network waiver; it never reads
+plain `PASS`. Historical evidence is retained unchanged. Rejudging it does
+not prove the later IKE or firmware fixes.
 
 ## Installing the canonical Controller image
 

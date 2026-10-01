@@ -4,15 +4,21 @@ This is the human-readable path from an Arch build workstation to a verified
 dual-boot client. It is intentionally terse. Every state-changing action has a
 check and a stop condition.
 
+[Start with the local factory human guide](../factory-guide/index.md), then
+use the [current operator runbook](../operator-runbook/index.md) for the
+disposable or kept VM workflow. This page also describes later physical
+provisioning; those sections do not authorize network attachment or hardware
+installation.
+
 [Printable manual](../../../doc/homelab/manual/workstation-factory.pdf) ·
 [Network design](../../../doc/homelab/design/network.pdf)
 
 > **Pilot boundary**
 >
 > Pilot workstations have no BitLocker, LUKS, custom Secure Boot trust, TPM
-> enrollment, roaming profile, or offline revocation. Do not place sensitive
-> data on them. None of those omissions may be silently carried into a
-> production profile.
+> enrollment, roaming profile, or offline revocation. The owner accepted
+> unencrypted disks for the phase-one mobile pilot; a stolen disk remains
+> readable. These omissions must stay explicit in any later profile.
 
 ## 1. Keep public, private, and secret data separate
 
@@ -351,3 +357,9 @@ temporary Controller only after all tests pass.
 
 Workstations remain joined to the permanent identity namespace and do not need
 rebuilding.
+
+This is the future multi-controller migration design, not a tested local
+cutover. The implemented directory disaster-recovery path instead restores a
+native Samba backup under a new DC name while preserving the domain identity;
+see the operator runbook. Neither route permits replacing an existing domain
+with a newly provisioned one and expecting joined workstations to trust it.

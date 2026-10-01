@@ -1,6 +1,6 @@
 # Workstation Owner Guide
 
-Version `20260727.002`
+Version `20261001.002`
 
 This is the first-stop guide for someone using a Telos Windows 11 and Arch
 laptop away from home. It covers normal use, automatic updates, optional
@@ -164,10 +164,17 @@ authorization are administrator work.
 
 ## Offline copy
 
-The workstation image should install the versioned PDF locally in both
-operating systems and add a desktop or Start-menu shortcut. A documentation
-update copies a new version, verifies its SHA-256 digest, then changes the
-shortcut. The previous copy remains until the new one opens successfully.
+Save this complete HTML page locally in both operating systems before travel.
+Disconnect every network and open each saved copy: its version must say
+`20261001.002`, and the recovery ladder and evidence checklist must be readable
+without following a link. Keep the previous copy until the replacement opens.
+Automatic image installation of an offline guide and shortcut is not yet a
+proven factory step. A PDF is optional; an older printable copy does not replace
+the current recovery instructions.
 
-Disconnect every network and open the shortcut. Verify the footer says
-`20260727.002` and the recovery ladder is readable without following a link.
+Before returning or transferring a laptop, ask the administrator to preserve
+needed files, remove connected access and verify its data-disposal procedure.
+Deleting files or removing a directory account does not sanitize the disk.
+For a lost or suspected compromised laptop, stop using it if it is still in
+your possession and report the facts through the private help channel; do not
+reset or reimage it before the administrator has preserved needed evidence.

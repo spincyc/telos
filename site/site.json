@@ -125,6 +125,24 @@
       "description": "Build and verify dual-boot Windows and Arch workstations with shared identity."
     },
     {
+      "source": "homelab/docs/factory-guide.md",
+      "output": "projects/homelab/factory-guide/index.html",
+      "source_relative_links": true,
+      "title": "Workstation Factory Human Guide",
+      "layout": "default",
+      "body_class": "homelab-guide",
+      "description": "Understand what the workstation factory builds, how to use it, and when to stop and ask."
+    },
+    {
+      "source": "homelab/docs/operator-runbook.md",
+      "output": "projects/homelab/operator-runbook/index.html",
+      "source_relative_links": true,
+      "title": "Workstation Factory Operator Runbook",
+      "layout": "default",
+      "body_class": "homelab-guide",
+      "description": "Run the workstation factory through its ordered installation, identity, recovery, and verification gates."
+    },
+    {
       "source": "site/pages/homelab/controller-network-gate.md",
       "output": "projects/homelab/controller-network-gate/index.html",
       "title": "Controller Network Gate",

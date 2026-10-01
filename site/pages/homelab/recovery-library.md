@@ -1,6 +1,6 @@
 # Recovery library
 
-Version `20260810.001`
+Version `20261001.002`
 
 This is the symptom-led first stop when something in the homelab has failed and
 you need to know what it is, what you can safely do about it, and whether the
@@ -28,15 +28,15 @@ Each scenario carries one of three status marks. Read the mark before you act:
 
 - **Implemented today** — the recovery path exists, has an automated check or
   test, and can be run now against the isolated lab or a running laptop.
-- **Modeled, pending live guests** — the logic, planning, and tests exist, but
-  the end-to-end live install/identity lifecycle (factory gates 6–10) has not
-  yet been accepted, so the procedure is not yet a proven click-by-click path.
+- **Deferred live proof** — prerequisites may already work, but this specific
+  failure-and-recovery scenario has not been exercised successfully.
 - **Partial** — part of the path is proven and part still depends on a gate
   that is not finished.
 
 The authoritative, moving picture of which gate is accepted lives in the
-factory state ledger, not on this page; when the mark here and the ledger
-disagree, the ledger wins.
+factory state ledger and the [operator runbook](../operator-runbook/index.md).
+Gate 11 closes phase one at `partial`, never PASS: controller restart,
+failed-install recovery and broken-boot repair remain deferred by ADR 0080.
 
 ## 1. Controller restart or loss
 
@@ -52,9 +52,11 @@ back to its known state because convergence is idempotent; nothing it hosts has
 to be rebuilt. Directory changes, optional home storage, and new PXE work simply
 wait until it is back.
 
-**Current support status.** Implemented today. The offline-first behavior is
-covered by the cached-identity contracts, and the owner-facing check ladder is
-in the [Workstation Owner Guide](../workstation-owner-guide/index.md).
+**Current support status.** Partial. Cached login is proven in the identity
+gates and the owner-facing ladder is in the
+[Workstation Owner Guide](../workstation-owner-guide/index.md). That does not
+prove the separate gate-11 controller-restart fault scenario, which remains
+deferred. A dead directory needs its native backup, not just a fresh OS.
 
 ## 2. PXE release rollback
 
@@ -89,21 +91,22 @@ rollback tests pass.
 complete — it stopped, produced no bootable system, or failed an acceptance
 check.
 
-**How you'd recover.** Re-run the install for the affected system. There is no
-unattended path and no flag that skips a prompt: the destructive disk erase is
-re-authorized by typing the target disk's serial at the console, so a repeat
-install is a deliberate, re-confirmed action, not an automatic retry. The
-install runners exist and can be prepared and driven:
+**How you'd recover.** Preserve the failed run's result and confirm teardown
+before preparing another disposable install. The local factory's generated
+Windows automation is restricted to the identified disposable QEMU disk and
+does not authorize a physical erase. Physical installation remains interactive
+and separately authorized against the measured disk serial. The local runners
+can be prepared with:
 
 ```sh
 make homelab-windows-install-prepare
 make homelab-arch-install-prepare
 ```
 
-**Current support status.** Modeled, pending live guests. Windows-first install
-has a recorded pass in the isolated lab, and the Arch-second runner preserves
-Windows partitions and recovery data, but the full live install-and-recover
-loop is still being accepted.
+**Current support status.** Deferred live proof. Both installation gates have
+passed in the isolated lab; deliberate install fault injection and recovery
+remain a separate deferred scenario. Do not erase a kept disk to repair a
+failed disposable attempt.
 
 ## 4. Broken boot
 
@@ -118,9 +121,10 @@ the boot policy, so a boot repair restores the menu rather than reinstalling an
 OS. Recovery of the boot artifacts otherwise falls back to a PXE re-stage of the
 affected system (scenario 3).
 
-**Current support status.** Modeled, pending live guests. Dual-boot disk
-acceptance and Windows-preserving planning are implemented and tested; the live
-boot-repair walkthrough waits on the dual-boot acceptance gate.
+**Current support status.** Deferred live proof. Dual-boot acceptance has
+passed; deliberately breaking and repairing the bootloader has not. Trying an
+independent firmware entry is a way to recover access, not evidence of a
+completed repair. Escalate before changing boot files or partitions.
 
 ## 5. Directory or DNS loss
 
@@ -129,16 +133,17 @@ domain logins, joins, and name resolution for domain services fail.
 
 **How you'd recover.** Already-joined laptops keep working offline on cached
 credentials, so this is rarely an emergency for the person carrying one. At
-home, the directory is restored by bringing the Controller back and letting it
-converge (scenario 1); a Controller that must be rebuilt from scratch is
-scenario 8. Rejoining a workstation after directory identity is restored uses
-the join procedure in the identity runbook, not a blind rejoin.
+home, first restore the existing Controller's DNS, time and Samba service.
+If its directory data is lost, use the operator runbook's native Samba backup
+and restore procedure. A new OS and a newly provisioned domain do not recreate
+the old account SIDs. Do not blindly rejoin clients or reset cached credentials.
 
-**Current support status.** Partial. Samba AD, its DNS zone, signed time, and
-Kerberos are proven on the disposable Controller, and cached-offline login is
-contracted and tested. A dedicated directory backup-and-restore drill remains a
-factory gate that is not yet accepted, so full directory disaster recovery is
-still reconstruction-plus-rejoin rather than a point-in-time restore.
+**Current support status.** Partial. Native directory backup, restoration under
+a new DC name, reconvergence and a directory probe have passed in an isolated
+drill (2026-10-01). Existing-client authentication after replacing its original
+DC needs its own keep-verify evidence; consult the runbook's current verdict.
+That proof must preserve the domain identity and use a client prepared for
+SRV-first discovery. Directory backups do not restore workstation files.
 
 ## 6. Update failure
 
@@ -161,8 +166,10 @@ A failing gate is the safe outcome: it declines to upgrade rather than leaving a
 half-applied system. Never run a partial `pacman -Sy`, delete the pacman lock,
 or force package replacement.
 
-**Current support status.** Implemented today. The Arch update policy, its gate,
-and its rollback record are built and tested (`make homelab-arch-update-test`).
+**Current support status.** Partial. The Arch update policy, gate and package
+evidence are built and tested (`make homelab-arch-update-test`); those tests do
+not prove recovery from an unbootable update. Retain the update journal and
+package lists, try the other OS, and escalate before package or boot repair.
 
 ## 7. Workstation remint
 
@@ -173,17 +180,20 @@ the same reproducible inputs.
 **How you'd recover.** Reminting is running the factory again from clean inputs:
 destroy the disposable state, re-install Windows and Arch, and rejoin identity.
 Because installation does only what cannot be done later and everything else is
-convergence from the repository, a reminted machine ends up byte-for-byte
-comparable to any other built from the same release. The repeatability
-comparator that proves two runs agree is:
+convergence from the repository, the verifier can compare stable invariants
+from the same sealed inputs. Disks are not promised byte-for-byte identical.
+The aggregate driver runs two lifecycles; the verifier grades retained evidence:
 
 ```sh
 make homelab-factory-verify
+make homelab-factory-repeat
 ```
 
-**Current support status.** Modeled, pending live guests. The verifier and
-manifest comparator are implemented, but the live twice-through remint depends
-on the install and identity gates being accepted first.
+Both commands above are read-only plans unless their documented live options
+are supplied. **Current support status:** the driver and comparator exist;
+read gate 12 in the operator runbook for the latest twice-through verdict and
+its explicit egress waiver. One completed workstation is not repeatability
+evidence. Preserve needed user files before reminting a kept machine.
 
 ## 8. Controller reconstruction
 
@@ -202,13 +212,32 @@ make homelab-bootstrap-controller
 make homelab-factory-pxe
 ```
 
-This assumes the Controller is dead and rebuilds it bare; the printable
-Controller Rebuild manual carries the command-and-evidence detail.
+These are building blocks, not a complete copy-paste recovery sequence. Follow
+the current operator runbook for its required inputs and console installation.
+For a persistent directory, also restore its native backup as in scenario 5.
+The older printable Controller Rebuild manual describes a broader design.
 
 **Current support status.** Implemented today (in the isolated lab). A fresh
 no-network Controller has been built, installed, and converged with the
 directory, DNS, signed time, TFTP, and HTTP all passing on loopback-only links;
 serving a real physical workstation boot is a separate, still-pending gate.
+
+## 9. Forgotten password, lost laptop or damaged disk
+
+If a previously used account still signs in offline, preserve that access and
+record whether connected login fails. An administrator can use the runbook's
+one-account password-reset target after verifying the directory is healthy;
+resetting the directory password does not immediately change a disconnected
+laptop's cached credential. A lost local-rescue password has a different
+recovery path from a lost domain password.
+
+For a missing or suspect disk, stop install attempts and preserve the data that
+is still readable. For a lost laptop or suspected compromise, report it through
+the private help channel and have the administrator revoke connected access
+and rotate exposed credentials. Neither action erases an unencrypted disk or
+revokes disconnected cached login. The runbook documents local VM retirement;
+physical disk sanitization, remote wipe and fleet incident automation are not
+implemented.
 
 ## When to ask for help
 

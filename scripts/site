@@ -16,12 +16,14 @@ import argparse
 import html
 import http.server
 import json
+import posixpath
 import re
 import shutil
 import socketserver
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "site/site.json"
@@ -30,6 +32,7 @@ ASSET_ROOT = ROOT / "release/site/assets"
 DATA_ROOT = ROOT / "site/data"
 DOC_ROOT = ROOT / "doc"
 OUTPUT_ROOT = ROOT / "build/site"
+REPOSITORY_URL = "https://github.com/spincyc/telos"
 
 MARKDOWN_LINK_RE = re.compile(r"(?<!\!)\[(?P<text>[^\]]*)\]\((?P<href>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
 HTML_REFERENCE_RE = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""")
@@ -84,6 +87,8 @@ def load_manifest() -> dict:
             r"[a-z0-9 -]*", body_class
         ):
             raise SiteError(f"page {index} has invalid body_class tokens")
+        if not isinstance(page.get("source_relative_links", False), bool):
+            raise SiteError(f"page {index} source_relative_links must be a boolean")
         seen_outputs.add(output)
 
     for index, item in enumerate(manifest["navigation"]):
@@ -120,15 +125,82 @@ def local_targets(href: str) -> str | None:
     return unquote(path) if path else None
 
 
+def public_repository_files() -> set[str]:
+    """Only tracked, non-ignored files may become links to public source."""
+    def listed(*options: str) -> set[str]:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(ROOT), "ls-files", "-z", "--cached", *options],
+                check=True, capture_output=True, text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise SiteError("cannot determine tracked public link targets") from error
+        return set(result.stdout.split("\0")) - {""}
+
+    return listed() - listed("--ignored", "--exclude-standard")
+
+
+def source_relative_link(
+    href: str, page: dict, manifest: dict, public_files: set[str]
+) -> str:
+    """Resolve a repository Markdown link for a page that opts into this mode."""
+    href = html.unescape(href)
+    target = local_targets(href)
+    if target is None:
+        return href
+    normalized = normalize(PurePosixPath(page["source"]).parent / target)
+    if target.startswith("/") or normalized is None:
+        raise SiteError(f"{page['source']}: link escapes the repository: {href}")
+    path = ROOT / normalized
+    # Refuse symlinks, including a symlinked parent, so a tracked link cannot
+    # smuggle a private or out-of-repository target through the public check.
+    if path.resolve() != path:
+        raise SiteError(f"{page['source']}: link follows a symlink: {href}")
+    directory = path.is_dir()
+    if directory:
+        prefix = normalized + "/" if normalized else ""
+        public = any(name.startswith(prefix) for name in public_files)
+    else:
+        public = normalized in public_files
+    if not path.exists() or not public:
+        raise SiteError(
+            f"{page['source']}: link target is missing, untracked, or ignored: {href}"
+        )
+    outputs = {entry["source"]: entry["output"] for entry in manifest["pages"]}
+    if normalized in outputs:
+        rewritten = quote(posixpath.relpath(
+            outputs[normalized], PurePosixPath(page["output"]).parent.as_posix()
+        ), safe="/")
+    else:
+        kind = "tree" if directory else "blob"
+        rewritten = f"{REPOSITORY_URL}/{kind}/main/{quote(normalized, safe='/')}"
+    parsed = urlsplit(href)
+    return urlunsplit(urlsplit(rewritten)._replace(
+        query=parsed.query, fragment=parsed.fragment
+    ))
+
+
 def check_links(manifest: dict) -> tuple[list[str], set[str]]:
     """Validate every link out of every page. Returns (problems, referenced PDFs)."""
     problems: list[str] = []
     referenced_pdfs: set[str] = set()
     outputs = {page["output"] for page in manifest["pages"]}
+    public_files = public_repository_files() if any(
+        page.get("source_relative_links") for page in manifest["pages"]
+    ) else set()
 
     for page, source in page_sources(manifest):
         output_dir = PurePosixPath(page["output"]).parent
         text = source.read_text(encoding="utf-8")
+        if page.get("source_relative_links"):
+            # Use the same rendered references as the rewrite, including
+            # reference-style Markdown, images, and explicit HTML links.
+            for href in HTML_REFERENCE_RE.findall(render_markdown(text)):
+                try:
+                    source_relative_link(href, page, manifest, public_files)
+                except SiteError as error:
+                    problems.append(str(error))
+            continue
         for match in MARKDOWN_LINK_RE.finditer(text):
             href = match.group("href")
             target = local_targets(href)
@@ -214,7 +286,9 @@ RFC1918_PATTERNS = (
 INSTANCE_LEAK_PATTERNS = RFC1918_PATTERNS + (
     (re.compile(r"\b[a-z0-9-]+\.unas\b"), "NAS hostname"),
 )
-INSTANCE_SCANNED_ROOTS = ("src/homelab", "homelab/decisions", "site/pages")
+INSTANCE_SCANNED_ROOTS = (
+    "src/homelab", "homelab/decisions", "homelab/docs", "site/pages"
+)
 INSTANCE_SCANNED_SUFFIXES = {".md", ".tex", ".json"}
 
 # Pass two: the code that provisions the lab. Globs rather than roots so the
@@ -222,11 +296,8 @@ INSTANCE_SCANNED_SUFFIXES = {".md", ".tex", ".json"}
 # tree.
 INSTANCE_CODE_GLOBS = (
     "homelab/*.md",
-    # The factory guides are tracked and world-readable though not wired into
-    # the site, so they get the rules the sibling homelab/*.md narratives get:
-    # the synthetic lab address they document is sanctioned, anything else is
-    # a leak. Wiring them into the site would put them under the prose pass,
-    # which forbids every address; that is the owner decision still open.
+    # Published homelab/docs also receives the strict prose pass above;
+    # this pass retains the MAC and disk-serial checks for those guides.
     "homelab/docs/**/*",
     "homelab/ansible/**/*",
     "homelab/archiso/**/*",
@@ -462,6 +533,17 @@ def rewrite_page_links(body: str) -> str:
     return HTML_REFERENCE_RE.sub(replace, body)
 
 
+def rewrite_source_links(
+    body: str, page: dict, manifest: dict, public_files: set[str]
+) -> str:
+    def replace(match: re.Match[str]) -> str:
+        reference = match.group(1)
+        rewritten = source_relative_link(reference, page, manifest, public_files)
+        return match.group(0).replace(reference, html.escape(rewritten, quote=True))
+
+    return HTML_REFERENCE_RE.sub(replace, body)
+
+
 def relative_prefix(output: str) -> str:
     depth = len(PurePosixPath(output).parts) - 1
     return "../" * depth
@@ -489,10 +571,17 @@ def command_build(arguments: argparse.Namespace) -> int:
     if OUTPUT_ROOT.exists():
         shutil.rmtree(OUTPUT_ROOT)
     OUTPUT_ROOT.mkdir(parents=True)
+    public_files = public_repository_files() if any(
+        page.get("source_relative_links") for page in manifest["pages"]
+    ) else set()
 
     for page, source in page_sources(manifest):
         layout = (LAYOUT_ROOT / f"{page['layout']}.html").read_text(encoding="utf-8")
-        body = rewrite_page_links(render_markdown(source.read_text(encoding="utf-8")))
+        body = render_markdown(source.read_text(encoding="utf-8"))
+        if page.get("source_relative_links"):
+            body = rewrite_source_links(body, page, manifest, public_files)
+        else:
+            body = rewrite_page_links(body)
         prefix = relative_prefix(page["output"])
         # The landing page's title is the site's title; "Telos — Telos" in a
         # browser tab helps nobody.

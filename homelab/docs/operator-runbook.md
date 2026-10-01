@@ -1,5 +1,7 @@
 # Workstation factory — operator runbook
 
+Version `20261001.002`
+
 An exact, ordered runbook for building and verifying the isolated workstation
 factory on one Arch build host. Every command below is a real `make` target
 verified against the [Makefile](../../Makefile) and the
@@ -12,10 +14,11 @@ Pair this with the [human guide](factory-guide.md) for orientation.
 
 ## Conventions and safety
 
-- **Dry run is the default.** Every mutating or destructive target does nothing
-  until you add `APPLY=1`. Disk-touching work runs against disposable qcow2
-  overlays; the canonical controller disk and Windows disk are never mutated in
-  place.
+- **Review the target's boundary.** Factory live targets require `APPLY=1`;
+  media/dependency acquisition and cache construction have their own effects
+  described below. Acceptance runs use disposable qcow2 overlays. Persistent
+  directory operations change their named instance in place, and successful
+  durable workstation stages replace that workstation's disk under its lock.
 - **Loopback only.** All links and services bind to host loopback. The simulated
   gateway is the sole DHCP authority. No target here touches UniFi, the physical
   network, a host bridge/TAP/route/VLAN, or a physical disk. Do not add one.
@@ -27,8 +30,8 @@ Pair this with the [human guide](factory-guide.md) for orientation.
   KVM QEMU and may prompt for `sudo` on this host to launch a guest or the
   controller-auth watcher. Where a step needs elevation it is called out with
   the exact argv. This runbook never runs `sudo` for you.
-- The synthetic lab is public test data: realm **`AD.FACTORY.TEST`**, controller
-  **`10.1.31.2`** (the Makefile default `BASE_URL=http://10.1.31.2`). Real
+- The synthetic lab is public test data: realm **`AD.FACTORY.TEST`**; use the
+  Makefile's default `BASE_URL` for the simulated controller. Real
   hostnames, addresses, and credentials live only in the private overlay
   (`telos-private`) and must never enter this tree.
 
@@ -102,10 +105,11 @@ deps -> media -> cache-seal -> offline-check
 | `WIMBOOT` | `homelab/var/media/wimboot` | Pinned iPXE `wimboot` |
 | `FACTORY_MEDIA_SEAL` | `homelab/var/media/factory-media-seal.json` | Aggregate media seal |
 | `FACTORY_DURATION` | `120` | Bounded live-run seconds, per phase. The default suits only a dry run: a Windows install takes ~69 min, so pass 5400-7200 for a real one |
-| `BASE_URL` | `http://10.1.31.2` | Controller HTTP base for releases |
+| `BASE_URL` | Synthetic Controller URL from the Makefile | Controller HTTP base for releases; omit to use the isolated lab default |
 | `VERSION` | *(required for `-pxe`)* | Release id `YYYYMMDD.NNN` |
 
-Everything under `homelab/var/` is disposable, git-ignored cache and evidence.
+`homelab/var/` is gitignored, but it also holds native directory backups under
+`backups/`; it is not all disposable. Preserve backups and retained evidence.
 Never commit media, credentials, private inventory, or evidence.
 
 ---
@@ -249,6 +253,21 @@ and never a working Controller.
 > the whole image** — root is locked, there is no authorized key, no init shell,
 > and SSH password authentication is off, so nothing in this repository can open
 > an image whose console password is gone.
+
+The fallback uses the same installer, not a second disk recipe. Its fixed VM
+serial fits QEMU's 20-character virtio limit; never shorten a different serial
+to make an identity check pass. The installer initializes/populates the live
+Arch keyring and invokes offline `pacstrap -C ... -U <target> ...`; retain those
+steps and option order when diagnosing a failed seed install. The source checks
+live in `homelab/tests/test_seed_installer.py` and `test_bootstrap_vm.py`.
+
+For a hand-driven console, shut down with the guest's `sudo poweroff` and wait
+for QEMU to exit. `Ctrl-a c` switches its multiplexed serial console/monitor;
+`Ctrl-a h` shows QEMU's help. If tmux intercepts that prefix, identify the guest
+pane and use `tmux send-keys -t <guest-pane> C-a c` from another terminal. Do not
+use a monitor quit or kill as a clean directory shutdown. Before acceptance,
+the seed guide's checks must show working `local-rescue` sudo, locked root,
+the expected root filesystem, systemd-boot/LTS entry and zero failed units.
 
 ---
 
@@ -497,8 +516,10 @@ failure — and this paragraph said to use only an 08-11 bundle.
 > (`05eec6e`; the instance converged before it keeps a truncated SID in its
 > marker), a refused password was an unexplained "stage returned 1"
 > (`efedf50`), and there was no way to start with temporary passwords
-> (`1b04fd3`). Still **NOT RUN**: `-up` under owner custody, `RECONVERGE=1`,
-> `-destroy` and the Ansible accounts path. A kept workstation against a
+> (`1b04fd3`). The 2026-10-01 native-directory restore drill also ran
+> `RECONVERGE=1`, a probe and destruction of the drill instance; see the
+> backup contract's live record. Still **NOT RUN**: `-up` under owner custody
+> and the Ansible accounts path. A kept workstation against a
 > persistent instance (TASK-28,
 > [`DURABLE-WORKSTATION-FLOW.md`](../DURABLE-WORKSTATION-FLOW.md)) **PASSED
 > live end to end 2026-09-30**, unattended under agent custody. Since
@@ -899,18 +920,21 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   serial and publication logs keep a line-aligned head and tail around an
   elision line (`dfd4264`).
 
-**Verdict: IN PROGRESS, no result yet.** The first live twice-through
-(`make homelab-factory-repeat APPLY=1 FACTORY_DURATION=7200`, started
-2026-09-30T23:28Z) passed iteration 1's phases 1–4 — Windows install, Windows
-identity, Arch install, Arch identity 21/21 — and failed phase 5:
-`arch-console-login-surface` found no getty within the fixed 120 s, the
-gate-7 boot gates described under [Stage 4](#stage-4--dual-boot-acceptance-gate-10),
-fixed in `f8f0443`. The second started 2026-10-01T01:53Z under one media seal
-and is running. Until an iteration completes all six phases, what is proven is
-that the aggregation is deterministic, not that two real lifecycles agree.
-Corrected 2026-10-01: this section read NOT RUN, with the driver's only
-execution the accidental unit-suite launch of 2026-09-24 (fixed by
-`272d693`).
+**Verdict: the last completed repeat FAILED acceptance; a fresh run is
+required.** Run `20261001T153726Z-2517176-repeat` completed two six-phase
+lifecycles on 2026-10-01 in 4 hours 10 minutes, with equivalent receipts and
+no retries. Two checker defects are fixed: the private-data scan misread a
+dotted netmask (`c07f701`), and release verification received the root rather
+than the selected set (`41b6bc8`). Both runs also failed gate 4 on a WinPE
+IKE flow. Suppression (`68800da`) and the subsequent OVMF cache correction
+(`c8e37d0`) require new live evidence; historical rescanning cannot prove them.
+
+Every iteration must now pass the embedded gate-4 PXE authority audit
+(`8eb5b6d`). Identical failed audits still fail repeat acceptance; absent or
+incomplete packet proof leaves it `NOT-RUN`. Inspect the receipt's
+`prerequisites`, sixteen checks, comparison and `needs_live_gate` together.
+Phase-one acceptance is `PASS-WITH-WAIVER` only when the sole waiver is ADR
+0080 and every other check and prerequisite passes.
 
 ### 5.4 Declared-service gate for a candidate image — **judge only**
 
@@ -937,14 +961,14 @@ the same split both identity gates already use.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20261001.001`)
+## Pass/fail gate summary (as of ledger `20261001.002`)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
 | 1 | Media intake | `homelab-factory-media`, `homelab-factory-cache-seal` | PASS |
 | 2 | Immutable releases | `homelab-factory-pxe VERSION=…` | PASS (first `20260727.001`; `.005` selected since; all five bound to the July media seal — see [1.2](#12-build-the-immutable-release-set)) |
 | 3 | Controller convergence | `homelab-factory-controller-bundle APPLY=1` (+ live runners) | PASS |
-| 4 | PXE authority boundary | `homelab-pxe-authority-audit SWITCH=…` | **PASS** |
+| 4 | PXE authority boundary | `homelab-pxe-authority-audit SWITCH=…` | Arch proof **PASS**; the 2026-10-01 merged repeat audit failed on WinPE IKE traffic. Suppression is implemented and awaits fresh live proof. |
 | 5 | Windows-first install | `homelab-windows-install-{prepare,run}` | **PASS** |
 | 6 | Windows join/login | `homelab-windows-identity-{prepare,run,judge}` | **PASS**, 24/24 contracted checks; judge also reports `deferred: [disable-reenable]` and `out_of_scope: [firmware-activation, live-microsoft-update]` |
 | 7 | Arch-second install | `homelab-arch-install-{prepare,run}` | **PASS** |
@@ -952,8 +976,8 @@ the same split both identity gates already use.
 | 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
 | 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
 | 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **CLOSED FOR PHASE ONE at `partial`** (ADR 0080, 2026-10-01; never pass) — 5 pass / 3 not-run, retained at `homelab/var/factory/recovery/run-20261001T015135Z-gate11live/`: the three loopback scenarios plus `directory-dns-loss` and `controller-reconstruction` live; deferred exactly `controller-restart`, `failed-install-recovery` and `broken-boot-repair`, for want of a Controller restart, a bootloader break-and-repair, and install fault injection. |
-| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver, `27d8af9`/`2aaa7fe`), `homelab-factory-verify` (per-bundle comparator) | **IN PROGRESS** — the first live twice-through failed in iteration 1 at dual-boot acceptance (fixed `f8f0443`); the second started 2026-10-01 and has no result yet. All sixteen checks have a wired producer; `host_network_changes` is waived by ADR 0080 (never PASS), so a passing run renders `PASS-WITH-WAIVER`. |
-| 13 | Documentation | this runbook + [human guide](factory-guide.md) | in progress; leak-scanned by `scripts/site check` since 2026-09-30, not yet in the site |
+| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver), `homelab-factory-verify` (per-bundle comparator) | **IN PROGRESS** — two complete lifecycles agreed in `20261001T153726Z-2517176-repeat`, but acceptance failed. The checker, IKE and firmware fixes require a fresh run. Both gate-4 prerequisites must pass; ADR 0080's host-network waiver is the only accepted waiver (`PASS-WITH-WAIVER`). |
+| 13 | Documentation | this runbook + [human guide](factory-guide.md) | both guides wired into site navigation 2026-10-01; current local usage, maintenance, recovery and retirement documented, command/link/privacy checks passing. Live verdict reconciliation and publication are separate checks; a local site build does not prove deployment. |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** — not authorized; only the read-only UniFi review in [`EXTERNAL-INTEGRATION-READINESS.md`](../EXTERNAL-INTEGRATION-READINESS.md) is |
 
 Gate 9 has no acceptance target of its own by design: its checks ride the two
@@ -1046,6 +1070,119 @@ transport.
   (see [0.5](#05-reinstall-the-canonical-controller-image)); **PASS**, one live
   run on 2026-09-24, with the hand-driven console session as the documented
   fallback.
+
+## Routine maintenance of a kept local instance
+
+Record the public commit, selected release-set version, instance/workstation
+names, last successful probe and backup identifiers in private operational
+notes. Keep account names and credentials out of public reports. First observe:
+
+```sh
+make homelab-bootstrap-vm-status
+make homelab-factory-persistent-status PERSISTENT_DC=<name>
+make homelab-durable-workstation-status WORKSTATION=<name>
+make homelab-factory-offline-check
+df -h build/homelab/vm homelab/var
+```
+
+Stop on an unexplained missing disk, pending fold, identity disagreement or
+insufficient space. A fold creates a standalone disk copy, so free space must
+cover the plan's estimate as well as retained backups. `make clean` preserves
+`build/homelab/vm`; do not replace a named destroy target with a bulk deletion.
+
+After a planned directory change, run the persistent probe and then verify
+each affected kept workstation. These boot guests and require the appropriate
+credential custody, even though the verify leaves workstation disks unchanged:
+
+```sh
+make homelab-factory-persistent-probe PERSISTENT_DC=<name> APPLY=1
+make homelab-durable-workstation-verify WORKSTATION=<name> \
+  PERSISTENT_DC=<name> ARCH_HOSTNAME=<installed hostname> APPLY=1
+```
+
+Require `pass` in each result, matching realm/SID and both operating systems'
+authentication checks. A status listing alone does not prove directory health.
+An instance provisioned before a configuration change needs its reviewed
+`homelab-factory-persistent-converge` plan and an explicit `RECONVERGE=1` run;
+do not infer that the new checkout has changed the guest.
+
+For operating-system updates, follow the
+[maintenance library](../../site/pages/homelab/maintenance-library.md). Record
+Windows update history, Arch update-unit outcome and package lists before
+rebuilding a failed image. Read Arch News before a planned refresh; the current
+timer does not interpret news or perform article-specific manual interventions.
+Do not treat package health checks as a proven boot-repair or rollback drill.
+
+## Native directory backup and recovery
+
+Observe instance status, ensure no live operation owns it, and retain a backup
+before a directory change:
+
+```sh
+make homelab-factory-persistent-backup PERSISTENT_DC=<name>
+make homelab-factory-persistent-backup PERSISTENT_DC=<name> APPLY=1
+```
+
+The plan is read-only. The applied target boots the named instance, runs Samba's
+native offline backup and retains a set under `homelab/var/backups/` (or
+`BACKUP_ROOT`). Verify its result, archive digest and database check. Backups
+carry directory secrets: keep them private, preserve their restrictive modes
+and retain an encrypted copy outside the build host. The factory does not
+automate that off-host copy or back up workstation files/disks.
+
+Use the full [backup/restore contract](../FACTORY-MAKE-TARGETS.md) for restore
+inputs, refusal conditions and the live proof record. Prefer a drill into a
+separate throwaway instance: restore the set under a **new DC hostname**, run
+`RECONVERGE=1`, then the persistent probe. A directory-only drill proves neither
+an existing client's trust nor recovery after destroying its original instance.
+That stronger proof also needs a kept workstation rendered with SRV-first DC
+discovery and a passing keep-verify after restoration. Never provision a new
+domain as a substitute for restoring the existing realm/SID.
+
+Back up the separate private inventory and its external secret store too.
+Restore a copy to a private temporary location, run the private preflight and
+review its redacted output before reconnecting it to Telos. A Git commit in the
+public repository backs up none of those values. Do not rotate or reset an
+account during an outage merely to make cached login appear healthy; first
+restore DNS/time/directory health, then use the one-account reset procedure if
+the current password is actually lost.
+
+## Retirement and incident response
+
+A lost or suspect laptop is an incident, not a factory cleanup. Record the last
+known use, affected account/device and exact symptom through the private help
+channel. An administrator can revoke connected account/share/Wi-Fi access and
+rotate exposed credentials through the owning systems, but this repository has
+no fleet revocation or remote wipe target. Cached offline login and unencrypted
+disk access remain possible. Preserve evidence before repair or reimaging.
+
+For an intentionally retired **local VM**, first verify needed user files are
+copied and open from their destination, retain the required private evidence,
+and run both status targets. Then retire the explicitly named workstation:
+
+```sh
+make homelab-durable-workstation-destroy WORKSTATION=<name> \
+  APPLY=1 CONFIRM='DESTROY <name>'
+```
+
+Read the result and confirm status no longer lists a usable disk or custody
+publication. The target lists the machine accounts it leaves in the directory;
+it does not delete them. Record that follow-up privately and have the directory
+administrator remove only confirmed retired accounts. Do not retire a directory
+until every bound workstation is retired or its recovery plan is verified:
+
+```sh
+make homelab-factory-persistent-destroy PERSISTENT_DC=<name> \
+  APPLY=1 CONFIRM='DESTROY <name>'
+```
+
+Verify the named instance is absent and record which backups are retained under
+the owner's retention decision. Destruction is irreversible and its first live
+proof is separate from documenting the command. These targets remove local VM
+state; they do not sanitize a physical disk, reset firmware, revoke external
+shares or erase backup copies. Physical transfer/disposal needs a separate
+device-specific sanitization procedure and verification; that path is not yet
+implemented here.
 
 ## Final verification and evidence to retain
 
