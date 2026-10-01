@@ -1597,5 +1597,16 @@ class RunTests(unittest.TestCase):
                 scan.findings)
 
 
+class ArchLoginWaitTests(unittest.TestCase):
+    def test_the_login_wait_covers_both_bounded_boot_gates(self):
+        # A gate-7 disk's join-once and domain-online units both run to their
+        # bounds in this lane (no join media, no directory); the 2026-10-01
+        # gate-12 run failed arch-console-login-surface on a fixed 120 s wait.
+        from homelab.workstations import arch_second
+        gates = 2 * arch_second.JOIN_WAIT_TRIES * arch_second.JOIN_WAIT_SECONDS
+        self.assertEqual(da.ARCH_BOOT_GATES_SECONDS, gates)
+        self.assertGreater(da.ARCH_LOGIN_WAIT_SECONDS, 120 + gates)
+
+
 if __name__ == "__main__":
     unittest.main()

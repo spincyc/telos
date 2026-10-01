@@ -55,6 +55,14 @@ import time
 import zlib
 
 try:
+    from ..workstations import arch_second
+except ImportError:  # Direct execution from homelab/vm.
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from homelab.workstations import arch_second
+
+try:
     from .arch_install_prepare import (
         DISK_SERIAL, _expected_sizes_mib, inspect_overlay)
     from .bootstrap_dc import ovmf_pair
@@ -672,10 +680,24 @@ def _query_running(qmp, process: subprocess.Popen[bytes]) -> bool:
         return process.poll() is None
 
 
+#: How long the Arch boot may take from the kernel handoff to its ttyS0 getty.
+#: A gate-7 disk runs two bounded units before ``systemd-user-sessions``: the
+#: one-shot join waits for one-use TELOS_JOIN media, and the domain-online gate
+#: waits for SSSD; both loop ``JOIN_WAIT_TRIES`` times ``JOIN_WAIT_SECONDS``.
+#: This lane attaches no join media and boots no directory, so both run to
+#: their bounds (about 240 s) and the getty follows. The 2026-10-01 gate-12
+#: run failed ``arch-console-login-surface`` on the old fixed 120 s wait for
+#: exactly that reason; derived here so a changed bound cannot reintroduce it.
+ARCH_BOOT_GATES_SECONDS = (
+    2 * arch_second.JOIN_WAIT_TRIES * arch_second.JOIN_WAIT_SECONDS)
+ARCH_LOGIN_WAIT_SECONDS = 120.0 + ARCH_BOOT_GATES_SECONDS + 60.0
+
+
 def observe_boot(
     process: subprocess.Popen[bytes], capture: Path, *,
     mode: str, qmp, frames_dir: Path | None, timeout: float,
-    quiesce: float = 3.0, confirm: float = 45.0, login_wait: float = 120.0,
+    quiesce: float = 3.0, confirm: float = 45.0,
+    login_wait: float | None = None,
     frame_interval: float = 10.0, max_frames: int = 360,
     nav_interval: float = 1.0, tick=None,
 ) -> BootObservation:
@@ -833,7 +855,9 @@ def observe_boot(
             if (observation.selection is not None and login_until is None
                     and observation.kernel_handoff_at is not None):
                 login_until = min(
-                    deadline, observation.kernel_handoff_at + login_wait)
+                    deadline, observation.kernel_handoff_at + (
+                        ARCH_LOGIN_WAIT_SECONDS if login_wait is None
+                        else login_wait))
                 # Same discipline as the default boot: liveness is sampled
                 # at the awaited handoff, never after the window closes.
                 observation.guest_running = _query_running(qmp, process)
