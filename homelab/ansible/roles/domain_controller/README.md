@@ -271,6 +271,13 @@ Copy the archive off the DC and test restoration on an isolated machine. Never
 restore a filesystem snapshot over a running directory, and never automate a
 restore from this role.
 
+A simulated persistent instance, which only its serial console reaches, has
+its own targets instead: `make homelab-factory-persistent-backup` takes
+`samba-tool domain backup offline` inside the instance and
+`make homelab-factory-persistent-restore` runs `samba-tool domain backup
+restore` into a freshly created instance under a new DC name, as Samba
+requires (ADR 0081).
+
 ## Human acceptance
 
 The role performs non-secret structural checks. An operator separately proves

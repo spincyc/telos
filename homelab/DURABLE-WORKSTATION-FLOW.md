@@ -129,8 +129,40 @@ length 4, complexity off, minimum age 0; the host checks, break-glass
 included, judge by it). A relaxed policy applies to every account in that
 domain, so the keeper's policy is a separate decision.
 Still open with the owner, and blocking the keeper (TASK-21): its directory
-password policy, backups (none exist for persistent instances or kept disks),
-and join-principal privilege.
+password policy and join-principal privilege. Backups of kept workstation
+disks do not exist.
+Owner decision 2026-09-30, backups (ADR 0081): the keeper is minted only
+after backup and restore of a persistent directory are built and proven.
+Both are built and **NOT RUN**: `homelab-factory-persistent-backup` takes a
+`samba-tool domain backup offline` over an audited raw disk, and
+`homelab-factory-persistent-restore` restores it with `samba-tool domain
+backup restore` into a freshly created instance, never from a disk image (see
+[FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "Backing up and restoring
+an instance's directory"). One gap needs the owner: Samba restores a DC only
+under a name the domain does not hold, so a restored instance runs DC
+`dr-<...>`, and every stage below expects `bootstrap-dc`; the durable binding
+refuses it until regaining the name (join a DC named `bootstrap-dc` to the
+restored domain, demote the temporary one) is built or another way is
+decided.
+
+### The live proof plan for backups
+
+Against `rehearsal-auto` (agent custody, so it runs unattended):
+
+1. `make homelab-factory-persistent-backup PERSISTENT_DC=rehearsal-auto APPLY=1`
+   -- PASS means a set under `homelab/var/backups/rehearsal-auto/` and
+   `last_backup` in the marker.
+2. A restore **drill**, which destroys nothing:
+   `make homelab-factory-persistent-restore PERSISTENT_DC=rehearsal-auto-drill BACKUP=<set> APPLY=1 CONFIRM='RESTORE rehearsal-auto-drill'`
+   -- PASS means samba started on the restored database with the backup's
+   realm, domain SID and principal digest; then destroy `rehearsal-auto-drill`.
+3. Only once a restored domain can regain the name `bootstrap-dc`: back up
+   `rehearsal-auto`, destroy it, restore it into its own name, then
+   `make homelab-factory-persistent-probe PERSISTENT_DC=rehearsal-auto APPLY=1`
+   and `make homelab-durable-workstation-verify WORKSTATION=rehearsal-auto-ws1 PERSISTENT_DC=rehearsal-auto ARCH_HOSTNAME=<host> APPLY=1`
+   against the restored instance. Run today, step 3 would end at the
+   binding's refusal and leave `rehearsal-auto-ws1` bound to a directory no
+   stage accepts, so it is not the plan until the name gap closes.
 
 ## Live record
 
