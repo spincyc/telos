@@ -57,29 +57,24 @@ raises :class:`RepeatError` rather than being copied anywhere.  A name has to
 be understood by one of the two tables to survive; nothing is silently
 accepted by either.
 
-What has never run
-------------------
-The honest boundary.  Everything above -- assembly, merging, retention
-planning, aggregation, verification and comparison -- is exercised by
-``homelab/tests/test_factory_repeat.py`` against fabricated bundles and the
-real :func:`factory_verify.verify_run`.  What has NEVER run is:
+Live evidence and test boundary
+-------------------------------
+On 2026-10-01 the live driver completed two six-phase lifecycles in
+``20261001T153726Z-2517176-repeat``.  Their receipts agreed, with no retries,
+but failed the artifact scan and release-set checks.  Subsequent fixes
+corrected the dotted-netmask scan and release-root resolution; rejudging the
+old evidence cannot prove the later WinPE IKE suppression or firmware fix.
+Both old iterations also failed gate 4 on an unapproved UDP 500 flow.
 
-* :class:`SubprocessLifecycle` -- the eleven ``subprocess.run`` calls that
-  actually drive the Make targets, the ``rmtree`` that destroys disposable
-  state between iterations, and the live ``prctl(PR_SET_NO_NEW_PRIVS)`` its
-  :meth:`~SubprocessLifecycle.confine` makes before any of them (tested only
-  against a fake libc).  Its argv construction is pure and tested
-  (:func:`prepare_command`, :func:`run_command`); only the process spawning is
-  not, and the ``PHASES`` argv table has never been confirmed against a live
-  lifecycle.
-* Consequently, gate 12 itself.  Two live lifecycles are the only thing that
-  can prove repeatability, and none has run.  The canonical Controller image
-  ``build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2`` was installed on
-  2026-09-24, so ``--apply`` no longer refuses on it; the precondition
-  (:func:`controller_image_problem`) still reads the real file every time and
-  refuses a blank or uninspectable image, rather than trusting a comment.
+Gate 12 therefore requires a passing embedded gate-4 audit in every
+iteration, separately from the verifier's sixteen-check API.  Agreement on
+the same failing or unproven prerequisite can never close the repeat gate.
+The fixture tests cover assembly, retention, verification, comparison and
+this prerequisite, but only a new live twice-through can prove changed
+lifecycle behavior.  :func:`controller_image_problem` still probes the real
+canonical disk and refuses a blank or uninspectable image.
 
-The seam is arranged so the untested layer is as thin as it can be:
+The seam keeps the live process layer thin:
 :meth:`LifecycleDriver.run_phase` returns a bundle path and
 :meth:`LifecycleDriver.destroy` removes disposable state, and everything else
 in :func:`run_iteration` and :func:`repeat` is driver-agnostic and tested with
@@ -936,11 +931,45 @@ def aggregate_result(*, iteration: int, observations: Sequence[dict],
     }
 
 
+def repeat_prerequisites(receipts: Sequence[dict]) -> list[dict]:
+    """Require gate 4 in each run without widening the phase verifier API.
+
+    Missing or incomplete evidence needs a live proof.  A failed audit or
+    malformed/unknown verdict fails closed.  The receipt names each blocked
+    iteration even when two identical failures compare as equivalent.
+    """
+    prerequisites = []
+    for index, receipt in enumerate(receipts, 1):
+        audit = receipt.get("pxe_authority_audit")
+        verdict = audit.get("verdict") if isinstance(audit, dict) else None
+        if isinstance(audit, dict) and audit.get("gate") != "workstation-factory-gate-4":
+            status = factory_verify.FAIL
+            detail = "the retained PXE authority audit does not identify gate 4"
+        elif verdict == factory_verify.PASS:
+            status = factory_verify.PASS
+            detail = "the retained gate-4 PXE authority audit passed"
+        elif audit is None or verdict in (factory_verify.NOT_RUN, "NOT-PROVABLE"):
+            status = factory_verify.NOT_RUN
+            detail = "gate 4 needs complete live switch evidence and a passing audit"
+        else:
+            status = factory_verify.FAIL
+            detail = ("the retained gate-4 PXE authority audit failed"
+                      if verdict == factory_verify.FAIL else
+                      "the retained gate-4 PXE authority audit has an invalid verdict")
+        prerequisites.append({
+            "iteration": index,
+            "gate": "workstation-factory-gate-4",
+            "status": status,
+            "detail": detail,
+        })
+    return prerequisites
+
+
 def repeat_verdict(receipts: Sequence[dict], comparisons: Sequence[dict]) -> str:
     """The gate-12 verdict: every run must pass AND every pair must agree.
 
-    A divergence or any failing run fails; any NOT-RUN run holds the verdict
-    at NOT-RUN; a run that passed only with a waiver makes the whole repeat
+    A divergence, failing run or failing prerequisite fails; any NOT-RUN run
+    or prerequisite holds the verdict at NOT-RUN.  A waived run makes the repeat
     ``PASS-WITH-WAIVER``, never ``PASS``.  A verdict outside
     ``factory_verify.VERDICTS`` fails closed rather than reading as a pass.
     Agreement on a waiver is the comparator's job: a waived check embeds its
@@ -949,6 +978,7 @@ def repeat_verdict(receipts: Sequence[dict], comparisons: Sequence[dict]) -> str
     if any(comparison["divergent_count"] for comparison in comparisons):
         return factory_verify.FAIL
     verdicts = {receipt["verdict"] for receipt in receipts}
+    verdicts.update(item["status"] for item in repeat_prerequisites(receipts))
     if factory_verify.FAIL in verdicts or not verdicts <= factory_verify.VERDICTS:
         return factory_verify.FAIL
     if factory_verify.NOT_RUN in verdicts:
@@ -990,6 +1020,7 @@ def repeat_receipt(receipts: Sequence[dict],
         raise RepeatError(
             f"gate 12 needs at least {MINIMUM_ITERATIONS} iterations; "
             f"{len(receipts)} were verified")
+    prerequisites = repeat_prerequisites(receipts)
     return {
         "schema": SCHEMA,
         "kind": "factory-repeat",
@@ -998,8 +1029,11 @@ def repeat_receipt(receipts: Sequence[dict],
         "equivalent": all(comparison["equivalent"] for comparison in comparisons),
         "runs": list(receipts),
         "comparisons": list(comparisons),
+        "prerequisites": prerequisites,
         "needs_live_gate": sorted(
-            {name for receipt in receipts for name in receipt["needs_live_gate"]}),
+            {name for receipt in receipts for name in receipt["needs_live_gate"]}
+            | {item["gate"] for item in prerequisites
+               if item["status"] != factory_verify.PASS}),
         "waivers": repeat_waivers(receipts),
         "retries": [dict(retry) for retry in retries],
     }
@@ -1142,22 +1176,21 @@ class LifecycleDriver:
 
 
 class SubprocessLifecycle(LifecycleDriver):
-    """HAS NEVER RUN.  Drives the real Make targets in a real repository.
+    """Drive the real Make targets; completed twice-through on 2026-10-01.
 
-    This class is the entire untested surface of gate 12's driver: the
+    This class is the live process boundary of gate 12's driver: the
     ``rmtree`` below and the two ``subprocess.run`` calls per phase.  Its argv
     construction lives in :func:`prepare_command` / :func:`run_command`, which
     are pure and tested, and the bundle a prepare step produces is read from
     the last non-empty line of its standard output, which is how every
     ``*-prepare`` runner reports it (``print(prepare(args))``).
 
-    The ``PHASES`` table it walks has been read off the Makefile but never
-    confirmed against a live lifecycle; when the first real repeat runs, that
-    table and this class are where the corrections land.  No phase target or
-    runner invokes a host privilege helper (read 2026-09-30: no host ``sudo``,
-    ``pkexec``, ``fusermount`` or bridge helper; the ``sudo`` strings in the
-    runners are typed into guests), so :meth:`confine` should cost the
-    lifecycle nothing -- the first live repeat is what confirms it.
+    The ``PHASES`` table has been confirmed against the live lifecycle.
+    No phase target or runner invokes a host privilege helper (reviewed
+    2026-09-30: no host ``sudo``, ``pkexec``, ``fusermount`` or bridge helper;
+    the ``sudo`` strings in the
+    runners are typed into guests); the completed live repeat exercised
+    :meth:`confine` before its captures and phase commands.
     """
 
     def __init__(self, *, repository: Path = REPOSITORY,
@@ -1474,6 +1507,11 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
           f"retries={len(document['retries'])}"
           f"{factory_verify.waiver_note(document['waivers'])}",
           file=sys.stderr)
+    for prerequisite in document["prerequisites"]:
+        if prerequisite["status"] != factory_verify.PASS:
+            print(f"blocked: iteration {prerequisite['iteration']} "
+                  f"{prerequisite['gate']}: {prerequisite['detail']}",
+                  file=sys.stderr)
     return 0 if document["verdict"] in ACCEPTED_VERDICTS else 1
 
 

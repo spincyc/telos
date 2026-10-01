@@ -5,9 +5,8 @@ a fake lifecycle driver, and push the result through the REAL
 ``factory_verify.verify_run`` and ``compare_runs``.  Nothing here boots a
 guest, spawns a process, touches the network, or needs privilege.
 
-What they cannot cover is stated in ``factory_repeat``'s module docstring: the
-``SubprocessLifecycle`` that drives the live Make targets has never run, and
-gate 12 itself needs two live lifecycles no test can substitute for.
+The live driver first completed two lifecycles on 2026-10-01.  These tests
+cannot substitute for a live repeat after lifecycle behavior changes.
 """
 
 import ast
@@ -45,10 +44,19 @@ GATEWAY_MAC = "52:54:00:31:11:01"
 
 SWITCH = "\n".join(
     json.dumps(event) for event in (
+        {"event": "switch-ready", "ports": [
+            {"port": "gateway", "mac": GATEWAY_MAC},
+            {"port": "controller", "mac": "52:54:00:31:11:12"},
+            {"port": "workstation", "mac": "52:54:00:31:12:12"}]},
+        {"event": "port-connected", "port": "controller",
+         "mac": "52:54:00:31:11:12", "generation": 1},
         {"event": "dhcp", "kind": "OFFER", "peer": "gateway",
          "source_mac": GATEWAY_MAC},
         {"event": "dhcp", "kind": "ACK", "peer": "gateway",
          "source_mac": GATEWAY_MAC},
+        {"event": "flow", "peer": "workstation", "delivered_to": "controller",
+         "ethertype": 0x0800, "ip_protocol": 17, "src_port": 2070,
+         "dst_port": 69},
     )
 ) + "\n"
 
@@ -988,6 +996,8 @@ class RepeatReceiptTests(unittest.TestCase):
     def receipt(self, verdict="PASS", not_run=()):
         return {"schema": 1, "kind": "factory-verify-run", "evidence": "run",
                 "verdict": verdict, "checks": {},
+                "pxe_authority_audit": {
+                    "gate": "workstation-factory-gate-4", "verdict": "PASS"},
                 "needs_live_gate": list(not_run),
                 "summary": {"pass": 16, "fail": 0, "not_run": len(not_run)}}
 
@@ -1025,6 +1035,42 @@ class RepeatReceiptTests(unittest.TestCase):
             [self.receipt(verdict="FAIL"), self.receipt()],
             [self.comparison()])
         self.assertEqual("FAIL", document["verdict"])
+
+    def test_gate4_must_pass_in_every_iteration(self):
+        for verdict, expected in (("FAIL", "FAIL"),
+                                  ("NOT-PROVABLE", "NOT-RUN"),
+                                  ("NOT-RUN", "NOT-RUN"),
+                                  ("WAIVED", "FAIL"),
+                                  ("unknown", "FAIL"),
+                                  (None, "FAIL"),
+                                  ({}, "FAIL")):
+            with self.subTest(verdict=verdict):
+                blocked = self.receipt()
+                blocked["pxe_authority_audit"]["verdict"] = verdict
+                document = factory_repeat.repeat_receipt(
+                    [self.receipt(), blocked], [self.comparison()])
+                self.assertEqual(expected, document["verdict"])
+                self.assertEqual(["workstation-factory-gate-4"],
+                                 document["needs_live_gate"])
+                self.assertEqual(2, document["prerequisites"][1]["iteration"])
+                self.assertEqual(expected, document["prerequisites"][1]["status"])
+
+    def test_missing_or_malformed_gate4_audit_never_passes(self):
+        for audit, expected in ((None, "NOT-RUN"), ({}, "FAIL"),
+                                ("PASS", "FAIL"),
+                                ({"gate": "other", "verdict": "PASS"}, "FAIL")):
+            with self.subTest(audit=audit):
+                receipt = self.receipt()
+                if audit is None:
+                    del receipt["pxe_authority_audit"]
+                else:
+                    receipt["pxe_authority_audit"] = audit
+                document = factory_repeat.repeat_receipt(
+                    [receipt, receipt], [self.comparison()])
+                self.assertEqual(expected, document["verdict"])
+                self.assertTrue(document["equivalent"])
+                self.assertEqual(["workstation-factory-gate-4"],
+                                 document["needs_live_gate"])
 
     # -- ADR 0080 waiver ----------------------------------------------------
 
@@ -1889,6 +1935,59 @@ class RepeatEndToEndTests(TemporaryRootTests):
             self.assertEqual("PASS", run["verdict"])
             self.assertEqual(16, run["summary"]["pass"])
         self.assertIn("PASS: factory-repeat", errors)
+
+    def test_equivalent_ike_failures_cannot_close_the_gate_with_a_waiver(self):
+        # The 2026-10-01 retained lifecycles agreed on the same UDP 500 flow.
+        # All sixteen checks can pass/waive while the distinct gate 4 fails.
+        class IkeProbe(FakeLifecycle):
+            def run_phase(self, phase, **kwargs):
+                bundle = super().run_phase(phase, **kwargs)
+                if phase.name == "windows-install":
+                    switch = bundle / "evidence" / "switch.jsonl"
+                    flow = {"event": "flow", "peer": "workstation",
+                            "delivered_to": "controller", "ethertype": 0x0800,
+                            "ip_protocol": 17, "src_port": 500, "dst_port": 500}
+                    with switch.open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(flow) + "\n")
+                return bundle
+
+        status, printed, errors = self.repeat(
+            driver=IkeProbe(),
+            producers=wired_producers(host_network_changes=UNPROVEN_UNIFI))
+        document = json.loads(printed)
+        self.assertEqual(1, status)
+        self.assertEqual("FAIL", document["verdict"])
+        self.assertTrue(document["equivalent"])
+        self.assertEqual(["workstation-factory-gate-4"], document["needs_live_gate"])
+        for run in document["runs"]:
+            self.assertEqual("PASS-WITH-WAIVER", run["verdict"])
+            self.assertEqual(16, len(run["checks"]))
+            self.assertEqual("FAIL", run["pxe_authority_audit"]["verdict"])
+        self.assertEqual(["FAIL", "FAIL"],
+                         [item["status"] for item in document["prerequisites"]])
+        self.assertIn("blocked: iteration 1 workstation-factory-gate-4", errors)
+        self.assertIn("blocked: iteration 2 workstation-factory-gate-4", errors)
+
+    def test_equivalent_incomplete_switch_evidence_stays_not_run(self):
+        class MissingFlows(FakeLifecycle):
+            def run_phase(self, phase, **kwargs):
+                bundle = super().run_phase(phase, **kwargs)
+                switch = bundle / "evidence" / "switch.jsonl"
+                if switch.is_file():
+                    lines = [line for line in switch.read_text().splitlines()
+                             if json.loads(line)["event"] != "flow"]
+                    switch.write_text("\n".join(lines) + "\n")
+                return bundle
+
+        status, printed, _errors = self.repeat(driver=MissingFlows())
+        document = json.loads(printed)
+        self.assertEqual(1, status)
+        self.assertEqual("NOT-RUN", document["verdict"])
+        self.assertTrue(document["equivalent"])
+        self.assertEqual(["workstation-factory-gate-4"], document["needs_live_gate"])
+        for run in document["runs"]:
+            self.assertEqual("PASS", run["verdict"])
+            self.assertEqual("NOT-PROVABLE", run["pxe_authority_audit"]["verdict"])
 
     def test_every_receipt_verifies_the_set_the_release_root_selects(self):
         # 2026-10-01: the live repeat handed the root itself to the set
