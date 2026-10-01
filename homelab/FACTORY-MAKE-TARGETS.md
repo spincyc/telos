@@ -468,7 +468,7 @@ Administrator password). A restore drill into a separate instance name proves
 the backup alone and destroys nothing: restore with `PERSISTENT_DC=<drill>`,
 then destroy the drill.
 
-Verdict: both **NOT RUN**. Unit tests: `homelab/tests/test_persistent_backup.py`,
+Verdict: **Live 2026-10-01 on `rehearsal-auto` (agent custody):** backup PASS (`persistent-backup/rehearsal-auto/20261001T052659Z-1662152-992606e0`; 1.7 MB tarball, dbcheck clean, SHA-256 agreed in guest and on host); the first restore drill into `rehearsal-auto-drill` restored the domain but failed to start samba, which the seed masks (fixed `2b555fa`); the second PASSED as DC `dr-2610010529` (`persistent-restore/rehearsal-auto-drill/20261001T052900Z-1665425-61d8abf8`: realm, domain SID and principal digest equal the backup's); `RECONVERGE=1` then PASSED, and the probe PASSED on the fabric under the new DC name (`persistent-probe/rehearsal-auto-drill/20261001T053036Z-1667189-63cd4172`). The drill instance was destroyed. Still unrun: restoring into the SAME instance name after destroying it and keep-verifying an SRV-first kept workstation against the restored DC. Unit tests: `homelab/tests/test_persistent_backup.py`,
 `homelab/tests/test_samba_backup_disk.py`.
 
 Superseded 2026-09-30, kept so it is not re-derived: this paragraph said no

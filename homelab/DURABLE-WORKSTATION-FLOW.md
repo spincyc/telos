@@ -138,7 +138,9 @@ delegated join rights revisited before physical laptops. Backups of kept
 workstation disks still do not exist.
 Owner decision 2026-09-30, backups (ADR 0081): the keeper is minted only
 after backup and restore of a persistent directory are built and proven.
-Both are built and **NOT RUN**: `homelab-factory-persistent-backup` takes a
+Both are built; backup, a restore drill under a new DC name, reconverge and
+probe PASSED live on 2026-10-01 (see FACTORY-MAKE-TARGETS.md for the runs); the
+workstation keep-verify against a restored DC is still unrun. `homelab-factory-persistent-backup` takes a
 `samba-tool domain backup offline` over an audited raw disk, and
 `homelab-factory-persistent-restore` restores it with `samba-tool domain
 backup restore` into a freshly created instance, never from a disk image (see
