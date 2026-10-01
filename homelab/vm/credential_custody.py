@@ -694,6 +694,17 @@ def workstation_store(state: Path, name: str) -> CustodyStore:
     return CustodyStore(Path(state), scope=SCOPE_WORKSTATION, name=name)
 
 
+def validated_instance_document(document: object, name: str) -> dict:
+    """An instance store's document as the store itself would accept it.
+
+    For a copy held outside the store (``persistent_backup``, ADR 0081):
+    the same schema, kind, scope, name and field checks, with no file.
+    """
+    return CustodyStore(
+        Path("/nonexistent"), scope=SCOPE_INSTANCE, name=name,
+    )._validated(document)
+
+
 def instance_custody(target: object) -> str:
     """An instance's custody from its marker; no marker yet means the owner's."""
     exists = getattr(target, "exists", None)

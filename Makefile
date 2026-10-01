@@ -154,6 +154,15 @@ PASSWORD_COMPLEXITY ?=
 # its CONTRACT ROLE (daily_administrator, standard_user, domain_administrator,
 # additional_standard_user_<uid>), never by an account name. No default.
 ROLE ?=
+# Samba backups of persistent instances (ADR 0081). BACKUP_ROOT holds one
+# directory per instance and one 0700 set per backup under the gitignored
+# homelab/var; every set holds every secret of its domain. BACKUP names ONE
+# set for -restore and has no default. RESTORE_DC_NAME is the restored DC's
+# name, never the backed-up DC's (Samba refuses that); unset, it is
+# dr-<UTC minute>.
+BACKUP_ROOT ?= homelab/var/backups
+BACKUP ?=
+RESTORE_DC_NAME ?=
 
 # A document leaf is any directory below src/ holding a main.tex. src/common
 # holds only shared includes and never becomes a document.
@@ -234,6 +243,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-factory-persistent-probe \
 	homelab-factory-persistent-password-policy \
 	homelab-factory-persistent-account-password \
+	homelab-factory-persistent-backup homelab-factory-persistent-restore \
 	homelab-durable-workstation-plan homelab-durable-workstation-status \
 	homelab-durable-workstation-adopt homelab-durable-workstation-destroy \
 	homelab-durable-workstation-reconcile \
@@ -1202,6 +1212,85 @@ homelab-factory-persistent-account-password:
 			--apply; \
 	fi
 
+# Back up one persistent instance's directory with Samba (ADR 0081). The dry
+# run binds the instance like the probe and starts nothing. APPLY=1 asks at
+# this terminal for the local-rescue password once (agent custody reads its
+# store), boots the instance in place on the per-run fabric with ONE extra
+# audited device -- a blank raw disk this run creates -- proves the realm and
+# domain SID, runs samba-tool dbcheck --cross-ncs and samba-tool domain backup
+# offline as root, writes the tarball onto that disk behind a length and
+# SHA-256 header, powers off over the console, verifies the tarball host-side
+# and keeps it under BACKUP_ROOT/<instance>/<run id>/ with its manifest and a
+# marker copy (and, for a throwaway agent-custody instance only, its custody
+# store), shreds the disk and records last_backup in the marker. Evidence
+# lands in the gitignored homelab/var/factory/persistent-backup/.
+homelab-factory-persistent-backup:
+	@if [ -z '$(PERSISTENT_DC)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo 'dry run: repeat with APPLY=1 to back the instance up; it will ask at this terminal for the local-rescue password'; \
+		$(PYTHON) homelab/vm/persistent_backup.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			backup \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--backup-root '$(BACKUP_ROOT)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)'); \
+	else \
+		$(PYTHON) homelab/vm/persistent_backup.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			backup \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--backup-root '$(BACKUP_ROOT)' \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			$(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)') \
+			--apply; \
+	fi
+
+# Restore one Samba backup set into a freshly created persistent instance
+# (ADR 0081). It refuses an instance that exists: destroy it first. The dry
+# run verifies the set, checks its realm against the directory identity and
+# starts nothing. APPLY=1 needs CONFIRM='RESTORE <instance>'; it creates the
+# instance from the canonical image under the custody the backup records,
+# boots it with no network device and the backup disk read-only, runs
+# samba-tool domain backup restore into /var/lib/samba under a NEW DC name
+# (Samba never restores a DC under a name the domain still holds), starts
+# samba, proves the realm, domain SID and principal digest are the backup's,
+# powers off over the console and records the restore. The durable stages
+# refuse a restored instance until its DC regains the bootstrap name, which is
+# not built. Evidence lands in homelab/var/factory/persistent-restore/.
+homelab-factory-persistent-restore:
+	@if [ -z '$(PERSISTENT_DC)' ] || [ -z '$(BACKUP)' ]; then \
+		echo 'require PERSISTENT_DC=<instance name> BACKUP=<backup set directory>' >&2; \
+		exit 2; \
+	fi
+	@if [ '$(APPLY)' != 1 ]; then \
+		echo "dry run: repeat with APPLY=1 CONFIRM='RESTORE $(PERSISTENT_DC)' to create and restore the instance"; \
+		$(PYTHON) homelab/vm/persistent_backup.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			restore \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--backup '$(BACKUP)' \
+			$(if $(RESTORE_DC_NAME),--restore-dc-name '$(RESTORE_DC_NAME)') \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)'); \
+	else \
+		$(PYTHON) homelab/vm/persistent_backup.py \
+			$(if $(FACTORY_CONTROLLER_STATE),--state-dir '$(FACTORY_CONTROLLER_STATE)') \
+			restore \
+			--instance '$(PERSISTENT_DC)' \
+			--persistent-root '$(PERSISTENT_DC_ROOT)' \
+			--backup '$(BACKUP)' \
+			$(if $(RESTORE_DC_NAME),--restore-dc-name '$(RESTORE_DC_NAME)') \
+			$(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') \
+			--confirm '$(CONFIRM)' \
+			--apply; \
+	fi
+
 # Disk-erasing: this deletes a real directory server, so it needs APPLY=1, the
 # stable instance name, and the exact confirmation carrying that name. An
 # agent-custody instance's credential store is shredded first (TASK-40).
@@ -1781,6 +1870,10 @@ help:
 		'                         Set, read back and record its directory password policy' \
 		'make homelab-factory-persistent-account-password PERSISTENT_DC=<name> ROLE=<contract role> [CHANGE_AT_FIRST_LOGON=1] [APPLY=1]' \
 		'                         Reset one staged account password; RESTAGE only creates' \
+		'make homelab-factory-persistent-backup PERSISTENT_DC=<name> [BACKUP_ROOT=<dir>] [APPLY=1]' \
+		'                         Samba backup into BACKUP_ROOT; records last_backup' \
+		"make homelab-factory-persistent-restore PERSISTENT_DC=<name> BACKUP=<set> [APPLY=1 CONFIRM='RESTORE <name>']" \
+		'                         Samba restore into a new instance under a new DC name' \
 		"make homelab-factory-persistent-destroy APPLY=1 PERSISTENT_DC=<name> CONFIRM='DESTROY <name>'" \
 		'make homelab-durable-workstation-plan WORKSTATION=<name> [WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>]' \
 		'make homelab-durable-workstation-adopt APPLY=1 WORKSTATION=<name> WINDOWS_RUN=<bundle> PERSISTENT_DC=<name>' \

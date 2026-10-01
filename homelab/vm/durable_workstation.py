@@ -163,6 +163,7 @@ def durable_binding(
         staged = target.directory_accounts()
         password_policy = policy_from_record(
             target.directory_password_policy(), instance)
+        restored = target.restored()
     except DurableBindingError:
         raise
     except (RuntimeError, ValueError, OSError) as error:
@@ -171,6 +172,18 @@ def durable_binding(
         raise DurableBindingError(
             f"{instance} records no converged directory with a domain SID; "
             f"converge it with homelab-factory-persistent-converge first")
+    if restored is not None and restored["dc_server_name"].lower() != NAME:
+        # ADR 0081: Samba restores a DC only under a name the domain never
+        # held, and every durable stage -- the console protocol, the role's
+        # SPN aliases, Arch's pinned ad_server, the probe's A and SRV checks
+        # -- expects the bootstrap Controller's own name.
+        raise DurableBindingError(
+            f"{instance} holds a directory restored from a Samba backup "
+            f"under the DC name {restored['dc_server_name']}, because Samba "
+            f"never restores a DC under a name the domain already holds "
+            f"(ADR 0081). Every durable stage expects the DC named {NAME}, "
+            f"and regaining that name is not built; this instance proves the "
+            f"backup, it cannot serve a workstation")
     if staged is None:
         raise DurableBindingError(
             f"{instance} records no staged durable account roster; stage it "

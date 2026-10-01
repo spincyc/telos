@@ -1093,5 +1093,109 @@ class PersistentAccountPasswordTargetTests(unittest.TestCase):
                 self.assertIn(message, result.stderr)
 
 
+class PersistentBackupTargetTests(unittest.TestCase):
+    """The Samba backup and restore targets (ADR 0081), fed to their parser."""
+
+    SCRIPT = "persistent_backup.py"
+
+    def parse(self, target, **variables):
+        sys.path.insert(0, str(ROOT))
+        from homelab.vm import persistent_backup
+        return [persistent_backup.parser().parse_args(argv)
+                for argv in emitted_by(target, self.SCRIPT, **variables)]
+
+    def test_the_backup_recipe_is_dry_run_first_and_parses(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        target = "homelab-factory-persistent-backup"
+        parsed = self.parse(
+            target, PERSISTENT_DC="lab-dc1",
+            FACTORY_CONTROLLER_STATE="/state/canonical",
+            DIRECTORY_IDENTITY="identity.json",
+            IDENTITY_OVERLAY="roster.json", PERSISTENT_DC_ROOT="/persistent",
+            BACKUP_ROOT="/sets")
+        self.assertEqual(len(parsed), 2)
+        for args, applied in zip(parsed, (False, True)):
+            self.assertEqual(args.command, "backup")
+            self.assertEqual(args.apply, applied)
+            self.assertEqual(args.instance, "lab-dc1")
+            self.assertEqual(args.state_dir, Path("/state/canonical"))
+            self.assertEqual(args.persistent_root, Path("/persistent"))
+            self.assertEqual(args.backup_root, Path("/sets"))
+            self.assertEqual(args.directory_identity, Path("identity.json"))
+            self.assertEqual(args.identity_overlay, Path("roster.json"))
+        # The default root is the gitignored homelab/var/backups.
+        [default, _] = self.parse(target, PERSISTENT_DC="lab-dc1")
+        self.assertEqual(default.backup_root, Path("homelab/var/backups"))
+        self.assertRegex(MAKEFILE, r"(?m)^BACKUP_ROOT \?= homelab/var/backups$")
+        only = commands(target)
+        self.assertEqual(1, only.count("--apply"))
+        for forbidden in ("CREDENTIAL", "SECRET", "--password", "--iso",
+                          "--seed-iso"):
+            self.assertNotIn(forbidden, only)
+
+    def test_the_restore_recipe_confirms_only_when_applied_and_parses(self):
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        target = "homelab-factory-persistent-restore"
+        parsed = self.parse(
+            target, PERSISTENT_DC="lab-dc1", BACKUP="/sets/lab-dc1/r1",
+            CONFIRM="RESTORE lab-dc1", RESTORE_DC_NAME="dr-1",
+            FACTORY_CONTROLLER_STATE="/state/canonical",
+            DIRECTORY_IDENTITY="identity.json",
+            PERSISTENT_DC_ROOT="/persistent")
+        self.assertEqual(len(parsed), 2)
+        for args, applied in zip(parsed, (False, True)):
+            self.assertEqual(args.command, "restore")
+            self.assertEqual(args.apply, applied)
+            self.assertEqual(
+                (args.instance, args.backup, args.restore_dc_name),
+                ("lab-dc1", Path("/sets/lab-dc1/r1"), "dr-1"))
+            self.assertEqual(args.confirm,
+                             "RESTORE lab-dc1" if applied else None)
+            self.assertEqual(args.state_dir, Path("/state/canonical"))
+            self.assertEqual(args.persistent_root, Path("/persistent"))
+            self.assertEqual(args.directory_identity, Path("identity.json"))
+        [dry, applied] = self.parse(
+            target, PERSISTENT_DC="lab-dc1", BACKUP="/sets/lab-dc1/r1")
+        self.assertIsNone(dry.restore_dc_name)
+        self.assertEqual(applied.confirm, "")
+        for name in ("BACKUP", "RESTORE_DC_NAME"):
+            self.assertRegex(MAKEFILE, rf"(?m)^{name} \?=\s*$")
+        only = commands(target)
+        self.assertEqual(1, only.count("--apply"))
+        self.assertNotIn("--password", only)
+
+    def test_both_targets_are_phony_listed_and_require_their_values(self):
+        phony = re.search(
+            r"^\.PHONY:(?P<body>.*?)(?=^\S|\Z)", MAKEFILE,
+            re.MULTILINE | re.DOTALL)
+        for target in ("homelab-factory-persistent-backup",
+                       "homelab-factory-persistent-restore"):
+            self.assertIn(target, phony.group("body").split())
+            self.assertIn(f"make {target} ", MAKEFILE)
+        if not shutil.which("make"):
+            self.skipTest("make is not installed")
+        for target, variables, message in (
+                ("homelab-factory-persistent-backup", {},
+                 "require PERSISTENT_DC=<instance name>"),
+                ("homelab-factory-persistent-restore",
+                 {"BACKUP": "/sets/x"},
+                 "require PERSISTENT_DC=<instance name> "
+                 "BACKUP=<backup set directory>"),
+                ("homelab-factory-persistent-restore",
+                 {"PERSISTENT_DC": "lab-dc1"},
+                 "require PERSISTENT_DC=<instance name> "
+                 "BACKUP=<backup set directory>")):
+            with self.subTest(target=target, variables=variables):
+                result = subprocess.run(
+                    ["make", target, *(
+                        f"{name}={value}"
+                        for name, value in variables.items())],
+                    cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

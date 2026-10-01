@@ -117,6 +117,23 @@ PERSISTENT_PASSWORD_POLICY_KEY = "directory_password_policy"
 PERSISTENT_PASSWORD_RESETS_KEY = "directory_account_password_resets"
 #: The only fields a reset entry may carry.
 PASSWORD_RESET_FIELDS = frozenset({"role", "utc", "must_change", "run_id"})
+#: The marker key recording this instance's latest proven Samba backup
+#: (``make homelab-factory-persistent-backup``, ADR 0081): when, where and the
+#: tarball's SHA-256.  Written only after the host verified the tarball it
+#: read off the backup disk and the run ended with a clean poweroff.
+PERSISTENT_LAST_BACKUP_KEY = "last_backup"
+LAST_BACKUP_FIELDS = frozenset({"utc", "path", "sha256", "run_id"})
+#: The marker key recording that this instance's directory was restored from
+#: a Samba backup (``make homelab-factory-persistent-restore``, ADR 0081),
+#: and under which DC name: Samba restores a DC only under a name the domain
+#: never held, so it is never the backed-up DC's.
+PERSISTENT_RESTORED_KEY = "restored"
+RESTORED_FIELDS = frozenset({
+    "utc", "run_id", "backup_path", "backup_sha256", "backup_created_utc",
+    "source_instance", "dc_server_name", "replaced_dc_server_name"})
+#: A NetBIOS computer name as ``samba-tool`` accepts one for a DC.
+DC_SERVER_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$")
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 #: The canonical text form of an Active Directory domain SID. The recorded value
 #: is the durable identity of the directory an instance now holds, and is what a
@@ -1040,6 +1057,132 @@ class PersistentControllerInstance:
         marker[PERSISTENT_PASSWORD_RESETS_KEY] = [*existing, dict(entry)]
         self._write_marker(marker)
         return marker
+
+    # -- Samba backup and restore (ADR 0081) ---------------------------------
+    @staticmethod
+    def _validated_last_backup(record: object) -> dict:
+        if not isinstance(record, dict) or set(record) != LAST_BACKUP_FIELDS:
+            raise PersistentInstanceInvalid(
+                "persistent last-backup record must carry exactly utc, path, "
+                "sha256 and run_id")
+        if not all(isinstance(record[key], str) and record[key]
+                   for key in LAST_BACKUP_FIELDS):
+            raise PersistentInstanceInvalid(
+                "persistent last-backup record has an empty field")
+        if not SHA256_HEX.fullmatch(record["sha256"]):
+            raise PersistentInstanceInvalid(
+                "persistent last-backup record has no SHA-256")
+        return record
+
+    def last_backup(self) -> dict | None:
+        """The latest proven backup, or ``None`` when none was ever taken."""
+        record = self.read_marker().get(PERSISTENT_LAST_BACKUP_KEY)
+        if record is None:
+            return None
+        return dict(self._validated_last_backup(record))
+
+    def record_last_backup(self, record: dict) -> dict:
+        """Replace the last-backup record, atomically; nothing else changes."""
+        record = self._validated_last_backup(dict(record))
+        marker = self.read_marker()
+        marker[PERSISTENT_LAST_BACKUP_KEY] = record
+        self._write_marker(marker)
+        return marker
+
+    @staticmethod
+    def _validated_restored(record: object) -> dict:
+        if not isinstance(record, dict) or set(record) != RESTORED_FIELDS:
+            raise PersistentInstanceInvalid(
+                "persistent restore record carries unexpected or missing "
+                "fields")
+        if not all(isinstance(record[key], str) and record[key]
+                   for key in RESTORED_FIELDS):
+            raise PersistentInstanceInvalid(
+                "persistent restore record has an empty field")
+        if not SHA256_HEX.fullmatch(record["backup_sha256"]):
+            raise PersistentInstanceInvalid(
+                "persistent restore record has no backup SHA-256")
+        for key in ("dc_server_name", "replaced_dc_server_name"):
+            if not DC_SERVER_NAME.fullmatch(record[key]):
+                raise PersistentInstanceInvalid(
+                    f"persistent restore record's {key} is not a DC name")
+        if record["dc_server_name"].upper() == \
+                record["replaced_dc_server_name"].upper():
+            raise PersistentInstanceInvalid(
+                "persistent restore record names the backed-up DC as the "
+                "restored one; Samba never restores a DC under that name")
+        return record
+
+    def restored(self) -> dict | None:
+        """How this instance's directory was restored, or ``None``."""
+        record = self.read_marker().get(PERSISTENT_RESTORED_KEY)
+        if record is None:
+            return None
+        return dict(self._validated_restored(record))
+
+    def record_restoration(self, records: dict, restored: dict) -> dict:
+        """Write a proven restore into a new instance's marker, atomically.
+
+        *records* are the backed-up marker's directory records, carried over
+        so the bindings that judge this directory still hold: the
+        convergence (realm, NetBIOS, DNS domain, domain SID), the staged
+        roster, the password policy and its resets, and the provisioning
+        attempt.  Each is validated exactly as its own writer validates it.
+        Refused on an instance that already records a directory: a restore
+        only ever fills a freshly created one.
+        """
+        allowed = {
+            PERSISTENT_CONVERGENCE_KEY, PERSISTENT_PROVISIONING_KEY,
+            PERSISTENT_ACCOUNTS_KEY, PERSISTENT_PASSWORD_POLICY_KEY,
+            PERSISTENT_PASSWORD_RESETS_KEY,
+        }
+        if set(records) - allowed:
+            raise PersistentInstanceInvalid(
+                "a restore carries only the directory records: "
+                + ", ".join(sorted(set(records) - allowed)))
+        if PERSISTENT_CONVERGENCE_KEY not in records:
+            raise PersistentInstanceInvalid(
+                "a restore must carry the backed-up convergence record")
+        restored = self._validated_restored(dict(restored))
+        marker = self.read_marker()
+        if any(key in marker for key in (
+                *allowed, PERSISTENT_ACCOUNTS_ATTEMPT_KEY,
+                PERSISTENT_RESTORED_KEY)):
+            raise PersistentInstanceInvalid(
+                f"{marker['instance']} already records a directory; a restore "
+                "fills only a freshly created instance")
+        candidate = dict(marker)
+        candidate[PERSISTENT_CONVERGENCE_KEY] = self._validated_convergence(
+            dict(records[PERSISTENT_CONVERGENCE_KEY]))
+        if candidate[PERSISTENT_CONVERGENCE_KEY].get("domain_sid") is None:
+            raise PersistentInstanceInvalid(
+                "the backed-up convergence record has no domain SID")
+        provisioning = records.get(PERSISTENT_PROVISIONING_KEY)
+        if provisioning is not None:
+            if not isinstance(provisioning, dict) or not isinstance(
+                    provisioning.get("attempted_utc"), str):
+                raise PersistentInstanceInvalid(
+                    "the backed-up provisioning record has no attempted_utc")
+            candidate[PERSISTENT_PROVISIONING_KEY] = dict(provisioning)
+        if records.get(PERSISTENT_ACCOUNTS_KEY) is not None:
+            candidate[PERSISTENT_ACCOUNTS_KEY] = self._validated_accounts(
+                dict(records[PERSISTENT_ACCOUNTS_KEY]))
+        if records.get(PERSISTENT_PASSWORD_POLICY_KEY) is not None:
+            try:
+                candidate[PERSISTENT_PASSWORD_POLICY_KEY] = _validated_policy(
+                    dict(records[PERSISTENT_PASSWORD_POLICY_KEY]))
+            except DirectoryPasswordPolicyError as error:
+                raise PersistentInstanceInvalid(
+                    f"the backed-up password policy is unusable: {error}"
+                ) from error
+        if records.get(PERSISTENT_PASSWORD_RESETS_KEY) is not None:
+            candidate[PERSISTENT_PASSWORD_RESETS_KEY] = [
+                dict(entry) for entry in self._validated_resets(
+                    records[PERSISTENT_PASSWORD_RESETS_KEY],
+                    self._staged_roles(candidate))]
+        candidate[PERSISTENT_RESTORED_KEY] = restored
+        self._write_marker(candidate)
+        return candidate
 
     def _write_marker(self, marker: dict) -> None:
         staging = self.state / PERSISTENT_MARKER_STAGING_NAME

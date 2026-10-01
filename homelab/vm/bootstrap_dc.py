@@ -2196,6 +2196,28 @@ def persistent_accounts(
     return 0
 
 
+def _persistent_backup_summary(
+    target: PersistentControllerInstance, existing: bool,
+) -> str:
+    """The latest Samba backup and any restore (ADR 0081), tolerant like the rest."""
+    if not existing:
+        return "none; this instance has not been created"
+    try:
+        last = target.last_backup()
+        restored = target.restored()
+    except (ValueError, RuntimeError) as error:
+        return f"unknown; the backup record is unreadable ({error})"
+    parts = [f"last {last['utc']} at {last['path']} (sha256 {last['sha256']})"
+             if last else "none taken"]
+    if restored:
+        parts.append(
+            f"restored {restored['utc']} from {restored['backup_path']} as DC "
+            f"{restored['dc_server_name']} (was "
+            f"{restored['replaced_dc_server_name']}); durable stages refuse "
+            f"it until its DC is named {NAME} again")
+    return "; ".join(parts)
+
+
 def persistent_status(root: Path, instance: str) -> int:
     try:
         state = _persistent_state(root, instance)
@@ -2228,6 +2250,8 @@ def persistent_status(root: Path, instance: str) -> int:
         target, marker is not None))
     print("directory account password resets: "
           + _persistent_password_resets_summary(target, marker is not None))
+    print("samba backup: " + _persistent_backup_summary(
+        target, marker is not None))
     print("running: " + {True: "yes", False: "no", None: "unknown"}[running])
     print("hash fence: none by design; the disk is the durable directory state")
     return 0 if marker else 1
