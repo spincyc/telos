@@ -2616,8 +2616,10 @@ class ArchIdentityBoundary:
             serial.stage(values)
         except ControllerPrincipalError as error:
             values.clear()
+            # The cause names the stage's credential-free failure category;
+            # without it a 2026-10-01 gate-12 run failed undiagnosably.
             raise ArchIdentityError(
-                "Controller principal staging failed",
+                f"Controller principal staging failed: {error}",
                 check="controller-ready") from error
         self._principals = values
 
