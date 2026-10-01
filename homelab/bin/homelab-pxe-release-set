@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,7 @@ def media_inventory(args: argparse.Namespace) -> dict:
         windows_install_source_path=args.windows_install_source,
         wimboot=args.wimboot,
         wimboot_metadata=args.wimboot_metadata,
+        samba_dns_cache=args.samba_dns_cache,
     )
 
 
@@ -43,6 +45,12 @@ def add_media(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--windows-install-source", type=Path, required=True)
     parser.add_argument("--wimboot", type=Path, required=True)
     parser.add_argument("--wimboot-metadata", type=Path, required=True)
+    parser.add_argument(
+        "--samba-dns-cache", type=Path,
+        default=Path(os.environ.get(
+            "TELOS_SAMBA_DNS_CACHE", str(ROOT / "var/media/samba-dns"))),
+        help="verified Samba repair cache (default: TELOS_SAMBA_DNS_CACHE or the local media cache)",
+    )
 
 
 def sha256(path: Path) -> str:

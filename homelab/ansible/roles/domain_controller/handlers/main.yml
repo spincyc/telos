@@ -2,6 +2,7 @@
 - name: restart samba ad dc
   ansible.builtin.systemd:
     name: samba.service
+    daemon_reload: true
     state: restarted
 
 - name: restart ntpd

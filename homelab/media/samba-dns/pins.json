@@ -1,0 +1,68 @@
+{
+  "base_library_sha256": "478a4a6e623001d7f98e40859308e258b9c2074f4682ca75eefdef2de7c6c4a2",
+  "base_package_version": "2:4.24.5-1",
+  "cares_library_sha256": "7f53b747cf5218e97b67531f000c911fff30a4f0f40b7899249dc5f04f85a7cd",
+  "packages": [
+    {
+      "filename": "smbclient-2:4.24.5-1-x86_64.pkg.tar.zst",
+      "name": "smbclient",
+      "sha256": "858addac65b6258e8c9d1eea63b7f4ab7329c38c02b2a1e86cc0b92092904f62",
+      "signature_sha256": "6a69f75016d4c92cf949fef6c97b021d8a088cd1b49196362eb6d65d1b8eccb3",
+      "signing_fingerprint": "5B7E3FB71B7F10329A1C03AB771DF6627EDF681F",
+      "url": "https://archive.archlinux.org/packages/s/smbclient/smbclient-2%3A4.24.5-1-x86_64.pkg.tar.zst"
+    },
+    {
+      "filename": "tevent-1:0.17.2-1-x86_64.pkg.tar.zst",
+      "name": "tevent",
+      "sha256": "4c7d3d14a4fd2d4b494c0a509a83416aa5372afa977d87f181f6357d230cc5d1",
+      "signature_sha256": "6a194980281747a0c9bd99b332a4f87b928d5dd47d1abf1c1f1b4b999ba1ad6e",
+      "signing_fingerprint": "5B7E3FB71B7F10329A1C03AB771DF6627EDF681F",
+      "url": "https://archive.archlinux.org/packages/t/tevent/tevent-1%3A0.17.2-1-x86_64.pkg.tar.zst"
+    },
+    {
+      "filename": "c-ares-1.34.8-1-x86_64.pkg.tar.zst",
+      "name": "c-ares",
+      "sha256": "18d27dd2bac45cb175936ce190e2419cbe00a1cf39db19c7086a53bf21d2797c",
+      "signature_sha256": "32d1ac5c39263f4992079b5a35a63d618d60994562c5c346973d0c1ca9868456",
+      "signing_fingerprint": "38100C24376CD5F6ED4FF4B46918400C2703040C",
+      "url": "https://archive.archlinux.org/packages/c/c-ares/c-ares-1.34.8-1-x86_64.pkg.tar.zst"
+    },
+    {
+      "filename": "perl-parse-yapp-1.21-10-any.pkg.tar.zst",
+      "name": "perl-parse-yapp",
+      "sha256": "09a3c70192ac21b4b538bde0f9a89826abe3128220324fdf617c5ac906b2ce74",
+      "signature_sha256": "797066fa0b8435f0df332f9cebb951be6f91f8d6ec02c012cab97c7ddf827c47",
+      "signing_fingerprint": "1519D5ABA65BF6FC2B73C7567A4E76095D8A52E4",
+      "url": "https://archive.archlinux.org/packages/p/perl-parse-yapp/perl-parse-yapp-1.21-10-any.pkg.tar.zst"
+    },
+    {
+      "filename": "rpcsvc-proto-1.4.4-2-x86_64.pkg.tar.zst",
+      "name": "rpcsvc-proto",
+      "sha256": "980e7d64275d11cb1920735ba3d838297454fda8c42e8d92dc2d458208a30429",
+      "signature_sha256": "4822ec087c3b4eb961ffd3e2648aba35511a1ad22c45b19d1f52fb11cfb53976",
+      "signing_fingerprint": "54C1FD273361EA514A237793F296BDE50368C6CE",
+      "url": "https://archive.archlinux.org/packages/r/rpcsvc-proto/rpcsvc-proto-1.4.4-2-x86_64.pkg.tar.zst"
+    }
+  ],
+  "schema": 1,
+  "source": {
+    "archive": {
+      "filename": "samba-4.24.5.tar.gz",
+      "sha256": "6d5d7ee82f5ce9da4135086c9b184e47a58b4b023565f58abbb1f8c8a922306b",
+      "url": "https://download.samba.org/pub/samba/stable/samba-4.24.5.tar.gz"
+    },
+    "key": {
+      "filename": "samba-pubkey.asc",
+      "sha256": "4a2e1d9c3b8844f9172a2d4611c77b0e48d068d101464c9583b983f4ee5d9473",
+      "url": "https://download.samba.org/pub/samba/samba-pubkey.asc"
+    },
+    "signature": {
+      "filename": "samba-4.24.5.tar.asc",
+      "sha256": "ab18897d0b5b36ef82d4103f15cc172d8d92f3da62beb4f217798800a298fbf0",
+      "url": "https://download.samba.org/pub/samba/stable/samba-4.24.5.tar.asc"
+    },
+    "signing_fingerprint": "81F5E2832BD2545A1897B713AA99442FB680B620",
+    "version": "4.24.5"
+  },
+  "source_date_epoch": 1784734138
+}

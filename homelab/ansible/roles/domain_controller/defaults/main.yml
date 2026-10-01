@@ -46,6 +46,12 @@ homelab_ad_ntp_upstreams:
 homelab_ad_development_clock_receipt_file: ""
 homelab_ad_manage_packages: true
 
+# The control-host cache is verified during acquisition and again by the
+# factory-media seal. FactoryBundle overrides this path with its verified
+# two-file copy. An absent repair is an error, never a silent fallback to
+# compressed SRV targets that strict clients cannot consume.
+homelab_ad_dns_repair_source: "{{ role_path }}/../../../var/media/samba-dns"
+
 # Documentation/input for the surrounding firewall role. This role does not
 # guess which firewall owns the host or network policy.
 homelab_ad_tcp_ports:

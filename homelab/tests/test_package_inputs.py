@@ -596,6 +596,8 @@ class PythonModuleParityTests(unittest.TestCase):
                 "provision-accounts.py": "guest",
                 "provision-domain.py": "guest",
                 "resolve-directory-accounts.py": "host",
+                "verify-dns-srv.py": "guest",
+                "verify-samba-dns-library.py": "guest",
             },
         )
 

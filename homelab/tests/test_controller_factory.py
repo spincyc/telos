@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ def _script_text():
 NONCE = "a" * 64
 GUEST_MAC = "52:54:00:11:11:11"
 
+@mock.patch.object(controller_factory, "stage_dns_repair", new=lambda *_: {})
 class ControllerFactoryBundleTests(unittest.TestCase):
     def test_synthetic_identity_is_fixed_and_non_private(self):
         spec = controller_factory.FactorySpec()
@@ -82,6 +84,8 @@ class ControllerFactoryBundleTests(unittest.TestCase):
             "homelab_ad_dns_domain": "ad.factory.test",
             "homelab_ad_expected_hostname": "bootstrap-dc",
             "homelab_ad_manage_packages": False,
+            "homelab_ad_dns_repair_source":
+                "/opt/telos-factory/ansible/roles/domain_controller/files/samba-dns",
             "homelab_ad_netbios_domain": "FACTORY",
             "homelab_ad_ntp_upstreams": ["198.51.100.10"],
             "homelab_ad_provision_enabled": True,
@@ -775,6 +779,7 @@ FROZEN_MARKERS = [
 ]
 
 
+@mock.patch.object(controller_factory, "stage_dns_repair", new=lambda *_: {})
 class DurablePxeServiceTests(unittest.TestCase):
     """PXE (TFTP + HTTP boot) must come back after a Controller reboots.
 
@@ -1017,6 +1022,35 @@ exit 0
                 self.assertIn(f"{unit} is not running", completed.stderr)
                 self.assertIn(
                     f"systemctl --no-pager --full status {unit}\n", log)
+
+
+class DnsRepairBundleTests(unittest.TestCase):
+    def test_verified_artifact_is_staged_only_in_the_payload_copy(self):
+        with tempfile.TemporaryDirectory() as name:
+            stage = Path(name) / "stage"
+            with mock.patch.object(controller_factory, "stage_dns_repair") as repair:
+                controller_factory.FactoryBundle(
+                    ROOT.parent, Path(name) / "factory.iso",
+                    authorization_nonce=NONCE).stage(stage)
+            repair.assert_called_once_with(
+                ROOT.parent.resolve(),
+                stage / "ansible/roles/domain_controller/files/samba-dns")
+            variables = json.loads((stage / "factory-vars.json").read_text())
+            self.assertEqual(
+                "/opt/telos-factory/ansible/roles/domain_controller/files/samba-dns",
+                variables["homelab_ad_dns_repair_source"])
+
+    def test_missing_or_corrupt_artifact_prevents_payload_completion(self):
+        with tempfile.TemporaryDirectory() as name:
+            stage = Path(name) / "stage"
+            with mock.patch.object(controller_factory, "stage_dns_repair",
+                                   side_effect=ValueError("invalid DNS repair")):
+                with self.assertRaisesRegex(ValueError, "invalid DNS repair"):
+                    controller_factory.FactoryBundle(
+                        ROOT.parent, Path(name) / "factory.iso",
+                        authorization_nonce=NONCE).stage(stage)
+            self.assertFalse((stage / "factory-vars.json").exists())
+            self.assertFalse((stage / "secret").exists())
 
 
 if __name__ == "__main__":

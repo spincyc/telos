@@ -24,6 +24,19 @@ from pathlib import Path
 LABEL = "TELOS_FACTORY"
 
 
+def stage_dns_repair(repo: Path, destination: Path) -> dict:
+    """Bind the offline-verified repair to this payload, never the source role."""
+    try:
+        from ..lib import samba_dns
+    except ImportError:  # Direct script entry point.
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+        import samba_dns
+    cache = Path(os.environ.get(
+        "TELOS_SAMBA_DNS_CACHE", str(repo / "homelab/var/media/samba-dns")))
+    return samba_dns.stage(cache, destination)
+
+
 @dataclass(frozen=True)
 class FactorySpec:
     hostname: str = "bootstrap-dc"
@@ -542,7 +555,11 @@ class FactoryBundle:
             if not source.is_dir():
                 raise FileNotFoundError(source)
             shutil.copytree(source, destination / Path(relative).name,
-                            symlinks=False)
+                            symlinks=False,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        stage_dns_repair(
+            self.repo,
+            destination / "ansible/roles/domain_controller/files/samba-dns")
         shutil.copyfile(
             self.repo / "homelab/vm/controller_auth_diagnostic.py",
             destination / "controller-auth-diagnostic.py",
@@ -565,6 +582,8 @@ class FactoryBundle:
             "homelab_ad_development_clock_receipt_file":
                 "/run/telos-factory-state/clock.receipt",
             "homelab_ad_manage_packages": False,
+            "homelab_ad_dns_repair_source":
+                "/opt/telos-factory/ansible/roles/domain_controller/files/samba-dns",
             "homelab_storage_address": self.spec.address,
             # Stated, not left to the role default, because it is the property
             # that keeps this payload hermetic: the disposable acceptance

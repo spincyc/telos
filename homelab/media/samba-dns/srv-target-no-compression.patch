@@ -1,0 +1,75 @@
+--- a/librpc/idl/dns.idl
++++ b/librpc/idl/dns.idl
+@@ -181,7 +181,7 @@
+ 
+ 	} dns_rp_record;
+ 
+-	typedef [public] struct {
++	typedef [flag(NDR_NO_COMP),public] struct {
+ 		uint16     priority;
+ 		uint16     weight;
+ 		uint16     port;
+--- a/librpc/tests/test_ndr_dns_nbt.c
++++ b/librpc/tests/test_ndr_dns_nbt.c
+@@ -222,6 +222,53 @@
+ 
+ 
+ 
++/* RFC 2782 forbids compression of the SRV TARGET. Keep accepting older peers'
++ * compressed records while emitting the conforming form, with owner compression
++ * still enabled. Both packets represent _ldap._tcp.example.test -> dc.example.test.
++ */
++static void test_ndr_dns_srv_target_no_compression(void **state)
++{
++	static const uint8_t compressed[] = {
++		0x72,0x41,0x81,0x80,0,1,0,1,0,0,0,0,
++		5,'_','l','d','a','p',4,'_','t','c','p',
++		7,'e','x','a','m','p','l','e',4,'t','e','s','t',0,
++		0,33,0,1,0xc0,0x0c,0,33,0,1,0,0,3,0x84,
++		0,11,0,0,0,100,1,0x85,2,'d','c',0xc0,0x17
++	};
++	static const uint8_t uncompressed[] = {
++		0x72,0x41,0x81,0x80,0,1,0,1,0,0,0,0,
++		5,'_','l','d','a','p',4,'_','t','c','p',
++		7,'e','x','a','m','p','l','e',4,'t','e','s','t',0,
++		0,33,0,1,0xc0,0x0c,0,33,0,1,0,0,3,0x84,
++		0,23,0,0,0,100,1,0x85,2,'d','c',
++		7,'e','x','a','m','p','l','e',4,'t','e','s','t',0
++	};
++	TALLOC_CTX *mem_ctx = talloc_new(NULL);
++	DATA_BLOB inputs[] = {
++		data_blob_const(compressed, sizeof(compressed)),
++		data_blob_const(uncompressed, sizeof(uncompressed)),
++	};
++	size_t i;
++	assert_non_null(mem_ctx);
++	for (i = 0; i < ARRAY_SIZE(inputs); i++) {
++		struct dns_name_packet packet = {0};
++		DATA_BLOB output;
++		enum ndr_err_code err;
++		err = ndr_pull_struct_blob_all(&inputs[i], mem_ctx, &packet,
++			(ndr_pull_flags_fn_t)ndr_pull_dns_name_packet);
++		assert_int_equal(err, NDR_ERR_SUCCESS);
++		assert_int_equal(packet.ancount, 1);
++		assert_string_equal(packet.answers[0].rdata.srv_record.target,
++			"dc.example.test");
++		err = ndr_push_struct_blob(&output, mem_ctx, &packet,
++			(ndr_push_flags_fn_t)ndr_push_dns_name_packet);
++		assert_int_equal(err, NDR_ERR_SUCCESS);
++		assert_int_equal(output.length, sizeof(uncompressed));
++		assert_memory_equal(output.data, uncompressed, output.length);
++	}
++	talloc_free(mem_ctx);
++}
++
+ int main(int argc, const char **argv)
+ {
+ 	const struct CMUnitTest tests[] = {
+@@ -229,6 +276,7 @@
+ 		cmocka_unit_test(test_ndr_dns_string_half_dots),
+ 		cmocka_unit_test(test_ndr_nbt_string_all_dots),
+ 		cmocka_unit_test(test_ndr_dns_string_all_dots),
++		cmocka_unit_test(test_ndr_dns_srv_target_no_compression),
+ 	};
+ 
+ 	cmocka_set_message_output(CM_OUTPUT_SUBUNIT);

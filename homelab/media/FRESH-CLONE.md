@@ -34,6 +34,7 @@ The aggregate target obtains, or starts acquisition of:
 - the current official Arch Linux x86-64 installation ISO;
 - the signed workstation package repository (the full dependency closure of
   the `workstation-install` package contract, with a `repo-add` database);
+- the pinned Samba DNS repair, built twice from verified source;
 - the pinned official iPXE `wimboot` release; and
 - the current official Windows 11 x64 multi-edition ISO.
 
@@ -42,6 +43,7 @@ Individual targets are useful when resuming a failed or interactive download:
 ```sh
 make homelab-media-arch
 make homelab-media-workstation-repo
+make homelab-media-samba-dns
 make homelab-media-wimboot
 make homelab-media-windows
 make homelab-stage-windows-source
@@ -73,6 +75,16 @@ and the `repo-add` database. The offline gate
 (`make homelab-factory-offline-check`) and factory publication refuse a
 missing, tampered, or contract-drifted repository; the disposable Controller
 serves it over HTTP so gate 7's `pacstrap` never needs an internet mirror.
+
+The Samba DNS repair corrects compressed SRV targets in Samba 4.24.5, which
+strict clients reject. Acquisition verifies the pinned upstream source and
+signed Arch inputs, then builds one library twice in a network-isolated
+sandbox and requires identical bytes. ABI checks and an actual c-ares parsing
+test bind the repair to the installed package version. The media seal includes
+the library and its receipt. Convergence installs a service-scoped override;
+every Samba start refuses mismatched package versions or library hashes.
+See [the pinned build recipe](samba-dns/README.md) for dependencies and upgrade
+handling. No client parser is weakened and no directory is recreated.
 
 `wimboot` is downloaded from the pinned release asset in the official
 `ipxe/wimboot` GitHub repository. Its byte count and SHA-256 must match the

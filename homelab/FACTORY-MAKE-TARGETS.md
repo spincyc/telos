@@ -46,7 +46,7 @@ explicitly, e.g. "PASS (Windows) / NOT RUN (Arch)".
 | Stage | Target | Status | Contract |
 |---|---|---|---|
 | Host | `homelab-factory-deps` | **implemented** | Install/check the complete Arch build-host dependency set. Online; explicit operator action. |
-| Acquire | `homelab-factory-media` | **implemented** | Fresh-resolve Arch and `wimboot`; import the operator-supplied Windows ISO; emit one aggregate receipt. Online or local import. Delegates to `homelab-media`. |
+| Acquire | `homelab-factory-media` | **implemented** | Acquire signed workstation packages and installation media, and build the pinned Samba DNS repair (`homelab-media-samba-dns`). Online or local import. Delegates to `homelab-media`. |
 | Seal | `homelab-factory-cache-seal` | **implemented** | Verify every cached input, record hashes and tool versions, and produce a portable inventory. No downloads. |
 | Offline gate | `homelab-factory-offline-check` | **implemented** | Refuse absent/unsealed inputs and prove subsequent recipes have no download dependency. |
 | Controller | `homelab-factory-controller` | **reserved** | Create a disposable controller overlay and converge PXE/HTTP, Samba AD DNS, Kerberos/time, logging, backup, and restore. The bundle half exists as **`homelab-factory-controller-bundle`** (implemented); the live runners converge the controller themselves. |

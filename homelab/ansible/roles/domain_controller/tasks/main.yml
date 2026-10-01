@@ -259,9 +259,13 @@
     mode: "0644"
   notify: restart samba ad dc
 
+- name: Install the guarded Samba DNS repair
+  ansible.builtin.include_tasks: samba-dns.yml
+
 - name: Enable the Samba AD DC
   ansible.builtin.systemd:
     name: samba.service
+    daemon_reload: true
     enabled: true
     state: started
 
@@ -602,6 +606,25 @@
       - "_ldap._tcp.{{ homelab_ad_dns_domain }}"
       - "{{ homelab_ad_expected_hostname }}.{{ homelab_ad_dns_domain }}"
   changed_when: false
+
+- name: Require client-compatible LDAP and Kerberos SRV wire responses
+  # host(1) accepts compressed SRV targets; c-ares 1.34.7+ does not. Prove
+  # the actual wire encoding over both transports after the restart handlers.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - /usr/local/libexec/homelab-verify-dns-srv
+      - --server
+      - "{{ homelab_ad_expected_hostname }}.{{ homelab_ad_dns_domain }}"
+      - --domain
+      - "{{ homelab_ad_dns_domain }}"
+      - --timeout
+      - "3"
+  changed_when: false
+  register: homelab_ad_srv_wire
+  until: homelab_ad_srv_wire.rc == 0
+  retries: 5
+  delay: 2
 
 - name: Refuse an existing directory with a different realm
   ansible.builtin.assert:

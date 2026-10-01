@@ -44,7 +44,9 @@ ARCH_HOMELAB_PACKAGES := archiso gptfdisk btrfs-progs cryptsetup dosfstools \
 	dnsmasq nginx ipxe qemu-base edk2-ovmf ansible samba krb5 ntp \
 	python-cryptography python-dnspython python-pexpect openresolv bind \
 	openssh rsync gnupg fakeroot mtools util-linux \
-	wimlib libisoburn 7zip
+	wimlib libisoburn 7zip \
+	gcc binutils bubblewrap pkgconf perl flex bison patch curl tar zstd gawk \
+	libarchive gnutls zlib talloc
 # Explicit choices for virtual dependencies that more than one package could
 # satisfy. Naming a provider here settles it before pacman has to ask. Empty
 # because the list above needs nothing: keep it that way rather than growing it.
@@ -61,6 +63,8 @@ ARCH_ISO ?= homelab/var/media/arch/archlinux-x86_64.iso
 WINDOWS_ISO_CACHE ?= homelab/var/media/windows/windows-11-x64.iso
 WINDOWS_INSTALL_SOURCE ?= homelab/var/media/windows/install-source
 FACTORY_MEDIA_SEAL ?= homelab/var/media/factory-media-seal.json
+SAMBA_DNS_CACHE ?= homelab/var/media/samba-dns
+export TELOS_SAMBA_DNS_CACHE := $(abspath $(SAMBA_DNS_CACHE))
 FACTORY_ARCH_SOURCE_CACHE ?= homelab/var/media/arch/extracted
 WORKSTATION_REPO ?= homelab/var/media/arch/workstation-repo
 # A Controller release needs a purpose-built mkarchiso netboot tree. The
@@ -409,8 +413,12 @@ homelab-bootstrap-deps: install-dependencies-arch
 # Microsoft requires an interactive consumer-media link, so the aggregate
 # target stops at that explicit gate until the operator supplies its ISO and
 # the digest printed by Microsoft's verification table.
-homelab-media: homelab-media-arch homelab-media-workstation-repo \
+homelab-media: homelab-media-arch homelab-media-workstation-repo homelab-media-samba-dns \
 	homelab-media-wimboot homelab-media-windows
+
+.PHONY: homelab-media-samba-dns
+homelab-media-samba-dns:
+	@homelab/bin/homelab-samba-dns build --cache '$(SAMBA_DNS_CACHE)'
 
 homelab-media-arch:
 	@homelab/media/fetch-arch
@@ -469,6 +477,7 @@ homelab-factory-cache-seal:
 		--windows-provenance '$(WINDOWS_ISO_CACHE).provenance.json' \
 		--windows-verification '$(WINDOWS_ISO_CACHE).verification.json' \
 		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
+		--samba-dns-cache '$(SAMBA_DNS_CACHE)' \
 		--wimboot '$(WIMBOOT)' \
 		--wimboot-metadata homelab/media/wimboot.json >/dev/null
 	@printf '%s\n' 'PASS: local factory media cache is sealed'
@@ -482,6 +491,7 @@ homelab-factory-offline-check:
 		--windows-provenance '$(WINDOWS_ISO_CACHE).provenance.json' \
 		--windows-verification '$(WINDOWS_ISO_CACHE).verification.json' \
 		--windows-install-source '$(WINDOWS_INSTALL_SOURCE)' \
+		--samba-dns-cache '$(SAMBA_DNS_CACHE)' \
 		--wimboot '$(WIMBOOT)' \
 		--wimboot-metadata homelab/media/wimboot.json >/dev/null
 	@homelab/bin/homelab-media-workstation-repo verify \

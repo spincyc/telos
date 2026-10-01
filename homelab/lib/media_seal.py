@@ -12,9 +12,10 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+import samba_dns
 import windows_install_source
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 TOOL_VERSIONS = "tool_versions"
 _ABSENT = object()
 
@@ -124,6 +125,7 @@ def inventory(
     windows_install_source_path: Path,
     wimboot: Path,
     wimboot_metadata: Path,
+    samba_dns_cache: Path,
 ) -> dict:
     """Verify every declared cache input and return its canonical seal."""
     arch = _json(arch_receipt, "Arch receipt")
@@ -184,10 +186,24 @@ def inventory(
     if install["edition"] != "Windows 11 Pro":
         raise SealError("install-source edition is not Windows 11 Pro")
 
+    try:
+        repair = samba_dns.verify(samba_dns_cache)
+    except samba_dns.SambaDnsError as exc:
+        raise SealError(f"Samba DNS repair does not verify: {exc}") from exc
+    repair_library = _record(
+        "samba-dns-library", samba_dns_cache / "libndr-nbt.so.0")
+    repair_receipt = _record(
+        "samba-dns-receipt", samba_dns_cache / "receipt.json")
+    if (repair_library["sha256"] != repair["library_sha256"]
+            or _json(samba_dns_cache / "receipt.json", "Samba DNS receipt")
+            != repair):
+        raise SealError("Samba DNS repair changed after verification")
+
     content = [
         arch_record,
         windows_record,
         wimboot_record,
+        repair_library,
         {
             "name": "windows-install-source",
             "bytes": install["bytes"],
@@ -204,6 +220,7 @@ def inventory(
         _record("windows-provenance", windows_provenance),
         _record("windows-verification", windows_verification),
         _record("wimboot-metadata", wimboot_metadata),
+        repair_receipt,
     ]
     return {
         "schema": 1,
@@ -221,6 +238,7 @@ def inventory(
                 "windows_edition": "Windows 11 Pro",
                 "windows_install_image": verification["install_image"],
                 "wimboot_version": metadata["version"],
+                "samba_dns": repair,
             },
         },
         # Tool versions are deliberately not content identity. Reproduction on
@@ -232,6 +250,7 @@ def inventory(
                 "windows-verification-receipt",
                 "windows-install-source.verify_cache",
                 "wimboot-pinned-metadata",
+                "samba_dns.verify",
             ],
         },
     }

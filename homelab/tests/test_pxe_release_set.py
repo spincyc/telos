@@ -1,10 +1,14 @@
 """Tests for transactional aggregate PXE release sets."""
 
+import argparse
 import json
+import os
+import runpy
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -212,6 +216,75 @@ class ReleaseSetTests(unittest.TestCase):
         self.seal.write_text(json.dumps(self.seal_value), encoding="utf-8")
         with self.assertRaisesRegex(release_set.ReleaseSetError, "sealed ISO"):
             self.build()
+
+
+class ReleaseSetCliTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.cli = runpy.run_path(str(ROOT / "bin/homelab-pxe-release-set"))
+        self.media_args = []
+        for option in (
+            "seal", "arch-iso", "arch-receipt", "windows-iso",
+            "windows-provenance", "windows-verification", "windows-install-source",
+            "wimboot", "wimboot-metadata",
+        ):
+            self.media_args.extend(("--" + option, str(self.root / option)))
+
+    def assert_cache_forwarded(self, expected, extra=()):
+        parser = argparse.ArgumentParser()
+        self.cli["add_media"](parser)
+        args = parser.parse_args([*self.media_args, *extra])
+        receipt = {"verified": True}
+        # Autospec enforces inventory's real required keyword-only signature;
+        # this catches an omitted cache before any live file could be opened.
+        with mock.patch.object(self.cli["media_seal"], "inventory", autospec=True,
+                               return_value=receipt) as inventory:
+            self.assertIs(self.cli["media_inventory"](args), receipt)
+        self.assertEqual(inventory.call_args.kwargs["samba_dns_cache"], expected)
+
+    def test_make_exported_cache_reaches_inventory(self):
+        cache = self.root / "configured-cache"
+        with mock.patch.dict(os.environ, {"TELOS_SAMBA_DNS_CACHE": str(cache)}):
+            self.assert_cache_forwarded(cache)
+
+    def test_explicit_cache_overrides_the_environment(self):
+        cache = self.root / "explicit-cache"
+        with mock.patch.dict(os.environ, {
+            "TELOS_SAMBA_DNS_CACHE": str(self.root / "environment-cache"),
+        }):
+            self.assert_cache_forwarded(cache, ("--samba-dns-cache", str(cache)))
+
+    def test_standalone_default_is_forwarded_without_reading_it(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("TELOS_SAMBA_DNS_CACHE", None)
+            self.assert_cache_forwarded(ROOT / "var/media/samba-dns")
+
+    def test_invalid_repair_refuses_the_build_before_any_leaf_is_staged(self):
+        args = [
+            "homelab-pxe-release-set", "build",
+            "--releases", str(self.root / "releases"),
+            "--version", "20260727.001",
+            "--controller-source", str(self.root / "controller"),
+            "--arch-source", str(self.root / "arch"),
+            "--base-url", "https://pxe.example.invalid",
+            *self.media_args,
+            "--samba-dns-cache", str(self.root / "refused-cache"),
+        ]
+        with mock.patch.object(sys, "argv", args), \
+                mock.patch.object(self.cli["media_seal"], "inventory", autospec=True,
+                                  side_effect=self.cli["media_seal"].SealError(
+                                      "Samba DNS repair does not verify")), \
+                mock.patch.object(self.cli["pxe_release_set"], "build") as build, \
+                mock.patch.object(self.cli["controller"], "stage") as controller, \
+                mock.patch.object(self.cli["arch_workstation"], "stage") as arch, \
+                mock.patch.object(self.cli["windows_stage"],
+                                  "stage_from_install_source") as windows:
+            with self.assertRaisesRegex(self.cli["media_seal"].SealError, "Samba DNS"):
+                self.cli["main"]()
+        for action in (build, controller, arch, windows):
+            action.assert_not_called()
 
 
 if __name__ == "__main__":

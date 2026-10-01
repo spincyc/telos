@@ -1895,5 +1895,51 @@ class DurableAccountSimulation:
                 variables["homelab_ad_account_group_plan"])
 
 
+@unittest.skipUnless(yaml, "PyYAML is not installed on this host")
+class DnsRepairConvergenceTests(unittest.TestCase):
+    def test_repair_precedes_start_and_changes_restart_with_reload(self):
+        tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        repair = next(index for index, task in enumerate(tasks)
+                      if task.get("ansible.builtin.include_tasks") == "samba-dns.yml")
+        start = next(index for index, task in enumerate(tasks)
+                     if task.get("ansible.builtin.systemd", {}).get("name")
+                     == "samba.service")
+        self.assertLess(repair, start)
+        self.assertTrue(tasks[start]["ansible.builtin.systemd"]["daemon_reload"])
+        handlers = yaml.safe_load((ROLE / "handlers/main.yml").read_text())
+        restart = next(task for task in handlers if task["name"] == "restart samba ad dc")
+        self.assertTrue(restart["ansible.builtin.systemd"]["daemon_reload"])
+        repair_tasks = yaml.safe_load((ROLE / "tasks/samba-dns.yml").read_text())
+        for task in repair_tasks:
+            destination = task.get("ansible.builtin.copy", {}).get("dest", "")
+            if "samba-dns/" in destination or destination.endswith("telos-dns.conf"):
+                self.assertEqual("restart samba ad dc", task["notify"])
+
+    def test_strict_wire_check_is_unconditional_after_handler_flush(self):
+        tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        flush = next(index for index, task in enumerate(tasks)
+                     if task.get("ansible.builtin.meta") == "flush_handlers")
+        check = next(index for index, task in enumerate(tasks)
+                     if "/usr/local/libexec/homelab-verify-dns-srv" in
+                     task.get("ansible.builtin.command", {}).get("argv", []))
+        self.assertLess(flush, check)
+        self.assertNotIn("when", tasks[check])
+        self.assertEqual("homelab_ad_srv_wire.rc == 0", tasks[check]["until"])
+        self.assertGreater(tasks[check]["retries"], 0)
+        self.assertLessEqual(tasks[check]["retries"], 5)
+
+    def test_direct_role_uses_control_host_cache_and_scopes_library_override(self):
+        defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+        self.assertEqual("{{ role_path }}/../../../var/media/samba-dns",
+                         defaults["homelab_ad_dns_repair_source"])
+        tasks = yaml.safe_load((ROLE / "tasks/samba-dns.yml").read_text())
+        content = next(task["ansible.builtin.copy"]["content"] for task in tasks
+                       if "content" in task.get("ansible.builtin.copy", {}))
+        self.assertIn("Environment=LD_LIBRARY_PATH=/usr/local/lib/telos/samba-dns\n", content)
+        self.assertIn("ExecStartPre=/usr/bin/python3 ", content)
+        self.assertNotIn("ExecStartPre=-", content)
+        self.assertNotIn("$LD_LIBRARY_PATH", content)
+
+
 if __name__ == "__main__":
     unittest.main()

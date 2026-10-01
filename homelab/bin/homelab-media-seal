@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--windows-install-source", type=Path, required=True)
     parser.add_argument("--wimboot", type=Path, required=True)
     parser.add_argument("--wimboot-metadata", type=Path, required=True)
+    parser.add_argument("--samba-dns-cache", type=Path, required=True)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[2]
     if subprocess.run(
@@ -42,6 +43,7 @@ def main() -> int:
         windows_install_source_path=args.windows_install_source,
         wimboot=args.wimboot,
         wimboot_metadata=args.wimboot_metadata,
+        samba_dns_cache=args.samba_dns_cache,
     )
     if args.action == "create":
         media_seal.write(args.seal, receipt)

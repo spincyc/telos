@@ -1035,7 +1035,8 @@ class TestNoInstanceData(unittest.TestCase):
         address = re.compile(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\."
                              r"\d{1,3}\.\d{1,3}(?:\.\d{1,3})?\b")
         for path in sorted(ANSIBLE.rglob("*")):
-            if not path.is_file():
+            if (not path.is_file() or "__pycache__" in path.parts
+                    or path.suffix == ".pyc"):
                 continue
             with self.subTest(path=path.relative_to(ANSIBLE)):
                 self.assertIsNone(address.search(path.read_text()),
