@@ -239,15 +239,33 @@ def render_diskpart(authorization: Authorization) -> str:
 # stopping IKEEXT in WinPE's RAM-only registry, after wpeinit and before the
 # first unicast flow, removes the only UDP 500 sender and leaves the sealed
 # image, the clear traffic, and the installed OS unchanged.  Fail closed if it
-# is not stopped.
+# is not stopped.  The sealed WinPE image has reg, net, WMIC and more, but
+# not sc.exe.  ChangeStartMode goes through the service manager (a registry
+# Start edit alone does not prove its live configuration).  Read the WMI
+# method result and both service properties, rather than localized net text
+# or display names.  MORE converts WMIC's UTF-16 output for FOR /F; missing
+# tools, providers, instances or fields leave the sentinels empty and fail.
 WINPE_IKE_SUPPRESSION = (
     "echo TELOS WINPE phase=ipsec-keying-off\r\n"
-    "sc config IKEEXT start= disabled >nul || exit /b 12\r\n"
+    "reg query HKLM\\SYSTEM\\CurrentControlSet\\Control\\MiniNT "
+    ">nul 2>&1 || exit /b 12\r\n"
+    'set "ike_config_result="\r\n'
+    'for /f "tokens=1,2 delims=;= \t" %%A in (\''
+    '%SystemRoot%\\System32\\wbem\\wmic.exe service where "Name=\'IKEEXT\'" '
+    "call ChangeStartMode Disabled 2^>nul ^| more') do "
+    'if /I "%%A"=="ReturnValue" set "ike_config_result=%%B"\r\n'
+    'if not "!ike_config_result!"=="0" exit /b 12\r\n'
     "net stop IKEEXT /y >nul 2>&1\r\n"
+    'set "ike_start_mode="\r\n'
     'set "ike_state="\r\n'
-    "for /f \"tokens=1,4\" %%A in ('sc query IKEEXT') do "
-    'if /I "%%A"=="STATE" set "ike_state=%%B"\r\n'
-    'if /I not "!ike_state!"=="STOPPED" exit /b 13\r\n'
+    'for /f "tokens=1,2 delims== \t" %%A in (\''
+    '%SystemRoot%\\System32\\wbem\\wmic.exe service where "Name=\'IKEEXT\'" '
+    "get StartMode^,State /value 2^>nul ^| more') do (\r\n"
+    '  if /I "%%A"=="StartMode" set "ike_start_mode=%%B"\r\n'
+    '  if /I "%%A"=="State" set "ike_state=%%B"\r\n'
+    ")\r\n"
+    'if /I not "!ike_start_mode!"=="Disabled" exit /b 13\r\n'
+    'if /I not "!ike_state!"=="Stopped" exit /b 13\r\n'
 )
 
 
