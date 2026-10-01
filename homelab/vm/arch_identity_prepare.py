@@ -16,7 +16,10 @@ and serial transcript, and produces the isolated bundle the gate-8 runner
   systemd-boot menu ever rendered, because auto-discovery never started the
   bootloader.  Pairing the authored NVRAM is what the gate-10 dual-boot lane
   already requires (``VARS_SOURCE_GATE7``), and the 2026-08-14 run rendered
-  the menu with it.  ``--ovmf-vars`` still overrides the source.
+  the menu with it.  ``--ovmf-vars`` still overrides the source.  The copy
+  drops EDK2's ``HDDP`` boot-path cache (``ovmf_vars``): gate 7 hot-attached
+  the disk behind a ``pcie-root-port`` and this boot cold-plugs it on the
+  root complex, so the cached path names a device this boot does not have.
 * ``windows-evidence.jsonl`` — the peer Windows lane's lifecycle checks,
   extracted fail-closed from its produced acceptance evidence stream (the
   JSONL published by ``windows_identity_evidence``); only a stream that
@@ -66,6 +69,7 @@ from .arch_install_prepare import (
 )
 from homelab.workstations.dualboot_acceptance import VARS_SOURCE_GATE7
 from .controller_factory import FactorySpec
+from .ovmf_vars import FirmwareVariablesError, copy_without_hddp
 from homelab.workstations.arch_second import JOIN_VERIFIED_MARKER
 
 # The exact pass shape arch_install_run records for a preserving install.
@@ -248,8 +252,12 @@ def prepare(
                 "prepared overlay does not back the gate-7 Arch disk")
 
         variables = run / BUNDLE_FIRMWARE
-        shutil.copyfile(vars_source, variables)
-        variables.chmod(0o600)
+        try:
+            dropped = copy_without_hddp(vars_source, variables)
+        except FirmwareVariablesError as error:
+            raise ArchIdentityPrepareError(
+                f"OVMF variables template is not an EDK2 variable store "
+                f"({error})") from error
 
         _private_file(
             run / BUNDLE_WINDOWS_EVIDENCE,
@@ -277,6 +285,7 @@ def prepare(
                 "path": str(variables.resolve()),
                 "source": str(vars_source.resolve()),
                 "policy": vars_policy,
+                "hddp_dropped": dropped,
             },
             "windows_evidence_source": str(
                 Path(windows_evidence).resolve()),

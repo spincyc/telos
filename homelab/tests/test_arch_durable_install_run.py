@@ -19,8 +19,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from homelab.tests.ovmf_store_fixture import store
 from homelab.vm import arch_durable_install_run as durable
 from homelab.vm import arch_install_run as gate7
+from homelab.vm import ovmf_vars
 from homelab.vm import workstation_instance as wi
 from homelab.vm.durable_workstation import DurableBinding, DurableBindingError
 from homelab.workstations import arch_second
@@ -126,6 +128,11 @@ def snapshot(directory: Path) -> dict:
     return {
         path.name: _digest(path) for path in sorted(directory.iterdir())
         if path.is_file() and path.name != wi.LOCK_NAME}
+
+
+#: The install bundle's variables after the hot-attached install boot: the
+#: authored entry, and the boot-path cache that boot's topology left behind.
+INSTALLED_VARS = store("Linux Boot Manager", hddp=True)
 
 
 def write_workstation(root: Path, name: str = "w1", *, ledger_extra=(),
@@ -589,7 +596,7 @@ class RunFixture:
         bundle = self.run_root / "run-synthetic"
         bundle.mkdir(parents=True, mode=0o700)
         self.make_overlay(Path(prepare_args.windows_disk), bundle / "arch.qcow2")
-        (bundle / "OVMF_VARS.fd").write_bytes(b"installer-authored vars\n")
+        (bundle / "OVMF_VARS.fd").write_bytes(INSTALLED_VARS)
         disk = Path(prepare_args.windows_disk)
         (bundle / "authorization.json").write_text(json.dumps({
             "authorization": {"backing_windows_disk": {
@@ -854,8 +861,12 @@ class RealFoldTests(RunFixture, unittest.TestCase):
         head = marker["ledger"][-1]
         disk = self.state / wi.DISK_NAME
         self.assertEqual(head["disk_sha256"], _digest(disk))
+        # Kept less the cache; the bundle's own copy is retained as booted.
         self.assertEqual((self.state / wi.VARS_NAME).read_bytes(),
-                         b"installer-authored vars\n")
+                         ovmf_vars.without_hddp(INSTALLED_VARS)[0])
+        self.assertEqual(
+            (self.run_root / "run-synthetic" / "OVMF_VARS.fd").read_bytes(),
+            INSTALLED_VARS)
         self.assertEqual(head["vars_sha256"],
                          _digest(self.state / wi.VARS_NAME))
         info = json.loads(subprocess.run(

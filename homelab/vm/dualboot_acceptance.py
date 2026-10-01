@@ -8,7 +8,10 @@ overlaying the persistent gate-5 ``windows.qcow2``) and its post-install
 that retained output with a fresh ``dualboot.qcow2`` so acceptance never
 mutates a gate artifact, pairs it by default with the gate-7 installed OVMF
 variables (matching physical persistence; ``--pristine-vars`` is a flagged
-escape hatch), and pins a QEMU command whose only boot path is the
+escape hatch) copied without EDK2's ``HDDP`` boot-path cache -- gate 7
+hot-attached the disk behind a ``pcie-root-port`` and this boot cold-plugs it
+on the root complex, so the path gate 7's boot cached is one this boot does
+not have (``ovmf_vars``) -- and pins a QEMU command whose only boot path is the
 cold-plugged NVMe carrying the authorized serial (deliberately the inverse of
 the gate-7 install boundary: here the disk MUST be firmware-bootable and
 PXE/media MUST be absent).
@@ -72,6 +75,7 @@ try:
         attach_planned_progress_port, audit_progress_port,
         prepare_socket_directory)
     from .guest_progress_credentials import mint_credential
+    from .ovmf_vars import FirmwareVariablesError, copy_without_hddp
     from .signal_cleanup import SignalGuard, terminate_children
     from .simulation_evidence import (
         private_file, redact, retain_redacted_logs)
@@ -88,6 +92,7 @@ except ImportError:  # Direct execution from homelab/vm.
         attach_planned_progress_port, audit_progress_port,
         prepare_socket_directory)
     from guest_progress_credentials import mint_credential
+    from ovmf_vars import FirmwareVariablesError, copy_without_hddp
     from signal_cleanup import SignalGuard, terminate_children
     from simulation_evidence import (
         private_file, redact, retain_redacted_logs)
@@ -547,8 +552,12 @@ def prepare(args: argparse.Namespace) -> Path:
             ],
             check=True, capture_output=True)
         overlay.chmod(0o600)
-        shutil.copyfile(ovmf_source, variables)
-        variables.chmod(0o600)
+        try:
+            dropped = copy_without_hddp(ovmf_source, variables)
+        except FirmwareVariablesError as error:
+            raise DualbootAcceptanceError(
+                f"OVMF variables source is not an EDK2 variable store "
+                f"({error})") from error
 
         command = qemu_dualboot_command(
             disk=overlay, variables=variables, qmp_socket=qmp_socket,
@@ -581,7 +590,9 @@ def prepare(args: argparse.Namespace) -> Path:
                 "layout": record,
                 "boot_policy": CONTRACT["boot_policy"],
                 "vars_source": vars_source,
+                # The boot copy: the source less its boot-path cache.
                 "vars_sha256": sha256(variables),
+                "vars_hddp_dropped": dropped,
             },
         }
         private_file(
@@ -950,8 +961,9 @@ def _bundle(path: Path) -> tuple[dict, list[str]]:
     if any(item.is_symlink() or not item.is_file() for item in required):
         raise DualbootAcceptanceError("dual-boot bundle is incomplete or unsafe")
     # The judged vars_source claim is only honest if the vars about to boot
-    # are the exact bytes prepare copied from the recorded source; a swap
-    # after prepare (pristine for gate-7-installed, say) is refused here.
+    # are the exact bytes prepare copied from the recorded source (less the
+    # ``HDDP`` cache, which prepare drops before it hashes); a swap after
+    # prepare (pristine for gate-7-installed, say) is refused here.
     if sha256(path / VARS_NAME) != authorized.get("vars_sha256"):
         raise DualbootAcceptanceError(
             "dual-boot OVMF variables differ from authorization")

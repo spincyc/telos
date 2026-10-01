@@ -22,7 +22,9 @@ import subprocess
 import tempfile
 import unittest
 
+from homelab.tests.ovmf_store_fixture import store
 from homelab.vm import arch_identity_prepare as prepare_module
+from homelab.vm import ovmf_vars
 from homelab.vm.arch_identity_prepare import (
     ARCH_JOIN_MARKER,
     ArchIdentityPrepareError,
@@ -110,9 +112,15 @@ def make_install_bundle(
         # The variables bootctl wrote at install: they carry the authored
         # "Linux Boot Manager" entry the identity boot needs.
         variables = bundle / "OVMF_VARS.fd"
-        variables.write_bytes(b"gate7-installed-ovmf-variables")
+        variables.write_bytes(GATE7_VARS)
         variables.chmod(0o600)
     return bundle
+
+
+#: The gate-7 bundle's variables: the authored entry, and the boot-path cache
+#: its hot-attached boot left behind.
+GATE7_VARS = store("Linux Boot Manager", hddp=True)
+PRISTINE_VARS = store("pristine template")
 
 
 def write_windows_evidence(path: Path, events=None) -> Path:
@@ -127,7 +135,7 @@ def write_windows_evidence(path: Path, events=None) -> Path:
 
 def make_vars_template(root: Path) -> Path:
     template = root / "pristine-OVMF_VARS.fd"
-    template.write_bytes(b"pristine-ovmf-variables-template")
+    template.write_bytes(PRISTINE_VARS)
     template.chmod(0o600)
     return template
 
@@ -262,9 +270,14 @@ class PrepareTests(unittest.TestCase):
             self.assertEqual(
                 authorization["firmware_copy"]["source"],
                 str((install / "OVMF_VARS.fd").resolve()))
+            # The boot copy drops only gate 7's boot-path cache, and the
+            # install bundle keeps its own as gate 7 left it.
             self.assertEqual(
                 (run / "OVMF_VARS.fd").read_bytes(),
-                (install / "OVMF_VARS.fd").read_bytes())
+                ovmf_vars.without_hddp(GATE7_VARS)[0])
+            self.assertEqual(
+                (install / "OVMF_VARS.fd").read_bytes(), GATE7_VARS)
+            self.assertEqual(authorization["firmware_copy"]["hddp_dropped"], 1)
 
     def test_gate7_bundle_without_variables_is_refused(self):
         with tempfile.TemporaryDirectory() as name:
@@ -275,6 +288,18 @@ class PrepareTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     ArchIdentityPrepareError, "Linux Boot Manager"):
                 prepare(install, evidence, run_root=root / "identity-runs")
+
+    def test_variables_that_are_not_a_store_are_refused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            install = make_install_bundle(root)
+            (install / "OVMF_VARS.fd").write_bytes(b"not a variable store")
+            evidence = write_windows_evidence(
+                root / "windows-acceptance.jsonl")
+            with self.assertRaisesRegex(
+                    ArchIdentityPrepareError, "not an EDK2 variable store"):
+                prepare(install, evidence, run_root=root / "identity-runs")
+            self.assertEqual(list((root / "identity-runs").iterdir()), [])
 
     def test_prepared_bundle_round_trips_the_consumer_contract(self):
         with tempfile.TemporaryDirectory() as name:
@@ -301,6 +326,7 @@ class PrepareTests(unittest.TestCase):
                 "operator-supplied")
             self.assertEqual(
                 (run / "OVMF_VARS.fd").read_bytes(), template.read_bytes())
+            self.assertEqual(authorization["firmware_copy"]["hddp_dropped"], 0)
             self.assertEqual(run.stat().st_mode & 0o777, 0o700)
             for artifact in ("arch-workstation.qcow2", "OVMF_VARS.fd",
                              "authorization.json", "windows-evidence.jsonl"):

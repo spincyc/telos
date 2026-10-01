@@ -16,7 +16,9 @@ import unittest
 from unittest import mock
 import zlib
 
+from homelab.tests.ovmf_store_fixture import store
 from homelab.vm import dualboot_acceptance as da
+from homelab.vm import ovmf_vars
 from homelab.workstations import dualboot_acceptance as judge_mod
 from homelab.workstations.arch_second import (
     EXPECTED, MENU_ARCH_TITLE, MENU_WINDOWS_TITLE, NVRAM_LINUX_LABEL)
@@ -470,6 +472,12 @@ class AuditTests(unittest.TestCase):
             da._qmp_socket_path(command))
 
 
+#: Gate 7's post-install variables: the authored NVRAM, and the boot-path
+#: cache its hot-attached boot left behind.
+GATE7_VARS = store("Linux Boot Manager", hddp=True)
+PRISTINE_VARS = store("pristine template")
+
+
 class PrepareTests(unittest.TestCase):
     def gate7(self, root: Path) -> Path:
         bundle = root / "gate7"
@@ -477,7 +485,7 @@ class PrepareTests(unittest.TestCase):
         (bundle / "arch.qcow2").write_bytes(b"gate7-disk")
         # The post-install OVMF variables carrying the installer-authored
         # NVRAM; the default prepare must consume exactly these.
-        (bundle / "OVMF_VARS.fd").write_bytes(b"gate7-installed-vars")
+        (bundle / "OVMF_VARS.fd").write_bytes(GATE7_VARS)
         (bundle / "evidence").mkdir(mode=0o700)
         (bundle / "evidence" / "result.json").write_text(json.dumps({
             "schema": 1, "status": "observed",
@@ -512,7 +520,7 @@ class PrepareTests(unittest.TestCase):
 
     def pristine_arguments(self, root: Path, bundle: Path):
         variables = root / "template-vars.fd"
-        variables.write_bytes(b"pristine-vars")
+        variables.write_bytes(PRISTINE_VARS)
         return self.arguments(
             root, bundle, "--pristine-vars", "--ovmf-vars", str(variables))
 
@@ -578,10 +586,12 @@ class PrepareTests(unittest.TestCase):
             self.assertTrue((run_dir / "dualboot.qcow2").is_file())
             self.assertTrue((run_dir / "OVMF_VARS.fd").is_file())
             # The default vars are the gate-7 installed NVRAM, byte for
-            # byte, and the authorization records their provenance.
-            self.assertEqual(
-                b"gate7-installed-vars",
-                (run_dir / "OVMF_VARS.fd").read_bytes())
+            # byte less the boot-path cache gate 7's topology left, and the
+            # authorization records their provenance.
+            cleaned = ovmf_vars.without_hddp(GATE7_VARS)[0]
+            self.assertEqual(cleaned, (run_dir / "OVMF_VARS.fd").read_bytes())
+            self.assertEqual(GATE7_VARS,
+                             (bundle / "OVMF_VARS.fd").read_bytes())
             creates = [
                 call.args[0] for call in spawn.call_args_list
                 if call.args[0][:2] == ["qemu-img", "create"]
@@ -601,12 +611,15 @@ class PrepareTests(unittest.TestCase):
             authorized = authorization["authorization"]
             self.assertEqual(
                 da.VARS_SOURCE_GATE7, authorized["vars_source"])
+            # The boot copy is what is authorized; the source as gate 7
+            # retains it.
             self.assertEqual(
-                hashlib.sha256(b"gate7-installed-vars").hexdigest(),
+                hashlib.sha256(cleaned).hexdigest(),
                 authorized["vars_sha256"])
             self.assertEqual(
-                authorized["gate7"]["vars_sha256"],
-                authorized["vars_sha256"])
+                hashlib.sha256(GATE7_VARS).hexdigest(),
+                authorized["gate7"]["vars_sha256"])
+            self.assertEqual(1, authorized["vars_hddp_dropped"])
             command = json.loads(
                 (run_dir / "qemu-command.json").read_text())["argv"]
             self.assertEqual(
@@ -645,7 +658,7 @@ class PrepareTests(unittest.TestCase):
                         }):
                 run_dir = da.prepare(arguments)
             self.assertEqual(
-                b"pristine-vars", (run_dir / "OVMF_VARS.fd").read_bytes())
+                PRISTINE_VARS, (run_dir / "OVMF_VARS.fd").read_bytes())
             authorization = json.loads(
                 (run_dir / "authorization.json").read_text())
             self.assertIs(True, authorization["pristine_vars"])

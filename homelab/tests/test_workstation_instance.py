@@ -25,8 +25,10 @@ import workstation_instance as wi  # noqa: E402
 from homelab.tests.identity_overlay_pin import (  # noqa: E402
     pinned_acceptance_state,
 )
+from homelab.tests.ovmf_store_fixture import store  # noqa: E402
 from homelab.vm import arch_durable_install_run  # noqa: E402
 from homelab.vm import arch_durable_join  # noqa: E402
+from homelab.vm import ovmf_vars  # noqa: E402
 
 
 def setUpModule():
@@ -40,6 +42,9 @@ def setUpModule():
 SECRET = b"SYNTHETIC-LOCAL-ADMIN-SECRET-7f3a"
 BINDING = wi.Binding("synthetic-dc", "EXAMPLE.TEST", "S-1-5-21-11-22-33")
 HOLDER = ["4242 (qemu-system-x86_64)"]
+#: The gate-5 bundle's store: Windows booted it through its short-form entry,
+#: so it carries the boot-path cache a kept workstation never keeps.
+GATE5_VARS = store("Windows Boot Manager", hddp=True)
 
 
 def _digest(path: Path) -> str:
@@ -95,7 +100,7 @@ class WorkstationTestCase(unittest.TestCase):
         _write(disk, 0xCD, "1M")
         disk.chmod(0o600)
         if firmware:
-            (bundle / "OVMF_VARS.fd").write_bytes(b"synthetic firmware vars")
+            (bundle / "OVMF_VARS.fd").write_bytes(GATE5_VARS)
             (bundle / "OVMF_VARS.fd").chmod(0o600)
         publication = bundle / "publication.iso"
         publication.write_bytes(b"ISO9660 " + SECRET + b"\n" * 4096)
@@ -152,7 +157,12 @@ class AdoptTests(WorkstationTestCase):
         for path in (target.disk, target.vars, target.publication,
                      target.marker):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600, path)
-        self.assertEqual(target.vars.read_bytes(), b"synthetic firmware vars")
+        # Copied less the boot-path cache, and the bundle's own copy is kept.
+        self.assertEqual(target.vars.read_bytes(),
+                         ovmf_vars.without_hddp(GATE5_VARS)[0])
+        self.assertEqual(ovmf_vars.hddp_states(target.vars.read_bytes()), [])
+        self.assertEqual((self.bundle / "OVMF_VARS.fd").read_bytes(),
+                         GATE5_VARS)
         marker = target.read_marker()
         self.assertEqual(marker["binding"], BINDING.record())
         self.assertEqual(marker["machine_accounts"], [])
@@ -307,11 +317,45 @@ class FoldTests(WorkstationTestCase):
     def test_fold_can_replace_the_firmware_variables(self):
         overlay = self.overlay(self.w, "arch-install")
         firmware = self.tmp / "stage-vars.fd"
-        firmware.write_bytes(b"vars with an Arch boot entry")
+        firmware.write_bytes(NEW_VARS)
         entry = self.w.fold(overlay, "arch-install", firmware_vars=firmware)
-        self.assertEqual(self.w.vars.read_bytes(), b"vars with an Arch boot entry")
+        self.assertEqual(self.w.vars.read_bytes(), NEW_VARS_KEPT)
         self.assertEqual(entry["vars_sha256"], _digest(self.w.vars))
         self.assertEqual(stat.S_IMODE(self.w.vars.stat().st_mode), 0o600)
+
+    def test_fold_keeps_the_variables_without_the_boot_path_cache(self):
+        overlay = self.overlay(self.w, "arch-install")
+        firmware = self.tmp / "stage-vars.fd"
+        firmware.write_bytes(NEW_VARS)
+        self.assertEqual(len(ovmf_vars.hddp_states(NEW_VARS)), 1)
+        entry = self.w.fold(overlay, "arch-install", firmware_vars=firmware)
+        kept = self.w.vars.read_bytes()
+        self.assertEqual(ovmf_vars.hddp_states(kept), [])
+        # Only the cache's state byte differs, and every other variable reads
+        # back unchanged.
+        self.assertEqual(len(kept), len(NEW_VARS))
+        self.assertEqual(
+            [index for index in range(len(kept))
+             if kept[index] != NEW_VARS[index]],
+            ovmf_vars.hddp_states(NEW_VARS))
+        live = ovmf_vars.firmware_variables(NEW_VARS)
+        del live[(ovmf_vars.HDDP_VENDOR, ovmf_vars.HDDP_NAME)]
+        self.assertEqual(ovmf_vars.firmware_variables(kept), live)
+        # The ledger records what is kept; the run's own copy is not touched.
+        self.assertEqual(entry["vars_sha256"], _digest(self.w.vars))
+        self.assertEqual(self.w.read_marker()["ledger"][-1], entry)
+        self.assertEqual(firmware.read_bytes(), NEW_VARS)
+
+    def test_fold_refuses_variables_that_are_not_a_store(self):
+        overlay = self.overlay(self.w, "arch-install")
+        firmware = self.tmp / "stage-vars.fd"
+        firmware.write_bytes(b"not an EDK2 variable store")
+        before = self.snapshot(self.w.state)
+        with self.assertRaisesRegex(wi.WorkstationInvalid,
+                                    "not an EDK2 variable store"):
+            self.w.fold(overlay, "arch-install", firmware_vars=firmware)
+        self.assertEqual(self.snapshot(self.w.state), before)
+        self.assertEqual(self.w._leftovers(), [])
 
     def test_fold_refuses_while_a_process_holds_the_disk(self):
         overlay = self.overlay(self.w, "arch-install")
@@ -427,7 +471,8 @@ INTERRUPTIONS = (
     ("vars-renamed", True, "fold", "fold", [], wi.RECOVERY_COMPLETE),
     ("ledger-append", True, "fold", "fold", [], wi.RECOVERY_COMPLETE),
 )
-NEW_VARS = b"vars with an Arch boot entry"
+NEW_VARS = store("Linux Boot Manager", hddp=True)
+NEW_VARS_KEPT = ovmf_vars.without_hddp(NEW_VARS)[0]
 
 
 class InterruptedFoldTests(WorkstationTestCase):
@@ -584,7 +629,7 @@ class InterruptedFoldTests(WorkstationTestCase):
                 if action == wi.RECOVERY_COMPLETE:
                     self.assertEqual(marker["ledger"][1:], [pending])
                     self.assertTrue(_identical(w.disk, expected))
-                    self.assertEqual(w.vars.read_bytes(), NEW_VARS)
+                    self.assertEqual(w.vars.read_bytes(), NEW_VARS_KEPT)
                     arch_durable_join.require_arch_join_next(w)
                 else:
                     self.assertEqual(marker["ledger"], [head])

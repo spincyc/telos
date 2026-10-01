@@ -20,7 +20,9 @@ What ``W`` holds:
     and ``fold`` refuses a disk that no longer does.
 ``OVMF_VARS.fd``
     The firmware variables that belong to the disk (boot entries live there),
-    copied from the gate-5 bundle and optionally replaced by a fold.
+    copied from the gate-5 bundle and optionally replaced by a fold; either
+    way without EDK2's ``HDDP`` boot-path cache, which names the topology of
+    the boot that wrote it and poisons a boot in another (``ovmf_vars``).
 ``publication.iso``
     The gate-5 bundle's one-use publication. It carries the Windows local
     administrator credential, so it is MOVED, never copied: after adoption the
@@ -77,6 +79,7 @@ from pathlib import Path
 
 try:
     from . import credential_custody as _custody
+    from .ovmf_vars import FirmwareVariablesError, copy_without_hddp
     from .simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         DOMAIN_SID,
@@ -88,6 +91,7 @@ try:
     )
 except ImportError:  # Direct execution from homelab/vm.
     import credential_custody as _custody
+    from ovmf_vars import FirmwareVariablesError, copy_without_hddp
     from simulation_overlay import (
         DESTROY_CONFIRMATION_PREFIX,
         DOMAIN_SID,
@@ -290,11 +294,21 @@ def _convert_standalone(source: Path, target: Path) -> None:
 
 
 def _copy_private(source: Path, target: Path) -> None:
+    """Stage a variable store for ``W`` without its boot-path cache.
+
+    ``HDDP`` caches the device path the boot that wrote it expanded the disk's
+    boot entries to, and ``W``'s disk is booted in more than one topology, so
+    ``W`` never keeps one (``ovmf_vars``).  Every other byte is copied.
+    """
     if target.is_symlink():
         raise WorkstationInvalid(f"refusing a symlinked staging file: {target}")
     target.unlink(missing_ok=True)
-    shutil.copyfile(source, target)
-    os.chmod(target, 0o600)
+    try:
+        copy_without_hddp(source, target)
+    except FirmwareVariablesError as error:
+        raise WorkstationInvalid(
+            f"firmware variables are not an EDK2 variable store ({error}): "
+            f"{source}") from error
     _fsync_file(target)
 
 
@@ -959,9 +973,10 @@ class WorkstationInstance:
         ``overlay`` must be a qcow2 whose backing file is this workstation's
         disk. It is flattened into a standalone staging copy, fsynced, and
         renamed over the disk; ``firmware_vars``, when given, replaces the
-        workstation's variables the same way. Refused while any process holds
-        either side open, and refused unless the disk still hashes to the
-        ledger head (it was not booted in place or edited out of band).
+        workstation's variables the same way, less the ``HDDP`` cache (the
+        ledger records the hash of what is kept). Refused while any process
+        holds either side open, and refused unless the disk still hashes to
+        the ledger head (it was not booted in place or edited out of band).
         """
         overlay = Path(overlay).absolute()
         if firmware_vars is not None:
@@ -1246,7 +1261,8 @@ def _print_plan(plan: dict, binding: Binding) -> None:
           f"{plan['free_bytes']} free")
     firmware = plan["firmware_vars"]
     print("firmware variables: "
-          + (f"copied from {firmware}" if firmware else "none in the bundle"))
+          + (f"copied from {firmware}, less the HDDP boot-path cache"
+             if firmware else "none in the bundle"))
     print(f"publication: MOVED from {plan['publication']}; the workstation "
           "takes custody and the bundle keeps no copy")
     # The realm and SID are recorded in the private marker, not echoed: like

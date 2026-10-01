@@ -15,7 +15,9 @@ import unittest
 from pathlib import Path
 
 from homelab.tests.identity_overlay_pin import pinned_identity_overlay
+from homelab.tests.ovmf_store_fixture import store
 from homelab.vm import controller_principals
+from homelab.vm import ovmf_vars
 from homelab.vm import windows_durable_prepare as prepare
 from homelab.vm import windows_identity_adapter
 from homelab.vm import workstation_instance as wi
@@ -38,6 +40,9 @@ BOOTSTRAP = f"bootstrap-dc.{DOMAIN}"
 SID = "S-1-5-21-11-22-33"
 INSTANCE = "synthetic-dc"
 PRIVATE_VALUES = (DOMAIN, REALM, SID)
+#: ``W``'s variables as an earlier fold kept them, before folds dropped the
+#: boot-path cache: an Arch boot in another disk topology left an ``HDDP``.
+KEPT_VARS = store("Linux Boot Manager", hddp=True)
 
 
 def binding(**overrides) -> DurableBinding:
@@ -72,7 +77,7 @@ def write_kept_workstation(root: Path, name: str = "w1", *,
                         "64M"], check=True, capture_output=True)
     else:
         disk.write_bytes(b"synthetic kept disk\n")
-    (state / wi.VARS_NAME).write_bytes(b"installer-authored vars\n")
+    (state / wi.VARS_NAME).write_bytes(KEPT_VARS)
     (state / wi.PUBLICATION_NAME).write_bytes(b"synthetic publication\n")
     for item in (disk, state / wi.VARS_NAME, state / wi.PUBLICATION_NAME):
         item.chmod(0o600)
@@ -267,8 +272,10 @@ class PrepareTests(unittest.TestCase):
             check=True, capture_output=True, text=True).stdout)
         self.assertEqual(Path(info["full-backing-filename"]),
                          (self.state / wi.DISK_NAME).resolve())
+        # The boot copy lacks only the boot-path cache; W's is untouched.
         self.assertEqual((attempt / "OVMF_VARS.fd").read_bytes(),
-                         b"installer-authored vars\n")
+                         ovmf_vars.without_hddp(KEPT_VARS)[0])
+        self.assertEqual((self.state / wi.VARS_NAME).read_bytes(), KEPT_VARS)
 
     def test_the_authorization_is_durable_and_carries_no_realm(self):
         attempt = self.prepared()
@@ -281,6 +288,10 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(durable["bound_instance"], INSTANCE)
         self.assertEqual(durable["ledger_head"]["disk_sha256"],
                          head["disk_sha256"])
+        # The copy's source is recorded as W holds it; the copy dropped HDDP.
+        self.assertEqual(authorization["firmware_copy"]["source_sha256"],
+                         head["vars_sha256"])
+        self.assertEqual(authorization["firmware_copy"]["hddp_dropped"], 1)
         self.assertEqual(authorization["post_join_submit_focus_calibration"],
                          {"enabled": False, "tabs": 0})
         self.assertIs(authorization["external_access"], False)

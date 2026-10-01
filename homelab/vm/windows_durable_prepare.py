@@ -9,7 +9,10 @@ stage is ``windows-join``, with the attempt shaped so that gate 6's own
 * the overlay is backed by ``W/workstation.qcow2`` -- the dual-boot disk, on
   which Windows sits behind systemd-boot's five-second Windows default -- and
   the firmware variables are ``W``'s own (the ``arch-install`` fold authored
-  them), so the boot order the Arch installer wrote is the one that boots;
+  them), so the boot order the Arch installer wrote is the one that boots --
+  copied without EDK2's ``HDDP`` boot-path cache, which an earlier boot in
+  another disk topology may have left and which crashed OVMF on this boot
+  (``ovmf_vars``);
 * the attempt lives under ``homelab/var/factory/durable-windows-joins/<W>/``,
   never inside ``W``, whose ``destroy`` refuses unexpected entries;
 * the control disc is gate 6's audited payload with its probe rendered for
@@ -44,6 +47,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from .durable_workstation import DurableBinding
+from .ovmf_vars import FirmwareVariablesError, copy_without_hddp
 from .simulation_evidence import private_file
 from .windows_control_iso import (
     ASSET_ROOT, EXPECTED_FILES, MANIFEST, SCRIPT, audit_payload,
@@ -313,8 +317,12 @@ def prepare(
         variables = attempt / VARS_NAME
         control_iso = attempt / CONTROL_ISO_NAME
         qmp = attempt / "windows.qmp"
-        shutil.copyfile(workstation.vars, variables)
-        variables.chmod(0o600)
+        try:
+            dropped = copy_without_hddp(workstation.vars, variables)
+        except FirmwareVariablesError as error:
+            raise DurableWindowsPrepareError(
+                f"the kept workstation's firmware variables are not an EDK2 "
+                f"variable store ({error})") from error
         create_overlay(workstation.disk, overlay)
         overlay.chmod(0o600)
         control_iso_builder(
@@ -351,6 +359,7 @@ def prepare(
             "firmware_copy": {
                 "path": str(variables.resolve()),
                 "source_sha256": source["firmware"]["sha256"],
+                "hddp_dropped": dropped,
             },
             "qmp_socket": str(qmp.resolve()),
             "serial_transport": {

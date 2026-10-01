@@ -10,6 +10,7 @@ password is synthetic.
 
 import ast
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -24,10 +25,12 @@ from unittest import mock
 
 from homelab.tests.identity_overlay_pin import (
     overlay_document, pinned_identity_overlay)
+from homelab.tests.ovmf_store_fixture import store
 from homelab.tests.test_windows_durable_prepare import (
     DOMAIN, INSTANCE, PRIVATE_VALUES, REALM, binding, canonical_state,
     fake_control_iso, snapshot, write_kept_workstation)
 from homelab.vm import controller_principals
+from homelab.vm import ovmf_vars
 from homelab.vm.directory_password_policy import DirectoryPasswordPolicy
 from homelab.vm import windows_durable_join as join
 from homelab.vm import windows_durable_prepare as prepare
@@ -41,6 +44,8 @@ from homelab.vm.windows_identity_run import WindowsIdentityRunError
 
 
 ROOT = Path(__file__).resolve().parents[2]
+#: The attempt's store after the join's Windows boot, with the cache it left.
+POST_JOIN_VARS = store("Windows Boot Manager", hddp=True)
 NAMES = {"standard_user": "person-b", "daily_administrator": "person-a",
          "domain_administrator": "person-a-root"}
 CONSOLE = b"Console-Rescue-Typed-1!"
@@ -926,7 +931,7 @@ class RunFixture:
         else:
             overlay.write_bytes(b"synthetic overlay")
         overlay.chmod(0o600)
-        (attempt / "OVMF_VARS.fd").write_bytes(b"post-join vars\n")
+        (attempt / "OVMF_VARS.fd").write_bytes(POST_JOIN_VARS)
         return attempt
 
     def args(self, *extra):
@@ -1156,8 +1161,13 @@ class RealFoldTests(RunFixture, unittest.TestCase):
         marker = self.marker()
         self.assertEqual([entry["stage"] for entry in marker["ledger"]],
                          ["adopt", "arch-install", "arch-join", "windows-join"])
+        # Folded less the boot-path cache the Windows boot left behind.
         self.assertEqual((self.state / wi.VARS_NAME).read_bytes(),
-                         b"post-join vars\n")
+                         ovmf_vars.without_hddp(POST_JOIN_VARS)[0])
+        self.assertEqual(marker["ledger"][-1]["vars_sha256"],
+                         hashlib.sha256(
+                             (self.state / wi.VARS_NAME).read_bytes()
+                         ).hexdigest())
         self.assertFalse((self.state / wi.PUBLICATION_NAME).exists())
         self.assertIn("retired_utc", marker["publication"])
         self.assertEqual(marker["machine_accounts"], ["TELOS-WIN-01"])

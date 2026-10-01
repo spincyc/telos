@@ -9,12 +9,13 @@ and it is read-only toward ``W``:
 
 * **Overlays only, under ``W``'s lock.**  Arch boots one fresh overlay of
   ``W/workstation.qcow2`` and Windows another (gate 6's attempt layout), each
-  with a copy of ``W``'s firmware variables; both overlays are removed
-  afterwards.  ``W``'s disk, variables and marker are hashed before and after
-  and must be unchanged.  Nothing is folded, no machine account is recorded,
-  and no ledger entry is written: ``workstation_instance`` offers only the
-  stage fold, ``record_machine_account`` and ``retire_publication``, and a
-  verify is none of them, so the run's evidence directory is its only record.
+  with a copy of ``W``'s firmware variables less EDK2's ``HDDP`` boot-path
+  cache (``ovmf_vars``); both overlays are removed afterwards.  ``W``'s disk,
+  variables and marker are hashed before and after and must be unchanged.
+  Nothing is folded, no machine account is recorded, and no ledger entry is
+  written: ``workstation_instance`` offers only the stage fold,
+  ``record_machine_account`` and ``retire_publication``, and a verify is none
+  of them, so the run's evidence directory is its only record.
 * **One fabric, one persistent session.**  The bound instance's own disk is
   booted in place on a per-run switch (``PersistentControllerSession``: no
   QMP, no medium, no pause) and proved to be the bound directory (realm and
@@ -102,6 +103,9 @@ from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
 from .factory_runner import (  # noqa: E402
     GATEWAY_MAC, capture_switch_evidence_cursor, gateway_command,
     wait_for_switch_port)
+from .ovmf_vars import (  # noqa: E402
+    EFI_GLOBAL_VARIABLE, FirmwareVariablesError, firmware_variables,
+    load_option)
 from .persistent_controller_session import (  # noqa: E402
     PersistentControllerSession, _probe_directory, session_command)
 from .secret_scan import count_secret_occurrences, secret_needles  # noqa: E402
@@ -182,107 +186,12 @@ def _say(message: str) -> None:
 
 
 # -- the firmware variable store, read-only -----------------------------------
-#: EDK2's variable store (``MdeModulePkg/Include/Guid/VariableFormat.h``) in
-#: the NV firmware volume OVMF keeps in ``OVMF_VARS.fd``.
-FV_SIGNATURE = b"_FVH"
-FV_HEADER_LENGTH_OFFSET = 48
-AUTHENTICATED_STORE = uuid.UUID("aaf32c78-947b-439a-a180-2e144ec37792")
-PLAIN_STORE = uuid.UUID("ddcf3616-3275-4164-98b6-fe85707ffe7d")
-STORE_HEADER_SIZE = 28
-STORE_FORMATTED = 0x5A
-VARIABLE_START_ID = 0x55AA
-#: Header sizes: the authenticated one carries a monotonic count, a
-#: timestamp and a public-key index before the name and data sizes.
-AUTHENTICATED_HEADER = 60
-PLAIN_HEADER = 32
-#: ``VAR_ADDED``, and ``VAR_ADDED & VAR_IN_DELETED_TRANSITION`` -- a copy
-#: that stays live only while no fully added copy exists.
-VAR_ADDED = 0x3F
-VAR_ADDED_IN_TRANSITION = 0x3E
-EFI_GLOBAL_VARIABLE = uuid.UUID("8be4df61-93ca-11d2-aa0d-00e098032b8c")
+#: The store itself is parsed by ``ovmf_vars``, shared with every runner that
+#: carries a store into a boot.
 #: systemd-boot's loader interface (``LoaderEntryDefault``, ``...OneShot``).
 SYSTEMD_BOOT_VENDOR = uuid.UUID("4a67b082-0a4c-41cf-b6c7-440b29bb8c4f")
-LOAD_OPTION_ACTIVE = 0x1
 #: The id systemd-boot gives the Windows Boot Manager entry it finds.
 WINDOWS_LOADER_ENTRY = "auto-windows"
-
-
-class FirmwareVariablesError(ValueError):
-    """The file is not an EDK2 variable store this parser understands."""
-
-
-def _align4(value: int) -> int:
-    return (value + 3) & ~3
-
-
-def firmware_variables(data: bytes) -> dict[tuple[uuid.UUID, str], bytes]:
-    """Every live variable in an OVMF variable store, by (vendor, name).
-
-    Only the fully added copy of a variable counts; a copy caught in a
-    deletion transition counts only when no fully added one exists, which is
-    EDK2's own rule after an interrupted update.
-    """
-    if len(data) < 64 or data[40:44] != FV_SIGNATURE:
-        raise FirmwareVariablesError("not a firmware volume")
-    store = struct.unpack_from("<H", data, FV_HEADER_LENGTH_OFFSET)[0]
-    if store + STORE_HEADER_SIZE > len(data):
-        raise FirmwareVariablesError("the variable store header is missing")
-    vendor = uuid.UUID(bytes_le=data[store:store + 16])
-    if vendor == AUTHENTICATED_STORE:
-        header = AUTHENTICATED_HEADER
-    elif vendor == PLAIN_STORE:
-        header = PLAIN_HEADER
-    else:
-        raise FirmwareVariablesError("not an EDK2 variable store")
-    size, format_ = struct.unpack_from("<IB", data, store + 16)
-    if format_ != STORE_FORMATTED:
-        raise FirmwareVariablesError("the variable store is not formatted")
-    end = min(store + size, len(data))
-    offset = _align4(store + STORE_HEADER_SIZE)
-    added: dict[tuple[uuid.UUID, str], bytes] = {}
-    transition: dict[tuple[uuid.UUID, str], bytes] = {}
-    while offset + header <= end:
-        start_id, state = struct.unpack_from("<HB", data, offset)
-        if start_id != VARIABLE_START_ID:
-            break
-        if header == AUTHENTICATED_HEADER:
-            name_size, data_size = struct.unpack_from("<II", data, offset + 36)
-            guid_at = offset + 44
-        else:
-            name_size, data_size = struct.unpack_from("<II", data, offset + 8)
-            guid_at = offset + 16
-        name_at = offset + header
-        value_at = name_at + name_size
-        following = _align4(value_at + data_size)
-        if value_at + data_size > end:
-            raise FirmwareVariablesError("a variable runs past the store")
-        if state in (VAR_ADDED, VAR_ADDED_IN_TRANSITION):
-            try:
-                name = data[name_at:value_at].decode("utf-16-le").rstrip("\0")
-            except UnicodeDecodeError as error:
-                raise FirmwareVariablesError(
-                    "a variable name is not UTF-16") from error
-            key = (uuid.UUID(bytes_le=data[guid_at:guid_at + 16]), name)
-            target = added if state == VAR_ADDED else transition
-            target[key] = data[value_at:value_at + data_size]
-        offset = following
-    return {**transition, **added}
-
-
-def load_option(data: bytes) -> tuple[bool, str]:
-    """``(active, description)`` of one ``EFI_LOAD_OPTION``."""
-    if len(data) < 8:
-        raise FirmwareVariablesError("a boot option is truncated")
-    attributes = struct.unpack_from("<I", data, 0)[0]
-    end = 6
-    while end + 1 < len(data) and data[end:end + 2] != b"\0\0":
-        end += 2
-    try:
-        description = data[6:end].decode("utf-16-le")
-    except UnicodeDecodeError as error:
-        raise FirmwareVariablesError(
-            "a boot option description is not UTF-16") from error
-    return bool(attributes & LOAD_OPTION_ACTIVE), description
 
 
 def _utf16_string(value: bytes) -> str:

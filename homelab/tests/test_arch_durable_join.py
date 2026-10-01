@@ -29,9 +29,11 @@ from unittest import mock
 
 from homelab.tests.identity_overlay_pin import (
     overlay_document, pinned_identity_overlay)
+from homelab.tests.ovmf_store_fixture import store
 from homelab.vm import arch_durable_install_run as durable_install
 from homelab.vm import arch_durable_join as join
 from homelab.vm import arch_install_run
+from homelab.vm import ovmf_vars
 from homelab.vm import workstation_instance as wi
 from homelab.vm.arch_identity_run import (
     ArchIdentityBundle, ArchIdentityError, roster_fingerprint)
@@ -1146,6 +1148,11 @@ class BoundaryTests(_Seams):
 
 
 # -- the runner: the kept workstation, its lock and the fold ------------------------------
+#: ``W``'s variables as stage arch-install folded them before the cache was
+#: dropped at the fold: its hot-attached boot left an ``HDDP`` behind.
+KEPT_VARS = store("Linux Boot Manager", hddp=True)
+
+
 def write_workstation(root: Path, *, source: str = "/nonexistent/arch-install",
                       ledger_stages=("adopt", "arch-install")) -> Path:
     state = root / "w1"
@@ -1153,7 +1160,7 @@ def write_workstation(root: Path, *, source: str = "/nonexistent/arch-install",
     disk = state / wi.DISK_NAME
     disk.write_bytes(b"synthetic kept disk\n")
     firmware = state / wi.VARS_NAME
-    firmware.write_bytes(b"synthetic installer-authored vars\n")
+    firmware.write_bytes(KEPT_VARS)
     (state / wi.PUBLICATION_NAME).write_bytes(b"synthetic publication\n")
     for path in state.iterdir():
         path.chmod(0o600)
@@ -1345,14 +1352,17 @@ class RunTests(RunFixture, unittest.TestCase):
         self.assertEqual(fold.call_args.kwargs["firmware_vars"],
                          run_dir / "OVMF_VARS.fd")
         self.assertEqual(fold.call_args.kwargs["source"], str(run_dir))
+        # The boot copy lacks only the boot-path cache; W's own is untouched.
         self.assertEqual((run_dir / "OVMF_VARS.fd").read_bytes(),
-                         (self.state / wi.VARS_NAME).read_bytes())
+                         ovmf_vars.without_hddp(KEPT_VARS)[0])
+        self.assertEqual((self.state / wi.VARS_NAME).read_bytes(), KEPT_VARS)
         self.assertFalse((run_dir / "arch-workstation.qcow2").exists())
         self.assertFalse(wi.WorkstationInstance(self.state).locked())
         result = self.result()
         self.assertEqual(result["verdict"], "pass")
         self.assertIs(result["folded"], True)
         self.assertEqual(result["stage"], "arch-join")
+        self.assertEqual(result["firmware_hddp_dropped"], 1)
         self.assertIn("Folded stage arch-join", output)
         text = json.dumps(result)
         for value in PRIVATE_VALUES:
@@ -1545,6 +1555,8 @@ class RealFoldTests(RunFixture, unittest.TestCase):
                          _digest(self.state / wi.DISK_NAME))
         self.assertEqual(head["vars_sha256"],
                          _digest(self.state / wi.VARS_NAME))
+        self.assertEqual(ovmf_vars.hddp_states(
+            (self.state / wi.VARS_NAME).read_bytes()), [])
         self.assertEqual(marker["machine_accounts"], ["KEPT-WS1$"])
         self.assertIsNone(marker.get("pending_fold"))
         self.assertFalse(any(self.run_root.glob("run-*/arch-workstation.qcow2")))

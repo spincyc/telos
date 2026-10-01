@@ -111,6 +111,7 @@ from .directory_password_policy import (  # noqa: E402
 from .durable_workstation import DurableBinding, durable_binding  # noqa: E402
 from .factory_runner import (  # noqa: E402
     GATEWAY_MAC, gateway_command, wait_for_switch_port)
+from .ovmf_vars import FirmwareVariablesError, copy_without_hddp  # noqa: E402
 from .persistent_controller_session import (  # noqa: E402
     TRANSCRIPT_LIMIT, PersistentControllerSession, _join_material,
     _probe_directory)
@@ -1496,9 +1497,19 @@ def _create_overlay(backing: Path, overlay: Path) -> None:
     overlay.chmod(0o600)
 
 
-def _copy_vars(source: Path, target: Path) -> None:
-    shutil.copyfile(source, target)
-    target.chmod(0o600)
+def _copy_vars(source: Path, target: Path) -> int:
+    """The run's copy of ``W``'s variables, less the boot-path cache.
+
+    ``W``'s variables may carry an ``HDDP`` cache written by a boot in the
+    install stage's topology; gate 8's boot cold-plugs the disk elsewhere, so
+    its copy never does (``ovmf_vars``).  ``W``'s own file is only read.
+    """
+    try:
+        return copy_without_hddp(source, target)
+    except FirmwareVariablesError as error:
+        raise ArchDurableJoinError(
+            f"the kept workstation's firmware variables are not an EDK2 "
+            f"variable store ({error})") from error
 
 
 def _gib(value: int) -> str:
@@ -1538,7 +1549,8 @@ def print_plan(
           f"MAC {SOCKET_MAC}; no QMP, no medium, no pause); stopped by a "
           f"clean console poweroff")
     print(f"Disk: a fresh overlay backed by {workstation.disk}, booted with a "
-          f"copy of the workstation's firmware variables")
+          f"copy of the workstation's firmware variables less EDK2's HDDP "
+          f"boot-path cache")
     cross = ("matches the host name stage arch-install baked"
              if installed == args.hostname else
              "could not be cross-checked: stage arch-install's bundle record "
@@ -1663,7 +1675,8 @@ def execute(
     step = "overlay"
     try:
         _create_overlay(workstation.disk, overlay)
-        _copy_vars(workstation.vars, firmware)
+        result["firmware_hddp_dropped"] = _copy_vars(
+            workstation.vars, firmware)
         step = "machine-account"
         workstation.record_machine_account(account)
         result["machine_account_recorded"] = True

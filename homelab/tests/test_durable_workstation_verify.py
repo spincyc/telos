@@ -16,16 +16,18 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
 import unittest
-import uuid
 from pathlib import Path
 from unittest import mock
 
 from homelab.tests.identity_overlay_pin import (
     overlay_document, pinned_identity_overlay)
+from homelab.tests.ovmf_store_fixture import (
+    efi_variable, hddp_variable, load_option_bytes, variable_store)
 from homelab.tests.test_arch_durable_join import (
     DOMAIN, HOSTNAME, INSTANCE, NAMES, NETBIOS, REALM, SID, TIMELINE, TOKEN,
     FakeProcess, Guest, account_record, binding)
@@ -33,6 +35,7 @@ from homelab.tests.test_windows_durable_prepare import (
     canonical_state, fake_control_iso)
 from homelab.vm import arch_durable_join as step7
 from homelab.vm import durable_workstation_verify as verify
+from homelab.vm import ovmf_vars
 from homelab.vm import windows_durable_prepare as prepare
 from homelab.vm import workstation_instance as wi
 from homelab.vm.bootstrap_dc import SOCKET_MAC
@@ -85,51 +88,10 @@ def in_order(test: unittest.TestCase, expected: list[str]) -> None:
 
 
 # -- firmware variable stores, byte by byte ------------------------------------
-NV_FV_GUID = uuid.UUID("fff12b8d-7696-4c8b-a985-2747075b4f50")
-
-
-def efi_variable(name: str, vendor: uuid.UUID, data: bytes, *,
-                 state: int = verify.VAR_ADDED,
-                 authenticated: bool = True) -> bytes:
-    encoded = (name + "\0").encode("utf-16-le")
-    if authenticated:
-        header = struct.pack(
-            "<HBBIQ16sIII16s", verify.VARIABLE_START_ID, state, 0, 7, 0,
-            bytes(16), 0, len(encoded), len(data), vendor.bytes_le)
-    else:
-        header = struct.pack(
-            "<HBBIII16s", verify.VARIABLE_START_ID, state, 0, 7,
-            len(encoded), len(data), vendor.bytes_le)
-    body = header + encoded + data
-    return body + b"\xff" * (-len(body) % 4)
-
-
-def load_option_bytes(description: str, *, active: bool = True) -> bytes:
-    path = b"\x7f\xff\x04\x00"  # the end-of-device-path node
-    return (struct.pack("<IH", 1 if active else 0, len(path))
-            + (description + "\0").encode("utf-16-le") + path)
-
-
-def variable_store(variables, *, authenticated: bool = True,
-                   size: int = 0x4000) -> bytes:
-    fv = (bytes(16) + NV_FV_GUID.bytes_le + struct.pack("<Q", 72 + size)
-          + verify.FV_SIGNATURE + struct.pack("<IHHHBB", 0x4FEFF, 72, 0, 0, 0,
-                                              2)
-          + struct.pack("<IIII", 1, 72 + size, 0, 0))
-    assert len(fv) == 72
-    guid = (verify.AUTHENTICATED_STORE if authenticated
-            else verify.PLAIN_STORE)
-    header = guid.bytes_le + struct.pack(
-        "<IBBHI", size, verify.STORE_FORMATTED, 0xFE, 0, 0)
-    body = b"".join(variables)
-    data = fv + header + body
-    return data + b"\xff" * (72 + size - len(data))
-
-
 def boot_store(order=(1, 0), *, windows_active=True, extra=(),
                authenticated=True) -> bytes:
     """Boot0000 Windows Boot Manager, Boot0001 Linux Boot Manager."""
-    glob = verify.EFI_GLOBAL_VARIABLE
+    glob = ovmf_vars.EFI_GLOBAL_VARIABLE
     return variable_store([
         efi_variable("Boot0000", glob, load_option_bytes(
             "Windows Boot Manager", active=windows_active),
@@ -515,7 +477,7 @@ class FirmwareVariableTests(unittest.TestCase):
                          "Windows Boot Manager")
 
     def test_only_live_copies_count(self):
-        glob = verify.EFI_GLOBAL_VARIABLE
+        glob = ovmf_vars.EFI_GLOBAL_VARIABLE
         stale = efi_variable("BootOrder", glob, struct.pack("<2H", 0, 1),
                              state=0x3C)
         store = variable_store([
@@ -525,7 +487,7 @@ class FirmwareVariableTests(unittest.TestCase):
                          load_option_bytes("Linux Boot Manager")),
             stale,
             efi_variable("BootOrder", glob, struct.pack("<2H", 0, 1),
-                         state=verify.VAR_ADDED_IN_TRANSITION),
+                         state=ovmf_vars.VAR_ADDED_IN_TRANSITION),
             efi_variable("BootOrder", glob, struct.pack("<2H", 1, 0)),
         ])
         variables = verify.firmware_variables(store)
@@ -534,7 +496,7 @@ class FirmwareVariableTests(unittest.TestCase):
         # A copy in a deletion transition is live only on its own.
         alone = variable_store([efi_variable(
             "BootOrder", glob, b"\x01\x00",
-            state=verify.VAR_ADDED_IN_TRANSITION)])
+            state=ovmf_vars.VAR_ADDED_IN_TRANSITION)])
         self.assertEqual(verify.firmware_variables(alone)[
             (glob, "BootOrder")], b"\x01\x00")
         deleted = variable_store([stale])
@@ -547,7 +509,7 @@ class FirmwareVariableTests(unittest.TestCase):
             path.write_bytes(boot_store(extra=(
                 efi_variable("LoaderEntryDefault", loader,
                              "arch.conf\0".encode("utf-16-le")),
-                efi_variable("BootNext", verify.EFI_GLOBAL_VARIABLE,
+                efi_variable("BootNext", ovmf_vars.EFI_GLOBAL_VARIABLE,
                              b"\x00\x00"))))
             facts = verify.boot_order_facts(path)
         self.assertTrue(facts["linux_first"])
@@ -1008,6 +970,23 @@ class ApplyTests(RunFixture, unittest.TestCase):
             (attempt / "authorization.json").read_text())
         self.assertEqual(authorization["durable"]["stage"], verify.LABEL)
         self.assertTrue(result["checks"]["overlays_discarded"])
+
+    def test_both_boots_copy_the_variables_without_the_boot_path_cache(self):
+        shutil.rmtree(self.state)
+        kept = boot_store(extra=(hddp_variable(),))
+        self.workstation(vars_bytes=kept)
+        before = snapshot(self.state)
+        self.assertEqual(self.apply(), 0, self.output)
+        self.assertEqual(snapshot(self.state), before)
+        self.assertEqual((self.state / wi.VARS_NAME).read_bytes(), kept)
+        self.assertTrue(self.result()["checks"]["workstation_unchanged"])
+        cleaned, dropped = ovmf_vars.without_hddp(kept)
+        self.assertEqual(dropped, 1)
+        run_dir, = (self.run_root / "w1").glob("run-*")
+        attempt, = (run_dir / "windows" / "w1").glob("attempt-*")
+        for copy in (run_dir / "arch" / "OVMF_VARS.fd",
+                     attempt / "OVMF_VARS.fd"):
+            self.assertEqual(copy.read_bytes(), cleaned, copy)
 
     def test_nothing_pauses_the_directory_or_injects_a_fault(self):
         recorded: list[str] = []
