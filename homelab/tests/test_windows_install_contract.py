@@ -383,9 +383,10 @@ class WindowsInstallContractTests(unittest.TestCase):
             'if /I "%%A"=="ReturnValue" set "ike_config_result=%%B"', block)
         # WMIC's process exit status alone does not prove method success.
         # A missing provider/instance/result must also refuse source access.
-        check = 'if not "!ike_config_result!"=="0" exit /b 12\r\n'
+        check = 'if not "!ike_config_result!"=="0" (\r\n'
         self.assertIn(check, block)
         self.assertLess(block.index(check), block.index("net stop IKEEXT"))
+        self.assertIn("  exit /b 12\r\n)\r\nnet stop IKEEXT", block)
         self.assertNotIn("sc config", block)
         self.assertNotIn("sc query", block)
         self.assertNotIn("reg add", block)
@@ -408,13 +409,30 @@ class WindowsInstallContractTests(unittest.TestCase):
                     f'if /I not "!{variable}!"=="{required}" exit /b 13\r\n',
                     block)
         # Both WMIC invocations convert UTF-16 before the batch parser.
-        self.assertEqual(2, block.count("2^>nul ^| more"))
+        self.assertEqual(1, block.count("2^>nul ^| more"))
+        self.assertEqual(1, block.count("2>&1 | more >X:\\ike-config.txt"))
         self.assertEqual(2, block.count(
             '%SystemRoot%\\System32\\wbem\\wmic.exe service where '
             '"Name=\'IKEEXT\'"'))
         # No localized service names, success text, or "not started" text.
         self.assertNotIn("NET HELPMSG", block)
         self.assertNotIn("net start", block)
+
+    def test_ike_configuration_failure_keeps_bounded_method_diagnostics(self):
+        block = WINPE_IKE_SUPPRESSION
+        marker = "echo TELOS WINPE phase=ipsec-winpe-confirmed\r\n"
+        self.assertLess(block.index("Control\\MiniNT"), block.index(marker))
+        self.assertLess(block.index(marker), block.index("call ChangeStartMode"))
+        self.assertEqual(1, block.count("call ChangeStartMode"))
+        self.assertIn(
+            "call ChangeStartMode Disabled 2>&1 | more >X:\\ike-config.txt\r\n",
+            block)
+        self.assertIn('for /f "delims=" %%A in (X:\\ike-config.txt)', block)
+        self.assertIn('set "ike_diagnostic_lines=0"', block)
+        self.assertIn("if !ike_diagnostic_lines! LEQ 16 echo(%%A", block)
+        self.assertLess(block.index("echo(%%A"), block.index("net stop IKEEXT"))
+        for unrelated in ("%inputs%", "password", "mount-source", "ipconfig"):
+            self.assertNotIn(unrelated, block)
 
     def test_ike_suppression_stays_in_winpe_not_the_installed_os(self):
         identity = SyntheticIdentity(

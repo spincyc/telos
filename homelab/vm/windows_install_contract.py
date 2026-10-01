@@ -249,12 +249,21 @@ WINPE_IKE_SUPPRESSION = (
     "echo TELOS WINPE phase=ipsec-keying-off\r\n"
     "reg query HKLM\\SYSTEM\\CurrentControlSet\\Control\\MiniNT "
     ">nul 2>&1 || exit /b 12\r\n"
+    "echo TELOS WINPE phase=ipsec-winpe-confirmed\r\n"
     'set "ike_config_result="\r\n'
-    'for /f "tokens=1,2 delims=;= \t" %%A in (\''
     '%SystemRoot%\\System32\\wbem\\wmic.exe service where "Name=\'IKEEXT\'" '
-    "call ChangeStartMode Disabled 2^>nul ^| more') do "
+    "call ChangeStartMode Disabled 2>&1 | more >X:\\ike-config.txt\r\n"
+    'for /f "tokens=1,2 delims=;= \t" %%A in (X:\\ike-config.txt) do '
     'if /I "%%A"=="ReturnValue" set "ike_config_result=%%B"\r\n'
-    'if not "!ike_config_result!"=="0" exit /b 12\r\n'
+    'if not "!ike_config_result!"=="0" (\r\n'
+    "  echo TELOS WINPE ipsec=configure-failed\r\n"
+    '  set "ike_diagnostic_lines=0"\r\n'
+    '  for /f "delims=" %%A in (X:\\ike-config.txt) do (\r\n'
+    "    set /a ike_diagnostic_lines+=1 >nul\r\n"
+    "    if !ike_diagnostic_lines! LEQ 16 echo(%%A\r\n"
+    "  )\r\n"
+    "  exit /b 12\r\n"
+    ")\r\n"
     "net stop IKEEXT /y >nul 2>&1\r\n"
     'set "ike_start_mode="\r\n'
     'set "ike_state="\r\n'
