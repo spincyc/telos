@@ -713,8 +713,10 @@ class LiveRecoveryLab(RecoveryLab):
         try:
             opened = self._open_identity_session(ctx)
         except BaseException as error:
+            # The message too, on stderr only (the operator's terminal, never
+            # the evidence): the type alone hid which refusal it was.
             print(f"live identity topology unavailable: "
-                  f"{type(error).__name__}", file=sys.stderr)
+                  f"{type(error).__name__}: {error}", file=sys.stderr)
             opened = None
         if opened is None:
             self._identity_failed = True
@@ -989,8 +991,11 @@ def parser() -> argparse.ArgumentParser:
                         help="fresh run bundle directory for evidence")
     result.add_argument("--releases", type=Path,
                         default=Path("homelab/var/pxe"))
+    # The canonical Controller image every other runner boots
+    # (bootstrap_dc.DEFAULT_STATE; test-pinned). It read homelab/var/controller,
+    # which does not exist, so the live identity hooks always deferred.
     result.add_argument("--controller-state", type=Path,
-                        default=Path("homelab/var/controller"))
+                        default=Path("build/homelab/vm/bootstrap-dc"))
     result.add_argument("--seed-iso", type=Path,
                         default=Path("homelab/var/seed/telos-controller-seed.iso"))
     result.add_argument("--duration", type=float, default=1800)

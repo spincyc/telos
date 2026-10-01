@@ -1334,5 +1334,16 @@ class IdentityBundleArgumentTests(unittest.TestCase):
         self.assertEqual(seen, [self.root / "bundle"])
 
 
+class ControllerStateDefaultTests(unittest.TestCase):
+    def test_the_default_is_the_canonical_controller_image(self):
+        # It once named a directory that never existed, so every live
+        # identity hook deferred with "controller state must be a real
+        # directory" (2026-10-01).
+        from homelab.vm import bootstrap_dc
+        from homelab.vm import lifecycle_recovery
+        args = lifecycle_recovery.parser().parse_args(["--run", "x"])
+        self.assertEqual(args.controller_state, bootstrap_dc.DEFAULT_STATE)
+
+
 if __name__ == "__main__":
     unittest.main()
