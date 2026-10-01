@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20261001.002`
+Document version: `20261001.003`
 
 Status: active implementation
 
 Last evidence/workstream review: 2026-10-01
 
-Repository baseline reviewed: `8eb5b6d`
+Repository baseline reviewed: `d5be72e`
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -158,7 +158,9 @@ Other present local inputs:
 | iPXE `wimboot` | `homelab/var/media/wimboot`; SHA-256 `5f067ccdc4d084d5bf77b6c853bd0f8402dfc2b4cd1b103d358993ae97fae8e3`. |
 | Controller seed | `homelab/var/seed/telos-controller-seed.iso`, rebuilt 2026-08-14; SHA-256 `66afce1801e1577d1662465e748a4d0eec1019d75c6ead4c0d2be048218a452a`, the seed the 2026-09-24 canonical install used (its install receipt). Superseded 2026-09-30: this row named the July seed, commit `00a209f`, SHA-256 `a73a1d51…b8be212`, 267 package archives and 545 receipted payloads. |
 
-All paths under `homelab/var/` are disposable, ignored cache or evidence.
+All paths under `homelab/var/` are ignored local state. Preserve directory
+backup sets under `homelab/var/backups/` and referenced acceptance evidence;
+they are not disposable caches.
 Fresh-clone reconstruction rules are in
 [media/FRESH-CLONE.md](media/FRESH-CLONE.md). The original repository-root
 Windows ISO is not a durable cache and must not appear in a commit.
@@ -743,10 +745,11 @@ Controller cold relaunch. The keeper instance is aiq TASK-21.
 - The disposable controller is accepted for Samba AD, DNS, signed time,
   TFTP, and HTTP service behavior. Superseded 2026-08-14 in part: it HAS since
   served real workstation PXE boots (the passing gate-5 and gate-7 installs).
-  Release rollback, backup, and restoration remain unexercised end to end
-  (`homelab-pxe-release-set-rollback` exists and the loopback rollback scenario
-  in gate 11 passes; the persistent-instance backup and restore targets exist
-  since `7b42180`, ADR 0081, and have NOT RUN).
+  The loopback release-pointer rollback passes in gate 11; serving and booting
+  the rolled-back release remains separate proof. Native directory backup,
+  same-instance restore under a new DC name, reconvergence and probe passed
+  2026-10-01. Existing-client verification after that restore failed on SSSD
+  readiness and remains under diagnosis (next actions below).
 - Existing PXE staging proves payload construction, not unattended Windows
   installation. Superseded 2026-08-14: the answer file, WinPE startup workflow,
   disk-serial gate, installation-image delivery, secret injection, and
@@ -863,19 +866,23 @@ The genuinely next implementation actions, in order:
    prove the IKE and firmware fixes. Use `FACTORY_DURATION=7200` and retain a
    comparison receipt. Only one lab mutation runs at a time; inspect process
    state and retained results before restarting an interrupted operation.
-3. **Disaster recovery (aiq TASK-41, TASK-42).** Native backup, a separate-name
-   restore drill, reconvergence and probe passed 2026-10-01 (the run IDs are in
-   [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md)). Same-instance restore
-   and kept-client verification remain. `rehearsal-auto-ws2` now has its
-   SRV-first Arch installation and join folded; its Windows join has not
-   passed. Recovery inspection found a Windows repair screen before sign-in,
-   unchanged kept-disk/firmware hashes, and a separate diagnostic boot of the
-   same disk reaching the lock screen. Retry the ordinary join with bounded
-   diagnostics, then keep-verify, back up `rehearsal-auto`, destroy and restore
-   that throwaway instance under a new DC name, reconverge, probe and
-   keep-verify again. Preserve the backup and require every intermediate
-   proof before continuing. `rehearsal-auto-ws1` predates SRV-first and cannot
-   prove discovery after a DC rename.
+3. **Disaster recovery (aiq TASK-41, TASK-42).** `rehearsal-auto-ws2` has all
+   four stages folded; Windows join `attempt-20261001T223623Z-5e1cc129efaf`
+   passed and retired its publication. Pre-DR keep-verify
+   `run-20261001T224742Z-294135-5bf47dc6` passed all 40 checks. Native backup
+   `20261001T225428Z-323971-342a3f27` verified before destroying the throwaway
+   directory; same-instance restore `20261001T225520Z-327126-e82e02db` passed
+   under new DC `dr-2610012255`, followed by reconvergence and probe
+   `20261001T225659Z-328973-facea8fe`. **Post-DR keep-verify failed**:
+   `run-20261001T225740Z-329731-9a00cfd1` could not bring SSSD online, although
+   the machine key authenticated to Kerberos and LDAP answered. SIGTERM
+   during the subsequent Controller relaunch prevented Windows verification;
+   fallback termination is recorded. No guests remain; the kept workstation
+   is unchanged and its test overlays were removed. Preserve the backup and
+   restored instance while diagnosing SSSD discovery; then pass both systems
+   without a rejoin. Intermittent first-boot firmware stalls persist despite
+   cleared HDDP state and are not claimed fixed. `rehearsal-auto-ws1` predates
+   SRV-first and cannot prove discovery after a DC rename.
 4. **The keeper (aiq TASK-21), with the owner** — after the DR proof passes.
    Its owner decisions are taken (the Keeper row under Agreed decisions). It
    repeats the durable flow, which passed live end to end 2026-09-30 under

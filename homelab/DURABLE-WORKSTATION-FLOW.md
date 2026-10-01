@@ -6,6 +6,12 @@ END** 2026-09-30, unattended under agent custody on the throwaway instance
 TASK-21. Under owner custody steps 7-9 have not passed (`rehearsal-ws1` stays
 at stage `arch-install`).
 
+Current DR checkpoint, 2026-10-01: `rehearsal-auto-ws2` passed both joins and
+pre-restore keep-verify; `rehearsal-auto` was backed up, destroyed and restored
+under a new DC name, then reconverged and probed successfully. **Post-restore
+keep-verify FAILED**, so restored-client recovery is not accepted and the keeper
+is not created. See the live record below; do not rejoin the workstation.
+
 Every workstation runner today wraps the Controller in `DisposableBootDisk`,
 and every run provisions a brand-new domain, so a minted workstation dies with
 its run. This flow mints a workstation you keep: Windows and Arch on one disk,
@@ -87,9 +93,11 @@ The disposable gates 5-8 must not change: `windows_install_run.py`,
 modules rather than edited, and the synthetic installer output is pinned by a
 golden digest.
 
-Step 9 passed against `rehearsal-auto`. Next, repeat steps 1-9 against the
-keeper (aiq TASK-21, owner custody); a throwaway instance and its workstations
-leave together by their destroy targets (the domain dies with the instance).
+Step 9 passed against `rehearsal-auto`. After the restored-client DR proof
+passes, repeat steps 1-9 against the keeper (aiq TASK-21, owner custody, with
+passwords typed at the owner's terminal). The keeper has not been created.
+A throwaway instance and its workstations leave together by their destroy
+targets (the domain dies with the instance).
 
 ## Risks
 
@@ -138,9 +146,10 @@ delegated join rights revisited before physical laptops. Backups of kept
 workstation disks still do not exist.
 Owner decision 2026-09-30, backups (ADR 0081): the keeper is minted only
 after backup and restore of a persistent directory are built and proven.
-Both are built; backup, a restore drill under a new DC name, reconverge and
-probe PASSED live on 2026-10-01 (see FACTORY-MAKE-TARGETS.md for the runs); the
-workstation keep-verify against a restored DC is still unrun. `homelab-factory-persistent-backup` takes a
+Both are built; backup, separate-name and same-instance restore under a new DC
+name, reconverge and probe PASSED live on 2026-10-01 (see
+FACTORY-MAKE-TARGETS.md for the runs). The first workstation keep-verify against
+the restored DC FAILED; its cause remains under diagnosis. `homelab-factory-persistent-backup` takes a
 `samba-tool domain backup offline` over an audited raw disk, and
 `homelab-factory-persistent-restore` restores it with `samba-tool domain
 backup restore` into a freshly created instance, never from a disk image (see
@@ -168,6 +177,11 @@ exists) -> probe -> keep-verify. The exact commands are in
 an instance's directory". PASS means the restored directory, under its new DC
 name, serves the kept workstation's Arch and Windows logins without a rejoin.
 
+The sequence has now reached that final check on `rehearsal-auto-ws2`, but the
+check failed. Retain the restored instance and verified backup while diagnosing
+the failure; do not repeat the destructive sequence or join either OS again
+merely to make verification pass.
+
 ## Live record
 
 2026-09-30, unattended under agent custody (TASK-40, `fa8ec58`/`14b925e`) on
@@ -187,6 +201,28 @@ Kerberos skew; Windows booted by the menu default, the daily administrator
 signed in, secure channel; `BootOrder` Linux-first with the menu defaulting to
 Windows). Corrected 2026-09-30, kept so it is not re-derived: this read
 "Keep-verify (step 9) was not yet run".
+
+2026-10-01, SRV-first `rehearsal-auto-ws2` under agent custody:
+
+- Windows join `attempt-20261001T223623Z-5e1cc129efaf` PASSED, folded and
+  retired the custody publication. Pre-DR keep-verify
+  `run-20261001T224742Z-294135-5bf47dc6` PASSED all 40 checks.
+- Native backup `20261001T225428Z-323971-342a3f27` was verified. The original
+  `rehearsal-auto` was destroyed and restored under the same instance name,
+  with new DC name `dr-2610012255`, in
+  `20261001T225520Z-327126-e82e02db` (PASS). Reconvergence PASSED, followed by
+  probe `20261001T225659Z-328973-facea8fe` (PASS).
+- Post-DR keep-verify `run-20261001T225740Z-329731-9a00cfd1` FAILED: Arch
+  SSSD remained offline despite a working machine TGT and LDAP. An unexplained
+  SIGTERM during the Controller relaunch then prevented Windows verification.
+  Neither observation establishes a root cause. At this checkpoint no VMs
+  remain, the kept workstation files are unchanged, and the restored instance
+  and backup are retained. No rejoin has been performed.
+
+Full evidence paths are in [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md),
+"Backing up and restoring an instance's directory". The earlier ordinary
+keep-verify passes stand; they do not turn this failed recovery check into a
+pass. Gate 12's fresh repeat after the fixes has not run yet.
 
 Owner custody on `rehearsal`: probe PASS (above), password policy recorded,
 adopt and durable Arch install PASS on `rehearsal-ws1`. The owner-run

@@ -1,6 +1,7 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-10-01 (recovery against `8eb5b6d`; previous passes
+**Last updated:** 2026-10-01 (post-restore verification checkpoint against
+`d5be72e`; previous passes
 2026-09-30, 2026-09-25, 2026-09-24 and 2026-08-17).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
@@ -19,7 +20,7 @@ accounts live in a persistent directory (aiq TASK-21), then the physical path
 | Persistent directory, throwaway instance `rehearsal` | **Converged** under the permanent realm and holding the **four durable accounts** (temporary passwords, change at first logon) — 2026-09-25, owner-run; probe PASS and password policy recorded 2026-09-30. Its workstation `rehearsal-ws1` stays at stage `arch-install`: the owner-run arch-join stopped on a mistyped temporary password (reset: `homelab-factory-persistent-account-password`) |
 | Durable workstation flow (TASK-28) | **DONE; PASS live end to end 2026-09-30**, unattended under agent custody (TASK-40, `fa8ec58`/`14b925e`) on throwaway instance `rehearsal-auto` and kept workstation `rehearsal-auto-ws1`: create, converge, accounts, probe, adopt, durable Arch install and join, durable Windows join, keep-verify across a Controller cold relaunch. Run ids: `homelab/DURABLE-WORKSTATION-FLOW.md`, "Live record" — §7 item 6 |
 | Keeper directory instance (TASK-21) | Not created; minted **after the DR proof** below, owner-run, owner custody, the owner's real passwords. Owner decisions taken 2026-09-30: a short password policy like `rehearsal`'s (minimum length 4, complexity off, minimum age 0); the temporary Domain Admin `tj-` join principal (revisit delegation before physical laptops); backup and restore proven before minting, sets kept in the gitignored `homelab/var/backups/` (`BACKUP_ROOT` overridable); SRV-first DR naming (TASK-42) — §7 item 9 |
-| Backup/restore and DR naming (TASK-41, TASK-42) | Native backup, separate-name restore, reconvergence and probe **PASS live 2026-10-01**; the drill instance was destroyed. Same-instance restore and kept-client verification remain. `rehearsal-auto-ws2` has SRV-first Arch installed and joined; its Windows join currently fails before sign-in. A healthy diagnostic boot of the same unchanged kept disk exists, so the recovery-screen cause needs bounded diagnosis. Commands and earlier proof: `FACTORY-MAKE-TARGETS.md`, backing up and restoring a directory. |
+| Backup/restore and DR naming (TASK-41, TASK-42) | **Restored-client proof FAILED, 2026-10-01.** SRV-first `rehearsal-auto-ws2` passed Windows join (folded, publication retired) and pre-DR keep-verify 40/40. Native backup, destruction and restoration of `rehearsal-auto` under the same instance name as DC `dr-2610012255`, reconvergence and probe all passed. Post-DR keep-verify found Arch SSSD offline despite machine TGT and LDAP working; an unexplained SIGTERM during Controller relaunch prevented Windows verification. No VMs remain, kept workstation files are unchanged, and restored instance/backup are retained. Cause under diagnosis; no rejoin. Exact evidence: `FACTORY-MAKE-TARGETS.md`, backing up and restoring a directory; next action §7 item 8. |
 | Committed 2026-09-30 | ADR 0079 (`0b9f102`, replacement-Controller PXE mint dropped); media seal tolerates tool-version drift and the cache is resealed to Arch 2026.08.01 (`110dfb5`; release sets `20260727.00N` stay bound to the old seal); hermetic seed tests (`9c3ca80`, TASK-30); PXE services enabled across reboot (`dfbcce7`, unit-tested only); ADR 0080 (`19c2c64`, gate 11 closes at `partial`, gate 12 waives `host_network_changes`); gate-14 readiness plan (`b719e7a`); drift-tool wildcard (`4d9f0ac`); the durable-flow design (`5f9a790`, `881c45a`); the gate-12 driver hands arch-install the Windows disk and scans retained evidence (`b84bc86`); TASK-28 steps 1-9 (`715147f`..`5f5b322`, `a54e7c9`), recorded password policy (`d3f8567`), one-account password reset (`bcf8d16`), agent credential custody (`fa8ec58`, `14b925e`) |
 | Committed 2026-09-30/10-01 (`4d35cbe..668b524`) | Durable flow's live record (`2b403ab`); backup and restore (`10dd1af`..`d6d1d91`, ADR 0081); SRV-first DC naming (`0a9cd99`, `a2775db`, `3d214e5`); dual-boot login wait derived from the Arch boot gates (`f8f0443`); gate 11's controller-state default (`3fb969e`) and SSSD priming before the outage (`668b524`) |
 | Next owner actions | (a) the keeper itself (TASK-21), after the DR proof; (b) re-converge `rehearsal` with `RECONVERGE=1` so the enabled PXE units can be checked across a reboot; (c) the read-only UniFi review items (TASK-37) — access or screenshots for the eleven stage-1 items in `homelab/EXTERNAL-INTEGRATION-READINESS.md` |
@@ -876,18 +877,27 @@ no headroom for a single spurious refusal.
    resuming: a fresh run must prove the checker, IKE and firmware fixes.
    Use `FACTORY_DURATION=7200`, one media seal, a retained `REPEAT_RECEIPT`
    and a fresh `REPEAT_WORK_ROOT`; expect about four hours and 52 GiB.
-   Check for an existing live runner before launching. Every iteration needs
+   The fresh repeat has not run yet. Check for an existing live runner before
+   launching. Every iteration needs
    gate 4 PASS; only the ADR 0080 waiver may remain.
-8. **The DR proof (aiq TASK-41, TASK-42), agent-runnable.** Backup, a
-   separate-name restore drill, reconvergence and probe passed 2026-10-01.
-   Same-instance restore and kept-client verification remain. The SRV-first
-   `rehearsal-auto-ws2` is installed and Arch-joined; diagnose its Windows
-   boot readiness before completing windows-join and keep-verify. Then
-   backup → destroy → restore `rehearsal-auto` under a new DC name →
-   `RECONVERGE=1` → probe → keep-verify. Read the exact commands and guards
-   in `FACTORY-MAKE-TARGETS.md`. The older `rehearsal-auto-ws1` cannot prove
-   SRV-first recovery. Owner-custody `rehearsal` separately needs owner-run
-   reconvergence before testing its newly enabled PXE units across a reboot.
+8. **The DR proof (aiq TASK-41, TASK-42), agent-runnable: diagnose the failed
+   post-restore verify.** `rehearsal-auto-ws2` Windows join
+   `attempt-20261001T223623Z-5e1cc129efaf` passed, folded and retired its
+   publication; pre-DR keep-verify `run-20261001T224742Z-294135-5bf47dc6`
+   passed 40/40. Backup `20261001T225428Z-323971-342a3f27` was verified;
+   same-instance destroy/restore `20261001T225520Z-327126-e82e02db` passed
+   as DC `dr-2610012255`; reconvergence and probe
+   `20261001T225659Z-328973-facea8fe` passed. Post-DR keep-verify
+   `run-20261001T225740Z-329731-9a00cfd1` failed with Arch SSSD offline
+   despite machine TGT and LDAP working. An unexplained SIGTERM during the
+   Controller relaunch prevented Windows verification. Diagnose those failures
+   without a rejoin, then repeat keep-verify; do not restart the already-proven
+   backup/destroy/restore sequence. No VMs remain at this checkpoint; the kept
+   files are unchanged, restored `rehearsal-auto` and its backup are retained.
+   Full evidence paths and guards are in `FACTORY-MAKE-TARGETS.md`. The older
+   `rehearsal-auto-ws1` cannot prove SRV-first recovery. Owner-custody
+   `rehearsal` separately needs owner-run reconvergence before testing its
+   newly enabled PXE units across a reboot.
 9. **Then the keeper (aiq TASK-21), with the owner:** owner custody with the
    owner's real passwords, once the DR proof passes. The owner's decisions
    were taken 2026-09-30 (Start-here table): the short policy, the temporary

@@ -1,6 +1,6 @@
 # Workstation factory Make contract
 
-Document version: `20261001.001`
+Document version: `20261001.002`
 
 Status: partly implemented. Targets marked **implemented** exist in the Makefile
 today and were verified against `grep -n '^homelab-' Makefile` on 2026-08-17
@@ -475,8 +475,28 @@ Administrator password). A restore drill into a separate instance name proves
 the backup alone and destroys nothing: restore with `PERSISTENT_DC=<drill>`,
 then destroy the drill.
 
-Verdict: **Live 2026-10-01 on `rehearsal-auto` (agent custody):** backup PASS (`persistent-backup/rehearsal-auto/20261001T052659Z-1662152-992606e0`; 1.7 MB tarball, dbcheck clean, SHA-256 agreed in guest and on host); the first restore drill into `rehearsal-auto-drill` restored the domain but failed to start samba, which the seed masks (fixed `2b555fa`); the second PASSED as DC `dr-2610010529` (`persistent-restore/rehearsal-auto-drill/20261001T052900Z-1665425-61d8abf8`: realm, domain SID and principal digest equal the backup's); `RECONVERGE=1` then PASSED, and the probe PASSED on the fabric under the new DC name (`persistent-probe/rehearsal-auto-drill/20261001T053036Z-1667189-63cd4172`). The drill instance was destroyed. Still unrun: restoring into the SAME instance name after destroying it and keep-verifying an SRV-first kept workstation against the restored DC. Unit tests: `homelab/tests/test_persistent_backup.py`,
+Earlier live evidence, 2026-10-01 on `rehearsal-auto` (agent custody): backup PASS (`persistent-backup/rehearsal-auto/20261001T052659Z-1662152-992606e0`; 1.7 MB tarball, dbcheck clean, SHA-256 agreed in guest and on host); the first restore drill into `rehearsal-auto-drill` restored the domain but failed to start samba, which the seed masks (fixed `2b555fa`); the second PASSED as DC `dr-2610010529` (`persistent-restore/rehearsal-auto-drill/20261001T052900Z-1665425-61d8abf8`: realm, domain SID and principal digest equal the backup's); `RECONVERGE=1` then PASSED, and the probe PASSED on the fabric under the new DC name (`persistent-probe/rehearsal-auto-drill/20261001T053036Z-1667189-63cd4172`). The drill instance was destroyed. Unit tests: `homelab/tests/test_persistent_backup.py`,
 `homelab/tests/test_samba_backup_disk.py`.
+
+**Current DR verdict: FAILED restored-client keep-verify, 2026-10-01.** The
+same-instance destroy/restore is now proven; the client recovery requirement is
+not. These later evidence paths are relative to `homelab/var/factory/`:
+
+| Step | Evidence | Outcome |
+|---|---|---|
+| `rehearsal-auto-ws2` Windows join | `durable-windows-joins/rehearsal-auto-ws2/attempt-20261001T223623Z-5e1cc129efaf/evidence/result.json` | PASS; folded, custody publication retired |
+| Pre-DR keep-verify | `durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T224742Z-294135-5bf47dc6/evidence/result.json` | PASS, 40/40 |
+| Native backup | `persistent-backup/rehearsal-auto/20261001T225428Z-323971-342a3f27/result.json` | Verified backup retained |
+| Destroy original, restore same instance | `persistent-restore/rehearsal-auto/20261001T225520Z-327126-e82e02db/result.json` | PASS; restored `rehearsal-auto` as DC `dr-2610012255` |
+| Reconvergence, then probe | `persistent-probe/rehearsal-auto/20261001T225659Z-328973-facea8fe/result.json` | Both PASS |
+| Post-DR keep-verify | `durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T225740Z-329731-9a00cfd1/evidence/result.json` | FAIL; Arch SSSD offline despite machine TGT and LDAP working; unexplained SIGTERM during Controller relaunch prevented Windows verification |
+
+At this checkpoint no VMs remain, the kept workstation files are unchanged,
+and the restored instance and verified backup are retained. The precise failure
+cause is under diagnosis; no rejoin has been performed. Diagnose against the
+restored directory and disposable workstation overlays before repeating
+keep-verify. The keeper is still absent and requires owner-terminal passwords
+after DR acceptance; the fresh gate-12 repeat has not run yet.
 
 Superseded 2026-09-30, kept so it is not re-derived: this paragraph said no
 workstation could be installed against a persistent instance because the
@@ -682,7 +702,9 @@ new local-administrator password is generated, stored as pending in the
 workstation's store before any guest starts, and made current by the fold.
 Verdict: **PASS 2026-09-30** under agent custody on `rehearsal-auto-ws1`
 (`durable-windows-joins/rehearsal-auto-ws1/attempt-20260930T203917Z-c67065dfe5be`:
-folded, custody publication retired). Owner custody: **NOT RUN**.
+folded, custody publication retired). Also **PASS 2026-10-01** on SRV-first
+`rehearsal-auto-ws2`, attempt `20261001T223623Z-5e1cc129efaf`, folded and
+publication retired. Owner custody: **NOT RUN**.
 
 #### Keep-verify (step 9)
 
@@ -702,6 +724,12 @@ Verdict: **PASS 2026-09-30** under agent custody on `rehearsal-auto-ws1`
 40 of 40 checks, about 5 min), including the Controller's clean poweroff and
 cold relaunch with AD live and the clock within Kerberos skew, and
 `BootOrder` still Linux-first. Owner custody: **NOT RUN**.
+
+On `rehearsal-auto-ws2`, pre-DR run
+`run-20261001T224742Z-294135-5bf47dc6` also PASSED 40/40. Post-DR run
+`run-20261001T225740Z-329731-9a00cfd1` FAILED; its Arch SSSD failure and the
+subsequent Controller-relaunch SIGTERM leave restored-client acceptance open.
+See the backup section above for the exact evidence and retained state.
 
 ## Required common inputs
 
