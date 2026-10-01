@@ -25,6 +25,7 @@ from homelab.vm.windows_install_contract import (
     render_startup,
     render_unattend,
     render_winpeshl,
+    render_winpe_ike_helper,
 )
 
 
@@ -223,7 +224,7 @@ class WindowsInstallContractTests(unittest.TestCase):
                 self.assertEqual(
                     {
                         "boot.ipxe", "install.bat", "winpeshl.ini",
-                        "mount-source.vbs", "windows-layout.txt",
+                        "mount-source.vbs", "ipsec-keying-off.vbs", "windows-layout.txt",
                         "Autounattend.xml",
                         "install-password.txt",
                     },
@@ -361,78 +362,50 @@ class WindowsInstallContractTests(unittest.TestCase):
             + "echo TELOS WINPE phase=disk-check-1\r\n", script)
         block_end = script.index(WINPE_IKE_SUPPRESSION) + len(
             WINPE_IKE_SUPPRESSION)
-        for unicast in ("ipconfig", "ping -n 1 10.1.31.2", "cscript.exe",
+        for unicast in ("ipconfig", "ping -n 1 10.1.31.2",
+                        'cscript.exe //nologo "%inputs%mount-source.vbs"',
                         "I:\\setup.exe"):
             self.assertLess(block_end, script.index(unicast), unicast)
         for widening in ("DisableFirewall", "advfirewall", "PolicyAgent",
                          "findstr"):
             self.assertNotIn(widening, script)
 
-    def test_ike_suppression_requires_winpe_and_successful_scm_change(self):
+    def test_ike_suppression_requires_winpe_and_a_bounded_native_helper(self):
         block = WINPE_IKE_SUPPRESSION
         guard = (
             "reg query HKLM\\SYSTEM\\CurrentControlSet\\Control\\MiniNT "
             ">nul 2>&1 || exit /b 12\r\n")
+        command = 'cscript.exe //nologo //T:60 "%inputs%ipsec-keying-off.vbs"'
         self.assertIn(guard, block)
-        self.assertLess(block.index(guard), block.index("ChangeStartMode"))
-        self.assertIn('set "ike_config_result="\r\n', block)
+        self.assertLess(block.index(guard), block.index(command))
+        self.assertIn('if not exist "%inputs%ipsec-keying-off.vbs" exit /b 12', block)
         self.assertIn(
-            'service where "Name=\'IKEEXT\'" call ChangeStartMode Disabled',
-            block)
-        self.assertIn(
-            'if /I "%%A"=="ReturnValue" set "ike_config_result=%%B"', block)
-        # WMIC's process exit status alone does not prove method success.
-        # A missing provider/instance/result must also refuse source access.
-        check = 'if not "!ike_config_result!"=="0" (\r\n'
-        self.assertIn(check, block)
-        self.assertLess(block.index(check), block.index("net stop IKEEXT"))
-        self.assertIn("  exit /b 12\r\n)\r\nnet stop IKEEXT", block)
-        self.assertNotIn("sc config", block)
-        self.assertNotIn("sc query", block)
-        self.assertNotIn("reg add", block)
+            command + '\r\nset "ike_result=!errorlevel!"\r\n'
+            'if not "!ike_result!"=="0" exit /b !ike_result!\r\n', block)
+        for parser in ("wmic", "for /f", "more", "net stop", "sc query"):
+            self.assertNotIn(parser, block)
 
-    def test_ike_suppression_reads_back_disabled_and_stopped_after_stop(self):
-        block = WINPE_IKE_SUPPRESSION
-        stop = "net stop IKEEXT /y >nul 2>&1\r\n"
-        self.assertIn(stop, block)
-        self.assertLess(block.index(stop), block.index("get StartMode^,State"))
-        for variable, field, required in (
-                ("ike_start_mode", "StartMode", "Disabled"),
-                ("ike_state", "State", "Stopped")):
-            with self.subTest(field=field):
-                empty = f'set "{variable}="\r\n'
-                self.assertIn(empty, block)
-                self.assertLess(block.index(empty), block.index("get StartMode"))
-                self.assertIn(
-                    f'if /I "%%A"=="{field}" set "{variable}=%%B"', block)
-                self.assertIn(
-                    f'if /I not "!{variable}!"=="{required}" exit /b 13\r\n',
-                    block)
-        # Both WMIC invocations convert UTF-16 before the batch parser.
-        self.assertEqual(1, block.count("2^>nul ^| more"))
-        self.assertEqual(1, block.count("2>&1 | more >X:\\ike-config.txt"))
-        self.assertEqual(2, block.count(
-            '%SystemRoot%\\System32\\wbem\\wmic.exe service where '
-            '"Name=\'IKEEXT\'"'))
-        # No localized service names, success text, or "not started" text.
-        self.assertNotIn("NET HELPMSG", block)
-        self.assertNotIn("net start", block)
-
-    def test_ike_configuration_failure_keeps_bounded_method_diagnostics(self):
-        block = WINPE_IKE_SUPPRESSION
-        marker = "echo TELOS WINPE phase=ipsec-winpe-confirmed\r\n"
-        self.assertLess(block.index("Control\\MiniNT"), block.index(marker))
-        self.assertLess(block.index(marker), block.index("call ChangeStartMode"))
-        self.assertEqual(1, block.count("call ChangeStartMode"))
-        self.assertIn(
-            "call ChangeStartMode Disabled 2>&1 | more >X:\\ike-config.txt\r\n",
-            block)
-        self.assertIn('for /f "delims=" %%A in (X:\\ike-config.txt)', block)
-        self.assertIn('set "ike_diagnostic_lines=0"', block)
-        self.assertIn("if !ike_diagnostic_lines! LEQ 16 echo(%%A", block)
-        self.assertLess(block.index("echo(%%A"), block.index("net stop IKEEXT"))
-        for unrelated in ("%inputs%", "password", "mount-source", "ipconfig"):
-            self.assertNotIn(unrelated, block)
+    def test_ike_helper_requires_numeric_results_and_fresh_stopped_proof(self):
+        helper = render_winpe_ike_helper()
+        helper.encode("ascii")
+        self.assertNotIn("\n", helper.replace("\r\n", ""))
+        self.assertIn('Win32_Service.Name=\'IKEEXT\'', helper)
+        self.assertIn('result = service.ChangeStartMode("Disabled")', helper)
+        self.assertIn('If result <> 0 Then', helper)
+        self.assertIn('result = service.StopService()', helper)
+        self.assertIn('If result <> 0 And result <> 6 Then', helper)
+        self.assertEqual(2, helper.count('If Not IsNumeric(result)'))
+        poll = helper[helper.index("For attempt = 1 To 30"):]
+        self.assertLess(poll.index("Set service = GetObject(moniker)"),
+                        poll.index("startMode = service.StartMode"))
+        self.assertLess(poll.index('If startMode <> "Disabled"'),
+                        poll.index('If currentState = "Stopped"'))
+        self.assertIn('WScript.Sleep 1000', poll)
+        self.assertIn('Fail "stop-timeout", 13', poll)
+        self.assertEqual(1, helper.count('WScript.Quit 0'))
+        self.assertIn('"TELOS WINPE ipsec=disabled-stopped"\r\n    WScript.Quit 0', poll)
+        for unrelated in ("password", "MapNetworkDrive", "DisplayName", "wmic", "net stop"):
+            self.assertNotIn(unrelated, helper)
 
     def test_ike_suppression_stays_in_winpe_not_the_installed_os(self):
         identity = SyntheticIdentity(
@@ -477,6 +450,7 @@ class WindowsInstallContractTests(unittest.TestCase):
             self.assertIn(f"{immutable}/{artifact}", script)
         for name in (
                 "install.bat", "winpeshl.ini", "windows-layout.txt",
+                "mount-source.vbs", "ipsec-keying-off.vbs",
                 "Autounattend.xml", "install-password.txt"):
             self.assertIn(
                 f"http://10.1.31.2/private/run-abc123/{name} {name}", script)

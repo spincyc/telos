@@ -162,6 +162,32 @@ class FactoryPublicationTests(unittest.TestCase):
             check=True, capture_output=True)
 
     @mock.patch.object(pxe_release_set, "verify", return_value=[])
+    def test_generated_ike_helper_reaches_the_exact_private_publication(self, _verify):
+        from homelab.tests.test_windows_install_contract import WindowsInstallContractTests
+        from homelab.vm.windows_install_contract import (
+            PRIVATE_INPUT_NAMES, PrivateRun, SyntheticIdentity,
+            render_winpe_ike_helper)
+
+        self.assertEqual(PRIVATE_INPUT_NAMES, factory_publication.PRIVATE_WINDOWS_FILES)
+        identity = SyntheticIdentity("TELOS-WIN-01", "telosadmin", "SynthPass-123",
+                                     "pxe-install", "InstallPass-123")
+        with PrivateRun(self.root / "inputs") as run:
+            generated = run.render_windows_inputs(
+                WindowsInstallContractTests.authorization(), identity,
+                install_source_unc=r"\\10.1.31.2\windows-release")
+            source = next(path for path in generated if path.name == "ipsec-keying-off.vbs")
+            expected = render_winpe_ike_helper().encode("ascii")
+            self.assertEqual(source.read_bytes(), expected)
+            destination = self.root / "publication-with-ike"
+            receipt = self.stage(destination, target="windows", private_windows_inputs=run.path)
+            relative = f"www/private/{run.path.name}/ipsec-keying-off.vbs"
+            self.assertEqual((destination / relative).read_bytes(), expected)
+            self.assertEqual(receipt["artifacts"][relative]["sha256"], hashlib.sha256(expected).hexdigest())
+            boot = (destination / "www/private" / run.path.name / "boot.ipxe").read_text()
+            self.assertIn(f"initrd http://10.1.31.2/private/{run.path.name}/ipsec-keying-off.vbs ipsec-keying-off.vbs", boot)
+        self.assertFalse(source.exists())
+
+    @mock.patch.object(pxe_release_set, "verify", return_value=[])
     def test_private_windows_inputs_are_explicit_complete_and_checksummed(
         self, _verify,
     ):

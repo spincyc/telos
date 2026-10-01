@@ -27,7 +27,8 @@ WINDOWS_11_PRO_INSTALL_KEY = "VK7JG-NPHTM-C97JM-9MPGT-3V66T"
 SAFE_SERIAL = re.compile(r"[A-Z0-9][A-Z0-9._-]{7,31}")
 RUN_ROOT = Path("homelab/var/factory/windows-runs")
 PRIVATE_INPUT_NAMES = frozenset({
-    "boot.ipxe", "install.bat", "mount-source.vbs", "winpeshl.ini",
+    "boot.ipxe", "install.bat", "mount-source.vbs", "ipsec-keying-off.vbs",
+    "winpeshl.ini",
     "windows-layout.txt", "Autounattend.xml", "install-password.txt",
 })
 
@@ -239,43 +240,76 @@ def render_diskpart(authorization: Authorization) -> str:
 # stopping IKEEXT in WinPE's RAM-only registry, after wpeinit and before the
 # first unicast flow, removes the only UDP 500 sender and leaves the sealed
 # image, the clear traffic, and the installed OS unchanged.  Fail closed if it
-# is not stopped.  The sealed WinPE image has reg, net, WMIC and more, but
-# not sc.exe.  ChangeStartMode goes through the service manager (a registry
-# Start edit alone does not prove its live configuration).  Read the WMI
-# method result and both service properties, rather than localized net text
-# or display names.  MORE converts WMIC's UTF-16 output for FOR /F; missing
-# tools, providers, instances or fields leave the sentinels empty and fail.
+# is not stopped.  The sealed WinPE image has cscript and the Win32_Service
+# provider, but not sc.exe.  The helper uses WMI numeric results and fresh
+# objects directly: a live successful WMIC call was rejected by CMD's output
+# parser, so console rendering must not decide whether service control worked.
 WINPE_IKE_SUPPRESSION = (
     "echo TELOS WINPE phase=ipsec-keying-off\r\n"
     "reg query HKLM\\SYSTEM\\CurrentControlSet\\Control\\MiniNT "
     ">nul 2>&1 || exit /b 12\r\n"
     "echo TELOS WINPE phase=ipsec-winpe-confirmed\r\n"
-    'set "ike_config_result="\r\n'
-    '%SystemRoot%\\System32\\wbem\\wmic.exe service where "Name=\'IKEEXT\'" '
-    "call ChangeStartMode Disabled 2>&1 | more >X:\\ike-config.txt\r\n"
-    'for /f "tokens=1,2 delims=;= \t" %%A in (X:\\ike-config.txt) do '
-    'if /I "%%A"=="ReturnValue" set "ike_config_result=%%B"\r\n'
-    'if not "!ike_config_result!"=="0" (\r\n'
-    "  echo TELOS WINPE ipsec=configure-failed\r\n"
-    '  set "ike_diagnostic_lines=0"\r\n'
-    '  for /f "delims=" %%A in (X:\\ike-config.txt) do (\r\n'
-    "    set /a ike_diagnostic_lines+=1 >nul\r\n"
-    "    if !ike_diagnostic_lines! LEQ 16 echo(%%A\r\n"
-    "  )\r\n"
-    "  exit /b 12\r\n"
-    ")\r\n"
-    "net stop IKEEXT /y >nul 2>&1\r\n"
-    'set "ike_start_mode="\r\n'
-    'set "ike_state="\r\n'
-    'for /f "tokens=1,2 delims== \t" %%A in (\''
-    '%SystemRoot%\\System32\\wbem\\wmic.exe service where "Name=\'IKEEXT\'" '
-    "get StartMode^,State /value 2^>nul ^| more') do (\r\n"
-    '  if /I "%%A"=="StartMode" set "ike_start_mode=%%B"\r\n'
-    '  if /I "%%A"=="State" set "ike_state=%%B"\r\n'
-    ")\r\n"
-    'if /I not "!ike_start_mode!"=="Disabled" exit /b 13\r\n'
-    'if /I not "!ike_state!"=="Stopped" exit /b 13\r\n'
+    'if not exist "%inputs%ipsec-keying-off.vbs" exit /b 12\r\n'
+    'cscript.exe //nologo //T:60 "%inputs%ipsec-keying-off.vbs"\r\n'
+    'set "ike_result=!errorlevel!"\r\n'
+    'if not "!ike_result!"=="0" exit /b !ike_result!\r\n'
 )
+
+
+def render_winpe_ike_helper() -> str:
+    """Control only IKEEXT; accept stopped state only from a fresh WMI object.
+
+    StopService may return before the service stops. Poll for at most thirty
+    seconds; cscript's outer sixty-second timeout also bounds stuck WMI calls.
+    Diagnostics are fixed categories and numeric method codes, never output
+    from a console parser or any source-mount credential.
+    """
+    return r'''Option Explicit
+On Error Resume Next
+Dim moniker, service, result, attempt, startMode, currentState
+moniker = "winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2:Win32_Service.Name='IKEEXT'"
+Set service = GetObject(moniker)
+If Err.Number <> 0 Then Fail "query-error", 12
+Err.Clear
+result = service.ChangeStartMode("Disabled")
+If Err.Number <> 0 Then Fail "configure-error", 12
+If IsNull(result) Or IsEmpty(result) Then Fail "configure-result-missing", 12
+If Not IsNumeric(result) Then Fail "configure-result-invalid", 12
+If result <> 0 Then
+  WScript.Echo "TELOS WINPE ipsec=configure-result code=" & result
+  WScript.Quit 12
+End If
+Err.Clear
+result = service.StopService()
+If Err.Number <> 0 Then Fail "stop-error", 13
+If IsNull(result) Or IsEmpty(result) Then Fail "stop-result-missing", 13
+If Not IsNumeric(result) Then Fail "stop-result-invalid", 13
+If result <> 0 And result <> 6 Then
+  WScript.Echo "TELOS WINPE ipsec=stop-result code=" & result
+  WScript.Quit 13
+End If
+For attempt = 1 To 30
+  Err.Clear
+  Set service = GetObject(moniker)
+  If Err.Number <> 0 Then Fail "verify-query-error", 13
+  startMode = service.StartMode
+  currentState = service.State
+  If Err.Number <> 0 Then Fail "verify-property-error", 13
+  If IsNull(startMode) Or IsNull(currentState) Then Fail "verify-property-missing", 13
+  If startMode <> "Disabled" Then Fail "verify-not-disabled", 13
+  If currentState = "Stopped" Then
+    WScript.Echo "TELOS WINPE ipsec=disabled-stopped"
+    WScript.Quit 0
+  End If
+  WScript.Sleep 1000
+Next
+Fail "stop-timeout", 13
+
+Sub Fail(category, code)
+  WScript.Echo "TELOS WINPE ipsec=" & category
+  WScript.Quit code
+End Sub
+'''.replace("\n", "\r\n")
 
 
 def render_startup(
@@ -500,6 +534,7 @@ def render_ipxe_overlay(version: str, private_base_url: str) -> str:
         f"kernel {release}/wimboot",
         f"initrd {private}/install.bat install.bat",
         f"initrd {private}/mount-source.vbs mount-source.vbs",
+        f"initrd {private}/ipsec-keying-off.vbs ipsec-keying-off.vbs",
         f"initrd {private}/winpeshl.ini winpeshl.ini",
         f"initrd {private}/windows-layout.txt windows-layout.txt",
         f"initrd {private}/Autounattend.xml Autounattend.xml",
@@ -618,6 +653,7 @@ class PrivateRun(AbstractContextManager["PrivateRun"]):
                 authorization,
                 install_source_unc=install_source_unc,
                 install_user=identity.install_user),
+            "ipsec-keying-off.vbs": render_winpe_ike_helper(),
             "mount-source.vbs": render_source_mount(
                 install_source_unc, identity.install_user),
             "winpeshl.ini": render_winpeshl(),

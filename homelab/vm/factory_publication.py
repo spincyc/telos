@@ -41,7 +41,8 @@ WORKSTATION_REPO_WWW = "arch/workstation-repo"
 DEFAULT_WORKSTATION_REPO = workstation_repo_lib.DEFAULT_REPO
 PACKAGE_CONTRACT = Path(__file__).resolve().parents[1] / "package-contract.json"
 PRIVATE_WINDOWS_FILES = frozenset({
-    "boot.ipxe", "install.bat", "mount-source.vbs", "winpeshl.ini",
+    "boot.ipxe", "install.bat", "mount-source.vbs", "ipsec-keying-off.vbs",
+    "winpeshl.ini",
     "windows-layout.txt", "Autounattend.xml", "install-password.txt",
 })
 
