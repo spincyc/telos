@@ -970,6 +970,8 @@ class AggregateStatusTests(unittest.TestCase):
             measurements=partial)
         self.assertEqual("observed", result["status"])
         self.assertEqual(["artifact_scan"], result["measurements_missing"])
+        # Present even when empty, so an absent field never means "unknown".
+        self.assertEqual([], result["retries"])
 
 
 class RepeatReceiptTests(unittest.TestCase):
@@ -1067,6 +1069,21 @@ class RepeatReceiptTests(unittest.TestCase):
         document = factory_repeat.repeat_receipt(
             [self.receipt(), self.receipt()], [self.comparison()])
         self.assertEqual([], document["waivers"])
+
+    def test_the_receipt_always_carries_its_retries(self):
+        clean = factory_repeat.repeat_receipt(
+            [self.receipt(), self.receipt()], [self.comparison()])
+        self.assertEqual([], clean["retries"])
+        retry = {"iteration": 2, "phase": "windows-install",
+                 "failed_bundle": "/runs/a", "category": "pxe-loop",
+                 "retry_bundle": "/runs/b"}
+        document = factory_repeat.repeat_receipt(
+            [self.receipt(), self.receipt()], [self.comparison()],
+            retries=[retry])
+        self.assertEqual([retry], document["retries"])
+        # Disclosed, never graded: the verdict is the runs' and pairs' alone.
+        self.assertEqual("PASS", document["verdict"])
+        self.assertEqual(set(clean), set(document))
 
 
 # --------------------------------------------------------------------------
@@ -1331,6 +1348,47 @@ class Spawning(factory_repeat.SubprocessLifecycle):
         raise factory_repeat.RepeatError("stopped before spawning")
 
 
+class FailingRunStep(factory_repeat.SubprocessLifecycle):
+    """The REAL driver, its prepare reporting a bundle and its run failing."""
+
+    def __init__(self, bundle):
+        super().__init__(stream=io.StringIO())
+        self.bundle = bundle
+        self.commands = []
+
+    def _run(self, command):
+        self.commands.append(command[2])
+        if command[2].endswith("-prepare"):
+            return f"noise\n{self.bundle}\n"
+        raise factory_repeat.RepeatError(
+            f"lifecycle step failed (1): {' '.join(command)}")
+
+
+class SubprocessFailureTests(unittest.TestCase):
+    def test_a_failed_run_step_names_the_prepared_bundle(self):
+        bundle = Path("/runs/run-20261001T040127Z-83e9981be5f8")
+        driver = FailingRunStep(bundle)
+        with self.assertRaises(factory_repeat.PhaseFailed) as caught:
+            driver.run_phase(factory_repeat.PHASES[0], workdir=Path("/work"),
+                             bundles={}, duration=7200)
+        self.assertEqual(bundle, caught.exception.bundle)
+        self.assertEqual("windows-install", caught.exception.phase)
+        self.assertIn("lifecycle step failed (1)", str(caught.exception))
+        self.assertEqual(["homelab-windows-install-prepare",
+                          "homelab-windows-install-run"], driver.commands)
+
+    def test_a_failed_prepare_step_stays_a_plain_repeat_error(self):
+        class FailingPrepare(FailingRunStep):
+            def _run(self, command):
+                raise factory_repeat.RepeatError("prepare refused")
+
+        with self.assertRaises(factory_repeat.RepeatError) as caught:
+            FailingPrepare(Path("/runs/x")).run_phase(
+                factory_repeat.PHASES[0], workdir=Path("/work"), bundles={},
+                duration=7200)
+        self.assertNotIsInstance(caught.exception, factory_repeat.PhaseFailed)
+
+
 class ConfinementOrderTests(TemporaryRootTests):
     def repeat(self, driver, *, apply, controller_disk=None):
         real_stderr, sys.stderr = sys.stderr, io.StringIO()
@@ -1551,6 +1609,152 @@ class IterationTests(TemporaryRootTests):
         self.assertEqual("FAIL", receipt["verdict"])
 
 
+class Flaky(FakeLifecycle):
+    """Fails chosen phase attempts the way a live run step does.
+
+    ``outcomes`` maps a phase name to one entry per attempt, counted across
+    the whole run: a category string (``""`` for a failure that records none)
+    fails that attempt in its own fresh bundle, whose ``result.json`` records
+    it exactly as ``windows_install_run`` does, then raises ``PhaseFailed``;
+    ``None`` -- or an attempt past the list -- passes as ``FakeLifecycle``.
+    """
+
+    def __init__(self, outcomes, **kwargs):
+        super().__init__(**kwargs)
+        self.outcomes = {name: list(values) for name, values in outcomes.items()}
+        self.attempts: dict[str, int] = {}
+
+    def run_phase(self, phase, *, workdir, bundles, duration):
+        attempt = self.attempts[phase.name] = self.attempts.get(phase.name, 0) + 1
+        planned = self.outcomes.get(phase.name, [])
+        outcome = planned[attempt - 1] if attempt <= len(planned) else None
+        if outcome is None:
+            return super().run_phase(
+                phase, workdir=workdir, bundles=bundles, duration=duration)
+        self.prepared.append(factory_repeat.prepare_command(phase, bundles))
+        bundle = Path(workdir) / f"{phase.name}-failed-{attempt}"
+        self.executed.append(
+            factory_repeat.run_command(phase, bundle, duration=duration))
+        result = {"schema": 1, "status": "fail", "phase": "windows-setup"}
+        if outcome:
+            result.update(failure_category=outcome, wimboot_banners=2)
+        evidence = factory_repeat.phase_evidence(phase, bundle)
+        if evidence is not None:
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / "result.json").write_text(json.dumps(result))
+        raise factory_repeat.PhaseFailed(
+            phase.name, bundle, "lifecycle step failed (1)")
+
+
+class BoundedRetryTests(TemporaryRootTests):
+    """One retry, for one phase, for one category; everything else fails."""
+
+    def run_quietly(self, driver):
+        errors = io.StringIO()
+        real_stderr, sys.stderr = sys.stderr, errors
+        try:
+            return self.iteration(driver=driver), errors.getvalue()
+        finally:
+            sys.stderr = real_stderr
+
+    def windows_runs(self, driver):
+        return [command[-2] for command in driver.executed
+                if command[2] == "homelab-windows-install-run"]
+
+    def test_the_only_retryable_failure_is_the_windows_pxe_loop(self):
+        self.assertEqual(
+            {"windows-install": frozenset({"pxe-loop"})},
+            factory_repeat.RETRYABLE_FAILURES)
+        # One definition: the category is the one the install runner records.
+        self.assertIn(factory_repeat.windows_install_run.PXE_LOOP,
+                      factory_repeat.RETRYABLE_FAILURES["windows-install"])
+        self.assertLessEqual(
+            set(factory_repeat.RETRYABLE_FAILURES),
+            {phase.name for phase in factory_repeat.PHASES})
+
+    def test_a_pxe_loop_then_success_passes_with_one_recorded_retry(self):
+        driver = Flaky({"windows-install": ["pxe-loop"]})
+        destination, errors = self.run_quietly(driver)
+        work = self.root / "work-1"
+        # A FRESH bundle: prepared again, run in a different directory.
+        prepare = factory_repeat.prepare_command(
+            factory_repeat.PHASES[0], {})
+        self.assertEqual([prepare, prepare], driver.prepared[:2])
+        self.assertEqual(
+            [f"WINDOWS_RUN={work / 'windows-install-failed-1'}",
+             f"WINDOWS_RUN={work / 'windows-install'}"],
+            self.windows_runs(driver))
+        result = json.loads((destination / "result.json").read_text())
+        self.assertEqual([{
+            "iteration": 1, "phase": "windows-install",
+            "failed_bundle": str(work / "windows-install-failed-1"),
+            "category": "pxe-loop",
+            "retry_bundle": str(work / "windows-install"),
+        }], result["retries"])
+        # The retry's bundle, never the failed one, feeds the aggregate.
+        self.assertEqual(
+            str(work / "windows-install" / "evidence"),
+            result["phases"][0]["evidence"])
+        receipt = factory_verify.verify_run(
+            destination, release_set=self.release_set())
+        self.assertEqual("PASS", receipt["verdict"])
+        self.assertIn("retry: iteration 1 windows-install hit pxe-loop", errors)
+
+    def test_a_second_pxe_loop_fails_the_iteration_without_a_third_try(self):
+        driver = Flaky({"windows-install": ["pxe-loop", "pxe-loop"]})
+        with self.assertRaisesRegex(
+                factory_repeat.RepeatError,
+                "windows-install failed again after its one pxe-loop retry "
+                "in iteration 1"):
+            self.run_quietly(driver)
+        self.assertEqual(2, driver.attempts["windows-install"])
+        self.assertEqual(2, len(self.windows_runs(driver)))
+        self.assertFalse((self.root / "aggregate-1").exists())
+
+    def test_any_other_failure_is_never_retried(self):
+        for index, outcome in enumerate(("", "timeout", "PXE-LOOP"), 1):
+            with self.subTest(outcome=outcome):
+                driver = Flaky({"windows-install": [outcome]})
+                with self.assertRaises(factory_repeat.PhaseFailed):
+                    self.iteration(index, driver=driver)
+                self.assertEqual(1, driver.attempts["windows-install"])
+
+    def test_a_failed_bundle_without_a_result_is_never_retried(self):
+        class Bare(Flaky):
+            def run_phase(self, phase, **kwargs):
+                if phase.name == "windows-install":
+                    self.attempts[phase.name] = (
+                        self.attempts.get(phase.name, 0) + 1)
+                    raise factory_repeat.PhaseFailed(
+                        phase.name, self.root_bundle, "no result written")
+                return super().run_phase(phase, **kwargs)
+
+        driver = Bare({})
+        driver.root_bundle = self.root / "never-written"
+        with self.assertRaises(factory_repeat.PhaseFailed):
+            self.iteration(driver=driver)
+        self.assertEqual(1, driver.attempts["windows-install"])
+
+    def test_no_other_phase_is_retried_even_for_a_pxe_loop(self):
+        driver = Flaky({"arch-install": ["pxe-loop"]})
+        with self.assertRaises(factory_repeat.PhaseFailed):
+            self.run_quietly(driver)
+        self.assertEqual(1, driver.attempts["arch-install"])
+
+    def test_a_driver_error_before_any_bundle_is_never_retried(self):
+        class Unprepared(FakeLifecycle):
+            calls = 0
+
+            def run_phase(self, phase, **kwargs):
+                Unprepared.calls += 1
+                raise factory_repeat.RepeatError("prepare failed")
+
+        with self.assertRaisesRegex(factory_repeat.RepeatError,
+                                    "prepare failed"):
+            self.iteration(driver=Unprepared())
+        self.assertEqual(1, Unprepared.calls)
+
+
 class RepeatEndToEndTests(TemporaryRootTests):
     def repeat(self, *, driver=None, receipt=None, iterations=2,
                producers=None, bind=None):
@@ -1764,6 +1968,40 @@ class RepeatEndToEndTests(TemporaryRootTests):
                      if difference["classification"] == "divergent"}
         self.assertIn("checks.no_host_network_change.status", divergent)
         self.assertIn("no_host_network_change", document["needs_live_gate"])
+
+    def test_a_retried_pxe_loop_is_disclosed_in_the_receipt_and_on_stderr(self):
+        # Iteration 1's install passes; iteration 2's loops once, then passes.
+        driver = Flaky({"windows-install": [None, "pxe-loop"]})
+        status, printed, errors = self.repeat(driver=driver)
+        self.assertEqual(0, status)
+        document = json.loads(printed)
+        work = self.root / "work" / "iteration-2"
+        expected = [{
+            "iteration": 2, "phase": "windows-install",
+            "failed_bundle": str(work / "windows-install-failed-2"),
+            "category": "pxe-loop",
+            "retry_bundle": str(work / "windows-install"),
+        }]
+        self.assertEqual(expected, document["retries"])
+        # Disclosed, not graded: both runs still pass and still agree.
+        self.assertEqual("PASS", document["verdict"])
+        self.assertTrue(document["equivalent"])
+        results = sorted((self.root / "evidence").glob(
+            "*-repeat/iteration-*/result.json"))
+        self.assertEqual(
+            [[], expected],
+            [json.loads(path.read_text())["retries"] for path in results])
+        self.assertIn("retried: iteration 2 windows-install after pxe-loop",
+                      errors)
+        self.assertIn("PASS: factory-repeat iterations=2 equivalent=True "
+                      "retries=1", errors)
+
+    def test_a_repeat_without_retries_says_so(self):
+        status, printed, errors = self.repeat()
+        self.assertEqual(0, status)
+        self.assertEqual([], json.loads(printed)["retries"])
+        self.assertIn("retries=0", errors)
+        self.assertNotIn("retried:", errors)
 
     def test_the_receipt_file_is_private_and_matches_standard_output(self):
         receipt = self.root / "repeat-receipt.json"

@@ -692,8 +692,11 @@ no headroom for a single spurious refusal.
   PXE→WinPE→reboot→PXE loop (NVMe never becomes bootable; a 2nd `wimboot v2.9.0`
   in `<bundle>/evidence/workstation-serial.log` is the signature). It killed one
   120-min attempt. A healthy install has exactly one `wimboot` and prints
-  `TELOS WINDOWS NATIVE READY` in ~69 min. Retry on loop; watch the serial log to
-  abort early rather than burn the full duration.
+  `TELOS WINDOWS NATIVE READY` in ~69 min. Handled since 2026-10-01 (it struck
+  gate 12's iteration 2 after ~3.5 h): `windows_install_run` fails on the 2nd
+  banner live with `result.json` `failure_category: "pxe-loop"`, and
+  `factory_repeat` retries that phase once with a fresh bundle, disclosed in the
+  receipt's `retries`; a manual run still needs a manual re-prepare.
 - **~~Pre-existing test failure~~ — FIXED 2026-08-14 (`e9ec869`).**
   `test_windows_run_dialog_calibration.test_guest_mismatch_fails_before_start`
   ("private publication must be a regular file") used to fail on HEAD; the stale

@@ -9,30 +9,35 @@ from unittest import mock
 from homelab.vm import windows_install_run
 
 
+def make_bundle(root: Path) -> Path:
+    """A private bundle whose authorization matches its tiny QEMU argv."""
+    root.mkdir(mode=0o700)
+    disk = root / "windows.qcow2"
+    for name in ("windows.qcow2", "OVMF_VARS.fd", "publication.iso"):
+        (root / name).write_bytes(name.encode())
+    command = [
+        "qemu", "-drive",
+        f"if=none,id=osdisk,file={disk.resolve()}",
+        "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001",
+    ]
+    import hashlib
+    digest = hashlib.sha256(
+        json.dumps(command, separators=(",", ":")).encode()).hexdigest()
+    (root / "authorization.json").write_text(json.dumps({
+        "authorization": {
+            "disk": {"disk": "record"},
+            "disk_serial": "TELOS-WIN-0001",
+            "qemu_argv_sha256": digest,
+            "release_version": "20260727.005",
+        },
+    }))
+    (root / "qemu-command.json").write_text(json.dumps({"argv": command}))
+    return root
+
+
 class WindowsInstallRunTests(unittest.TestCase):
     def bundle(self, root: Path) -> Path:
-        root.mkdir(mode=0o700)
-        disk = root / "windows.qcow2"
-        for name in ("windows.qcow2", "OVMF_VARS.fd", "publication.iso"):
-            (root / name).write_bytes(name.encode())
-        command = [
-            "qemu", "-drive",
-            f"if=none,id=osdisk,file={disk.resolve()}",
-            "-device", "nvme,drive=osdisk,serial=TELOS-WIN-0001",
-        ]
-        import hashlib
-        digest = hashlib.sha256(
-            json.dumps(command, separators=(",", ":")).encode()).hexdigest()
-        (root / "authorization.json").write_text(json.dumps({
-            "authorization": {
-                "disk": {"disk": "record"},
-                "disk_serial": "TELOS-WIN-0001",
-                "qemu_argv_sha256": digest,
-                "release_version": "20260727.005",
-            },
-        }))
-        (root / "qemu-command.json").write_text(json.dumps({"argv": command}))
-        return root
+        return make_bundle(root)
 
     def test_default_is_dry_run(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -284,6 +289,237 @@ class WindowsInstallRunTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "native Windows"):
             windows_install_run._validate_lifecycle(
                 serial.replace(windows_install_run.NATIVE_READY_MARKER, ""))
+
+    def test_post_run_check_shares_the_live_wimboot_signature(self):
+        # One definition: the post-run validation and the live wait refuse a
+        # second banner through the same check, as the same PxeLoop.
+        looped = "\n".join((FIRST_BOOT, SECOND_BOOT, NATIVE_READY))
+        with self.assertRaises(windows_install_run.PxeLoop) as caught:
+            windows_install_run._validate_lifecycle(looped)
+        self.assertEqual(2, caught.exception.banners)
+
+    def test_a_split_banner_is_never_counted(self):
+        # A serial read can stop mid-line; a fixed literal only delays a match.
+        tail = "wimboot v2.9.0 -- Windows Imaging Format bootloader -- x\n"
+        for cut in range(len(tail)):
+            with self.subTest(cut=cut):
+                partial = FIRST_BOOT + "\n" + tail[:cut]
+                expected = 2 if windows_install_run.WIMBOOT_BANNER in (
+                    tail[:cut]) else 1
+                self.assertEqual(
+                    expected, windows_install_run.wimboot_banners(partial))
+
+
+#: A healthy first boot, as the live serial records it (measured from the
+#: 2026-10-01 bundles): one PXE firmware boot, the private overlay, one banner.
+FIRST_BOOT = "\n".join((
+    'BdsDxe: loading Boot0003 "UEFI PXEv4 (MAC:525400311212)"',
+    'BdsDxe: starting Boot0003 "UEFI PXEv4 (MAC:525400311212)"',
+    "http://10.1.31.2/private/run-abc/boot.ipxe... ok",
+    "http://10.1.31.2/windows/20260727.005/wimboot... ok",
+    "wimboot v2.9.0 -- Windows Imaging Format bootloader -- "
+    "https://ipxe.org/wimboot",
+    'Command line: "wimboot"',
+    "Using install.bat",
+    "Using winpeshl.ini",
+))
+#: The loop: WinPE rebooted into PXE instead of the NVMe and wimboot ran again.
+SECOND_BOOT = "\n".join((
+    'BdsDxe: starting Boot0003 "UEFI PXEv4 (MAC:525400311212)"',
+    "http://10.1.31.2/windows/20260727.005/wimboot... ok",
+    "wimboot v2.9.0 -- Windows Imaging Format bootloader -- "
+    "https://ipxe.org/wimboot",
+))
+NATIVE_READY = windows_install_run.NATIVE_READY_MARKER
+SETUP_PROGRESS = "Windows Setup is copying files"
+
+
+class FakeProcess:
+    def __init__(self, pid):
+        self.pid = pid
+        self.stdout = None
+
+    def poll(self):
+        return None
+
+
+class FakeWorkstation(FakeProcess):
+    """Emits one serial chunk per poll, as a live guest does, then exits."""
+
+    def __init__(self, pid, chunks, *, exits):
+        super().__init__(pid)
+        self.chunks = list(chunks)
+        self.exits = exits
+        self.polls = 0
+        self.serial: Path | None = None
+
+    def poll(self):
+        self.polls += 1
+        if self.chunks:
+            with self.serial.open("a", encoding="utf-8") as stream:
+                stream.write(self.chunks.pop(0) + "\n")
+            return None
+        if self.exits or self.polls > 50:  # never spin to the deadline
+            return 0
+        return None
+
+
+class FakeQmp:
+    def __init__(self):
+        self.closed = False
+        self.screens = 0
+
+    def screenshot(self, path):
+        self.screens += 1
+        Path(path).write_bytes(b"P6\n1 1\n255\n\0\0\0")
+
+    def close(self):
+        self.closed = True
+
+
+class FakeBootDisk:
+    def __init__(self, *_args, **_kwargs):
+        self.disk = Path("/overlay/controller.raw")
+        self.vars = Path("/overlay/OVMF_VARS.fd")
+        self.overlay = mock.Mock()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class LiveWaitTests(unittest.TestCase):
+    """The wait for native readiness, driven against fakes: no QEMU, no host."""
+
+    def live_run(self, chunks, *, exits=True):
+        from contextlib import ExitStack, nullcontext, redirect_stdout
+        import io
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        bundle = make_bundle(Path(temporary.name) / "bundle")
+        evidence = bundle / "evidence"
+        workstation = FakeWorkstation(704, chunks, exits=exits)
+        processes = {
+            "switch": FakeProcess(701), "gateway": FakeProcess(702),
+            "controller": FakeProcess(703), "workstation": workstation,
+        }
+        qmp = FakeQmp()
+
+        def popen(argv, **_kwargs):
+            return processes[argv[0]]
+
+        def capture(process, path):
+            self.assertIs(workstation, process)
+            path.touch(mode=0o600)
+            workstation.serial = path
+            return mock.Mock()
+
+        terminate = mock.Mock(return_value=[])
+        sleeps = mock.Mock()
+        authorization = {"authorization": {"release_version": "20260727.005"}}
+        patches = {
+            "_bundle": mock.Mock(return_value=(authorization, ["workstation"])),
+            "_qmp_socket_path": mock.Mock(
+                return_value=bundle / "windows.qmp"),
+            "paths": mock.Mock(return_value={
+                "disk": Path("/state/disk"), "vars": Path("/state/vars")}),
+            "socket": mock.Mock(),
+            "SignalGuard": nullcontext,
+            "DisposableBootDisk": FakeBootDisk,
+            "qemu_commands": mock.Mock(
+                return_value={"controller": ["controller"]}),
+            "switch_command": mock.Mock(return_value=["switch"]),
+            "gateway_command": mock.Mock(return_value=["gateway"]),
+            "subprocess": mock.Mock(Popen=mock.Mock(side_effect=popen)),
+            "wait_for_switch_port": mock.Mock(),
+            "audit_live_process": mock.Mock(),
+            "activate_publication": mock.Mock(),
+            "capture_serial": capture,
+            "_connect_qmp": mock.Mock(return_value=qmp),
+            "terminate_children": terminate,
+        }
+        error = None
+        with ExitStack() as stack:
+            for name, value in patches.items():
+                stack.enter_context(
+                    mock.patch.object(windows_install_run, name, value))
+            stack.enter_context(
+                mock.patch.object(windows_install_run.time, "sleep", sleeps))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            try:
+                status = windows_install_run.run(
+                    bundle, controller_state=Path("/state"), duration=7200,
+                    apply=True)
+            except Exception as raised:  # noqa: BLE001 - asserted by callers
+                status, error = None, raised
+        result = json.loads((evidence / "result.json").read_text())
+        return {"status": status, "error": error, "result": result,
+                "workstation": workstation, "qmp": qmp,
+                "terminate": terminate, "processes": processes,
+                "sleeps": sleeps, "evidence": evidence}
+
+    def test_a_second_wimboot_banner_fails_fast_with_the_pxe_loop_category(self):
+        # The 2026-10-01 loop: a second banner, then (had it been allowed to
+        # keep waiting) nothing but silence until the duration ran out.
+        run = self.live_run(
+            [FIRST_BOOT, SETUP_PROGRESS, SECOND_BOOT]
+            + [SETUP_PROGRESS] * 40, exits=False)
+        self.assertIsInstance(run["error"], windows_install_run.PxeLoop)
+        # Stopped on the poll that saw the second banner, not at the deadline.
+        self.assertEqual(3, run["workstation"].polls)
+        self.assertEqual(40, len(run["workstation"].chunks))
+        self.assertEqual(2, run["sleeps"].call_count)
+        result = run["result"]
+        self.assertEqual("fail", result["status"])
+        self.assertEqual("windows-setup", result["phase"])
+        self.assertEqual(windows_install_run.PXE_LOOP, "pxe-loop")
+        self.assertEqual("pxe-loop", result["failure_category"])
+        self.assertEqual(2, result["wimboot_banners"])
+        self.assertEqual("PxeLoop", result["error_type"])
+        self.assertIn("2 wimboot banners", result["error"])
+        # Torn down exactly as any failure is: every child terminated, QMP
+        # closed, logs retained redacted, the publication handed off.
+        run["terminate"].assert_called_once()
+        self.assertEqual(
+            sorted(run["processes"].values(), key=lambda p: p.pid),
+            sorted(run["terminate"].call_args.args[0], key=lambda p: p.pid))
+        self.assertTrue(run["qmp"].closed)
+        self.assertIn("workstation-serial.log", result["retained_logs"])
+        self.assertTrue(result["private_publication_retained_for_identity"])
+        serial = (run["evidence"] / "workstation-serial.log").read_text()
+        self.assertEqual(2, windows_install_run.wimboot_banners(serial))
+
+    def test_the_category_distinguishes_the_loop_from_every_other_failure(self):
+        loop = self.live_run([FIRST_BOOT, SECOND_BOOT], exits=False)["result"]
+        exited = self.live_run([FIRST_BOOT], exits=True)
+        self.assertIn("exited before native", str(exited["error"]))
+        other = exited["result"]
+        self.assertNotIn("failure_category", other)
+        self.assertNotIn("wimboot_banners", other)
+        # Same teardown record otherwise: only the category fields differ.
+        self.assertEqual(
+            set(other) | {"failure_category", "wimboot_banners"}, set(loop))
+        exited["terminate"].assert_called_once()
+
+    def test_one_banner_then_native_ready_is_unchanged_success(self):
+        run = self.live_run(
+            [FIRST_BOOT, SETUP_PROGRESS, NATIVE_READY], exits=True)
+        self.assertIsNone(run["error"])
+        self.assertEqual(0, run["status"])
+        result = run["result"]
+        self.assertEqual({
+            "schema", "status", "phase", "pxe_firmware_boots",
+            "release_version", "measurements", "retained_logs",
+            "private_publication_retained_for_identity",
+        }, set(result))
+        self.assertEqual("observed", result["status"])
+        self.assertEqual("native-windows-clean-shutdown", result["phase"])
+        self.assertEqual(1, result["pxe_firmware_boots"])
+        self.assertEqual(4, run["workstation"].polls)
+        run["terminate"].assert_called_once()
+        self.assertTrue(run["qmp"].closed)
 
 
 if __name__ == "__main__":

@@ -162,6 +162,12 @@ lifecycle.** A single Windows install alone has run 68 minutes. Whatever value
 is supplied applies to *every* phase, so budget per phase and expect the
 apply path to take hours, not minutes.
 
+One bounded retry: a `windows-install` that fails with its live-detected PXE
+loop (`failure_category: "pxe-loop"`) is re-run once from a fresh bundle — any
+other failure, phase, or a second loop fails the iteration — and each retry is
+listed under `retries` in the iteration's `result.json`, the repeat receipt,
+and stderr.
+
 The dry run starts nothing and is safe at any time. Verified 2026-08-17 it
 prints the loopback boundary, the iteration count, both roots, the release set,
 the six lifecycle phases in order — `windows-install`, `windows-identity`,

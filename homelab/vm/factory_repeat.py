@@ -103,11 +103,14 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 try:
-    from . import factory_runner, factory_verify, simulation_evidence
+    from . import (
+        factory_runner, factory_verify, simulation_evidence,
+        windows_install_run)
 except ImportError:  # Direct execution from homelab/vm.
     import factory_runner  # type: ignore[no-redef]
     import factory_verify  # type: ignore[no-redef]
     import simulation_evidence  # type: ignore[no-redef]
+    import windows_install_run  # type: ignore[no-redef]
 
 
 SCHEMA = 1
@@ -220,6 +223,32 @@ FAIL_STATUS = factory_verify.RUN_FAIL_STATUS              # "fail"
 
 class RepeatError(RuntimeError):
     """The lifecycle, its evidence, or its preconditions are not repeatable."""
+
+
+class PhaseFailed(RepeatError):
+    """A prepared phase bundle's run step failed; ``bundle`` names it.
+
+    Raised by a driver's :meth:`LifecycleDriver.run_phase` so the failed
+    bundle's own ``result.json`` can be read for a retryable
+    ``failure_category`` (:data:`RETRYABLE_FAILURES`).
+    """
+
+    def __init__(self, phase: str, bundle: Path, detail: str) -> None:
+        super().__init__(f"phase {phase} failed in {bundle}: {detail}")
+        self.phase = phase
+        self.bundle = Path(bundle)
+
+
+#: The only failures a phase is retried for, by phase: the Windows install's
+#: PXE->WinPE->reboot->PXE loop, a nondeterministic flake a fresh bundle clears
+#: (4 of 5 live installs on 2026-10-01 were healthy), which
+#: ``windows_install_run`` detects live and records as its
+#: ``failure_category``.  At most ONE retry per phase per iteration; any other
+#: phase or category, or a second loop, fails the iteration as before.  Every
+#: retry is recorded in the iteration's ``result.json`` and the repeat receipt.
+RETRYABLE_FAILURES: dict[str, frozenset[str]] = {
+    "windows-install": frozenset({windows_install_run.PXE_LOOP}),
+}
 
 
 # --------------------------------------------------------------------------
@@ -886,8 +915,13 @@ def aggregate_status(observations: Sequence[dict], measurements: dict) -> str:
 
 
 def aggregate_result(*, iteration: int, observations: Sequence[dict],
-                     measurements: dict) -> dict:
-    """The aggregate ``result.json`` body for one iteration."""
+                     measurements: dict,
+                     retries: Sequence[dict] = ()) -> dict:
+    """The aggregate ``result.json`` body for one iteration.
+
+    ``retries`` is always present, empty when no phase was retried, so the
+    nondeterminism a retry absorbed is disclosed rather than hidden.
+    """
     status = aggregate_status(observations, measurements)
     return {
         "schema": SCHEMA,
@@ -897,6 +931,7 @@ def aggregate_result(*, iteration: int, observations: Sequence[dict],
         "phases": [dict(observation) for observation in observations],
         "measurements": measurements,
         "measurements_missing": missing_measurements(measurements),
+        "retries": [dict(retry) for retry in retries],
     }
 
 
@@ -942,8 +977,14 @@ ACCEPTED_VERDICTS = frozenset(
 
 
 def repeat_receipt(receipts: Sequence[dict],
-                   comparisons: Sequence[dict]) -> dict:
-    """The whole-gate receipt: N run receipts plus their pairwise comparisons."""
+                   comparisons: Sequence[dict], *,
+                   retries: Sequence[dict] = ()) -> dict:
+    """The whole-gate receipt: N run receipts plus their pairwise comparisons.
+
+    ``retries`` lists every bounded phase retry any iteration made
+    (:data:`RETRYABLE_FAILURES`).  It discloses nondeterminism; it never
+    changes the verdict, which is still graded on the runs that completed.
+    """
     if len(receipts) < MINIMUM_ITERATIONS:
         raise RepeatError(
             f"gate 12 needs at least {MINIMUM_ITERATIONS} iterations; "
@@ -959,6 +1000,7 @@ def repeat_receipt(receipts: Sequence[dict],
         "needs_live_gate": sorted(
             {name for receipt in receipts for name in receipt["needs_live_gate"]}),
         "waivers": repeat_waivers(receipts),
+        "retries": [dict(retry) for retry in retries],
     }
 
 
@@ -1059,7 +1101,12 @@ class LifecycleDriver:
 
     def run_phase(self, phase: Phase, *, workdir: Path,
                   bundles: dict[str, Path], duration: float) -> Path:
-        """Prepare and execute one phase; return its bundle directory."""
+        """Prepare and execute one phase; return its bundle directory.
+
+        Each call prepares a FRESH bundle.  When the run step fails after a
+        bundle was prepared, raise :class:`PhaseFailed` naming it, so the
+        iteration can read that bundle's ``failure_category``.
+        """
         raise NotImplementedError
 
     def capture_host_network(self):
@@ -1136,7 +1183,10 @@ class SubprocessLifecycle(LifecycleDriver):
             if not reported:
                 raise RepeatError(f"{phase.prepare_target} reported no bundle path")
             bundle = Path(reported[-1])
-        self._run(run_command(phase, bundle, duration=duration))
+        try:
+            self._run(run_command(phase, bundle, duration=duration))
+        except RepeatError as error:
+            raise PhaseFailed(phase.name, bundle, str(error)) from error
         return bundle
 
     def capture_host_network(self):
@@ -1146,6 +1196,51 @@ class SubprocessLifecycle(LifecycleDriver):
 
     def confine(self) -> None:
         set_no_new_privileges()
+
+
+def failure_category(phase: Phase, bundle: Path) -> str | None:
+    """The machine-readable ``failure_category`` a failed bundle recorded."""
+    evidence = phase_evidence(phase, bundle)
+    if evidence is None:
+        return None
+    category = read_phase_result(evidence).get("failure_category")
+    return category if isinstance(category, str) else None
+
+
+def run_phase_bounded(driver: LifecycleDriver, phase: Phase, *,
+                      iteration: int, workdir: Path,
+                      bundles: dict[str, Path], duration: float,
+                      retries: list[dict]) -> Path:
+    """Run one phase, retrying it at most ONCE on a retryable failure.
+
+    Only a :class:`PhaseFailed` whose bundle recorded a category
+    :data:`RETRYABLE_FAILURES` lists for this phase is retried, with a fresh
+    bundle; anything else propagates exactly as before.  A retry that fails
+    again fails the iteration -- there is never a second retry.  A successful
+    retry is appended to ``retries``.
+    """
+    try:
+        return Path(driver.run_phase(
+            phase, workdir=workdir, bundles=bundles, duration=duration))
+    except PhaseFailed as failure:
+        category = failure_category(phase, failure.bundle)
+        if category not in RETRYABLE_FAILURES.get(phase.name, ()):
+            raise
+        record = {"iteration": iteration, "phase": phase.name,
+                  "failed_bundle": str(failure.bundle), "category": category}
+    print(f"retry: iteration {iteration} {phase.name} hit {category} in "
+          f"{record['failed_bundle']}; preparing a fresh bundle for its one "
+          "retry", file=sys.stderr)
+    try:
+        bundle = Path(driver.run_phase(
+            phase, workdir=workdir, bundles=bundles, duration=duration))
+    except PhaseFailed as again:
+        raise RepeatError(
+            f"phase {phase.name} failed again after its one {category} retry "
+            f"in iteration {iteration} (first {record['failed_bundle']}, "
+            f"retry {again.bundle}): {again}") from again
+    retries.append(dict(record, retry_bundle=str(bundle)))
+    return bundle
 
 
 def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
@@ -1170,9 +1265,11 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     observations: list[dict] = []
     blocks: list[tuple[str, dict]] = []
     evidence_pairs: list[tuple[str, Path]] = []
+    retries: list[dict] = []
     for phase in phases:
-        bundle = Path(driver.run_phase(
-            phase, workdir=workdir, bundles=bundles, duration=duration))
+        bundle = run_phase_bounded(
+            driver, phase, iteration=index, workdir=workdir, bundles=bundles,
+            duration=duration, retries=retries)
         bundles[phase.name] = bundle
         evidence = phase_evidence(phase, bundle)
         observation = {"phase": phase.name, "status": None,
@@ -1190,7 +1287,8 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
                      network_after=driver.capture_host_network())
     measurements = assemble_measurements(blocks, producers=producers)
     result = aggregate_result(
-        iteration=index, observations=observations, measurements=measurements)
+        iteration=index, observations=observations, measurements=measurements,
+        retries=retries)
     return retain_aggregate_evidence(destination, evidence_pairs, result=result)
 
 
@@ -1277,21 +1375,31 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
     run_root = evidence_root / f"{stamp}-{os.getpid()}-repeat"
     simulation_evidence.private_directory(run_root)
     receipts = []
+    retries: list[dict] = []
     for index in range(1, iterations + 1):
         destination = run_iteration(
             index, driver=driver, workdir=work_root / f"iteration-{index}",
             destination=run_root / f"iteration-{index}", bind=bind,
             phases=phases, duration=duration)
+        # Read back from the retained evidence, so the receipt discloses
+        # exactly the retries the iteration's own result.json records.
+        retries.extend(read_phase_result(destination).get("retries") or ())
         receipts.append(factory_verify.verify_run(
             destination, release_set=releases))
     comparisons = compare_iterations(receipts)
-    document = repeat_receipt(receipts, comparisons)
+    document = repeat_receipt(receipts, comparisons, retries=retries)
     print(factory_verify.render_receipt(document), end="", file=stream)
     if receipt is not None:
         factory_verify.write_receipt(document, receipt)
         print(f"receipt written: {receipt}", file=sys.stderr)
+    for retry in document["retries"]:
+        print(f"retried: iteration {retry['iteration']} {retry['phase']} "
+              f"after {retry['category']} (failed bundle "
+              f"{retry['failed_bundle']}, retry bundle "
+              f"{retry['retry_bundle']})", file=sys.stderr)
     print(f"{document['verdict']}: factory-repeat iterations="
-          f"{document['iterations']} equivalent={document['equivalent']}"
+          f"{document['iterations']} equivalent={document['equivalent']} "
+          f"retries={len(document['retries'])}"
           f"{factory_verify.waiver_note(document['waivers'])}",
           file=sys.stderr)
     return 0 if document["verdict"] in ACCEPTED_VERDICTS else 1

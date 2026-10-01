@@ -41,6 +41,36 @@ except ImportError:
 
 MAX_DURATION = 10800
 NATIVE_READY_MARKER = "TELOS WINDOWS NATIVE READY"
+#: The fixed tail of wimboot's banner (``wimboot v2.9.0 -- Windows Imaging
+#: Format bootloader -- https://ipxe.org/wimboot``).  A healthy install prints
+#: it exactly once; a second one is the PXE->WinPE->reboot->PXE loop, in which
+#: the NVMe never becomes bootable (HANDOFF.md section 5).  A fixed literal, so
+#: a serial read split mid-line can only delay a match, never fake one.
+WIMBOOT_BANNER = "Windows Imaging Format bootloader"
+#: ``result.json``'s ``failure_category`` for that loop: the one failure a
+#: caller (``factory_repeat``) may retry with a fresh bundle.
+PXE_LOOP = "pxe-loop"
+
+
+class PxeLoop(RuntimeError):
+    """The workstation PXE-booted WinPE again: Setup restarted from scratch."""
+
+    def __init__(self, banners: int) -> None:
+        super().__init__(
+            f"PXE loop: {banners} wimboot banners on the workstation serial; "
+            "the NVMe never became bootable")
+        self.banners = banners
+
+
+def wimboot_banners(serial: str) -> int:
+    return serial.count(WIMBOOT_BANNER)
+
+
+def _refuse_pxe_loop(serial: str) -> None:
+    """The one loop check, applied live while waiting and again post-run."""
+    banners = wimboot_banners(serial)
+    if banners > 1:
+        raise PxeLoop(banners)
 
 
 def _screenshot_interval(duration: float) -> int:
@@ -117,9 +147,9 @@ def _connect_qmp(
 
 
 def _validate_lifecycle(serial: str) -> None:
+    _refuse_pxe_loop(serial)
     required = (
-        "/private/run-", "install.bat", "winpeshl.ini",
-        "Windows Imaging Format bootloader",
+        "/private/run-", "install.bat", "winpeshl.ini", WIMBOOT_BANNER,
     )
     if not all(marker in serial for marker in required):
         raise RuntimeError("private WinPE overlay handoff was not fully observed")
@@ -285,11 +315,16 @@ def run(
                         raise RuntimeError(
                             "Windows lifecycle process failed: "
                             + ", ".join(failed))
-                    if processes["workstation"].poll() is not None:
+                    exited = processes["workstation"].poll() is not None
+                    if exited:
                         serial_thread.join(timeout=2)
-                        serial = (
-                            evidence / "workstation-serial.log").read_text(
-                                encoding="utf-8", errors="replace")
+                    serial = (evidence / "workstation-serial.log").read_text(
+                        encoding="utf-8", errors="replace")
+                    # Live, not post-run: once Setup restarts from PXE nothing
+                    # later in this run can succeed, so the loop fails now
+                    # instead of burning the rest of the duration.
+                    _refuse_pxe_loop(serial)
+                    if exited:
                         if NATIVE_READY_MARKER not in serial:
                             raise RuntimeError(
                                 "workstation exited before native Windows "
@@ -331,6 +366,9 @@ def run(
         result["error"] = redact(
             str(error).encode("utf-8", errors="replace")).decode(
                 "utf-8", errors="replace")
+        if isinstance(error, PxeLoop):
+            result["failure_category"] = PXE_LOOP
+            result["wimboot_banners"] = error.banners
         raise
     finally:
         listener.close()
