@@ -314,6 +314,15 @@ checks green and `VERDICT PASS workstation-factory-gate-4`:
 A controller DHCP offer, a controller identity announcement, or any
 backdoor listen/egress still **fails** the gate.
 
+Windows-install switch logs from before TASK-43 (2026-10-01) fail
+`gate4.controller-approved-flows-only` on one unanswered workstation→controller
+UDP `500->500` flow. It is stock WinPE's built-in IPsec negotiation-discovery
+probe, which IKEEXT sends at the SMB source mount. The owner decision is to
+suppress the sender and leave the approved controller surface unchanged. The
+generated `install.bat` therefore disables and stops IKEEXT right after
+`wpeinit`; see `WINPE_IKE_SUPPRESSION` in
+`homelab/vm/windows_install_contract.py`.
+
 ---
 
 ## Stage 2 — Windows first (gate 5) and Windows identity (gate 6)

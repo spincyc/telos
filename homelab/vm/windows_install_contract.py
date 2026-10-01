@@ -227,6 +227,30 @@ def render_diskpart(authorization: Authorization) -> str:
     ))
 
 
+# Stock WinPE carries a built-in IPsec policy (Microsoft: "Windows PE supports
+# IPsec protocol by default"; Anonymous main mode, NTLMv2 user auth) applied as
+# negotiation discovery: each new unicast TCP/UDP flow (ICMP exempt) is sent in
+# clear while the IKE and AuthIP IPsec Keying Modules service (IKEEXT) sends a
+# UDP 500->500 negotiation to the same peer in parallel.  The fabric never
+# answers it, but gate 4 fails it as an unapproved flow to the controller
+# (TASK-43; first seen at the SMB source mount in every install since
+# 2026-08-12, absent from the installed OS's gate-6 traffic).  The owner
+# decision is to suppress the emitter, not to approve the port.  Disabling and
+# stopping IKEEXT in WinPE's RAM-only registry, after wpeinit and before the
+# first unicast flow, removes the only UDP 500 sender and leaves the sealed
+# image, the clear traffic, and the installed OS unchanged.  Fail closed if it
+# is not stopped.
+WINPE_IKE_SUPPRESSION = (
+    "echo TELOS WINPE phase=ipsec-keying-off\r\n"
+    "sc config IKEEXT start= disabled >nul || exit /b 12\r\n"
+    "net stop IKEEXT /y >nul 2>&1\r\n"
+    'set "ike_state="\r\n'
+    "for /f \"tokens=1,4\" %%A in ('sc query IKEEXT') do "
+    'if /I "%%A"=="STATE" set "ike_state=%%B"\r\n'
+    'if /I not "!ike_state!"=="STOPPED" exit /b 13\r\n'
+)
+
+
 def render_startup(
     authorization: Authorization, *, install_source_unc: str,
     install_user: str,
@@ -269,7 +293,8 @@ def render_startup(
         'set "inputs=%~dp0"\r\n'
         "echo TELOS WINPE phase=wpeinit\r\n"
         "wpeinit || exit /b 10\r\n"
-        "echo TELOS WINPE phase=disk-check-1\r\n"
+        + WINPE_IKE_SUPPRESSION
+        + "echo TELOS WINPE phase=disk-check-1\r\n"
         '(echo list disk&echo exit)>X:\\disk-list-script.txt\r\n'
         "diskpart /s X:\\disk-list-script.txt >X:\\disk-list.txt || exit /b 11\r\n"
         + check

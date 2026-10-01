@@ -1,5 +1,6 @@
 """Tests for the disposable Windows installation authorization boundary."""
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -9,6 +10,7 @@ from unittest import mock
 import xml.etree.ElementTree as ET
 
 from homelab.vm.windows_install_contract import (
+    WINPE_IKE_SUPPRESSION,
     Authorization,
     PrivateRun,
     SyntheticIdentity,
@@ -335,6 +337,58 @@ class WindowsInstallContractTests(unittest.TestCase):
             helper)
         self.assertIn('stream.ReadLine', helper)
         self.assertNotIn("InstallPass-123", helper)
+
+    # sha256 of render_startup() for the fixture below as it was before
+    # TASK-43 added WINPE_IKE_SUPPRESSION.  Stripping that block must restore
+    # it byte for byte; a deliberate later install.bat change updates this
+    # digest to the new rendering with the block removed.
+    PRE_IKE_SUPPRESSION_STARTUP_SHA256 = (
+        "6f2edf4b8ca705b42405f9762f57c02f828015a1196810ebf633d6564d87339d")
+
+    def test_startup_stops_winpe_ike_keying_before_any_unicast_flow(self):
+        script = render_startup(
+            self.authorization(),
+            install_source_unc=r"\\10.1.31.2\windows-release",
+            install_user=r"TELOS\pxe-install")
+        self.assertEqual(1, script.count(WINPE_IKE_SUPPRESSION))
+        self.assertEqual(
+            self.PRE_IKE_SUPPRESSION_STARTUP_SHA256,
+            hashlib.sha256(script.replace(WINPE_IKE_SUPPRESSION, "")
+                           .encode("utf-8")).hexdigest(),
+            "the IKE suppression must be the only change to install.bat")
+        self.assertIn(
+            "wpeinit || exit /b 10\r\n" + WINPE_IKE_SUPPRESSION
+            + "echo TELOS WINPE phase=disk-check-1\r\n", script)
+        block_end = script.index(WINPE_IKE_SUPPRESSION) + len(
+            WINPE_IKE_SUPPRESSION)
+        for unicast in ("ipconfig", "ping -n 1 10.1.31.2", "cscript.exe",
+                        "I:\\setup.exe"):
+            self.assertLess(block_end, script.index(unicast), unicast)
+        self.assertEqual(
+            "echo TELOS WINPE phase=ipsec-keying-off\r\n"
+            "sc config IKEEXT start= disabled >nul || exit /b 12\r\n"
+            "net stop IKEEXT /y >nul 2>&1\r\n"
+            'set "ike_state="\r\n'
+            "for /f \"tokens=1,4\" %%A in ('sc query IKEEXT') do "
+            'if /I "%%A"=="STATE" set "ike_state=%%B"\r\n'
+            'if /I not "!ike_state!"=="STOPPED" exit /b 13\r\n',
+            WINPE_IKE_SUPPRESSION)
+        self.assertEqual(1, script.count("exit /b 12"))
+        self.assertEqual(1, script.count("exit /b 13"))
+        for widening in ("DisableFirewall", "advfirewall", "PolicyAgent",
+                         "findstr"):
+            self.assertNotIn(widening, script)
+
+    def test_ike_suppression_stays_in_winpe_not_the_installed_os(self):
+        identity = SyntheticIdentity(
+            "TELOS-WIN-01", "telosadmin", "SynthPass-123",
+            r"TELOS\pxe-install", "InstallPass-123")
+        for rendered in (
+                render_unattend(identity),
+                render_source_mount(
+                    r"\\10.1.31.2\windows-release", r"TELOS\pxe-install"),
+                render_winpeshl()):
+            self.assertNotIn("IKEEXT", rendered)
 
     def test_unattend_is_explicit_pro_us_partition_three_and_install_key(self):
         identity = SyntheticIdentity(
