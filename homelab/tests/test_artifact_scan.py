@@ -306,6 +306,71 @@ class PrivateTests(ScannerTestCase):
         self.assertEqual(1, artifact_scan.scan_artifacts(tree)["private"])
 
 
+def lab_block(prefix: str) -> str:
+    """A simulated-lab address with ``prefix`` appended, built at run time.
+
+    Tokens the site gate rejects (a lab address with too short a block) are
+    kept off the source line, exactly as :func:`unsanctioned_address` is.
+    """
+    return ".".join(("10", "1", "31", "11")) + "/" + prefix
+
+
+class NetmaskNotationTests(ScannerTestCase):
+    """iPXE prints ``net0: <address>/<dotted netmask> gw <gateway>``.
+
+    The CIDR rule once read the netmask's first octet as the prefix length
+    ``/255``, so the sanctioned lab address in every retained PXE serial log
+    counted as private (gate 12, 2026-10-01: ``private: 2`` in both
+    iterations, both ``workstation-serial.log``).  The netmask form is now
+    judged by its own rule against the same /24-and-longer lab sanction.
+    """
+
+    def test_ipxe_s_lab_address_and_lab_netmask_are_not_a_leak(self):
+        tree = self.tree()
+        self.write(tree, "workstation-serial.log",
+                   "net0: 10.1.31.11/255.255.255.0 gw 10.1.31.1\n")
+        result = artifact_scan.scan_tree(tree)
+        self.assertEqual([], self.rules(result, "private"))
+
+    def test_a_lab_address_with_a_short_netmask_is_still_private(self):
+        tree = self.tree()
+        self.write(tree, "serial.log",
+                   f"net0: {lab_block('.'.join(('255', '255', '0', '0')))}\n")
+        result = artifact_scan.scan_tree(tree)
+        self.assertEqual(["instance-leak-rfc-1918-address-with-netmask"],
+                         self.rules(result, "private"))
+
+    def test_an_unsanctioned_address_with_a_netmask_is_still_private(self):
+        tree = self.tree()
+        self.write(tree, "serial.log",
+                   f"net0: {unsanctioned_address()}/255.255.255.0 gw x\n")
+        result = artifact_scan.scan_tree(tree)
+        self.assertIn("instance-leak-rfc-1918-address-with-netmask",
+                      self.rules(result, "private"))
+
+    def test_a_real_prefix_length_is_still_judged_as_a_cidr(self):
+        tree = self.tree()
+        # A sentence-final period is not a netmask octet.
+        self.write(tree, "notes.md", f"the lab is {lab_block('16')}.\n")
+        result = artifact_scan.scan_tree(tree)
+        self.assertEqual(["instance-leak-rfc-1918-cidr"],
+                         self.rules(result, "private"))
+
+    def test_the_prefix_length_out_of_range_is_still_a_cidr_finding(self):
+        tree = self.tree()
+        self.write(tree, "notes.md", f"route {lab_block('255')} via x\n")
+        result = artifact_scan.scan_tree(tree)
+        self.assertEqual(["instance-leak-rfc-1918-cidr"],
+                         self.rules(result, "private"))
+
+    def test_findings_never_carry_the_netmask_token(self):
+        tree = self.tree()
+        token = lab_block(".".join(("255", "255", "0", "0")))
+        self.write(tree, "serial.log", f"net0: {token}\n")
+        rendered = json.dumps(artifact_scan.scan_tree(tree).as_dict())
+        self.assertNotIn(token, rendered)
+
+
 class OversizedTests(ScannerTestCase):
     def test_the_limit_is_the_verifier_s_own_constant(self):
         self.assertEqual(factory_verify.EVIDENCE_LIMIT, artifact_scan.SIZE_LIMIT)
