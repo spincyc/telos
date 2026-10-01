@@ -1161,14 +1161,27 @@ class SubprocessLifecycle(LifecycleDriver):
         shutil.rmtree(workdir, ignore_errors=True)
         simulation_evidence.private_directory(workdir)
 
-    def _run(self, command: list[str]) -> str:
+    def _run(self, command: list[str], log: Path | None = None) -> str:
         print(f"$ {' '.join(command)}", file=self.stream)
         completed = subprocess.run(
             command, cwd=self.repository, capture_output=True, text=True)
+        kept = b""
+        if log is not None:
+            # Every step's own output, redacted then bounded, beside its
+            # bundle: a 2026-10-01 run failed with only "lifecycle step failed
+            # (2)" because the captured output was discarded.
+            combined = (completed.stdout + completed.stderr).encode(
+                "utf-8", "replace")
+            kept, _sizes = simulation_evidence.redact_and_bound(combined)
+            simulation_evidence.private_file(Path(log), kept)
         if completed.returncode != 0:
+            tail = "\n".join(
+                kept.decode("utf-8", "replace").splitlines()[-15:])
             raise RepeatError(
                 f"lifecycle step failed ({completed.returncode}): "
-                f"{' '.join(command)}")
+                f"{' '.join(command)}"
+                + (f"\nstep output: {log}\n{tail}" if log is not None
+                   else ""))
         return completed.stdout
 
     def run_phase(self, phase: Phase, *, workdir: Path,
@@ -1178,13 +1191,15 @@ class SubprocessLifecycle(LifecycleDriver):
             bundle = Path(workdir) / phase.name
             simulation_evidence.private_directory(bundle.parent)
         else:
-            lines = [line.strip() for line in self._run(command).splitlines()]
+            lines = [line.strip() for line in self._run(
+                command, Path(workdir) / f"{phase.name}-prepare.log").splitlines()]
             reported = [line for line in lines if line]
             if not reported:
                 raise RepeatError(f"{phase.prepare_target} reported no bundle path")
             bundle = Path(reported[-1])
         try:
-            self._run(run_command(phase, bundle, duration=duration))
+            self._run(run_command(phase, bundle, duration=duration),
+                      Path(workdir) / f"{phase.name}-run.log")
         except RepeatError as error:
             raise PhaseFailed(phase.name, bundle, str(error)) from error
         return bundle

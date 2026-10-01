@@ -1343,7 +1343,7 @@ class Spawning(factory_repeat.SubprocessLifecycle):
     def destroy(self, workdir):
         self.events.append(("destroy",))
 
-    def _run(self, command):
+    def _run(self, command, log=None):
         self.events.append(("spawn", command[2]))
         raise factory_repeat.RepeatError("stopped before spawning")
 
@@ -1356,12 +1356,31 @@ class FailingRunStep(factory_repeat.SubprocessLifecycle):
         self.bundle = bundle
         self.commands = []
 
-    def _run(self, command):
+    def _run(self, command, log=None):
         self.commands.append(command[2])
         if command[2].endswith("-prepare"):
             return f"noise\n{self.bundle}\n"
         raise factory_repeat.RepeatError(
             f"lifecycle step failed (1): {' '.join(command)}")
+
+
+class StepOutputTests(unittest.TestCase):
+    def test_a_failed_step_keeps_its_redacted_output_and_names_it(self):
+        # 2026-10-01: a failed phase left only "lifecycle step failed (2)".
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "work" / "windows-identity-run.log"
+            driver = factory_repeat.SubprocessLifecycle(stream=io.StringIO())
+            command = [sys.executable, "-c",
+                       "import sys; print('phase said: refused at sign-in'); "
+                       "print('password=hunter2'); sys.exit(2)"]
+            with self.assertRaises(factory_repeat.RepeatError) as caught:
+                driver._run(command, log)
+            kept = log.read_text()
+            self.assertIn("refused at sign-in", kept)
+            self.assertNotIn("hunter2", kept)
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+            self.assertIn(str(log), str(caught.exception))
+            self.assertIn("refused at sign-in", str(caught.exception))
 
 
 class SubprocessFailureTests(unittest.TestCase):
@@ -1379,7 +1398,7 @@ class SubprocessFailureTests(unittest.TestCase):
 
     def test_a_failed_prepare_step_stays_a_plain_repeat_error(self):
         class FailingPrepare(FailingRunStep):
-            def _run(self, command):
+            def _run(self, command, log=None):
                 raise factory_repeat.RepeatError("prepare refused")
 
         with self.assertRaises(factory_repeat.RepeatError) as caught:
