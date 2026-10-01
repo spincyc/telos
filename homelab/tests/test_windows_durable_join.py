@@ -755,6 +755,9 @@ class ExecuteTests(unittest.TestCase):
                     "evidence_secret_free"):
             self.assertIs(recorded[key], True, key)
         self.assertEqual(recorded["controller_auth_diagnostic"], "disabled")
+        self.assertEqual(recorded["credential_custody"], "owner")
+        self.assertEqual(recorded["local_administrator_credential"],
+                         "owner-typed; never stored")
         self.assertEqual(recorded["fault_operations"], "none")
         self.assertIs(recorded["controller"]["clean_poweroff"], True)
         self.assertTrue(all(recorded["teardown"].values()))
@@ -763,6 +766,17 @@ class ExecuteTests(unittest.TestCase):
             self.assertNotIn(value, text)
         self.assertTrue((self.attempt / "attempt-consumed.json").is_file())
         self.assertTrue((self.attempt / "terminal-teardown.json").is_file())
+        self.assert_no_secret_retained()
+
+    def test_agent_custody_receipt_does_not_claim_owner_typed_credentials(self):
+        values = join.OwnerSecrets(CONSOLE, LOCAL, DAILY, custody=join.AGENT)
+        with mock.patch(__name__ + ".owner_secrets", return_value=values):
+            self.execute()
+        recorded, text = self.result()
+        self.assertEqual(recorded["credential_custody"], "agent")
+        self.assertEqual(recorded["local_administrator_credential"],
+                         "agent-generated; retained in the workstation custody store")
+        self.assertNotIn("owner-typed", text)
         self.assert_no_secret_retained()
 
     def test_a_failed_join_leaves_the_publication_and_records_the_failure(self):

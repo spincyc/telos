@@ -568,6 +568,7 @@ class WindowsAndVerifyAgentTests(unittest.TestCase):
     def test_windows_generates_and_stores_the_local_administrator(self):
         daily = self.prove_daily()
         secrets = windows.agent_secrets(self.source)
+        self.assertEqual(cc.AGENT, secrets.custody)
         self.assertEqual(CONSOLE.encode(), secrets.console)
         self.assertEqual(daily, secrets.daily_administrator)
         self.assertIsNone(windows.local_administrator_password_problem(
@@ -591,6 +592,7 @@ class WindowsAndVerifyAgentTests(unittest.TestCase):
 
     def test_the_owner_secret_objects_are_unchanged_without_extras(self):
         owner = windows.OwnerSecrets(b"c-1", "l-2", "d-3")
+        self.assertEqual(cc.OWNER, owner.custody)
         self.assertEqual(("c-1", "l-2", "d-3"), owner.values())
         self.assertEqual([b"c-1", b"d-3"],
                          verify.VerifySecrets(b"c-1", b"d-3").values())

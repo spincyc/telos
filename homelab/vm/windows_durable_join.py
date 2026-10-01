@@ -68,7 +68,7 @@ from .bootstrap_dc import (  # noqa: E402
 from .controller_image import (  # noqa: E402
     ControllerImageError, assert_installed)
 from .credential_custody import (  # noqa: E402
-    AGENT, WINDOWS_LOCAL_ADMINISTRATOR, AgentCredentialSource, CustodyError,
+    AGENT, OWNER, WINDOWS_LOCAL_ADMINISTRATOR, AgentCredentialSource, CustodyError,
     credential_source, instance_custody)
 from .directory_password_policy import (  # noqa: E402
     SAMBA_DEFAULT, DirectoryPasswordPolicy)
@@ -153,11 +153,14 @@ class DurableControllerAuthDisabled(RuntimeError):
 
 # -- the owner's credentials ------------------------------------------------------
 class OwnerSecrets:
-    """The three values the owner types, in memory only, never in ``repr``."""
+    """Run-scoped values and their custody mode, never in ``repr``."""
 
     def __init__(self, console: bytes, local_administrator: str,
                  daily_administrator: str, *,
-                 extra: tuple[str, ...] = ()) -> None:
+                 extra: tuple[str, ...] = (), custody: str = OWNER) -> None:
+        if custody not in (OWNER, AGENT):
+            raise ValueError("credential custody must be owner or agent")
+        self.custody = custody
         self.console = console
         self.local_administrator = local_administrator
         self.daily_administrator = daily_administrator
@@ -295,7 +298,8 @@ def agent_secrets(
         checks=(lambda value: local_administrator_password_problem(
             value, policy),),
         avoid=(console, daily))
-    return OwnerSecrets(console, local, daily, extra=source.scan_values())
+    return OwnerSecrets(console, local, daily, extra=source.scan_values(),
+                        custody=AGENT)
 
 
 # -- gate 6's credential owner, for a durable directory ------------------------------
@@ -815,7 +819,11 @@ class DurableWindowsJoin:
             "bound_instance": self.binding.instance,
             "attempt": attempt.name,
             "machine_account": WINDOWS_COMPUTER_NAME,
-            "local_administrator_credential": "owner-typed; never stored",
+            "credential_custody": self.secrets.custody,
+            "local_administrator_credential": (
+                "agent-generated; retained in the workstation custody store"
+                if self.secrets.custody == AGENT
+                else "owner-typed; never stored"),
             "local_administrator_rotated": False,
             "joined_after_reboot": False,
             "secure_channel_proved": False,
