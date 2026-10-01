@@ -285,24 +285,6 @@ class OneUseDomainJoinMaterialTests(unittest.TestCase):
                 material.use(fail)
         self.assertNotIn(SECRET, str(caught.exception))
 
-    def test_a_secret_free_cause_is_named(self):
-        # 2026-10-01: a gate-12 arch install failed as only "RuntimeError".
-        material = OneUseDomainJoinMaterial(
-            "synthetic.test",
-            stage=lambda _secret: self.result("stage"),
-            destroy=lambda: self.result("destroy", True),
-        )
-
-        def fail(_values):
-            raise RuntimeError("another controller simulation is already running")
-
-        with mock.patch.object(material, "_generate", return_value=SECRET):
-            with self.assertRaisesRegex(
-                    ControllerJoinMaterialError,
-                    "already running") as caught:
-                material.use(fail)
-        self.assertNotIn(SECRET, str(caught.exception))
-
     def test_lost_stage_acknowledgement_attempts_ownership_bound_cleanup(self):
         destroy = mock.Mock(return_value=self.result("destroy", True))
         material = OneUseDomainJoinMaterial(

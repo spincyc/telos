@@ -445,18 +445,6 @@ class OneUseDomainJoinMaterial:
         )
         return f"OneUseDomainJoinMaterial(realm={self.realm!r}, state={state})"
 
-    def _safe_reason(self, error: BaseException) -> str:
-        """The error's own text, only when it cannot carry the join secret.
-
-        The type alone left a 2026-10-01 gate-12 failure undiagnosable; the
-        text is withheld whenever it contains the credential this use minted.
-        """
-        text = str(error)
-        secret = self._credential_value
-        if not text or (secret and secret in text):
-            return ""
-        return f" ({text[:200]})"
-
     @staticmethod
     def _generate() -> str:
         return "Synthetic-Join-" + secrets.token_urlsafe(24) + "-47!"
@@ -516,13 +504,9 @@ class OneUseDomainJoinMaterial:
             if primary is not None or cleanup is not None:
                 details = []
                 if primary is not None:
-                    details.append(
-                        f"stage/consumer: {type(primary).__name__}"
-                        + self._safe_reason(primary))
+                    details.append(f"stage/consumer: {type(primary).__name__}")
                 if cleanup is not None:
-                    details.append(
-                        f"destruction: {type(cleanup).__name__}"
-                        + self._safe_reason(cleanup))
+                    details.append(f"destruction: {type(cleanup).__name__}")
                 coordinate = (
                     primary.coordinate
                     if isinstance(primary, ControllerJoinMaterialError)
