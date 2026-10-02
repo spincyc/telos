@@ -152,8 +152,9 @@ make homelab-factory-repeat APPLY=1 FACTORY_DURATION=7200
 |---|---|---|
 | `REPEAT_EVIDENCE_ROOT` | `homelab/var/factory/repeat` | Where the aggregate bundle of each iteration is written. |
 | `REPEAT_WORK_ROOT` | `homelab/var/factory/repeat-work` | Disposable work root, destroyed before each iteration. |
-| `REPEAT_ITERATIONS` | `2` | Gate 12 requires at least 2. |
-| `REPEAT_RECEIPT` | unset | Optional path for the comparison receipt. |
+| `REPEAT_ITERATIONS` | `2` | Total cycles, including one reused cycle when supplied; gate 12 requires at least 2. |
+| `REPEAT_REUSE_ITERATION` | unset | Reverify one complete accepted aggregate directory and run the remaining cycles fresh at identical input pins (`7e4c72c`). A failed iteration is refused. |
+| `REPEAT_RECEIPT` | unset | Optional comparison receipt path; recovery must use a new path outside reused evidence, disposable work and generated aggregates. |
 | `FACTORY_DURATION` | `120` | Forwarded to each phase as its **per-phase** budget, not a whole-run budget. |
 | `FACTORY_RELEASES` | unset | Optional PXE release root (default `homelab/var/pxe`); every receipt verifies the set its `selected-release-set.json` names, and the apply refuses up front when that selection does not resolve. |
 
@@ -190,14 +191,174 @@ and is fail-closed, so a partially written disk over a size floor does not
 satisfy it. Since the canonical image was installed on 2026-09-24 the dry run no
 longer refuses.
 
-Verdict: **acceptance failed; fixes await a fresh live repeat.** Run
+Checkpoint 2026-10-02 14:06 UTC: **original repeat remains FAIL; the first
+recovery stopped without a comparison receipt; the latest recovery finished
+FAIL on the route criterion. No live run remains; the owner's route-proof
+decision is pending.** Original
+run `20261002T011915Z-907070-repeat`
+finished about 05:26 UTC from `93eb6b6`, selected release `20261001.001` and
+the current sealed Samba repair bytes. Its final receipt
+`homelab/var/factory/repeat/recovery-repeat-receipt.json` records `FAIL`,
+`equivalent: false`, zero retries. Iteration 1 completed all six phases at
+03:22 UTC, then failed root verification: 15 pass / one fail,
+`host_network_changes.listener=1`. Raw before/after snapshots were discarded,
+so the exact listener cannot be attributed. Preserve that failure.
+
+Iteration 2 is **PASS-WITH-WAIVER**: 15 pass / one ADR 0080 UniFi waiver,
+no fail or not-run checks, all six local network-change counters zero. Both
+iterations' gate-4 audits passed all four checks. Iteration 2 completed
+Windows identity 24 checks, Arch identity 21, dual-boot eight observed checks
+(Windows login was not driven there), and lifecycle recovery three pass /
+five deferred. The independent gate-11 live result stays five pass / three
+ADR 0080 deferrals. Before recovery, the root agent verified no VMs remained,
+74 GiB was free, and saved the originals' SHA-256 inventory at
+`/tmp/telos-recovery-root/original-repeat-before-recovery.sha256`.
+
+Recovery from `7e4c72c` started at 05:31:17 UTC, reusing accepted original
+`iteration-2` with one fresh full cycle at the same pins. It stopped about
+06:39 UTC with exit 2. Windows bundle
+`homelab/var/factory/windows-installs/run-20261002T053119Z-97daa1c63993`
+failed `pxe-loop` after about 67 minutes: OVMF reported Windows Boot Manager
+`Not Found`, then entered `wimboot` a second time. The permitted retry,
+`run-20261002T063837Z-3c2cd155d481`, failed immediately when the process audit
+saw `python3` immediately after launch. No final comparison receipt was written.
+
+On resuming at 11:32 UTC, the root agent verified no VMs remained and every
+entry in the originals' SHA-256 inventory still matched. Read-only GPT/ESP
+inspection found `bootmgfw.efi` present (3,008,968 bytes) and the ESP partition
+GUID matching the firmware entry. This does not resolve the firmware fault.
+Preserve the failed disks, firmware variables, results and logs, and the
+accepted original iteration. Only `publication.iso` in the two failed Windows
+bundles was retired: private receipt
+`/tmp/telos-recovery-root/abandoned-publications-retirement.json` records
+23,144,542,208 bytes reclaimed and 58 GiB free. The keeper's reserved Windows
+bundle is untouched.
+
+The bounded process-audit race fix is committed in `c45c0dc`. A regression
+reproduces the old audit's refusal of a Python-to-QEMU launch transition;
+the precise source of the live `python3` command line remains unproven.
+The full audit
+passed 4,149 tests with five skips, no failures/errors, no lab touches and no
+QEMU launch attempts; independent review passed 35 tests with no blockers.
+The latest recovery started at 11:42:12 UTC from that commit, reusing the
+same accepted original `iteration-2` at the same pins. Windows bundle
+`run-20261002T114214Z-22aa7767d7e4` passed on its first attempt at 12:52:31 UTC:
+`observed` / `native-windows-clean-shutdown`, one firmware PXE boot, release
+`20261001.001`, unchanged canonical disk/variables and zero external
+connections. All six functional phases then completed. The final receipt and
+exit file were written at 13:47:15 UTC: **FAIL**, `equivalent: false`, zero
+retries, driver/supervisor exit 2. No VMs remain and no rerun has started.
+
+The reused cycle remains **PASS-WITH-WAIVER**, 15 pass / one ADR 0080 UniFi
+waiver. The fresh cycle has 15 pass / one fail, solely
+`host_network_changes.route=4`; TAP, bridge, VLAN, listener and forwarding
+counters are zero (forwarding uses privilege proof), and UniFi is unproven.
+Both cycles' gate-4 audits pass. Private before/after snapshots retain one
+automatic IPv6 router-advertisement ECMP next-hop replacement: the same
+replacement appears in both the IPv4 and IPv6 all-table views, so old/new
+entries total four. It is a real host route change, not four independent
+changes. The current criterion fails it. Whether privilege proof may cover
+automatic route changes is an owner decision, still pending; do not change
+the verdict or extend the existing waiver in anticipation. Gate 12 is open.
+Direct capability proof does not audit requests to privileged host services;
+accepting that limit would have to be part of the owner's decision.
+
+Durable private recovery records are retained under
+`homelab/var/factory/recovery-checkpoints/20261002-route-review/`:
+`recovered-repeat-2-independent.json`,
+`abandoned-publications-retirement.json`, `launch-audit-full-test-audit.json`
+and `original-repeat-before-recovery.sha256`. The independent verifier
+reproduces the reused cycle's 15 pass / one waiver and the fresh cycle's
+15 pass / one route failure. These ignored records preserve the checkpoint
+without depending on the historical `/tmp` copies.
+
+| Stopped recovery evidence | Value |
+|---|---|
+| Run root | `homelab/var/factory/repeat/20261002T053117Z-1175062-repeat` |
+| Former supervisor / driver | `1174594` / `1175062`; historical identifiers, not active processes |
+| Log / PID / exit files | `/tmp/telos-recovery-root/recovered-repeat.log`, `/tmp/telos-recovery-root/recovered-repeat.pid`, `/tmp/telos-recovery-root/recovered-repeat.exit` |
+| Work root | `homelab/var/factory/repeat-work-resume-20261002` |
+| Intended comparison receipt, not written | `homelab/var/factory/repeat/recovered-repeat-receipt.json` |
+| Budget | Two total cycles: one reused, one fresh; `FACTORY_DURATION=7200` per phase |
+| Retained raw before snapshot | Run root's `diagnostics/iteration-2/before.json` exists; private diagnostic, not publication evidence. |
+
+| Completed recovery evidence | Value |
+|---|---|
+| Run root | `homelab/var/factory/repeat/20261002T114212Z-1294100-repeat` |
+| Former supervisor / driver | `1293625` / `1294100`; stopped, exit 2 |
+| Launcher / log / PID / exit files | `/tmp/telos-recovery-root/recovered-repeat-2.sh`, `/tmp/telos-recovery-root/recovered-repeat-2.log`, `/tmp/telos-recovery-root/recovered-repeat-2.pid`, `/tmp/telos-recovery-root/recovered-repeat-2.exit` |
+| Work root | `homelab/var/factory/repeat-work-resume2-20261002` |
+| Final comparison receipt | `homelab/var/factory/repeat/recovered-repeat-2-receipt.json`: FAIL, nonequivalent, zero retries |
+| Windows bundle | `homelab/var/factory/windows-installs/run-20261002T114214Z-22aa7767d7e4` |
+| Budget | One accepted original cycle plus one fresh full cycle; `FACTORY_DURATION=7200` per phase |
+| Retained raw snapshots | Run root's `diagnostics/iteration-2/before.json` and `after.json`; private diagnostics, not publication evidence |
+
+Input binding `93eb6b6` closes the reproduced A→B→A false pass: it pins the
+actual publication manifest and seal, then validates the copied leaf bytes
+before consumption. `tools/factory-repeat-input-binding --json --releases
+<release-root> <publication>` checks that binding. The pre-run audit passed:
+4,115 tests, five skips, no failures or errors, zero lab-state touches and two
+advisory argv mentions; `tmt check` passed. These pre-run checks do not
+override the original listener failure or the latest route failure.
+
+**Recovery support is committed and available in `7e4c72c`; gate-12
+acceptance remains open after the route failure.** `REPEAT_REUSE_ITERATION`
+maps to `--reuse-iteration`. With total
+`REPEAT_ITERATIONS=2`, it accepts one already-passing full cycle and runs one
+fresh full cycle at identical pins. It re-verifies the prior aggregate, gate 4,
+input pins and evidence stability, records explicit reused/new sources, and
+preserves the original FAIL. Acceptance is unchanged. Private raw before/after
+network snapshots accompany each new aggregate. The prior evidence, new
+disposable work and new aggregate destinations must remain disjoint, and the
+recovery receipt must be a new path. Never put retained evidence under a work
+root that the driver destroys. The default evidence parent may hold both runs;
+each has its own timestamped directory.
+
+The following records the first stopped recovery's invocation; do not rerun
+it over the retained work and evidence. The later recovery also finished,
+with the separate failed receipt above. A route-proof policy change needs
+the owner's decision; another cycle under the existing criterion remains
+authorized. Disk headroom is being checked before another launch.
+If another recovery is needed, select new work and receipt paths, re-verify
+the accepted original iteration and unchanged pins, verify the lab is idle,
+and run the plan without `APPLY=1` before applying.
+
+```sh
+make homelab-factory-repeat APPLY=1 FACTORY_DURATION=7200 \
+    REPEAT_ITERATIONS=2 \
+    REPEAT_REUSE_ITERATION=homelab/var/factory/repeat/20261002T011915Z-907070-repeat/iteration-2 \
+    REPEAT_WORK_ROOT=homelab/var/factory/repeat-work-resume-20261002 \
+    REPEAT_RECEIPT=homelab/var/factory/repeat/recovered-repeat-receipt.json
+```
+
+Validation: 4,140 tests, five skips, no failures/errors, lab touches or VM
+launches; independent review passed 25 tests and `tmt check` passed. These
+checks did not prevent the stopped recovery's live failures. The later
+`c45c0dc` validation is recorded above; the latest live receipt remains FAIL.
+
+The **earlier repeat also FAILED acceptance.** Run
 `20261001T153726Z-2517176-repeat` completed both six-phase lifecycles in
 4 hours 10 minutes on 2026-10-01. The receipts agreed with no retries, but
 the artifact scan misread an iPXE dotted netmask and release verification
 received the release root instead of the selected set. Those checker defects
 are fixed by `c07f701` and `41b6bc8`. Both retained packet logs also contain
-an unapproved Windows IKE flow; `68800da` suppresses it in newly prepared
-WinPE installations and needs live proof.
+an unapproved Windows IKE flow. Initial suppression `68800da` depended on
+`sc.exe`, absent from the sealed WinPE; the subsequent WMIC output parser
+falsely rejected a successful service change. Typed WMI calls through VBS
+(`8eb69a9`) are now live-proven: Windows run
+`run-20261001T235652Z-a782e2f67fac` finished at 2026-10-02 01:17 UTC after
+about 70 minutes, runner exit 0, `observed` / `native-windows-clean-shutdown`,
+one firmware PXE boot, unchanged canonical disk and firmware, and zero external
+connections. It used release `20260727.005`, having been prepared before
+resealing; its unconsumed publication is retained for the keeper.
+
+That complete Windows capture, combined with Arch run
+`run-20261001T193550Z-e5108779aad1`, passed all four gate-4 checks (TASK-43
+DONE). Receipt
+`homelab/var/factory/authority-audits/20261002-winpe-vbs-merged.json` records
+34 DHCP server frames, all from the gateway, and 268 approved flows. No VM
+remained before the fresh repeat started. This separate proof does not replace
+either fresh repeat iteration's gate-4 audit.
 
 Since `8eb5b6d`, each iteration must carry a passing gate-4 PXE authority
 audit as well as satisfy the sixteen verifier checks. An identical failed
@@ -205,8 +366,8 @@ audit in both iterations still fails the repeat; an absent or incomplete
 audit leaves it `NOT-RUN`. The receipt lists these `prerequisites` and names
 any blocked gate in `needs_live_gate`. A successful phase-one repeat reads
 `PASS-WITH-WAIVER`, with only ADR 0080's host-network waiver; it never reads
-plain `PASS`. Historical evidence is retained unchanged. Rejudging it does
-not prove the later IKE or firmware fixes.
+plain `PASS`. Historical evidence is retained unchanged. Firmware stalls remain
+a disclosed retry condition; there is no claim that firmware is fixed.
 
 ## Installing the canonical Controller image
 
@@ -503,19 +664,27 @@ a pristine overlay. The existing bounded cold-boot retry passed; its first
 attempt is recorded in `fabric/windows-boot-attempt-1.json` beside that run's
 evidence. Firmware stalls are not claimed fixed.
 
-The keeper is absent and now awaits owner-terminal credentials. The fresh
-gate-12 repeat has not started; `4dc04b0` now binds every phase to the selected
-set, media seal and actual repair bytes. New release set `20261001.001` and
-the real input-binding preflight pass. Separately, WinPE VBS retry (`8eb69a9`)
-`windows-installs/run-20261001T235652Z-a782e2f67fac` is active with no final
-verdict. Only one lab mutation may run at a time.
+The keeper was confirmed absent and its convergence plan passed again at
+14:01 UTC; it awaits owner-terminal credentials. The owner
+availability question remains unanswered. WinPE VBS run (`8eb69a9`)
+`windows-installs/run-20261001T235652Z-a782e2f67fac` completed successfully,
+and its publication is retained unconsumed for keeper adoption. The original
+gate-12 repeat finished FAIL. Recovery from `7e4c72c` stopped with exit 2
+without a final comparison receipt; the accepted original second iteration
+and reserved keeper bundle remain unchanged. The recovery from process-audit
+fix `c45c0dc` completed all functional phases but finished FAIL on the route
+criterion, exit 2; no VMs remain and no rerun has started. The owner's decision
+on automatic-route privilege proof is pending, and gate 12 remains open. See
+[the repeat driver](#the-repeat-driver) for exact paths and supported reuse
+constraints.
+Only one lab mutation may run at a time.
 
 #### Owner-terminal keeper sequence (TASK-21)
 
 The DR prerequisite is satisfied. The keeper convergence dry run has been
 checked, but no keeper instance exists yet. Run the following at the owner's
-terminal, one command at a time after the previous command passes, once the
-active lab run has stopped. `keeper` is the local instance selector; directory
+terminal, one command at a time after the previous command passes, while the
+lab is idle. `keeper` is the local instance selector; directory
 and account names still come from the private overlay. The canonical image
 must be installed, its `local-rescue` password available, and the verified
 Samba repair cache present. If status finds an existing keeper, inspect its
@@ -542,9 +711,12 @@ first-logon changes. Never put credentials in chat, argv, Make variables or
 environment variables. An interrupted provisioning run may require
 `RECONVERGE=1`; it does not replace an Administrator password already set.
 
-Next adopt a successful fresh gate-5 bundle whose one-use publication remains
-unconsumed, then follow the durable Arch install, Arch join and Windows join
-steps below against `PERSISTENT_DC=keeper`. A completed repeat's identity
+Next adopt the successful gate-5 bundle
+`homelab/var/factory/windows-installs/run-20261001T235652Z-a782e2f67fac`,
+reserved with its one-use publication unconsumed, then follow the durable Arch
+install, Arch join and Windows join steps below against `PERSISTENT_DC=keeper`.
+This bundle used release `20260727.005`; the repeat uses the new selected set.
+A completed repeat's identity
 phase consumes its publication, so do not assume its gate-5 disk is adoptable.
 At the joins the owner types the daily administrator's temporary/new/current
 passwords as prompted and distinct Arch `local-rescue` and Windows local

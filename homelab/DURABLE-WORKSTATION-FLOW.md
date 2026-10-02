@@ -237,10 +237,44 @@ Windows). Corrected 2026-09-30, kept so it is not re-derived: this read
 Full evidence paths are in [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md),
 "Backing up and restoring an instance's directory". The earlier ordinary
 keep-verify passes and the failed recovery attempt retain their original
-verdicts. The new passing run closes TASK-41/TASK-42. Gate 12's fresh repeat
-has not started. The separate WinPE VBS retry (`8eb69a9`),
-`windows-installs/run-20261001T235652Z-a782e2f67fac`, is active at this
-checkpoint with no verdict; it does not establish repeat acceptance.
+verdicts. The new passing run closes TASK-41/TASK-42. The separate WinPE VBS
+run (`8eb69a9`), `windows-installs/run-20261001T235652Z-a782e2f67fac`,
+finished at 2026-10-02 01:17 UTC with runner exit 0 and
+`observed` / `native-windows-clean-shutdown`. Its release is `20260727.005`,
+prepared before resealing, and its publication remains unconsumed for the
+keeper. Its complete capture plus Arch run `run-20261001T193550Z-e5108779aad1`
+passed all four gate-4 checks (TASK-43 DONE). Gate 12's fresh repeat
+`20261002T011915Z-907070-repeat` started at 01:19:15 UTC from `93eb6b6` on
+selected release `20261001.001`. At the 14:06 UTC checkpoint, it has finished
+with final receipt FAIL, `equivalent: false`, zero retries. Iteration 1 failed
+15 pass / one fail on `host_network_changes.listener=1`; discarded snapshots
+prevent exact attribution. Iteration 2 passed 15 checks with only the ADR 0080
+UniFi waiver, no fail/not-run and all six local network counters zero. Both
+gate-4 audits passed. Recovery `20261002T053117Z-1175062-repeat` from
+`7e4c72c` reused accepted iteration 2 but stopped about 06:39 UTC with exit 2
+and no final comparison receipt. Windows `run-20261002T053119Z-97daa1c63993`
+failed `pxe-loop` after OVMF reported Windows Boot Manager `Not Found`; its
+permitted retry `run-20261002T063837Z-3c2cd155d481` failed an immediate
+process audit that saw `python3` immediately after launch. No VMs remained after that run.
+Original evidence hashes still match. Only the two failed bundles'
+`publication.iso` files were retired; their disks, firmware variables, results
+and logs remain. The process-audit fix is committed as `c45c0dc`. Recovery
+`20261002T114212Z-1294100-repeat` ran from 11:42:12 to 13:47:15 UTC, reusing
+the accepted original iteration at the same pins. Both cycles completed all
+six functional phases, but the final comparison is **FAIL**,
+`equivalent: false`, zero retries. The fresh cycle passed 15 aggregate checks
+and failed only on `host_network_changes.route=4`; the other five local
+counters are zero, forwarding by privilege proof, and UniFi remains unproven.
+Raw before/after diagnostics retain one automatic IPv6 router-advertisement
+ECMP next-hop replacement, counted in both all-table route views as four
+old/new entries. Extending privilege proof to automatic route changes awaits
+an owner decision; the present verdict stands and gate 12 remains open.
+The supervisor and driver stopped with exit 2, no VMs remain, and no rerun
+has started. Exact receipt and diagnostic paths are in
+[the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). The keeper
+remains absent, its reserved Windows publication unconsumed, and the owner
+availability question unanswered. Credentials must be typed at the owner's
+terminal after verifying the lab is idle; only one live lane may run at a time.
 
 Owner custody on `rehearsal`: probe PASS (above), password policy recorded,
 adopt and durable Arch install PASS on `rehearsal-ws1`. The owner-run
