@@ -22,6 +22,17 @@
       "stage": "stable",
       "usage": "tools/factory-bundle-firmware-provenance [--json] BUNDLE [BUNDLE ...]"
     },
+    "factory-repeat-input-binding": {
+      "idempotent": true,
+      "json": true,
+      "lang": "python",
+      "mutates": false,
+      "origin": "local",
+      "purpose": "Validate staged factory publications against the expected selected release.",
+      "requires": [],
+      "stage": "stable",
+      "usage": "tools/factory-repeat-input-binding [--json] [--releases PATH] PUBLICATION [PUBLICATION ...]"
+    },
     "lab-state-test-audit": {
       "idempotent": true,
       "json": true,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ from pathlib import Path
 
 try:
     from homelab.lib import (
-        pxe_release_set, windows_install_source,
+        pxe_release, pxe_release_set, windows_install_source,
         workstation_repo as workstation_repo_lib)
     from homelab.vm.controller_factory import (
         FactorySpec, nginx_config, tftp_unit)
@@ -21,6 +22,7 @@ except ModuleNotFoundError as error:
     if error.name != "homelab":
         raise
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    import pxe_release
     import pxe_release_set
     import windows_install_source
     import workstation_repo as workstation_repo_lib
@@ -29,6 +31,72 @@ except ModuleNotFoundError as error:
 
 class PublicationError(RuntimeError):
     """Selected release material is absent, altered, or unsafe."""
+
+
+RELEASE_EXPECTED_ENV = "TELOS_PXE_RELEASE_EXPECTED"
+
+
+def _validate_identity(value: object) -> dict:
+    if (not isinstance(value, dict)
+            or set(value) != {"version", "manifest_sha256", "media_seal_sha256"}
+            or not isinstance(value["version"], str)
+            or not pxe_release_set.VERSION.fullmatch(value["version"])
+            or any(not isinstance(value[key], str)
+                   or not re.fullmatch(r"[0-9a-f]{64}", value[key])
+                   for key in ("manifest_sha256", "media_seal_sha256"))):
+        raise PublicationError("expected release identity is invalid")
+    return value
+
+
+def _manifest_identity(path: Path) -> tuple[dict, dict]:
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise PublicationError("release-set manifest must be a regular file")
+        payload = path.read_bytes()
+        manifest = json.loads(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PublicationError(f"cannot read release-set manifest: {error}") from error
+    if (not isinstance(manifest, dict)
+            or set(manifest) != {"schema", "version", "media_seal_sha256", "targets"}
+            or manifest["schema"] != pxe_release_set.SCHEMA
+            or not isinstance(manifest["targets"], dict)
+            or set(manifest["targets"]) != set(pxe_release_set.TARGETS)):
+        raise PublicationError("release-set manifest has invalid fields")
+    identity = _validate_identity({
+        "version": manifest["version"],
+        "manifest_sha256": hashlib.sha256(payload).hexdigest(),
+        "media_seal_sha256": manifest["media_seal_sha256"],
+    })
+    return manifest, identity
+
+
+def publication_release_identity(
+    publication: Path, *, expected: dict | None = None,
+) -> dict:
+    """Verify the copied release manifest and served leaves; return their identity.
+
+    This reads only the publication tree, never the current selected pointer.
+    ``expected`` has version, manifest_sha256 and media_seal_sha256 fields.
+    """
+    publication = Path(publication)
+    manifest, identity = _manifest_identity(publication / pxe_release_set.MANIFEST)
+    if expected is not None and identity != _validate_identity(expected):
+        raise PublicationError("copied publication does not match expected release identity")
+    version = identity["version"]
+    for target in pxe_release_set.TARGETS:
+        record = manifest["targets"][target]
+        leaf = publication / "www" / target / version
+        try:
+            if (not isinstance(record, dict)
+                    or record.get("manifest") != f"targets/{target}/{version}/release.json"
+                    or record.get("manifest_sha256") != digest(leaf / pxe_release.MANIFEST)):
+                raise PublicationError(f"{target}: copied leaf manifest digest/path mismatch")
+            problems = pxe_release.verify(leaf)
+        except (OSError, pxe_release.ReleaseError) as error:
+            raise PublicationError(f"{target}: cannot verify copied release: {error}") from error
+        if problems:
+            raise PublicationError(f"{target}: copied release failed verification: " + "; ".join(problems))
+    return identity
 
 
 TFTP_PACKAGE = re.compile(
@@ -159,6 +227,12 @@ def stage(
     workstation_repo: Path | None = None,
 ) -> dict:
     """Copy only manifest-verified selected bytes into a private staging tree."""
+    expected = None
+    if RELEASE_EXPECTED_ENV in os.environ:
+        try:
+            expected = _validate_identity(json.loads(os.environ[RELEASE_EXPECTED_ENV]))
+        except json.JSONDecodeError as error:
+            raise PublicationError("expected release identity is invalid JSON") from error
     releases = Path(releases).resolve()
     destination = Path(destination)
     selected_path = releases / pxe_release_set.SELECTED
@@ -176,8 +250,13 @@ def stage(
         raise PublicationError(
             "selected release set failed verification: " + "; ".join(problems))
     aggregate = release_set / pxe_release_set.MANIFEST
-    if digest(aggregate) != selected.get("manifest_sha256"):
+    _manifest, source_identity = _manifest_identity(aggregate)
+    if source_identity["manifest_sha256"] != selected.get("manifest_sha256"):
         raise PublicationError("selected descriptor does not match release-set manifest")
+    if source_identity["version"] != version:
+        raise PublicationError("selected descriptor does not match release-set version")
+    if expected is not None and source_identity != expected:
+        raise PublicationError("selected publication does not match expected release identity")
     if destination.exists():
         raise PublicationError(f"publication destination already exists: {destination}")
     ipxe = _ipxe_binary(ipxe_binary)
@@ -259,6 +338,9 @@ def stage(
         for release_target in pxe_release_set.TARGETS:
             source = release_set / "targets" / release_target / version
             shutil.copytree(source, www / release_target / version)
+        # Validate the consumed bytes, not another snapshot of the mutable
+        # selection. This also refuses source changes between verify and copy.
+        copied_identity = publication_release_identity(destination, expected=source_identity)
         if repo_source is not None:
             shutil.copytree(repo_source, www / WORKSTATION_REPO_WWW)
         bootstrap = www / "boot" / "boot.ipxe"
@@ -484,7 +566,8 @@ def stage(
                     "packages": repo_summary["packages"],
                     "bytes": repo_summary["bytes"],
                 } if repo_summary is not None else None),
-            "selected_manifest_sha256": selected["manifest_sha256"],
+            "selected_manifest_sha256": copied_identity["manifest_sha256"],
+            "release_identity": copied_identity,
             "bootstrap": "www/boot/boot.ipxe",
             "offline_repair": repair,
             "artifacts": artifacts,

@@ -2,13 +2,15 @@
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from homelab.lib import pxe_release_set, windows_install_source
+from homelab.lib import pxe_release, pxe_release_set, windows_install_source
 from homelab.lib import workstation_repo
 from homelab.tests.test_workstation_repo import make_repo
 from homelab.vm import factory_publication
@@ -21,28 +23,16 @@ class FactoryPublicationTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.releases = self.root / "pxe"
         self.version = "20260727.001"
-        self.release_set = self.releases / "release-sets" / self.version
-        self.release_set.mkdir(parents=True)
-        self.aggregate_bytes = b'{"schema":1,"selected":"exact bytes"}\n'
-        aggregate = self.release_set / pxe_release_set.MANIFEST
-        aggregate.write_bytes(self.aggregate_bytes)
-        for target in pxe_release_set.TARGETS:
-            leaf = self.release_set / "targets" / target / self.version
-            leaf.mkdir(parents=True)
-            (leaf / "boot.ipxe").write_text(f"#!ipxe\n# {target}\n")
-        (self.release_set / "targets" / "windows" / self.version
-         / "release.json").write_text(json.dumps({
-             "source_iso_sha256": "a" * 64,
-         }))
-        selected = {
-            "schema": 1,
-            "version": self.version,
-            "manifest_sha256": hashlib.sha256(
-                self.aggregate_bytes).hexdigest(),
-        }
-        self.releases.mkdir(exist_ok=True)
-        (self.releases / pxe_release_set.SELECTED).write_text(
-            json.dumps(selected))
+        self.seal = self.root / "seal.json"
+        self.seal.write_text(json.dumps({"schema": 1, "content": [
+            {"name": "arch-iso", "sha256": "b" * 64},
+            {"name": "windows-iso", "sha256": "a" * 64},
+            {"name": "wimboot", "sha256": "c" * 64},
+            {"name": "windows-install-source", "source_iso_sha256": "a" * 64,
+             "receipt_sha256": "d" * 64, "bytes": 1234, "file_count": 2},
+        ]}))
+        self.release_set = self.build_release(self.version)
+        self.aggregate_bytes = (self.release_set / pxe_release_set.MANIFEST).read_bytes()
         self.ipxe = self.root / "ipxe.efi"
         self.ipxe.write_bytes(b"verified first stage")
         self.seed = self.root / "seed.iso"
@@ -52,6 +42,33 @@ class FactoryPublicationTests(unittest.TestCase):
             self.workstation_repo,
             workstation_repo.resolve_contract_packages(),
             extra_packages=("glibc",))
+
+    def build_release(self, version):
+        def leaves(build_root):
+            result = {}
+            for target in pxe_release_set.TARGETS:
+                source = build_root / "source" / target
+                source.mkdir(parents=True)
+                (source / "boot.ipxe").write_text(f"#!ipxe\n# {target}\n")
+                (source / "target.json").write_text(json.dumps({
+                    "schema": 1, "id": target, "entrypoints": ["boot.ipxe"]}))
+                leaf = pxe_release.stage(source, build_root / "leaves", version=version)
+                if target == "windows":
+                    manifest = leaf / pxe_release.MANIFEST
+                    value = json.loads(manifest.read_text())
+                    value["source_iso_sha256"] = "a" * 64
+                    manifest.write_text(json.dumps(value))
+                result[target] = leaf
+            return result
+        return pxe_release_set.build(
+            self.releases, version, self.seal, json.loads(self.seal.read_text()), leaves)
+
+    def identity(self):
+        return {
+            "version": self.version,
+            "manifest_sha256": hashlib.sha256(self.aggregate_bytes).hexdigest(),
+            "media_seal_sha256": factory_publication.digest(self.seal),
+        }
 
     def stage(self, destination, **kwargs):
         if kwargs.get("target", "arch-workstation") == "arch-workstation":
@@ -100,6 +117,92 @@ class FactoryPublicationTests(unittest.TestCase):
                     return_value="/usr/bin/xorriso"):
             return factory_publication.extract_tftp_repair(
                 self.seed, self.root / "repair-extracted")
+
+    def test_pinned_publication_reports_verified_consumed_identity(self):
+        expected = self.identity()
+        destination = self.root / "publication"
+        with mock.patch.dict(os.environ, {
+                factory_publication.RELEASE_EXPECTED_ENV: json.dumps(expected)}):
+            receipt = self.stage(destination, target="windows")
+        self.assertEqual(receipt["release_identity"], expected)
+        self.assertEqual(receipt["selected_manifest_sha256"], expected["manifest_sha256"])
+        self.assertEqual(factory_publication.publication_release_identity(
+            destination, expected=expected), expected)
+        (destination / "www/windows" / self.version / "boot.ipxe").write_text("changed")
+        with self.assertRaisesRegex(factory_publication.PublicationError, "copied release failed"):
+            factory_publication.publication_release_identity(destination, expected=expected)
+
+    def test_transient_reselection_cannot_publish_a_different_pinned_set(self):
+        selected = self.releases / pxe_release_set.SELECTED
+        original = selected.read_bytes()
+        expected = self.identity()
+        self.build_release("20260727.002")
+        destination = self.root / "publication"
+        try:
+            with mock.patch.dict(os.environ, {
+                    factory_publication.RELEASE_EXPECTED_ENV: json.dumps(expected)}):
+                with self.assertRaisesRegex(factory_publication.PublicationError, "expected release identity"):
+                    self.stage(destination, target="windows")
+        finally:
+            selected.write_bytes(original)
+        self.assertFalse(destination.exists())
+        self.assertEqual(selected.read_bytes(), original)
+
+    def test_invalid_repeat_release_pin_fails_before_staging(self):
+        for value in ("{", "null", "{}", json.dumps({**self.identity(), "version": "../bad"}),
+                      json.dumps({**self.identity(), "manifest_sha256": "invalid"})):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {
+                    factory_publication.RELEASE_EXPECTED_ENV: value}):
+                with self.assertRaisesRegex(factory_publication.PublicationError, "expected release identity"):
+                    self.stage(self.root / "publication", target="windows")
+                self.assertFalse((self.root / "publication").exists())
+
+    def test_manifest_swap_during_copy_is_refused_even_after_source_restored(self):
+        aggregate = self.release_set / pxe_release_set.MANIFEST
+        copy = shutil.copy2
+        def changed_copy(source, destination, *args, **kwargs):
+            if Path(source) != aggregate:
+                return copy(source, destination, *args, **kwargs)
+            try:
+                aggregate.write_bytes(self.aggregate_bytes + b"\n")
+                return copy(source, destination, *args, **kwargs)
+            finally:
+                aggregate.write_bytes(self.aggregate_bytes)
+        destination = self.root / "publication"
+        with mock.patch.object(factory_publication.shutil, "copy2", side_effect=changed_copy):
+            with self.assertRaisesRegex(factory_publication.PublicationError, "copied publication does not match"):
+                self.stage(destination, target="windows")
+        self.assertFalse(destination.exists())
+        self.assertEqual(aggregate.read_bytes(), self.aggregate_bytes)
+
+    def test_leaf_swap_during_copy_cannot_be_sealed_as_selected_bytes(self):
+        leaf = self.release_set / "targets/windows" / self.version
+        boot = leaf / "boot.ipxe"
+        manifest = leaf / pxe_release.MANIFEST
+        original_boot, original_manifest = boot.read_bytes(), manifest.read_bytes()
+        copy = shutil.copytree
+        for coherent in (False, True):
+            def changed_copy(source, destination, *args, **kwargs):
+                if Path(source) != leaf:
+                    return copy(source, destination, *args, **kwargs)
+                try:
+                    boot.write_bytes(b"#!ipxe\n# different consumed payload\n")
+                    if coherent:
+                        value = json.loads(original_manifest)
+                        value["artifacts"]["boot.ipxe"] = {
+                            "size": boot.stat().st_size, "sha256": factory_publication.digest(boot)}
+                        manifest.write_text(json.dumps(value))
+                    return copy(source, destination, *args, **kwargs)
+                finally:
+                    boot.write_bytes(original_boot)
+                    manifest.write_bytes(original_manifest)
+            destination = self.root / "publication"
+            with self.subTest(coherent=coherent), mock.patch.object(
+                    factory_publication.shutil, "copytree", side_effect=changed_copy):
+                with self.assertRaisesRegex(factory_publication.PublicationError, "copied (release|leaf)"):
+                    self.stage(destination, target="windows")
+            self.assertFalse(destination.exists())
+            self.assertEqual(pxe_release_set.verify(self.release_set), [])
 
     @mock.patch.object(pxe_release_set, "verify", return_value=[])
     def test_stages_exact_selected_manifest_and_served_bytes(self, _verify):

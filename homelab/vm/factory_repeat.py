@@ -1360,10 +1360,16 @@ class SubprocessLifecycle(LifecycleDriver):
         if self._expected_inputs is not None:
             try:
                 from .controller_factory import DNS_REPAIR_EXPECTED_ENV
+                from .factory_publication import RELEASE_EXPECTED_ENV
             except ImportError:
                 from controller_factory import DNS_REPAIR_EXPECTED_ENV
+                from factory_publication import RELEASE_EXPECTED_ENV
             environment[DNS_REPAIR_EXPECTED_ENV] = json.dumps(
                 self._expected_inputs["samba_dns"], sort_keys=True)
+            environment[RELEASE_EXPECTED_ENV] = json.dumps({
+                **self._expected_inputs["release_set"],
+                "media_seal_sha256": self._expected_inputs["media_seal_sha256"],
+            }, sort_keys=True)
             assert self._input_paths is not None
             # The inner Makefile derives TELOS_SAMBA_DNS_CACHE from this
             # variable; carry the same cache the driver actually inspected.

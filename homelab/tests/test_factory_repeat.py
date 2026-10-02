@@ -2310,7 +2310,32 @@ class ActualInputBindingTests(TemporaryRootTests):
             "receipt_sha256": samba_dns._sha(self.cache / "receipt.json")})
         environment = self.driver._phase_environment()
         self.assertEqual(json.loads(environment["TELOS_SAMBA_DNS_EXPECTED"]), identity["samba_dns"])
+        self.assertEqual(json.loads(environment["TELOS_PXE_RELEASE_EXPECTED"]), {
+            **identity["release_set"], "media_seal_sha256": identity["media_seal_sha256"]})
         self.assertEqual(environment["SAMBA_DNS_CACHE"], str(self.cache))
+
+    def test_phase_cannot_consume_transient_reselection_between_boundary_checks(self):
+        from homelab.tests.test_factory_publication import FactoryPublicationTests
+        from homelab.vm import factory_publication
+
+        fixture = FactoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.releases = self.releases
+        self.bind()
+        pinned = self.driver.check_inputs()
+        selected = self.releases / pxe_release_set.SELECTED
+        original = selected.read_bytes()
+        fixture.build_release("20260810.002")
+        destination = self.root / "publication"
+        try:
+            with mock.patch.dict(os.environ, self.driver._phase_environment()):
+                with self.assertRaisesRegex(factory_publication.PublicationError, "expected release identity"):
+                    fixture.stage(destination, target="windows")
+        finally:
+            selected.write_bytes(original)
+        self.assertEqual(self.driver.check_inputs(), pinned)
+        self.assertFalse(destination.exists())
 
     def test_coherently_rebuilt_cache_cannot_hide_behind_unchanged_seal(self):
         self.bind()
