@@ -478,9 +478,10 @@ then destroy the drill.
 Earlier live evidence, 2026-10-01 on `rehearsal-auto` (agent custody): backup PASS (`persistent-backup/rehearsal-auto/20261001T052659Z-1662152-992606e0`; 1.7 MB tarball, dbcheck clean, SHA-256 agreed in guest and on host); the first restore drill into `rehearsal-auto-drill` restored the domain but failed to start samba, which the seed masks (fixed `2b555fa`); the second PASSED as DC `dr-2610010529` (`persistent-restore/rehearsal-auto-drill/20261001T052900Z-1665425-61d8abf8`: realm, domain SID and principal digest equal the backup's); `RECONVERGE=1` then PASSED, and the probe PASSED on the fabric under the new DC name (`persistent-probe/rehearsal-auto-drill/20261001T053036Z-1667189-63cd4172`). The drill instance was destroyed. Unit tests: `homelab/tests/test_persistent_backup.py`,
 `homelab/tests/test_samba_backup_disk.py`.
 
-**Current DR verdict: FAILED restored-client keep-verify, 2026-10-01.** The
-same-instance destroy/restore is now proven; the client recovery requirement is
-not. These later evidence paths are relative to `homelab/var/factory/`:
+**Current DR verdict: PASS, 40/40 restored-client checks, 2026-10-01.**
+Native backup, same-instance destroy/restore under a new DC name and existing
+client recovery without a rejoin are proven; TASK-41 and TASK-42 are done.
+These evidence paths are relative to `homelab/var/factory/`:
 
 | Step | Evidence | Outcome |
 |---|---|---|
@@ -489,14 +490,76 @@ not. These later evidence paths are relative to `homelab/var/factory/`:
 | Native backup | `persistent-backup/rehearsal-auto/20261001T225428Z-323971-342a3f27/result.json` | Verified backup retained |
 | Destroy original, restore same instance | `persistent-restore/rehearsal-auto/20261001T225520Z-327126-e82e02db/result.json` | PASS; restored `rehearsal-auto` as DC `dr-2610012255` |
 | Reconvergence, then probe | `persistent-probe/rehearsal-auto/20261001T225659Z-328973-facea8fe/result.json` | Both PASS |
-| Post-DR keep-verify | `durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T225740Z-329731-9a00cfd1/evidence/result.json` | FAIL; Arch SSSD offline despite machine TGT and LDAP working; unexplained SIGTERM during Controller relaunch prevented Windows verification |
+| First post-DR keep-verify | `durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T225740Z-329731-9a00cfd1/evidence/result.json` | FAIL, retained; Arch SSSD offline despite machine TGT and LDAP working; unexplained SIGTERM during Controller relaunch prevented Windows verification |
+| Post-repair keep-verify | `durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T235410Z-588718-de077620/evidence/result.json` | PASS, 40/40; both systems without a rejoin, kept disk/variables/marker unchanged, no fold or ledger entry, clean teardown |
 
-At this checkpoint no VMs remain, the kept workstation files are unchanged,
-and the restored instance and verified backup are retained. The precise failure
-cause is under diagnosis; no rejoin has been performed. Diagnose against the
-restored directory and disposable workstation overlays before repeating
-keep-verify. The keeper is still absent and requires owner-terminal passwords
-after DR acceptance; the fresh gate-12 repeat has not run yet.
+Samba's compressed SRV Targets were rejected by strict clients. Repair
+`bdebb4f` scopes a verified serializer library to `samba.service`, preserving
+internal DNS; restored-DC reconvergence then passed all four strict
+LDAP/Kerberos UDP/TCP checks before the successful keep-verify. The restored
+instance and native backup remain retained. During the passing run the first
+Windows boot stalled after 72,192 read bytes in 33 operations, zero writes and
+a pristine overlay. The existing bounded cold-boot retry passed; its first
+attempt is recorded in `fabric/windows-boot-attempt-1.json` beside that run's
+evidence. Firmware stalls are not claimed fixed.
+
+The keeper is absent and now awaits owner-terminal credentials. The fresh
+gate-12 repeat has not started; `4dc04b0` now binds every phase to the selected
+set, media seal and actual repair bytes. New release set `20261001.001` and
+the real input-binding preflight pass. Separately, WinPE VBS retry (`8eb69a9`)
+`windows-installs/run-20261001T235652Z-a782e2f67fac` is active with no final
+verdict. Only one lab mutation may run at a time.
+
+#### Owner-terminal keeper sequence (TASK-21)
+
+The DR prerequisite is satisfied. The keeper convergence dry run has been
+checked, but no keeper instance exists yet. Run the following at the owner's
+terminal, one command at a time after the previous command passes, once the
+active lab run has stopped. `keeper` is the local instance selector; directory
+and account names still come from the private overlay. The canonical image
+must be installed, its `local-rescue` password available, and the verified
+Samba repair cache present. If status finds an existing keeper, inspect its
+recorded stage before continuing; do not destroy or recreate it to resume.
+
+```sh
+make homelab-factory-persistent-status PERSISTENT_DC=keeper
+make homelab-factory-persistent-converge-plan PERSISTENT_DC=keeper
+make homelab-factory-persistent-converge PERSISTENT_DC=keeper APPLY=1
+make homelab-factory-persistent-password-policy PERSISTENT_DC=keeper MIN_PASSWORD_LENGTH=4 PASSWORD_COMPLEXITY=off APPLY=1
+make homelab-factory-persistent-accounts-plan PERSISTENT_DC=keeper CHANGE_AT_FIRST_LOGON=1
+make homelab-factory-persistent-accounts PERSISTENT_DC=keeper CHANGE_AT_FIRST_LOGON=1 APPLY=1
+make homelab-factory-persistent-probe PERSISTENT_DC=keeper APPLY=1
+```
+
+Convergence creates the absent instance under owner custody; a separate `-up`
+is unnecessary. Type the canonical `local-rescue` password and a new built-in
+domain Administrator password twice when prompted. That new password must
+meet the initial Samba policy (at least seven characters and three character
+classes); the short policy is applied by the next command. Account staging
+asks for the console password and a temporary
+password for each declared directory account. Keep those values for the later
+first-logon changes. Never put credentials in chat, argv, Make variables or
+environment variables. An interrupted provisioning run may require
+`RECONVERGE=1`; it does not replace an Administrator password already set.
+
+Next adopt a successful fresh gate-5 bundle whose one-use publication remains
+unconsumed, then follow the durable Arch install, Arch join and Windows join
+steps below against `PERSISTENT_DC=keeper`. A completed repeat's identity
+phase consumes its publication, so do not assume its gate-5 disk is adoptable.
+At the joins the owner types the daily administrator's temporary/new/current
+passwords as prompted and distinct Arch `local-rescue` and Windows local
+administrator passwords. Finish with verification, then the first keeper
+native backup:
+
+```sh
+make homelab-durable-workstation-verify WORKSTATION=<workstation> PERSISTENT_DC=keeper ARCH_HOSTNAME=<host> APPLY=1
+make homelab-factory-persistent-backup PERSISTENT_DC=keeper APPLY=1
+```
+
+Keep-verify asks for the console password and current daily-administrator
+password; backup asks for the console password. Retain the passing evidence
+and verified backup set. This sequence is loopback-only and gives no gate-14
+authorization.
 
 Superseded 2026-09-30, kept so it is not re-derived: this paragraph said no
 workstation could be installed against a persistent instance because the
@@ -728,8 +791,11 @@ cold relaunch with AD live and the clock within Kerberos skew, and
 On `rehearsal-auto-ws2`, pre-DR run
 `run-20261001T224742Z-294135-5bf47dc6` also PASSED 40/40. Post-DR run
 `run-20261001T225740Z-329731-9a00cfd1` FAILED; its Arch SSSD failure and the
-subsequent Controller-relaunch SIGTERM leave restored-client acceptance open.
-See the backup section above for the exact evidence and retained state.
+subsequent Controller-relaunch SIGTERM remain recorded. After the Samba SRV
+repair and reconvergence, `run-20261001T235410Z-588718-de077620` PASSED 40/40
+without a rejoin or changes to the kept files, closing restored-client
+acceptance. Its disclosed first-boot retry does not establish a firmware fix.
+See the backup section above for exact evidence and retained state.
 
 ## Required common inputs
 

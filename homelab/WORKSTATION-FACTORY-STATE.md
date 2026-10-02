@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20261001.003`
+Document version: `20261001.004`
 
 Status: active implementation
 
 Last evidence/workstream review: 2026-10-01
 
-Repository baseline reviewed: `d5be72e`
+Repository baseline reviewed: `c657b36` (Samba repair `bdebb4f`, input binding `4dc04b0`)
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -214,6 +214,29 @@ gate. **PASS 2026-09-30** end to end, unattended under agent custody on the
 throwaway instance `rehearsal-auto`: create, converge, accounts, probe, adopt,
 durable Arch install and join, durable Windows join, and keep-verify across a
 Controller cold relaunch. The keeper instance is aiq TASK-21.
+
+**Directory disaster recovery (TASK-41/TASK-42) PASSED 2026-10-01.** Native
+backup, same-instance restore under new DC `dr-2610012255`, reconvergence and
+probe passed. After repair `bdebb4f`, restored-DC convergence passed all four
+strict LDAP/Kerberos UDP/TCP probes; the existing SRV-first
+`rehearsal-auto-ws2` passed keep-verify 40/40 without a rejoin:
+`homelab/var/factory/durable-workstation-verifies/rehearsal-auto-ws2/run-20261001T235410Z-588718-de077620/evidence/result.json`.
+Kept disk, firmware variables and marker were unchanged; no fold or ledger
+entry was made; teardown was clean. The first Windows boot stalled with
+72,192 read bytes, 33 operations and zero writes on a pristine overlay; the
+existing bounded cold-boot retry passed and retained
+`fabric/windows-boot-attempt-1.json`. Firmware stalls are not claimed fixed.
+Earlier failed evidence, restored instance and verified native backup remain.
+
+The keeper (TASK-21) is active but absent; its convergence dry run is checked
+and its DR prerequisite is satisfied. Owner-terminal credentials are still
+required. Fresh Windows VBS retry `run-20261001T235652Z-a782e2f67fac`
+(`8eb69a9`, supervisor `655752`) is active at this checkpoint, with no final
+verdict. The full fresh repeat has NOT STARTED; `4dc04b0` binds the actual
+repair bytes, media seal and selected set to every phase. Release set
+`20261001.001` and the real input-binding preflight pass. Gate 11 stays phase-one
+`partial` (five pass, three ADR 0080 deferrals); the historical repeat FAIL
+is unchanged. Only one live lab lane may run at a time.
 
 ## Current blockers and cautions
 
@@ -748,8 +771,9 @@ Controller cold relaunch. The keeper instance is aiq TASK-21.
   The loopback release-pointer rollback passes in gate 11; serving and booting
   the rolled-back release remains separate proof. Native directory backup,
   same-instance restore under a new DC name, reconvergence and probe passed
-  2026-10-01. Existing-client verification after that restore failed on SSSD
-  readiness and remains under diagnosis (next actions below).
+  2026-10-01. Existing-client verification initially failed on SSSD readiness;
+  after the Samba SRV repair and reconvergence it PASSED 40/40 without a
+  rejoin (current recovery evidence above).
 - Existing PXE staging proves payload construction, not unattended Windows
   installation. Superseded 2026-08-14: the answer file, WinPE startup workflow,
   disk-serial gate, installation-image delivery, secret injection, and
@@ -852,7 +876,7 @@ and both installer handoffs are proven. Gates 5–10 pass; the full Windows
 plus Arch gate-4 audit awaits the fresh IKE-suppression proof. Gate 11
 is closed for phase one at `partial` (2026-10-01).
 
-The genuinely next implementation actions, in order:
+Current actions and completed prerequisites:
 
 1. **Keep the canonical Controller image's `local-rescue` password safe.** The
    image was installed 2026-09-24 through `make homelab-bootstrap-vm-install`
@@ -863,28 +887,38 @@ The genuinely next implementation actions, in order:
 2. **Gate 12 (aiq TASK-6): prove the corrected factory twice.** The last
    completed repeat is `repeat/20261001T153726Z-2517176-repeat`; both complete
    lifecycles agreed but acceptance failed (gate-12 row). A fresh run must
-   prove the IKE and firmware fixes. Use `FACTORY_DURATION=7200` and retain a
-   comparison receipt. Only one lab mutation runs at a time; inspect process
-   state and retained results before restarting an interrupted operation.
-3. **Disaster recovery (aiq TASK-41, TASK-42).** `rehearsal-auto-ws2` has all
-   four stages folded; Windows join `attempt-20261001T223623Z-5e1cc129efaf`
+   prove the IKE, Samba DNS and WinPE startup fixes; firmware stalls remain a
+   disclosed retry condition. The fresh repeat has not started: input binding
+   is complete (`4dc04b0`); obtain the active Windows VBS retry's verdict
+   first. Use `FACTORY_DURATION=7200` and retain a comparison receipt. Only one
+   lab mutation runs at a time; inspect process state and retained results
+   before restarting an interrupted operation.
+3. **Disaster recovery (aiq TASK-41, TASK-42) is DONE.** `rehearsal-auto-ws2`
+   has all four stages folded; Windows join `attempt-20261001T223623Z-5e1cc129efaf`
    passed and retired its publication. Pre-DR keep-verify
    `run-20261001T224742Z-294135-5bf47dc6` passed all 40 checks. Native backup
    `20261001T225428Z-323971-342a3f27` verified before destroying the throwaway
    directory; same-instance restore `20261001T225520Z-327126-e82e02db` passed
    under new DC `dr-2610012255`, followed by reconvergence and probe
-   `20261001T225659Z-328973-facea8fe`. **Post-DR keep-verify failed**:
+   `20261001T225659Z-328973-facea8fe`. **The first post-DR keep-verify failed**:
    `run-20261001T225740Z-329731-9a00cfd1` could not bring SSSD online, although
    the machine key authenticated to Kerberos and LDAP answered. SIGTERM
    during the subsequent Controller relaunch prevented Windows verification;
-   fallback termination is recorded. No guests remain; the kept workstation
-   is unchanged and its test overlays were removed. Preserve the backup and
-   restored instance while diagnosing SSSD discovery; then pass both systems
-   without a rejoin. Intermittent first-boot firmware stalls persist despite
-   cleared HDDP state and are not claimed fixed. `rehearsal-auto-ws1` predates
+   fallback termination is recorded. Repair `bdebb4f` corrected compressed SRV
+   Targets, reconvergence passed four strict DNS probes, and subsequent
+   `run-20261001T235410Z-588718-de077620` PASSED both systems, 40/40, without a
+   rejoin. Kept files remained unchanged; no fold or ledger entry was added;
+   teardown was clean. Preserve both verdicts, the native backup and restored
+   instance. Intermittent first-boot firmware stalls persist despite cleared
+   HDDP state and are not claimed fixed; the passing run used its recorded
+   bounded Windows cold-boot retry. `rehearsal-auto-ws1` predates
    SRV-first and cannot prove discovery after a DC rename.
-4. **The keeper (aiq TASK-21), with the owner** — after the DR proof passes.
-   Its owner decisions are taken (the Keeper row under Agreed decisions). It
+4. **The keeper (aiq TASK-21), with the owner** — DR prerequisite satisfied,
+   keeper absent and convergence dry run checked. Its owner decisions are
+   taken (the Keeper row under Agreed decisions). Follow the exact
+   [owner-terminal sequence](FACTORY-MAKE-TARGETS.md#owner-terminal-keeper-sequence-task-21)
+   once the live lab lane is free: converge, policy, accounts, probe, durable
+   workstation flow and keep-verify, then the first keeper native backup. It
    repeats the durable flow, which passed live end to end 2026-09-30 under
    agent custody on `rehearsal-auto` / `rehearsal-auto-ws1` (run ids in
    [DURABLE-WORKSTATION-FLOW.md](DURABLE-WORKSTATION-FLOW.md), "Live record"),
@@ -909,9 +943,9 @@ The genuinely next implementation actions, in order:
    names all three directory roles. `-up` remains unrun under owner custody;
    agent-custody creation passed 2026-09-30. Reconvergence and destruction
    passed in the 2026-10-01 directory restore drill.
-6. **Gate 13** — reconcile the final live results after the repeat and DR
-   proofs. The two guides are wired into the site, strict prose privacy and
-   link checks pass, and the rendered mobile/desktop layouts are verified.
+6. **Gate 13** — DR is reconciled here; reconcile the final live results after
+   the fresh repeat. The two guides are wired into the site, strict prose
+   privacy and link checks pass, and the rendered mobile/desktop layouts are verified.
    Publishing still requires push authority and exact-commit deployment proof.
 
 Superseded 2026-08-17, kept so it is not re-derived: this list previously opened

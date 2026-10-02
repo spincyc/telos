@@ -1,7 +1,7 @@
 # Workstation-factory handoff (for a fresh agent)
 
-**Last updated:** 2026-10-01 (post-restore verification checkpoint against
-`d5be72e`; previous passes
+**Last updated:** 2026-10-01 (restored-client DR PASS checkpoint; Samba repair
+`bdebb4f`, WinPE VBS retry code `8eb69a9`; previous passes
 2026-09-30, 2026-09-25, 2026-09-24 and 2026-08-17).
 **Read this first, then `homelab/WORKSTATION-FACTORY-STATE.md`** (the canonical
 per-gate state) and `homelab/FACTORY-MAKE-TARGETS.md` (the Make contract).
@@ -19,12 +19,13 @@ accounts live in a persistent directory (aiq TASK-21), then the physical path
 | Private roster (`homelab/instance/identity/principals.json`, gitignored) | All three directory roles named and UID-pinned, plus one `additional_standard_users` entry. **Names are instance data: never write them into a tracked file or a commit message** (ADR 0046) |
 | Persistent directory, throwaway instance `rehearsal` | **Converged** under the permanent realm and holding the **four durable accounts** (temporary passwords, change at first logon) — 2026-09-25, owner-run; probe PASS and password policy recorded 2026-09-30. Its workstation `rehearsal-ws1` stays at stage `arch-install`: the owner-run arch-join stopped on a mistyped temporary password (reset: `homelab-factory-persistent-account-password`) |
 | Durable workstation flow (TASK-28) | **DONE; PASS live end to end 2026-09-30**, unattended under agent custody (TASK-40, `fa8ec58`/`14b925e`) on throwaway instance `rehearsal-auto` and kept workstation `rehearsal-auto-ws1`: create, converge, accounts, probe, adopt, durable Arch install and join, durable Windows join, keep-verify across a Controller cold relaunch. Run ids: `homelab/DURABLE-WORKSTATION-FLOW.md`, "Live record" — §7 item 6 |
-| Keeper directory instance (TASK-21) | Not created; minted **after the DR proof** below, owner-run, owner custody, the owner's real passwords. Owner decisions taken 2026-09-30: a short password policy like `rehearsal`'s (minimum length 4, complexity off, minimum age 0); the temporary Domain Admin `tj-` join principal (revisit delegation before physical laptops); backup and restore proven before minting, sets kept in the gitignored `homelab/var/backups/` (`BACKUP_ROOT` overridable); SRV-first DR naming (TASK-42) — §7 item 9 |
-| Backup/restore and DR naming (TASK-41, TASK-42) | **Restored-client proof FAILED, 2026-10-01.** SRV-first `rehearsal-auto-ws2` passed Windows join (folded, publication retired) and pre-DR keep-verify 40/40. Native backup, destruction and restoration of `rehearsal-auto` under the same instance name as DC `dr-2610012255`, reconvergence and probe all passed. Post-DR keep-verify found Arch SSSD offline despite machine TGT and LDAP working; an unexplained SIGTERM during Controller relaunch prevented Windows verification. No VMs remain, kept workstation files are unchanged, and restored instance/backup are retained. Cause under diagnosis; no rejoin. Exact evidence: `FACTORY-MAKE-TARGETS.md`, backing up and restoring a directory; next action §7 item 8. |
+| Keeper directory instance (TASK-21) | Active, still absent. The DR prerequisite is satisfied; its convergence dry run is checked and creation awaits owner-terminal credentials and a free lab lane. Owner custody, short password policy (minimum 4, complexity off, minimum age 0), temporary Domain Admin `tj-` joins and SRV-first discovery remain the accepted choices. Exact owner sequence: `FACTORY-MAKE-TARGETS.md`, "Owner-terminal keeper sequence (TASK-21)"; §7 item 9. |
+| Backup/restore and DR naming (TASK-41, TASK-42) | **DONE; restored-client proof PASS, 40/40, 2026-10-01.** After native backup and same-instance restore as DC `dr-2610012255`, repair `bdebb4f` and reconvergence passed four strict DNS probes. Existing SRV-first `rehearsal-auto-ws2` keep-verify `run-20261001T235410Z-588718-de077620` passed both OSes without a rejoin. Kept disk, variables and marker unchanged; no fold/ledger entry; clean teardown. The earlier failed attempt and the passing run's bounded Windows cold-boot retry remain recorded; firmware is not claimed fixed. Restored instance and native backup retained. Exact evidence: `FACTORY-MAKE-TARGETS.md`, backing up and restoring a directory; §7 item 8. |
+| Active Windows retry | Fresh WinPE VBS retry (`8eb69a9`) `windows-installs/run-20261001T235652Z-a782e2f67fac`, supervisor `655752`, is active at this checkpoint; no final verdict. Do not start a second live lane. |
 | Committed 2026-09-30 | ADR 0079 (`0b9f102`, replacement-Controller PXE mint dropped); media seal tolerates tool-version drift and the cache is resealed to Arch 2026.08.01 (`110dfb5`; release sets `20260727.00N` stay bound to the old seal); hermetic seed tests (`9c3ca80`, TASK-30); PXE services enabled across reboot (`dfbcce7`, unit-tested only); ADR 0080 (`19c2c64`, gate 11 closes at `partial`, gate 12 waives `host_network_changes`); gate-14 readiness plan (`b719e7a`); drift-tool wildcard (`4d9f0ac`); the durable-flow design (`5f9a790`, `881c45a`); the gate-12 driver hands arch-install the Windows disk and scans retained evidence (`b84bc86`); TASK-28 steps 1-9 (`715147f`..`5f5b322`, `a54e7c9`), recorded password policy (`d3f8567`), one-account password reset (`bcf8d16`), agent credential custody (`fa8ec58`, `14b925e`) |
 | Committed 2026-09-30/10-01 (`4d35cbe..668b524`) | Durable flow's live record (`2b403ab`); backup and restore (`10dd1af`..`d6d1d91`, ADR 0081); SRV-first DC naming (`0a9cd99`, `a2775db`, `3d214e5`); dual-boot login wait derived from the Arch boot gates (`f8f0443`); gate 11's controller-state default (`3fb969e`) and SSSD priming before the outage (`668b524`) |
-| Next owner actions | (a) the keeper itself (TASK-21), after the DR proof; (b) re-converge `rehearsal` with `RECONVERGE=1` so the enabled PXE units can be checked across a reboot; (c) the read-only UniFi review items (TASK-37) — access or screenshots for the eleven stage-1 items in `homelab/EXTERNAL-INTEGRATION-READINESS.md` |
-| Gates 11/12 live runs (TASK-6) | Gate 11 **closed for phase one at `partial`** (five pass, exactly three ADR 0080 deferrals). Repeat `20261001T153726Z-2517176-repeat` completed two six-phase lifecycles in 4h10m with equivalent receipts, but acceptance FAILED on two checker defects and gate-4 IKE traffic. Checker fixes: `c07f701`, `41b6bc8`; IKE suppression: `68800da`; OVMF cache fix: `c8e37d0`; mandatory per-iteration gate 4: `8eb5b6d`. A fresh repeat must prove them; use `FACTORY_DURATION=7200` and retain a receipt. Only one lab mutation runs at a time. |
+| Next owner actions | (a) the keeper's terminal credential steps (TASK-21), now unblocked by DR but serialized with the active lab run; (b) re-converge `rehearsal` with `RECONVERGE=1` so the enabled PXE units can be checked across a reboot; (c) the read-only UniFi review items (TASK-37) — access or screenshots for the eleven stage-1 items in `homelab/EXTERNAL-INTEGRATION-READINESS.md` |
+| Gates 11/12 live runs (TASK-6) | Gate 11 **closed for phase one at `partial`** (five pass, exactly three ADR 0080 deferrals). Repeat `20261001T153726Z-2517176-repeat` completed two six-phase lifecycles in 4h10m with equivalent receipts, but acceptance FAILED on two checker defects and gate-4 IKE traffic. Checker fixes: `c07f701`, `41b6bc8`; IKE suppression: `68800da`; OVMF cache fix: `c8e37d0`; mandatory per-iteration gate 4: `8eb5b6d`. The fresh repeat has NOT STARTED; actual input binding is complete (`4dc04b0`), release set `20261001.001` verifies, and the separate Windows VBS retry has no verdict. Use `FACTORY_DURATION=7200` and retain a receipt. Only one lab mutation runs at a time. |
 
 **Owner-only steps** (they read passwords at the owner's terminal; hand over
 the exact command, never run them yourself): `homelab-bootstrap-vm-install`,
@@ -877,11 +878,12 @@ no headroom for a single spurious refusal.
    resuming: a fresh run must prove the checker, IKE and firmware fixes.
    Use `FACTORY_DURATION=7200`, one media seal, a retained `REPEAT_RECEIPT`
    and a fresh `REPEAT_WORK_ROOT`; expect about four hours and 52 GiB.
-   The fresh repeat has not run yet. Check for an existing live runner before
-   launching. Every iteration needs
-   gate 4 PASS; only the ADR 0080 waiver may remain.
-8. **The DR proof (aiq TASK-41, TASK-42), agent-runnable: diagnose the failed
-   post-restore verify.** `rehearsal-auto-ws2` Windows join
+   The fresh repeat has not started. Input binding is complete (`4dc04b0`)
+   against release set `20261001.001`; obtain the separate Windows VBS
+   retry's verdict. Check for an existing live runner before launching. Every
+   iteration needs gate 4 PASS; only the ADR 0080 waiver may remain.
+8. **The DR proof (aiq TASK-41, TASK-42) is DONE.** `rehearsal-auto-ws2`
+   Windows join
    `attempt-20261001T223623Z-5e1cc129efaf` passed, folded and retired its
    publication; pre-DR keep-verify `run-20261001T224742Z-294135-5bf47dc6`
    passed 40/40. Backup `20261001T225428Z-323971-342a3f27` was verified;
@@ -890,26 +892,37 @@ no headroom for a single spurious refusal.
    `20261001T225659Z-328973-facea8fe` passed. Post-DR keep-verify
    `run-20261001T225740Z-329731-9a00cfd1` failed with Arch SSSD offline
    despite machine TGT and LDAP working. An unexplained SIGTERM during the
-   Controller relaunch prevented Windows verification. Diagnose those failures
-   without a rejoin, then repeat keep-verify; do not restart the already-proven
-   backup/destroy/restore sequence. No VMs remain at this checkpoint; the kept
-   files are unchanged, restored `rehearsal-auto` and its backup are retained.
+   Controller relaunch prevented Windows verification. Those failed results
+   remain retained. Samba repair `bdebb4f` removed compressed SRV Targets;
+   restored-DC reconvergence then passed four strict LDAP/Kerberos UDP/TCP
+   probes. Keep-verify `run-20261001T235410Z-588718-de077620` PASSED 40/40
+   without rejoining either OS, changing kept disk/variables/marker, folding
+   overlays or adding a ledger entry; teardown was clean. Windows needed the
+   existing bounded cold-boot retry after a pristine-overlay first-boot stall
+   (72,192 read bytes, 33 operations, zero writes;
+   `fabric/windows-boot-attempt-1.json`). Do not claim firmware is fixed or
+   repeat the destructive drill. Restored `rehearsal-auto` and its backup remain.
    Full evidence paths and guards are in `FACTORY-MAKE-TARGETS.md`. The older
    `rehearsal-auto-ws1` cannot prove SRV-first recovery. Owner-custody
    `rehearsal` separately needs owner-run reconvergence before testing its
    newly enabled PXE units across a reboot.
-9. **Then the keeper (aiq TASK-21), with the owner:** owner custody with the
-   owner's real passwords, once the DR proof passes. The owner's decisions
+9. **The keeper (aiq TASK-21), with the owner, is unblocked by DR:** owner
+   custody with the owner's real passwords; the keeper is still absent and
+   its convergence dry run is checked. The owner's decisions
    were taken 2026-09-30 (Start-here table): the short policy, the temporary
    Domain Admin `tj-` join principal, backups to `homelab/var/backups/` proven
-   before minting, SRV-first DR naming. Then
-   `homelab-factory-persistent-converge` and
-   `homelab-factory-persistent-accounts CHANGE_AT_FIRST_LOGON=1` for the
-   instance to keep, both owner-run, and steps 1-9 against it. The domain SID
-   is born at that convergence. The throwaway instances and their kept
-   workstations leave by `homelab-factory-persistent-destroy` and
+   before minting, SRV-first DR naming. Follow the exact
+   [owner-terminal sequence](FACTORY-MAKE-TARGETS.md#owner-terminal-keeper-sequence-task-21):
+   converge creates the absent keeper, apply the agreed password policy,
+   stage temporary account passwords, probe, complete the durable workstation
+   flow, pass keep-verify, then take the first keeper native backup. Credentials
+   are typed only at the owner's terminal. Wait for the active lab run to stop
+   before each live step; do not overlap it with the fresh Windows retry or
+   gate 12. The domain SID is born at convergence. The throwaway instances and
+   their kept workstations leave by `homelab-factory-persistent-destroy` and
    `homelab-durable-workstation-destroy` (directory destruction passed in the
-   restore drill; kept-workstation destruction is not yet live-proven). Gate 14 only with explicit owner go-ahead; the plan is
+   restore drill; kept-workstation destruction is not yet live-proven).
+   Gate 14 only with explicit owner go-ahead; the plan is
    `homelab/EXTERNAL-INTEGRATION-READINESS.md`, and its read-only UniFi review
    (TASK-37) is authorized and waits on owner-supplied access. Decided
    2026-09-30 and no longer open: gate 11 `partial` closure and the gate-12

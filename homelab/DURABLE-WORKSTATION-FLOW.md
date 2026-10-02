@@ -6,11 +6,12 @@ END** 2026-09-30, unattended under agent custody on the throwaway instance
 TASK-21. Under owner custody steps 7-9 have not passed (`rehearsal-ws1` stays
 at stage `arch-install`).
 
-Current DR checkpoint, 2026-10-01: `rehearsal-auto-ws2` passed both joins and
-pre-restore keep-verify; `rehearsal-auto` was backed up, destroyed and restored
-under a new DC name, then reconverged and probed successfully. **Post-restore
-keep-verify FAILED**, so restored-client recovery is not accepted and the keeper
-is not created. See the live record below; do not rejoin the workstation.
+Current DR checkpoint, 2026-10-01: **PASS, 40/40**. After native backup,
+destruction and restoration of `rehearsal-auto` under a new DC name, repaired
+Samba DNS and reconvergence, the existing SRV-first `rehearsal-auto-ws2`
+passed both operating systems without a rejoin. TASK-41 and TASK-42 are done.
+The keeper (TASK-21) is still absent and requires owner-terminal credentials;
+its DR prerequisite is now satisfied. See the live record below.
 
 Every workstation runner today wraps the Controller in `DisposableBootDisk`,
 and every run provisions a brand-new domain, so a minted workstation dies with
@@ -93,9 +94,10 @@ The disposable gates 5-8 must not change: `windows_install_run.py`,
 modules rather than edited, and the synthetic installer output is pinned by a
 golden digest.
 
-Step 9 passed against `rehearsal-auto`. After the restored-client DR proof
-passes, repeat steps 1-9 against the keeper (aiq TASK-21, owner custody, with
-passwords typed at the owner's terminal). The keeper has not been created.
+Step 9 and the restored-client DR proof passed against `rehearsal-auto`.
+Repeat steps 1-9 against the keeper (aiq TASK-21, owner custody, with passwords
+typed at the owner's terminal). The keeper has not been created. Its exact
+directory setup sequence is in [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md#owner-terminal-keeper-sequence-task-21).
 A throwaway instance and its workstations leave together by their destroy
 targets (the domain dies with the instance).
 
@@ -149,7 +151,9 @@ after backup and restore of a persistent directory are built and proven.
 Both are built; backup, separate-name and same-instance restore under a new DC
 name, reconverge and probe PASSED live on 2026-10-01 (see
 FACTORY-MAKE-TARGETS.md for the runs). The first workstation keep-verify against
-the restored DC FAILED; its cause remains under diagnosis. `homelab-factory-persistent-backup` takes a
+the restored DC FAILED; the later run passed both systems, 40/40, after the
+Samba SRV serializer repair (`bdebb4f`) and reconvergence.
+`homelab-factory-persistent-backup` takes a
 `samba-tool domain backup offline` over an audited raw disk, and
 `homelab-factory-persistent-restore` restores it with `samba-tool domain
 backup restore` into a freshly created instance, never from a disk image (see
@@ -177,10 +181,10 @@ exists) -> probe -> keep-verify. The exact commands are in
 an instance's directory". PASS means the restored directory, under its new DC
 name, serves the kept workstation's Arch and Windows logins without a rejoin.
 
-The sequence has now reached that final check on `rehearsal-auto-ws2`, but the
-check failed. Retain the restored instance and verified backup while diagnosing
-the failure; do not repeat the destructive sequence or join either OS again
-merely to make verification pass.
+The sequence PASSED on `rehearsal-auto-ws2`, including the final check without
+rejoining either OS. Retain the restored instance, verified backup and both
+failed and passing evidence; no additional destructive drill is needed to
+satisfy the keeper's prerequisite.
 
 ## Live record
 
@@ -215,14 +219,28 @@ Windows). Corrected 2026-09-30, kept so it is not re-derived: this read
 - Post-DR keep-verify `run-20261001T225740Z-329731-9a00cfd1` FAILED: Arch
   SSSD remained offline despite a working machine TGT and LDAP. An unexplained
   SIGTERM during the Controller relaunch then prevented Windows verification.
-  Neither observation establishes a root cause. At this checkpoint no VMs
-  remain, the kept workstation files are unchanged, and the restored instance
-  and backup are retained. No rejoin has been performed.
+  At that checkpoint the cause was under diagnosis; the failed run remains
+  evidence, and neither OS was rejoined.
+- Samba emitted compressed SRV Targets that strict clients rejected. Repair
+  `bdebb4f` preserves internal DNS and scopes the verified serializer library
+  to `samba.service`. Restored-DC reconvergence then passed all four strict
+  LDAP/Kerberos UDP/TCP probes.
+- Post-repair keep-verify `run-20261001T235410Z-588718-de077620` PASSED all
+  40 checks against the restored DC. Both systems passed without a rejoin;
+  the kept disk, firmware variables and marker were unchanged, no overlay
+  was folded and no ledger entry was added, and teardown was clean. The
+  first Windows boot stalled after 72,192 read bytes in 33 operations, with
+  zero writes and a pristine overlay. The existing bounded cold-boot retry
+  passed; `fabric/windows-boot-attempt-1.json` records the first attempt.
+  This is not a firmware-fix claim.
 
 Full evidence paths are in [FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md),
 "Backing up and restoring an instance's directory". The earlier ordinary
-keep-verify passes stand; they do not turn this failed recovery check into a
-pass. Gate 12's fresh repeat after the fixes has not run yet.
+keep-verify passes and the failed recovery attempt retain their original
+verdicts. The new passing run closes TASK-41/TASK-42. Gate 12's fresh repeat
+has not started. The separate WinPE VBS retry (`8eb69a9`),
+`windows-installs/run-20261001T235652Z-a782e2f67fac`, is active at this
+checkpoint with no verdict; it does not establish repeat acceptance.
 
 Owner custody on `rehearsal`: probe PASS (above), password policy recorded,
 adopt and durable Arch install PASS on `rehearsal-ws1`. The owner-run
