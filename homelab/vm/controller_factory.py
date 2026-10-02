@@ -36,7 +36,10 @@ def dns_repair_identity(cache: Path) -> dict[str, str]:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
                 raise ValueError("DNS repair inputs must be regular single-link files")
-            identity[key] = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest = hashlib.sha256()
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+            identity[key] = digest.hexdigest()
             after = os.fstat(stream.fileno())
             if (before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                     after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
