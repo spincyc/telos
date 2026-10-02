@@ -2370,6 +2370,335 @@ class ActualInputBindingTests(TemporaryRootTests):
         self.assertEqual(comparison["divergent_count"], 1)
 
 
+class RecoveryIterationTests(TemporaryRootTests):
+    """One retained full cycle plus one fresh cycle, through the real judge."""
+
+    def setUp(self):
+        super().setUp()
+        self.releases = self.release_root()
+        selected = pxe_release_set.selected_release_set(self.releases)
+        aggregate = json.loads((selected / "release-set.json").read_text())
+        self.inputs = {
+            "release_set": {"version": aggregate["version"],
+                            "manifest_sha256": samba_dns._sha(selected / "release-set.json")},
+            "media_seal_sha256": aggregate["media_seal_sha256"],
+            "samba_dns": {"library_sha256": "b" * 64, "receipt_sha256": "c" * 64}}
+        self.disk = self.installed_controller_disk()
+        self.prior = self.iteration(index=2, driver=self.driver())
+        self.old_receipt = self.root / "original-failed-repeat.json"
+        self.old_receipt.write_text('{"verdict":"FAIL"}\n')
+
+    def driver(self):
+        inputs = self.inputs
+        class Pinned(FakeLifecycle):
+            def check_inputs(self):
+                return inputs
+        return Pinned()
+
+    def run_recovery(self, *, driver=None, prior=None, iterations=2, receipt=None,
+                     producers=None):
+        stream = io.StringIO()
+        with mock.patch.object(sys, "stderr", io.StringIO()):
+            status = factory_repeat.repeat(
+                apply=True, iterations=iterations, reuse_iteration=prior or self.prior,
+                controller_disk=self.disk, evidence_root=self.root / "new-evidence",
+                work_root=self.root / "new-work", releases=self.releases,
+                receipt=receipt, driver=driver or self.driver(),
+                bind=lambda bundles, **kwargs: producers or wired_producers(), stream=stream)
+        return status, json.loads(stream.getvalue()) if stream.getvalue() else None
+
+    def edit_result(self, change):
+        path = self.prior / "result.json"
+        value = json.loads(path.read_text())
+        change(value)
+        path.write_text(json.dumps(value))
+
+    def assert_refused_without_vm(self, **kwargs):
+        driver = self.driver()
+        status, document = self.run_recovery(driver=driver, **kwargs)
+        self.assertEqual(status, 2)
+        self.assertIsNone(document)
+        self.assertEqual(driver.captures, 0)
+        self.assertEqual(driver.destroyed, [])
+        self.assertEqual(driver.executed, [])
+
+    def test_one_reused_plus_one_fresh_full_iteration_preserves_original_failure(self):
+        driver = self.driver()
+        before = factory_repeat._snapshot_digest(factory_repeat._evidence_snapshot(self.prior))
+        receipt = self.root / "recovery.json"
+        status, document = self.run_recovery(driver=driver, receipt=receipt)
+        self.assertEqual(status, 0)
+        self.assertEqual(document["verdict"], "PASS")
+        self.assertTrue(document["equivalent"])
+        self.assertEqual(document["iterations"], 2)
+        self.assertEqual(len(driver.executed), len(factory_repeat.PHASES))
+        self.assertEqual(driver.destroyed, [self.root / "new-work/iteration-2"])
+        self.assertEqual([s["kind"] for s in document["sources"]], ["reused", "new"])
+        self.assertEqual(document["sources"][0], {
+            "kind": "reused", "evidence": str(self.prior), "sha256": before})
+        self.assertEqual([r["factory_inputs"] for r in document["runs"]], [self.inputs] * 2)
+        self.assertEqual(factory_repeat._snapshot_digest(factory_repeat._evidence_snapshot(self.prior)), before)
+        self.assertEqual(self.old_receipt.read_text(), '{"verdict":"FAIL"}\n')
+        self.assertEqual(json.loads(receipt.read_text()), document)
+
+    def test_failing_listener_prior_is_not_reused(self):
+        self.edit_result(lambda v: v["measurements"]["host_network_changes"].update(listener=1))
+        self.assert_refused_without_vm()
+
+    def test_live_style_unifi_waiver_survives_both_recovered_cycles(self):
+        counters = {**PRODUCED["host_network_changes"], "unifi": "unproven",
+                    "basis": {"forwarding": "privilege"}}
+        self.edit_result(lambda v: v["measurements"].update(host_network_changes=counters))
+        status, document = self.run_recovery(producers=wired_producers(host_network_changes=counters))
+        self.assertEqual(status, 0)
+        self.assertEqual(document["verdict"], "PASS-WITH-WAIVER")
+        self.assertTrue(document["waivers"])
+        self.assertEqual([run["verdict"] for run in document["runs"]], ["PASS-WITH-WAIVER"] * 2)
+        self.assertEqual(document["runs"][0]["waivers"], document["runs"][1]["waivers"])
+        self.assertTrue(document["equivalent"])
+
+    def test_reused_retries_come_from_the_verified_snapshot(self):
+        retry = {"iteration": 2, "phase": "windows-install", "category": "pxe-loop",
+                 "failed_bundle": "fixture/failed", "retry_bundle": "fixture/passed"}
+        self.edit_result(lambda v: v.update(retries=[retry]))
+        verified, fingerprint, retries = factory_repeat.checked_reused_iteration(
+            self.prior, releases=self.releases)
+        self.assertEqual(retries, [retry])
+        self.assertEqual(verified["verdict"], "PASS")
+        self.assertRegex(fingerprint, r"^[0-9a-f]{64}$")
+        read = factory_repeat.read_phase_result
+        def reject_unbound_read(path):
+            self.assertNotEqual(Path(path), self.prior)
+            return read(path)
+        with mock.patch.object(factory_repeat, "read_phase_result", side_effect=reject_unbound_read):
+            status, document = self.run_recovery()
+        self.assertEqual(status, 0)
+        self.assertEqual(document["retries"], [retry])
+
+    def test_gate4_failure_cannot_be_hidden_by_sixteen_passing_checks(self):
+        with (self.prior / "switch.jsonl").open("a") as stream:
+            stream.write(json.dumps({"event": "flow", "peer": "workstation",
+                "delivered_to": "controller", "ethertype": 0x0800,
+                "ip_protocol": 17, "src_port": 500, "dst_port": 500}) + "\n")
+        self.assertEqual(factory_verify.verify_run(self.prior, releases=self.releases)["verdict"], "PASS")
+        self.assert_refused_without_vm()
+
+    def test_incomplete_or_forged_phase_metadata_refuses_before_vm(self):
+        path = self.prior / "result.json"
+        original = path.read_bytes()
+        changes = [lambda v: v["phases"].pop(),
+                   lambda v: v["phases"][0].update(status_required=False),
+                   lambda v: v["phases"][0].update(status="skipped"),
+                   lambda v: v["phases"][1].update(phase="windows-install"),
+                   lambda v: v.update(status="observed"),
+                   lambda v: v["phase_evidence"]["retained"].pop("arch-identity")]
+        for change in changes:
+            with self.subTest(change=change):
+                path.write_bytes(original)
+                self.edit_result(change)
+                self.assert_refused_without_vm()
+
+    def test_missing_or_malformed_prior_refuses_before_vm(self):
+        self.assert_refused_without_vm(prior=self.root / "future-evidence")
+        (self.prior / "result.json").write_text("{")
+        self.assert_refused_without_vm()
+
+    def test_malformed_inputs_refuse_before_vm(self):
+        self.edit_result(lambda v: v.update(factory_inputs={"release_set": {}}))
+        self.assert_refused_without_vm()
+
+    def test_wrong_release_pin_refuses_before_vm(self):
+        self.edit_result(lambda v: v["factory_inputs"]["release_set"].update(manifest_sha256="0" * 64))
+        self.assert_refused_without_vm()
+
+    def test_different_live_repair_pin_refuses_before_vm(self):
+        driver = self.driver()
+        changed = json.loads(json.dumps(self.inputs))
+        changed["samba_dns"]["library_sha256"] = "0" * 64
+        driver.check_inputs = lambda: changed
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "factory_inputs differ"):
+            self.run_recovery(driver=driver)
+        self.assertEqual(driver.captures, 0)
+        self.assertEqual(driver.executed, [])
+
+    def test_changed_prior_during_initial_verification_refuses_before_vm(self):
+        original = factory_repeat._complete_iteration
+        def mutate(evidence, result):
+            original(evidence, result)
+            path = self.prior / "result.json"
+            path.write_bytes(path.read_bytes() + b"\n")
+        with mock.patch.object(factory_repeat, "_complete_iteration", side_effect=mutate):
+            self.assert_refused_without_vm()
+
+    def test_changed_prior_phase_artifact_blocks_final_receipt(self):
+        driver = self.driver()
+        run = driver.run_phase
+        def mutate(phase, **kwargs):
+            bundle = run(phase, **kwargs)
+            if phase.name == "windows-install":
+                path = self.prior / "phases/dualboot-acceptance/boot1-serial.log"
+                path.write_bytes(path.read_bytes() + b"changed retained boot evidence\n")
+            return bundle
+        driver.run_phase = mutate
+        receipt = self.root / "recovery.json"
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "changed before the recovery receipt"):
+            self.run_recovery(driver=driver, receipt=receipt)
+        self.assertFalse(receipt.exists())
+
+    def test_existing_failed_receipt_is_never_overwritten(self):
+        self.assert_refused_without_vm(receipt=self.old_receipt)
+        self.assertEqual(self.old_receipt.read_text(), '{"verdict":"FAIL"}\n')
+
+    def test_disposable_work_overlap_and_insufficient_cycles_refuse(self):
+        self.assert_refused_without_vm(prior=self.root / "new-work/iteration-2")
+        self.assert_refused_without_vm(iterations=1)
+
+    def test_new_evidence_cannot_be_created_inside_the_reused_aggregate(self):
+        driver = self.driver()
+        with mock.patch.object(sys, "stderr", io.StringIO()):
+            status = factory_repeat.repeat(
+                apply=True, reuse_iteration=self.prior, driver=driver,
+                controller_disk=self.disk, releases=self.releases,
+                evidence_root=self.prior / "nested", work_root=self.root / "new-work",
+                stream=io.StringIO())
+        self.assertEqual(status, 2)
+        self.assertEqual(driver.executed, [])
+        self.assertFalse((self.prior / "nested").exists())
+
+    def test_real_cleanup_cannot_erase_new_evidence_or_diagnostics(self):
+        for reuse in (None, self.prior):
+            for iterations in (2, 3):
+                with self.subTest(reuse=reuse, iterations=iterations):
+                    work = self.root / "unsafe-work"
+                    evidence = work / f"iteration-{iterations}" / "evidence"
+                    evidence.mkdir(parents=True, exist_ok=True)
+                    marker = evidence / "preserve"
+                    marker.write_text("existing evidence")
+                    driver = self.driver()
+                    driver.destroy = lambda path: factory_repeat.SubprocessLifecycle.destroy(driver, path)
+                    with mock.patch.object(sys, "stderr", io.StringIO()):
+                        status = factory_repeat.repeat(
+                            apply=True, iterations=iterations, reuse_iteration=reuse,
+                            driver=driver, controller_disk=self.disk, releases=self.releases,
+                            evidence_root=evidence, work_root=work,
+                            bind=lambda *args, **kwargs: wired_producers(), stream=io.StringIO())
+                    self.assertEqual(status, 2)
+                    self.assertEqual(driver.captures, 0)
+                    self.assertEqual(driver.executed, [])
+                    self.assertEqual(marker.read_text(), "existing evidence")
+
+    def test_reverse_and_symlinked_root_overlap_refuse(self):
+        evidence = self.root / "overlap-evidence"
+        evidence.mkdir()
+        alias = self.root / "alias"
+        alias.symlink_to(evidence, target_is_directory=True)
+        for work in (evidence / "work", alias / "work"):
+            driver = self.driver()
+            with mock.patch.object(sys, "stderr", io.StringIO()):
+                status = factory_repeat.repeat(
+                    apply=True, driver=driver, controller_disk=self.disk,
+                    releases=self.releases, evidence_root=evidence, work_root=work,
+                    stream=io.StringIO())
+            self.assertEqual(status, 2)
+            self.assertEqual(driver.captures, 0)
+
+    def test_receipt_cannot_be_disposable_or_inside_generated_aggregate(self):
+        for reuse in (None, self.prior):
+            for receipt in (
+                    self.root / "new-work/receipt.json",
+                    self.root / f"new-evidence/fixed-{os.getpid()}-repeat/iteration-2/result.json"):
+                driver = self.driver()
+                with mock.patch.object(factory_repeat, "datetime") as clock, \
+                        mock.patch.object(sys, "stderr", io.StringIO()):
+                    clock.now.return_value.strftime.return_value = "fixed"
+                    status = factory_repeat.repeat(
+                        apply=True, reuse_iteration=reuse, driver=driver,
+                        controller_disk=self.disk, releases=self.releases,
+                        evidence_root=self.root / "new-evidence", work_root=self.root / "new-work",
+                        receipt=receipt, stream=io.StringIO())
+                self.assertEqual(status, 2)
+                self.assertEqual(driver.captures, 0)
+                self.assertFalse(receipt.exists())
+
+    def test_retained_symlink_and_oversized_artifact_refuse_before_vm(self):
+        path = self.prior / "phases/dualboot-acceptance/boot1-serial.log"
+        path.unlink()
+        path.symlink_to(self.old_receipt)
+        self.assert_refused_without_vm()
+        path.unlink()
+        with path.open("wb") as stream:
+            stream.truncate(factory_verify.EVIDENCE_LIMIT + 1)
+        self.assert_refused_without_vm()
+
+    def test_hardlinked_and_fifo_evidence_refuse_without_vm(self):
+        path = self.prior / "phases/dualboot-acceptance/boot1-serial.log"
+        alias = self.root / "outside-alias"
+        os.link(path, alias)
+        self.assert_refused_without_vm()
+        alias.unlink()
+        path.unlink()
+        os.mkfifo(path)
+        self.assert_refused_without_vm()
+
+    def test_opened_file_type_is_checked_without_blocking_on_a_fifo_race(self):
+        path = self.root / "raced-file"
+        path.write_bytes(b"regular at enumeration")
+        original = os.open
+        def swap_then_open(filename, flags, *args, **kwargs):
+            self.assertTrue(flags & os.O_NONBLOCK)
+            path.unlink()
+            os.mkfifo(path)
+            return original(filename, flags, *args, **kwargs)
+        with mock.patch.object(factory_repeat.os, "open", side_effect=swap_then_open):
+            with self.assertRaisesRegex(factory_repeat.RepeatError, "not a regular file"):
+                factory_repeat._read_regular(path, single_link=True)
+
+    def test_new_cycle_failure_remains_a_failed_recovery(self):
+        driver = self.driver()
+        fixtures = {name: dict(value) for name, value in PHASE_FIXTURES.items()}
+        fixtures["dualboot-acceptance"]["evidence"] = {
+            **fixtures["dualboot-acceptance"]["evidence"],
+            "result.json": json.dumps({"schema": 1, "status": "fail",
+                                       "measurements": DUALBOOT_MEASUREMENTS}).encode()}
+        driver.fixtures = fixtures
+        status, document = self.run_recovery(driver=driver)
+        self.assertEqual(status, 1)
+        self.assertEqual(document["verdict"], "FAIL")
+
+
+class HostNetworkRetentionTests(TemporaryRootTests):
+    def test_exact_snapshots_are_private_and_outside_the_aggregate(self):
+        class Network(FakeLifecycle):
+            def capture_host_network(self):
+                self.captures += 1
+                return {"schema": 1, "captured_at": str(self.captures), "observations": [
+                    {"command": ["ss", "-H", "-lntup"], "stdout":
+                     "tcp LISTEN 0 3 127.0.0.1:31415 *:* users:((python3,pid=123,fd=3))"}]}
+        driver = Network()
+        diagnostic = self.root / "diagnostics/iteration-1"
+        destination = factory_repeat.run_iteration(
+            1, driver=driver, workdir=self.root / "work", destination=self.root / "aggregate",
+            diagnostics=diagnostic, bind=lambda *args, **kwargs: wired_producers())
+        self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o700)
+        for name, count in (("before", "1"), ("after", "2")):
+            path = diagnostic / f"{name}.json"
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            value = json.loads(path.read_text())
+            self.assertEqual(value["captured_at"], count)
+            self.assertIn("pid=123", value["observations"][0]["stdout"])
+        self.assertFalse((destination / "diagnostics").exists())
+        self.assertEqual(factory_verify.verify_run(destination, releases=self.release_root())["verdict"], "PASS")
+
+    def test_oversized_snapshot_refuses_before_any_phase(self):
+        driver = FakeLifecycle()
+        driver.capture_host_network = lambda: {"raw": "x" * factory_repeat.NETWORK_SNAPSHOT_LIMIT}
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "snapshot exceeds"):
+            factory_repeat.run_iteration(1, driver=driver, workdir=self.root / "work",
+                destination=self.root / "aggregate", diagnostics=self.root / "diagnostics",
+                bind=lambda *args, **kwargs: wired_producers())
+        self.assertEqual(driver.executed, [])
+
+
 class RetainedInputBindingTests(TemporaryRootTests):
     repeat = RepeatEndToEndTests.repeat
 

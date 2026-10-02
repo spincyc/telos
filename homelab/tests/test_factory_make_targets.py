@@ -1200,5 +1200,20 @@ class PersistentBackupTargetTests(unittest.TestCase):
                 self.assertIn(message, result.stderr)
 
 
+class RepeatRecoveryMakeTests(unittest.TestCase):
+    def test_reused_iteration_reaches_both_real_parser_branches(self):
+        import factory_repeat
+        argvs = emitted_by("homelab-factory-repeat", "homelab-factory-repeat",
+                           REPEAT_REUSE_ITERATION="/fixture/old/iteration-2",
+                           REPEAT_RECEIPT="/fixture/new-receipt.json")
+        self.assertEqual(len(argvs), 2)
+        parsed = [factory_repeat.parser().parse_args(argv) for argv in argvs]
+        self.assertEqual([args.apply for args in parsed], [False, True])
+        for args in parsed:
+            self.assertEqual(args.reuse_iteration, Path("/fixture/old/iteration-2"))
+            self.assertEqual(args.iterations, 2)
+            self.assertEqual(args.receipt, Path("/fixture/new-receipt.json"))
+
+
 if __name__ == "__main__":
     unittest.main()

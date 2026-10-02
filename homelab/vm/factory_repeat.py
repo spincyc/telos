@@ -79,6 +79,12 @@ repair library/receipt pair before any phase. Each payload checks the expected
 pair while staging; each iteration retains it in the compared evidence. A
 coherent cache replacement or reseal during the repeat is a hard failure.
 
+``--reuse-iteration`` revalidates one complete accepted aggregate and runs
+the remaining cycles fresh under exactly its input pin. It never rewrites
+the original repeat or upgrades a failed cycle. Raw host-network snapshots
+are bounded private diagnostics beside each new aggregate, outside the
+publishable evidence allowlist.
+
 The seam keeps the live process layer thin:
 :meth:`LifecycleDriver.run_phase` returns a bundle path and
 :meth:`LifecycleDriver.destroy` removes disposable state, and everything else
@@ -98,6 +104,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -128,6 +135,9 @@ DEFAULT_EVIDENCE_ROOT = Path("homelab/var/factory/repeat")
 DEFAULT_WORK_ROOT = Path("homelab/var/factory/repeat-work")
 DEFAULT_RELEASES = Path("homelab/var/pxe")
 DEFAULT_MEDIA_SEAL = Path("homelab/var/media/factory-media-seal.json")
+NETWORK_SNAPSHOT_LIMIT = 2 << 20
+REUSE_EVIDENCE_LIMIT = 64 << 20
+REUSE_ENTRY_LIMIT = 1024
 
 #: The canonical Controller disk every live phase boots or copies.
 CANONICAL_CONTROLLER_DISK = Path("build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2")
@@ -806,16 +816,24 @@ def _merged_bytes(chunks: Iterable[bytes], *, name: str) -> bytes:
     return data
 
 
-def _read_regular(path: Path) -> bytes:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+def _read_regular(path: Path, *, limit: int | None = None,
+                  single_link: bool = False) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
             raise RepeatError(f"{path} is not a regular file")
+        if single_link and metadata.st_nlink != 1:
+            raise RepeatError("reused evidence file must have exactly one link")
         chunks = []
+        size = 0
         while True:
             chunk = os.read(descriptor, 1 << 20)
             if not chunk:
                 break
+            size += len(chunk)
+            if limit is not None and size > limit:
+                raise RepeatError("evidence exceeds its read size limit")
             chunks.append(chunk)
         return b"".join(chunks)
     finally:
@@ -1056,6 +1074,158 @@ def compare_iterations(receipts: Sequence[dict]) -> list[dict]:
         comparison["b"] = other["evidence"]
         comparisons.append(comparison)
     return comparisons
+
+
+def _input_identity(value: object) -> dict:
+    """Require the complete live input pin, never a partially matching subset."""
+    try:
+        if (not isinstance(value, dict)
+                or set(value) != {"release_set", "media_seal_sha256", "samba_dns"}
+                or set(value["release_set"]) != {"version", "manifest_sha256"}
+                or set(value["samba_dns"]) != {"library_sha256", "receipt_sha256"}
+                or not re.fullmatch(r"\d{8}\.\d{3}", value["release_set"]["version"])
+                or any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in (
+                    value["release_set"]["manifest_sha256"], value["media_seal_sha256"],
+                    *value["samba_dns"].values()))):
+            raise ValueError("incomplete identity")
+    except (KeyError, TypeError, ValueError):
+        raise RepeatError("reused iteration has invalid factory_inputs") from None
+    return value
+
+
+def _evidence_snapshot(root: Path) -> dict[str, bytes | None]:
+    """Bounded regular-file snapshot, including all retained phase artifacts.
+
+    Verification runs on these exact bytes in a private temporary tree, so
+    a concurrent edit cannot separate the verifier's input from its digest.
+    """
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise RepeatError("reused iteration must be an existing regular evidence directory")
+    result: dict[str, bytes | None] = {}
+    pending = [root]
+    total = 0
+    while pending:
+        for entry in sorted(pending.pop().iterdir()):
+            mode = entry.lstat().st_mode
+            name = entry.relative_to(root).as_posix()
+            if stat.S_ISDIR(mode):
+                result[name] = None
+                pending.append(entry)
+            elif stat.S_ISREG(mode):
+                if entry.stat().st_size > factory_verify.EVIDENCE_LIMIT:
+                    raise RepeatError("reused evidence exceeds the per-file size limit")
+                payload = _read_regular(
+                    entry, limit=factory_verify.EVIDENCE_LIMIT, single_link=True)
+                total += len(payload)
+                if len(payload) > factory_verify.EVIDENCE_LIMIT or total > REUSE_EVIDENCE_LIMIT:
+                    raise RepeatError("reused evidence exceeds the size limit")
+                result[name] = payload
+            else:
+                raise RepeatError("reused evidence contains a symlink or non-regular entry")
+            if len(result) > REUSE_ENTRY_LIMIT:
+                raise RepeatError("reused evidence exceeds the entry limit")
+    return result
+
+
+def _snapshot_digest(snapshot: dict[str, bytes | None]) -> str:
+    inventory = {name: None if payload is None else hashlib.sha256(payload).hexdigest()
+                 for name, payload in sorted(snapshot.items())}
+    return hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()
+
+
+def _complete_iteration(evidence: Path, result: dict) -> None:
+    """A reused aggregate must retain the complete six-phase contract."""
+    observations = result.get("phases")
+    if (result.get("schema") != SCHEMA or result.get("kind") != "factory-repeat-iteration"
+            or result.get("status") != "pass"
+            or type(result.get("iteration")) is not int or result["iteration"] < 1
+            or not isinstance(observations, list) or len(observations) != len(PHASES)):
+        raise RepeatError("reused evidence is not a complete passing aggregate iteration")
+    retries = result.get("retries")
+    if result.get("measurements_missing") != [] or not isinstance(retries, list):
+        raise RepeatError("reused iteration has incomplete measurements or retry metadata")
+    for retry in retries:
+        if (not isinstance(retry, dict)
+                or set(retry) != {"iteration", "phase", "failed_bundle", "category", "retry_bundle"}
+                or retry["iteration"] != result["iteration"]
+                or not isinstance(retry["phase"], str)
+                or retry["category"] not in RETRYABLE_FAILURES.get(retry["phase"], ())
+                or any(not isinstance(retry[key], str) or not retry[key]
+                       for key in ("failed_bundle", "retry_bundle"))):
+            raise RepeatError("reused iteration has invalid retry metadata")
+    retained = result.get("phase_evidence", {}).get("retained", {})
+    if not isinstance(retained, dict):
+        raise RepeatError("reused iteration has invalid retained phase metadata")
+    expected_trees = {phase.name for phase in PHASES if phase.evidence is not None}
+    _files, trees = enumerate_bundle(evidence / PHASE_TREE)
+    if _files or set(trees) != expected_trees or set(retained) != expected_trees:
+        raise RepeatError("reused iteration lacks the complete retained phase tree")
+    for phase, observation in zip(PHASES, observations):
+        required = phase.result and phase.evidence is not None
+        if (not isinstance(observation, dict)
+                or set(observation) != {"phase", "status", "status_required", "evidence"}
+                or observation["phase"] != phase.name
+                or observation["status_required"] is not required
+                or (phase.evidence is None and observation["evidence"] is not None)
+                or (phase.evidence is not None and (
+                    not isinstance(observation["evidence"], str) or not observation["evidence"]))
+                or (required and observation["status"] not in {"pass", "observed"})
+                or (not required and observation["status"] is not None)):
+            raise RepeatError(f"reused iteration has invalid phase metadata: {phase.name}")
+        if phase.evidence is None:
+            continue
+        phase_root = evidence / PHASE_TREE / phase.name
+        files, directories = enumerate_bundle(phase_root)
+        if directories or sorted(files) != retained[phase.name]:
+            raise RepeatError(f"reused iteration retained phase inventory differs: {phase.name}")
+        for name in files:
+            if evidence_disposition(name) != RETAIN:
+                raise RepeatError("reused phase tree has an unexpected artifact")
+        if required and read_phase_result(phase_root).get("status") != observation["status"]:
+            raise RepeatError(f"reused iteration phase status differs: {phase.name}")
+
+
+def checked_reused_iteration(evidence: Path, *, releases: Path | None) -> tuple[dict, str, list]:
+    """Return the verified receipt, digest and retries from the same snapshot."""
+    evidence = Path(evidence).absolute()
+    try:
+        snapshot = _evidence_snapshot(evidence)
+        fingerprint = _snapshot_digest(snapshot)
+        with tempfile.TemporaryDirectory(prefix="telos-repeat-reuse-") as temporary:
+            copied = Path(temporary) / evidence.name
+            simulation_evidence.private_directory(copied)
+            for name, payload in sorted(snapshot.items()):
+                if payload is None:
+                    simulation_evidence.private_directory(copied / name)
+                else:
+                    _private_write(copied / name, payload)
+            result = read_phase_result(copied)
+            _complete_iteration(copied, result)
+            inputs = _input_identity(result.get("factory_inputs"))
+            verified = factory_verify.verify_run(copied, releases=releases)
+            if (verified["verdict"] not in ACCEPTED_VERDICTS
+                    or repeat_prerequisites([verified])[0]["status"] != factory_verify.PASS):
+                raise RepeatError("reused iteration must pass verification and gate 4")
+            if verified.get("release_set") != {
+                    **inputs["release_set"], "media_seal_sha256": inputs["media_seal_sha256"]}:
+                raise RepeatError("reused iteration factory_inputs differ from the verified release")
+            verified["factory_inputs"] = inputs
+            verified["evidence"] = str(evidence)
+        if _snapshot_digest(_evidence_snapshot(evidence)) != fingerprint:
+            raise RepeatError("reused iteration changed while being verified")
+        return verified, fingerprint, result["retries"]
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+        raise RepeatError(f"cannot reuse iteration: {error}") from error
+
+
+def _retain_network_snapshot(snapshot: object, destination: Path) -> None:
+    payload = (json.dumps(snapshot, indent=2, sort_keys=True) + "\n").encode()
+    if len(payload) > NETWORK_SNAPSHOT_LIMIT:
+        raise RepeatError("host network diagnostic snapshot exceeds its size limit")
+    if destination.exists():
+        raise RepeatError("host network diagnostic snapshot already exists")
+    _private_write(destination, payload)
 
 
 # --------------------------------------------------------------------------
@@ -1454,7 +1624,8 @@ def run_phase_bounded(driver: LifecycleDriver, phase: Phase, *,
 def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
                   destination: Path, bind: Callable[..., Producers] = None,
                   phases: Sequence[Phase] = PHASES,
-                  duration: float = DEFAULT_DURATION) -> Path:
+                  duration: float = DEFAULT_DURATION,
+                  diagnostics: Path | None = None) -> Path:
     """Run one whole lifecycle from destroyed state into one aggregate bundle.
 
     Driver-agnostic and unit tested with a fake driver: the destroy call, the
@@ -1469,6 +1640,8 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     bind = default_producer_binding if bind is None else bind
     inputs = driver.check_inputs()
     before = driver.capture_host_network()
+    if diagnostics is not None:
+        _retain_network_snapshot(before, Path(diagnostics) / "before.json")
     driver.destroy(workdir)
     bundles: dict[str, Path] = {}
     observations: list[dict] = []
@@ -1496,8 +1669,11 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
                 blocks.append((phase.name, measurements))
             evidence_pairs.append((phase.name, evidence))
         observations.append(observation)
+    after = driver.capture_host_network()
+    if diagnostics is not None:
+        _retain_network_snapshot(after, Path(diagnostics) / "after.json")
     producers = bind(bundles, phases=phases, network_before=before,
-                     network_after=driver.capture_host_network())
+                     network_after=after)
     measurements = assemble_measurements(blocks, producers=producers)
     result = aggregate_result(
         iteration=index, observations=observations, measurements=measurements,
@@ -1553,6 +1729,7 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
            duration: float = DEFAULT_DURATION,
            apply: bool = False,
            receipt: Path | None = None,
+           reuse_iteration: Path | None = None,
            controller_disk: Path = CANONICAL_CONTROLLER_DISK,
            driver: LifecycleDriver | None = None,
            bind: Callable[..., Producers] | None = None,
@@ -1563,8 +1740,35 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
     bind = default_producer_binding if bind is None else bind
     evidence_root = Path(evidence_root)
     work_root = Path(work_root)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_root = evidence_root / f"{stamp}-{os.getpid()}-repeat"
     problems = preflight(iterations=iterations, controller_disk=controller_disk,
                          releases=releases)
+    if (evidence_root.resolve().is_relative_to(work_root.resolve())
+            or work_root.resolve().is_relative_to(evidence_root.resolve())):
+        problems.append("aggregate evidence and disposable work roots must not overlap")
+    if receipt is not None:
+        output = Path(receipt).resolve()
+        if (output.is_relative_to(work_root.resolve())
+                or any(output.is_relative_to((run_root / f"iteration-{index}").resolve())
+                       for index in range(1, iterations + 1))):
+            problems.append("receipt must be outside disposable work and generated aggregates")
+    reused = None
+    if reuse_iteration is not None:
+        prior = Path(reuse_iteration).absolute()
+        try:
+            if (tuple(phases) != PHASES
+                    or prior.resolve().is_relative_to(Path(work_root).resolve())
+                    or Path(work_root).resolve().is_relative_to(prior.resolve())
+                    or evidence_root.resolve().is_relative_to(prior.resolve())):
+                raise RepeatError("reuse requires all six phases and disjoint prior/new work and evidence")
+            if receipt is not None and (Path(receipt).exists() or Path(receipt).is_symlink()
+                    or Path(receipt).resolve().is_relative_to(prior.resolve())):
+                raise RepeatError("recovery receipt must be a new path outside reused evidence")
+            verified, fingerprint, prior_retries = checked_reused_iteration(prior, releases=releases)
+            reused = (prior, verified, fingerprint, prior_retries)
+        except RepeatError as error:
+            problems.append(str(error))
     # A dry run's whole output IS the plan, so it belongs on standard output.
     # An apply's standard output is the receipt document and nothing else --
     # the same split ``factory_verify`` uses -- so the plan narrates on stderr.
@@ -1573,9 +1777,12 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
           work_root=work_root, releases=releases, receipt=receipt,
           phases=phases, availability=producer_availability(),
           problems=problems)
+    if reuse_iteration is not None:
+        print(f"Reuse candidate: {reuse_iteration}; run {iterations - 1} new lifecycle(s)",
+              file=stream if not apply else sys.stderr)
     if not apply:
         print("dry run; repeat with --apply to run the lifecycle "
-              f"{iterations} times and compare the receipts", file=stream)
+              f"{iterations - (reuse_iteration is not None)} times and compare the receipts", file=stream)
         return 0
     if problems:
         for problem in problems:
@@ -1589,16 +1796,19 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
     # proof's start-of-run facts are read after it holds.
     driver.confine()
     driver.bind_inputs(releases=releases, media_seal=media_seal)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_root = evidence_root / f"{stamp}-{os.getpid()}-repeat"
+    if reused is not None and driver.check_inputs() != reused[1]["factory_inputs"]:
+        raise RepeatError("live factory_inputs differ from the reused iteration")
     simulation_evidence.private_directory(run_root)
-    receipts = []
-    retries: list[dict] = []
-    for index in range(1, iterations + 1):
+    receipts = [] if reused is None else [reused[1]]
+    retries: list[dict] = [] if reused is None else list(reused[3])
+    sources = [] if reused is None else [{
+        "kind": "reused", "evidence": str(reused[0]), "sha256": reused[2]}]
+    for index in range(len(receipts) + 1, iterations + 1):
         destination = run_iteration(
             index, driver=driver, workdir=work_root / f"iteration-{index}",
             destination=run_root / f"iteration-{index}", bind=bind,
-            phases=phases, duration=duration)
+            phases=phases, duration=duration,
+            diagnostics=run_root / "diagnostics" / f"iteration-{index}")
         # Read back from the retained evidence, so the receipt discloses
         # exactly the retries the iteration's own result.json records.
         retries.extend(read_phase_result(destination).get("retries") or ())
@@ -1611,10 +1821,25 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
         inputs = read_phase_result(destination).get("factory_inputs")
         if inputs is not None:
             verified["factory_inputs"] = inputs
+        if reused is not None and inputs != reused[1]["factory_inputs"]:
+            raise RepeatError("new iteration factory_inputs differ from the reused iteration")
         driver.check_inputs()
         receipts.append(verified)
+        if reused is not None:
+            sources.append({"kind": "new", "evidence": str(destination.absolute()),
+                            "sha256": _snapshot_digest(_evidence_snapshot(destination))})
+    if reused is not None:
+        checked, fingerprint, prior_retries = checked_reused_iteration(reused[0], releases=releases)
+        if checked != reused[1] or fingerprint != reused[2] or prior_retries != reused[3]:
+            raise RepeatError("reused iteration changed before the recovery receipt")
+        if driver.check_inputs() != reused[1]["factory_inputs"]:
+            raise RepeatError("live factory_inputs changed before the recovery receipt")
+        if receipt is not None and (Path(receipt).exists() or Path(receipt).is_symlink()):
+            raise RepeatError("recovery receipt already exists; original evidence is preserved")
     comparisons = compare_iterations(receipts)
     document = repeat_receipt(receipts, comparisons, retries=retries)
+    if reused is not None:
+        document["sources"] = sources
     print(factory_verify.render_receipt(document), end="", file=stream)
     if receipt is not None:
         factory_verify.write_receipt(document, receipt)
@@ -1648,7 +1873,9 @@ def parser() -> argparse.ArgumentParser:
                         help="PXE release root; live runs currently require "
                              "the default root served by the prepare targets")
     result.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS,
-                        help=f"lifecycles to run (at least {MINIMUM_ITERATIONS})")
+                        help=f"total lifecycles, including reuse (at least {MINIMUM_ITERATIONS})")
+    result.add_argument("--reuse-iteration", type=Path, default=None,
+                        help="reverify one complete retained iteration and run the remaining cycles fresh")
     result.add_argument("--media-seal", type=Path, default=DEFAULT_MEDIA_SEAL,
                         help="current media seal the selected set and repair must match")
     result.add_argument("--duration", type=float, default=DEFAULT_DURATION,
@@ -1671,6 +1898,7 @@ def main(argv: list[str] | None = None) -> int:
         releases=args.releases, iterations=args.iterations,
         media_seal=args.media_seal,
         duration=args.duration, apply=args.apply, receipt=args.receipt,
+        reuse_iteration=args.reuse_iteration,
         controller_disk=args.controller_disk)
 
 

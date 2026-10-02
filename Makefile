@@ -89,6 +89,7 @@ REPEAT_EVIDENCE_ROOT ?= homelab/var/factory/repeat
 REPEAT_WORK_ROOT ?= homelab/var/factory/repeat-work
 REPEAT_ITERATIONS ?= 2
 REPEAT_RECEIPT ?=
+REPEAT_REUSE_ITERATION ?=
 # Persistent controller instances: a directory server that can be brought up,
 # used, shut down, and brought up again with the same domain and accounts. This
 # is NOT the acceptance path. Every gate still boots a disposable copy of
@@ -588,6 +589,7 @@ homelab-factory-repeat:
 			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
 			--work-root '$(REPEAT_WORK_ROOT)' \
 			--iterations '$(REPEAT_ITERATIONS)' \
+			$(if $(REPEAT_REUSE_ITERATION),--reuse-iteration '$(REPEAT_REUSE_ITERATION)') \
 			--media-seal '$(FACTORY_MEDIA_SEAL)' \
 			--duration '$(FACTORY_DURATION)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
@@ -597,6 +599,7 @@ homelab-factory-repeat:
 			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
 			--work-root '$(REPEAT_WORK_ROOT)' \
 			--iterations '$(REPEAT_ITERATIONS)' \
+			$(if $(REPEAT_REUSE_ITERATION),--reuse-iteration '$(REPEAT_REUSE_ITERATION)') \
 			--media-seal '$(FACTORY_MEDIA_SEAL)' \
 			--duration '$(FACTORY_DURATION)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
