@@ -22,6 +22,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LABEL = "TELOS_FACTORY"
+DNS_REPAIR_EXPECTED_ENV = "TELOS_SAMBA_DNS_EXPECTED"
+
+
+def dns_repair_identity(cache: Path) -> dict[str, str]:
+    """The two actual files a repeat pins, read without following symlinks."""
+    identity = {}
+    for key, name in (("library_sha256", "libndr-nbt.so.0"),
+                      ("receipt_sha256", "receipt.json")):
+        descriptor = os.open(
+            Path(cache) / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                raise ValueError("DNS repair inputs must be regular single-link files")
+            identity[key] = hashlib.file_digest(stream, "sha256").hexdigest()
+            after = os.fstat(stream.fileno())
+            if (before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError("DNS repair changed while hashing")
+    return identity
 
 
 def stage_dns_repair(repo: Path, destination: Path) -> dict:
@@ -34,7 +54,26 @@ def stage_dns_repair(repo: Path, destination: Path) -> dict:
         import samba_dns
     cache = Path(os.environ.get(
         "TELOS_SAMBA_DNS_CACHE", str(repo / "homelab/var/media/samba-dns")))
-    return samba_dns.stage(cache, destination)
+    raw_expected = os.environ.get(DNS_REPAIR_EXPECTED_ENV)
+    expected = None
+    if raw_expected is not None:
+        try:
+            expected = json.loads(raw_expected)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid expected DNS repair identity") from exc
+        if (not isinstance(expected, dict)
+                or set(expected) != {"library_sha256", "receipt_sha256"}
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                       for value in expected.values())):
+            raise ValueError("invalid expected DNS repair identity")
+        if dns_repair_identity(cache) != expected:
+            raise ValueError("DNS repair differs from the repeat's pinned inputs")
+    receipt = samba_dns.stage(cache, destination)
+    if expected is not None and (
+            dns_repair_identity(destination) != expected
+            or dns_repair_identity(cache) != expected):
+        raise ValueError("DNS repair changed while staging the repeat's pinned inputs")
+    return receipt
 
 
 @dataclass(frozen=True)

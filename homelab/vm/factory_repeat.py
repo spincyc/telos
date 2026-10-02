@@ -74,6 +74,11 @@ this prerequisite, but only a new live twice-through can prove changed
 lifecycle behavior.  :func:`controller_image_problem` still probes the real
 canonical disk and refuses a blank or uninspectable image.
 
+The live driver pins the selected set, current media seal and verified Samba
+repair library/receipt pair before any phase. Each payload checks the expected
+pair while staging; each iteration retains it in the compared evidence. A
+coherent cache replacement or reseal during the repeat is a hard failure.
+
 The seam keeps the live process layer thin:
 :meth:`LifecycleDriver.run_phase` returns a bundle path and
 :meth:`LifecycleDriver.destroy` removes disposable state, and everything else
@@ -85,6 +90,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -121,6 +127,7 @@ DEFAULT_DURATION = 3600.0
 DEFAULT_EVIDENCE_ROOT = Path("homelab/var/factory/repeat")
 DEFAULT_WORK_ROOT = Path("homelab/var/factory/repeat-work")
 DEFAULT_RELEASES = Path("homelab/var/pxe")
+DEFAULT_MEDIA_SEAL = Path("homelab/var/media/factory-media-seal.json")
 
 #: The canonical Controller disk every live phase boots or copies.
 CANONICAL_CONTROLLER_DISK = Path("build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2")
@@ -1128,7 +1135,7 @@ def preflight(*, iterations: int = DEFAULT_ITERATIONS,
 
 
 # --------------------------------------------------------------------------
-# Orchestration -- the thin, never-executed layer
+# Orchestration -- the thin live process layer
 # --------------------------------------------------------------------------
 
 
@@ -1174,6 +1181,13 @@ class LifecycleDriver:
         keeps the forwarding counter unproven rather than faking it.
         """
 
+    def bind_inputs(self, *, releases: Path | None, media_seal: Path) -> None:
+        """Pin the live inputs; fixture drivers have no external inputs."""
+
+    def check_inputs(self) -> dict | None:
+        """Current input identity, or no external inputs for a fixture driver."""
+        return None
+
 
 class SubprocessLifecycle(LifecycleDriver):
     """Drive the real Make targets; completed twice-through on 2026-10-01.
@@ -1205,6 +1219,76 @@ class SubprocessLifecycle(LifecycleDriver):
         self.qemu_running = lambda: subprocess.run(
             ["pgrep", "-u", str(os.geteuid()), "-f", "^qemu-system-"],
             capture_output=True).returncode == 0
+        self._expected_inputs: dict | None = None
+        self._input_paths: tuple[Path, Path, Path] | None = None
+
+    def bind_inputs(self, *, releases: Path | None, media_seal: Path) -> None:
+        # Install prepare targets currently route only their default PXE root.
+        # Refuse a verifier-only override instead of grading a different set.
+        served = (self.repository / DEFAULT_RELEASES).resolve()
+        requested = None if releases is None else Path(releases).resolve()
+        if requested != served:
+            raise RepeatError("live repeat serves only the default PXE root "
+                              f"{served}; --releases cannot select a different served root")
+        cache = Path(os.environ.get("TELOS_SAMBA_DNS_CACHE", str(
+            self.repository / "homelab/var/media/samba-dns"))).resolve()
+        self._input_paths = (served, Path(media_seal).resolve(), cache)
+        selected = factory_verify.pxe_release_set.selected_release_set(served)
+        problems = factory_verify.pxe_release_set.verify(selected)
+        if problems:
+            raise RepeatError("selected release does not verify: " + "; ".join(problems))
+        self._expected_inputs = self._current_inputs()
+
+    def _current_inputs(self) -> dict:
+        if self._input_paths is None:
+            raise RepeatError("live repeat inputs were not pinned")
+        try:
+            from .controller_factory import dns_repair_identity
+            from ..lib import samba_dns
+        except ImportError:
+            from controller_factory import dns_repair_identity
+            sys.path.insert(0, str(self.repository / "homelab/lib"))
+            import samba_dns
+        releases, seal_path, cache = self._input_paths
+        try:
+            selected = factory_verify.pxe_release_set.selected_release_set(releases)
+            aggregate = json.loads(_read_regular(selected / "release-set.json"))
+            seal_raw = _read_regular(seal_path)
+            seal = json.loads(seal_raw)
+            seal_digest = hashlib.sha256(seal_raw).hexdigest()
+            if aggregate.get("media_seal_sha256") != seal_digest:
+                raise RepeatError("selected release is not bound to the current media seal")
+            repair = samba_dns.verify(cache)
+            identity = dns_repair_identity(cache)
+            if repair.get("library_sha256") != identity["library_sha256"]:
+                raise RepeatError("DNS repair changed after verification")
+            if json.loads(_read_regular(cache / "receipt.json")) != repair:
+                raise RepeatError("DNS repair receipt changed after verification")
+            provenance = seal.get("provenance", {})
+            records = seal.get("content", []) + provenance.get("records", [])
+            for name, key in (("samba-dns-library", "library_sha256"),
+                              ("samba-dns-receipt", "receipt_sha256")):
+                matches = [record for record in records if record.get("name") == name]
+                if len(matches) != 1 or matches[0].get("sha256") != identity[key]:
+                    raise RepeatError(f"{name} differs from the selected release's media seal")
+            if provenance.get("assertions", {}).get("samba_dns") != repair:
+                raise RepeatError("DNS repair provenance differs from the media seal")
+            return {
+                "release_set": {"version": aggregate["version"],
+                    "manifest_sha256": hashlib.sha256(_read_regular(selected / "release-set.json")).hexdigest()},
+                "media_seal_sha256": seal_digest,
+                "samba_dns": identity,
+            }
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as exc:
+            raise RepeatError(f"live factory inputs do not verify: {exc}") from exc
+
+    def check_inputs(self) -> dict:
+        if self._expected_inputs is None:
+            raise RepeatError("live repeat inputs were not pinned")
+        current = self._current_inputs()
+        if current != self._expected_inputs:
+            raise RepeatError("live factory inputs changed during the repeat")
+        return current
 
     def destroy(self, workdir: Path) -> None:
         workdir = Path(workdir)
@@ -1250,7 +1334,8 @@ class SubprocessLifecycle(LifecycleDriver):
         self._await_quiescent()
         print(f"$ {' '.join(command)}", file=self.stream)
         completed = subprocess.run(
-            command, cwd=self.repository, capture_output=True, text=True)
+            command, cwd=self.repository, capture_output=True, text=True,
+            env=self._phase_environment())
         kept = b""
         if log is not None:
             # Every step's own output, redacted then bounded, beside its
@@ -1269,6 +1354,22 @@ class SubprocessLifecycle(LifecycleDriver):
                 + (f"\nstep output: {log}\n{tail}" if log is not None
                    else ""))
         return completed.stdout
+
+    def _phase_environment(self) -> dict[str, str]:
+        environment = dict(os.environ)
+        if self._expected_inputs is not None:
+            try:
+                from .controller_factory import DNS_REPAIR_EXPECTED_ENV
+            except ImportError:
+                from controller_factory import DNS_REPAIR_EXPECTED_ENV
+            environment[DNS_REPAIR_EXPECTED_ENV] = json.dumps(
+                self._expected_inputs["samba_dns"], sort_keys=True)
+            assert self._input_paths is not None
+            # The inner Makefile derives TELOS_SAMBA_DNS_CACHE from this
+            # variable; carry the same cache the driver actually inspected.
+            environment["SAMBA_DNS_CACHE"] = str(self._input_paths[2])
+            environment["TELOS_SAMBA_DNS_CACHE"] = str(self._input_paths[2])
+        return environment
 
     def run_phase(self, phase: Phase, *, workdir: Path,
                   bundles: dict[str, Path], duration: float) -> Path:
@@ -1360,6 +1461,7 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     the evidence the artifact scan reads only exist once the phases have run.
     """
     bind = default_producer_binding if bind is None else bind
+    inputs = driver.check_inputs()
     before = driver.capture_host_network()
     driver.destroy(workdir)
     bundles: dict[str, Path] = {}
@@ -1368,9 +1470,13 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     evidence_pairs: list[tuple[str, Path]] = []
     retries: list[dict] = []
     for phase in phases:
+        if driver.check_inputs() != inputs:
+            raise RepeatError("factory inputs changed before a lifecycle phase")
         bundle = run_phase_bounded(
             driver, phase, iteration=index, workdir=workdir, bundles=bundles,
             duration=duration, retries=retries)
+        if driver.check_inputs() != inputs:
+            raise RepeatError("factory inputs changed during a lifecycle phase")
         bundles[phase.name] = bundle
         evidence = phase_evidence(phase, bundle)
         observation = {"phase": phase.name, "status": None,
@@ -1390,6 +1496,8 @@ def run_iteration(index: int, *, driver: LifecycleDriver, workdir: Path,
     result = aggregate_result(
         iteration=index, observations=observations, measurements=measurements,
         retries=retries)
+    if inputs is not None:
+        result["factory_inputs"] = inputs
     return retain_aggregate_evidence(destination, evidence_pairs, result=result)
 
 
@@ -1434,6 +1542,7 @@ def _plan(stream, *, iterations: int, evidence_root: Path, work_root: Path,
 def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
            work_root: Path = DEFAULT_WORK_ROOT,
            releases: Path | None = DEFAULT_RELEASES,
+           media_seal: Path = DEFAULT_MEDIA_SEAL,
            iterations: int = DEFAULT_ITERATIONS,
            duration: float = DEFAULT_DURATION,
            apply: bool = False,
@@ -1473,6 +1582,7 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
     # too -- so every process of the run inherits it and the forwarding
     # proof's start-of-run facts are read after it holds.
     driver.confine()
+    driver.bind_inputs(releases=releases, media_seal=media_seal)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = evidence_root / f"{stamp}-{os.getpid()}-repeat"
     simulation_evidence.private_directory(run_root)
@@ -1489,8 +1599,14 @@ def repeat(*, evidence_root: Path = DEFAULT_EVIDENCE_ROOT,
         # ``releases`` is the PXE release ROOT, so the verifier resolves the
         # set its selection descriptor names; handing the root over as the set
         # failed check 16 in both iterations of the 2026-10-01 live repeat.
-        receipts.append(factory_verify.verify_run(
-            destination, releases=releases))
+        verified = factory_verify.verify_run(destination, releases=releases)
+        # Keep the actual consumed inputs in both retained iteration evidence
+        # and the compared receipt. Historical verifier behavior is unchanged.
+        inputs = read_phase_result(destination).get("factory_inputs")
+        if inputs is not None:
+            verified["factory_inputs"] = inputs
+        driver.check_inputs()
+        receipts.append(verified)
     comparisons = compare_iterations(receipts)
     document = repeat_receipt(receipts, comparisons, retries=retries)
     print(factory_verify.render_receipt(document), end="", file=stream)
@@ -1523,11 +1639,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT,
                         help="disposable state, destroyed before each iteration")
     result.add_argument("--releases", type=Path, default=DEFAULT_RELEASES,
-                        help="PXE release root; the set its "
-                             "selected-release-set.json names is verified "
-                             "into every receipt")
+                        help="PXE release root; live runs currently require "
+                             "the default root served by the prepare targets")
     result.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS,
                         help=f"lifecycles to run (at least {MINIMUM_ITERATIONS})")
+    result.add_argument("--media-seal", type=Path, default=DEFAULT_MEDIA_SEAL,
+                        help="current media seal the selected set and repair must match")
     result.add_argument("--duration", type=float, default=DEFAULT_DURATION,
                         help="per-phase runtime budget in seconds")
     result.add_argument("--controller-disk", type=Path,
@@ -1546,6 +1663,7 @@ def main(argv: list[str] | None = None) -> int:
     return repeat(
         evidence_root=args.evidence_root, work_root=args.work_root,
         releases=args.releases, iterations=args.iterations,
+        media_seal=args.media_seal,
         duration=args.duration, apply=args.apply, receipt=args.receipt,
         controller_disk=args.controller_disk)
 

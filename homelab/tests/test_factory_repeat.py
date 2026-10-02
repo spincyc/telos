@@ -38,6 +38,8 @@ import factory_repeat  # noqa: E402
 import fake_image_tools  # noqa: E402
 import factory_runner  # noqa: E402
 import factory_verify  # noqa: E402
+import samba_dns  # noqa: E402
+from test_samba_dns import fixture_receipt  # noqa: E402
 
 
 GATEWAY_MAC = "52:54:00:31:11:01"
@@ -1430,6 +1432,12 @@ class Spawning(factory_repeat.SubprocessLifecycle):
         self.events.append(("capture",))
         return None
 
+    def bind_inputs(self, **kwargs):
+        pass  # This fixture tests confinement ordering, not external media.
+
+    def check_inputs(self):
+        return None
+
     def destroy(self, workdir):
         self.events.append(("destroy",))
 
@@ -2247,6 +2255,126 @@ class RepeatEndToEndTests(TemporaryRootTests):
         self.assertEqual(2, status)
         self.assertEqual([], driver.executed)
         self.assertIn("at least 2", errors.getvalue())
+
+
+class ActualInputBindingTests(TemporaryRootTests):
+    def setUp(self):
+        super().setUp()
+        old = self.release_root()
+        self.releases = self.root / factory_repeat.DEFAULT_RELEASES
+        self.releases.parent.mkdir(parents=True)
+        old.rename(self.releases)
+        self.seal = self.root / "seal.json"
+        self.cache = self.root / "repair-cache"
+        self.cache.mkdir()
+        self.write_repair(b"first independently verified repair")
+        self.reseal()
+        patcher = mock.patch.object(samba_dns, "_elf", return_value=self.repair["abi"])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        environment = mock.patch.dict(os.environ, {"TELOS_SAMBA_DNS_CACHE": str(self.cache)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.driver = factory_repeat.SubprocessLifecycle(repository=self.root, stream=io.StringIO())
+
+    def write_repair(self, payload):
+        (self.cache / samba_dns.LIBRARY).write_bytes(payload)
+        self.repair = fixture_receipt(self.cache / samba_dns.LIBRARY)
+        (self.cache / "receipt.json").write_text(json.dumps(self.repair))
+
+    def reseal(self):
+        seal = json.loads(self.seal.read_text())
+        seal["content"] = [r for r in seal["content"] if r["name"] != "samba-dns-library"] + [
+            {"name": "samba-dns-library", "sha256": samba_dns._sha(self.cache / samba_dns.LIBRARY)}]
+        seal["provenance"] = {
+            "records": [{"name": "samba-dns-receipt", "sha256": samba_dns._sha(self.cache / "receipt.json")}],
+            "assertions": {"samba_dns": self.repair}}
+        self.seal.write_text(json.dumps(seal))
+        selected_path = self.releases / pxe_release_set.SELECTED
+        selected = json.loads(selected_path.read_text())
+        aggregate_path = self.releases / "release-sets" / selected["version"] / pxe_release_set.MANIFEST
+        aggregate = json.loads(aggregate_path.read_text())
+        aggregate["media_seal_sha256"] = samba_dns._sha(self.seal)
+        aggregate_path.write_text(json.dumps(aggregate))
+        selected["manifest_sha256"] = samba_dns._sha(aggregate_path)
+        selected_path.write_text(json.dumps(selected))
+
+    def bind(self):
+        self.driver.bind_inputs(releases=self.releases, media_seal=self.seal)
+
+    def test_actual_sealed_pair_is_pinned_and_supplied_to_phase_processes(self):
+        self.bind()
+        identity = self.driver.check_inputs()
+        self.assertEqual(identity["samba_dns"], {
+            "library_sha256": samba_dns._sha(self.cache / samba_dns.LIBRARY),
+            "receipt_sha256": samba_dns._sha(self.cache / "receipt.json")})
+        environment = self.driver._phase_environment()
+        self.assertEqual(json.loads(environment["TELOS_SAMBA_DNS_EXPECTED"]), identity["samba_dns"])
+        self.assertEqual(environment["SAMBA_DNS_CACHE"], str(self.cache))
+
+    def test_coherently_rebuilt_cache_cannot_hide_behind_unchanged_seal(self):
+        self.bind()
+        self.write_repair(b"second independently verified repair")
+        self.assertEqual(samba_dns.verify(self.cache), self.repair)
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "media seal"):
+            self.driver.check_inputs()
+
+    def test_even_coherent_reseal_and_reselection_cannot_change_repeat_inputs(self):
+        self.bind()
+        self.write_repair(b"second independently verified repair")
+        self.reseal()
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "changed during the repeat"):
+            self.driver.check_inputs()
+
+    def test_old_selected_set_cannot_claim_the_current_seal(self):
+        self.seal.write_text(self.seal.read_text() + "\n")
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "current media seal"):
+            self.bind()
+
+    def test_nondefault_verifier_root_refuses_before_reading_live_inputs(self):
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "default PXE root"):
+            self.driver.bind_inputs(releases=self.root / "other", media_seal=self.seal)
+
+    def test_changed_pair_is_a_comparator_divergence(self):
+        self.bind()
+        identity = self.driver.check_inputs()
+        other = json.loads(json.dumps(identity))
+        other["samba_dns"]["library_sha256"] = "0" * 64
+        comparison = factory_verify.compare_runs({"factory_inputs": identity}, {"factory_inputs": other})
+        self.assertFalse(comparison["equivalent"])
+        self.assertEqual(comparison["divergent_count"], 1)
+
+
+class RetainedInputBindingTests(TemporaryRootTests):
+    repeat = RepeatEndToEndTests.repeat
+
+    def test_observed_inputs_are_retained_and_compared_in_both_iterations(self):
+        inputs = {"media_seal_sha256": "a" * 64, "samba_dns": {
+            "library_sha256": "b" * 64, "receipt_sha256": "c" * 64}}
+        class Pinned(FakeLifecycle):
+            def check_inputs(self):
+                return inputs
+        status, printed, _errors = self.repeat(driver=Pinned())
+        self.assertEqual(status, 0)
+        receipt = json.loads(printed)
+        self.assertTrue(receipt["equivalent"])
+        self.assertEqual([run["factory_inputs"] for run in receipt["runs"]], [inputs, inputs])
+        results = sorted((self.root / "evidence").glob("*/iteration-*/result.json"))
+        self.assertEqual(len(results), 2)
+        self.assertEqual([json.loads(path.read_text())["factory_inputs"] for path in results], [inputs, inputs])
+
+    def test_midphase_input_change_refuses_aggregate_evidence(self):
+        class Changing(FakeLifecycle):
+            current = {"repair": "before"}
+            def check_inputs(self):
+                return self.current
+            def run_phase(self, phase, **kwargs):
+                bundle = super().run_phase(phase, **kwargs)
+                self.current = {"repair": "after"}
+                return bundle
+        with self.assertRaisesRegex(factory_repeat.RepeatError, "changed during a lifecycle phase"):
+            self.repeat(driver=Changing())
+        self.assertEqual(list((self.root / "evidence").glob("*/iteration-*/result.json")), [])
 
 
 if __name__ == "__main__":

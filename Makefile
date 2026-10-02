@@ -588,6 +588,7 @@ homelab-factory-repeat:
 			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
 			--work-root '$(REPEAT_WORK_ROOT)' \
 			--iterations '$(REPEAT_ITERATIONS)' \
+			--media-seal '$(FACTORY_MEDIA_SEAL)' \
 			--duration '$(FACTORY_DURATION)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(REPEAT_RECEIPT),--receipt '$(REPEAT_RECEIPT)'); \
@@ -596,6 +597,7 @@ homelab-factory-repeat:
 			--evidence-root '$(REPEAT_EVIDENCE_ROOT)' \
 			--work-root '$(REPEAT_WORK_ROOT)' \
 			--iterations '$(REPEAT_ITERATIONS)' \
+			--media-seal '$(FACTORY_MEDIA_SEAL)' \
 			--duration '$(FACTORY_DURATION)' \
 			$(if $(FACTORY_RELEASES),--releases '$(FACTORY_RELEASES)') \
 			$(if $(REPEAT_RECEIPT),--receipt '$(REPEAT_RECEIPT)') \

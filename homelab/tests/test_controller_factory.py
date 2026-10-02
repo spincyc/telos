@@ -1025,6 +1025,13 @@ exit 0
 
 
 class DnsRepairBundleTests(unittest.TestCase):
+    def test_a_fifo_is_rejected_without_waiting_for_a_writer(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            os.mkfifo(root / "libndr-nbt.so.0")
+            with self.assertRaisesRegex(ValueError, "regular single-link"):
+                controller_factory.dns_repair_identity(root)
+
     def test_verified_artifact_is_staged_only_in_the_payload_copy(self):
         with tempfile.TemporaryDirectory() as name:
             stage = Path(name) / "stage"
@@ -1051,6 +1058,70 @@ class DnsRepairBundleTests(unittest.TestCase):
                         authorization_nonce=NONCE).stage(stage)
             self.assertFalse((stage / "factory-vars.json").exists())
             self.assertFalse((stage / "secret").exists())
+
+
+class ExpectedDnsRepairTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.cache, self.destination = self.root / "cache", self.root / "staged"
+        self.cache.mkdir()
+        (self.cache / "libndr-nbt.so.0").write_bytes(b"verified original candidate")
+        (self.cache / "receipt.json").write_text('{"verified": true}')
+        self.expected = controller_factory.dns_repair_identity(self.cache)
+        environment = mock.patch.dict(os.environ, {
+            "TELOS_SAMBA_DNS_CACHE": str(self.cache),
+            controller_factory.DNS_REPAIR_EXPECTED_ENV: json.dumps(self.expected)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        sys.path.insert(0, str(ROOT / "lib"))
+        import samba_dns
+        self.samba_dns = samba_dns
+
+    def copy(self, source, destination):
+        shutil.copytree(source, destination)
+        return {"verified": True}
+
+    def test_expected_pair_is_preserved_across_staging(self):
+        with mock.patch.object(self.samba_dns, "stage", side_effect=self.copy):
+            controller_factory.stage_dns_repair(self.root, self.destination)
+        self.assertEqual(controller_factory.dns_repair_identity(self.destination), self.expected)
+
+    def test_changed_pair_refuses_before_staging(self):
+        (self.cache / "libndr-nbt.so.0").write_bytes(b"another verified candidate")
+        (self.cache / "receipt.json").write_text('{"verified": "another"}')
+        with mock.patch.object(self.samba_dns, "stage") as stage:
+            with self.assertRaisesRegex(ValueError, "pinned inputs"):
+                controller_factory.stage_dns_repair(self.root, self.destination)
+        stage.assert_not_called()
+
+    def test_cache_swap_during_staging_refuses_even_if_copied_pair_was_correct(self):
+        def swapped(source, destination):
+            result = self.copy(source, destination)
+            (source / "receipt.json").write_text('{"verified": "new"}')
+            return result
+        with mock.patch.object(self.samba_dns, "stage", side_effect=swapped):
+            with self.assertRaisesRegex(ValueError, "changed while staging"):
+                controller_factory.stage_dns_repair(self.root, self.destination)
+
+    def test_staged_pair_swap_refuses_even_if_source_stays_correct(self):
+        def swapped(source, destination):
+            result = self.copy(source, destination)
+            (destination / "libndr-nbt.so.0").write_bytes(b"wrong staged candidate")
+            return result
+        with mock.patch.object(self.samba_dns, "stage", side_effect=swapped):
+            with self.assertRaisesRegex(ValueError, "changed while staging"):
+                controller_factory.stage_dns_repair(self.root, self.destination)
+
+    def test_incomplete_or_malformed_expected_pair_is_not_ignored(self):
+        for expected in ("not-json", "{}", '{"library_sha256": "bad"}'):
+            with self.subTest(expected=expected), mock.patch.dict(os.environ, {
+                    controller_factory.DNS_REPAIR_EXPECTED_ENV: expected}), \
+                    mock.patch.object(self.samba_dns, "stage") as stage:
+                with self.assertRaisesRegex(ValueError, "invalid expected"):
+                    controller_factory.stage_dns_repair(self.root, self.destination)
+                stage.assert_not_called()
 
 
 if __name__ == "__main__":
