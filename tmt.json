@@ -33,6 +33,17 @@
       "stage": "stable",
       "usage": "tools/factory-repeat-input-binding [--json] [--releases PATH] PUBLICATION [PUBLICATION ...]"
     },
+    "factory-retire-abandoned-publications": {
+      "idempotent": false,
+      "json": true,
+      "lang": "python",
+      "mutates": true,
+      "origin": "local",
+      "purpose": "Retire explicitly named abandoned Windows publication ISOs with strict guards.",
+      "requires": [],
+      "stage": "stable",
+      "usage": "tools/factory-retire-abandoned-publications [--json] [--apply --receipt PATH] BUNDLE [BUNDLE ...]"
+    },
     "lab-state-test-audit": {
       "idempotent": true,
       "json": true,

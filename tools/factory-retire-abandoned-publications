@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Plan retirement of explicitly named, interrupted Windows publication ISOs.
+
+Default is read-only. --apply requires a new private JSONL receipt: its first
+fsynced event preserves every planned path/hash/inode and failed result; later
+events record each completed unlink. A missing completion means inspect the
+named file, never assume success. No disk, firmware, result or log is removed.
+
+Only default windows-installs children with an early RunInterrupted failure
+are supported. Repository factory/instance/VM metadata is checked for references;
+external reservations are not discoverable. Run as the sole lab operation.
+
+Usage: tools/factory-retire-abandoned-publications [--json] [--apply --receipt PATH] BUNDLE [BUNDLE ...]
+"""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+BUNDLES = Path("homelab/var/factory/windows-installs")
+LOCK = Path("build/homelab/vm/bootstrap-dc/.simulation.lock")
+REFERENCE_ROOTS = (Path("homelab/var/factory"), Path("homelab/instance"),
+                   Path("build/homelab/vm"))
+METADATA_SUFFIXES = {".json", ".jsonl", ".yaml", ".yml", ".toml"}
+LIMIT = 4 << 20
+SCAN_LIMIT = 256 << 20
+ENTRY_LIMIT = 100000
+ISO = "publication.iso"
+NATIVE = b"TELOS WINDOWS NATIVE READY"
+ENTRIES = {ISO, "windows.qcow2", "OVMF_VARS.fd", "authorization.json",
+           "qemu-command.json", "evidence"}
+
+
+class Refused(RuntimeError):
+    """Evidence or concurrency does not support this narrow retirement."""
+
+
+def canonical(path: Path) -> Path:
+    path = path.absolute()
+    if path.resolve(strict=True) != path:
+        raise Refused("symlink or noncanonical path refused: " + str(path))
+    return path
+
+
+def private_directory(path: Path) -> os.stat_result:
+    canonical(path)
+    info = path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o700):
+        raise Refused("directory must be owned and mode 0700: " + str(path))
+    return info
+
+
+def identity(info: os.stat_result) -> dict:
+    return {"device": info.st_dev, "inode": info.st_ino, "bytes": info.st_size,
+            "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid,
+            "links": info.st_nlink, "mtime_ns": info.st_mtime_ns,
+            "ctime_ns": info.st_ctime_ns}
+
+
+@contextmanager
+def regular(path: Path, *, private: bool = True):
+    canonical(path.parent)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or (private and stat.S_IMODE(info.st_mode) != 0o600)):
+            raise Refused("file must be owned, regular, single-link and private: " + str(path))
+        yield fd, info
+    finally:
+        os.close(fd)
+
+
+def read(path: Path, *, private: bool = True) -> bytes:
+    with regular(path, private=private) as (fd, info):
+        if info.st_size > LIMIT:
+            raise Refused("metadata exceeds size bound: " + str(path))
+        data = b""
+        while chunk := os.read(fd, min(65536, LIMIT + 1 - len(data))):
+            data += chunk
+            if len(data) > LIMIT:
+                raise Refused("metadata exceeds size bound: " + str(path))
+        if identity(info) != identity(os.fstat(fd)) or len(data) != info.st_size:
+            raise Refused("metadata changed while reading: " + str(path))
+        return data
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def json_value(raw: bytes):
+    def unique(items):
+        value = {}
+        for key, item in items:
+            if key in value:
+                raise Refused("duplicate JSON field")
+            value[key] = item
+        return value
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def document(raw: bytes) -> dict:
+    value = json_value(raw)
+    if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] != 1:
+        raise Refused("unsupported metadata schema")
+    return value
+
+
+@contextmanager
+def inspect_bundle(bundle: Path, repository: Path):
+    bundle = canonical(bundle)
+    if (bundle.parent != repository / BUNDLES
+            or not re.fullmatch(r"run-\d{8}T\d{6}Z-[0-9a-f]{12}", bundle.name)):
+        raise Refused("only direct default Windows install bundles are supported")
+    directory = private_directory(bundle)
+    if {p.name for p in bundle.iterdir()} != ENTRIES:
+        raise Refused("identity, reservation or unknown bundle state: " + str(bundle))
+    private_directory(bundle / "evidence")
+    raw = read(bundle / "evidence/result.json")
+    result = document(raw)
+    if (result.get("status"), result.get("phase"), result.get("error_type")) != (
+            "fail", "windows-setup", "RunInterrupted"):
+        raise Refused("bundle is not an early interrupted Windows failure: " + str(bundle))
+    if result.get("private_publication_retained_for_identity") is not True:
+        raise Refused("publication custody is unknown: " + str(bundle))
+    serial = read(bundle / "evidence/workstation-serial.log")
+    logs = result.get("retained_logs")
+    retained = logs.get("workstation-serial.log") if isinstance(logs, dict) else None
+    if (not isinstance(retained, dict)
+            or any(type(retained.get(key)) is not int for key in (
+                "elided_bytes", "original_bytes", "retained_bytes"))
+            or retained["elided_bytes"] != 0
+            or retained["original_bytes"] != len(serial)
+            or retained["retained_bytes"] != len(serial)):
+        raise Refused("native-readiness evidence is incomplete or elided: " + str(bundle))
+    if NATIVE in serial:
+        raise Refused("native Windows readiness forbids retirement: " + str(bundle))
+    authorization = read(bundle / "authorization.json")
+    command = read(bundle / "qemu-command.json")
+    authorized = document(authorization).get("authorization")
+    argv = document(command).get("argv")
+    if not isinstance(authorized, dict) or not isinstance(argv, list) or not argv:
+        raise Refused("invalid bundle authorization or QEMU command")
+    if authorized.get("qemu_argv_sha256") != digest(json.dumps(argv, separators=(",", ":")).encode()):
+        raise Refused("QEMU command does not match its authorization")
+    preserved = {}
+    for name in ("windows.qcow2", "OVMF_VARS.fd"):
+        with regular(bundle / name) as (_fd, info):
+            preserved[name] = identity(info)
+    dirfd = os.open(bundle, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if (os.fstat(dirfd).st_dev, os.fstat(dirfd).st_ino) != (directory.st_dev, directory.st_ino):
+            raise Refused("bundle directory changed")
+        with regular(bundle / ISO) as (fd, info):
+            if info.st_size <= 0:
+                raise Refused("publication is empty")
+            sha = hashlib.sha256()
+            while chunk := os.read(fd, 1 << 20):
+                sha.update(chunk)
+            if identity(info) != identity(os.fstat(fd)):
+                raise Refused("publication changed while hashing")
+            record = {"bundle": str(bundle), "path": str(bundle / ISO),
+                      **identity(info), "sha256": sha.hexdigest(),
+                      "result": {key: result[key] for key in ("status", "phase", "error_type")},
+                      "result_sha256": digest(raw), "serial_sha256": digest(serial),
+                      "authorization_sha256": digest(authorization),
+                      "qemu_command_sha256": digest(command), "preserved": preserved,
+                      "bundle_device": directory.st_dev, "bundle_inode": directory.st_ino}
+            yield record, dirfd, fd
+    finally:
+        os.close(dirfd)
+
+
+def references(repository: Path, bundles: list[Path]) -> str:
+    """Fingerprint bounded metadata, refusing references outside each bundle."""
+    tokens = [bundle.name.encode() for bundle in bundles]
+    inventory = {}
+    total = count = 0
+    for relative in REFERENCE_ROOTS:
+        root = repository / relative
+        if not root.exists():
+            # Missing optional state trees cannot hold a reference.
+            if root.is_symlink():
+                raise Refused("reference root is a dangling symlink")
+            inventory[str(relative)] = None
+            continue
+        canonical(root)
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            for path in sorted(directory.iterdir()):
+                count += 1
+                if count > ENTRY_LIMIT:
+                    raise Refused("reference inventory exceeds entry bound")
+                if path in bundles:
+                    continue
+                info = path.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    raise Refused("symlink in reference inventory: " + str(path))
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(path)
+                elif path.suffix in METADATA_SUFFIXES:
+                    raw = read(path, private=False)
+                    total += len(raw)
+                    if total > SCAN_LIMIT:
+                        raise Refused("reference inventory exceeds byte bound")
+                    # Decode JSON strings too: an escaped path is still a
+                    # reference. Unreadable/malformed metadata is unknown
+                    # state, never evidence that no reservation exists.
+                    searchable = raw
+                    if path.suffix == ".json":
+                        searchable += json.dumps(json_value(raw), ensure_ascii=False).encode()
+                    elif path.suffix == ".jsonl":
+                        for line in raw.splitlines():
+                            if line.strip():
+                                searchable += json.dumps(json_value(line), ensure_ascii=False).encode()
+                    if any(token in searchable for token in tokens):
+                        raise Refused("bundle referenced by retained state: " + str(path))
+                    inventory[str(path.relative_to(repository))] = digest(raw)
+    return digest(json.dumps(inventory, sort_keys=True).encode())
+
+
+def assert_idle(proc: Path) -> None:
+    for entry in proc.iterdir():
+        if not entry.name.isdecimal() or int(entry.name) == os.getpid():
+            continue
+        try:
+            if entry.stat().st_uid != os.geteuid():
+                continue
+            parts = (entry / "cmdline").read_bytes().split(b"\0")
+        except FileNotFoundError:
+            continue
+        if not parts or not parts[0]:
+            continue
+        words = [os.fsdecode(part) for part in parts if part]
+        executable = Path(words[0]).name
+        modules = [word.rsplit(".", 1)[-1] for word in words if word.startswith("homelab.vm.")]
+        modules.extend(Path(word).stem for word in words
+                       if "homelab/vm/" in word and word.endswith(".py"))
+        if (executable.startswith("qemu-system-")
+                or executable in {"qemu-img", "qemu-nbd"}
+                or any(module.endswith(("_run", "_prepare", "_orchestrator"))
+                       or module in {"factory_repeat", "factory_runner", "workstation_instance",
+                                     "bootstrap_dc", "controller_factory", "simulated_topology",
+                                     "persistent_controller_session"} for module in modules)
+                or any(re.fullmatch(r"homelab-.*(?:run|prepare|adopt|up)", Path(word).name)
+                       for word in words)):
+            raise Refused("lab operation is still running (pid " + entry.name + ")")
+
+
+def event(fd: int, value: dict) -> None:
+    data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    while data:
+        data = data[os.write(fd, data):]
+    os.fsync(fd)
+
+
+def run(bundles: list[Path], *, apply: bool = False, receipt: Path | None = None,
+        repository: Path = REPOSITORY, proc: Path = Path("/proc")) -> dict:
+    repository = canonical(repository)
+    if not bundles or (apply and receipt is None) or (not apply and receipt is not None):
+        raise Refused("explicit bundles required; --receipt is required only with --apply")
+    bundles = [canonical(path) for path in bundles]
+    if len(set(bundles)) != len(bundles):
+        raise Refused("duplicate bundle")
+    with regular(repository / LOCK, private=False) as (lock, _info):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused("simulation lock is held") from None
+        assert_idle(proc)
+        reference_sha = references(repository, bundles)
+        records = []
+        for bundle in bundles:
+            with inspect_bundle(bundle, repository) as (record, _dir, _fd):
+                records.append(record)
+        payload = {"kind": "factory-retire-abandoned-publications", "status": "plan",
+                   "publications": records, "bytes": sum(row["bytes"] for row in records),
+                   "references_sha256": reference_sha}
+        if not apply:
+            return payload
+        receipt = receipt.absolute()
+        private_directory(receipt.parent)
+        if any(receipt.is_relative_to(repository / path) for path in REFERENCE_ROOTS):
+            raise Refused("receipt must be outside inventoried runtime state")
+        fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            event(fd, {"schema": 1, **payload, "status": "prepared"})
+            parent = os.open(receipt.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(parent)
+            finally:
+                os.close(parent)
+            for bundle, expected in zip(bundles, records):
+                assert_idle(proc)
+                if references(repository, bundles) != reference_sha:
+                    raise Refused("reference inventory changed before retirement")
+                with inspect_bundle(bundle, repository) as (current, directory, publication):
+                    if current != expected:
+                        raise Refused("bundle or publication changed since plan")
+                    assert_idle(proc)
+                    if references(repository, bundles) != reference_sha:
+                        raise Refused("reference inventory changed while hashing publication")
+                    if {p.name for p in bundle.iterdir()} != ENTRIES:
+                        raise Refused("bundle acquired identity or unknown state while hashing")
+                    for name, key in (
+                            ("evidence/result.json", "result_sha256"),
+                            ("evidence/workstation-serial.log", "serial_sha256"),
+                            ("authorization.json", "authorization_sha256"),
+                            ("qemu-command.json", "qemu_command_sha256")):
+                        if digest(read(bundle / name)) != expected[key]:
+                            raise Refused("bundle evidence changed while hashing publication: " + name)
+                    for name, original in expected["preserved"].items():
+                        with regular(bundle / name) as (_fd, info):
+                            if identity(info) != original:
+                                raise Refused("preserved file changed while hashing publication: " + name)
+                    final = identity(os.fstat(publication))
+                    if (final != {key: expected[key] for key in final}
+                            or identity(os.stat(ISO, dir_fd=directory, follow_symlinks=False)) != final):
+                        raise Refused("publication path changed immediately before unlink")
+                    os.unlink(ISO, dir_fd=directory)
+                    os.fsync(directory)
+                event(fd, {"schema": 1, "status": "retired", "path": expected["path"],
+                           "sha256": expected["sha256"], "inode": expected["inode"],
+                           "bytes": expected["bytes"]})
+            event(fd, {"schema": 1, "status": "complete", "retired": len(records),
+                       "bytes": payload["bytes"]})
+        finally:
+            os.close(fd)
+        return {**payload, "status": "retired", "receipt": str(receipt)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="emit cli-v1 JSON")
+    parser.add_argument("--apply", action="store_true", help="retire only the explicitly named ISOs")
+    parser.add_argument("--receipt", type=Path, help="new private JSONL audit, outside runtime state")
+    parser.add_argument("bundles", nargs="+", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        payload = run(args.bundles, apply=args.apply, receipt=args.receipt)
+    except (OSError, ValueError, RuntimeError) as error:
+        if args.json:
+            print(json.dumps({"v": 1, "status": "error", "code": "refused", "error": str(error)},
+                             sort_keys=True, separators=(",", ":")), file=sys.stderr)
+        else:
+            print("factory-retire-abandoned-publications: " + str(error), file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"v": 1, **payload}, sort_keys=True, separators=(",", ":")))
+    else:
+        print(f"{payload['status']}: {len(payload['publications'])} publication ISOs, {payload['bytes']} bytes")
+        for row in payload["publications"]:
+            print(f"{row['path']}\t{row['sha256']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
