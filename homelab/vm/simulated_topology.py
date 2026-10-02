@@ -581,6 +581,41 @@ def audit_persistent_controller(
             "persistent controller: the disk device is not the instance disk")
 
 
+def live_qemu_argv(
+    pid: int, role: str, proc_root: Path = Path("/proc"),
+) -> list[str]:
+    """Wait briefly for QEMU's argv; callers must still audit its arguments.
+
+    A nonempty cmdline can still describe the process before exec completes.
+    It is never approved: only an approved QEMU name ends this bounded wait.
+    Once QEMU appears, an unsafe command must fail its audit immediately,
+    rather than being retried until a different command happens to pass.
+    """
+    cmdline = proc_root / str(pid) / "cmdline"
+    argv: list[str] = []
+    error: OSError | None = None
+    for attempt in range(20):
+        try:
+            raw = cmdline.read_bytes()
+            error = None
+        except OSError as caught:
+            raw = b""
+            error = caught
+        argv = [os.fsdecode(part) for part in raw.split(b"\0") if part]
+        if argv and Path(argv[0]).name in {"qemu-system-x86_64", "qemu-kvm"}:
+            return argv
+        if attempt < 19:
+            time.sleep(0.01)
+    if error is not None:
+        raise RuntimeError(
+            f"{role}: cannot audit live QEMU process {pid}: {error}") from error
+    if not argv:
+        raise RuntimeError(f"{role}: live QEMU process has empty cmdline")
+    executable = Path(argv[0]).name
+    raise RuntimeError(
+        f"{role}: live process is not approved QEMU: {executable}")
+
+
 def audit_live_process(
     pid: int, role: str, proc_root: Path = Path("/proc"),
     *,
@@ -592,29 +627,7 @@ def audit_live_process(
     qmp_socket: Path | None = None,
 ) -> None:
     """Re-audit the kernel's view of a newly started QEMU process."""
-    cmdline = proc_root / str(pid) / "cmdline"
-    raw = b""
-    error: OSError | None = None
-    for _attempt in range(20):
-        try:
-            raw = cmdline.read_bytes()
-            error = None
-        except OSError as caught:
-            error = caught
-        if raw:
-            break
-        time.sleep(0.01)
-    if error is not None:
-        raise RuntimeError(
-            f"{role}: cannot audit live QEMU process {pid}: {error}") from error
-    argv_bytes = [part for part in raw.split(b"\0") if part]
-    if not argv_bytes:
-        raise RuntimeError(f"{role}: live QEMU process has empty cmdline")
-    argv = [os.fsdecode(part) for part in argv_bytes]
-    executable = Path(argv[0]).name
-    if executable not in {"qemu-system-x86_64", "qemu-kvm"}:
-        raise RuntimeError(
-            f"{role}: live process is not approved QEMU: {executable}")
+    argv = live_qemu_argv(pid, role, proc_root)
     audit_qemu_argv(
         role, argv, allowed_nic_models=allowed_nic_models,
         allowed_chardevs=allowed_chardevs)

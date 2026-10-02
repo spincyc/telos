@@ -284,6 +284,59 @@ class SessionCommandTests(SessionFixture):
 
 
 class SessionLifecycleTests(SessionFixture):
+    def test_pre_exec_process_waits_for_exact_audited_command_before_login(self):
+        session = self.session()
+        self.live_argv = ["python3", "launcher.py"]
+
+        def finish_exec(_delay):
+            self.assertNotIn("login", self.calls)
+            self.assertFalse(session.facts["live_argv_audited"])
+            (self.proc / str(self.guests[-1].pid) / "cmdline").write_bytes(
+                b"\0".join(part.encode() for part in session.command))
+
+        with self.console_fakes(), mock.patch.object(
+                simulated_topology.time, "sleep", side_effect=finish_exec) as wait:
+            session.start()
+            session.stop()
+        wait.assert_called_once_with(0.01)
+        self.assertTrue(session.facts["live_argv_audited"])
+        self.assertEqual(self.calls, ["spawn", "login", "ad", "poweroff"])
+        self.assertEqual(self.guests[0].signals, [])
+
+    def test_pre_exec_process_that_never_becomes_qemu_is_stopped(self):
+        session = self.session()
+        self.live_argv = ["python3", *session.command]
+        with self.console_fakes() as poweroff, \
+                mock.patch.object(simulated_topology.time, "sleep") as wait:
+            with self.assertRaises(session_module.PersistentControllerSessionError):
+                session.start()
+        self.assertEqual(wait.call_count, 19)
+        poweroff.assert_not_called()
+        self.assertNotIn("login", self.calls)
+        self.assertFalse(session.facts["live_argv_audited"])
+        self.assertEqual(self.guests[0].signals, ["terminate"])
+        self.assertFalse(self.lock_held())
+
+    def test_pre_exec_transition_still_requires_the_exact_persistent_command(self):
+        session = self.session()
+        self.live_argv = ["python3", "launcher.py"]
+
+        def finish_exec(_delay):
+            wrong = session.command + ["-qmp", "unix:/tmp/q,server=on"]
+            (self.proc / str(self.guests[-1].pid) / "cmdline").write_bytes(
+                b"\0".join(part.encode() for part in wrong))
+
+        with self.console_fakes() as poweroff, mock.patch.object(
+                simulated_topology.time, "sleep", side_effect=finish_exec) as wait:
+            with self.assertRaises(session_module.PersistentControllerSessionError):
+                session.start()
+        wait.assert_called_once_with(0.01)
+        poweroff.assert_not_called()
+        self.assertNotIn("login", self.calls)
+        self.assertFalse(session.facts["live_argv_audited"])
+        self.assertEqual(self.guests[0].signals, ["terminate"])
+        self.assertFalse(self.lock_held())
+
     def test_start_logs_in_and_stop_powers_off_before_any_terminate(self):
         session = self.session()
         with self.console_fakes():

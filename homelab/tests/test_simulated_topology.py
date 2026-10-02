@@ -172,5 +172,88 @@ class SimulatedTopologyTests(unittest.TestCase):
                 popen.assert_not_called()
 
 
+class LiveProcessAuditTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.proc = Path(temporary.name)
+        (self.proc / "123").mkdir()
+        self.cmdline = self.proc / "123" / "cmdline"
+        self.argv = [
+            "/usr/bin/qemu-system-x86_64", "-nodefaults",
+            "-netdev", "socket,id=x,connect=127.0.0.1:12971",
+            "-device", "e1000e,netdev=x",
+        ]
+
+    def write_argv(self, argv):
+        self.cmdline.write_bytes(b"\0".join(part.encode() for part in argv))
+
+    def audit(self):
+        simulated_topology.audit_live_process(
+            123, "client", self.proc, allowed_nic_models=("e1000e",))
+
+    def test_pre_exec_cmdline_then_empty_then_qemu_is_audited(self):
+        self.write_argv(["python3", "launcher.py"])
+        transition = iter([[], self.argv])
+        with mock.patch.object(
+                simulated_topology.time, "sleep",
+                side_effect=lambda _: self.write_argv(next(transition))) as wait, \
+                mock.patch.object(
+                    simulated_topology, "audit_qemu_argv",
+                    wraps=simulated_topology.audit_qemu_argv) as audit:
+            self.audit()
+        self.assertEqual(wait.call_count, 2)
+        audit.assert_called_once_with(
+            "client", self.argv, allowed_nic_models=("e1000e",),
+            allowed_chardevs=())
+
+    def test_a_wrapper_that_never_execs_is_not_approved(self):
+        self.write_argv(["python3", *self.argv])
+        with mock.patch.object(simulated_topology.time, "sleep") as wait, \
+                mock.patch.object(simulated_topology, "audit_qemu_argv") as audit:
+            with self.assertRaisesRegex(RuntimeError, "not approved QEMU: python3"):
+                self.audit()
+        self.assertEqual(wait.call_count, 19)
+        audit.assert_not_called()
+
+    def test_exited_pre_exec_process_cannot_reuse_a_stale_cmdline(self):
+        self.write_argv(["python3", "launcher.py"])
+        with mock.patch.object(
+                simulated_topology.time, "sleep",
+                side_effect=lambda _: self.cmdline.unlink(missing_ok=True)), \
+                mock.patch.object(simulated_topology, "audit_qemu_argv") as audit:
+            with self.assertRaisesRegex(RuntimeError, "cannot audit live QEMU"):
+                self.audit()
+        audit.assert_not_called()
+
+    def test_empty_or_unreadable_cmdline_can_transition_to_qemu(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                self.write_argv([])
+                if missing:
+                    self.cmdline.unlink()
+                with mock.patch.object(
+                        simulated_topology.time, "sleep",
+                        side_effect=lambda _: self.write_argv(self.argv)):
+                    self.audit()
+
+    def test_unsafe_qemu_is_rejected_without_waiting_for_a_safe_command(self):
+        self.write_argv(self.argv + ["-nic", "user"])
+        with mock.patch.object(
+                simulated_topology.time, "sleep",
+                side_effect=lambda _: self.write_argv(self.argv)) as wait:
+            with self.assertRaises(ValueError):
+                self.audit()
+        wait.assert_not_called()
+
+    def test_pre_exec_transition_does_not_bypass_network_audit(self):
+        self.write_argv(["python3", "launcher.py"])
+        with mock.patch.object(
+                simulated_topology.time, "sleep",
+                side_effect=lambda _: self.write_argv(self.argv + ["-nic", "user"])):
+            with self.assertRaises(ValueError):
+                self.audit()
+
+
 if __name__ == "__main__":
     unittest.main()

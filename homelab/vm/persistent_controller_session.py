@@ -101,7 +101,7 @@ from .serial_automation import (  # noqa: E402
     SerialAutomation, SerialAutomationError)
 from .signal_cleanup import SignalGuard, terminate_children  # noqa: E402
 from .simulated_topology import (  # noqa: E402
-    BACKUP_INPUT, audit_persistent_controller, backup_disk_args)
+    BACKUP_INPUT, audit_persistent_controller, backup_disk_args, live_qemu_argv)
 from .simulation_evidence import redact  # noqa: E402
 from .simulation_overlay import PersistentControllerInstance  # noqa: E402
 
@@ -438,15 +438,11 @@ class PersistentControllerSession:
 
     # -- internals -------------------------------------------------------
     def _audit_live(self, pid: int) -> None:
-        cmdline = self._proc_root / str(pid) / "cmdline"
-        raw = b""
-        for _attempt in range(20):
-            with contextlib.suppress(OSError):
-                raw = cmdline.read_bytes()
-            if raw:
-                break
-            time.sleep(0.01)
-        live = [os.fsdecode(part) for part in raw.split(b"\0") if part]
+        try:
+            live = live_qemu_argv(pid, "persistent controller", self._proc_root)
+        except RuntimeError as error:
+            raise PersistentControllerSessionError(
+                "the live QEMU process is not the audited persistent command") from error
         if live != self._argv:
             raise PersistentControllerSessionError(
                 "the live QEMU process is not the audited persistent command")
