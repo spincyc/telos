@@ -245,7 +245,7 @@ prepared before resealing, and its publication remains unconsumed for the
 keeper. Its complete capture plus Arch run `run-20261001T193550Z-e5108779aad1`
 passed all four gate-4 checks (TASK-43 DONE). Gate 12's fresh repeat
 `20261002T011915Z-907070-repeat` started at 01:19:15 UTC from `93eb6b6` on
-selected release `20261001.001`. At the 14:06 UTC checkpoint, it has finished
+selected release `20261001.001`. At the 16:52 UTC checkpoint, it has finished
 with final receipt FAIL, `equivalent: false`, zero retries. Iteration 1 failed
 15 pass / one fail on `host_network_changes.listener=1`; discarded snapshots
 prevent exact attribution. Iteration 2 passed 15 checks with only the ADR 0080
@@ -267,12 +267,19 @@ and failed only on `host_network_changes.route=4`; the other five local
 counters are zero, forwarding by privilege proof, and UniFi remains unproven.
 Raw before/after diagnostics retain one automatic IPv6 router-advertisement
 ECMP next-hop replacement, counted in both all-table route views as four
-old/new entries. Extending privilege proof to automatic route changes awaits
-an owner decision; the present verdict stands and gate 12 remains open.
-The supervisor and driver stopped with exit 2, no VMs remain, and no rerun
-has started. Exact receipt and diagnostic paths are in
+old/new entries. That failure stands; its supervisor and driver stopped with
+exit 2. Third strict recovery `20261002T143757Z-1346697-repeat` ran from
+14:37:57 to 16:41:30 UTC from `011e678`, reusing unchanged accepted original
+iteration 2 plus one fresh cycle. It finished **PASS-WITH-WAIVER**,
+`equivalent: true`, zero retries: each cycle passed 15 checks with only the
+ADR 0080 UniFi waiver and all four gate-4 checks. The fresh cycle's six local
+network counters are zero; independent comparison agrees. Gate 12 is closed
+for phase one and TASK-6 is done. Supervisor exit 0 and teardown are verified,
+with no QEMU or repeat driver remaining. No route-policy exception was needed
+or approved. Exact receipts, source fingerprints and diagnostic paths are in
 [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). The keeper
-remains absent, its reserved Windows publication unconsumed, and the owner
+remains absent; TASK-21 is blocked solely on owner-terminal passwords. Its
+reserved Windows publication is unconsumed, and the owner
 availability question unanswered. Credentials must be typed at the owner's
 terminal after verifying the lab is idle; only one live lane may run at a time.
 

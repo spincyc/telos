@@ -138,12 +138,15 @@ If its directory data is lost, use the operator runbook's native Samba backup
 and restore procedure. A new OS and a newly provisioned domain do not recreate
 the old account SIDs. Do not blindly rejoin clients or reset cached credentials.
 
-**Current support status.** Partial. Native directory backup, restoration under
-a new DC name, reconvergence and a directory probe have passed in an isolated
-drill (2026-10-01). Existing-client authentication after replacing its original
-DC needs its own keep-verify evidence; consult the runbook's current verdict.
-That proof must preserve the domain identity and use a client prepared for
-SRV-first discovery. Directory backups do not restore workstation files.
+**Current support status.** Proven in the isolated lab, 2026-10-01. Native
+backup, same-instance restoration under a new DC name, reconvergence and a
+directory probe passed. After the Samba SRV repair, an existing client
+prepared for SRV-first discovery passed all 40 keep-verify checks without
+rejoining either OS; the kept disk, firmware variables and marker stayed
+unchanged. The domain identity was preserved. The operator runbook records
+the evidence and the bounded Windows boot retry; firmware stalls are not
+claimed fixed. Owner keeper and physical recovery remain unperformed.
+Directory backups do not restore workstation files.
 
 ## 6. Update failure
 

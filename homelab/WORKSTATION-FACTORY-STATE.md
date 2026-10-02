@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20261002.004`
+Document version: `20261002.006`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-10-02 14:06 UTC
+Last evidence/workstream review: 2026-10-02 16:58 UTC
 
-Repository baseline reviewed: `c45c0dc` (bounded process-audit fix; repeat recovery `7e4c72c`, Samba repair `bdebb4f`, WinPE VBS `8eb69a9`, publication input binding `93eb6b6`)
+Repository baseline reviewed: `011e678` (guarded publication retirement; bounded process-audit fix `c45c0dc`, repeat recovery `7e4c72c`, Samba repair `bdebb4f`, WinPE VBS `8eb69a9`, publication input binding `93eb6b6`)
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -200,8 +200,8 @@ Do not skip a gate or turn a planned assertion into a reported pass.
 | 9 | Optional storage failure | Prove per-user SMB authorization when present and successful login with no delay or hard failure when the NAS is absent. Record UID/GID and timestamp measurements before reconsidering NFS. | **PASS 2026-08-14.** This gate has no target of its own by design and is graded inside the gate-6 and gate-8 identity acceptances: `homelab/workstations/acceptance.json` carries six `optional-storage` checks, and the three `windows-smb-*` ones are exercised by `windows_identity_acceptance.py` while the three `arch-smb-*` ones are the gate-8 runner's `arch-storage-{attached,denied,absent-login}`. The Windows half is live-proven in the 2026-08-13 gate-6 evidence (`optional-storage-offline` and `optional-storage-access-denied` among its 24 passed checks); the Arch half is live-proven in the passing 2026-08-14 gate-8 run (`arch-identity/run-20260814T172142Z-495164bc7159`). Controller side was already complete and test-locked 2026-08-12 (`11c2c5f`): the per-user `[homes]` share over `/srv/unas/<user>`, rfc2307 identities so an owner reads their own directory and a foreigner is denied, and the storage name published to the controller's own address, which the gate-8 runner repoints for the absent-login proof. The attached check now also records the UID, GID and file mtime this gate's proof asks for, and refuses a pass whose identifiers disagree with what the directory staged -- which is what makes them a stability proof. Two faults had to be fixed to get the Arch half green, both in `HANDOFF.md` §3: the storage alias had no `servicePrincipalName` for the `cifs/` ticket `mount.cifs` asks the KDC for, and the Controller's own name service had no directory source at all. |
 | 10 | Dual-boot acceptance | From cold boot, select and log into both systems; verify Windows-default five-second policy, disk measurements, EFI recovery choices, and no cross-OS partition damage. | **PASS 2026-08-11**: bundle `dualboot-acceptance/run-20260811T170510Z-a619bcb1f028` records `observed`/`dualboot-accepted`, all eight checks green. From cold boot the firmware started `Linux Boot Manager` (systemd-boot), the five-second menu rendered Windows-default (measured ~5s), Windows BOOTED — observation `boot-observed`, six retained frames — but this run drove no Windows login and no Windows shutdown: the bundle's `result.json` records `windows_clean_shutdown: false` and `windows_login_proven: false`, and the `windows-default-boot` event records `clean_shutdown: false`, `login_proven: false`, `input_sent: false`. Boot 2 rendered the menu again (Linux-first NVRAM held — Windows adopted the blob-bearing entry and did not self-promote, `c15dff7`/`83be6bf`), the drive paused the countdown and arrow-navigated to Arch then pressed Enter (`6d8823b`), Arch handed off on ttyS0 to its getty login surface, the GPT was byte-unchanged, and both EFI boot managers plus the recovery entry were present. The judge grades it verbatim `{"checks": 8, "deferred": ["windows-login-driven", "arch-authenticated-login"], "external_access": false, "result": "pass", "schema_version": 1, "windows_login_proven": false}` (re-run 2026-08-14 via `python3 homelab/bin/homelab-dualboot-acceptance judge <bundle>/evidence/dualboot-events.jsonl`; the Make entry point is `homelab-dualboot-acceptance-judge DUALBOOT_EVIDENCE=…`). BOTH deferrals must be read with the pass: Windows login is deferred to gate 6's identity stream (where it is proven), and Arch AUTHENTICATED login is deferred to gate 8 — gate 10 proved only that Arch reached its ttyS0 getty prompt. **Established 2026-08-17: neither deferral can be closed on the retained disks, and the Controller image is not what blocks them.** Arch has no credential of any kind on that disk -- the install-time join bound it to a domain that no longer exists with nothing cached, `local-rescue` was created by `useradd` with no `-p` so its password is disabled and nothing ever sets it, and `loader.conf` sets `editor no` so the cmdline cannot reach root before the getty; the routine that would set the rescue password itself runs from the root shell the login is what enables. Windows has exactly one login that needs no directory, the local one, and its credential is destroyed: gate 5 generates it randomly and retains it only in the unattend, gate 6 recovers it only from the one-use `publication.iso`, and no `publication.iso` remains anywhere in the tree. Both remaining routes -- grading a break-glass local login as directory authentication, or editing `/etc/shadow` host-side in the disk under test -- are refused. A re-run today would reproduce the same eight-check pass with the same two deferrals in ~5 min and ~500 MB, and the gate-7 input is provably read-only across a run (fresh overlay, and `_bundle` re-hashes both input disks against the authorization at every start; all three digests were re-verified byte-identical on 2026-08-17, six days and one full run later). Every gate-7 disk since the three 2026-08-14 bundles bakes in `telos-arch-join-once` and `telos-arch-domain-online`, ordered before `systemd-user-sessions`, which with no join media and no directory burn ~240 s before the getty. Since `f8f0443` (2026-10-01) `observe_boot`'s login wait is derived from those two bounds (420 s), so any gate-7 bundle serves. Superseded 2026-10-01, kept so it is not re-derived: the fixed 120 s wait failed `arch-console-login-surface` on such a disk (the first gate-12 run), and this row said to re-run only on an 08-11 bundle. |
 | 11 | Lifecycle recovery | Exercise controller restart/loss, PXE release rollback, failed install, broken boot, directory/DNS loss, update failure, workstation remint, and controller reconstruction from public inputs plus a synthetic private overlay. | **CLOSED FOR PHASE ONE 2026-10-01 at `partial`, per [ADR 0080](decisions/0080-phase-one-closure-of-recovery-and-egress-checks.md) -- never relabelled `pass`.** Run `homelab/var/factory/recovery/run-20261001T015135Z-gate11live/{recovery-evidence.jsonl,result.json}` (`RECOVERY_BOOT=1`, identity bundle prepared from gate-12 iteration 1's outputs): 8 scenarios, `pass: 5`, `not_run: 3`, `fail: 0`; the judge grades it `{"checks": 8, "deferred": ["controller-restart", "failed-install-recovery", "broken-boot-repair"], "result": "partial"}`, exactly the three ADR 0080 deferrals. `pxe-release-rollback`, `update-failure-rollback` (ADR 0075) and `workstation-remint` pass in the loopback lab with no guest; `directory-dns-loss` (Controller frozen by SIGSTOP, cached operation continued under `offline_credentials_expiration = 0`, directory restored) and `controller-reconstruction` (converged from public inputs plus a synthetic private overlay) pass LIVE. Runner + judge `f39f3a1` (`make homelab-factory-recover`, `homelab-factory-recover-judge RECOVERY_EVIDENCE=…`); the two live hooks `2c3cd56`, forwarded their inputs by `2aaa7fe`. Every judged live field is backed by a token-scoped marker the guest itself printed: `controller_frozen` by the workstation refusing an unprimed domain principal (the host's SIGSTOP flag must agree but is not the proof), `converged_from_public_inputs` by the reconstructed Controller's own convergence and readiness markers and then `net ads testjoin` from the joined workstation. Two defects were fixed on the way, and the four earlier `-gate11live` runs that day deferred one or both hooks on them: `3fb969e`, the runner's `--controller-state` default named `homelab/var/controller`, which never existed, so both hooks ALWAYS deferred (its error now prints the message); `668b524`, the directory/DNS-loss hook froze the Controller before any online login, so nothing was cached and cached operation could never be observed -- it now primes SSSD with one online standard-user login first, as gate 8 does. The live hooks need a PREPARED, unexecuted gate-8 bundle (`homelab-arch-identity-prepare`), not an executed one. The three deferred scenarios stay stubs past phase one because their primitives do not exist: nothing power-cycles a live Controller and re-establishes its console (the boundary exposes an outage, not a restart), breaks and repairs a guest's bootloader, or makes an install fail on purpose. Read `pxe-release-rollback` narrowly: it flips the host-side selection pointer to the prior verified set and back (`homelab/vm/lifecycle_recovery.py`); nothing is served or booted. Superseded 2026-10-01, kept so it is not re-derived: this row read PARTIAL with both hooks implemented but NOT RUN, its only retained evidence `run-20260814T120300Z-3b3169f9f15f` (`pass: 3`, `not_run: 5`); the judge's verdict is `partial` by construction (`"pass" if not deferred else "partial"`), and any earlier claim of a date-stamped live pass had no retained artifact behind it. |
-| 12 | Repeatability | Destroy disposable state, run the entire factory at least twice from the same sealed inputs, and compare receipts. | **OPEN; latest final receipt FAIL, owner route-proof decision pending.** Recovery `repeat/20261002T114212Z-1294100-repeat` from `c45c0dc` finished at 13:47:15 UTC, exit 2, `equivalent: false`, zero retries. Both cycles completed all six functional phases; the fresh aggregate has 15 pass / one fail solely on `host_network_changes.route=4`, other five local counters zero (forwarding by privilege), UniFi unproven. Both gate-4 audits pass. Raw before/after snapshots retain one automatic IPv6 router-advertisement ECMP next-hop replacement counted in both all-table views as four old/new entries. Extending privilege proof to automatic route changes awaits the owner; no VMs remain and no rerun has started. Original `repeat/20261002T011915Z-907070-repeat` remains **FAIL**: iteration 1 failed on `listener=1` (discarded snapshots prevent attribution); accepted iteration 2 remains **PASS-WITH-WAIVER**, 15 pass / one ADR 0080 UniFi waiver, no fail/not-run, six local counters zero. First recovery `repeat/20261002T053117Z-1175062-repeat` stopped about 06:39 UTC with exit 2 and no final receipt after Windows `pxe-loop` and retry process-audit failures; fix `c45c0dc` is committed. Exact receipts and retained history: [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). Earlier `repeat/20261001T153726Z-2517176-repeat` also remains **FAILED**: equivalent lifecycles with no retries failed artifact scanning (fixed `c07f701`), selected-set verification (fixed `41b6bc8`) and WinPE IKE (now proven fixed by `8eb69a9`). Every accepted cycle requires its own gate-4 PASS. Current phase-one acceptance permits only the ADR 0080 UniFi waiver; observed local route/listener changes fail and missing proof stays `NOT-RUN`. The firmware fault is unresolved. |
-| 13 | Documentation/publication | Human and operator guides match supported commands, distinguish pending proof, pass privacy/link checks, and are usable from the site. | **Local documentation and site wiring verified 2026-10-01; final reconciliation awaits the gate-12 route-proof decision.** Both `homelab/docs/` guides are rendered in the site and linked from the Homelab index. Source-relative links resolve to published pages or tracked public source; missing, private, ignored and escaping targets are refused. All sixteen documentation topics are mapped in `DOCUMENTATION-PASS.md`; local usage, maintenance, directory backup/recovery and retirement are documented, with later physical/NAS work labelled. Link/privacy checks, 45 repository tests and `make verify-site` pass (26 pages, 148 publications). Chromium checks at 390px and 1440px found and fixed guide overflow. These are local results, not a deployment claim. |
+| 12 | Repeatability | Destroy disposable state, run the entire factory at least twice from the same sealed inputs, and compare receipts. | **CLOSED FOR PHASE ONE, PASS-WITH-WAIVER, 2026-10-02; TASK-6 DONE.** Strict recovery `repeat/20261002T143757Z-1346697-repeat` from `011e678` finished 16:41:30 UTC, supervisor exit 0, equivalent receipts and zero retries. It reused unchanged accepted `20261002T011915Z-907070-repeat/iteration-2` plus one fresh cycle at identical pins. Both cycles have 15 PASS and only the ADR 0080 UniFi waiver; each gate-4 audit is 4/4 PASS and the fresh six local network counters are zero. Independent comparison agrees with zero divergences; no QEMU or repeat driver remains. Final receipt `homelab/var/factory/repeat/recovered-repeat-3-receipt.json`; exact SHA-256, source fingerprints and diagnostics: [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). No route-policy exception was needed or approved. Original listener failure `011915`, stopped recovery `053117` without a receipt, route failure `114212`, and earlier checker/IKE failure `20261001T153726Z-2517176-repeat` retain their verdicts and evidence. The current contract still fails observed local route/listener changes, and firmware stalls are not claimed fixed. |
+| 13 | Documentation/publication | Human and operator guides match supported commands, distinguish pending proof, pass privacy/link checks, and are usable from the site. | **Local documentation pass complete, 2026-10-02 (TASK-7).** Accepted gate-12 evidence and all sixteen topics are reconciled in the guides, map and ledger, with physical/NAS limits explicit. Final command drift passes (113 defined / 83 documented); source privacy/links, build and `make verify-site` pass (26 pages / 148 publications / 181 files). Chromium reviewed both guides and recovery at 390px/1440px: no page overflow, all local fragments resolve, every link is keyboard reachable with visible focus, and code/tables retain local scrolling. Earlier isolated source-copy build/verify required no private overlay or lab media; no fresh-household live install is claimed. Browser proof is archived with the strict-repeat checkpoint. Publication still needs separate push authority and exact-commit deployment evidence. |
 | 14 | External integration | Only after a new explicit authorization: read-only UniFi review, separately approved changes, physical attachment, then ThinkPad X13 Gen 6 Intel pilot. | blocked by design; **not authorized**. The staged plan is [EXTERNAL-INTEGRATION-READINESS.md](EXTERNAL-INTEGRATION-READINESS.md) (`b719e7a`). The only authorized step (owner, 2026-09-30) is its read-only UniFi DHCP/PXE review with owner-supplied access, aiq TASK-37, blocked on that access. ADR 0080's gate-12 egress waiver lapses here. |
 
 Owner decision 2026-09-30 ([ADR 0079](decisions/0079-drop-the-controller-pxe-mint.md)):
@@ -230,9 +230,9 @@ existing bounded cold-boot retry passed and retained
 `fabric/windows-boot-attempt-1.json`. Firmware stalls are not claimed fixed.
 Earlier failed evidence, restored instance and verified native backup remain.
 
-The keeper (TASK-21) is active but absent; its convergence dry run passed again
-at 14:01 UTC
-and its DR prerequisite is satisfied. Owner-terminal credentials are still
+The keeper (TASK-21) is blocked solely on owner-terminal passwords and absent;
+status and convergence planning were rechecked about 16:49 UTC. Its DR
+prerequisite is satisfied. Owner-terminal credentials are still
 required and the owner availability question remains unanswered. Windows VBS
 run `run-20261001T235652Z-a782e2f67fac` (`8eb69a9`) finished at 2026-10-02
 01:17 UTC after about 70 minutes: runner exit 0,
@@ -283,16 +283,15 @@ at HEAD `c45c0dc`, reusing the same accepted iteration and pins. Windows
 `run-20261002T114214Z-22aa7767d7e4` passed on its first attempt at 12:52:31 UTC:
 `observed` / `native-windows-clean-shutdown`, one firmware PXE boot, release
 `20261001.001`, unchanged canonical disk/variables and zero external
-connections. Both cycles completed all six functional phases. The new final
+connections. Both cycles completed all six functional phases. That final
 receipt is **FAIL**, `equivalent: false`, zero retries: the fresh cycle has
 15 pass / one fail solely on `host_network_changes.route=4`. Other local
 counters are zero, forwarding by privilege proof, and UniFi remains unproven.
 Both gate-4 audits pass. Private before/after snapshots retain one automatic
 IPv6 router-advertisement ECMP next-hop replacement, counted in the IPv4 and
-IPv6 all-table views as four old/new entries. The owner has been asked whether
-privilege proof may cover automatic route changes; no decision has been made
-and the present failure stands. Supervisor `1293625` and driver `1294100`
-stopped with exit 2; no VMs remain and no rerun has started. Final receipt and
+IPv6 all-table views as four old/new entries. No automatic-route privilege
+exception was approved; this failed receipt stands. Supervisor `1293625` and driver `1294100`
+stopped with exit 2; no VMs remained after that run. Final receipt and
 raw diagnostic paths are in
 [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver).
 The independent comparison, retirement receipt, full launch-test audit and
@@ -301,9 +300,29 @@ original evidence hash inventory also have durable private copies in
 Gate 11's independent live proof stays phase-one `partial` (five pass, three
 ADR 0080 deferrals); the repeat's three/five recovery result does not replace
 it. Historical repeat FAIL and restored-client DR PASS40/40 are unchanged.
-Only one live lab lane may run at a time. Resolve the route-proof criterion
-before choosing the next gate-12 action; preserve all failed receipts and
-the accepted original cycle.
+Third strict recovery `20261002T143757Z-1346697-repeat` ran from 14:37:57 to
+16:41:30 UTC from `011e678`, reusing unchanged accepted original iteration 2
+plus one fresh full cycle at identical pins. Final receipt
+`homelab/var/factory/repeat/recovered-repeat-3-receipt.json` is
+**PASS-WITH-WAIVER**, `equivalent: true`, zero retries. Both cycles have
+15 PASS and only the ADR 0080 UniFi waiver, and both gate-4 audits pass 4/4.
+The fresh six local network counters are zero. Independent comparison agrees
+with zero divergences. Supervisor `1346230` exited 0; driver `1346697` and all
+QEMUs are stopped. Gate 12 is closed for phase one and TASK-6 is done. No
+route-policy exception was needed or approved; that optional proposal is
+superseded for acceptance. Durable supervisor and independent comparison files
+are under `homelab/var/factory/recovery-checkpoints/20261002-strict-repeat-3/`;
+exact work/receipt paths are in [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver).
+Guarded retirement `011e678` freed 34,673,319,936 bytes from only three early
+failed publications; all 21 other file hashes, prior receipts and the keeper's
+reserved publication stayed unchanged. Its 27 tests passed with zero lab
+touches, and private audit/retirement/hash records are in the route-review
+directory above. Free space was 64 GiB before launch and about 30 GiB during
+Windows installation; these are historical capacity measurements. Preserve
+all failed receipts and both accepted cycles. TASK-7's local documentation
+pass is complete: final command, source, rendered-site and browser checks
+passed, as recorded in gate 13 and `DOCUMENTATION-PASS.md`. No push or
+deployment is authorized by the live acceptance.
 
 ## Current blockers and cautions
 
@@ -953,26 +972,18 @@ Current actions and completed prerequisites:
    and the hand-driven console install per the runbook's
    ["Keep the `local-rescue` password"](docs/operator-runbook.md) recipe and
    ["Interactive offline installation"](vm/README.md) is the fallback.
-2. **Gate 12 (aiq TASK-6): obtain a second accepted cycle.** Original repeat
-   `repeat/20261002T011915Z-907070-repeat` finished FAIL; preserve its receipt
-   and the earlier repeat failure. Its second iteration is accepted with only
-   the ADR 0080 UniFi waiver. Recovery `repeat/20261002T053117Z-1175062-repeat`
-   stopped with exit 2 after a Windows PXE loop and its retry's process-audit
-   failure; no comparison receipt was written. Recovery
-   `repeat/20261002T114212Z-1294100-repeat` from `c45c0dc` finished at
-   13:47:15 UTC with FAIL, nonequivalent, zero retries and exit 2. Both cycles
-   completed all phases; the fresh aggregate failed solely on `route=4`
-   (15 pass / one fail), with retained raw snapshots attributing the change to
-   an automatic IPv6 router-advertisement ECMP next-hop replacement. Both
-   gate-4 audits pass. Extending privilege proof to automatic route changes
-   awaits the owner; the failure stands, gate 12 remains open, and no VMs or
-   rerun remain. Preserve the final receipt and diagnostics in
-   [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). Another
-   cycle under the existing criterion remains authorized; check disk headroom
-   before launching. A criterion change needs the owner's decision. Preserve
-   failed evidence; only
-   the two abandoned publications were retired. The firmware fault remains
-   unresolved.
+2. **Gate 12 (aiq TASK-6) is DONE.** Strict recovery
+   `repeat/20261002T143757Z-1346697-repeat` from `011e678` finished at
+   16:41:30 UTC, supervisor exit 0, with PASS-WITH-WAIVER, equivalent cycles
+   and zero retries. One accepted original cycle was reused and one fresh
+   full cycle ran at identical pins; each has 15 PASS / only the UniFi waiver
+   and gate-4 4/4 PASS. Independent comparison agrees; no repeat driver or
+   QEMU remains. Preserve both accepted sources and the exact receipt/hash
+   in [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver).
+   Original listener failure `011915`, stopped recovery `053117` without a
+   receipt, route failure `114212` and older failures remain unchanged. No
+   automatic-route exception was needed or approved, and no new cycle is
+   required for acceptance. The firmware fault remains unresolved.
 3. **Disaster recovery (aiq TASK-41, TASK-42) is DONE.** `rehearsal-auto-ws2`
    has all four stages folded; Windows join `attempt-20261001T223623Z-5e1cc129efaf`
    passed and retired its publication. Pre-DR keep-verify
@@ -993,8 +1004,11 @@ Current actions and completed prerequisites:
    HDDP state and are not claimed fixed; the passing run used its recorded
    bounded Windows cold-boot retry. `rehearsal-auto-ws1` predates
    SRV-first and cannot prove discovery after a DC rename.
-4. **The keeper (aiq TASK-21), with the owner** — DR prerequisite satisfied,
-   keeper absent and convergence dry run checked. Its owner decisions are
+4. **The keeper (aiq TASK-21) is blocked solely on owner-terminal passwords**
+   — DR prerequisite satisfied, keeper absent and convergence dry run checked
+   again about 16:49 UTC. The first owner action is
+   `make homelab-factory-persistent-converge PERSISTENT_DC=keeper APPLY=1`.
+   Its owner decisions are
    taken (the Keeper row under Agreed decisions). Follow the exact
    [owner-terminal sequence](FACTORY-MAKE-TARGETS.md#owner-terminal-keeper-sequence-task-21)
    once the live lab lane is free: converge, policy, accounts, probe, durable
@@ -1023,10 +1037,11 @@ Current actions and completed prerequisites:
    names all three directory roles. `-up` remains unrun under owner custody;
    agent-custody creation passed 2026-09-30. Reconvergence and destruction
    passed in the 2026-10-01 directory restore drill.
-6. **Gate 13** — DR and the stopped recovery are reconciled here; reconcile
-   later live results when another repeat completes. The two guides are wired into the site, strict prose
-   privacy and link checks pass, and the rendered mobile/desktop layouts are verified.
-   Publishing still requires push authority and exact-commit deployment proof.
+6. **Gate 13 (aiq TASK-7) local pass is complete.** The accepted repeat,
+   current procedures and all sixteen documentation topics are reconciled.
+   Final command, privacy/link, build/verify and Chromium mobile/desktop
+   checks passed. Publishing still requires push authority and exact-commit
+   deployment proof; neither is claimed here.
 
 Superseded 2026-08-17, kept so it is not re-derived: this list previously opened
 with gate 8's serial routing and gate 9's storage checks. Both are done — gate 8

@@ -1,9 +1,9 @@
 # Homelab documentation pass
 
-Document version: `20261001.002`
+Document version: `20261002.001`
 
-Status: reconciled for the local phase-one workflow on 2026-10-01; live
-acceptance remains governed by the state ledger. The first two guides shipped
+Status: local documentation pass complete on 2026-10-02, including the accepted
+gate-12 repeat; live evidence remains governed by the state ledger. The first two guides shipped
 2026-08-12 (`2680c23`):
 [`docs/factory-guide.md`](docs/factory-guide.md) (human) and
 [`docs/operator-runbook.md`](docs/operator-runbook.md) (operator). Both are
@@ -91,20 +91,20 @@ fixed with useful content rather than decoration.
 |---:|---|---|---|---|
 | 1 | Documentation map | [Site index](../site/pages/homelab/index.md): task-led reading order, current HTML guides and historical PDFs | This map owns coverage; the state ledger owns verdicts; the Make contract owns interfaces. Checks and source versions are described below. | current local map and navigation |
 | 2 | Controller network gate | [Network simulation](../site/pages/homelab/controller-network-simulation.md), human view | [Network gate](../site/pages/homelab/controller-network-gate.md): fields, observations, packet capture and rollback; [readiness plan](EXTERNAL-INTEGRATION-READINESS.md) owns the read-only review before any attachment | documented; physical execution separately authorized |
-| 3 | Bootstrap Controller | [Factory guide](docs/factory-guide.md), two controller modes | [Runbook](docs/operator-runbook.md), Stages 0–1 and persistent instance; [media intake](media/FRESH-CLONE.md), [offline seed](seed/README.md), [console fallback](vm/README.md). Password custody, rebuild and native directory backup are explicit. | local workflow documented; kept-disk backup remains absent |
+| 3 | Bootstrap Controller | [Factory guide](docs/factory-guide.md), two controller modes | [Runbook](docs/operator-runbook.md), Stages 0–1 and persistent instance; [media intake](media/FRESH-CLONE.md), [offline seed](seed/README.md), [console fallback](vm/README.md). Fresh-clone seed/create/install, password custody, rebuild and native directory backup are explicit. | local workflow documented; another-household proof and kept-disk backup remain absent |
 | 4 | Network design | [Factory page](../site/pages/homelab/workstation-factory.md), Stage 6 | Field-by-field restricted attachment and rollback exist in the network gate; the [network design source](../src/homelab/design/network/main.tex) contains zone/port/Wi-Fi/cutover worksheets | existing coverage, not an empty gap; whole-house deployment and a full HTML design remain later |
 | 5 | Directory and DNS | [Owner guide](../site/pages/homelab/workstation-owner-guide.md), Controller absence and cached login | [Runbook](docs/operator-runbook.md), persistent identity, accounts and directory recovery; [role reference](ansible/roles/domain_controller/README.md), [backup contract](FACTORY-MAKE-TARGETS.md). Restored-client proof is distinct from a directory-only restore. | local procedures documented; live DR verdict belongs to ledger |
-| 6 | PXE and install media | [Factory guide](docs/factory-guide.md) and factory page, Stages 5–6 | [Media intake](media/FRESH-CLONE.md), runbook Stages 0–3, release rollback, [Windows flow](pxe/windows/FLOW.md). Wired boot and the physical interactive boundary are explicit. | local workflow documented; hardware boot unproven |
-| 7 | Workstation factory | [Factory guide](docs/factory-guide.md), shipped 2026-08-12 | [Operator runbook](docs/operator-runbook.md): commands, evidence, gate table, failures and cleanup; [durable flow](DURABLE-WORKSTATION-FLOW.md) owns the kept-workstation sequence | documented; publication and final live evidence tracked separately |
+| 6 | PXE and install media | [Factory guide](docs/factory-guide.md) and factory page, Stages 5–6 | [Media intake](media/FRESH-CLONE.md), runbook Stages 0–3, [staged netboot recipe](archiso/README.md), release rollback, [Windows flow](pxe/windows/FLOW.md). Samba repair acquisition, Windows source staging and online/offline order are explicit. | local workflow documented; fresh netboot rebuild and hardware boot not proven by this doc pass |
+| 7 | Workstation factory | [Factory guide](docs/factory-guide.md), shipped 2026-08-12 | [Operator runbook](docs/operator-runbook.md): commands, evidence, gate table, failures and cleanup; [durable flow](DURABLE-WORKSTATION-FLOW.md) owns the kept-workstation sequence | documented; gate 12 accepted with only the UniFi waiver; keeper credentials and publication remain separate |
 | 8 | Windows owner and operator paths | Owner guide: normal use, updates, travel, rescue and evidence | Runbook Stages 2/4/5 and [identity procedure](../site/pages/homelab/workstation-identity-procedures.md); firmware activation/live Microsoft Update remain outside local acceptance | local identity/install covered; physical repair and disposal remain later |
 | 9 | Arch owner and operator paths | Owner guide and [maintenance library](../site/pages/homelab/maintenance-library.md) | Runbook Stages 3/4/5, generated SSSD contract, UID/time/cache verification; maintenance covers news review, package evidence and stop conditions | existing coverage; live boot break/repair deferred by ADR 0080 |
 | 10 | User storage | Owner guide: local homes and three optional-storage outcomes | Runbook gate 9 and maintenance/recovery checks; [operator source](../src/homelab/manual/workstation-factory/optional-services.tex) has SMB mapping and three-state drill | local failure checks proven; NAS deployment, per-user automation, backup/restore and NFS remain unimplemented |
-| 11 | Recovery library | [Recovery library](../site/pages/homelab/recovery-library.md), including credentials/loss/disk symptoms | Runbook recovery, native directory backup/restore reference, secret-free evidence and explicit live-proof limits | current local support labels; three gate-11 scenarios deferred |
+| 11 | Recovery library | [Recovery library](../site/pages/homelab/recovery-library.md), including credentials/loss/disk symptoms | Runbook recovery, native directory backup/restore reference, 40/40 restored-client proof without rejoin, secret-free evidence and explicit owner/physical limits | local DR proven; three gate-11 scenarios deferred |
 | 12 | Maintenance library | [Maintenance library](../site/pages/homelab/maintenance-library.md), calendar and escalation | Runbook maintenance: status, versions, capacity, backups, update evidence and restore drills. Real network exports/certificate deployment wait for those services. | local calendar documented; future service tasks labelled |
 | 13 | Migration and VM-later register | Factory page, Stage 12 | [ADR 0068](decisions/0068-stable-service-names-and-dc-migration.md), network design placement register, ADR 0081 restore-name contract | design exists; multi-DC replication/cutover/demotion not implemented or proven |
 | 14 | Private-overlay bootstrap | Factory page, Stage 1 | Interactive onboard and preflight, [overlay reference](instance-example/README.md), runbook private-backup/restore checks | local setup documented; another-household fresh-clone rehearsal remains an acceptance task |
 | 15 | Decommission and incident response | Owner guide and recovery library: stop, protect data, report loss | Runbook retirement: named VM destroy, custody cleanup, directory-account follow-up, private inventory and physical sanitization boundary | local retirement documented; physical wipe/firmware reset/remote revocation unimplemented |
-| 16 | Cross-document acceptance | Site index and the runbook's supported-state table | Run `tools/doc-make-target-drift`, `scripts/site check`, then `make verify-site`; record fresh-clone and live evidence separately. HTML review must include navigation, narrow viewport, keyboard links and code readability. | checks available; do not infer live or deployed acceptance from local checks |
+| 16 | Cross-document acceptance | Site index and the runbook's supported-state table | Command, privacy, source-link and rendered-site checks passed; Chromium reviewed both guides and recovery at 390px and 1440px, including fragments, keyboard links and code/table scrolling. | local pass complete 2026-10-02; fresh-household live execution and deployment remain unproven |
 
 ## Corrections and remaining acceptance
 
@@ -113,7 +113,7 @@ here — the gate-9 "no storage check" misdescription and the gate table pinned 
 ledger `20260812.001` — were both applied to `docs/operator-runbook.md`. Do not
 re-open them.
 
-Reconciled 2026-10-01, in the documents this pass owns:
+Reconciled 2026-10-01/02, in the documents this pass owns:
 
 - **Site navigation wiring is implemented.** Both guides are registered in
   `site/site.json`; source-relative repository links resolve to published pages
@@ -128,15 +128,31 @@ Reconciled 2026-10-01, in the documents this pass owns:
 - **~~The persistent-instance documentation carries a NOT RUN marker.~~
   Replaced 2026-09-25** (`b2e8fed`): the serial-console converge and durable
   accounts ran live on a throwaway instance. The durable flow passed
-  2026-09-30; the 2026-10-01 directory-only restore drill also proved
-  reconvergence, a probe and drill teardown. Owner-custody and restored-client
-  acceptance remain distinct and follow the live ledger.
-- **Gate 12 needs a fresh proof after the 2026-10-01 fixes.** Two complete
-  live lifecycles agreed, but failed acceptance. The runbook and state ledger
-  name the checker defects, IKE suppression and firmware correction. Both
-  fresh iterations must pass gate 4 as well as the sixteen verifier checks;
-  ADR 0080's host-network waiver remains explicit. Reconcile their final
-  verdicts together after the run.
+  2026-09-30. Native backup and same-instance restore under a new DC name
+  passed on 2026-10-01. After Samba SRV repair, existing SRV-first client
+  keep-verify passed 40/40 without rejoin or changes to its kept disk,
+  firmware variables or marker (`run-20261001T235410Z-588718-de077620`).
+  Owner keeper and physical recovery remain unperformed; directory recovery
+  does not back up workstation files.
+- **Gate 12 accepted 2026-10-02, PASS-WITH-WAIVER.** Final receipt
+  `homelab/var/factory/repeat/recovered-repeat-3-receipt.json` records one
+  reverified accepted cycle plus one fresh six-phase cycle at identical pins,
+  equivalent with zero retries. Each cycle has 15 PASS checks, only ADR 0080's
+  UniFi waiver and a gate-4 PASS. The new local network counters are all zero;
+  independent comparison agrees with no divergence. No route-policy extension
+  was needed or applied. Historical checker/IKE, listener and route failures
+  remain retained, and intermittent firmware stalls are not claimed fixed.
+  Gate 11 remains separately closed for phase one at `partial`, with its
+  three agreed deferrals; the repeat's narrower lifecycle run does not replace
+  that evidence.
+- **Online prerequisites and fresh-clone order are explicit.** The runbook
+  describes the dependency target's host package transaction, Samba repair
+  acquisition/sealing, Windows source staging, and seed/netboot builds before
+  the offline boundary. The netboot recipe stages the profile first and uses
+  its completed `out/` as `CONTROLLER_SOURCE`; no public authorized key means
+  console-only access. Fresh canonical VM creation is distinct from a
+  lost-password rebuild. These source-checked recipes do not claim a newly
+  executed netboot build or a fresh-household installation.
 - **The human guide explains both controller modes.** The runbook now covers
   kept-instance maintenance, native directory backups, private-overlay backup,
   incident triage and named VM retirement, with explicit boundaries for missing
@@ -153,6 +169,29 @@ Reconciled 2026-10-01, in the documents this pass owns:
   `FACTORY_DURATION` warning, WinPE's disk selection (ADR 0078), the stale
   controller-seed and Arch inputs, the handoff banner, the NOT RUN durable
   accounts in the ledger and handoff, and the human guide's persistent mode.
+
+## Local acceptance record, 2026-10-02
+
+All sixteen topics above have a human path and an operator reference or an
+explicit unsupported boundary. Final command drift passed with 113 defined
+and 83 documented targets, no stale targets. Source link/privacy checks and
+`make verify-site` passed for 26 pages and 148 publications; `make site`
+produced 181 files. The registry and diff hygiene checks passed.
+
+Chromium reviewed the factory guide, operator runbook and recovery library
+at 390px and 1440px. Document width matched the content viewport in all six
+cases; code and tables retained local scrolling. All local links and fragments
+resolved after correcting the repeatability anchor. Keyboard Tab reached all
+16, 43 and 11 links respectively, with visible focus outlines. Private review
+records are retained with the strict-repeat recovery checkpoint. This is a
+local render review, not a deployment claim or a full accessibility audit.
+
+The earlier isolated source-copy check/build/verify required no private
+overlay or lab media. The corrected seed/netboot recipe was checked against
+source contracts, not executed as a new image build. Another-household live
+installation, owner keeper passwords, physical integration and deployment
+remain separate acceptance boundaries; completing this documentation pass
+does not claim those outcomes.
 
 ## Page pattern
 

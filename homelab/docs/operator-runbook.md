@@ -1,6 +1,6 @@
 # Workstation factory — operator runbook
 
-Version `20261001.002`
+Version `20261002.001`
 
 An exact, ordered runbook for building and verifying the isolated workstation
 factory on one Arch build host. Every command below is a real `make` target
@@ -37,7 +37,10 @@ Pair this with the [human guide](factory-guide.md) for orientation.
 
 ### Resolved 2026-09-24: the canonical Controller image is installed
 
-**No live target in this runbook is blocked on the image any more.** From
+**The existing build host has an installed image; a fresh clone does not.**
+For a new host, acquire the media and build the offline seed in Stage 0.2,
+then create and install the absent canonical VM in Stage 0.5. Do not use the
+lost-password destroy procedure to initialize a fresh clone. From
 2026-08-14 until 2026-09-24 `build/homelab/vm/bootstrap-dc/bootstrap-dc.qcow2`
 was a 197,888-byte empty disk — the image had been destroyed with owner
 authorization after its `local-rescue` console password was lost — and
@@ -71,7 +74,7 @@ with `grep` of the Makefile on 2026-08-17, and again on 2026-09-24):
 
 Corrected 2026-08-17: this list read *eight* and included
 `homelab-factory-repeat`, which is now implemented — see
-[5.3 Repeatability](#53-repeatability--in-progress-gate-12).
+[5.3 Repeatability](#53-repeatability-gate-12).
 
 ## Lifecycle map
 
@@ -91,7 +94,7 @@ deps -> media -> cache-seal -> offline-check
              dualboot-acceptance (gate 10)
                                     |
                                     v
-      verify -> recover (gate 11) -> repeat (gate 12, in progress)
+      verify -> recover (gate 11, partial) -> repeat (gate 12, accepted with waiver)
 ```
 
 ## Common variables and their defaults
@@ -101,7 +104,9 @@ deps -> media -> cache-seal -> offline-check
 | `APPLY` | unset (dry run) | Set to `1` to actually mutate |
 | `ARCH_ISO` | `homelab/var/media/arch/archlinux-x86_64.iso` | Verified Arch ISO |
 | `WINDOWS_ISO_CACHE` | `homelab/var/media/windows/windows-11-x64.iso` | Imported Windows ISO |
+| `WINDOWS_INSTALL_SOURCE` | `homelab/var/media/windows/install-source` | Staged Windows Setup source, required before sealing |
 | `WORKSTATION_REPO` | `homelab/var/media/arch/workstation-repo` | Signed Arch package repo |
+| `SAMBA_DNS_CACHE` | `homelab/var/media/samba-dns` | Pinned, verified Samba SRV repair library and receipt |
 | `WIMBOOT` | `homelab/var/media/wimboot` | Pinned iPXE `wimboot` |
 | `FACTORY_MEDIA_SEAL` | `homelab/var/media/factory-media-seal.json` | Aggregate media seal |
 | `FACTORY_DURATION` | `120` | Bounded live-run seconds, per phase. The default suits only a dry run: a Windows install takes ~69 min, so pass 5400-7200 for a real one |
@@ -122,12 +127,13 @@ Never commit media, credentials, private inventory, or evidence.
 make homelab-factory-deps
 ```
 
-`homelab-factory-deps` chains `homelab-bootstrap-deps`, which checks the full
-Arch build-host closure (QEMU `qemu-base`, `edk2-ovmf`, `archiso`, `samba`,
+`homelab-factory-deps` chains `homelab-bootstrap-deps`, which installs or
+upgrades the full Arch build-host closure (QEMU `qemu-base`, `edk2-ovmf`, `archiso`, `samba`,
 `krb5`, `dnsmasq`, `nginx`, `ipxe`, `ansible`, `wimlib`, `gptfdisk`, `mtools`,
-and the Python/TeX/site sets). It reports what is missing; it does not silently
-install. **Evidence:** the command exits 0 with no "missing" lines. The
-lightweight live-tool subset can be re-checked any time with
+and the Python/TeX/site sets). Review the declared closure before invoking it:
+the target runs one full `pacman -Syu --needed --noconfirm` transaction, using
+`sudo` unless already root. This changes host packages. **Evidence:** require
+exit 0. The lightweight read-only live-tool subset can be re-checked with
 `make homelab-sim-deps` (checks `qemu-system-x86_64`, `qemu-img`, `sfdisk`,
 `mcopy`).
 
@@ -139,7 +145,8 @@ make homelab-factory-media
 
 This fans out to `homelab-media-arch` (fetches + digest/keyring-verifies the
 Arch ISO), `homelab-media-workstation-repo` (resolves the signed Arch install
-closure into `WORKSTATION_REPO`), `homelab-media-wimboot` (version/hash-pinned
+closure into `WORKSTATION_REPO`), `homelab-media-samba-dns` (builds and verifies
+the pinned SRV serializer repair), `homelab-media-wimboot` (version/hash-pinned
 `wimboot`), and `homelab-media-windows`.
 
 Microsoft requires an interactive download, so Windows import stops at an
@@ -163,6 +170,50 @@ inspects the image catalog. **Evidence:** the import refuses to proceed unless
 the digest matches and **Windows 11 Pro (index 6)** is present; the cache gains
 `windows-11-x64.iso`, its `.provenance.json`, and `.verification.json`.
 
+After import succeeds, stage the Windows source before sealing:
+
+```sh
+make homelab-stage-windows-source
+```
+
+The aggregate media target does not perform this step. It writes the atomic,
+receipt-backed `WINDOWS_INSTALL_SOURCE` cache without changing the imported
+ISO. For individual acquisition targets, see [fresh-clone media intake](../media/FRESH-CLONE.md).
+The [Samba DNS repair contract](../media/samba-dns/README.md) owns the pinned
+source/package versions, two-build check, ABI admission and upgrade rules.
+Do not replace its required verified library/receipt pair with an arbitrary
+host library.
+
+**Prepare Controller artifacts while online.** A fresh canonical image needs
+the offline seed; building it downloads its package closure:
+
+```sh
+make homelab-bootstrap-seed
+```
+
+Require the completed `homelab/var/seed/telos-controller-seed.iso`; see the
+[seed contract](../seed/README.md). Separately, the aggregate PXE release
+requires a completed Controller netboot tree. From repository root, with
+`archiso` installed and a dedicated unused `/tmp/homelab-image` work tree:
+
+```sh
+make homelab-image
+sudo mkarchiso -v -w /tmp/homelab-image/work \
+  -o /tmp/homelab-image/out /tmp/homelab-image/profile
+```
+
+The first command stages and audits the installer, module closure and profile;
+continue only if its audit succeeds. Build the staged profile, not the raw
+tracked `homelab/archiso` directory. A public `authorized_keys` is optional:
+without one, the image has console access and SSH is disabled. For another
+work directory use `python3 homelab/bin/homelab-image --work <absolute-path>`
+and follow its printed build command. `--check` also stages; it is not read-only.
+Require a successful build and retain its completed `out/` as
+`CONTROLLER_SOURCE` for Stage 1.2. See [the netboot recipe](../archiso/README.md).
+Neither the seed ISO nor a stock Arch ISO is that source. ADR 0079 still
+excludes replacement-Controller PXE mint acceptance; the canonical Controller
+is installed from Arch plus the seed below.
+
 ### 0.3 Seal the cache (no downloads)
 
 ```sh
@@ -172,7 +223,10 @@ make homelab-factory-cache-seal
 **Evidence:** prints `PASS: local factory media cache is sealed` and writes the
 atomic aggregate receipt `homelab/var/media/factory-media-seal.json` binding
 Arch, the Windows provenance/Pro verification, the Windows install source, and
-`wimboot`, recording content hashes and tool versions separately.
+`wimboot`, plus the verified Samba DNS repair library and receipt (including
+pinned provenance), recording content hashes and tool versions separately.
+The seed and Controller netboot builds above are separate local prerequisites;
+this media seal alone does not prove either build completed.
 
 ### 0.4 Offline gate (proves no download dependency downstream)
 
@@ -188,10 +242,20 @@ must run with the host network unavailable.
 
 ### 0.5 Reinstall the canonical Controller image
 
-**Done 2026-09-24 — run this again only if the image is lost,** and then only
-after destroying and recreating the disk as in
-[Keep the `local-rescue` password](#keep-the-local-rescue-password), because it
-refuses any disk that is not freshly created. Its first live run succeeded; see
+**Existing host: done 2026-09-24.** First check status; leave a ready image in
+place. On a fresh clone with no canonical VM, plan and create it before the
+owner-terminal install below:
+
+```sh
+make homelab-bootstrap-vm-status
+make homelab-bootstrap-vm-plan
+make homelab-bootstrap-vm-create APPLY=1
+```
+
+If an existing image is lost, follow the separately guarded destroy/recreate
+procedure in [Keep the `local-rescue` password](#keep-the-local-rescue-password).
+The install refuses any disk that is not freshly created. Its first live run
+succeeded; see
 [Resolved 2026-09-24: the canonical Controller image is installed](#resolved-2026-09-24-the-canonical-controller-image-is-installed).
 
 ```sh
@@ -291,22 +355,33 @@ was accepted at ledger gate 3 (`20260727T201057Z-controller.json`).
 ### 1.2 Build the immutable release set
 
 ```sh
-make homelab-factory-pxe VERSION=YYYYMMDD.NNN
-# optional: CONTROLLER_SOURCE=<netboot tree> ARCH_SOURCE=<...> BASE_URL=<...>
+make homelab-factory-pxe VERSION=YYYYMMDD.NNN \
+  CONTROLLER_SOURCE=/tmp/homelab-image/out
+# optional: ARCH_SOURCE=<...> BASE_URL=<...>
 ```
 
 Requires a `VERSION` of the form `YYYYMMDD.NNN` (it errors without one). It
 delegates to `homelab-pxe-release-set`, building the controller, Arch, and
 Windows leaves transactionally under one release id. **Evidence:** a
 `homelab/var/pxe` release set for `VERSION`; the selected set is
-`20260727.005` (aggregate manifest SHA-256 `110ec794…7da17f`). Corrected
-2026-09-30: this quoted `abbc459e…baccdc`, which is `20260727.001`'s. All five
-sets `20260727.001`–`.005` bind the July media seal, so since the 2026-09-30
-reseal `make homelab-pxe-release-set-verify RELEASE_SET=<set>` refuses them
+`20261001.001` (aggregate manifest SHA-256 `5f319624…fdd6311`), bound to the
+current seal including Arch 2026.08.01 and the Samba repair bytes. Historical
+sets `20260727.001`–`.005` bind the retained July seal, so
+`make homelab-pxe-release-set-verify RELEASE_SET=<set>` refuses them
 unless `FACTORY_MEDIA_SEAL=homelab/var/media/factory-media-seal.20260727-releases.json`;
-the next build binds the new seal and Arch 2026.08.01. A genuine
-controller mkarchiso netboot tree at `CONTROLLER_SOURCE` is a required local
-input; the seed ISO is a data disc and is never substituted for it.
+new builds use the current seal. The separately reserved keeper Windows
+bundle `run-20261001T235652Z-a782e2f67fac` used `.005`, prepared before resealing.
+
+`CONTROLLER_SOURCE` is the completed netboot `out/` from Stage 0.2, not
+`profile/` or `out/arch/`. Omit it only when a verified tree already exists at
+`FACTORY_CONTROLLER_SOURCE` (default `homelab/var/media/controller/netboot`);
+a fresh clone must build or supply it. The seed ISO is a data disc and is
+never substituted. Verify the new set before using it:
+
+```sh
+make homelab-pxe-release-set-verify \
+  RELEASE_SET=homelab/var/pxe/release-sets/YYYYMMDD.NNN
+```
 
 ### 1.3 Gate 4 — PXE authority boundary (read-only audit)
 
@@ -341,6 +416,16 @@ suppress the sender and leave the approved controller surface unchanged. The
 generated `install.bat` therefore disables and stops IKEEXT right after
 `wpeinit`; see `WINPE_IKE_SUPPRESSION` in
 `homelab/vm/windows_install_contract.py`.
+
+**Fresh gate-4 proof PASS, 2026-10-02.** Typed VBS calls in `8eb69a9` are
+proven by the complete Windows run `run-20261001T235652Z-a782e2f67fac` plus
+Arch `run-20261001T193550Z-e5108779aad1`: all four checks passed in
+`homelab/var/factory/authority-audits/20261002-winpe-vbs-merged.json`
+(34 DHCP server frames, all gateway; 268 approved flows). Both gate-4 audits
+in the original October 2 repeat also passed. Earlier `68800da` required
+unavailable `sc.exe`; a later WMIC parser falsely rejected a successful
+change. Those failed attempts remain historical evidence. Gate-4 proof alone
+does not close gate 12, and no firmware-fix claim follows from it.
 
 ---
 
@@ -491,6 +576,11 @@ gate does not require a clean Windows shutdown and did not observe one. Note
 `windows_login_proven: false` here — **live Windows login is proven by gate 6's
 identity stream, not this gate.**
 
+**Repeated 2026-10-02:** `run-20261002T163609Z-9bc15e4653cd` passed all
+eight checks with Windows default, byte-identical partitions and clean
+shutdowns for both operating systems. Its `windows_login_proven` remains
+false; the same repeat's Windows identity stream passed all 24 checks.
+
 **A gate-7 disk made since 2026-08-14 reaches its getty slowly.** It bakes in
 `telos-arch-join-once.service` and `telos-arch-domain-online.service`, both
 ordered before `systemd-user-sessions.service`. Gate 10 attaches no media and
@@ -516,9 +606,13 @@ failure — and this paragraph said to use only an 08-11 bundle.
 > (`05eec6e`; the instance converged before it keeps a truncated SID in its
 > marker), a refused password was an unexplained "stage returned 1"
 > (`efedf50`), and there was no way to start with temporary passwords
-> (`1b04fd3`). The 2026-10-01 native-directory restore drill also ran
-> `RECONVERGE=1`, a probe and destruction of the drill instance; see the
-> backup contract's live record. Still **NOT RUN**: `-up` under owner custody
+> (`1b04fd3`). Native backup and same-instance restore under a new DC name
+> passed on 2026-10-01. After Samba SRV repair, the existing SRV-first
+> workstation passed keep-verify 40/40 without rejoining either OS or changing
+> its kept disk, firmware variables or marker
+> (`run-20261001T235410Z-588718-de077620`); see the backup contract's live record.
+> Owner-custody keeper and physical recovery remain unperformed.
+> Still **NOT RUN**: `-up` under owner custody
 > and the Ansible accounts path. A kept workstation against a
 > persistent instance (TASK-28,
 > [`DURABLE-WORKSTATION-FLOW.md`](../DURABLE-WORKSTATION-FLOW.md)) **PASSED
@@ -846,7 +940,7 @@ exposes an outage, not a restart), nothing can break a guest's bootloader and
 repair it, and no fault-injection seam can make an install fail on purpose. The
 judge's `partial` is honest deferral, not a pass.
 
-### 5.3 Repeatability — **IN PROGRESS (gate 12)**
+### 5.3 Repeatability — gate 12
 
 ```sh
 make homelab-factory-repeat                        # read-only dry run; safe any time
@@ -865,8 +959,22 @@ and assembles one union receipt from their bundles.
 | `REPEAT_EVIDENCE_ROOT` | `homelab/var/factory/repeat` | Aggregate bundle per iteration. |
 | `REPEAT_WORK_ROOT` | `homelab/var/factory/repeat-work` | Disposable work root, destroyed before each iteration. |
 | `REPEAT_ITERATIONS` | `2` | Gate 12 requires at least 2. |
+| `REPEAT_REUSE_ITERATION` | unset | Reverify and reuse one accepted prior full cycle; it counts toward `REPEAT_ITERATIONS`. |
 | `REPEAT_RECEIPT` | unset | Optional path for the comparison receipt. |
 | `FACTORY_DURATION` | `120` | Forwarded to each phase as its **per-phase** budget. |
+
+With `REPEAT_REUSE_ITERATION` and total `REPEAT_ITERATIONS=2`, the driver
+reuses one accepted prior full cycle and runs one fresh full cycle. It
+re-verifies the prior aggregate, gate-4 proof, identical input pins and evidence
+stability, and records explicit reused/new sources. A failed cycle is not
+eligible. The retained evidence, new disposable work and new timestamped
+aggregate directories must be disjoint, with a new receipt path; their common
+evidence parent may hold both runs. Never place retained evidence under work
+the driver destroys. Original failures remain unchanged. Use the
+[Make contract's recovery procedure](../FACTORY-MAKE-TARGETS.md#the-repeat-driver)
+for the current handles and example; do not replay a historical invocation
+over its retained paths or overlap an active lab lane. Private before/after
+network diagnostics are retained for each new aggregate.
 
 **The 120-second `FACTORY_DURATION` default is far too small for a real
 lifecycle** — a single Windows install alone has run 68 minutes — and the value
@@ -903,15 +1011,15 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   that omits the field leaves the check NOT RUN and one that emits an unproven
   counter renders FAIL. Neither can render PASS. ADR
   [0080](../decisions/0080-phase-one-closure-of-recovery-and-egress-checks.md)
-  (owner, 2026-09-30) waives this check for the loopback factory: it is
+  (owner, 2026-09-30) permits the unproven UniFi counter for the loopback factory: it is
   recorded as waived, never as PASS, and the waiver lapses at gate 14. Check 9
   renders `WAIVED` naming ADR 0080 and a run or repeat `PASS-WITH-WAIVER`
   (`c383e3c`). An unprivileged run cannot read the nft ruleset, so the
   `forwarding` counter is proven by privilege instead: under `--apply` the
   repeat driver sets no_new_privs, and each capture records that the run holds
   no network-admin capability and that the forwarding sysctls did not change
-  (`6f86808`). That proves the run changed nothing, not that nothing changed;
-  the measurement records its basis.
+  (`6f86808`). This is the accepted forwarding basis; the receipt names it
+  separately. Route, listener, bridge, tap and VLAN counters must still be zero.
 - `artifact_scan` (check 15) scans each finished phase's retained top-level
   evidence files — not the checkout, bundle roots or disks — and stays NOT RUN
   when any evidence directory is missing (`b84bc86`; this read "requires a
@@ -920,14 +1028,36 @@ had one — `login`, `optional_storage_absence_nonblocking`,
   serial and publication logs keep a line-aligned head and tail around an
   elision line (`dfd4264`).
 
-**Verdict: the last completed repeat FAILED acceptance; a fresh run is
-required.** Run `20261001T153726Z-2517176-repeat` completed two six-phase
+**Accepted 2026-10-02 at 16:41:30 UTC: PASS-WITH-WAIVER, equivalent,
+zero retries.** Receipt
+`homelab/var/factory/repeat/recovered-repeat-3-receipt.json` combines the
+reverified accepted cycle `20261002T011915Z-907070-repeat/iteration-2` with
+the fresh six-phase cycle `20261002T143757Z-1346697-repeat/iteration-2`.
+Each has 15 PASS checks and only the approved UniFi waiver; each gate-4 audit
+passes all four prerequisites. All six local network counters are zero. The
+media seal, selected release `20261001.001` and Samba repair identities match.
+Independent verification reproduced equivalence with no divergent results;
+the supervisor exited 0 and all guests stopped. The [state ledger](../WORKSTATION-FACTORY-STATE.md)
+records the exact source fingerprints, receipt digest and private diagnostics.
+The route-policy extension proposed during recovery was not needed or applied.
+
+Historical run `20261001T153726Z-2517176-repeat` completed two six-phase
 lifecycles on 2026-10-01 in 4 hours 10 minutes, with equivalent receipts and
 no retries. Two checker defects are fixed: the private-data scan misread a
 dotted netmask (`c07f701`), and release verification received the root rather
 than the selected set (`41b6bc8`). Both runs also failed gate 4 on a WinPE
-IKE flow. Suppression (`68800da`) and the subsequent OVMF cache correction
-(`c8e37d0`) require new live evidence; historical rescanning cannot prove them.
+IKE flow. Typed VBS suppression (`8eb69a9`) now has fresh gate-4 proof above;
+the earlier `68800da` attempt and subsequent OVMF cache correction (`c8e37d0`)
+do not establish that intermittent firmware stalls are fixed.
+
+The original October 2 repeat `20261002T011915Z-907070-repeat` remains FAIL
+on its first cycle's listener change; its accepted second cycle is retained
+at PASS-WITH-WAIVER. Recovery `20261002T114212Z-1294100-repeat` completed
+the functional phases but remains FAIL on `route=4`, with raw snapshots
+retained. Reusing the accepted cycle does not erase either failure. The
+current strict criteria still fail observed local route/listener changes.
+The interrupted first recovery also remains retained; no failed receipt was
+rewritten into a pass.
 
 Every iteration must now pass the embedded gate-4 PXE authority audit
 (`8eb5b6d`). Identical failed audits still fail repeat acceptance; absent or
@@ -961,22 +1091,22 @@ the same split both identity gates already use.
 
 ---
 
-## Pass/fail gate summary (as of ledger `20261001.002`)
+## Pass/fail gate summary (local evidence through 2026-10-02)
 
 | Gate | What it proves | Real target(s) | State |
 |---:|---|---|---|
 | 1 | Media intake | `homelab-factory-media`, `homelab-factory-cache-seal` | PASS |
-| 2 | Immutable releases | `homelab-factory-pxe VERSION=…` | PASS (first `20260727.001`; `.005` selected since; all five bound to the July media seal — see [1.2](#12-build-the-immutable-release-set)) |
+| 2 | Immutable releases | `homelab-factory-pxe VERSION=…` | PASS; `20261001.001` selected and bound to the current seal including Samba repair. July `.001`–`.005` remain historical and require their retained seal — see [1.2](#12-build-the-immutable-release-set). |
 | 3 | Controller convergence | `homelab-factory-controller-bundle APPLY=1` (+ live runners) | PASS |
-| 4 | PXE authority boundary | `homelab-pxe-authority-audit SWITCH=…` | Arch proof **PASS**; the 2026-10-01 merged repeat audit failed on WinPE IKE traffic. Suppression is implemented and awaits fresh live proof. |
+| 4 | PXE authority boundary | `homelab-pxe-authority-audit SWITCH=…` | **PASS**, all four checks: complete Windows VBS (`8eb69a9`) plus Arch capture, receipt `20261002-winpe-vbs-merged.json`. Historical IKE failures stand; every accepted repeat cycle still requires its own audit. |
 | 5 | Windows-first install | `homelab-windows-install-{prepare,run}` | **PASS** |
 | 6 | Windows join/login | `homelab-windows-identity-{prepare,run,judge}` | **PASS**, 24/24 contracted checks; judge also reports `deferred: [disable-reenable]` and `out_of_scope: [firmware-activation, live-microsoft-update]` |
 | 7 | Arch-second install | `homelab-arch-install-{prepare,run}` | **PASS** |
-| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PASS**, 21/21, proven live 2026-08-14 (bundle `arch-identity/run-20260814T172142Z-495164bc7159`; judge prints `PASS: 21 checks, external_access=False`) |
+| 8 | Arch join/login | `homelab-arch-identity-{prepare,run,judge}` | **PASS**, 21/21, repeated 2026-10-02 in `arch-identity/run-20261002T163435Z-cd13514cfd7c`; judge prints `PASS: 21 checks, external_access=False`. |
 | 9 | Optional storage failure | *(no target of its own, by design: it rides gate 6 and gate 8)* | **PASS** — the Windows half in the 2026-08-13 gate-6 evidence, the Arch half graded inside the passing 2026-08-14 gate-8 run |
-| 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8; judge reports `deferred: [windows-login-driven, arch-authenticated-login]`, and Windows was observed booting rather than driven to a login or a clean shutdown |
+| 10 | Dual-boot acceptance | `homelab-dualboot-acceptance-{prepare,run,judge}` | **PASS**, 8/8 in `run-20261002T163609Z-9bc15e4653cd`: Windows default, partitions byte-identical, both OS clean shutdowns. Windows login is not proven by this boot check; authenticated login belongs to the identity gates. |
 | 11 | Lifecycle recovery | `homelab-factory-recover`, `-recover-judge` | **CLOSED FOR PHASE ONE at `partial`** (ADR 0080, 2026-10-01; never pass) — 5 pass / 3 not-run, retained at `homelab/var/factory/recovery/run-20261001T015135Z-gate11live/`: the three loopback scenarios plus `directory-dns-loss` and `controller-reconstruction` live; deferred exactly `controller-restart`, `failed-install-recovery` and `broken-boot-repair`, for want of a Controller restart, a bootloader break-and-repair, and install fault injection. |
-| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver), `homelab-factory-verify` (per-bundle comparator) | **IN PROGRESS** — two complete lifecycles agreed in `20261001T153726Z-2517176-repeat`, but acceptance failed. The checker, IKE and firmware fixes require a fresh run. Both gate-4 prerequisites must pass; ADR 0080's host-network waiver is the only accepted waiver (`PASS-WITH-WAIVER`). |
+| 12 | Repeatability | `homelab-factory-repeat` (aggregate driver), `homelab-factory-verify` (per-bundle comparator) | **PASS-WITH-WAIVER**, 2026-10-02: `recovered-repeat-3-receipt.json`, one reverified accepted cycle plus one fresh cycle, equivalent and zero retries. Each 15 PASS + only ADR 0080's UniFi waiver; both gate-4 audits pass. Local network counters all zero. Independent comparison agrees; earlier failures remain retained. |
 | 13 | Documentation | this runbook + [human guide](factory-guide.md) | both guides wired into site navigation 2026-10-01; current local usage, maintenance, recovery and retirement documented, command/link/privacy checks passing. Live verdict reconciliation and publication are separate checks; a local site build does not prove deployment. |
 | 14 | External integration (UniFi/physical) | *(blocked by design)* | **BLOCKED** — not authorized; only the read-only UniFi review in [`EXTERNAL-INTEGRATION-READINESS.md`](../EXTERNAL-INTEGRATION-READINESS.md) is |
 
@@ -1138,6 +1268,17 @@ an existing client's trust nor recovery after destroying its original instance.
 That stronger proof also needs a kept workstation rendered with SRV-first DC
 discovery and a passing keep-verify after restoration. Never provision a new
 domain as a substitute for restoring the existing realm/SID.
+
+**Proven in the throwaway lab, 2026-10-01:** native backup, same-instance
+destroy/restore under a new DC hostname, reconvergence and probe passed.
+After the Samba SRV serializer repair (`bdebb4f`), existing SRV-first client
+`rehearsal-auto-ws2` passed keep-verify 40/40
+(`run-20261001T235410Z-588718-de077620`), without rejoining either OS. Kept
+disk, firmware variables and marker were unchanged; no overlay was folded,
+no ledger entry added, and teardown was clean. Earlier failed evidence remains
+retained. The Windows check needed its existing bounded cold-boot retry; this
+does not prove the firmware fault fixed. Owner keeper and physical recovery
+remain unperformed. This directory proof does not back up workstation files.
 
 Back up the separate private inventory and its external secret store too.
 Restore a copy to a private temporary location, run the private preflight and

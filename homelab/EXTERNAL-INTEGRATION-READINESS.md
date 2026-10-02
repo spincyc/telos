@@ -1,7 +1,7 @@
 # External integration readiness (gate 14)
 
 Status: plan only. Written 2026-09-30 for local work item TASK-9; local proof
-checkpoint updated 2026-10-02 14:06 UTC.
+checkpoint updated 2026-10-02 16:52 UTC.
 
 Gate 14 is **not authorized**. This plan authorizes nothing. Every mutation
 below is marked "needs separate owner authorization" and stays blocked until
@@ -25,7 +25,7 @@ the gitignored `homelab/instance/` overlay (ADR 0046).
 | The owner accepted unencrypted disks for the phase-one mobile pilot. This is not a minting blocker; disk theft remains unprotected and encryption is a later iteration. | Ledger decisions table and cautions |
 | Physical installs are interactive. The destructive confirmation is the typed hardware disk serial. Unattended Windows automation is limited to disposable QEMU. | ADR 0058, ADR 0078 |
 | Anything a workstation keeps discovers services by stable name and SRV record, never by address. | ADR 0068 |
-| The complete local lifecycle, including the twice-through repeat, must pass before any UniFi change or physical attachment. ADR 0080 (owner, 2026-09-30) closes phase one with gate 11 at `partial` (five scenarios run and pass, three deferred) and gate 12 passing with only the permitted UniFi waiver. Gate 11 reached that state 2026-10-01. The original 2026-10-02 repeat remains FAIL; its first recovery stopped with exit 2 and no final receipt. The latest recovery from `c45c0dc` finished at 13:47:15 UTC with FAIL, nonequivalent, zero retries: the fresh cycle's only failure is `route=4`. No live run remains. The owner has not decided whether privilege proof may cover automatic route changes; gate 12 remains open and stages 2-6 blocked. | ADR 0077, ADR 0080, ledger gates 11-12 |
+| The complete local lifecycle, including the twice-through repeat, must pass before any UniFi change or physical attachment. ADR 0080 closes phase one with gate 11 at `partial` (five scenarios pass, three deferred) and gate 12 at PASS-WITH-WAIVER with only the permitted UniFi waiver. Gate 11 reached that state 2026-10-01; strict recovery `20261002T143757Z-1346697-repeat` closed gate 12 on 2026-10-02 at 16:41:30 UTC, equivalent with zero retries and independent verification. No route-policy exception was needed or approved. The lifecycle ordering prerequisite is satisfied; every remaining stage-0 gap and separate owner authorization still applies. Gate 14 remains unauthorized. | ADR 0077, ADR 0080, ledger gates 11-12 |
 
 **Evidence convention.** Private evidence goes under
 `homelab/instance/evidence/gate14/<stage>/`, with files at mode 0600 inside
@@ -53,7 +53,7 @@ hosts belongs to the later stage and needs its authorization there.
 
 | ID | Gap and evidence | Done when |
 |---|---|---|
-| P0.1 | **Local lifecycle incomplete.** Gate 11 reached its phase-one state 2026-10-01. The original repeat from `93eb6b6` finished FAIL, nonequivalent, zero retries. Iteration 1 failed on one listener change (raw snapshots discarded); iteration 2 passed with only the ADR 0080 UniFi waiver and all six local network counters zero. Both gate-4 audits passed. The first recovery stopped with exit 2 after a Windows PXE loop and retry process-audit failure, without a final receipt. Recovery `20261002T114212Z-1294100-repeat` from process-audit fix `c45c0dc` completed all six functional phases but finished FAIL at 13:47:15 UTC: 15 pass / one route failure in the fresh cycle, nonequivalent, zero retries. Both gate-4 audits pass. Raw diagnostics retain one automatic IPv6 router-advertisement next-hop replacement counted as `route=4`; the owner decision on extending privilege proof is pending. No VMs or rerun remain. The firmware fault is unresolved. ADR 0077, as narrowed by ADR 0080, blocks UniFi changes and attachment until gate 12 reaches its phase-one state too. | Gate 11 `partial` with exactly the three ADR 0080 deferrals; gate 12 passes twice-through with only the permitted ADR 0080 UniFi waiver. |
+| P0.1 | **Local lifecycle closed for phase one, 2026-10-02 (TASK-6 DONE).** Gate 11 retains its independent `partial` verdict, five pass / three ADR 0080 deferrals. Strict recovery `20261002T143757Z-1346697-repeat` from `011e678` finished 16:41:30 UTC at PASS-WITH-WAIVER, equivalent, zero retries: unchanged accepted original cycle plus one fresh cycle at identical pins. Both cycles have 15 PASS / only UniFi waiver and gate-4 4/4 PASS; the fresh six local counters are zero. Independent comparison agrees and teardown is complete. Original listener and route failures and the stopped recovery remain retained. No route-policy exception was needed or approved; firmware stalls remain unresolved. | Done for the agreed loopback lifecycle. This does not close other stage-0 gaps or authorize UniFi changes or physical attachment. |
 | P0.2 | **PXE services do not survive a reboot.** Convergence starts Samba, ntpd and TFTP with `systemctl restart` and starts nginx with a bare `nginx -c`. None of them was enabled (`homelab/vm/controller_factory.py` ~318-323). Fixed 2026-09-30 in `dfbcce7`: TFTP and a `telos-factory-http.service` are enabled units; unit-tested, and the reboot-survival check on a persistent instance has not run. | A converged Controller, rebooted in the lab, serves DNS, time, TFTP and HTTP without reconverging. |
 | P0.3 | **iPXE chain loop under one boot filename.** The simulated gateway hands out the second-stage script URL only when a request carries option 175 or user class `iPXE` (option 77) (`homelab/vm/simulated_gateway.py` ~256-258). UniFi Network Boot gives every request the same filename. The Controller serves the stock `ipxe.efi`, which has no embedded script (`controller_factory.py` ~318). Stock iPXE would therefore run DHCP, get `ipxe.efi` again, and loop. | Either (a) a pinned iPXE build with an embedded script that chains the release entry point, or (b) UniFi class matching, if stage 1 row 5 shows it exists. `factory_publication._ipxe_binary` already accepts an explicit binary (~67-82). Under (a), the script must either resolve `services.boot_fqdn` at PXE time (stage 1 row 6 decides how) or chain through `${next-server}`. The simulated gateway gains a single-filename mode that reproduces UniFi, and a loopback PXE run reaches the installer through that mode. |
 | P0.4 | **Addresses where names belong.** The release `boot.ipxe` chains to an IPv4 literal (`homelab/vm/factory_publication.py` ~272-277). The WinPE startup pings a literal (`homelab/vm/windows_install_contract.py` ~281). The install-source share binds a literal (`factory_publication.py` ~311). ADR 0068 names `services.boot_fqdn`, but the overlay's `directory.json` schema does not carry that key yet (`homelab/tests/test_directory_identity.py` ~431). The former offline-check blocker was resolved by the 2026-09-30 media reseal (TASK-34); older release sets still need the retained seal they bind. | Releases render names from the overlay, and a new release set builds and passes the offline check. |
@@ -68,8 +68,8 @@ hosts belongs to the later stage and needs its authorization there.
 **Evidence.** Each item's own commit and passing tests, plus a live loopback
 run where the Done-when column requires one.
 
-The keeper (TASK-21) is still absent. Its recovery prerequisite is satisfied;
-creation and account staging await owner-terminal credentials; verify the lab
+The keeper (TASK-21) is absent and blocked solely on owner-terminal passwords.
+Its recovery prerequisite is satisfied; verify the lab
 is idle before each live step. The separate Windows VBS run completed successfully and its merged
 Windows/Arch capture passed all four gate-4 checks (TASK-43 DONE). Gate 12's
 original repeat `20261002T011915Z-907070-repeat` finished FAIL; its accepted
@@ -79,12 +79,17 @@ from `7e4c72c` stopped with exit 2 and no final comparison receipt. Recovery
 13:47:15 UTC with FAIL, `equivalent: false`, zero retries and exit 2. The fresh
 cycle failed solely on `route=4`; the other five local counters are zero,
 forwarding by privilege proof, and UniFi is unproven. Its raw diagnostics
-are retained. The owner's automatic-route proof decision is pending; no VMs
-remain, no rerun has started, and gate 12 stays open. Evidence paths are in
+are retained. Third strict recovery `20261002T143757Z-1346697-repeat` from
+`011e678` finished at 16:41:30 UTC with **PASS-WITH-WAIVER**, equivalent
+receipts and zero retries. It reused accepted original iteration 2 plus one
+fresh full cycle under unchanged criteria: both 15 PASS / only UniFi waiver,
+both gate-4 audits 4/4 PASS, and all six fresh local counters zero. Independent
+comparison agrees; teardown is complete. Gate 12 is closed for phase one and
+TASK-6 is done. No route-policy exception was needed or approved. Evidence paths are in
 [the repeat driver](FACTORY-MAKE-TARGETS.md#the-repeat-driver). The keeper's
 reserved Windows publication remains unconsumed and the owner availability
-question unanswered. P0.7's closure does not authorize any external
-integration or close the other stage-0 gaps.
+question unanswered. P0.1 and P0.7 are closed for their stated loopback scope;
+neither authorizes external integration or closes the other stage-0 gaps.
 
 **Pass/stop.** Stage 0 passes when every row is done. P0.9 blocks only
 stage 5 onward. A row that cannot be done in the lab is a stop, recorded
