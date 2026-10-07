@@ -67,6 +67,34 @@ class SimulatedSwitchTests(unittest.TestCase):
         thread.join(5)
         self.assertFalse(thread.is_alive())
 
+    def test_every_accepted_peer_sends_without_nagle_delay(self):
+        listener = self.listener()
+        address = listener.getsockname()
+        fabric = switch.ConcurrentSwitch(listener, [
+            switch.Port(1, "client", CLIENT),
+            switch.Port(2, "controller", CONTROLLER),
+        ], idle_timeout=5)
+        thread = threading.Thread(target=fabric.run)
+        thread.start()
+        controller = socket.create_connection(address)
+        controller.sendall(framed(gateway.identity_announcement(
+            CONTROLLER, "controller")))
+        client = socket.create_connection(address)
+        broadcast = gateway.ethernet(b"\xff" * 6, CLIENT, 0x88b5, b"x")
+        client.sendall(framed(broadcast))
+        receive(client)
+        receive(controller)
+        with fabric.connection_lock:
+            accepted = [entry[0] for entry in fabric.connections.values()]
+        self.assertEqual(2, len(accepted))
+        for connection in accepted:
+            self.assertTrue(connection.getsockopt(
+                socket.IPPROTO_TCP, socket.TCP_NODELAY))
+        client.close()
+        controller.close()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
     def test_readiness_precedes_peer_connections(self):
         listener = self.listener()
         read_fd, write_fd = __import__("os").pipe()

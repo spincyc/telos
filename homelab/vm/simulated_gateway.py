@@ -562,6 +562,8 @@ def connect_peer(
         controller_mac=controller_mac, identity_mode=identity_mode,
         pxe_identity_mode=pxe_identity_mode)
     with socket.create_connection((host, port)) as connection:
+        # Small frames must not wait for a delayed ACK (simulated_switch).
+        connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         announcement = identity_announcement(GATEWAY_MAC, "gateway")
         connection.sendall(struct.pack("!I", len(announcement)) + announcement)
         while True:

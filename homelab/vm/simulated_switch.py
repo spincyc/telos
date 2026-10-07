@@ -208,6 +208,12 @@ class ConcurrentSwitch:
             if address[0] != "127.0.0.1":
                 connection.close()
                 raise RuntimeError("refusing non-loopback peer")
+            # Every Ethernet frame is one small write.  With Nagle on, a
+            # frame written while an earlier one is unacknowledged waits for
+            # the peer's delayed ACK, which held request/response traffic
+            # (WinPE's SMB pull of install.wim) to about 1.8 MB/s and made
+            # gate 5 take 69 minutes (timing analysis 2026-10-07).
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             authentication_deadline = min(
                 deadline if len(self.accepted_ports) < len(self.ports)
                 else time.monotonic() + self.accept_timeout,
