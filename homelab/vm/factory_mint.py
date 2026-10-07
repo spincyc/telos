@@ -262,7 +262,7 @@ def plan_steps(options: Options, state: MintState) -> list[Step]:
             steps.append(Step(
                 "windows-install", "homelab-windows-install-run",
                 (("FACTORY_DURATION", str(WINDOWS_INSTALL_DURATION)),),
-                note="a fresh gate-5 Windows 11 Pro install (about 70 min)"))
+                note="a fresh gate-5 Windows 11 Pro install (about 10 min)"))
         steps.append(Step(
             "adopt", "homelab-durable-workstation-adopt",
             windows + ((("WINDOWS_RUN", str(options.windows_run)),)

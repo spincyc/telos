@@ -825,6 +825,14 @@ on the mint's second attempt after a firmware boot stall, keep-verify 41 of
 41 with all three standard accounts logged in on Arch at their staged uid
 (`durable-workstation-verifies/uat2-ws/run-20261007T185239Z-443170-cec41833`),
 and a native backup (`persistent-backup/uat2/20261007T185727Z-448928-4ea486bc`).
+**UAT-3 PASS 2026-10-07** on `uat3` / `uat3-ws` with the made-up roster in
+the owner's own shape (`uat3-principals.json`: three roles and one
+additional user): keep-verify 41 of 41
+(`durable-workstation-verifies/uat3-ws/run-20261007T195644Z-538689-0e1fd32e`),
+Windows join first try. Its first invocation stopped on a failed gate-5
+install before install retries existed (`5c33181`); the resumed invocation
+(`homelab/var/factory/mint/uat3/uat3-ws/20261007T192103Z-485485/`) absorbed
+a second failed install by itself and passed.
 Records: `homelab/var/factory/mint/uat2/uat2-ws/20261007T174955Z-348250/`
 (stopped at the join, before the Start-menu fix) and
 `.../20261007T182846Z-391547/` (resumed, PASS). A clean run is about 30-35

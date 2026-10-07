@@ -382,6 +382,22 @@ the join topology sometimes hangs at about 29.8 MB read. Eleven manual boots
 of the same disk outside the harness, with and without the control disc, all
 passed; the cause is not identified and firmware is not claimed fixed.
 
+A likely contributor, not yet tested: this host is an Intel Core Ultra 9
+285K with split-lock detection, and `kernel.split_lock_mitigate` is `1`, so
+every split lock a guest performs puts that vCPU thread to sleep for about
+10 ms and serializes it with other split-locking cores. The kernel logged
+`x86/split lock detection: #AC: CPU n/KVM/<pid> took a split_lock trap` at
+Windows kernel addresses (`0xfffff80...`) during the 2026-10-07 Windows
+boots (it logs once per thread, so the true rate is unknown). That penalty
+is a well-known cause of slow or hung Windows guests on recent Intel hosts.
+Disabling it needs root, so it is the owner's to run, and it is reversible:
+`sudo sysctl -w kernel.split_lock_mitigate=0` (persist with a file in
+`/etc/sysctl.d/`; undo with `=1`). Re-time gate 5 and the Windows join
+afterwards before claiming any effect. The same day, UAT-3 lost two gate-5
+installs: one to the PXE loop (OVMF `Not Found` for the Windows entry and
+the NVMe removable path after Setup's reboot) and one where Windows powered
+off at OOBE's "Updates are underway" screen without its readiness marker.
+
 ## Current blockers and cautions
 
 - **RESOLVED 2026-09-24 — the canonical Controller image is installed.** The
