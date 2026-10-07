@@ -127,11 +127,16 @@ RECOVERY_EVIDENCE ?=
 # 120-second default would abort a Samba provisioning run.
 PERSISTENT_CONVERGE_TIMEOUT ?=
 RECONVERGE ?=
-# The owner's private identity overlay, for the durable-account verb only.
-# Optional: with no value the roster resolves from
-# homelab/instance/identity/principals.json, which is where it belongs. It
-# carries NAMES and never a credential.
+# The owner's private identity overlay. Optional: with no value the roster
+# resolves from homelab/instance/identity/principals.json, which is where it
+# belongs. It carries NAMES and never a credential. When set it is also
+# exported as TELOS_IDENTITY_OVERLAY, so every stage of one run (account
+# staging, the durable Arch install, both joins, keep-verify) resolves the
+# same roster -- a rehearsal's made-up accounts, for example.
 IDENTITY_OVERLAY ?=
+ifneq ($(strip $(IDENTITY_OVERLAY)),)
+export TELOS_IDENTITY_OVERLAY := $(abspath $(IDENTITY_OVERLAY))
+endif
 # The permanent directory identity document (ADR 0065). Optional: with no
 # value it resolves from homelab/instance/identity/directory.json, which is
 # where it belongs. The durable path REFUSES to inherit the acceptance realm.
@@ -255,7 +260,7 @@ override _TELOS_BOUNDED_PDF_JOB_OPTION = $(if $(strip $(_TELOS_MAKE_PARALLEL_FLA
 	homelab-durable-arch-install-plan homelab-durable-arch-install \
 	homelab-durable-arch-join-plan homelab-durable-arch-join \
 	homelab-durable-windows-join-plan homelab-durable-windows-join \
-	homelab-durable-workstation-verify \
+	homelab-durable-workstation-verify homelab-factory-mint \
 	homelab-windows-install-prepare \
 	homelab-windows-install-run \
 	homelab-arch-install-prepare homelab-arch-install-run \
@@ -1430,12 +1435,32 @@ homelab-durable-windows-join:
 # and read-only secure-channel probe). The firmware BootOrder must still start
 # with Linux. Both passwords are typed at this terminal before anything
 # starts (under agent custody, TASK-40, read from the custody store). A dry
-# run without APPLY=1.
-DURABLE_VERIFY = $(PYTHON) homelab/vm/durable_workstation_verify.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)')
+# run without APPLY=1. VERIFY_USERS=1 (owner request 2026-10-07) also logs
+# every standard account in at the Arch getty with its own current password
+# and proves its uidNumber; under owner custody each one's password is asked
+# too.
+DURABLE_VERIFY = $(PYTHON) homelab/vm/durable_workstation_verify.py --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(FACTORY_CONTROLLER_STATE),--controller-state '$(FACTORY_CONTROLLER_STATE)') $(if $(DIRECTORY_IDENTITY),--directory-identity '$(DIRECTORY_IDENTITY)') $(if $(filter 1,$(VERIFY_USERS)),--verify-users)
 
 homelab-durable-workstation-verify:
 	$(DURABLE_ARCH_REQUIRE)
 	@$(DURABLE_VERIFY) $(if $(filter 1,$(APPLY)),--apply)
+
+# One-command mint (owner request 2026-10-07). Runs, in order and resuming at
+# the first unfinished step (decided from the instance and workstation
+# markers): persistent-up (new agent-custody throwaway only), converge, the
+# short password policy (minimum 4, complexity off), accounts (permanent
+# passwords), probe, a fresh gate-5 Windows install unless WINDOWS_RUN names
+# one, adopt, durable Arch install, Arch join, Windows join, keep-verify and a
+# native backup -- each by its own target above. Owner custody asks every
+# credential ONCE at this terminal, holds it in memory only and answers each
+# step's own prompt through a pseudo-terminal; agent custody (CUSTODY=agent
+# THROWAWAY=1) asks nothing. Per-step logs and timings land under
+# homelab/var/factory/mint/. A dry run without APPLY=1.
+FACTORY_MINT = $(PYTHON) homelab/vm/factory_mint.py --persistent-dc '$(PERSISTENT_DC)' --persistent-root '$(PERSISTENT_DC_ROOT)' --workstation '$(WORKSTATION)' --root '$(DURABLE_WORKSTATION_ROOT)' --hostname '$(ARCH_HOSTNAME)' $(if $(WINDOWS_RUN),--windows-run '$(WINDOWS_RUN)') $(if $(CUSTODY),--custody '$(CUSTODY)') $(if $(filter 1,$(THROWAWAY)),--throwaway) $(if $(IDENTITY_OVERLAY),--identity-overlay '$(IDENTITY_OVERLAY)')
+
+homelab-factory-mint:
+	$(DURABLE_ARCH_REQUIRE)
+	@$(FACTORY_MINT) $(if $(filter 1,$(APPLY)),--apply)
 
 homelab-windows-install-prepare:
 	@if [ '$(APPLY)' != 1 ]; then \
@@ -1912,6 +1937,8 @@ help:
 		'                         Join its Windows, fold it, then retire the publication' \
 		'make homelab-durable-workstation-verify WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> [APPLY=1]' \
 		'                         Re-prove both joins across a Controller relaunch; folds nothing' \
+		'make homelab-factory-mint WORKSTATION=<name> PERSISTENT_DC=<name> ARCH_HOSTNAME=<name> [WINDOWS_RUN=<bundle>] [APPLY=1]' \
+		'                         Every step above in one command; asks each password once' \
 		'make homelab-private-onboard  Build a sibling private overlay' \
 		'make adr-digest           Regenerate the printable decision record' \
 		'make clean      Remove build/ except durable VM state (build/homelab/vm)' \

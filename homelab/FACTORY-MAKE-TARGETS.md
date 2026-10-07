@@ -730,7 +730,82 @@ approved. The keeper's reserved publication remains untouched. See
 constraints.
 Only one lab mutation may run at a time.
 
+#### One-command mint (`homelab-factory-mint`, owner request 2026-10-07)
+
+The owner asked not to keep entering passwords. `make homelab-factory-mint`
+runs every step of this section and of "Kept workstations" below, in order,
+each by its own target, and resumes at the first unfinished step (decided
+from the instance and workstation markers) when it is run again:
+
+| # | Step | Target | Skipped when |
+|---:|---|---|---|
+| 1 | `up` | `homelab-factory-persistent-up CUSTODY=agent THROWAWAY=1` | the instance exists, or owner custody (converge creates it) |
+| 2 | `converge` | `homelab-factory-persistent-converge` | the marker records `converged` |
+| 3 | `password-policy` | `homelab-factory-persistent-password-policy MIN_PASSWORD_LENGTH=4 PASSWORD_COMPLEXITY=off` | that policy is recorded |
+| 4 | `accounts` | `homelab-factory-persistent-accounts` (permanent passwords) | accounts are staged |
+| 5 | `probe` | `homelab-factory-persistent-probe` | the workstation is adopted |
+| 6 | `windows-install` | `homelab-windows-install-prepare` then `-run FACTORY_DURATION=7200` | `WINDOWS_RUN` names a bundle, or adopted |
+| 7 | `adopt` | `homelab-durable-workstation-adopt` | adopted |
+| 8 | `arch-install` | `homelab-durable-arch-install FACTORY_DURATION=1800` | folded |
+| 9 | `arch-join` | `homelab-durable-arch-join` | folded |
+| 10 | `windows-join` | `homelab-durable-windows-join` | folded and the publication retired |
+| 11 | `verify` | `homelab-durable-workstation-verify` | never |
+| 12 | `backup` | `homelab-factory-persistent-backup` | never |
+
+```sh
+# dry run: the steps still to run and what will be asked
+make homelab-factory-mint PERSISTENT_DC=<instance> WORKSTATION=<w> ARCH_HOSTNAME=<host>
+# a throwaway rehearsal, nothing asked, made-up accounts
+make homelab-factory-mint PERSISTENT_DC=<rehearsal> WORKSTATION=<w> ARCH_HOSTNAME=<host> \
+    CUSTODY=agent THROWAWAY=1 IDENTITY_OVERLAY=<made-up roster> APPLY=1
+# the keeper, owner custody: every password asked once, here, before anything starts
+make homelab-factory-mint PERSISTENT_DC=keeper WORKSTATION=<w> ARCH_HOSTNAME=<host> \
+    [WINDOWS_RUN=<finished gate-5 bundle>] APPLY=1
+```
+
+Credential custody is unchanged and comes from the instance marker. Under
+**agent** custody nothing is asked. Under **owner** custody the command asks
+once, at the controlling terminal and before any step starts, for exactly the
+values the remaining steps need: the `local-rescue` console password (the
+canonical image's, for an instance that has not converged), a new built-in
+domain Administrator password (Samba's default policy: at least seven
+characters, three classes), each roster account's permanent password, the
+Arch `local-rescue` and the Windows `telosadmin` break-glass passwords; each
+twice except a daily administrator's existing one. It judges them with the
+runners' own host-side checks (the short policy, typeability at the guest
+keyboard, all distinct), holds them in memory only, and runs each step as the
+child of a pseudo-terminal, typing a value into the step's own `getpass`
+prompt only when that prompt is one it knows and the terminal's echo is off.
+Any other credential prompt, a prompt naming another account than the one
+collected, or an echoing terminal stops the step before it can boot anything
+(every runner asks before any process starts). Nothing is written to a file,
+argv, the environment, a Make variable or a log; each step's output is also
+scrubbed of every collected value. A rerun asks again. Accounts are staged
+with permanent passwords; an instance already staged with
+`CHANGE_AT_FIRST_LOGON=1` is refused and left to the per-step targets.
+
+`IDENTITY_OVERLAY` names a roster document in `principals.json`'s schema and
+is exported as `TELOS_IDENTITY_OVERLAY`, which `arch_second.identity_overlay_path`
+honours, so every step of one run (staging, the durable install, both joins,
+keep-verify) resolves the same roster. Rehearsals use made-up rosters under
+the gitignored `homelab/instance/uat/`; the owner's own file is never
+touched. Each run writes `homelab/var/factory/mint/<instance>/<w>/<run id>/`
+with one 0600 log per step and `mint-run.json` (per-step start, end, exit and
+seconds). Only one lab mutation may run at a time: the command refuses to
+start while any QEMU runs. Implemented by `homelab/vm/factory_mint.py`;
+tests in `homelab/tests/test_factory_mint.py` drive the runners' real prompt
+functions over a pseudo-terminal.
+
+A kept agent-custody store holding the owner's real passwords was considered
+and NOT built (2026-10-07): it would relax the "owner custody, typed and never
+stored" rule this section keeps, and the one-sitting prompt gives the owner
+the same single interaction without storing anything.
+
 #### Owner-terminal keeper sequence (TASK-21)
+
+`homelab-factory-mint` above runs this whole sequence with one sitting of
+password entry; the per-step commands below remain the reference and the
+fallback.
 
 The DR prerequisite is satisfied. The keeper convergence dry run has been
 checked, but no keeper instance exists yet. Run the following at the owner's

@@ -736,8 +736,23 @@ def identity_contract_path() -> Path:
     return Path(__file__).with_name("identity_lifecycle.json")
 
 
+#: Set by ``make`` from ``IDENTITY_OVERLAY`` (and by ``make
+#: homelab-factory-mint`` for its rehearsal rosters), so that every stage of
+#: one run -- account staging, the durable Arch install, both joins and
+#: keep-verify -- resolves the same roster without each target growing its
+#: own option.  It names a FILE of account names and never a credential; the
+#: durable stages still refuse a roster whose fingerprint is not the one the
+#: instance staged.
+IDENTITY_OVERLAY_ENVIRONMENT = "TELOS_IDENTITY_OVERLAY"
+
+
 def identity_overlay_path() -> Path:
     """The owner's gitignored private roster declaration.
+
+    ``TELOS_IDENTITY_OVERLAY`` (``IDENTITY_OVERLAY_ENVIRONMENT``), when set
+    and non-empty, names another roster document of the same schema --
+    a rehearsal's made-up accounts, for example (owner decision 2026-10-07:
+    rehearse with invented users, never the owner's file).
 
     ADR 0046: real identities are instance data, so the real account names
     live only under ``homelab/instance/`` and never in a tracked file.  The
@@ -756,6 +771,9 @@ def identity_overlay_path() -> Path:
     this file.  So the role declares contract ROLES, never account names, and
     there is no second place to keep in step.
     """
+    override = os.environ.get(IDENTITY_OVERLAY_ENVIRONMENT, "")
+    if override:
+        return Path(override).absolute()
     return HOMELAB_ROOT / "instance" / "identity" / "principals.json"
 
 

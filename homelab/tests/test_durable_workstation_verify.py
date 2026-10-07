@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -272,13 +273,56 @@ class VerifyGuest(Guest):
     """Step 7's joined guest, plus the verify's testjoin and a menu."""
 
     def __init__(self, accounts, *, testjoin=True, menu_default="Windows 11",
-                 **options):
+                 user_passwords=None, **options):
         options.setdefault("expired", False)
         options.setdefault("temporary", DAILY)
         super().__init__(accounts, **options)
         self.testjoin = testjoin
         self.menu_default = menu_default
         self.testjoin_command: bytes | None = None
+        #: --verify-users: each standard account's password, by name.
+        self.user_passwords = dict(user_passwords or {})
+        self.current_user: str | None = None
+        self.user_sessions: list[str] = []
+
+    # -- --verify-users: other accounts at the getty ----------------------
+    def on_arch_login_username_sent(self, value, reader):
+        name = value.decode()
+        if name in self.user_passwords:
+            if reader != "getty":
+                self.violations.append("username")
+            self.current_user = name
+            self.ask("password", b"Password: ")
+            return
+        self.current_user = None
+        super().on_arch_login_username_sent(value, reader)
+
+    def on_arch_login_password_sent(self, value, reader):
+        if self.current_user is None:
+            super().on_arch_login_password_sent(value, reader)
+            return
+        if value != self.user_passwords[self.current_user]:
+            self.emit(b"\r\nLogin incorrect\r\n")
+            self.ask("getty", HOSTNAME.encode() + b" login: ")
+            return
+        self.user_sessions.append(self.current_user)
+        self.shell(self.current_user.encode())
+
+    def on_arch_verify_user_uid_sent(self, value, reader):
+        if reader != "shell" or self.current_user is None:
+            self.violations.append("user-uid")
+        marker = re.search(rb"__TELOS_VERIFY_UID_[0-9a-z]+=", value).group(0)
+        self.emit(b"\r\n" + marker
+                  + str(self.uids[self.current_user]).encode() + b"\r\n")
+        self.ask("shell", b"[" + self.current_user.encode() + b"@"
+                 + HOSTNAME.encode() + b" ~]$ ")
+
+    def on_arch_verify_user_logout(self, value, reader):
+        if reader != "shell":
+            self.violations.append("user-logout")
+        self.current_user = None
+        self.emit(b"\r\nlogout\r\n\r\n")
+        self.ask("getty", HOSTNAME.encode() + b" login: ")
 
     def on_arch_verify_testjoin_sent(self, value, reader):
         self.testjoin_command = value
@@ -592,6 +636,47 @@ class TestjoinCommandTests(unittest.TestCase):
                 self.assertIs(verify.prove_testjoin(console, facts), expected)
                 self.assertIs(facts["passed"], expected)
                 self.assertEqual(console.timeout, 30.0)
+
+
+class UserLoginTests(unittest.TestCase):
+    def test_only_the_standard_accounts_are_logged_in(self):
+        accounts = [{"contract_role": role, "name": role}
+                    for role in ("standard_user", "daily_administrator",
+                                 "domain_administrator",
+                                 "additional_standard_user_10002")]
+        self.assertEqual(
+            ["standard_user", "additional_standard_user_10002"],
+            [a["contract_role"] for a in verify.standard_accounts(accounts)])
+
+    def test_the_uid_command_echo_is_never_the_result(self):
+        command, marker = verify.session_uid_command(TOKEN + "u0")
+        self.assertIn(b"id -u", command)
+        self.assertIn(marker + b"%s", command)
+        self.assertIsNone(re.search(
+            re.escape(marker) + rb"[0-9]", command))
+
+    def test_each_standard_account_is_asked_after_the_daily_one(self):
+        prompter = Prompter(CONSOLE, DAILY, b"Kid-Pass-1", b"Guest-Pass-2")
+        users = [{"contract_role": "standard_user", "name": "kid"},
+                 {"contract_role": "additional_standard_user_10002",
+                  "name": "guest"}]
+        secrets = verify.collect_verify_secrets(
+            INSTANCE, "zqx-daily", prompt=prompter, users=users)
+        self.assertEqual(4, len(prompter.asked))
+        self.assertIn("CURRENT domain password for standard_user (kid)",
+                      prompter.asked[2])
+        self.assertEqual(b"Guest-Pass-2",
+                         secrets.users["additional_standard_user_10002"])
+        self.assertIn(b"Kid-Pass-1", secrets.values())
+        secrets.clear()
+        self.assertEqual({}, secrets.users)
+
+    def test_a_user_password_equal_to_the_console_is_refused(self):
+        with self.assertRaisesRegex(verify.KeepVerifyError, "console"):
+            verify.collect_verify_secrets(
+                INSTANCE, "zqx-daily", prompt=Prompter(CONSOLE, DAILY,
+                                                       CONSOLE),
+                users=[{"contract_role": "standard_user", "name": "kid"}])
 
 
 class CredentialTests(unittest.TestCase):
@@ -949,6 +1034,57 @@ class ApplyTests(RunFixture, unittest.TestCase):
         self.assertIs(result["folded"], False)
         self.assertIn("no non-stage annotation", result["ledger_entry"])
         self.assertIn("PASS", self.output)
+
+    def users_setup(self, password=b"Standard-Pass-4!"):
+        standard = verify.standard_accounts(self.accounts)
+        self.assertTrue(standard)
+        self.prompter = Prompter(CONSOLE, DAILY,
+                                 *[password] * len(standard))
+        self.guest_options["user_passwords"] = {
+            account["name"]: b"Standard-Pass-4!" for account in standard}
+        return standard
+
+    def test_verify_users_logs_every_standard_account_in_first(self):
+        standard = self.users_setup()
+        with mock.patch.object(wi.WorkstationInstance, "fold",
+                               side_effect=AssertionError("fold")):
+            status = self.run_quietly("--apply", "--verify-users")
+        self.assertEqual(status, 0, self.output)
+        result = self.result()
+        self.assertEqual(result["verdict"], "pass", result["checks"])
+        self.assertIs(True, result["checks"]["arch_standard_accounts_login"])
+        self.assertEqual(
+            [account["contract_role"] for account in standard],
+            [record["contract_role"]
+             for record in result["facts"]["arch"]["user_logins"]])
+        self.assertEqual([a["name"] for a in standard],
+                         self.guest.user_sessions)
+        self.assertEqual(self.guest.violations, [])
+        in_order(self, ["prompt:1", "prompt:2", "prompt:3",
+                        "wait:arch-domain-online-observed",
+                        "send:arch-verify-user-uid-sent",
+                        "send:arch-verify-user-logout",
+                        "send:arch-probe-roster-sent"])
+        payload = json.dumps(result)
+        for account in standard:
+            self.assertNotIn(account["name"], payload)
+        self.assertNotIn("Standard-Pass-4!", payload)
+
+    def test_a_refused_standard_login_fails_the_verdict(self):
+        self.users_setup(password=b"Wrong-Pass-9!")
+        status = self.run_quietly("--apply", "--verify-users")
+        self.assertEqual(status, 2, self.output)
+        result = self.result()
+        self.assertEqual(result["verdict"], "fail")
+        self.assertIs(False, result["checks"]["arch_standard_accounts_login"])
+        self.assertEqual("arch", result["failures"][0]["step"])
+        # Windows is still verified after the recorded Arch failure.
+        self.assertIs(True, result["checks"]["windows_signed_in"])
+
+    def test_without_the_option_nothing_changes(self):
+        self.assertEqual(self.apply(), 0, self.output)
+        self.assertNotIn("arch_standard_accounts_login",
+                         self.result()["checks"])
 
     def test_the_kept_workstation_is_never_modified(self):
         self.assertEqual(self.apply(), 0, self.output)

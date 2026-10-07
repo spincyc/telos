@@ -1819,7 +1819,9 @@ class RosterLoaderTests(unittest.TestCase):
         # The test module bound the real function at import; the pin replaced
         # only the module attribute the loader calls, so this is the real path
         # (computed, never read).
-        overlay = identity_overlay_path()
+        with mock.patch.dict(os.environ):
+            os.environ.pop("TELOS_IDENTITY_OVERLAY", None)
+            overlay = identity_overlay_path()
         homelab = Path(__file__).resolve().parents[1]
         self.assertEqual(
             homelab / "instance" / "identity" / "principals.json", overlay)
@@ -1827,6 +1829,19 @@ class RosterLoaderTests(unittest.TestCase):
         # what is tracked.
         ignore = (homelab.parent / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("/homelab/instance/", ignore.splitlines())
+
+    def test_the_environment_names_another_roster_for_the_whole_run(self):
+        # make exports IDENTITY_OVERLAY as TELOS_IDENTITY_OVERLAY so every
+        # stage of a run resolves one roster; an empty value is no override.
+        with mock.patch.dict(os.environ,
+                             {"TELOS_IDENTITY_OVERLAY": "rehearsal.json"}):
+            self.assertEqual(Path("rehearsal.json").absolute(),
+                             identity_overlay_path())
+        with mock.patch.dict(os.environ, {"TELOS_IDENTITY_OVERLAY": ""}):
+            homelab = Path(__file__).resolve().parents[1]
+            self.assertEqual(
+                homelab / "instance" / "identity" / "principals.json",
+                identity_overlay_path())
 
     # ---- With an overlay: the roster is renamed ----
 

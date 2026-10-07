@@ -284,18 +284,24 @@ class VerifySecrets:
     """The two values the owner types, in memory only, never in ``repr``."""
 
     def __init__(self, console: bytes, daily: bytes, *,
-                 extra: tuple[bytes, ...] = ()) -> None:
+                 extra: tuple[bytes, ...] = (),
+                 users: Mapping[str, bytes] | None = None) -> None:
         self.console = console
         self.daily = daily
         #: Agent custody only (TASK-40): the stores' other values, scanned
         #: for in the evidence too; empty for the owner.
         self.extra = tuple(extra)
+        #: ``--verify-users`` (owner request 2026-10-07): each standard
+        #: account's current password, by contract role.
+        self.users = dict(users or {})
 
     def __repr__(self) -> str:
         return "VerifySecrets(<withheld>)"
 
     def values(self) -> list[bytes]:
         own = [value for value in (self.console, self.daily) if value]
+        own += [value for value in self.users.values()
+                if value and value not in own]
         return own + [value for value in self.extra
                       if value and value not in own]
 
@@ -312,17 +318,28 @@ class VerifySecrets:
         self.console = b""
         self.daily = b""
         self.extra = ()
+        self.users = {}
 
 
 def collect_verify_secrets(
     instance: str, daily_name: str, *,
     prompt: Callable[..., bytes] = _typed_secret,
+    users: Sequence[Mapping] = (),
 ) -> VerifySecrets:
-    """Ask, in order, for the two values the run needs; nothing has started."""
+    """Ask, in order, for the values the run needs; nothing has started.
+
+    *users* are the standard accounts ``--verify-users`` logs in, each asked
+    for by its contract role and name after the daily administrator's.
+    """
     console = prompt(f"{CONSOLE_ACCOUNT} console password for persistent "
                      f"instance {instance}: ")
     daily = prompt(f"CURRENT domain password for daily_administrator "
                    f"({daily_name}): ")
+    typed_users = {
+        str(account["contract_role"]): prompt(
+            f"CURRENT domain password for {account['contract_role']} "
+            f"({account['name']}): ")
+        for account in users}
     try:
         problem = typeable_problem(daily.decode("utf-8"))
     except UnicodeDecodeError:
@@ -336,14 +353,27 @@ def collect_verify_secrets(
             "the daily administrator's password and the Controller console "
             "password must differ; the two you typed are identical. Nothing "
             "was started")
-    return VerifySecrets(console, daily)
+    if console in typed_users.values():
+        raise KeepVerifyError(
+            "a standard account's password equals the Controller console "
+            "password. Nothing was started")
+    return VerifySecrets(console, daily, users=typed_users)
 
 
-def agent_verify_secrets(source: AgentCredentialSource) -> VerifySecrets:
-    """The two values from custody (TASK-40): console, proven current daily."""
+def agent_verify_secrets(
+    source: AgentCredentialSource, users: Sequence[Mapping] = (),
+) -> VerifySecrets:
+    """The values from custody (TASK-40): console, proven current daily.
+
+    *users* (``--verify-users``) adds each standard account's proven current
+    password; one staged for a change at first logon has none and is refused.
+    """
     console = source.console()
     try:
         daily = source.live_current("daily_administrator")
+        user_values = {
+            str(account["contract_role"]): source.live_current(
+                str(account["contract_role"])) for account in users}
     except CustodyError as error:
         raise KeepVerifyError(str(error)) from error
     try:
@@ -355,7 +385,8 @@ def agent_verify_secrets(source: AgentCredentialSource) -> VerifySecrets:
             f"the daily administrator's password {problem}; gate 6 types it "
             f"at the Windows sign-in. Nothing was started")
     return VerifySecrets(console, daily, extra=tuple(
-        value.encode("utf-8") for value in source.scan_values()))
+        value.encode("utf-8") for value in source.scan_values()),
+        users=user_values)
 
 
 # -- the Arch phase -----------------------------------------------------------------
@@ -370,8 +401,47 @@ ARCH_CHECKS = (
 )
 
 
+#: ``--verify-users`` (owner request 2026-10-07): every standard account
+#: logs in at the getty with its own password and runs as its staged uid.
+USER_LOGINS_CHECK = "standard_accounts_login"
+USER_LOGIN_FAILURE = (
+    "a standard account did not log in at the Arch getty with its current "
+    "password, or did not run as its staged uidNumber")
+
+
 def arch_check_name(key: str) -> str:
     return key if key == "menu_defaults_to_windows" else f"arch_{key}"
+
+
+def standard_accounts(accounts: Sequence[Mapping]) -> list[Mapping]:
+    """The roster's standard accounts: every one but the two administrators."""
+    return [account for account in accounts
+            if account.get("contract_role") not in (
+                "daily_administrator", "domain_administrator")]
+
+
+def session_uid_command(token: str) -> tuple[bytes, bytes]:
+    """One user-shell command reporting ``id -u`` behind a token marker.
+
+    The echoed command line carries ``%s`` after the marker, never a digit,
+    so only the printed value can match.
+    """
+    marker = b"__TELOS_VERIFY_UID_" + token.encode("ascii") + b"="
+    return (b"printf '\\n" + marker + b"%s\\n' \"$(id -u)\"", marker)
+
+
+def prove_session_uid(console, token: str) -> int | None:
+    command, marker = session_uid_command(token)
+    console._send(command, "arch-verify-user-uid-sent")
+    try:
+        # Anchored on a real line end: a split serial read must never yield
+        # the leading digits of a longer number.
+        match = console._wait(
+            rb"(?:^|\n)" + re.escape(marker) + rb"([0-9]+)(?=[\r\n])",
+            "arch-verify-user-uid")
+    except SerialAutomationError:
+        return None
+    return int(match.group(1))
 
 
 def testjoin_command(token: str) -> tuple[bytes, bytes]:
@@ -426,6 +496,7 @@ class VerifyArchBoundary(DurableArchJoinBoundary):
         accounts: Sequence[Mapping], hostname: str, fabric: "Fabric",
         canonical_state: Path = DEFAULT_STATE,
         duration: float = DEFAULT_DURATION,
+        user_logins: Sequence[tuple[Mapping, bytes]] = (),
     ) -> None:
         super().__init__(
             bundle, binding=binding, target=target, credentials=credentials,
@@ -433,7 +504,10 @@ class VerifyArchBoundary(DurableArchJoinBoundary):
             canonical_state=canonical_state, duration=duration,
             session_factory=_refuse_session)
         self.fabric = fabric
+        self.user_logins = tuple(user_logins)
         self.checks = {key: False for key in ARCH_CHECKS}
+        if self.user_logins:
+            self.checks[USER_LOGINS_CHECK] = False
         self.facts = {"mode": LABEL, "login": {}, "testjoin": {},
                       "identity": {}, "menu_default_entry": None}
 
@@ -483,6 +557,8 @@ class VerifyArchBoundary(DurableArchJoinBoundary):
             raise KeepVerifyError("the Arch console is not open")
         await_domain_online(console, self._boot_facts)
         self.checks["domain_online_observed"] = True
+        if self.user_logins:
+            self._prove_user_logins(console)
         login: dict[str, object] = {}
         self.facts["login"] = login
         live = first_logon_login(
@@ -527,6 +603,40 @@ class VerifyArchBoundary(DurableArchJoinBoundary):
             raise failure
         if not self.checks["testjoin_passed"]:
             raise KeepVerifyError(TESTJOIN_FAILURE)
+
+    def _prove_user_logins(self, console) -> None:
+        """Each standard account logs in at the getty, runs as its uid, exits.
+
+        The daily administrator's own proofs follow at the next getty, so
+        everything after this is exactly the verify without the option.
+        Facts name contract roles only, never an account.
+        """
+        results: list[dict[str, object]] = []
+        self.facts["user_logins"] = results
+        for index, (account, password) in enumerate(self.user_logins):
+            record: dict[str, object] = {
+                "contract_role": account.get("contract_role"),
+                "login_completed": False, "uid_matches": False}
+            results.append(record)
+            login: dict[str, object] = {}
+            first_logon_login(
+                console, login,
+                username=str(account["name"]).encode("ascii"),
+                password=password, new_password=None)
+            record["login_completed"] = login.get("login_completed") is True
+            record["echo_observed"] = login.get("echo_observed") is True
+            uid = prove_session_uid(console, f"{console.token}u{index}")
+            record["uid_matches"] = (
+                uid is not None and uid == int(account["uidNumber"]))
+            console._send(b"exit", "arch-verify-user-logout")
+            if not (record["login_completed"] and record["uid_matches"]):
+                break
+        self.checks[USER_LOGINS_CHECK] = (
+            len(results) == len(self.user_logins)
+            and all(record["login_completed"] is True
+                    and record["uid_matches"] is True for record in results))
+        if not self.checks[USER_LOGINS_CHECK]:
+            raise KeepVerifyError(USER_LOGIN_FAILURE)
 
     def stop(self) -> list[str]:
         """Gate 8's teardown of the workstation; the Controller is not ours."""
@@ -861,7 +971,10 @@ class KeepVerify:
         self._windows_adapter_factory = windows_adapter_factory
         self.arch_boundary: VerifyArchBoundary | None = None
         self.windows_boundary: VerifyWindowsBoundary | None = None
-        self.checks: dict[str, bool] = {key: False for key in REQUIRED_CHECKS}
+        self.required = REQUIRED_CHECKS + (
+            (arch_check_name(USER_LOGINS_CHECK),)
+            if getattr(secrets, "users", None) else ())
+        self.checks: dict[str, bool] = {key: False for key in self.required}
         self.facts: dict[str, object] = {}
         self.failures: list[dict[str, object]] = []
 
@@ -935,7 +1048,9 @@ class KeepVerify:
                 self.secrets.console, self.secrets.daily, None, b"",
                 extra=tuple(getattr(self.secrets, "extra", ()))),
             accounts=self.accounts, hostname=self.hostname, fabric=fabric,
-            canonical_state=self.controller_state, duration=self.duration)
+            canonical_state=self.controller_state, duration=self.duration,
+            **({"user_logins": self._user_logins()}
+               if getattr(self.secrets, "users", None) else {}))
         self.arch_boundary = boundary
         try:
             drive_join(boundary)
@@ -944,10 +1059,19 @@ class KeepVerify:
         except Exception as error:  # noqa: BLE001 - recorded; Windows next
             self._failed("arch", error)
         finally:
-            for key in ARCH_CHECKS:
+            keys = ARCH_CHECKS + ((USER_LOGINS_CHECK,)
+                                  if getattr(self.secrets, "users", None)
+                                  else ())
+            for key in keys:
                 self.checks[arch_check_name(key)] = (
                     boundary.checks.get(key) is True)
             self.facts["arch"] = boundary.facts
+
+    def _user_logins(self) -> list[tuple[Mapping, bytes]]:
+        users = self.secrets.users
+        return [(account, users[str(account["contract_role"])])
+                for account in standard_accounts(self.accounts)
+                if str(account["contract_role"]) in users]
 
     def _windows_phase(self, attempt: Path, fabric: Fabric, session) -> None:
         facts: dict[str, object] = {
@@ -1175,7 +1299,7 @@ class KeepVerify:
         if hits:
             self.facts["evidence_secret_hits"] = hits
         passed = (not self.failures
-                  and all(self.checks[key] is True for key in REQUIRED_CHECKS))
+                  and all(self.checks[key] is True for key in self.required))
         result = {
             "schema": 1, "kind": "durable-workstation-verify",
             "label": LABEL,
@@ -1355,11 +1479,14 @@ def run(
         credentials = credential_source(
             target, prompt=prompt,
             workstation=(workstation.state, workstation.state.name))
+        users = (standard_accounts(accounts)
+                 if getattr(args, "verify_users", False) else [])
         if credentials.agent:
-            verify_secrets = agent_verify_secrets(credentials)
+            verify_secrets = agent_verify_secrets(credentials, users)
         else:
             verify_secrets = collect_verify_secrets(
-                binding.instance, daily_name, prompt=credentials.ask)
+                binding.instance, daily_name, prompt=credentials.ask,
+                users=users)
         try:
             root = Path(args.run_root).absolute()
             private_directory(root / workstation.state.name)
@@ -1418,6 +1545,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--duration", type=float, default=DEFAULT_DURATION,
         help="the Arch phase's wall-clock bound in seconds")
+    result.add_argument(
+        "--verify-users", action="store_true",
+        help="also log every standard account in at the Arch getty with its "
+             "own current password and prove its uidNumber (owner request "
+             "2026-10-07); asks for each one's password under owner custody")
     result.add_argument("--apply", action="store_true")
     return result
 
