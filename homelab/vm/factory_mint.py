@@ -81,8 +81,11 @@ SECRET_MAX = 512
 #: Steps that leave the kept workstation and directory unchanged when they
 #: fail, and whose failures include an intermittent firmware boot stall
 #: (UAT 2026-10-07; the 2026-10-01 rehearsal needed six Windows-join
-#: attempts): the mint repeats them itself, so an owner never retypes.
-ATTEMPTS = {"windows-join": 5, "verify": 3}
+#: attempts): the mint repeats them itself, so an owner never retypes.  A
+#: gate-5 install that fails (OVMF sometimes cannot read the NVMe after
+#: Setup's reboot and PXE-boots again, ``pxe-loop``) is repeated with a
+#: freshly prepared bundle, as the repeat driver does.
+ATTEMPTS = {"windows-join": 5, "verify": 3, "windows-install": 3}
 
 
 class MintError(RuntimeError):
@@ -858,13 +861,7 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
             Path(options.identity_overlay).absolute())
     try:
         for number, step in enumerate(steps, 1):
-            if step.name == "windows-install":
-                bundle = prepare_windows(options, evidence, env, number)
-                options.windows_run = bundle
-                _write_text(evidence.parent / PENDING_BUNDLE, f"{bundle}\n")
-                step = Step(step.name, step.target,
-                            step.variables + (("WINDOWS_RUN", str(bundle)),),
-                            step.asks, step.note)
+            planned = step
             if step.name == "adopt" and options.windows_run is not None and \
                     not any(name == "WINDOWS_RUN" for name, _ in step.variables):
                 step = Step(step.name, step.target,
@@ -873,6 +870,16 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
                             step.asks, step.note)
             attempts = ATTEMPTS.get(step.name, 1)
             for attempt in range(1, attempts + 1):
+                if planned.name == "windows-install":
+                    # Every attempt installs into a fresh bundle.
+                    bundle = prepare_windows(options, evidence, env, number)
+                    options.windows_run = bundle
+                    _write_text(evidence.parent / PENDING_BUNDLE,
+                                f"{bundle}\n")
+                    step = Step(planned.name, planned.target,
+                                planned.variables
+                                + (("WINDOWS_RUN", str(bundle)),),
+                                planned.asks, planned.note)
                 suffix = "" if attempt == 1 else f"-attempt{attempt}"
                 log = evidence / f"{number:02}-{step.name}{suffix}.log"
                 entry = {"step": step.name, "target": step.target,

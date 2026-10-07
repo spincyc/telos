@@ -795,7 +795,7 @@ seconds). Only one lab mutation may run at a time: the command refuses to
 start while any QEMU runs.
 
 Two steps are repeated by the command itself, with the credentials it
-already holds: `windows-join` up to five attempts and `verify` up to three.
+already holds: `windows-join` up to five attempts, `verify` up to three, and the gate-5 `windows-install` up to three, each in a freshly prepared bundle (after Setup's reboot OVMF sometimes cannot read the NVMe at all and PXE-boots again, `pxe-loop`; UAT-3 hit it 2026-10-07).
 Both leave the kept workstation unchanged when they fail, and both boot
 Windows through an intermittent OVMF stall (the firmware spins at the
 TianoCore logo after reading 72,192 bytes, before systemd-boot loads; the

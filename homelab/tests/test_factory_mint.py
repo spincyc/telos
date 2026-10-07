@@ -595,6 +595,17 @@ class MintRunTests(unittest.TestCase):
         self.assertEqual([1, 2, 3], [step["attempt"] for step in joins])
         self.assertEqual([2, 2, 0], [step["exit"] for step in joins])
 
+    def test_a_failed_windows_install_is_repeated_in_a_fresh_bundle(self):
+        opts = options(self.temp, custody="agent", throwaway=True,
+                       make=self.fake_make(failing=(
+                           "homelab-windows-install-run", 1)))
+        fm.mint(opts, apply=True, allow_busy=True,
+                evidence_root=self.temp / "evidence")
+        targets = self.targets()
+        self.assertEqual(2, targets.count("homelab-windows-install-prepare"))
+        self.assertEqual(2, targets.count("homelab-windows-install-run"))
+        self.assertEqual(1, targets.count("homelab-durable-workstation-adopt"))
+
     def test_retries_are_bounded(self):
         opts = options(self.temp, custody="agent", throwaway=True,
                        make=self.fake_make(failing=(
