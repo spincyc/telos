@@ -6,6 +6,15 @@ END** 2026-09-30, unattended under agent custody on the throwaway instance
 TASK-21. Under owner custody steps 7-9 have not passed (`rehearsal-ws1` stays
 at stage `arch-install`).
 
+One-command mint, 2026-10-07: `make homelab-factory-mint` runs steps 1-9
+plus the persistent directory and a backup, resuming from markers; owner
+custody types every value once at the start (FACTORY-MAKE-TARGETS.md, "One-
+command mint"). UAT PASS on throwaway `uat2` / `uat2-ws` with made-up users,
+keep-verify 41/41 including every standard account's Arch login
+(`VERIFY_USERS=1`). A Windows join whose firmware variables lose the
+Linux-first boot order is no longer folded, and a desktop hidden by a Start
+menu Windows opened itself is closed with Escape.
+
 Current DR checkpoint, 2026-10-01: **PASS, 40/40**. After native backup,
 destruction and restoration of `rehearsal-auto` under a new DC name, repaired
 Samba DNS and reconvergence, the existing SRV-first `rehearsal-auto-ws2`

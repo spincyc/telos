@@ -1,12 +1,12 @@
 # Local workstation factory state
 
-Document version: `20261002.006`
+Document version: `20261007.001`
 
 Status: active implementation
 
-Last evidence/workstream review: 2026-10-02 16:58 UTC
+Last evidence/workstream review: 2026-10-07 19:10 UTC
 
-Repository baseline reviewed: `011e678` (guarded publication retirement; bounded process-audit fix `c45c0dc`, repeat recovery `7e4c72c`, Samba repair `bdebb4f`, WinPE VBS `8eb69a9`, publication input binding `93eb6b6`)
+Repository baseline reviewed: one-command mint and UAT fixes `fa4910f`..`d9c080a` (2026-10-07) on top of `011e678` (guarded publication retirement; bounded process-audit fix `c45c0dc`, repeat recovery `7e4c72c`, Samba repair `bdebb4f`, WinPE VBS `8eb69a9`, publication input binding `93eb6b6`)
 
 This is the durable restart ledger for the phase-one workstation factory. A
 fresh operator or agent should read this file before changing the controller,
@@ -69,6 +69,7 @@ controller must not become a second DHCP authority.
 | Durable workstations | Owner-approved 2026-09-30 (TASK-28), as designed in [DURABLE-WORKSTATION-FLOW.md](DURABLE-WORKSTATION-FLOW.md): installs stay on the disposable Controller and the persistent one serves only joins and logins; under owner custody the owner types a distinct Windows local-administrator and Arch `local-rescue` password at join, which the factory never stores. |
 | Credential custody | Owner decision 2026-09-30 (TASK-40): throwaway rehearsal instances (`CUSTODY=agent THROWAWAY=1`) run unattended on harness-generated credentials held in 0600 stores for the instance's life and shredded on destroy. The keeper stays owner custody: the owner's real passwords, typed and never stored. |
 | Keeper (TASK-21) | Owner decisions 2026-09-30: a short directory password policy like `rehearsal`'s (minimum length 4, complexity off, minimum age 0); the temporary Domain Admin `tj-` join principal, delegation revisited before physical laptops; backup and restore ([ADR 0081](decisions/0081-samba-native-backup-and-restore-of-persistent-directories.md)) proven live before minting, to the gitignored `homelab/var/backups/` (`BACKUP_ROOT` overridable); a restored DC takes a new name that kept clients find by SRV first (TASK-42). |
+| One-command minting | Owner request 2026-10-07: "I should not have to keep entering passwords"; drive everything, including all UAT, with made-up users and passwords until only one final list of users and passwords is needed. `make homelab-factory-mint` (`FACTORY-MAKE-TARGETS.md`, "One-command mint") runs the whole durable sequence and resumes from markers; rehearsals run under agent custody with made-up rosters (`IDENTITY_OVERLAY`, gitignored `homelab/instance/uat/`); the keeper stays owner custody, but the owner types every value once, in one sitting, and the command answers each step's own prompt over a pty, storing nothing. Accounts are staged with permanent passwords. A kept agent-custody store of the owner's real passwords was blocked by the session's safety classifier and is not pursued; do not re-propose it without new owner direction. |
 | External integration | Gate 14 is not authorized. Only a read-only UniFi DHCP/PXE review with owner-supplied access is (2026-09-30, aiq TASK-37); the staged plan is [EXTERNAL-INTEGRATION-READINESS.md](EXTERNAL-INTEGRATION-READINESS.md). |
 
 The accepted architectural records for this phase are ADRs
@@ -230,7 +231,14 @@ existing bounded cold-boot retry passed and retained
 `fabric/windows-boot-attempt-1.json`. Firmware stalls are not claimed fixed.
 Earlier failed evidence, restored instance and verified native backup remain.
 
-The keeper (TASK-21) is blocked solely on owner-terminal passwords and absent;
+**2026-10-07: the keeper now needs one sitting.** `make homelab-factory-mint
+PERSISTENT_DC=keeper WORKSTATION=keeper-ws1 ARCH_HOSTNAME=keeper-ws1 APPLY=1`
+at the owner's terminal asks every value once and runs the rest unattended
+(about 30-35 minutes); its rehearsal UAT passed on `uat2` (FACTORY-MAKE-TARGETS.md,
+"One-command mint"). The instance `keeper`, seeded 2026-10-02 and never
+converged, is reused. The reserved Windows bundle named below was deleted on
+2026-10-06; the mint installs a fresh one. History kept: the keeper (TASK-21)
+was blocked solely on owner-terminal passwords and absent;
 status and convergence planning were rechecked about 16:49 UTC. Its DR
 prerequisite is satisfied. Owner-terminal credentials are still
 required and the owner availability question remains unanswered. Windows VBS
@@ -323,6 +331,56 @@ all failed receipts and both accepted cycles. TASK-7's local documentation
 pass is complete: final command, source, rendered-site and browser checks
 passed, as recorded in gate 13 and `DOCUMENTATION-PASS.md`. No push or
 deployment is authorized by the live acceptance.
+
+## Stage timing and why it was slow (2026-10-07)
+
+Measured from retained evidence and live runs (read-only analysis, TASK-44):
+
+| Stage | Wall time |
+|---|---|
+| Gate 5 Windows install | 68.2-69.9 min on six cycles; **10.3 min after `b9024cc`** (UAT-2) |
+| Gate 6 Windows identity | 44.3-44.5 min, dominated by fixed waits (60 s sign-in pause, four Windows boots, two Controller-offline windows of 180-285 s, about fifteen Run-dialog action discs) |
+| Gate 7 / gate 8 Arch | 2.8 min / 1.5-3.5 min |
+| Gate 10 dual-boot | 5.3 min, about 4 min of it the Arch join units' boot waits with no directory up |
+| Gate 12 cycle | about 2 h 03 min per cycle; Windows is about 91 % of it |
+| Persistent converge / policy / accounts / probe / backup | under 1 min each |
+| Durable Arch install / join / Windows join / keep-verify | 2.4-2.7 / 1.0-1.1 / 7.5-14 / 4.7-9.6 min |
+
+Root cause of the Windows install time: 64 of its 69 minutes were Setup
+pulling the 8 GB `install.wim` from the Controller's SMB share at a mean
+1.8 MB/s, while guest, switch, Controller and host disk were nearly idle. The
+loopback switch (`simulated_switch.py`) never set `TCP_NODELAY`, so each
+Ethernet frame (one small write) waited for the peer's delayed ACK whenever
+one was outstanding; request/response SMB stalled while bulk HTTP (`boot.wim`,
+the Arch packages) stayed fast. `b9024cc` sets it on every accepted switch
+peer and the gateway; the next install wrote the same 17 GB in about seven
+minutes and finished in 10.3. Gate 6 and gate 12 have not been re-timed
+since. Further savings ranked by the analysis, none taken: parallel repeat
+iterations (port 31415 and the fixed fabric addressing block it), bounding
+gate 10's join waits when no join media is present, trimming gate 6's fixed
+waits, a Pro-only `install.wim`, and a golden sysprepped image for repeat
+cycles (a redesign that conflicts with gate 5 proving PXE in every cycle).
+
+Why the assembly is hard is mostly the boundary, not the technology: ADR 0077
+and the hard boundary above (no TAP, bridge, VDE, passt or user-net; loopback
+only; never `sudo`) force a Python userspace switch and simulated gateway
+instead of a kernel bridge or libvirt network; ADR 0058 and the ban on guest
+agents force serial-console automation of the Controller and QMP
+pixel-compared GUI driving of Windows instead of cloud-init, SSH, WinRM or an
+unattended `djoin`; ADR 0078 and the secret rules force one-use credential
+discs; and gate 5's "PXE, no ISO attached, every cycle" rules out attaching
+the ISO with an autounattend (10-15 min) or a golden image (minutes). A
+rootless `unshare -rn` namespace with its own bridge would remove the switch
+and gateway without `sudo` or host changes, but needs an ADR 0077 amendment.
+
+Intermittent Windows boot stalls remain (see the mint's retries in
+[FACTORY-MAKE-TARGETS.md](FACTORY-MAKE-TARGETS.md), "One-command mint"): the
+firmware sometimes spins at the TianoCore logo after 72,192 bytes, once
+reported `failed to load Boot0007 "Linux Boot Manager" ... Not Found` and
+fell through to Windows Boot Manager, and the first Windows kernel boot in
+the join topology sometimes hangs at about 29.8 MB read. Eleven manual boots
+of the same disk outside the harness, with and without the control disc, all
+passed; the cause is not identified and firmware is not claimed fixed.
 
 ## Current blockers and cautions
 

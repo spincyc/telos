@@ -82,7 +82,7 @@ SECRET_MAX = 512
 #: fail, and whose failures include an intermittent firmware boot stall
 #: (UAT 2026-10-07; the 2026-10-01 rehearsal needed six Windows-join
 #: attempts): the mint repeats them itself, so an owner never retypes.
-ATTEMPTS = {"windows-join": 3, "verify": 2}
+ATTEMPTS = {"windows-join": 5, "verify": 3}
 
 
 class MintError(RuntimeError):

@@ -792,7 +792,22 @@ the gitignored `homelab/instance/uat/`; the owner's own file is never
 touched. Each run writes `homelab/var/factory/mint/<instance>/<w>/<run id>/`
 with one 0600 log per step and `mint-run.json` (per-step start, end, exit and
 seconds). Only one lab mutation may run at a time: the command refuses to
-start while any QEMU runs. Implemented by `homelab/vm/factory_mint.py`;
+start while any QEMU runs.
+
+Two steps are repeated by the command itself, with the credentials it
+already holds: `windows-join` up to five attempts and `verify` up to three.
+Both leave the kept workstation unchanged when they fail, and both boot
+Windows through an intermittent OVMF stall (the firmware spins at the
+TianoCore logo after reading 72,192 bytes, before systemd-boot loads; the
+2026-10-01 rehearsal needed six join attempts). A join whose firmware
+variables come back without an active Linux Boot Manager at the head of
+`BootOrder` is never folded (`windows_durable_join.BOOT_ORDER_LOST_FAILURE`):
+the first mint UAT showed that a stalled boot can leave OVMF deleting the
+short-form Linux and Windows entries, after which Windows starts by the
+fallback path and recreates its own entry first. A run that installed
+Windows but failed before adoption records the bundle beside its evidence
+(`pending-windows-run`), and the rerun adopts it instead of installing
+again. Implemented by `homelab/vm/factory_mint.py`;
 tests in `homelab/tests/test_factory_mint.py` drive the runners' real prompt
 functions over a pseudo-terminal.
 
@@ -801,11 +816,33 @@ and NOT built (2026-10-07): it would relax the "owner custody, typed and never
 stored" rule this section keeps, and the one-sitting prompt gives the owner
 the same single interaction without storing anything.
 
+Verdict: **UAT PASS 2026-10-07** under agent custody on throwaway instance
+`uat2`, kept workstation `uat2-ws`, with the made-up roster
+`homelab/instance/uat/uat2-principals.json` (three directory roles and two
+additional standard users, uidNumbers 10000-10004): every step in one
+command, the mint's own gate-5 install included (10.3 min), the Windows join
+on the mint's second attempt after a firmware boot stall, keep-verify 41 of
+41 with all three standard accounts logged in on Arch at their staged uid
+(`durable-workstation-verifies/uat2-ws/run-20261007T185239Z-443170-cec41833`),
+and a native backup (`persistent-backup/uat2/20261007T185727Z-448928-4ea486bc`).
+Records: `homelab/var/factory/mint/uat2/uat2-ws/20261007T174955Z-348250/`
+(stopped at the join, before the Start-menu fix) and
+`.../20261007T182846Z-391547/` (resumed, PASS). A clean run is about 30-35
+minutes. The first UAT (`uat1`, `uat1-ws`) found the policy-ordering defect
+(`67c86a1`), the Start-menu and boot-order failures (`d9c080a`, `564d22a`),
+and folded a Windows-first firmware store before the guard existed; it is
+retained as failed evidence. The owner-custody prompt path is proven against
+the runners' real `getpass` prompts in the unit tests only: no rehearsal can
+run it live, because only the owner holds the canonical image's console
+password.
+
 #### Owner-terminal keeper sequence (TASK-21)
 
 `homelab-factory-mint` above runs this whole sequence with one sitting of
 password entry; the per-step commands below remain the reference and the
-fallback.
+fallback. Corrected 2026-10-07: the password-policy step refused any
+instance without staged accounts, so the order below (policy, then
+accounts) could not run until `67c86a1`; the first mint UAT found it.
 
 The DR prerequisite is satisfied. The keeper convergence dry run has been
 checked, but no keeper instance exists yet. Run the following at the owner's
