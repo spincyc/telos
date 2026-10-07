@@ -45,7 +45,10 @@ from homelab.vm.windows_identity_run import WindowsIdentityRunError
 
 ROOT = Path(__file__).resolve().parents[2]
 #: The attempt's store after the join's Windows boot, with the cache it left.
-POST_JOIN_VARS = store("Windows Boot Manager", hddp=True)
+#: What a good join leaves: systemd-boot still first (UAT 2026-10-07 found a
+#: join that did not, and such variables are never folded).
+POST_JOIN_VARS = store("Linux Boot Manager", hddp=True)
+WINDOWS_FIRST_VARS = store("Windows Boot Manager", hddp=True)
 NAMES = {"standard_user": "person-b", "daily_administrator": "person-a",
          "domain_administrator": "person-a-root"}
 CONSOLE = b"Console-Rescue-Typed-1!"
@@ -945,7 +948,8 @@ class RunFixture:
         else:
             overlay.write_bytes(b"synthetic overlay")
         overlay.chmod(0o600)
-        (attempt / "OVMF_VARS.fd").write_bytes(POST_JOIN_VARS)
+        (attempt / "OVMF_VARS.fd").write_bytes(
+            getattr(self, "post_join_vars", POST_JOIN_VARS))
         return attempt
 
     def args(self, *extra):
@@ -1069,6 +1073,27 @@ class RunTests(RunFixture, unittest.TestCase):
         self.assertIs(recorded["folded"], False)
         self.assertFalse(wi.WorkstationInstance(self.state, name="w1").locked())
         self.assertEqual(self.constructed[0]["secrets"].values(), ())
+
+    def test_a_join_that_lost_the_linux_first_boot_order_is_not_folded(self):
+        self.post_join_vars = WINDOWS_FIRST_VARS
+        publication = (self.state / wi.PUBLICATION_NAME).read_bytes()
+        with mock.patch.object(wi.WorkstationInstance, "fold") as fold, \
+                mock.patch.object(
+                    wi.WorkstationInstance, "retire_publication") as retire:
+            with self.assertRaisesRegex(join.DurableWindowsJoinError,
+                                        "Linux Boot Manager"):
+                self.run_quietly("--apply")
+        fold.assert_not_called()
+        retire.assert_not_called()
+        self.assertEqual(
+            (self.state / wi.PUBLICATION_NAME).read_bytes(), publication)
+        attempt = self.run_root / "w1" / "attempt-synthetic"
+        recorded = json.loads(
+            (attempt / "evidence" / "result.json").read_text())
+        self.assertIs(recorded["folded"], False)
+        self.assertIs(recorded["boot_order_lost"], True)
+        self.assertEqual(recorded["status"], "fail")
+        self.assertFalse((attempt / "windows.qcow2").exists())
 
     def test_a_retirement_failure_after_the_fold_is_reported(self):
         with mock.patch.object(wi.WorkstationInstance, "fold",

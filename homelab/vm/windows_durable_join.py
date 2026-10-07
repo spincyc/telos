@@ -754,6 +754,26 @@ def _write_json(path: Path, document: Mapping[str, object]) -> None:
                         + "\n").encode("utf-8"))
 
 
+#: UAT 2026-10-07: the join passed but its firmware variables no longer
+#: booted Linux first -- both the Linux and the original Windows entries were
+#: gone and Windows had created a new entry at the head.  OVMF deletes boot
+#: entries it cannot match to QEMU's boot devices, and the intermittent
+#: firmware stall before the boot loader is the likely trigger; Windows then
+#: starts by the fallback path and recreates itself first.  Folding those
+#: variables would leave a workstation with no systemd-boot menu.
+BOOT_ORDER_LOST_FAILURE = (
+    "Windows joined, but the firmware variables the run left no longer start "
+    "with an active Linux Boot Manager, so the dual-boot menu would be gone. "
+    "Nothing was folded: the kept workstation, its variables and its "
+    "publication are unchanged; repeat the stage")
+
+
+def boot_order_kept(firmware_vars: Path) -> bool:
+    """Whether *firmware_vars* still boot systemd-boot first."""
+    from .durable_workstation_verify import boot_order_facts
+    return boot_order_facts(firmware_vars).get("linux_first") is True
+
+
 def _amend_result(evidence: Path, **fields: object) -> None:
     output = evidence / RESULT_NAME
     if output.is_symlink() or not output.is_file():
@@ -1272,6 +1292,11 @@ def run(args: argparse.Namespace, *,
                     workstation, binding, target=target,
                     controller_state=args.controller_state,
                     secrets=secrets).execute(attempt, marker)
+                if not boot_order_kept(attempt / VARS_NAME):
+                    _amend_result(evidence, status="fail",
+                                  boot_order_lost=True,
+                                  error=BOOT_ORDER_LOST_FAILURE)
+                    raise DurableWindowsJoinError(BOOT_ORDER_LOST_FAILURE)
                 entry = workstation.fold(
                     overlay, STAGE, firmware_vars=attempt / VARS_NAME,
                     source=str(attempt))
