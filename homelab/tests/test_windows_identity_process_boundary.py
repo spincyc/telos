@@ -1392,3 +1392,56 @@ class NativeProcessBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootFailureScreenTests(unittest.TestCase):
+    """2026-10-07: a readiness failure keeps the guest's screen, best effort."""
+
+    def boundary(self, temp: Path):
+        from types import SimpleNamespace
+        runtime = temp / "runtime"
+        runtime.mkdir()
+        return SimpleNamespace(qmp_root=temp, runtime=runtime)
+
+    def test_the_screen_is_dumped_beside_the_attempt_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            boundary = self.boundary(Path(temporary))
+            process = mock.Mock(pid=4242)
+            process.poll.return_value = None
+            qmp = mock.Mock()
+            with mock.patch.object(windows_identity_run.QmpClient, "connect",
+                                   return_value=qmp) as connect:
+                windows_identity_run.NativeProcessBoundary \
+                    ._retain_boot_failure_screen(boundary, process, 2)
+            connect.assert_called_once()
+            self.assertEqual(4242, connect.call_args.kwargs[
+                "expected_peer_pid"])
+            qmp.execute.assert_called_once_with("screendump", {
+                "filename": str(boundary.runtime
+                                / "windows-boot-attempt-2.png"),
+                "format": "png"})
+            qmp.close.assert_called_once_with()
+
+    def test_any_failure_is_ignored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            boundary = self.boundary(Path(temporary))
+            process = mock.Mock(pid=4242)
+            process.poll.return_value = None
+            with mock.patch.object(windows_identity_run.QmpClient, "connect",
+                                   side_effect=OSError("gone")):
+                windows_identity_run.NativeProcessBoundary \
+                    ._retain_boot_failure_screen(boundary, process, 1)
+            qmp = mock.Mock()
+            qmp.execute.side_effect = RuntimeError("no display")
+            with mock.patch.object(windows_identity_run.QmpClient, "connect",
+                                   return_value=qmp):
+                windows_identity_run.NativeProcessBoundary \
+                    ._retain_boot_failure_screen(boundary, process, 1)
+            qmp.close.assert_called_once_with()
+            exited = mock.Mock(pid=1)
+            exited.poll.return_value = 0
+            with mock.patch.object(windows_identity_run.QmpClient,
+                                   "connect") as connect:
+                windows_identity_run.NativeProcessBoundary \
+                    ._retain_boot_failure_screen(boundary, exited, 1)
+            connect.assert_not_called()

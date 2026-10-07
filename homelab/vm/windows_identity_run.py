@@ -1618,6 +1618,7 @@ class NativeProcessBoundary:
                 try:
                     self._wait_for_windows_os_readiness(cursor, process)
                 except RuntimeError:
+                    self._retain_boot_failure_screen(process, boot_attempt)
                     boot_diagnostic = self._collect_boot_failure_diagnostic(
                         process, pristine)
                     self._stop("windows")
@@ -1905,6 +1906,40 @@ class NativeProcessBoundary:
                 time.sleep(0.05)
         raise WindowsIdentityRunError(
             "Windows boot diagnostics were unavailable")
+
+    def _retain_boot_failure_screen(
+        self, process: subprocess.Popen[bytes], boot_attempt: int,
+    ) -> None:
+        """Best effort: keep what the guest showed when readiness failed.
+
+        Added 2026-10-07 because the durable Windows join's intermittent
+        boot stalls left only block counters behind, never the screen that
+        explains them.  It never changes the verdict: any failure here is
+        ignored, and the block-statistics diagnostic still follows.
+        """
+        if self.qmp_root is None or process.poll() is not None:
+            return
+        target = self.runtime / f"windows-boot-attempt-{boot_attempt}.png"
+        try:
+            qmp = QmpClient.connect(
+                self.qmp_root / "windows.qmp", timeout=1.0,
+                expected_peer_pid=process.pid)
+        except Exception:  # noqa: BLE001 - diagnostic only
+            return
+        try:
+            qmp.execute("screendump",
+                        {"filename": str(target), "format": "png"})
+        except Exception:  # noqa: BLE001 - diagnostic only
+            return
+        finally:
+            try:
+                qmp.close()
+            except Exception:  # noqa: BLE001 - diagnostic only
+                pass
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
 
     def _collect_boot_failure_diagnostic(
         self,
