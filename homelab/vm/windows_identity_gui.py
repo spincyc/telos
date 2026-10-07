@@ -75,7 +75,16 @@ class WindowsCredentialRotationDriver:
             raise WindowsIdentityGuiError(
                 "credential evidence root must be private")
 
-    def _observe(self, checkpoint: Checkpoint) -> None:
+    #: A desktop checkpoint that keeps missing is nudged with these keys every
+    #: this many missed frames (UAT 2026-10-07: Windows opened the Start
+    #: menu by itself at the first sign-in of a freshly installed profile,
+    #: covering the desktop the reference depicts; Escape closes it and does
+    #: nothing on a bare desktop).  Never used for a sign-in screen, where
+    #: Escape would return to the lock screen.
+    NUDGE_EVERY_MISSES = 5
+
+    def _observe(self, checkpoint: Checkpoint,
+                 nudge: tuple[str, ...] = ()) -> None:
         # One matching transitional frame is not enough authority to type a
         # credential. The reference must depict the already-focused field.
         reference_image = read_ppm(checkpoint.reference)
@@ -90,6 +99,11 @@ class WindowsCredentialRotationDriver:
         deadline = self.clock() + checkpoint.timeout
         consecutive = 0
         best = float("inf")
+        # The latest frame that did NOT match, kept only until the next one:
+        # on a timeout it is the one picture of what the guest showed instead
+        # (2026-10-07; every miss used to be deleted, leaving nothing).
+        last_miss: Path | None = None
+        misses = 0
         while self.clock() < deadline:
             self.sequence += 1
             path = self.observer.root / (
@@ -110,12 +124,25 @@ class WindowsCredentialRotationDriver:
             best = min(best, distance)
             if useful_frame(actual) and distance <= checkpoint.threshold:
                 consecutive += 1
+                misses = 0
                 if consecutive == 2:
+                    if last_miss is not None:
+                        last_miss.unlink(missing_ok=True)
                     return
             else:
                 consecutive = 0
-                path.unlink(missing_ok=True)
+                misses += 1
+                if last_miss is not None:
+                    last_miss.unlink(missing_ok=True)
+                last_miss = path
+                if nudge and misses % self.NUDGE_EVERY_MISSES == 0:
+                    for name in nudge:
+                        self.qmp.key(name)
             self.pause(self.interval)
+        if last_miss is not None and last_miss.exists():
+            last_miss.rename(last_miss.with_name(
+                f"identity-{self.sequence:04d}-{checkpoint.name}"
+                "-timeout-last-miss.ppm"))
         raise WindowsIdentityGuiError(
             f"timed out proving {checkpoint.name}; "
             f"best image distance {best:.2f}")

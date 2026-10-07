@@ -298,7 +298,11 @@ class _GuiInteraction:
             crop=reference.crop,
             expected_geometry=reference.geometry,
         )
-        self._driver._observe(checkpoint)
+        # A desktop hidden by a Start menu Windows opened on its own is
+        # closed with Escape (WindowsCredentialRotationDriver._observe).
+        self._driver._observe(
+            checkpoint,
+            nudge=("esc",) if reference.state_kind == "desktop" else ())
 
     def disable_durable_capture(self) -> None:
         """Irreversibly prohibit retained screenshots after secret entry."""

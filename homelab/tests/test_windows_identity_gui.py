@@ -255,5 +255,57 @@ class WindowsIdentityGuiTests(unittest.TestCase):
                     expected_geometry=(1280, 800)))
 
 
+class DesktopNudgeAndLastMissTests(unittest.TestCase):
+    """UAT 2026-10-07: a Start menu over the desktop, and no retained miss."""
+
+    PATTERN = bytes([20, 40, 60, 180, 200, 220]) * (320 * 200 // 2)
+    MISS = bytes([200, 20, 20, 10, 90, 30]) * (320 * 200 // 2)
+
+    def run_frames(self, root, frames, *, nudge=(), timeout=20):
+        reference = root / "reference.ppm"
+        reference.write_bytes(b"P6\n320 200\n255\n" + self.PATTERN)
+        qmp = FakeQmp()
+
+        def screenshot(path):
+            qmp.actions.append(("screenshot", path.name))
+            path.write_bytes(b"P6\n320 200\n255\n" + frames.pop(0))
+
+        qmp.screenshot = screenshot
+        ticks = iter(range(100))
+        driver = WindowsCredentialRotationDriver(
+            qmp, root, interval=0, clock=lambda: next(ticks),
+            pause=lambda _: None)
+        driver._observe(Checkpoint(
+            "desktop", reference, (), timeout=timeout, threshold=0,
+            crop=(0, 0, 320, 200)), nudge=nudge)
+        return qmp
+
+    def test_a_hidden_desktop_is_nudged_with_escape_until_it_shows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            frames = [self.MISS] * 6 + [self.PATTERN] * 2
+            qmp = self.run_frames(root, frames, nudge=("esc",))
+            self.assertEqual(1, qmp.actions.count(("key", "esc")))
+            # The miss frames are gone once the state is proved.
+            self.assertEqual([], list(root.glob("*timeout-last-miss*")))
+
+    def test_without_a_nudge_no_key_is_sent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            frames = [self.MISS] * 6 + [self.PATTERN] * 2
+            qmp = self.run_frames(root, frames)
+            self.assertNotIn("key", [action[0] for action in qmp.actions])
+
+    def test_the_last_miss_is_kept_when_the_state_never_shows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(WindowsIdentityGuiError,
+                                        "timed out proving desktop"):
+                self.run_frames(root, [self.MISS] * 50, timeout=8)
+            kept = sorted(path.name for path in root.glob("identity-*"))
+            self.assertEqual(1, len(kept))
+            self.assertTrue(kept[0].endswith("-desktop-timeout-last-miss.ppm"))
+
+
 if __name__ == "__main__":
     unittest.main()
