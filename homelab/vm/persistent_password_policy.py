@@ -344,9 +344,12 @@ def password_policy(
         print(f"error: {error}", file=sys.stderr)
         return 2
     try:
+        # Before accounts are staged too: the short policy has to exist
+        # before permanent short passwords can be staged under it.
         binding = durable_binding(
             root, instance, canonical_state=canonical_state,
-            identity_path=identity_path, overlay_path=overlay_path)
+            identity_path=identity_path, overlay_path=overlay_path,
+            require_accounts=False)
         target = PersistentControllerInstance(binding.state, instance=instance)
         preview = session_command(
             target, 65535, canonical_state=canonical_state)
@@ -358,7 +361,7 @@ def password_policy(
     print(f"state: {binding.state}")
     print(f"binding: the convergence record agrees with "
           f"{binding.identity_source}; the declared Controller address, "
-          "prefix and gateway are the per-run fabric's; the staged roster "
+          "prefix and gateway are the per-run fabric's; any staged roster "
           "fingerprint is current (values are compared, not printed)")
     print("recorded now: "
           + (f"{recorded.describe()} ({recorded.source})" if recorded.recorded

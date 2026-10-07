@@ -151,8 +151,14 @@ def durable_binding(
     identity_path: Path | None = None,
     overlay_path: Path | None = None,
     roster_fingerprint: str | None = None,
+    require_accounts: bool = True,
 ) -> DurableBinding:
     """Bind to ``root/instance`` or refuse, before anything is booted.
+
+    *require_accounts* ``False`` is for the directory password policy alone
+    (UAT 2026-10-07): permanent short passwords can be staged only once the
+    short policy exists, so the policy must be settable before any account
+    is.  A roster that IS staged must still be the current one.
 
     *roster_fingerprint* exists for the reason ``durable_directory_roster``
     takes a path: a test must be able to bind without resolving whatever
@@ -185,7 +191,7 @@ def durable_binding(
         raise DurableBindingError(
             f"{instance} records no converged directory with a domain SID; "
             f"converge it with homelab-factory-persistent-converge first")
-    if staged is None:
+    if staged is None and require_accounts:
         raise DurableBindingError(
             f"{instance} records no staged durable account roster; stage it "
             f"with homelab-factory-persistent-accounts first")
@@ -213,7 +219,7 @@ def durable_binding(
     require_fabric_agreement(identity, source)
     current = (roster_fingerprint if roster_fingerprint is not None
                else _current_roster_fingerprint(overlay_path))
-    if staged.get("roster_fingerprint") != current:
+    if staged is not None and staged.get("roster_fingerprint") != current:
         raise DurableBindingError(
             f"{instance}'s staged roster fingerprint is not the durable "
             f"roster's current one: the directory holds accounts the private "

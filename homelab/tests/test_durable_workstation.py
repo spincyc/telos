@@ -175,6 +175,19 @@ class DurableBindingTests(BindingFixture):
         self.write_marker(unstaged)
         self.refused("no staged durable account roster")
 
+    def test_the_password_policy_may_bind_before_accounts_are_staged(self):
+        # UAT 2026-10-07: the short policy must exist before permanent short
+        # passwords can be staged, so only the policy step skips this.
+        unstaged = marker()
+        del unstaged["directory_accounts"]
+        self.write_marker(unstaged)
+        binding = self.bind(require_accounts=False)
+        self.assertEqual(binding.roster_fingerprint, FINGERPRINT)
+        # A roster that is staged must still be the current one.
+        self.write_marker(marker())
+        self.refused("fingerprint", require_accounts=False,
+                     roster_fingerprint="fedcba9876543210")
+
     def test_a_stale_roster_fingerprint_is_refused(self):
         self.refused("fingerprint", roster_fingerprint="fedcba9876543210")
 
