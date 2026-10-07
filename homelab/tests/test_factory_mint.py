@@ -528,6 +528,31 @@ class MintRunTests(unittest.TestCase):
             (self.temp / "evidence").rglob("mint-run.json")).read_text())
         self.assertEqual("fail", record["result"])
 
+    def test_a_rerun_adopts_the_bundle_an_earlier_mint_installed(self):
+        bundle = self.temp / "bundle"
+        (bundle / "evidence").mkdir(parents=True)
+        (bundle / "evidence" / "result.json").write_text(json.dumps({
+            "status": "observed", "phase": "native-windows-clean-shutdown",
+            "private_publication_retained_for_identity": True}))
+        (bundle / "publication.iso").write_bytes(b"iso")
+        (bundle / "windows.qcow2").write_bytes(b"disk")
+        evidence = self.temp / "evidence"
+        record = evidence / "uat" / "uat-ws" / fm.PENDING_BUNDLE
+        record.parent.mkdir(parents=True)
+        record.write_text(f"{bundle}\n")
+        opts = options(self.temp, custody="agent", throwaway=True,
+                       make=self.fake_make())
+        fm.mint(opts, apply=True, allow_busy=True, evidence_root=evidence)
+        self.assertNotIn("homelab-windows-install-run", self.targets())
+        adopt = next(json.loads(line) for line in
+                     self.calls.read_text().splitlines()
+                     if "homelab-durable-workstation-adopt" in line)
+        self.assertIn(f"WINDOWS_RUN={bundle}", adopt)
+        self.assertFalse(record.exists())
+
+    def test_an_unfinished_pending_bundle_is_not_reused(self):
+        self.assertFalse(fm.finished_bundle(self.temp / "missing"))
+
     def test_a_dry_run_starts_nothing(self):
         opts = options(self.temp, make=self.fake_make())
         self.assertEqual(0, fm.mint(opts, apply=False))

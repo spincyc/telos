@@ -182,6 +182,37 @@ def _workstation_vars(options: Options) -> list[tuple[str, str]]:
         ("DURABLE_WORKSTATION_ROOT", str(options.workstation_root))]
 
 
+#: Beside a workstation's mint evidence: the gate-5 bundle a mint installed
+#: but has not adopted yet, so a rerun after a later failure adopts it
+#: instead of spending another 70 minutes installing Windows.
+PENDING_BUNDLE = "pending-windows-run"
+
+
+def finished_bundle(bundle: Path) -> bool:
+    """A gate-5 bundle adopt would take: observed, publication retained."""
+    try:
+        result = json.loads((Path(bundle) / "evidence" / "result.json")
+                            .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(result, dict)
+            and result.get("status") == "observed"
+            and result.get("phase") == "native-windows-clean-shutdown"
+            and result.get("private_publication_retained_for_identity") is True
+            and (Path(bundle) / "publication.iso").is_file()
+            and (Path(bundle) / "windows.qcow2").is_file())
+
+
+def pending_bundle(evidence_root: Path, options: Options) -> Path | None:
+    record = evidence_root / options.instance / options.workstation \
+        / PENDING_BUNDLE
+    try:
+        bundle = Path(record.read_text(encoding="utf-8").strip())
+    except OSError:
+        return None
+    return bundle if bundle.parts and finished_bundle(bundle) else None
+
+
 def plan_steps(options: Options, state: MintState) -> list[Step]:
     """The steps still to run, in order, decided from the markers alone."""
     steps: list[Step] = []
@@ -198,7 +229,8 @@ def plan_steps(options: Options, state: MintState) -> list[Step]:
             frozenset({"console", "administrator"}),
             note=("provision the directory"
                   + ("; creates the owner-custody instance"
-                     if state.instance is None else ""))))
+                     if state.instance is None and options.custody != "agent"
+                     else ""))))
     if not state.policy_recorded():
         steps.append(Step(
             "password-policy", "homelab-factory-persistent-password-policy",
@@ -705,6 +737,13 @@ def _write_record(path: Path, record: dict) -> None:
     os.replace(staging, path)
 
 
+def _write_text(path: Path, text: str) -> None:
+    staging = path.with_name("." + path.name + ".new")
+    staging.write_text(text, encoding="utf-8")
+    os.chmod(staging, 0o600)
+    os.replace(staging, path)
+
+
 def print_plan(options: Options, state: MintState,
                steps: Sequence[Step]) -> None:
     print(f"mint: workstation {options.workstation} (Arch host "
@@ -761,6 +800,11 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
     if (state.workstation is not None and options.windows_run is not None
             and "adopt" in state.stages()):
         options.windows_run = None
+    if options.windows_run is None and "adopt" not in state.stages():
+        options.windows_run = pending_bundle(evidence_root, options)
+        if options.windows_run is not None:
+            print(f"resuming with the finished, unadopted Windows bundle "
+                  f"{options.windows_run}")
     steps = plan_steps(options, state)
     print_plan(options, state, steps)
     if not apply:
@@ -806,6 +850,7 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
             if step.name == "windows-install":
                 bundle = prepare_windows(options, evidence, env, number)
                 options.windows_run = bundle
+                _write_text(evidence.parent / PENDING_BUNDLE, f"{bundle}\n")
                 step = Step(step.name, step.target,
                             step.variables + (("WINDOWS_RUN", str(bundle)),),
                             step.asks, step.note)
@@ -831,6 +876,9 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
             _write_record(evidence / "mint-run.json", record)
             print(f"[mint] {step.name}: exit {status} after "
                   f"{entry['seconds'] / 60:.1f} min", flush=True)
+            if step.name == "adopt" and status == 0:
+                with contextlib.suppress(FileNotFoundError):
+                    (evidence.parent / PENDING_BUNDLE).unlink()
             if status != 0:
                 raise MintError(
                     f"step {step.name} failed (exit {status}); its log is "
