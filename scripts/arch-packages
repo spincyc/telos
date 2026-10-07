@@ -10,9 +10,9 @@ The classic case is QEMU. `qemu-full` and `qemu-desktop` depend on
 `qemu-audio-jack`, which depends on the virtual package `jack`, which is
 provided by both `jack2` and `pipewire-jack`. Choosing `pipewire-jack` then
 depends on the virtual `pipewire-session-manager`, so answering one question
-earns another. None of it is wanted: the acceptance lab runs QEMU headless with
-`-nographic` and no audio device at all, so `qemu-base` is the correct package
-and the whole branch disappears.
+earns another. A headless host wants `qemu-base`, and the whole branch
+disappears; the general remedy is the same for any package: declare the
+variant, or name the provider explicitly.
 
 This script makes that a property of the package list rather than something
 that has to be remembered. It reads pacman's sync databases directly -- no

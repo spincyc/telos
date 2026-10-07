@@ -1,1 +1,0 @@
-"""Reproducible virtual-machine definitions."""

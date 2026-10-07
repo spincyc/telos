@@ -262,17 +262,14 @@ def published_pdfs() -> set[str]:
     }
 
 
-# ADR 0046: the homelab record publishes a generic profile. Real addresses,
-# hostnames and share paths belong in the gitignored instance overlay. This is
-# the fail-closed check that decision requires, and it runs in CI where the
-# overlay does not exist -- so a leak is caught by the absence of an excuse.
+# Telos is public. Published prose may name no private address at all; code
+# may name none outside the documentation ranges sanctioned below. Real
+# addresses, hostnames and hardware identifiers never belong in this
+# repository.
 #
 # The check runs in two passes because the two kinds of file have opposite
-# rules. Published prose may name no address at all; code must name plenty, so
-# there the gate flags every hardware-identifier-shaped token it cannot trace
-# to a sanctioned synthetic range. Scanning only prose is how a captured
-# workstation MAC, a captured disk serial and the real lab subnet reached the
-# tests, the libraries and a fixture unchallenged.
+# rules: prose is held to the strict pattern set, and code is flagged for every
+# hardware-identifier-shaped token it cannot trace to a sanctioned range.
 RFC1918_ADDRESS = r"""(?:
       10\.\d{1,3}\.\d{1,3}\.\d{1,3}
     | 192\.168\.\d{1,3}\.\d{1,3}
@@ -286,130 +283,51 @@ RFC1918_PATTERNS = (
 INSTANCE_LEAK_PATTERNS = RFC1918_PATTERNS + (
     (re.compile(r"\b[a-z0-9-]+\.unas\b"), "NAS hostname"),
 )
-INSTANCE_SCANNED_ROOTS = (
-    "src/homelab", "homelab/decisions", "homelab/docs", "site/pages"
-)
+INSTANCE_SCANNED_ROOTS = ("src", "research", "site/pages")
 INSTANCE_SCANNED_SUFFIXES = {".md", ".tex", ".json"}
 
-# Pass two: the code that provisions the lab. Globs rather than roots so the
-# top-level homelab narratives are covered without pulling in every sibling
-# tree.
+# Pass two: code and data that ship with the site or the tools.
 INSTANCE_CODE_GLOBS = (
-    "homelab/*.md",
-    # Published homelab/docs also receives the strict prose pass above;
-    # this pass retains the MAC and disk-serial checks for those guides.
-    "homelab/docs/**/*",
-    "homelab/ansible/**/*",
-    "homelab/archiso/**/*",
-    "homelab/bin/**/*",
-    "homelab/lib/**/*",
-    "homelab/network/**/*",
-    "homelab/profiles/**/*",
-    "homelab/pxe/**/*",
-    "homelab/qemu/**/*",
-    "homelab/seed/**/*",
-    "homelab/tests/**/*",
-    "homelab/updates/**/*",
-    "homelab/vm/**/*",
-    "homelab/workstations/**/*",
     "release/**/*",
     "tools/**/*",
 )
-# Deliberately absent, each for a reason rather than by oversight:
-#   scripts/** -- scripts/site's own sanction comments and telos-private's
-#     "10.1.0.0/16" prompt example are address literals the CIDR rule would
-#     flag, and widening the sanction to /16 to permit a comment would undo
-#     the prefix-length check that caught a real leak.
+# Deliberately absent: scripts/**, because this file's own sanction comments
+# are address literals the CIDR rule would flag.
 INSTANCE_CODE_SUFFIXES = {".j2", ".json", ".md", ".ps1", ".py", ".yaml", ".yml"}
 INSTANCE_CODE_PATTERNS = RFC1918_PATTERNS + (
     (re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b"), "MAC address"),
     # A vendor disk serial as lsblk reports it: the Samsung-style letter-digit
-    # prefix, or a long digit run in a field that says what it is. The second
-    # needs the field name -- a bare digit run of that length is far more often
-    # a size or an integer bound.
+    # prefix, or a long digit run in a field that says what it is.
     (re.compile(r"\bS[0-9][A-Z][0-9A-Z]{11,13}\b"), "vendor disk serial"),
     (re.compile(r"serial\W{1,8}\d{12,}", re.IGNORECASE), "vendor disk serial"),
-    # A CIDR is a topology disclosure that its network address alone does not
-    # carry: the size of the block says how the real site is subnetted. The
-    # patterns above stop at the word boundary before the slash, so a real
-    # supernet reached the tests wearing a network address that looks like a
-    # documentation subnet in isolation and this host's real prefix length.
-    # Matching the prefix length into the token makes INSTANCE_SANCTIONED judge
-    # both halves, so a sanctioned network address with an unsanctioned prefix
-    # length is now reported.
-    #
-    # A prefix length is never followed by ".<digit>": that is the first octet
-    # of a dotted netmask (iPXE prints "net0: <address>/255.255.255.0 gw ..."),
-    # which this rule once read as the impossible prefix /255 and reported
-    # against the sanctioned lab address in every retained PXE serial log
-    # (gate 12, 2026-10-01). The netmask form is judged by its own rule below,
-    # so it is reclassified, not dropped.
+    # A CIDR discloses how a real site is subnetted, so the prefix length is
+    # part of the token INSTANCE_SANCTIONED must excuse. A prefix length is
+    # never followed by ".<digit>": that is a dotted netmask, judged below.
     (re.compile(rf"\b{RFC1918_ADDRESS}/\d{{1,3}}\b(?!\.\d)", re.VERBOSE), "RFC 1918 CIDR"),
     (re.compile(rf"\b{RFC1918_ADDRESS}/(?:\d{{1,3}}\.){{3}}\d{{1,3}}\b", re.VERBOSE),
      "RFC 1918 address with netmask"),
 )
 
-# The synthetic ranges this project draws test values from. A token outside
-# this set is assumed captured from real hardware until someone adds it here
-# deliberately, which is the whole point: the addition is the review.
+# The documentation ranges code may use. A token outside this set is assumed
+# real until someone adds it here deliberately: the addition is the review.
 INSTANCE_SANCTIONED = re.compile(
     r"""^(?:
-        # The bare 10/8 network address only. Sanctioning the whole 10.0.0.0/24
-        # was the excuse that let a real default-gateway address sit in a test
-        # unchallenged: a site whose first /24 is 10.0.0.0/24 has every one of
-        # its hosts pre-excused. Code needs the network address (the CIDR
-        # branches below carry the block sizes) and nothing else in that /24;
-        # a synthetic host belongs in 10.1.x, which is sanctioned already.
-          10\.0\.0\.0
-        # QEMU user-mode networking, whose addresses are fixed by QEMU itself:
-        # .2 is its gateway, .3 its DNS, .15 the first guest lease. The whole
-        # /24 was sanctioned and no file used any of it, while 10.0.2.0/24 sits
-        # inside this build host's real supernet -- an unused excuse for 256
-        # real addresses. Widen only for another address QEMU itself fixes.
-        | 10\.0\.2\.(?:2|3|15)
-        | 10\.1\.\d{1,3}\.\d{1,3}                  # simulated lab, 10.1.31.0/24 and neighbours
-        | 10\.[29]\.1\.\d{1,3}                     # simulated firewall's far networks
+          10\.0\.0\.0                              # the bare 10/8 network address
         | 172\.(?:16|31)\.\d{1,3}\.\d{1,3}         # generic documentation subnets
         | 192\.168\.\d{1,3}\.\d{1,3}               # generic documentation subnets
-        # Sanctioned CIDRs. Separate from the address branches above because the
-        # anchors here make the prefix length part of what must be excused: a
-        # network address earns no excuse for the block size attached to it,
-        # which is how a real supernet got through. Every prefix length below is
-        # either an RFC-fixed private root or long enough that the block it
-        # names is a single synthetic subnet rather than a site's topology.
         | 10\.0\.0\.0/(?:8|24)                     # RFC 1918 10/8 root; documentation subnet
-        | 10\.1\.40\.0/21                          # simulated household supernet (deny-household)
-        | 10\.1\.\d{1,3}\.\d{1,3}/(?:2[4-9]|3[0-3]) # simulated lab, /24 and longer only
-        # The same lab block in dotted-netmask form, again /24 and longer only.
-        | 10\.1\.\d{1,3}\.\d{1,3}/255\.255\.255\.(?:0|128|192|224|240|248|252|254|255)
         | 172\.16\.0\.0/12                         # RFC 1918 172.16/12 root
         | 192\.168\.0\.0/16                        # RFC 1918 192.168/16 root
-        | 192\.168\.50\.0/30                       # documentation subnet, netplan unit test
         | 52:54:00(?::[0-9a-f]{2}){3}              # QEMU locally-administered MAC range
         | (?:aa:bb:cc|00:11:22)(?::[0-9a-f]{2}){3} # placeholder MACs
-        | (?:00:00:00|01:00:00)(?::[0-9a-f]{2}){3} # the null MAC and the switch model's BPDU address
-        # Carve-out: three vendor OUIs invented for the hardware-shape fixtures
-        # before this gate existed. They are not this workstation's interfaces
-        # (checked against /sys/class/net), so they stay until someone reissues
-        # those fixtures in the 52:54:00 range.
-        | (?:00:e0:4c|3c:ec:ef|a0:88:69)(?::[0-9a-f]{2}){3}
+        | (?:00:00:00|01:00:00)(?::[0-9a-f]{2}){3} # the null MAC and the bridge-group address
     )$""",
     re.VERBOSE | re.IGNORECASE,
 )
 
-# Carve-outs, per file and per finding so that exempting one class of token
-# never quietly exempts the others. Every entry here is a leak this gate would
-# otherwise report, held open because the file belongs to another owner;
-# exempting them is what lets the gate widen now rather than after they settle.
-# Delete each entry the moment its file is scrubbed.
-INSTANCE_CODE_EXEMPT = {
-    # Hardware-shape fixtures whose NVMe serials predate this gate, and the
-    # acceptance test that must type them back verbatim. None of them is a disk
-    # in this workstation (checked against /dev/disk/by-id).
-    "homelab/tests/fixtures/uefi-mixed-nvme-sata.json": ("vendor disk serial",),
-    "homelab/tests/fixtures/uefi-single-nvme.json": ("vendor disk serial",),
-    "homelab/tests/test_acceptance.py": ("vendor disk serial",),
-}
+# Carve-outs, per file and per finding. Empty: add an entry only with the
+# reason, and delete it the moment its file is scrubbed.
+INSTANCE_CODE_EXEMPT: dict[str, tuple[str, ...]] = {}
 
 
 def check_instance_leaks() -> list[str]:
@@ -435,9 +353,9 @@ def check_instance_leaks() -> list[str]:
 def _is_script(path) -> bool:
     """A suffix-less text script, identified by its shebang.
 
-    The entry points under `homelab/bin/` and the registry tools under `tools/`
-    carry no extension, so a suffix allowlist alone never reads them -- and they
-    are exactly the files that hold real invocations. Reading the first two
+    Registry tools under `tools/` carry no extension, so a suffix allowlist
+    alone never reads them -- and they are exactly the files that hold real
+    invocations. Reading the first two
     bytes is cheaper and more honest than guessing from the directory.
     """
     try:
@@ -466,8 +384,8 @@ def scan_for_instance_data(paths, patterns, sanctioned) -> list[str]:
                         continue
                     problems.append(
                         f"{relative}:{number}: {description} {match.group(0)!r} "
-                        "in a published source (ADR 0046: use a placeholder and "
-                        "put the real value in homelab/instance/)"
+                        "in a published source (use a documentation-range "
+                        "placeholder; real values never enter this repository)"
                     )
     return problems
 

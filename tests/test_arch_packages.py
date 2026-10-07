@@ -138,13 +138,11 @@ class TestDeclaredPackages(unittest.TestCase):
         self.assertEqual(arch_packages.declared_packages(makefile),
                          ["alpha", "beta", "gamma", "delta"])
 
-    def test_the_real_makefile_declares_the_homelab_packages(self):
+    def test_the_real_makefile_declares_the_publication_toolchain(self):
         declared = arch_packages.declared_packages()
-        for expected in ("qemu-base", "edk2-ovmf", "archiso", "ansible"):
+        for expected in ("texlive-bin", "texlive-latexextra", "ghostscript",
+                         "python-markdown"):
             self.assertIn(expected, declared)
-        # The packages that would ask about jack must never appear.
-        for forbidden in ("qemu-full", "qemu-desktop"):
-            self.assertNotIn(forbidden, declared)
 
 
 if __name__ == "__main__":

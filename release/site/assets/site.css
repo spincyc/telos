@@ -37,9 +37,6 @@ body {
 }
 .shell { width: min(100% - 2.5rem, var(--shell)); margin-inline: auto; }
 .prose { max-width: var(--measure); }
-/* Long inline commands and checksums must fit the published factory guides. */
-.homelab-guide .prose { overflow-wrap: anywhere; }
-.homelab-guide .prose :is(pre, table) { overflow-wrap: normal; }
 .skip { position: absolute; left: -9999px; }
 .skip:focus {
   left: 1rem; top: 1rem; z-index: 20; padding: .65rem .9rem;

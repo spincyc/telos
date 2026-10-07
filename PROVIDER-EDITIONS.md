@@ -21,8 +21,7 @@ doc/<project>/<provider>/<document>.pdf
 site/pages/<project>/<provider>.md
 ```
 
-Project chooser pages live at `site/pages/<project>/index.md`. Homelab remains
-provider-neutral and keeps its existing source organization.
+Project chooser pages live at `site/pages/<project>/index.md`.
 
 ## What is shared
 
@@ -69,8 +68,8 @@ arbitrary template paths or forcing their content into a symmetric schema.
 
 The site builder scans every declared page source for links and every published
 PDF for reachability. Nested output paths are resolved as a browser would
-resolve them. The homelab instance-data leak check remains recursive over all
-site page sources.
+resolve them. The private-address leak check remains recursive over all site
+page sources.
 
 ## ChatGPT Projects
 

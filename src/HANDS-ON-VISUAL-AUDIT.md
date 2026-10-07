@@ -41,21 +41,19 @@ Neither medium substitutes for the other.
 
 ## Inventory
 
-The repository publishes four hands-on projects, 30 provider/type families,
-148 PDFs, and 1,072 PDF pages at this baseline:
+The repository publishes three hands-on projects, 27 provider/type families,
+140 PDFs, and 995 PDF pages at this baseline:
 
 | Project | Families | Delivered PDFs | Pages | Current audit |
 |---|---:|---:|---:|---|
 | Potato Launcher | 5 | 18 | 56 | Detailed below; remediation first |
 | Electricity & Magnetism | 10 | 36 | 139 | Family audit complete; leaf ledger pending |
 | Lake Country Fishing | 12 | 86 | 800 | Family audit complete; leaf ledger pending |
-| Homelab | 3 | 8 retained PDFs | 77 | Active Markdown/HTML family audit complete |
 
 Research records, generated build intermediates, tooling, and site chooser
 pages are supporting material rather than hands-on publication leaves. Site
 pages still require audit when they deliver or navigate an operational
-procedure. Homelab's active deliverables are Markdown and HTML; retained PDFs
-do not create a new PDF requirement.
+procedure.
 
 ## Potato Launcher — first remediation gate
 
@@ -156,18 +154,6 @@ equivalent. A fixed Letter PDF alone is not a mobile-accessible equivalent.
 Current fishing PDFs are untagged, essential overlay text reaches 5.5–6 pt in
 places, and many raster assets remain color-profiled rather than verified
 grayscale; these are delivery defects even when a drawing's content is sound.
-
-## Homelab — active Markdown and HTML baseline
-
-Homelab needs deterministic topology, state, terminal, and UI evidence more
-than graphite. Use pencil only for physical device/cable/port orientation when
-it teaches an observable action.
-
-| Family | Status | Highest-value next work |
-|---|---|---|
-| Manuals / runbooks | Missing | Add Windows Setup and disk-layout states, Controller console/reboot states, network rollback topologies, expected command output, and symptom-led stop/correct/rollback branches. |
-| Design | Partial | Add canonical network/DHCP authority topology, protocol/trust labels on boot-chain arrows, and provisioning-to-poweroff-to-activation swimlanes. |
-| Site workflows | Missing | Reconcile the 12 procedure steps with the durable 14 gates, then render derived Proven/In progress/Pending/Blocked states, evidence links, semantic callouts, and responsive step navigation. |
 
 ## Verification backlog
 

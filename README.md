@@ -17,11 +17,10 @@ voice. Agreement is useful. Difference is useful too.
     <button type="button" data-project-filter="field">Field</button>
     <button type="button" data-project-filter="science">Science</button>
     <button type="button" data-project-filter="build">Build</button>
-    <button type="button" data-project-filter="systems">Systems</button>
   </div>
 </div>
 
-<p class="project-status" data-project-status aria-live="polite">4 projects</p>
+<p class="project-status" data-project-status aria-live="polite">3 projects</p>
 
 <div class="project-grid">
   <section class="project-card" data-project-card data-tags="field">
@@ -41,12 +40,6 @@ voice. Agreement is useful. Difference is useful too.
     <h2><a href="projects/potato-launcher/index.md">Potato Launcher</a></h2>
     <p>Combustion, projectile motion, careful fabrication, and a safety-first supervised build.</p>
     <p><a href="projects/potato-launcher/index.md">Choose an edition →</a></p>
-  </section>
-  <section class="project-card" data-project-card data-tags="systems">
-    <span class="eyebrow">Systems · provider-neutral</span>
-    <h2><a href="projects/homelab/index.md">Homelab</a></h2>
-    <p>A reproducible network-provisioning system with guarded installation, a Controller, and continuous convergence.</p>
-    <p><a href="projects/homelab/index.md">Open project →</a></p>
   </section>
 </div>
 

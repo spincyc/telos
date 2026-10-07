@@ -5,12 +5,3 @@ __pycache__/
 /tools/worktree-marshal/build/
 /tools/worktree-marshal/dist/
 /tools/worktree-marshal/src/*.egg-info/
-
-# ADR 0046: private homelab instance data. Real hostnames, addresses, interface
-# names, disk serials and per-machine inventory never enter the published site.
-/homelab/instance/
-/homelab/var/
-
-# Operator-downloaded installation media may be handed to the build at the
-# repository root. It is never source material and must never enter Git.
-/*.iso

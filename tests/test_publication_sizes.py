@@ -57,34 +57,8 @@ class PublicationSizeTests(unittest.TestCase):
         self.assertEqual(
             media,
             [],
-            "Installation media must be fetched into the disposable cache, "
-            "not committed:\n" + "\n".join(media),
-        )
-
-    def test_disposable_media_cache_is_gitignored(self):
-        candidates = (
-            "homelab/var/media/arch/archlinux-x86_64.iso",
-            "homelab/var/media/windows/windows-11-x64.iso",
-            "homelab/var/media/wimboot",
-            "homelab/var/media/download.partial",
-        )
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                REPOSITORY_ROOT,
-                "check-ignore",
-                "--no-index",
-                *candidates,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(
-            result.stdout.splitlines(),
-            list(candidates),
-            "Every fetched media artifact and temporary download must remain ignored",
+            "Installation media must never be committed:\n"
+            + "\n".join(media),
         )
 
 
