@@ -482,6 +482,12 @@ FAKE_MAKE = textwrap.dedent("""\
     if "homelab-windows-install-prepare" in sys.argv:
         print("homelab/var/factory/windows-installs/run-20261007T000000Z-"
               "abcdef012345")
+    failing = {failing!r}
+    if failing and failing[0] in sys.argv:
+        seen = sum(failing[0] in line
+                   for line in open({calls!r}).read().splitlines())
+        if seen <= failing[1]:
+            sys.exit(2)
     sys.exit({status})
 """)
 
@@ -491,11 +497,12 @@ class MintRunTests(unittest.TestCase):
         self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.calls = self.temp / "calls.jsonl"
 
-    def fake_make(self, status=0):
+    def fake_make(self, status=0, failing=()):
         path = self.temp / "make"
         path.write_text(FAKE_MAKE.format(python=sys.executable,
                                          calls=str(self.calls),
-                                         status=status), encoding="utf-8")
+                                         status=status, failing=failing),
+                        encoding="utf-8")
         path.chmod(0o700)
         return str(path)
 
@@ -571,6 +578,34 @@ class MintRunTests(unittest.TestCase):
 
     def test_an_unfinished_pending_bundle_is_not_reused(self):
         self.assertFalse(fm.finished_bundle(self.temp / "missing"))
+
+    def test_a_flaky_windows_join_is_repeated_without_asking_again(self):
+        opts = options(self.temp, custody="agent", throwaway=True,
+                       make=self.fake_make(failing=(
+                           "homelab-durable-windows-join", 2)))
+        result = fm.mint(opts, apply=True, allow_busy=True,
+                         evidence_root=self.temp / "evidence")
+        self.assertEqual(0, result)
+        self.assertEqual(3, self.targets().count(
+            "homelab-durable-windows-join"))
+        record = json.loads(next(
+            (self.temp / "evidence").rglob("mint-run.json")).read_text())
+        joins = [step for step in record["steps"]
+                 if step["step"] == "windows-join"]
+        self.assertEqual([1, 2, 3], [step["attempt"] for step in joins])
+        self.assertEqual([2, 2, 0], [step["exit"] for step in joins])
+
+    def test_retries_are_bounded(self):
+        opts = options(self.temp, custody="agent", throwaway=True,
+                       make=self.fake_make(failing=(
+                           "homelab-durable-windows-join", 9)))
+        with self.assertRaisesRegex(fm.MintError, "windows-join failed"):
+            fm.mint(opts, apply=True, allow_busy=True,
+                    evidence_root=self.temp / "evidence")
+        self.assertEqual(fm.ATTEMPTS["windows-join"], self.targets().count(
+            "homelab-durable-windows-join"))
+        self.assertNotIn("homelab-durable-workstation-verify",
+                         self.targets())
 
     def test_a_dry_run_starts_nothing(self):
         opts = options(self.temp, make=self.fake_make())

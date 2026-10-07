@@ -78,6 +78,11 @@ ARCH_INSTALL_DURATION = 1800
 #: ~20 GB disk), a ~20 GB adopted disk and one ~20-30 GB fold at a time.
 MIN_FREE_BYTES = 90 * 1024 ** 3
 SECRET_MAX = 512
+#: Steps that leave the kept workstation and directory unchanged when they
+#: fail, and whose failures include an intermittent firmware boot stall
+#: (UAT 2026-10-07; the 2026-10-01 rehearsal needed six Windows-join
+#: attempts): the mint repeats them itself, so an owner never retypes.
+ATTEMPTS = {"windows-join": 3, "verify": 2}
 
 
 class MintError(RuntimeError):
@@ -866,22 +871,34 @@ def mint(options: Options, *, apply: bool, allow_busy: bool = False,
                             step.variables
                             + (("WINDOWS_RUN", str(options.windows_run)),),
                             step.asks, step.note)
-            log = evidence / f"{number:02}-{step.name}.log"
-            entry = {"step": step.name, "target": step.target,
-                     "log": log.name, "started_utc": _now()}
-            record["steps"].append(entry)
-            _write_record(evidence / "mint-run.json", record)
-            print(f"\n[mint] {number}/{len(steps)} {step.name}: "
-                  f"make {step.target} (log {log})", flush=True)
-            began = time.monotonic()
-            status = run_on_pty(step_argv(options, step, apply=True),
-                                credentials=credentials, log=log, env=env,
-                                accounts=accounts)
-            entry.update(finished_utc=_now(), exit=status,
-                         seconds=round(time.monotonic() - began, 1))
-            _write_record(evidence / "mint-run.json", record)
-            print(f"[mint] {step.name}: exit {status} after "
-                  f"{entry['seconds'] / 60:.1f} min", flush=True)
+            attempts = ATTEMPTS.get(step.name, 1)
+            for attempt in range(1, attempts + 1):
+                suffix = "" if attempt == 1 else f"-attempt{attempt}"
+                log = evidence / f"{number:02}-{step.name}{suffix}.log"
+                entry = {"step": step.name, "target": step.target,
+                         "attempt": attempt, "log": log.name,
+                         "started_utc": _now()}
+                record["steps"].append(entry)
+                _write_record(evidence / "mint-run.json", record)
+                print(f"\n[mint] {number}/{len(steps)} {step.name}"
+                      + (f" (attempt {attempt} of {attempts})"
+                         if attempt > 1 else "")
+                      + f": make {step.target} (log {log})", flush=True)
+                began = time.monotonic()
+                status = run_on_pty(step_argv(options, step, apply=True),
+                                    credentials=credentials, log=log, env=env,
+                                    accounts=accounts)
+                entry.update(finished_utc=_now(), exit=status,
+                             seconds=round(time.monotonic() - began, 1))
+                _write_record(evidence / "mint-run.json", record)
+                print(f"[mint] {step.name}: exit {status} after "
+                      f"{entry['seconds'] / 60:.1f} min", flush=True)
+                if status == 0:
+                    break
+                if attempt < attempts:
+                    print(f"[mint] {step.name} failed; it leaves the kept "
+                          "workstation unchanged, so it is repeated",
+                          flush=True)
             if step.name == "adopt" and status == 0:
                 with contextlib.suppress(FileNotFoundError):
                     (evidence.parent / PENDING_BUNDLE).unlink()
