@@ -368,6 +368,17 @@ CHILD = textwrap.dedent("""
         sys.stdout.write("local-rescue console password: ")
         sys.stdout.flush()
         sys.stdin.readline()
+    elif which == "logged":
+        # A log line that ends like a prompt, then more output: not a prompt.
+        import time
+        sys.stdout.write("note: the local-rescue console password:")
+        sys.stdout.flush()
+        time.sleep(0.1)
+        print(" is read from custody", flush=True)
+        sys.stdout.write("an echoed line ending in password: ")
+        sys.stdout.flush()
+        time.sleep(1.5)
+        print("done", flush=True)
 """)
 
 
@@ -446,6 +457,14 @@ class PseudoTerminalTests(unittest.TestCase):
                                                      "uat-kid")}
         with self.assertRaisesRegex(fm.MintError, "another account"):
             self.run_child("converge")
+
+    def test_a_logged_line_ending_like_a_prompt_is_not_one(self):
+        log = self.temp / "logged.log"
+        status = fm.run_on_pty([sys.executable, str(self.script), "logged"],
+                               credentials=None, log=log, echo=False,
+                               stop_grace=5.0)
+        self.assertEqual(0, status)
+        self.assertIn("done", log.read_text())
 
     def test_agent_custody_answers_nothing(self):
         log = self.temp / "agent.log"

@@ -620,18 +620,24 @@ def run_on_pty(
             emit(data)
             tail = (tail + data)[-4096:]
             key, match = match_prompt(tail)
-            if key is None:
-                if (UNKNOWN_PROMPT.search(last_line(tail))
-                        and _quiet(fd, QUIET_WAIT) and _echo_off(fd)):
-                    failure = ("the step asked for a credential this command "
-                               "does not recognise; nothing was typed and it "
-                               "was stopped")
-                    break
+            if key is None and not UNKNOWN_PROMPT.search(last_line(tail)):
                 continue
-            if credentials is None:
-                failure = ("the step asked for a credential, but this "
-                           "instance is agent custody and nothing was "
-                           "collected; it was stopped")
+            # A real prompt is followed by silence: more output means the
+            # line was only logged, and the next read carries on.
+            if not _quiet(fd, QUIET_WAIT):
+                continue
+            if key is None or credentials is None:
+                # getpass turns echo off before it prompts; an echoing
+                # terminal here means a logged line, not a question.
+                if not _wait_echo_off(fd, QUIET_WAIT):
+                    continue
+                failure = (
+                    "the step asked for a credential this command does not "
+                    "recognise; nothing was typed and it was stopped"
+                    if key is None else
+                    "the step asked for a credential, but this instance is "
+                    "agent custody and nothing was collected; it was "
+                    "stopped")
                 break
             value = credentials.values.get(key)
             if not value:
